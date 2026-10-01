@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { XIcon } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
+import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
 
 const Sheet = ({
   ...props
@@ -23,13 +24,22 @@ const SheetClose = ({
 };
 
 const SheetPortal = ({
+  container,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) => {
-  return <DialogPrimitive.Portal data-slot="sheet-portal" {...props} />;
+  const overlayPortalContainer = useOverlayPortalContainer();
+  return (
+    <DialogPrimitive.Portal
+      data-slot="sheet-portal"
+      container={container ?? overlayPortalContainer ?? undefined}
+      {...props}
+    />
+  );
 };
 
 function SheetOverlay({
   className,
+  style,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
@@ -39,6 +49,7 @@ function SheetOverlay({
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/25 duration-400 ease-out",
         className
       )}
+      style={{ pointerEvents: "auto", ...style }}
       {...props}
     />
   );
@@ -63,10 +74,13 @@ function SheetContent({
   showClose = true,
   className,
   children,
+  style,
   ...props
 }: SheetContentProps) {
+  const overlayPortalContainer = useOverlayPortalContainer();
+
   return (
-    <SheetPortal container={container ?? undefined}>
+    <SheetPortal container={container ?? overlayPortalContainer ?? undefined}>
       {showOverlay ? <SheetOverlay /> : null}
       <DialogPrimitive.Content
         data-slot="sheet-content"
@@ -83,6 +97,7 @@ function SheetContent({
           "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 max-h-[85dvh] border-t",
           className
         )}
+        style={{ pointerEvents: "auto", ...style }}
         {...props}
       >
         {children}

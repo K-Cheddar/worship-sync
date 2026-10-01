@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Save } from "lucide-react";
+import { Check, Plus, Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -36,13 +36,8 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, qualificationAreaMatchesListQuery } from "../teamsUtils";
-import {
-  formatQualificationAreaSaveToast,
-  formatQualificationLevelSaveToast,
-} from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -101,7 +96,6 @@ const QualificationManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
   // Mirrors `editing` so an in-flight save can tell, on completion, whether the
   // operator has since switched areas — without rebinding the panel or clobbering
   // the other area's level drafts.
@@ -178,7 +172,11 @@ const QualificationManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const openAreaEditor = (area: TeamQualificationArea) => {
@@ -239,7 +237,6 @@ const QualificationManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
-    const saveToastMessage = formatQualificationAreaSaveToast(wasEditing, payload);
     const optimisticArea: TeamQualificationArea = {
       churchId,
       areaId: localAreaId,
@@ -256,12 +253,8 @@ const QualificationManager = ({
       if (!wasEditing) {
         onAreaSaved(response.area, localAreaId);
       }
-      showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         if (editingRef.current?.areaId === wasEditing.areaId) {
           setEditing(response.area);
         }
@@ -348,10 +341,6 @@ const QualificationManager = ({
     }
     const savingKey = levelId ? `level:${levelId}` : "level:new";
     setLevelSavingKey(savingKey);
-    const existingLevel = levelId
-      ? levels.find((level) => level.levelId === levelId) || null
-      : null;
-    const saveToastMessage = formatQualificationLevelSaveToast(existingLevel, payload);
     const localLevel: TeamQualificationLevel = {
       churchId,
       levelId: levelId || `local-level-${generateRandomId()}`,
@@ -382,7 +371,6 @@ const QualificationManager = ({
           rank: response.level.rank,
         },
       }));
-      showToast(saveToastMessage, "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification level.");
       onArchived();
@@ -468,7 +456,7 @@ const QualificationManager = ({
         }
         formHeaderActions={
           editing || returnTo ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
@@ -507,12 +495,13 @@ const QualificationManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save area"
+            entityLabel="qualification area"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
             onSave={() => void submitArea()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >
@@ -551,6 +540,12 @@ const QualificationManager = ({
                   description: level.description || "",
                   rank: level.rank,
                 };
+                const hasPendingLevelChanges = JSON.stringify(levelDraft) !== JSON.stringify({
+                  areaId: level.areaId,
+                  name: level.name,
+                  description: level.description || "",
+                  rank: level.rank,
+                });
                 return (
                   <div
                     key={level.levelId}
@@ -561,36 +556,43 @@ const QualificationManager = ({
                       hideLabel
                       value={levelDraft.name}
                       placeholder="Level 2"
-                      onChange={(name) =>
+                      onChange={(name) => {
                         setLevelDrafts((current) => ({
                           ...current,
                           [level.levelId]: { ...levelDraft, name: String(name) },
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <Input
                       label="Rank"
                       hideLabel
                       type="number"
                       value={levelDraft.rank}
-                      onChange={(rank) =>
+                      onChange={(rank) => {
                         setLevelDrafts((current) => ({
                           ...current,
                           [level.levelId]: {
                             ...levelDraft,
                             rank: Number(rank),
                           },
-                        }))
-                      }
+                        }));
+                      }}
                     />
                     <Button
                       variant="tertiary"
-                      svg={Save}
-                      aria-label={`Save ${level.name}`}
-                      isLoading={levelSavingKey === `level:${level.levelId}`}
+                      aria-label={
+                        levelSavingKey === `level:${level.levelId}`
+                          ? `Saving ${level.name}`
+                          : !hasPendingLevelChanges
+                            ? `Saved ${level.name}`
+                            : `Save ${level.name}`
+                      }
+                      aria-busy={levelSavingKey === `level:${level.levelId}` || undefined}
+                      disabled={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges}
+                      svg={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges ? undefined : Save}
                       onClick={() => void saveLevel(level.levelId)}
                     >
-                      Save
+                      {levelSavingKey === `level:${level.levelId}` ? "Saving…" : !hasPendingLevelChanges ? <><Check aria-hidden="true" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}
                     </Button>
                   </div>
                 );
@@ -601,25 +603,27 @@ const QualificationManager = ({
                   hideLabel
                   value={newLevelName}
                   placeholder="New level"
-                  onChange={(name) => setNewLevelName(String(name))}
+                  onChange={(name) => {
+                    setNewLevelName(String(name));
+                  }}
                 />
                 <Input
                   label="Rank"
                   hideLabel
                   type="number"
                   value={newLevelRank}
-                  onChange={(rank) => setNewLevelRank(String(rank))}
+                  onChange={(rank) => {
+                    setNewLevelRank(String(rank));
+                  }}
                 />
                 <Button
                   variant="secondary"
                   svg={Plus}
-                  disabled={
-                    !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))
-                  }
-                  isLoading={levelSavingKey === "level:new"}
+                  aria-busy={levelSavingKey === "level:new" || undefined}
+                  disabled={levelSavingKey === "level:new" || !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))}
                   onClick={() => void saveLevel()}
                 >
-                  Add level
+                  {levelSavingKey === "level:new" ? "Creating…" : "Add level"}
                 </Button>
               </div>
             </div>

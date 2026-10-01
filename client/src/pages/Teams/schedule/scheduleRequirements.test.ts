@@ -83,6 +83,17 @@ describe("resolveOccurrenceRequirements", () => {
     ]);
   });
 
+  it("can disable the legacy fallback for generated periods", () => {
+    expect(
+      resolveOccurrenceRequirements({
+        occurrence: null,
+        service: null,
+        teamPositionIds,
+        fallbackToAllTeamPositions: false,
+      }),
+    ).toEqual([]);
+  });
+
   it("uses service requirements over the team fallback", () => {
     expect(
       resolveOccurrenceRequirements({
@@ -103,6 +114,25 @@ describe("resolveOccurrenceRequirements", () => {
         teamPositionIds,
       }),
     ).toEqual([{ positionId: "camera", count: 1 }]);
+  });
+
+  it("returns no requirements when service requirements belong to another team", () => {
+    expect(
+      resolveOccurrenceRequirements({
+        service: { positionRequirements: [{ positionId: "praise-guitar", count: 2 }] },
+        teamPositionIds,
+      }),
+    ).toEqual([]);
+  });
+
+  it("returns no requirements when an occurrence override belongs to another team", () => {
+    expect(
+      resolveOccurrenceRequirements({
+        occurrence: { positionRequirements: [{ positionId: "praise-guitar", count: 2 }] },
+        service: { positionRequirements: [{ positionId: "camera", count: 4 }] },
+        teamPositionIds,
+      }),
+    ).toEqual([]);
   });
 });
 

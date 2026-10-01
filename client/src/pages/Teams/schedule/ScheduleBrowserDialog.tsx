@@ -181,7 +181,7 @@ const ScheduleBrowserDialog = ({
                   <button
                     type="button"
                     aria-current={isSelected ? "true" : undefined}
-                    className={`flex w-full flex-col gap-1 rounded-md border p-3 text-left transition-colors ${isSelected
+                    className={`flex w-full cursor-pointer flex-col gap-1 rounded-md border p-3 text-left transition-colors ${isSelected
                       ? "border-cyan-500 bg-cyan-950/30"
                       : "border-gray-700 bg-gray-950/40 hover:border-gray-500"
                       }`}

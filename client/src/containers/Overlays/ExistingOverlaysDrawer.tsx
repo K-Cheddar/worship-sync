@@ -111,7 +111,7 @@ async function createOverlayCopyInDb(
   delete rest.servicePlanSource;
   delete rest.servicePlanBaseline;
   delete rest.servicePlanOverrides;
-  delete rest.servicePlanReviewRequired;
+  delete (rest as Record<string, unknown>).servicePlanReviewRequired;
   const doc = {
     _id: `overlay-${newId}`,
     ...rest,

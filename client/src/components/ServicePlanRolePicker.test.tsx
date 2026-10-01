@@ -1,6 +1,12 @@
 import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Provider } from "react-redux";
+import store from "../store/store";
 import ServicePlanRolePicker from "./ServicePlanRolePicker";
+
+const renderWithStore = (ui: React.ReactElement) => render(
+  <Provider store={store}>{ui}</Provider>,
+);
 
 const roles = [
   {
@@ -30,7 +36,7 @@ describe("ServicePlanRolePicker", () => {
     const user = userEvent.setup();
     const onValueChange = jest.fn();
 
-    render(
+    renderWithStore(
       <ServicePlanRolePicker
         value=""
         onValueChange={onValueChange}
@@ -45,6 +51,11 @@ describe("ServicePlanRolePicker", () => {
       /Role notes:.*All roles/,
     );
     await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+
+    expect(screen.getByRole("region", { name: "Role options" })).toHaveClass("scrollbar-portal");
+    expect(screen.getByRole("region", { name: "Role options" })).toHaveStyle({
+      "--scrollbar-width": "thin",
+    });
 
     expect(screen.getAllByText("Media Team")).not.toHaveLength(0);
     expect(screen.getAllByText("Worship Team")).not.toHaveLength(0);
@@ -74,7 +85,7 @@ describe("ServicePlanRolePicker", () => {
     const user = userEvent.setup();
     localStorage.setItem("role-picker-team", "media");
 
-    render(
+    renderWithStore(
       <ServicePlanRolePicker
         value=""
         onValueChange={jest.fn()}
@@ -95,7 +106,7 @@ describe("ServicePlanRolePicker", () => {
 
   it("adds team names only when a role name is duplicated", async () => {
     const user = userEvent.setup();
-    render(
+    renderWithStore(
       <ServicePlanRolePicker
         value=""
         onValueChange={jest.fn()}
@@ -120,7 +131,7 @@ describe("ServicePlanRolePicker", () => {
   // the scroll gesture when a finger lands on a role button.
   it("does not cancel touch pointerdown on role rows so the list can scroll", async () => {
     const user = userEvent.setup();
-    render(
+    renderWithStore(
       <ServicePlanRolePicker
         value=""
         onValueChange={jest.fn()}
@@ -149,7 +160,7 @@ describe("ServicePlanRolePicker", () => {
         onValueChange={(next) => {
           selected = next;
           onValueChange(next);
-          rerender(renderPicker());
+          rerender(<Provider store={store}>{renderPicker()}</Provider>);
         }}
         options={roles}
         teamFilterStorageKey="role-picker-team"
@@ -158,7 +169,7 @@ describe("ServicePlanRolePicker", () => {
       />
     );
 
-    const { rerender } = render(renderPicker());
+    const { rerender } = renderWithStore(renderPicker());
 
     await user.click(screen.getByRole("button", { name: "Filter role notes" }));
     await user.click(screen.getByRole("button", { name: "Camera" }));

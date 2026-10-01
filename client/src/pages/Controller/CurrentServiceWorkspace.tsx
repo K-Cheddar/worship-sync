@@ -33,6 +33,7 @@ import {
   getServicePlanMicrophones,
   getTeamsBootstrap,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
 } from "../../api/auth";
 import type {
   TeamPosition,
@@ -53,9 +54,9 @@ import ServicePlanEditor from "../Services/ServicePlanEditor";
 import CurrentServiceItemList from "./CurrentServiceItemList";
 import {
   getOccurrenceAssignmentSummary,
-  getScheduledMicrophoneHolders,
+  getScheduledEquipmentHolders,
   groupAssignmentSummaryByTeam,
-  teamMicrophoneSlotKey,
+  teamEquipmentSlotKey,
   type TeamsAssignmentSummaryRow,
 } from "../Teams/pages/teamsAssignmentsSummary";
 import WhosServingPanel from "../Teams/pages/WhosServingPanel";
@@ -639,6 +640,10 @@ const CurrentServiceWorkspace = () => {
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<
     string | null
   >(null);
+  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
+  const microphoneMutationSeqRef = useRef(0);
+  const iemMutationSeqRef = useRef(0);
+  const equipmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const [timingPlan, setTimingPlan] =
     useState<ServicePlanTimingSource | null>(null);
 
@@ -1061,13 +1066,22 @@ const CurrentServiceWorkspace = () => {
     [assignmentRows, canLoadRoleData, roleSchedules],
   );
 
-  const scheduledMicrophoneHolders = useMemo(
+  const scheduledEquipmentHolders = useMemo(
     () =>
       canLoadRoleData
-        ? getScheduledMicrophoneHolders(assignmentRows, roleTeams)
+        ? getScheduledEquipmentHolders(assignmentRows, roleTeams)
         : new Map(),
     [assignmentRows, canLoadRoleData, roleTeams],
   );
+
+  const enqueueEquipmentSave = <T,>(task: () => Promise<T>) => {
+    const run = equipmentSaveQueueRef.current.then(task, task);
+    equipmentSaveQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 
   /**
    * Day-level microphone allocation, saved straight to the owning schedule.
@@ -1077,7 +1091,9 @@ const CurrentServiceWorkspace = () => {
   const saveScheduledMicrophones = useCallback(
     async (row: TeamsAssignmentSummaryRow, microphoneIds: string[]) => {
       if (!churchId || !row.scheduleId) return;
-      setSavingMicrophoneSlot(teamMicrophoneSlotKey(row));
+      const scheduleId = row.scheduleId;
+      const mutationSeq = ++microphoneMutationSeqRef.current;
+      setSavingMicrophoneSlot(teamEquipmentSlotKey(row));
       // Success feedback is the toolbar Syncing → Synced chip (no toast).
       dispatch(
         autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -1085,14 +1101,16 @@ const CurrentServiceWorkspace = () => {
         ),
       );
       try {
-        const result = await updateTeamScheduleAssignmentMicrophones(
-          churchId,
-          row.scheduleId,
-          {
-            serviceId: row.occurrenceId,
-            positionSlotKey: row.columnKey,
-            microphoneIds,
-          },
+        const result = await enqueueEquipmentSave(() =>
+          updateTeamScheduleAssignmentMicrophones(
+            churchId,
+            scheduleId,
+            {
+              serviceId: row.occurrenceId,
+              positionSlotKey: row.columnKey,
+              microphoneIds,
+            },
+          ),
         );
         setRoleScheduleSource((current) =>
           current.map((schedule) =>
@@ -1108,7 +1126,55 @@ const CurrentServiceWorkspace = () => {
           "Could not update team microphones.",
         );
       } finally {
-        setSavingMicrophoneSlot(null);
+        if (microphoneMutationSeqRef.current === mutationSeq) {
+          setSavingMicrophoneSlot(null);
+        }
+        dispatch(
+          autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
+            AUTOSAVE_DEBOUNCE_KEYS.teams,
+          ),
+        );
+      }
+    },
+    [churchId, dispatch, showToast],
+  );
+
+  const saveScheduledIems = useCallback(
+    async (row: TeamsAssignmentSummaryRow, iemIds: string[]) => {
+      if (!churchId || !row.scheduleId) return;
+      const scheduleId = row.scheduleId;
+      const mutationSeq = ++iemMutationSeqRef.current;
+      setSavingIemSlot(teamEquipmentSlotKey(row));
+      dispatch(
+        autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
+          AUTOSAVE_DEBOUNCE_KEYS.teams,
+        ),
+      );
+      try {
+        const result = await enqueueEquipmentSave(() =>
+          updateTeamScheduleAssignmentIems(
+            churchId,
+            scheduleId,
+            {
+              serviceId: row.occurrenceId,
+              positionSlotKey: row.columnKey,
+              iemIds,
+            },
+          ),
+        );
+        setRoleScheduleSource((current) =>
+          current.map((schedule) =>
+            schedule.scheduleId === result.schedule.scheduleId
+              ? result.schedule
+              : schedule,
+          ),
+        );
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not update team IEM assignments.");
+      } finally {
+        if (iemMutationSeqRef.current === mutationSeq) {
+          setSavingIemSlot(null);
+        }
         dispatch(
           autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
             AUTOSAVE_DEBOUNCE_KEYS.teams,
@@ -1220,17 +1286,24 @@ const CurrentServiceWorkspace = () => {
       members={roleMembers}
       positions={rolePositions}
       teams={roleTeams}
-      scheduledMicrophoneHolders={
-        canLoadRoleData ? scheduledMicrophoneHolders : undefined
+      scheduledEquipmentHolders={
+        canLoadRoleData ? scheduledEquipmentHolders : undefined
       }
-      teamMicrophones={
+      scheduledEquipmentStatus={
+        canLoadRoleData ? assignmentsStatus : "unavailable"
+      }
+      teamEquipment={
         canLoadRoleData
           ? {
               rows: assignmentRows,
               assignmentsStatus,
-              savingSlot: savingMicrophoneSlot,
-              onChange: (row, microphoneIds) => {
+              savingMicrophoneSlot,
+              savingIemSlot,
+              onMicrophoneChange: (row, microphoneIds) => {
                 void saveScheduledMicrophones(row, microphoneIds);
+              },
+              onIemChange: (row, iemIds) => {
+                void saveScheduledIems(row, iemIds);
               },
             }
           : undefined

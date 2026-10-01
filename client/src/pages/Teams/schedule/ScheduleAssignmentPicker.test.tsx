@@ -321,4 +321,20 @@ describe("ScheduleAssignmentPicker occupied slots", () => {
     expect(screen.queryByRole("menuitem", { name: "Find a sub" })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Taylor" })).toBeInTheDocument();
   });
+
+  it("shows the roster photo in the member option without adding a nested button", () => {
+    renderPicker({
+      members: [{
+        ...member,
+        profileImageUrl: "https://example.com/taylor.jpg",
+      }],
+    });
+
+    const option = screen.getByRole("option", { name: "Taylor" });
+    expect(within(option).getByAltText("")).toHaveAttribute(
+      "src",
+      "https://example.com/taylor.jpg",
+    );
+    expect(within(option).queryByRole("button")).not.toBeInTheDocument();
+  });
 });

@@ -10,6 +10,7 @@ import {
 import Button from "../Button/Button";
 import { X } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
+import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
 
 interface ModalProps {
   isOpen: boolean;
@@ -43,9 +44,9 @@ const sizeClasses = {
   full: "inset-0 left-0 top-0 h-full max-h-full w-full max-w-none translate-x-0 translate-y-0 p-0",
 };
 
-const getControllerElement = () => {
-  const controllerMain = document.getElementById("controller-main");
-  return controllerMain ?? document.body;
+const getControllerElement = (ownerDocument: Document = document) => {
+  const controllerMain = ownerDocument.getElementById("controller-main");
+  return controllerMain ?? ownerDocument.body;
 };
 
 const Modal = ({
@@ -64,6 +65,8 @@ const Modal = ({
   titleClassName,
   description,
 }: ModalProps) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
+  const ownerDocument = overlayPortalContainer?.ownerDocument ?? document;
   const handleOpenChange = useCallback(
     (open: boolean) => {
       if (!open) onClose();
@@ -75,9 +78,15 @@ const Modal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogPortal container={getControllerElement()}>
+      <DialogPortal
+        container={
+          overlayPortalContainer ??
+          getControllerElement(ownerDocument)
+        }
+      >
         <DialogOverlay className={cn(zIndexClass, backdropClassName)} />
         <DialogPrimitive.Content
+          style={{ pointerEvents: "auto" }}
           className={cn(
             "fixed left-1/2 top-1/2 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-200",

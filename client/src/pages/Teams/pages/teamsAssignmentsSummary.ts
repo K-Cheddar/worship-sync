@@ -59,6 +59,8 @@ export type TeamsAssignmentSummaryRow = {
   canNotify: boolean | null;
   /** Church microphones allocated to this scheduled slot for the day. */
   microphoneIds: string[];
+  /** Church IEMs allocated to this scheduled slot for the day. */
+  iemIds?: string[];
 };
 
 export type TeamsAssignmentSummaryTeamGroup = {
@@ -244,6 +246,7 @@ export const getOccurrenceAssignmentSummary = ({
       memberProfileImageUrl,
       canNotify,
       microphoneIds,
+      iemIds,
     }: {
       positionId: string;
       columnKey: string;
@@ -253,6 +256,7 @@ export const getOccurrenceAssignmentSummary = ({
       memberProfileImageUrl?: string;
       canNotify: boolean | null;
       microphoneIds: string[];
+      iemIds: string[];
     }): TeamsAssignmentSummaryRow => {
       const position = positionById.get(positionId);
       const teamId = position?.teamId || schedule.teamId || "unknown";
@@ -274,6 +278,7 @@ export const getOccurrenceAssignmentSummary = ({
         memberProfileImageUrl,
         canNotify,
         microphoneIds,
+        iemIds,
       };
     };
 
@@ -333,6 +338,10 @@ export const getOccurrenceAssignmentSummary = ({
               schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[
                 column.columnKey
               ] || [],
+            iemIds:
+              schedule.iemAssignments?.[scheduleOccurrenceId]?.[
+                column.columnKey
+              ] || [],
           }),
         );
       }
@@ -360,6 +369,7 @@ export const getOccurrenceAssignmentSummary = ({
           microphoneIds:
             schedule.microphoneAssignments?.[scheduleOccurrenceId]?.[slotKey] ||
             [],
+          iemIds: schedule.iemAssignments?.[scheduleOccurrenceId]?.[slotKey] || [],
         }),
       );
     }
@@ -395,6 +405,7 @@ export const getOccurrenceAssignmentSummary = ({
         // Nobody scheduled, so there is no one to reach.
         canNotify: null,
         microphoneIds: [],
+        iemIds: [],
       });
     }
   }
@@ -406,8 +417,11 @@ export const getOccurrenceAssignmentSummary = ({
  * Identifies one scheduled slot's microphone allocation across the surfaces
  * that save it — used to show a save in progress on that slot alone.
  */
-export const teamMicrophoneSlotKey = (row: TeamsAssignmentSummaryRow) =>
+export const teamEquipmentSlotKey = (row: TeamsAssignmentSummaryRow) =>
   `${row.scheduleId}:${row.occurrenceId}:${row.columnKey}`;
+
+/** Compatibility name for callers that only deal with microphones. */
+export const teamMicrophoneSlotKey = teamEquipmentSlotKey;
 
 /**
  * The rows that can hold a church microphone for the day: scheduled slots on
@@ -429,10 +443,48 @@ export const getTeamMicrophoneRows = (
 };
 
 /**
- * Who each microphone is already allocated to by the schedule, keyed by
- * microphone id — what the plan's own per-item microphone picker warns with
- * before an operator hands the same microphone to someone else.
+ * Scheduled slots that can hold either kind of service-level equipment. The
+ * schedule must exist because these rows are written back to its assignment
+ * maps; unscheduled service requirements have no durable target yet.
  */
+export const getTeamEquipmentRows = (
+  rows: TeamsAssignmentSummaryRow[],
+  teams: TeamRecord[],
+): TeamsAssignmentSummaryRow[] => {
+  const equipmentTeamIds = new Set(
+    teams
+      .filter((team) => team.usesMicrophoneAssignments || team.usesIemAssignments)
+      .map((team) => team.teamId),
+  );
+  return rows.filter(
+    (row) => Boolean(row.scheduleId) && equipmentTeamIds.has(row.teamId),
+  );
+};
+
+/** Who each scheduled microphone or IEM is allocated to, keyed by equipment ID. */
+export const getScheduledEquipmentHolders = (
+  rows: TeamsAssignmentSummaryRow[],
+  teams: TeamRecord[],
+): Map<string, string[]> => {
+  const holdersByEquipment = new Map<string, string[]>();
+  const microphoneTeamIds = new Set(teams.filter((team) => team.usesMicrophoneAssignments).map((team) => team.teamId));
+  const iemTeamIds = new Set(teams.filter((team) => team.usesIemAssignments).map((team) => team.teamId));
+  rows.filter((row) => row.scheduleId && (microphoneTeamIds.has(row.teamId) || iemTeamIds.has(row.teamId))).forEach((row) => {
+    const holder = row.memberName || row.slotLabel;
+    const equipmentIds = [
+      ...(microphoneTeamIds.has(row.teamId) ? row.microphoneIds : []),
+      ...(iemTeamIds.has(row.teamId) ? row.iemIds || [] : []),
+    ];
+    equipmentIds.forEach((equipmentId) => {
+      const holders = holdersByEquipment.get(equipmentId);
+      if (holders) holders.push(holder);
+      else holdersByEquipment.set(equipmentId, [holder]);
+    });
+  });
+  return holdersByEquipment;
+};
+
+/** Compatibility helper for callers that only consume scheduled microphones. */
 export const getScheduledMicrophoneHolders = (
   rows: TeamsAssignmentSummaryRow[],
   teams: TeamRecord[],
@@ -441,12 +493,9 @@ export const getScheduledMicrophoneHolders = (
   getTeamMicrophoneRows(rows, teams).forEach((row) => {
     const holder = row.memberName || row.slotLabel;
     row.microphoneIds.forEach((microphoneId) => {
-      const holders = holdersByMicrophone.get(microphoneId);
-      if (holders) {
-        holders.push(holder);
-        return;
-      }
-      holdersByMicrophone.set(microphoneId, [holder]);
+      const holders = holdersByMicrophone.get(microphoneId) || [];
+      holders.push(holder);
+      holdersByMicrophone.set(microphoneId, holders);
     });
   });
   return holdersByMicrophone;

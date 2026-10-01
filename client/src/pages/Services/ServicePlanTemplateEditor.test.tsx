@@ -241,10 +241,10 @@ describe("ServicePlanTemplateEditor", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: /Orange/i }));
 
     expect(
-      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+      screen.getByRole("button", { name: "Equipment plan for Opening prayer" }),
     ).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+      screen.getByRole("button", { name: "Equipment plan for Opening prayer" }),
     );
     expect(
       await screen.findByPlaceholderText("Assignees"),
@@ -263,7 +263,7 @@ describe("ServicePlanTemplateEditor", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: /Orange/i }));
 
     await user.click(
-      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+      screen.getByRole("button", { name: "Equipment plan for Opening prayer" }),
     );
     await user.type(
       await screen.findByPlaceholderText("Assignees"),
@@ -372,7 +372,7 @@ describe("ServicePlanTemplateEditor", () => {
     // A template has no people: its rows are the ordered microphone plan that
     // a dated plan hands out, so they read as slots rather than as gaps.
     await user.click(
-      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+      screen.getByRole("button", { name: "Equipment plan for Opening prayer" }),
     );
     expect(
       await within(screen.getByRole("dialog")).findByRole("button", {
@@ -381,7 +381,7 @@ describe("ServicePlanTemplateEditor", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByRole("dialog")).getByRole("group", {
-        name: /Microphone plan for Opening prayer/i,
+        name: /Equipment plan for Opening prayer/i,
       }),
     ).toBeInTheDocument();
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
@@ -419,7 +419,7 @@ describe("ServicePlanTemplateEditor", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Microphone plan for Opening prayer" }),
+      screen.getByRole("button", { name: "Equipment plan for Opening prayer" }),
     );
     expect(
       await within(screen.getByRole("dialog")).findByRole("button", {

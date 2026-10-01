@@ -163,6 +163,7 @@ test("mapPlanningCenterPlanToImportData maps assignees, key, arrangement, and st
 
   assert.equal(result.sections[0].sectionName, "Worship");
   const songRow = result.sections[0].rows[0];
+  assert.equal(songRow.sourceOccurrenceId, "2");
   assert.equal(songRow.elementType, "Special Music");
   assert.equal(songRow.songTitle, "Great Are You Lord");
   assert.equal(songRow.contentTitle, songRow.title);
@@ -175,6 +176,7 @@ test("mapPlanningCenterPlanToImportData maps assignees, key, arrangement, and st
   ]);
   assert.equal(songRow.note, "Band in");
   assert.equal(result.sections[0].rows[1].ledBy, "Host");
+  assert.equal(result.sections[0].rows[1].sourceOccurrenceId, "3");
   assert.deepEqual(result.sections[0].rows[1].ledByAssignments, [
     { kind: "teamPosition", id: "tp1", name: "Host" },
   ]);

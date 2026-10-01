@@ -119,6 +119,22 @@ interface PreparedVideoMetrics {
   reason?: string;
 }
 
+interface ResourcePolicy {
+  mode: "auto" | "efficiency" | "maximum-performance";
+  tier: 0 | 1 | 2 | 3 | 4;
+  pressure: "healthy" | "elevated" | "constrained" | "critical" | "unknown";
+  underSustainedPressure: boolean;
+  metrics: "available" | "partial" | "unavailable" | "stale";
+  recommendations: {
+    optionalPreviewWork: "normal" | "reduced" | "minimal" | "paused";
+    distantMediaPreparation: "normal" | "reduced" | "minimal" | "paused";
+    backgroundWork: "normal" | "reduced" | "minimal" | "paused";
+    operatorPreviewQuality: "normal" | "reduced" | "minimal" | "paused";
+    captureQuality: "subsystem-controlled";
+    audiencePlayback: "protected";
+  };
+}
+
 interface ElectronAPI {
   getAppVersion: () => Promise<string>;
   getPlatform: () => Promise<string>;
@@ -235,10 +251,12 @@ interface ElectronAPI {
   ) => Promise<{ downloaded: number; cleaned: number }>;
   /** Development-only renderer process metrics for prepared-video experiments. */
   getPreparedVideoMetrics?: () => Promise<PreparedVideoMetrics>;
-  subscribePreparedVideoMetrics?: () => Promise<boolean>;
-  unsubscribePreparedVideoMetrics?: () => Promise<boolean>;
-  onPreparedVideoMetrics?: (
+  subscribePreparedVideoMetrics?: (
     callback: (metrics: PreparedVideoMetrics) => void,
+  ) => () => void;
+  getResourceGovernorPolicy?: () => Promise<ResourcePolicy>;
+  subscribeResourceGovernorPolicy?: (
+    callback: (policy: ResourcePolicy) => void,
   ) => () => void;
 
   // App-managed local assets

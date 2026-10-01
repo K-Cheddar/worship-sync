@@ -1,4 +1,5 @@
 import type { TeamRecord, TeamSchedule } from "../../../api/authTypes";
+import { overlapsInclusiveDateRange } from "./dateRangeUtils";
 
 /**
  * Filtering for the "browse all schedules" view. Kept separate from the dialog
@@ -35,23 +36,6 @@ export type ScheduleBrowserRow<T extends BrowsableSchedule> = {
   teamName: string;
 };
 
-/** Inclusive overlap between a schedule's window and the filter's window. */
-const overlapsRange = (
-  schedule: BrowsableSchedule,
-  startDate: string,
-  endDate: string,
-) => {
-  if (!startDate && !endDate) return true;
-  const scheduleStart = schedule.startDate || schedule.endDate || "";
-  const scheduleEnd = schedule.endDate || schedule.startDate || "";
-  // Undated (legacy) schedules can't be excluded on dates without hiding them
-  // from every dated search, so they always pass.
-  if (!scheduleStart || !scheduleEnd) return true;
-  if (startDate && scheduleEnd < startDate) return false;
-  if (endDate && scheduleStart > endDate) return false;
-  return true;
-};
-
 export const filterSchedulesForBrowser = <T extends BrowsableSchedule>({
   schedules,
   teams,
@@ -69,7 +53,7 @@ export const filterSchedulesForBrowser = <T extends BrowsableSchedule>({
       if (filters.status === "active" && schedule.archivedAt) return false;
       if (filters.status === "archived" && !schedule.archivedAt) return false;
       if (filters.teamId && schedule.teamId !== filters.teamId) return false;
-      if (!overlapsRange(schedule, filters.startDate, filters.endDate)) {
+      if (!overlapsInclusiveDateRange(schedule, filters)) {
         return false;
       }
       if (!search) return true;

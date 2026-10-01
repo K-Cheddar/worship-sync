@@ -17,7 +17,8 @@ import type { OccurrenceFill, ScheduleSlotColumn } from "./scheduleRequirements"
 import ScheduleBoardCell from "./ScheduleBoardCell";
 import type { TeamScheduleAssignmentResponse } from "./scheduleResponseState";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
-import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
+import type { ServiceEquipment } from "../../../types/servicePlan";
+import type { ScheduleEquipmentHolder } from "./ScheduleEquipmentSelect";
 import ScheduleFillBadge from "./ScheduleFillBadge";
 import ScheduleOccurrenceDateButton from "./ScheduleOccurrenceDateButton";
 import ScheduleOccurrenceRibbon from "./ScheduleOccurrenceRibbon";
@@ -59,11 +60,18 @@ type BoardCellData = {
   canEdit: boolean;
   microphones?: ServicePlanMicrophone[];
   microphoneIds?: string[];
-  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphoneHolders?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
   microphonesLoading?: boolean;
   microphonesUnavailable?: boolean;
   savingMicrophone?: boolean;
   onMicrophoneChange?: (microphoneIds: string[]) => void;
+  iems?: ServiceEquipment[];
+  iemIds?: string[];
+  iemHoldersByIem?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
+  savingIem?: boolean;
+  onIemChange?: (iemIds: string[]) => void;
+  iemLoading?: boolean;
+  iemUnavailable?: boolean;
 };
 
 type BoardOccurrenceGroup = {
@@ -264,6 +272,13 @@ const ScheduleBoardView = ({
                   microphonesUnavailable={cellProps.microphonesUnavailable}
                   savingMicrophone={cellProps.savingMicrophone}
                   onMicrophoneChange={cellProps.onMicrophoneChange}
+                  iems={cellProps.iems}
+                  iemIds={cellProps.iemIds}
+                  iemHoldersByIem={cellProps.iemHoldersByIem}
+                  savingIem={cellProps.savingIem}
+                  onIemChange={cellProps.onIemChange}
+                  iemLoading={cellProps.iemLoading}
+                  iemUnavailable={cellProps.iemUnavailable}
                 />
               ))
             ) : (

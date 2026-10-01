@@ -144,6 +144,7 @@ describe("ElectronMediaSurfacePool", () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     Object.defineProperty(HTMLMediaElement.prototype, "load", {
       configurable: true,
       value: originalLoad,
@@ -1510,5 +1511,201 @@ describe("ElectronMediaSurfacePool", () => {
     expect(onPreparationFailure.mock.calls.length).toBeGreaterThan(1);
     expect(onPreparationFailure.mock.calls.length).toBeLessThanOrEqual(4);
     jest.useRealTimers();
+  });
+
+  it("pauses a failed hidden preparation and cancels its presented-frame callback", async () => {
+    jest.useFakeTimers();
+    const requestFrame = jest.fn(() => 41);
+    const cancelVideoFrameCallback = jest.fn();
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: requestFrame,
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "cancelVideoFrameCallback", {
+      configurable: true,
+      value: cancelVideoFrameCallback,
+    });
+    const pause = HTMLMediaElement.prototype.pause as jest.Mock;
+    render(
+      <ElectronMediaSurfacePool
+        enabled candidates={[candidate]} views={[]}
+        onReadyChange={jest.fn()} onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    await act(async () => { jest.advanceTimersByTime(0); await Promise.resolve(); });
+    await waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(1));
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(41);
+    expect(pause.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toHaveProperty("paused", true);
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "error");
+  });
+
+  it("removes metadata and error listeners when metadata preparation times out", async () => {
+    jest.useFakeTimers();
+    Object.defineProperty(HTMLMediaElement.prototype, "load", { configurable: true, value: jest.fn() });
+    const removeListener = jest.spyOn(EventTarget.prototype, "removeEventListener");
+    const addListener = jest.spyOn(EventTarget.prototype, "addEventListener");
+    render(
+      <ElectronMediaSurfacePool
+        enabled candidates={[candidate]} views={[]}
+        onReadyChange={jest.fn()} onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    expect(removeListener.mock.calls.map(([event]) => event)).toEqual(expect.arrayContaining(["loadedmetadata", "error"]));
+    expect(addListener.mock.calls.map(([event]) => event)).toEqual(expect.arrayContaining(["loadedmetadata", "error"]));
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "error");
+    removeListener.mockRestore();
+    addListener.mockRestore();
+  });
+
+  it("removes seek and error listeners when cue alignment times out", async () => {
+    jest.useFakeTimers();
+    const originalFrameCallback = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (callback: () => void) => { callback(); return 1; },
+    });
+    const removeListener = jest.spyOn(EventTarget.prototype, "removeEventListener");
+    const addListener = jest.spyOn(EventTarget.prototype, "addEventListener");
+    const cue = { mediaKey: candidate.mediaKey, positionSeconds: 5, paused: false, atServerMs: Date.now(), generation: 1, applySeek: true };
+    const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const onSurfaceElement = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled candidates={[candidate]} views={[]}
+        onReadyChange={onReadyChange} onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+    await act(async () => { jest.advanceTimersByTime(0); await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "ready"));
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled candidates={[candidate]} views={[makeView(candidate.mediaKey, candidate.source, true, cue)]}
+        onReadyChange={onReadyChange} onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement}
+      />,
+    );
+    await waitFor(() => expect(addListener).toHaveBeenCalledWith("seeked", expect.any(Function), expect.anything()));
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    expect(removeListener.mock.calls.map(([event]) => event)).toEqual(expect.arrayContaining(["seeked", "error"]));
+    removeListener.mockRestore();
+    addListener.mockRestore();
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", { configurable: true, value: originalFrameCallback });
+  });
+
+  it("does not let an obsolete failed preparation pause the newer generation", async () => {
+    jest.useFakeTimers();
+    const callbacks: Array<() => void> = [];
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: (callback: () => void) => { callbacks.push(callback); return callbacks.length; },
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "cancelVideoFrameCallback", {
+      configurable: true,
+      value: jest.fn(),
+    });
+    const pause = HTMLMediaElement.prototype.pause as jest.Mock;
+    const onReadyChange = jest.fn();
+    const onFirstAdvancingFrameChange = jest.fn();
+    const onSurfaceElement = jest.fn();
+    const { rerender } = render(
+      <ElectronMediaSurfacePool enabled candidates={[candidate]} views={[]}
+        onReadyChange={onReadyChange} onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement} />,
+    );
+    await act(async () => { jest.advanceTimersByTime(0); await Promise.resolve(); });
+    await waitFor(() => expect(callbacks).toHaveLength(1));
+    rerender(
+      <ElectronMediaSurfacePool enabled candidates={[{ ...candidate, source: "media-cache://newer.mp4" }]} views={[]}
+        onReadyChange={onReadyChange} onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
+        onSurfaceElement={onSurfaceElement} />,
+    );
+    await act(async () => { jest.advanceTimersByTime(0); await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(callbacks.length).toBeGreaterThanOrEqual(2));
+    act(() => callbacks[1]?.());
+    await waitFor(() => expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "ready"));
+    const pausesAfterNewGeneration = pause.mock.calls.length;
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+    expect(pause).toHaveBeenCalledTimes(pausesAfterNewGeneration);
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute("data-prepared-state", "ready");
+  });
+
+  it("does not accumulate frame callbacks or event listeners across automatic retries", async () => {
+    jest.useFakeTimers();
+    let nextFrameHandle = 0;
+    const requestFrame = jest.fn(() => {
+      nextFrameHandle += 1;
+      return nextFrameHandle;
+    });
+    const cancelVideoFrameCallback = jest.fn();
+    const addListener = jest.spyOn(EventTarget.prototype, "addEventListener");
+    const removeListener = jest.spyOn(EventTarget.prototype, "removeEventListener");
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", { configurable: true, value: requestFrame });
+    Object.defineProperty(HTMLVideoElement.prototype, "cancelVideoFrameCallback", { configurable: true, value: cancelVideoFrameCallback });
+    render(
+      <ElectronMediaSurfacePool enabled candidates={[candidate]} views={[]}
+        onReadyChange={jest.fn()} onFirstAdvancingFrameChange={jest.fn()} onSurfaceElement={jest.fn()} />,
+    );
+    await waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(1));
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+    await act(async () => { jest.advanceTimersByTime(1000); await Promise.resolve(); await Promise.resolve(); });
+    await waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(2));
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    expect(cancelVideoFrameCallback).toHaveBeenCalledTimes(2);
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+    const added = addListener.mock.calls
+      .map((call, index) => ({ call, target: addListener.mock.contexts[index] }))
+      .filter(({ call, target }) => target === video && (call[0] === "loadedmetadata" || call[0] === "error") && (call[2] as AddEventListenerOptions | undefined)?.once === true);
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.length).toBeLessThanOrEqual(8);
+    const removals = removeListener.mock.calls
+      .map((call, index) => ({ call, target: removeListener.mock.contexts[index] }))
+      .filter(({ target }) => target === video);
+    const unremovedListeners = added
+      .filter(({ call }) => !removals.some(({ call: removedCall }) => removedCall[0] === call[0] && removedCall[1] === call[1]));
+    expect(unremovedListeners).toEqual([]);
+    addListener.mockRestore();
+    removeListener.mockRestore();
+  });
+
+  it("keeps an active surface live when another candidate preparation fails", async () => {
+    jest.useFakeTimers();
+    const cancelVideoFrameCallback = jest.fn();
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value: function requestFrame(this: HTMLVideoElement, callback: (now: number, metadata: VideoFrameCallbackMetadata) => void) {
+        const id = (this.getAttribute("data-testid") ?? "").includes("remote:failed") ? 22 : 11;
+        if (id === 11) {
+          presentedFrameCount += 1;
+          const now = performance.now();
+          callback(now, { width: 100, height: 100, presentationTime: now, mediaTime: presentedFrameCount / 30, presentedFrames: presentedFrameCount, expectedDisplayTime: now });
+        }
+        return id;
+      },
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "cancelVideoFrameCallback", { configurable: true, value: cancelVideoFrameCallback });
+    const liveCandidate = makeCandidate("remote:live");
+    const failedCandidate = makeCandidate("remote:failed");
+    render(
+      <ElectronMediaSurfacePool enabled candidates={[liveCandidate, failedCandidate]} views={[makeView(liveCandidate.mediaKey, liveCandidate.source, false)]}
+        onReadyChange={jest.fn()} onFirstAdvancingFrameChange={jest.fn()} onSurfaceElement={jest.fn()} />,
+    );
+    await act(async () => { jest.advanceTimersByTime(0); await Promise.resolve(); });
+    await act(async () => { jest.advanceTimersByTime(5000); await Promise.resolve(); });
+
+    expect(screen.getByTestId("electron-media-surface-remote:live")).toHaveAttribute("data-prepared-state", "ready");
+    expect(screen.getByTestId("electron-media-surface-video-remote:live")).toHaveAttribute("src", "media-cache://clip.mp4");
+    expect(screen.getByTestId("electron-media-surface-remote:failed")).toHaveAttribute("data-prepared-state", "error");
   });
 });

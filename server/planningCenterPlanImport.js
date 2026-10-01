@@ -251,6 +251,7 @@ const rowFromItem = (item, includedByKey) => {
   else if (itemType === "media") elementType = "Media";
 
   return {
+    ...(item.id != null ? { sourceOccurrenceId: String(item.id) } : {}),
     elementType,
     title,
     contentTitle: title,

@@ -28,10 +28,8 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { isActive, roleMatchesListQuery } from "../teamsUtils";
-import { formatTeamRoleSaveToast } from "../teamsSaveToasts";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
@@ -80,7 +78,6 @@ const TeamRoleManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
 
   const applyTeamId = useCallback((nextTeamId: string) => {
     setSelectedTeamId(nextTeamId);
@@ -108,7 +105,11 @@ const TeamRoleManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const openRoleEditor = (role: TeamRole) => {
@@ -168,7 +169,6 @@ const TeamRoleManager = ({
       name: draft.name.trim(),
       description: draft.description || "",
     };
-    const saveToastMessage = formatTeamRoleSaveToast(wasEditing, payload);
     const optimisticRole: TeamRole = {
       churchId,
       roleId: localRoleId,
@@ -188,12 +188,8 @@ const TeamRoleManager = ({
       if (!wasEditing) {
         onSaved(response.role, localRoleId);
       }
-      showToast(saveToastMessage, "success");
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different role while this save was
         // in flight. Only refresh the selected record if they're still on the
         // one we just saved, so the panel never rebinds to a stale role.
@@ -308,7 +304,7 @@ const TeamRoleManager = ({
         }
         formHeaderActions={
           editing || returnTo ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
@@ -343,12 +339,13 @@ const TeamRoleManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save role"
+            entityLabel="role"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
-            isLoading={isSavingCurrent}
           />
         }
       >

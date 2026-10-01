@@ -16,6 +16,7 @@ export const mergeServicePlanOverlayFields = (
   existing: OverlayInfo,
   patch: ServicePlanningFieldPatch,
   source?: ServicePlanOverlaySource,
+  options: { applyIncoming?: boolean } = {},
 ): OverlayInfo => {
   const fields: SyncedOverlayField[] = ["name", "title", "event"];
   const baseline = { ...(existing.servicePlanBaseline || {}) };
@@ -27,9 +28,9 @@ export const mergeServicePlanOverlayFields = (
     if (importedValue === undefined) return;
     const currentValue = existing[field] || "";
     const hasPriorBaseline = existing.servicePlanBaseline?.[field] !== undefined;
-    const isOverride = Boolean(overrides[field])
+    const isOverride = !options.applyIncoming && (Boolean(overrides[field])
       || !hasPriorBaseline
-      || currentValue !== (existing.servicePlanBaseline?.[field] || "");
+      || currentValue !== (existing.servicePlanBaseline?.[field] || ""));
     if (isOverride) {
       overrides[field] = true;
     } else {
@@ -44,9 +45,6 @@ export const mergeServicePlanOverlayFields = (
     servicePlanSource: source || existing.servicePlanSource,
     servicePlanBaseline: baseline,
     servicePlanOverrides: overrides,
-    // Existing overlays predate field provenance. Preserve their values and
-    // make the association visible for deliberate review instead of guessing.
-    servicePlanReviewRequired: existing.servicePlanReviewRequired || !existing.servicePlanBaseline,
   };
 };
 
@@ -70,8 +68,6 @@ export const trackServicePlanOverlayEdit = (
   return {
     ...next,
     servicePlanOverrides: overrides,
-    servicePlanReviewRequired: existing.servicePlanReviewRequired
-      && Object.values(overrides).some(Boolean),
   };
 };
 
@@ -117,7 +113,6 @@ export const buildClonedParticipantOverlay = (
             event: patch.event ?? template.event ?? "",
           },
           servicePlanOverrides: {},
-          servicePlanReviewRequired: false,
         }
       : {}),
   };
@@ -156,7 +151,6 @@ export const buildNewParticipantOverlay = (
           event: patch.event ?? "",
         },
         servicePlanOverrides: {},
-        servicePlanReviewRequired: false,
       }
     : {}),
 });
@@ -192,7 +186,6 @@ export const persistNewParticipantOverlayClone = async (
         servicePlanSource: fallback.servicePlanSource,
         servicePlanBaseline: fallback.servicePlanBaseline,
         servicePlanOverrides: fallback.servicePlanOverrides,
-        servicePlanReviewRequired: fallback.servicePlanReviewRequired,
         duration:
           (rest as OverlayInfo).duration ??
           DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,

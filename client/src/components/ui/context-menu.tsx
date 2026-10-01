@@ -6,6 +6,7 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
 import { menuItemTouchTargetClassName } from "./menuStyles";
+import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
 
 const ContextMenu = ({
   ...props
@@ -26,10 +27,18 @@ const ContextMenuGroup = ({
 );
 
 const ContextMenuPortal = ({
+  container,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Portal>) => (
-  <ContextMenuPrimitive.Portal data-slot="context-menu-portal" {...props} />
-);
+}: React.ComponentProps<typeof ContextMenuPrimitive.Portal>) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
+  return (
+    <ContextMenuPrimitive.Portal
+      data-slot="context-menu-portal"
+      container={container ?? overlayPortalContainer ?? undefined}
+      {...props}
+    />
+  );
+};
 
 const ContextMenuSub = ({
   ...props
@@ -71,34 +80,52 @@ const ContextMenuSubTrigger = ({
 
 const ContextMenuSubContent = ({
   className,
+  updatePositionStrategy,
+  style,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) => (
-  <ContextMenuPrimitive.SubContent
-    data-slot="context-menu-sub-content"
-    className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-md border border-gray-600 bg-gray-800 p-1 text-white shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-      className
-    )}
-    {...props}
-  />
-);
-
-const ContextMenuContent = ({
-  className,
-  ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Content>) => (
-  <ContextMenuPortal>
-    <ContextMenuPrimitive.Content
-      data-slot="context-menu-content"
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
+  return (
+    <ContextMenuPrimitive.SubContent
+      data-slot="context-menu-sub-content"
+      updatePositionStrategy={
+        updatePositionStrategy ?? (overlayPortalContainer ? "always" : undefined)
+      }
+      style={{ pointerEvents: "auto", ...style }}
       className={cn(
-        "z-50 max-h-[min(24rem,var(--radix-context-menu-content-available-height))] min-w-[12rem] overflow-y-auto overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-1 text-white shadow-md",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+        "z-50 min-w-[8rem] overflow-hidden rounded-md border border-gray-600 bg-gray-800 p-1 text-white shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
         className
       )}
       {...props}
     />
-  </ContextMenuPortal>
-);
+  );
+};
+
+const ContextMenuContent = ({
+  className,
+  updatePositionStrategy,
+  style,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.Content>) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
+  return (
+    <ContextMenuPortal>
+      <ContextMenuPrimitive.Content
+        data-slot="context-menu-content"
+        updatePositionStrategy={
+          updatePositionStrategy ?? (overlayPortalContainer ? "always" : undefined)
+        }
+        style={{ pointerEvents: "auto", ...style }}
+        className={cn(
+          "z-50 max-h-[min(24rem,var(--radix-context-menu-content-available-height))] min-w-[12rem] overflow-y-auto overflow-x-hidden rounded-md border border-gray-600 bg-gray-800 p-1 text-white shadow-md",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+          className
+        )}
+        {...props}
+      />
+    </ContextMenuPortal>
+  );
+};
 
 const ContextMenuItem = ({
   className,

@@ -33,10 +33,11 @@ The canonical repository skills are in `.agents/skills/`. Skills own detailed pr
 - `$react-quality`: substantive React or TypeScript implementation and review.
 - `$react-state-performance`: high-frequency, broad-fan-out, synchronized, preview, media, or suspected performance work.
 - `$display-window`: projector, monitor, stream, preview, crossfade, media, video, overlay, timer, or display-layer work.
+- `$floating-window-ui`: FloatingWindow descendants, owner-aware overlay portals, popovers, selects, menus, dialogs, sheets, context menus, and related lifecycle or focus behavior.
 - `/overlay`: overlay state-machine, timing, and Firebase synchronization work.
 - `$persisted-mutation-safety` and `$schedule-mutation-safety`: overlapping persisted writes and schedule mutations.
 - `$reliable-state-mutations`: async ownership boundaries, durable retry points, and interrupted stateful workflows.
-- `/brand-voice`: user-visible copy.
+- `$brand-voice`: user-visible copy.
 
 ### Assumptions and decisions
 
@@ -158,4 +159,4 @@ A change is ready only when it is correct, low-regression, understandable, respo
 
 ## Brand voice
 
-For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `/brand-voice`.
+For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `$brand-voice`.

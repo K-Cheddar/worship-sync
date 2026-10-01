@@ -3,6 +3,7 @@ import { FileText, Minimize2, Trash2, Upload } from "lucide-react";
 import { createPortal } from "react-dom";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
+import { useOverlayPortalContainer } from "../components/FloatingWindow/FloatingWindowPortalContext";
 import { uploadChurchResource } from "../api/auth";
 import { useNativeFileDrop } from "../containers/Media/useNativeFileDrop";
 import { ProgressPopup } from "../containers/Media/components/ProgressPopup";
@@ -27,6 +28,7 @@ type ResourceUploadDialogProps = {
 const controllerElement = () => document.getElementById("controller-main") || document.body;
 
 const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadDialogProps) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -144,7 +146,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadD
           onRestore={() => setIsMinimized(false)}
           onMinimize={() => setIsMinimizedToButton(true)}
         />,
-        controllerElement(),
+        overlayPortalContainer ?? controllerElement(),
       ) : null}
       <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
         {isUploading ? "Uploading..." : "Upload"}

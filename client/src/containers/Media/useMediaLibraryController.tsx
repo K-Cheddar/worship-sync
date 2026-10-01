@@ -107,7 +107,7 @@ import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
-import { alertMediaLibraryFlushFailed } from "./mediaLibraryFlushAlerts";
+import { mediaLibraryFlushFailureMessage } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { ActionCreators } from "redux-undo";
@@ -1215,7 +1215,7 @@ export function useMediaLibraryController({
     > => {
       if (rows.length === 0) return { phase: "ok", providerFailed: [] };
       if (!db) {
-        window.alert("Could not update references before delete.");
+        showToast("Could not update references before delete.", "error");
         return { phase: "sweep_failed" };
       }
       const sweep = await sweepMediaReferencesBeforeDelete(
@@ -1224,15 +1224,13 @@ export function useMediaLibraryController({
         rows,
       );
       if (!sweep.ok) {
-        window.alert(
-          sweep.message || "Could not update references before delete.",
-        );
+        showToast(sweep.message || "Could not update references before delete.", "error");
         return { phase: "sweep_failed" };
       }
       const providerFailed = await deleteFromProviders(rows);
       return { phase: "ok", providerFailed };
     },
-    [db, deleteFromProviders],
+    [db, deleteFromProviders, showToast],
   );
 
   const handleDeleteFolderKeepContents = useCallback(
@@ -1256,12 +1254,12 @@ export function useMediaLibraryController({
       void flushMediaLibraryDocToPouch(db, next.list, next.folders).then(
         (r) => {
           if (!r.ok) {
-            alertMediaLibraryFlushFailed(r.error, "folder");
+            showToast(mediaLibraryFlushFailureMessage(r.error, "folder"), "error");
           }
         },
       );
     },
-    [db, dispatch, folders, list, mediaRouteFolders],
+    [db, dispatch, folders, list, mediaRouteFolders, showToast],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -1325,7 +1323,7 @@ export function useMediaLibraryController({
         next.folders,
       );
       if (!flushResult.ok) {
-        alertMediaLibraryFlushFailed(flushResult.error, "library");
+        showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
       }
       if (result.providerFailed.length > 0) {
         setProviderRetryRows(result.providerFailed);
@@ -1343,6 +1341,7 @@ export function useMediaLibraryController({
       mediaRouteFolders,
       removeMediaRowsAfterSweep,
       clearSelection,
+      showToast,
     ],
   );
 
@@ -1462,7 +1461,7 @@ export function useMediaLibraryController({
           currentFolders,
         );
         if (!flushResult.ok) {
-          alertMediaLibraryFlushFailed(flushResult.error, "library");
+          showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
           // Keep the optimistic rows hidden while the local library is out of
           // sync. This also prevents a stale remote echo from making a
           // provider-deleted asset look available again during reconciliation.
@@ -1517,7 +1516,7 @@ export function useMediaLibraryController({
         return { succeeded: [], failed: rows };
       }
     },
-    [db, dispatch, removeMediaRowsAfterSweep, updateToast],
+    [db, dispatch, removeMediaRowsAfterSweep, showToast, updateToast],
   );
 
   const handleConfirmDelete = async () => {

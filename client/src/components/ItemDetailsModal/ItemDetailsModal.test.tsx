@@ -142,6 +142,9 @@ describe("ItemDetailsEditorFields song links", () => {
         ],
       });
     });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -158,6 +161,9 @@ describe("ItemDetailsEditorFields song links", () => {
       />,
     );
 
+    fireEvent.change(screen.getByLabelText("Song name:"), {
+      target: { value: "Example song revised" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(

@@ -42,6 +42,7 @@ import type {
 import type { MenuItemType } from "../../../types";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import {
   MemberFilterPanel,
   MemberListFilterToolbar,
@@ -51,6 +52,7 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
 import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
 import SelectAllButton from "../../../components/SelectAllButton";
@@ -65,8 +67,7 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
-import { formatMemberSaveToast } from "../teamsSaveToasts";
-import { canNotifyMember } from "../unnotifiableMembers";
+import { hasMemberContactInfo } from "../memberContactInfo";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -75,7 +76,6 @@ import {
   buildTeamsPositionEditPath,
 } from "../teamsReturnNavigation";
 import { useTeamsReturnNavigation } from "../hooks/useTeamsReturnNavigation";
-import { useTeamsNarrowViewport } from "../hooks/useTeamsNarrowViewport";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import {
@@ -169,6 +169,7 @@ type MemberManagerProps = {
   onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
   onRemoved: (memberId: string) => void;
+  onImported?: () => void;
 };
 
 const MemberManager = ({
@@ -180,6 +181,7 @@ const MemberManager = ({
   onTeamSaved,
   onArchived,
   onRemoved,
+  onImported,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast, removeToast } = useToast();
@@ -232,7 +234,6 @@ const MemberManager = ({
   const location = useLocation();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
-  const isNarrowViewport = useTeamsNarrowViewport();
   const pendingEditMemberIdRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback(
@@ -397,7 +398,7 @@ const MemberManager = ({
   };
 
   const cancelEditing = () => {
-    finishEditing(reset);
+    requestDiscardAction(() => finishEditing(reset));
   };
 
   const confirmDelete = async () => {
@@ -688,16 +689,6 @@ const MemberManager = ({
         }
       }
 
-      const saveToastMessage = formatMemberSaveToast(wasEditing, body, {
-        positionNameById: new Map(
-          positions.map((position) => [position.positionId, position.name]),
-        ),
-        teamNameById: new Map(data.teams.map((team) => [team.teamId, team.name])),
-        roleNameById: new Map(
-          data.teamRoles.map((role) => [role.roleId, role.name]),
-        ),
-        priorTeamIds: joinedTeamIds,
-      });
       const localMemberId =
         wasEditing?.memberId || `local-member-${generateRandomId()}`;
       const optimisticMember: TeamRosterMember = {
@@ -773,15 +764,11 @@ const MemberManager = ({
       // and schedule reflect the join or removal right away, rather than
       // waiting for the next stale-focus bootstrap.
       response.teams?.forEach((team) => onTeamSaved(team));
-      showToast(saveToastMessage, "success");
       if (profileImageUploadFailed) {
         showToast("You can choose the image again and save to retry.", "error");
       }
-      // Cross-section return, or mobile where the form covers the list: close.
-      // On desktop, keep the panel open for back-to-back editing.
-      if (returnTo || isNarrowViewport) {
-        finishEditing(reset);
-      } else if (wasEditing) {
+      // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (wasEditing) {
         // The operator may have switched to a different member while this save
         // was in flight. Only refresh the selected record if they're still on
         // the one we just saved, so the panel never rebinds to a stale member.
@@ -1049,6 +1036,7 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
+        listHeaderActions={<PortableDataActions type="members" onImported={onImported} />}
         keepCreateActionVisible
         scrollableList
         listToolbar={
@@ -1133,11 +1121,17 @@ const MemberManager = ({
                 key={member.memberId}
                 compact
                 title={memberName(member)}
-                // Surfaced in the list, not only inside the form, so an admin
-                // can see at a glance who a notification would never reach —
-                // and fix it here, where addresses are entered.
+                leadingVisual={
+                  <MemberAvatar
+                    profileImageUrl={member.profileImageUrl}
+                    memberName={memberName(member)}
+                    className="h-8 w-8"
+                  />
+                }
+                // Surfaced in the list so an admin can see at a glance which
+                // roster records are missing contact information.
                 subtitle={
-                  canNotifyMember(member) ? undefined : "No email"
+                  hasMemberContactInfo(member) ? undefined : "No contact info"
                 }
                 archived={Boolean(member.archivedAt)}
                 canEdit={canEdit}
@@ -1201,7 +1195,9 @@ const MemberManager = ({
         formFooter={
           <FormActionButtons
             pinFooter
-            saveLabel="Save member"
+            entityLabel="member"
+            isCreate={!editing}
+            isSaving={isSavingCurrent}
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
@@ -1215,7 +1211,6 @@ const MemberManager = ({
               isSavingCurrent ||
               profileImageUploading
             }
-            isLoading={isSavingCurrent}
           />
         }
       >
@@ -1557,11 +1552,13 @@ const MemberManager = ({
           emptyText="No teams yet."
         />
         <EntityMultiSelect
+          key={`${showCreate ? "open" : "closed"}-${editing?.memberId || "create-member"}`}
           label="Positions"
           description="Positions this member can be scheduled for."
           options={positionOptions}
           groups={positionTeamFilters}
           groupFilterLabel="Filter positions by team"
+          defaultGroupIds={draftTeamIds}
           allGroupsLabel="All teams"
           value={draft.positionIds}
           onChange={applyPositionSelection}

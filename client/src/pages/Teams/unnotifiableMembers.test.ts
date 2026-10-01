@@ -1,4 +1,5 @@
 import { canNotifyMember } from "./unnotifiableMembers";
+import type { TeamRosterMember } from "../../api/authTypes";
 
 describe("canNotifyMember", () => {
   it("is true with an email", () => {
@@ -12,6 +13,19 @@ describe("canNotifyMember", () => {
 
   it("is false with neither", () => {
     expect(canNotifyMember({})).toBe(false);
+  });
+
+  it("does not treat a phone number alone as notification eligibility", () => {
+    const phoneOnlyMember: TeamRosterMember = {
+      memberId: "member-1",
+      churchId: "church-1",
+      firstName: "Rae",
+      lastName: "Kim",
+      phoneNumber: "+15555550123",
+      positionIds: [],
+      blockoutDates: [],
+    };
+    expect(canNotifyMember(phoneOnlyMember)).toBe(false);
   });
 
   it("treats a whitespace-only email as missing", () => {

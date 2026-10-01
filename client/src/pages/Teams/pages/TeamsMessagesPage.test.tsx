@@ -1,12 +1,14 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TeamsMessagesPage from "./TeamsMessagesPage";
 import { useTeamsPage } from "../TeamsPageContext";
 import {
   dispatchAvailabilityNotificationBatch,
   getAvailabilityNotificationBatch,
+  getNotificationIntentPreview,
   getNotificationIntents,
   prepareAvailabilityNotificationBatch,
+  sendNotificationIntent,
 } from "../../../api/auth";
 import type { NotificationBatch } from "../../../api/authTypes";
 
@@ -14,6 +16,7 @@ jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
 jest.mock("../../../api/auth", () => ({
   dispatchAvailabilityNotificationBatch: jest.fn(),
   getAvailabilityNotificationBatch: jest.fn(),
+  getNotificationIntentPreview: jest.fn(),
   getNotificationIntents: jest.fn(),
   prepareAvailabilityNotificationBatch: jest.fn(),
   sendNotificationIntent: jest.fn(),
@@ -22,8 +25,10 @@ jest.mock("../../../api/auth", () => ({
 const mockUseTeamsPage = jest.mocked(useTeamsPage);
 const mockGetBatch = jest.mocked(getAvailabilityNotificationBatch);
 const mockGetIntents = jest.mocked(getNotificationIntents);
+const mockGetIntentPreview = jest.mocked(getNotificationIntentPreview);
 const mockPrepare = jest.mocked(prepareAvailabilityNotificationBatch);
 const mockDispatch = jest.mocked(dispatchAvailabilityNotificationBatch);
+const mockSendIntent = jest.mocked(sendNotificationIntent);
 
 const batch: NotificationBatch = {
   batchId: "batch_1",
@@ -64,9 +69,97 @@ beforeEach(() => {
     },
   } as unknown as ReturnType<typeof useTeamsPage>);
   mockGetIntents.mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 50 });
+  mockGetIntentPreview.mockResolvedValue({
+    success: true,
+    preview: {
+      intentId: "intent_1", intentType: "availability_request", memberId: "member_1",
+      message: "Exact server message for Rae.", approvalVersion: "fresh-approval-v3", expiresAt: 100,
+      eligible: true, eligibilityStatus: "enabled", phoneNumberSnapshot: "+15555550987",
+      characterCount: 31, segmentCount: 2, maskedPhoneNumber: "••• ••• 0987",
+    },
+  });
+  mockSendIntent.mockResolvedValue({ success: true });
   mockGetBatch.mockResolvedValue({ success: true, batch });
   mockPrepare.mockResolvedValue({ success: true, batch });
   mockDispatch.mockResolvedValue({ success: true, batch: { ...batch, status: "sent", summary: { ...batch.summary, sent: 1 } } });
+});
+
+const recentIntent = {
+  intentId: "intent_1", churchId: "church_1", intentType: "availability_request" as const,
+  sourceType: "team_intake_recipient" as const, sourceId: "recipient_1", sourceVersion: "v1",
+  memberId: "member_1", formId: "form_1", recipientId: "recipient_1", occurrenceId: "occurrence_1",
+  channel: "sms" as const, status: "ready" as const, createdAt: "2026-10-01T12:00:00.000Z",
+  updatedAt: "2026-10-01T12:00:00.000Z", previewEligible: true,
+};
+
+async function openRecentMessages(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await screen.findByRole("button", { name: "Send one SMS" });
+  await user.click(screen.getByRole("button", { name: "Send one SMS" }));
+  expect(mockGetIntentPreview).toHaveBeenCalledWith("church_1", "intent_1");
+  await screen.findByRole("dialog", { name: "Send this SMS?" });
+}
+
+test("recent message SMS review shows the fresh server snapshot and Cancel does not send", async () => {
+  const user = userEvent.setup();
+  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  const dialog = screen.getByRole("dialog", { name: "Send this SMS?" });
+  expect(within(dialog).getByText("Rae Rivera")).toBeInTheDocument();
+  expect(within(dialog).getByText("+15555550987")).toBeInTheDocument();
+  expect(within(dialog).getByText("Exact server message for Rae.")).toBeInTheDocument();
+  expect(within(dialog).getByText("2 SMS segments.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByRole("dialog", { name: "Send this SMS?" })).not.toBeInTheDocument();
+  expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("recent message send uses the fresh preview approval version and refreshes history", async () => {
+  const user = userEvent.setup();
+  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  await waitFor(() => expect(mockSendIntent).toHaveBeenCalledWith("church_1", "intent_1", "fresh-approval-v3"));
+  await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
+  expect(await screen.findByRole("status")).toHaveTextContent("SMS accepted by the provider.");
+});
+
+test("recent message send keeps an uncertain provider outcome visible", async () => {
+  const user = userEvent.setup();
+  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
+  mockSendIntent.mockResolvedValue({
+    success: false,
+    errorMessage: "The provider outcome is uncertain. Review SMS history before retrying.",
+  });
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("The provider outcome is uncertain.");
+  await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
+});
+
+test("recent message confirmation ignores duplicate Send activation", async () => {
+  const user = userEvent.setup();
+  mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
+  mockSendIntent.mockImplementation(() => new Promise(() => {}));
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  const sendButton = within(screen.getByRole("dialog", { name: "Send this SMS?" })).getByRole("button", { name: /^Send$/ });
+  fireEvent.click(sendButton);
+  fireEvent.click(sendButton);
+
+  expect(mockSendIntent).toHaveBeenCalledTimes(1);
+  expect(mockSendIntent).toHaveBeenCalledWith("church_1", "intent_1", "fresh-approval-v3");
 });
 
 test("only sends after confirmation and dispatches the explicitly prepared batch", async () => {
@@ -82,14 +175,15 @@ test("only sends after confirmation and dispatches the explicitly prepared batch
     intentType: "availability_request", formId: "form_1", memberIds: ["member_1"],
   })));
   expect(await screen.findByText(/secure response/)).toBeInTheDocument();
+  await user.click(await screen.findByText("View message"));
   expect(await screen.findByText(/Church: please respond at/)).toBeInTheDocument();
   expect(mockDispatch).not.toHaveBeenCalled();
 
-  await user.click(screen.getByRole("button", { name: "Review and send this batch" }));
-  expect(await screen.findByRole("dialog", { name: "Confirm this batch" })).toBeInTheDocument();
-  expect(screen.getByText(/Send exactly 1 selected messages/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+  expect(screen.getByText(/Send exactly 1 selected message/)).toBeInTheDocument();
   expect(mockDispatch).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Confirm and send selected batch" }));
+  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1"));
 });
 
@@ -129,6 +223,68 @@ test("team and name filters compose, and selection survives filter changes", asy
   expect(screen.getByText("0 selected")).toBeInTheDocument();
   expect(screen.getByText("No mobile number")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Terry Taylor" })).toBeDisabled();
+});
+
+test("changing recipients closes confirmation and invalidates the reviewed batch", async () => {
+  const user = userEvent.setup();
+  mockPrepare.mockResolvedValue({ success: true, batch });
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
+  expect(screen.getByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Recipients changed");
+});
+
+test("changing the intake form invalidates the active batch", async () => {
+  const user = userEvent.setup();
+  mockPrepare.mockResolvedValue({ success: true, batch });
+  mockUseTeamsPage.mockReturnValue({
+    churchId: "church_1", canEditTeams: true,
+    pageData: {
+      intakeForms: [
+        { formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true },
+        { formId: "form_2", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", active: true },
+      ],
+      schedules: [], teams: [], positions: [], intakeRecipients: [],
+      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true } },
+      members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] }],
+    },
+  } as unknown as ReturnType<typeof useTeamsPage>);
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /November availability/ }));
+  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Form changed");
+});
+
+test("changing the message type invalidates the active batch", async () => {
+  const user = userEvent.setup();
+  mockPrepare.mockResolvedValue({ success: true, batch });
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("combobox", { name: /Message/ }));
+  await user.click(screen.getByRole("option", { name: "Remind nonresponders" }));
+  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Message type changed");
 });
 
 test("select all is indeterminate for some visible selections and prepares only eligible selected volunteers", async () => {

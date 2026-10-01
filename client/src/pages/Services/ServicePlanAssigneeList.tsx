@@ -4,10 +4,13 @@ import Button from "../../components/Button/Button";
 import HistorySuggestField from "../../components/HistorySuggestField/HistorySuggestField";
 import { ServicePlanMicrophoneChip } from "../../components/ServicePlanMicrophoneChip";
 import { ServicePlanMicrophoneIcon } from "../../components/ServicePlanMicrophoneIcon";
+import { ServiceEquipmentChip } from "../../components/ServiceEquipmentChip";
+import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../components/ServiceEquipmentIcon";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
 import {
@@ -23,7 +26,9 @@ import {
   isUnassignedServicePlanAssignee,
   type ServicePlanAssignee,
   type ServicePlanMicrophone,
+  type ServiceEquipment,
 } from "../../types/servicePlan";
+import { hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
 
 export const createServicePlanAssignee = (
   overrides: Partial<ServicePlanAssignee> = {},
@@ -84,7 +89,10 @@ const pruneEmptyAssignees = (
 ): ServicePlanAssignee[] =>
   assignees.filter(
     (assignee) =>
-      assignee.name?.trim() || assignee.memberId || assignee.microphoneIds?.length,
+      assignee.name?.trim()
+      || assignee.memberId
+      || assignee.microphoneIds?.length
+      || assignee.iemIds?.length,
   );
 
 /**
@@ -100,7 +108,7 @@ export const applyAssigneeChanges = (
   const next = assignees.map((assignee) =>
     assignee.id === assigneeId ? { ...assignee, ...changes } : assignee,
   );
-  if (!("microphoneIds" in changes)) return next;
+  if (!("microphoneIds" in changes) && !("iemIds" in changes)) return next;
   return pruneEmptyAssignees(next);
 };
 
@@ -123,6 +131,15 @@ export const hasUnclaimedMicrophoneSlot = (
       && (assignee.microphoneIds || []).length > 0,
   );
 
+export const hasUnclaimedIemSlot = (
+  assignees: ServicePlanAssignee[],
+): boolean =>
+  assignees.some(
+    (assignee) =>
+      isUnassignedServicePlanAssignee(assignee)
+      && (assignee.iemIds || []).length > 0,
+  );
+
 /**
  * Removing a person hands their microphones back to the item rather than
  * deleting them: the mic is still in the service, it just has nobody on it
@@ -137,11 +154,15 @@ export const releaseServicePlanAssignee = (
     if (assignee.id !== assigneeId) return [assignee];
     if (
       isUnassignedServicePlanAssignee(assignee)
-      || !(assignee.microphoneIds || []).length
+      || (!(assignee.microphoneIds || []).length && !(assignee.iemIds || []).length)
     ) {
       return [];
     }
-    return [{ id: assignee.id, microphoneIds: assignee.microphoneIds }];
+    return [{
+      id: assignee.id,
+      ...(assignee.microphoneIds?.length ? { microphoneIds: assignee.microphoneIds } : {}),
+      ...(assignee.iemIds?.length ? { iemIds: assignee.iemIds } : {}),
+    }];
   });
 
 /**
@@ -158,6 +179,13 @@ export const addMicrophoneSlot = (
   microphoneId: string,
 ): ServicePlanAssignee[] =>
   addServicePlanAssignee(assignees, { microphoneIds: [microphoneId] });
+
+/** Add an IEM as an unclaimed equipment slot on the service-plan item. */
+export const addIemSlot = (
+  assignees: ServicePlanAssignee[],
+  iemId: string,
+): ServicePlanAssignee[] =>
+  addServicePlanAssignee(assignees, { iemIds: [iemId] });
 
 /** Promote a named person without moving unnamed microphone slots. */
 export const promoteServicePlanAssignee = (
@@ -184,6 +212,7 @@ type ServicePlanAssigneeListProps = {
   /** True when the operator may edit (canEdit && isEditing on the row). */
   allowEdit: boolean;
   microphones: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
   assignedToHistoryValues: string[];
   onRemoveAssignedToHistoryValue?: (value: string) => void;
   isAssignedToHistoryValueRemovable?: (value: string) => boolean;
@@ -194,7 +223,8 @@ type ServicePlanAssigneeListProps = {
    */
   structureOnly?: boolean;
   /** Scheduled holders for the plan date, keyed by church microphone id. */
-  scheduledMicrophoneHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
+  scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
   onEdit?: () => void;
   onChange: (next: ServicePlanAssignee[], coalesceKey?: string) => void;
 };
@@ -264,12 +294,14 @@ const ServicePlanAssigneeList = ({
   assignees,
   allowEdit,
   microphones,
+  iemEquipment = [],
   assignedToHistoryValues,
   onRemoveAssignedToHistoryValue,
   isAssignedToHistoryValueRemovable,
   itemLabel,
   structureOnly = false,
-  scheduledMicrophoneHolders,
+  scheduledEquipmentHolders,
+  scheduledEquipmentStatus,
   onEdit,
   onChange,
 }: ServicePlanAssigneeListProps) => {
@@ -282,9 +314,14 @@ const ServicePlanAssigneeList = ({
   const microphonesById = new Map(
     microphones.map((microphone) => [microphone.id, microphone]),
   );
-  const itemHasMicrophones = assignees.some(
-    (assignee) => (assignee.microphoneIds || []).length > 0,
-  );
+  const iems = iemEquipment.filter((item) => item.category === "iem");
+  const iemsById = new Map(iems.map((item) => [item.id, item]));
+  const itemHasEquipment = assignees.some(hasServicePlanAssigneeEquipment);
+  const scheduleAvailabilityHint = scheduledEquipmentStatus === "loading"
+    ? "Checking schedule…"
+    : scheduledEquipmentStatus === "unavailable"
+      ? "Schedule availability couldn't be confirmed"
+      : null;
 
   const updateAssignee = (
     assigneeId: string,
@@ -311,7 +348,7 @@ const ServicePlanAssigneeList = ({
       }}
       aria-label={
         structureOnly
-          ? `Microphone plan for ${itemLabel}`
+          ? `Equipment plan for ${itemLabel}`
           : `Assignees for ${itemLabel}`
       }
     >
@@ -320,7 +357,7 @@ const ServicePlanAssigneeList = ({
         <div className="flex shrink-0 items-center gap-1.5">
           <UserRound className="size-3.5 shrink-0 text-gray-300" aria-hidden />
           <span className="shrink-0 text-xs font-medium text-white">
-            {structureOnly ? "Microphone plan" : "Assignees"}
+            {structureOnly ? "Equipment plan" : "Assignees"}
           </span>
         </div>
         {assignees.map((assignee, assigneeIndex) => {
@@ -336,6 +373,16 @@ const ServicePlanAssigneeList = ({
               !taken.has(microphone.id)
               && !(assignee.microphoneIds || []).includes(microphone.id),
           );
+          const takenIemIds = new Set(
+            assignees.filter((candidate) => candidate.id !== assignee.id)
+              .flatMap((candidate) => candidate.iemIds || []),
+          );
+          const assigneeIems = (assignee.iemIds || [])
+            .map((id) => iemsById.get(id))
+            .filter((item): item is ServiceEquipment => Boolean(item));
+          const availableIems = iems.filter(
+            (item) => !takenIemIds.has(item.id) && !(assignee.iemIds || []).includes(item.id),
+          );
           // In a template an unnamed row is a position in the order the dated
           // plan hands microphones out in; a named one is a standing group.
           const label =
@@ -345,13 +392,13 @@ const ServicePlanAssigneeList = ({
             .slice(0, assigneeIndex + 1)
             .filter((candidate) => !isUnassignedServicePlanAssignee(candidate)).length - 1;
           const isLead = namedAssigneeIndex === 0 && !isUnassigned;
-          // Quiet, not an alarm: plenty of people never need a microphone. It
-          // only says anything on an item that has a microphone plan at all.
-          const showMissingMicrophoneHint =
+          // Quiet, not an alarm: only say something when this item already has
+          // an equipment plan for the other assignees.
+          const showMissingEquipmentHint =
             !structureOnly
             && !isUnassigned
-            && itemHasMicrophones
-            && !(assignee.microphoneIds || []).length;
+            && itemHasEquipment
+            && !hasServicePlanAssigneeEquipment(assignee);
 
           return (
             <div
@@ -421,15 +468,15 @@ const ServicePlanAssigneeList = ({
                 </Button>
               ) : null}
 
-              {showMissingMicrophoneHint ? (
+              {showMissingEquipmentHint ? (
                 <span className="shrink-0 text-[10px] text-gray-400">
-                  No mic
+                  No equipment
                 </span>
               ) : null}
 
               {assigneeMicrophones.map((microphone) => {
                 const scheduledHolders =
-                  scheduledMicrophoneHolders?.get(microphone.id) || [];
+                  scheduledEquipmentHolders?.get(microphone.id) || [];
                 const replaceableMicrophones = microphones.filter(
                   (candidate) =>
                     candidate.id !== microphone.id
@@ -478,9 +525,14 @@ const ServicePlanAssigneeList = ({
                           </span>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="min-w-52 overflow-hidden p-0">
+                          {scheduleAvailabilityHint ? (
+                            <DropdownMenuLabel className="whitespace-normal px-3 text-xs font-normal text-amber-200">
+                              {scheduleAvailabilityHint}
+                            </DropdownMenuLabel>
+                          ) : null}
                           <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
                             {replaceableMicrophones.map((candidate) => {
-                              const candidateHolders = scheduledMicrophoneHolders?.get(candidate.id) || [];
+                              const candidateHolders = scheduledEquipmentHolders?.get(candidate.id) || [];
                               return (
                                 <DropdownMenuItem
                                   key={candidate.id}
@@ -538,6 +590,54 @@ const ServicePlanAssigneeList = ({
                 );
               })}
 
+              {assigneeIems.map((iem) => (
+                <span key={iem.id} className="inline-flex items-center gap-0.5">
+                  <ServiceEquipmentChip
+                    equipment={iem}
+                    className="gap-1 rounded-full border-fuchsia-700/60 bg-fuchsia-950/50 px-2 py-1 text-fuchsia-100"
+                  >
+                    {allowEdit ? (
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        iconSize="sm"
+                        padding="p-0"
+                        className="h-6 w-6 justify-center"
+                        svg={X}
+                        aria-label={`Remove ${iem.name} from ${label}`}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          updateAssignee(assignee.id, {
+                            iemIds: (assignee.iemIds || []).filter((id) => id !== iem.id),
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </ServiceEquipmentChip>
+                  {(scheduledEquipmentHolders?.get(iem.id) || []).length ? (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex cursor-pointer items-center rounded p-0.5 text-amber-300 hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+                          aria-label={`IEM conflict for ${iem.name}`}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <TriangleAlert className="size-4 shrink-0" aria-hidden />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-72 border-amber-700/60 bg-gray-900 p-3 text-gray-100">
+                        <p className="text-xs font-semibold text-amber-200">IEM conflict</p>
+                        <p className="mt-1 text-xs text-gray-300">
+                          {iem.name} is scheduled to {(scheduledEquipmentHolders?.get(iem.id) || []).join(", ")}.
+                        </p>
+                      </PopoverContent>
+                    </Popover>
+                  ) : null}
+                </span>
+              ))}
+
               {allowEdit && availableMicrophones.length > 0 ? (
                 // Default modal menu + inner scroller: wheel works under Sheet
                 // RemoveScroll, and scrollbar-portal matches app chrome.
@@ -560,10 +660,15 @@ const ServicePlanAssigneeList = ({
                     align="start"
                     className="min-w-52 overflow-hidden p-0"
                   >
+                    {scheduleAvailabilityHint ? (
+                      <DropdownMenuLabel className="whitespace-normal px-3 text-xs font-normal text-amber-200">
+                        {scheduleAvailabilityHint}
+                      </DropdownMenuLabel>
+                    ) : null}
                     <div className="scrollbar-portal max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height,24rem))] overflow-x-hidden overflow-y-auto overscroll-contain p-1">
                       {availableMicrophones.map((microphone) => {
                         const scheduledHolders =
-                          scheduledMicrophoneHolders?.get(microphone.id) || [];
+                          scheduledEquipmentHolders?.get(microphone.id) || [];
                         const scheduledLabel = scheduledHolders.length
                           ? `Assigned: ${scheduledHolders.join(", ")}`
                           : null;
@@ -602,6 +707,46 @@ const ServicePlanAssigneeList = ({
                 </DropdownMenu>
               ) : null}
 
+              {allowEdit && availableIems.length ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Plus}
+                      iconSize="xs"
+                      padding="px-1 py-0.5"
+                      className="h-7 max-md:min-h-[2rem] max-md:px-2 border border-dashed border-fuchsia-500/40 text-xs text-fuchsia-200"
+                      aria-label={`Add IEM for ${label}`}
+                    >IEM</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-40">
+                    {scheduleAvailabilityHint ? (
+                      <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-amber-200">
+                        {scheduleAvailabilityHint}
+                      </DropdownMenuLabel>
+                    ) : null}
+                    {availableIems.map((iem) => {
+                      const scheduledHolders = scheduledEquipmentHolders?.get(iem.id) || [];
+                      return (
+                        <DropdownMenuItem
+                          key={iem.id}
+                          onSelect={() => updateAssignee(assignee.id, {
+                            iemIds: [...(assignee.iemIds || []), iem.id],
+                          })}
+                        >
+                          <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
+                          <span className="truncate">{iem.name}</span>
+                          <span className={cn("ml-auto shrink-0 text-xs", scheduledHolders.length ? "text-amber-300" : "text-gray-400")}>
+                            {scheduledHolders.length ? `Assigned: ${scheduledHolders.join(", ")}` : getServiceEquipmentSubtypeLabel(iem.subtype)}
+                          </span>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+
               {allowEdit ? (
                 <Button
                   type="button"
@@ -613,7 +758,7 @@ const ServicePlanAssigneeList = ({
                   aria-label={
                     isUnassigned
                       ? `Remove ${label} from ${itemLabel}`
-                      : `Remove ${label} from ${itemLabel}, keeping their microphones`
+                      : `Remove ${label} from ${itemLabel}, keeping their equipment`
                   }
                   onClick={(event) => {
                     event.stopPropagation();

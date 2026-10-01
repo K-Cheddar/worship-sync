@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import Button from "../components/Button/Button";
+import { useOverlayPortalContainer } from "../components/FloatingWindow/FloatingWindowPortalContext";
 import { getChatImageUrl } from "./api";
 import type { ChatImageAttachment as ChatImageAttachmentType } from "./types";
 
@@ -56,6 +57,7 @@ const ChatImageAttachment = ({
   authorName: string;
   attachment: ChatImageAttachmentType;
 }) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   const [thumbnailUrl, setThumbnailUrl] = useState("");
   const [fullUrl, setFullUrl] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -212,7 +214,7 @@ const ChatImageAttachment = ({
       {isOpen
         ? createPortal(
             <div
-              className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4"
+              className="pointer-events-auto fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4"
               role="dialog"
               aria-modal="true"
               aria-label={`Photo from ${authorName}`}
@@ -247,7 +249,7 @@ const ChatImageAttachment = ({
                 </span>
               )}
             </div>,
-            document.body,
+            overlayPortalContainer ?? document.body,
           )
         : null}
     </>

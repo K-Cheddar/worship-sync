@@ -163,7 +163,7 @@ describe("plan generated overlay field ownership", () => {
     expect(refreshed.servicePlanOverrides?.name).toBeUndefined();
   });
 
-  it("keeps legacy overlay values and flags the new source association for review", () => {
+  it("preserves legacy overlay edits during background reconciliation", () => {
     const legacy = p("legacy", "Reading", "Operator Name");
     legacy.title = "Operator Title";
     const associated = mergeServicePlanOverlayFields(legacy, {
@@ -174,7 +174,35 @@ describe("plan generated overlay field ownership", () => {
 
     expect(associated.name).toBe("Operator Name");
     expect(associated.title).toBe("Operator Title");
-    expect(associated.servicePlanReviewRequired).toBe(true);
     expect(associated.servicePlanOverrides).toEqual({ name: true, title: true, event: true });
+  });
+
+  it("applies mapped values during an explicit sync, including over prior edits", () => {
+    const legacy = p("legacy", "Sabbath School Host", "Dobney Keen");
+    const associated = mergeServicePlanOverlayFields(legacy, {
+      name: "Clarence Jones",
+      event: "Sabbath School Host",
+    }, source, { applyIncoming: true });
+
+    expect(associated.name).toBe("Clarence Jones");
+    expect(associated.event).toBe("Sabbath School Host");
+    expect(associated.servicePlanOverrides).toEqual({});
+    expect(associated).not.toHaveProperty("servicePlanReviewRequired");
+  });
+
+  it("keeps source fields safe during passive reconciliation after an operator edit", () => {
+    const generated = buildNewParticipantOverlay(
+      { name: "Plan Name", title: "Reader", event: "Reading" },
+      "overlay-1",
+      undefined,
+      source,
+    );
+    const edited = trackServicePlanOverlayEdit(generated, { name: "Corrected Name" });
+    const refreshed = mergeServicePlanOverlayFields(edited, {
+      name: "Changed Plan Name",
+      event: "Updated Reading",
+    }, source);
+    expect(refreshed.name).toBe("Corrected Name");
+    expect(refreshed.event).toBe("Updated Reading");
   });
 });

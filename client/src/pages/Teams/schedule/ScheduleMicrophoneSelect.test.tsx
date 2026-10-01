@@ -1,14 +1,40 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ScheduleMicrophoneSelect from "./ScheduleMicrophoneSelect";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment } from "../../../types/servicePlan";
 
 const microphones: ServicePlanMicrophone[] = [
   { id: "mic-lead", name: "Lead", type: "Handheld", color: "#9ca3af" },
 ];
 
 describe("ScheduleMicrophoneSelect", () => {
+  it("supports an IEM-only team without rendering a microphone picker", async () => {
+    const onIemChange = jest.fn();
+    const iems: ServiceEquipment[] = [{ id: "same-id", category: "iem", name: "IEM 3" }];
+    render(
+      <ScheduleMicrophoneSelect
+        microphoneIds={[]}
+        microphones={[]}
+        holdersByMicrophone={new Map()}
+        slotKey="service:position::0"
+        ariaLabel="Microphone for Sarah"
+        canEdit
+        showMicrophones={false}
+        iems={iems}
+        iemIds={[]}
+        onIemChange={onIemChange}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Microphone for Sarah")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("combobox", { name: "Microphone for Sarah IEM" }));
+    await userEvent.click(screen.getByRole("option", { name: /IEM 3/ }));
+    expect(onIemChange).toHaveBeenCalledWith(["same-id"]);
+  });
   it("links to the church Microphones page when the catalog is empty", () => {
     render(
       <MemoryRouter>

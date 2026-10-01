@@ -10,8 +10,16 @@ import type {
 } from "../../types/servicePlan";
 import { getServicePlanElementAssignees, getServicePlanElementScriptureRefs, getServicePlanElementType } from "../../types/servicePlan";
 import generateRandomId from "../../utils/generateRandomId";
-import { getServicePlanResourceText, createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
+import {
+  areServicePlanTextResourceBodiesEqual,
+  getImportedTextResourceTitle,
+  isLegacyImportedDescriptionResource,
+  getServicePlanResourceText,
+  createServicePlanLinkResource,
+  createServicePlanTextResource,
+} from "./servicePlanResources";
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
+import { stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
 
 type Part = ServicePlanImportAmbiguity["parts"][number];
 
@@ -39,6 +47,47 @@ const stableStringify = (value: unknown): string => {
 
 export const servicePlanResourceFingerprint = (resource: ServicePlanContentResource): string =>
   stableStringify(resource);
+
+/** Upgrade the old placeholder only when saved source provenance identifies the exact resource. */
+export const upgradeLegacyImportedDescriptionTitles = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+): ServicePlanElement => {
+  if (!current.sourcePlanningManaged || current.importAmbiguity?.source !== "servicePlanning") return current;
+  const resources = [...(current.resources || [])];
+  let parts = current.importAmbiguity.parts;
+  let changed = false;
+
+  parts = parts.map((part) => {
+    if (part.kind !== "description" || part.destination !== "content" || part.managed?.kind !== "resource") return part;
+    const incomingMatches = imported.importAmbiguity?.parts.filter((candidate) =>
+      candidate.kind === "description" && candidate.destination === "content" &&
+      candidate.value === part.value && (candidate.sourceField || "title") === (part.sourceField || "title"),
+    ) || [];
+    if (incomingMatches.length !== 1) return part;
+    const index = resources.findIndex((resource) => resource.id === part.managed!.id);
+    if (index < 0) return part;
+    const resource = resources[index];
+    if (!isLegacyImportedDescriptionResource(resource) ||
+      servicePlanResourceFingerprint(resource) !== part.managed.fingerprint ||
+      !areServicePlanTextResourceBodiesEqual(resource, part.value)) return part;
+
+    const title = getImportedTextResourceTitle(part.value);
+    resources[index] = { ...resource, title };
+    changed = true;
+    return {
+      ...part,
+      managed: { kind: "resource", id: resource.id, fingerprint: servicePlanResourceFingerprint(resources[index]) },
+    };
+  });
+
+  if (!changed) return current;
+  return {
+    ...current,
+    resources,
+    importAmbiguity: { ...current.importAmbiguity, parts },
+  };
+};
 
 export const servicePlanNoteFingerprint = (block: { id?: string; [key: string]: unknown }): string =>
   stableStringify(block);
@@ -69,7 +118,8 @@ export const applyReviewedServicePlanParts = (
     if (managed.kind === "assignee") {
       assignees = assignees.flatMap((person) => {
         if (person.id !== managed.id || JSON.stringify({ name: person.name }) !== managed.fingerprint) return [person];
-        return person.microphoneIds?.length ? [{ id: person.id, microphoneIds: person.microphoneIds }] : [];
+        const equipmentSlot = stripServicePlanAssigneeIdentityPreservingEquipment(person);
+        return equipmentSlot ? [equipmentSlot] : [];
       });
     } else if (managed.kind === "scripture") {
       scriptures = scriptures.filter((reference) =>
@@ -144,11 +194,12 @@ export const applyReviewedServicePlanParts = (
       const isLink = part.destination === "resource";
       const created = isLink
         ? createServicePlanLinkResource({ title: part.value, url: part.value })
-        : createServicePlanTextResource({ title: "Imported description", text: multilineTextToRichText(part.value) });
+        : createServicePlanTextResource({ title: getImportedTextResourceTitle(part.value), text: multilineTextToRichText(part.value) });
       const existing = resources.find((resource) => isLink
         ? Boolean(resource.url && urlKey(resource.url) === urlKey(part.value))
-        : resource.type === "text" && resource.title === "Imported description" &&
-          richTextToPlainText(getServicePlanResourceText(resource)) === part.value,
+        : part.managed?.kind === "resource" && resource.id === part.managed.id &&
+          servicePlanResourceFingerprint(resource) === part.managed.fingerprint &&
+          areServicePlanTextResourceBodiesEqual(resource, part.value),
       );
       if (existing) {
         if (part.managed?.kind === "resource" && part.managed.id === existing.id && servicePlanResourceFingerprint(existing) === part.managed.fingerprint) return;
@@ -235,9 +286,11 @@ export const reconcileReviewedServicePlanParts = (
       const assignees = getServicePlanElementAssignees(next);
       const match = assignees.find((person) => person.id === managed.id);
       if (!match || JSON.stringify({ name: match.name }) !== managed.fingerprint) return false;
-      next.assignees = assignees.flatMap((person) => person !== match ? [person] : person.microphoneIds?.length
-        ? [{ id: person.id, microphoneIds: person.microphoneIds }]
-        : []);
+      next.assignees = assignees.flatMap((person) => {
+        if (person !== match) return [person];
+        const equipmentSlot = stripServicePlanAssigneeIdentityPreservingEquipment(person);
+        return equipmentSlot ? [equipmentSlot] : [];
+      });
       return true;
     }
     return false;
@@ -275,7 +328,9 @@ export const reconcileReviewedServicePlanParts = (
       delete next.scriptureRef;
       return { ...part, managed: { kind: "scripture" as const, id, fingerprint: scriptureFingerprint(reference) } };
     }
-    if (part.kind === "person" && part.destination === "assignee") {
+    // A free-text title may be promoted to an assignee only after the
+    // operator explicitly chooses that destination during ambiguity review.
+    if ((part.kind === "person" || part.kind === "description") && part.destination === "assignee") {
       const existing = part.managed?.kind === "assignee"
         ? getServicePlanElementAssignees(next).find((person) => person.id === part.managed!.id)
         : undefined;
@@ -287,7 +342,7 @@ export const reconcileReviewedServicePlanParts = (
     }
     if ((part.kind === "description" || part.kind === "url") && (part.destination === "resource" || part.destination === "content")) {
       const incomingResource = (incoming.resources || []).find((resource) =>
-        resource.url === part.value || (resource.type === "text" && richTextToPlainText(getServicePlanResourceText(resource)) === part.value),
+        resource.url === part.value || areServicePlanTextResourceBodiesEqual(resource, part.value),
       ) || (part.kind === "url" && part.destination === "resource"
         ? createServicePlanLinkResource({ title: part.value, url: part.value })
         : undefined);
@@ -367,7 +422,7 @@ export const reconcileReviewedServicePlanParts = (
   const preexistingScriptureKeys = new Set(getServicePlanElementScriptureRefs(next).map(scriptureKey));
   const preexistingResourceUrls = new Set((next.resources || []).flatMap((resource) => resource.url ? [urlKey(resource.url)] : []));
   const preexistingTextResources = new Set((next.resources || []).flatMap((resource) =>
-    resource.type === "text" ? [richTextToPlainText(getServicePlanResourceText(resource))] : [],
+    resource.type === "text" ? [richTextToPlainText(getServicePlanResourceText(resource)).replace(/\r\n?/g, "\n").trim()] : [],
   ));
   const mergedParts = incomingParts.map((part, index) => {
     if (processedIncoming.has(index)) return part;
@@ -387,7 +442,7 @@ export const reconcileReviewedServicePlanParts = (
       const parsedScripture = part.destination === "scripture" ? parseBibleReference(part.value) : undefined;
       if (parsedScripture && preexistingScriptureKeys.has(scriptureKey(parsedScripture))) return part;
       if (part.destination === "resource" && preexistingResourceUrls.has(urlKey(part.value))) return part;
-      if (part.destination === "content" && preexistingTextResources.has(part.value)) return part;
+      if (part.destination === "content" && preexistingTextResources.has(part.value.replace(/\r\n?/g, "\n").trim())) return part;
       const installed = installIncoming(part);
       if ((part.destination === "scripture" || part.destination === "resource" ||
         part.destination === "content" || part.destination === "notes" || part.destination === "assignee") &&
@@ -402,8 +457,7 @@ export const reconcileReviewedServicePlanParts = (
             : part.destination === "resource" || part.destination === "content"
               ? (next.resources || []).some((resource) => part.destination === "resource"
                   ? Boolean(resource.url && urlKey(resource.url) === urlKey(part.value))
-                  : resource.type === "text" && resource.title === "Imported description" &&
-                    richTextToPlainText(getServicePlanResourceText(resource)) === part.value)
+                  : areServicePlanTextResourceBodiesEqual(resource, part.value))
               : (next.notes?.blocks || []).some((block) => richTextToPlainText({ blocks: [block] }) === part.value);
         if (!alreadyPresent) conflict = true;
       }

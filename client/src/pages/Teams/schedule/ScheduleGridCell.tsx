@@ -22,15 +22,17 @@ import { isMemberAvailableOnDate } from "../memberPreferences";
 import ScheduleAssignmentCell from "./ScheduleAssignmentCell";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
-import ScheduleMicrophoneSelect, {
-  type ScheduleMicrophoneHolder,
-} from "./ScheduleMicrophoneSelect";
+import ScheduleEquipmentSelect, {
+  type ScheduleEquipmentHolder,
+} from "./ScheduleEquipmentSelect";
 import {
   scheduleCellPaddingClassName,
   scheduleGridLeftBorderClassName,
   scheduleAssignmentLabelClassName,
 } from "./scheduleUtils";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
+import type { ServiceEquipment } from "../../../types/servicePlan";
 
 type ScheduleGridCellProps = {
   occurrenceId: string;
@@ -55,11 +57,18 @@ type ScheduleGridCellProps = {
   canEdit: boolean;
   microphones?: ServicePlanMicrophone[];
   microphoneIds?: string[];
-  microphoneHolders?: ReadonlyMap<string, ScheduleMicrophoneHolder[]>;
+  microphoneHolders?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
   microphonesLoading?: boolean;
   microphonesUnavailable?: boolean;
   savingMicrophone?: boolean;
   onMicrophoneChange?: (microphoneIds: string[]) => void;
+  iems?: ServiceEquipment[];
+  iemIds?: string[];
+  iemHoldersByIem?: ReadonlyMap<string, ScheduleEquipmentHolder[]>;
+  savingIem?: boolean;
+  onIemChange?: (iemIds: string[]) => void;
+  iemLoading?: boolean;
+  iemUnavailable?: boolean;
 };
 
 const ScheduleGridCell = memo(({
@@ -88,6 +97,13 @@ const ScheduleGridCell = memo(({
   microphonesUnavailable = false,
   savingMicrophone = false,
   onMicrophoneChange,
+  iems,
+  iemIds,
+  iemHoldersByIem,
+  savingIem,
+  onIemChange,
+  iemLoading,
+  iemUnavailable,
 }: ScheduleGridCellProps) => {
   const handlersRef = useContext(ScheduleAssignmentContext);
   const assignedMemberId = getCellPrimaryMemberId(assignmentCell);
@@ -201,6 +217,13 @@ const ScheduleGridCell = memo(({
                   memberName={displayLabel}
                 />
               ) : null}
+              {assignedMember && !assignedMember.scheduleGuest ? (
+                <MemberAvatar
+                  profileImageUrl={assignedMember.profileImageUrl}
+                  memberName={`${assignedMember.firstName} ${assignedMember.lastName}`}
+                  className="h-5 w-5 text-[8px]"
+                />
+              ) : null}
               {availabilityConflictLabel ? (
                 <TriangleAlert
                   className="h-3.5 w-3.5 shrink-0 text-amber-300"
@@ -232,18 +255,26 @@ const ScheduleGridCell = memo(({
             />
           ) : null}
         </div>
-        {microphones && microphoneHolders && onMicrophoneChange ? (
-          <ScheduleMicrophoneSelect
+        {(microphones && microphoneHolders && onMicrophoneChange) || (iems && onIemChange) ? (
+          <ScheduleEquipmentSelect
             microphoneIds={microphoneIds}
-            microphones={microphones}
-            holdersByMicrophone={microphoneHolders}
+            microphones={microphones || []}
+            holdersByMicrophone={microphoneHolders || new Map()}
             slotKey={`${occurrenceId}:${columnKey}`}
             ariaLabel={`Microphone for ${displayLabel} (${columnLabel})`}
             canEdit={canEdit}
             loading={microphonesLoading}
             unavailable={microphonesUnavailable}
             saving={savingMicrophone}
-            onChange={onMicrophoneChange}
+            onChange={onMicrophoneChange || (() => undefined)}
+            iems={iems}
+            iemIds={iemIds}
+            iemHoldersByIem={iemHoldersByIem}
+            savingIem={savingIem}
+            onIemChange={onIemChange}
+            iemLoading={iemLoading}
+            iemUnavailable={iemUnavailable}
+            showMicrophones={Boolean(microphones && onMicrophoneChange)}
           />
         ) : null}
         {shadowAssignments.length > 0 ? (

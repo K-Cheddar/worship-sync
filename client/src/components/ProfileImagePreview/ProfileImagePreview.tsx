@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
+import MemberAvatar from "../MemberAvatar/MemberAvatar";
 
 type ProfileImagePreviewProps = {
   imageUrl: string;
@@ -25,7 +26,11 @@ const ProfileImagePreview = ({
         aria-label={`View profile image of ${memberName}`}
         onClick={() => setIsPreviewOpen(true)}
       >
-        <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+        <MemberAvatar
+          profileImageUrl={imageUrl}
+          memberName={memberName}
+          className="h-full w-full"
+        />
       </Button>
       <Modal
         isOpen={isPreviewOpen}

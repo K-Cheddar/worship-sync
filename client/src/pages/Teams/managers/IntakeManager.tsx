@@ -1,4 +1,4 @@
-import { type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -39,6 +39,7 @@ import type {
   TeamService,
   SmsDeliveryAttempt,
   NotificationIntent,
+  NotificationBatch,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -72,7 +73,9 @@ import {
   isActive,
   memberName,
 } from "../teamsUtils";
-import { formatIntakeFormSaveToast } from "../teamsSaveToasts";
+import { getUpcomingAvailabilitySuggestion } from "../intakeAvailabilitySuggestion";
+import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
+import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
@@ -87,6 +90,8 @@ import {
 
 type IntakeManagerProps = {
   forms: TeamIntakeForm[];
+  displayForms?: TeamIntakeForm[];
+  listHeader?: ReactNode;
   submissions: TeamIntakeSubmission[];
   intakeRecipients: TeamIntakeRecipient[];
   smsEligibilityByMemberId?: Record<
@@ -196,6 +201,8 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
 
 const IntakeManager = ({
   forms,
+  displayForms,
+  listHeader,
   submissions,
   intakeRecipients,
   smsEligibilityByMemberId,
@@ -212,6 +219,7 @@ const IntakeManager = ({
   onRecipientSaved,
   onSmsDeliveryAttemptSaved,
 }: IntakeManagerProps) => {
+  const visibleForms = displayForms ?? forms;
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
@@ -225,6 +233,8 @@ const IntakeManager = ({
   const [formNotificationIntents, setFormNotificationIntents] = useState<NotificationIntent[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
+  const [showSendForm, setShowSendForm] = useState(false);
+  const [preserveSuggestedOccurrences, setPreserveSuggestedOccurrences] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastCreatedPublicUrl, setLastCreatedPublicUrl] = useState("");
   const [selectedMemberBySubmission, setSelectedMemberBySubmission] = useState<
@@ -244,6 +254,21 @@ const IntakeManager = ({
   const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientBusy, setRecipientBusy] = useState(false);
   const [recipientActionKey, setRecipientActionKey] = useState("");
+  const [recipientSmsPreview, setRecipientSmsPreview] = useState<{
+    intentId: string;
+    approvalVersion: string;
+    recipientName: string;
+    phoneNumberSnapshot: string;
+    message: string;
+    segmentCount: number;
+    recipient?: TeamIntakeRecipient;
+  } | null>(null);
+  const recipientSmsSendLockRef = useRef(false);
+  const editingFormHasIssuedRequests = Boolean(editing && (
+    intakeRecipients.some((recipient) => recipient.formId === editing.formId) ||
+    submissions.some((submission) => submission.formId === editing.formId) ||
+    (editing.submissionCount || 0) > 0
+  ));
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
@@ -251,12 +276,20 @@ const IntakeManager = ({
     setRecipientMemberIds(new Set());
     setRecipientSearch("");
   };
+  const normalizeDraft = (value: typeof draft) => ({
+    ...value,
+    availabilityServices: [...value.availabilityServices].sort((a, b) => a.serviceId.localeCompare(b.serviceId)),
+    availabilityOccurrences: [...value.availabilityOccurrences].sort((a, b) => a.occurrenceId.localeCompare(b.occurrenceId)),
+    teamIds: [...value.teamIds].sort(),
+    enabledFields: [...(value.enabledFields || [])].sort(),
+  });
   const hasPendingChanges = editing
-    ? JSON.stringify(draft) !==
-      JSON.stringify({
+    ? JSON.stringify(normalizeDraft(draft)) !==
+      JSON.stringify(normalizeDraft({
         name: editing.name,
         startDate: editing.startDate,
         endDate: editing.endDate,
+        responseDeadline: editing.responseDeadline || editing.endDate,
         availabilityServices: editing.availabilityServices || [],
         availabilityOccurrences: editing.availabilityOccurrences || [],
         teamIds: editing.teamIds || [],
@@ -267,8 +300,8 @@ const IntakeManager = ({
         positionsMessage: editing.positionsMessage || "",
         availabilityMessage: editing.availabilityMessage || "",
         notesMessage: editing.notesMessage || "",
-      })
-    : JSON.stringify(draft) !== JSON.stringify(emptyDraft());
+      }))
+    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(emptyDraft()));
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const closePanel = () => {
@@ -276,6 +309,7 @@ const IntakeManager = ({
     setSelectedForm(null);
     setShowCreate(false);
     setShowEditForm(false);
+    setShowSendForm(false);
     setEditing(null);
     setDraft(emptyDraft());
   };
@@ -285,6 +319,8 @@ const IntakeManager = ({
     setSelectedForm(null);
     setShowCreate(true);
     setShowEditForm(false);
+    setShowSendForm(false);
+    setPreserveSuggestedOccurrences(false);
     setEditing(null);
     setDraft(emptyDraft());
   };
@@ -294,6 +330,8 @@ const IntakeManager = ({
     setSelectedForm(form);
     setShowCreate(false);
     setShowEditForm(false);
+    setShowSendForm(false);
+    setPreserveSuggestedOccurrences(false);
     setEditing(null);
     setDraft(emptyDraft());
   };
@@ -303,6 +341,8 @@ const IntakeManager = ({
     setSelectedForm(form);
     setShowCreate(false);
     setShowEditForm(true);
+    setShowSendForm(false);
+    setPreserveSuggestedOccurrences(false);
     setEditing(form);
     setDraft({
       name: form.name,
@@ -410,7 +450,8 @@ const IntakeManager = ({
     );
   };
 
-  const updateDraftDates = (patch: { startDate?: string; endDate?: string }) =>
+  const updateDraftDates = (patch: { startDate?: string; endDate?: string }) => {
+    setPreserveSuggestedOccurrences(false);
     setDraft((current) => {
       const next = { ...current, ...patch };
       if (next.startDate && next.endDate) {
@@ -422,13 +463,22 @@ const IntakeManager = ({
       }
       return next;
     });
+  };
 
   const buildPayload = (): TeamIntakeFormPayload => {
     const serviceIds = draft.availabilityServices.map(
       (service) => service.serviceId,
     );
-    const availabilityOccurrences =
-      draft.startDate && draft.endDate
+    const unchangedExistingCoverage = Boolean(editing &&
+      draft.startDate === editing.startDate &&
+      draft.endDate === editing.endDate &&
+      JSON.stringify(serviceIds.slice().sort()) === JSON.stringify((editing.availabilityServices || []).map(({ serviceId }) => serviceId).slice().sort()) &&
+      editing.availabilityOccurrences?.length
+    );
+    const preserveOccurrences = editingFormHasIssuedRequests || unchangedExistingCoverage || preserveSuggestedOccurrences;
+    const availabilityOccurrences = preserveOccurrences
+      ? editing?.availabilityOccurrences?.length ? editing.availabilityOccurrences : draft.availabilityOccurrences
+      : draft.startDate && draft.endDate
         ? generateScheduleOccurrences({
             services,
             serviceIds,
@@ -455,12 +505,6 @@ const IntakeManager = ({
       return;
     }
     const payload = buildPayload();
-    const saveToastMessage = formatIntakeFormSaveToast(editing, payload, {
-      teamNameById: new Map(teams.map((team) => [team.teamId, team.name])),
-      serviceNameById: new Map(
-        services.map((service) => [service.serviceId, service.name]),
-      ),
-    });
     setSaving(true);
     try {
       if (editing) {
@@ -472,9 +516,9 @@ const IntakeManager = ({
         onFormSaved(response.form);
         setSelectedForm(response.form);
         setShowEditForm(false);
+        setShowSendForm(false);
         setEditing(null);
         setDraft(emptyDraft());
-        showToast(saveToastMessage, "success");
       } else {
         const response = await createTeamIntakeForm(churchId, payload);
         onFormSaved(response.form);
@@ -484,8 +528,12 @@ const IntakeManager = ({
               buildTeamIntakePublicUrl(response.publicToken),
           );
         }
-        showToast(saveToastMessage, "success");
-        closePanel();
+        setSelectedForm(response.form);
+        setShowCreate(false);
+        setShowEditForm(false);
+        setShowSendForm(false);
+        setEditing(null);
+        setDraft(emptyDraft());
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this intake form.");
@@ -510,38 +558,60 @@ const IntakeManager = ({
     );
   }, [forms, selectedForm]);
   const activeSelectedFormId = activeSelectedForm?.formId || "";
+  const activeSelectedFormIdRef = useRef(activeSelectedFormId);
+  const churchIdRef = useRef(churchId);
+  const messageStateRefreshSequenceRef = useRef(0);
+  activeSelectedFormIdRef.current = activeSelectedFormId;
+  churchIdRef.current = churchId;
+  const upcomingAvailabilitySuggestion = useMemo(
+    () => getUpcomingAvailabilitySuggestion({ services, forms }),
+    [forms, services],
+  );
+
+  const openUpcomingAvailabilityDraft = () => {
+    if (!upcomingAvailabilitySuggestion) return;
+    resetRecipientSelection();
+    setSelectedForm(null);
+    setShowCreate(true);
+    setShowEditForm(false);
+    setShowSendForm(false);
+    setPreserveSuggestedOccurrences(true);
+    setEditing(null);
+    setDraft(upcomingAvailabilitySuggestion.draft);
+  };
+
+  const refreshFormMessageState = useCallback((formId: string) => {
+    if (!churchId || !formId) return;
+    const requestedChurchId = churchId;
+    const refreshSequence = ++messageStateRefreshSequenceRef.current;
+    const isCurrentForm = () => churchIdRef.current === requestedChurchId && activeSelectedFormIdRef.current === formId && messageStateRefreshSequenceRef.current === refreshSequence;
+    void getTeamIntakeSmsAttempts(requestedChurchId, formId)
+      .then((response) => {
+        if (isCurrentForm()) setSmsDeliveryAttempts(response.attempts || []);
+      })
+      .catch((error) => {
+        if (isCurrentForm()) showApiErrorToast(showToast, error, "Could not load SMS delivery history.");
+      });
+    void getNotificationIntents(requestedChurchId, { formId })
+      .then((response) => {
+        if (isCurrentForm()) setFormNotificationIntents(response.intents || []);
+      })
+      .catch((error) => {
+        if (isCurrentForm()) showApiErrorToast(showToast, error, "Could not load intake message status.");
+      });
+  }, [churchId, showToast]);
 
   useEffect(() => {
-    if (!churchId || !activeSelectedFormId) return;
-    let cancelled = false;
     setSmsDeliveryAttempts([]);
     setFormNotificationIntents([]);
-    void getTeamIntakeSmsAttempts(churchId, activeSelectedFormId)
-      .then((response) => {
-        if (!cancelled) setSmsDeliveryAttempts(response.attempts || []);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showApiErrorToast(
-            showToast,
-            error,
-            "Could not load SMS delivery history.",
-          );
-        }
-      });
-    void getNotificationIntents(churchId, { formId: activeSelectedFormId })
-      .then((response) => {
-        if (!cancelled) setFormNotificationIntents(response.intents || []);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showApiErrorToast(showToast, error, "Could not load intake message status.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSelectedFormId, churchId, showToast]);
+    refreshFormMessageState(activeSelectedFormId);
+  }, [activeSelectedFormId, refreshFormMessageState]);
+
+  const handleAvailabilityBatchUpdated = (batch: NotificationBatch) => {
+    if (batch.churchId !== churchIdRef.current) return;
+    batch.intakeRecipients?.forEach(onRecipientSaved);
+    refreshFormMessageState(batch.formId);
+  };
 
   const selectedFormSubmissions = useMemo(
     () =>
@@ -595,18 +665,32 @@ const IntakeManager = ({
     return grouped;
   }, [formNotificationIntents]);
 
-  const intakeMessageCounts = useMemo(() => ({
-    requested: selectedFormRecipients.length,
-    accepted: smsDeliveryAttempts.filter((attempt) => ["accepted", "sent", "delivered"].includes(attempt.status)).length,
-    delivered: smsDeliveryAttempts.filter((attempt) => attempt.status === "delivered").length,
-    failed: smsDeliveryAttempts.filter((attempt) => ["failed", "undelivered"].includes(attempt.status)).length,
-    uncertain: smsDeliveryAttempts.filter((attempt) => attempt.outcome === "unknown").length,
-    responded: selectedFormRecipients.filter((recipient) => Boolean(recipient.respondedAt)).length,
-    waiting: selectedFormRecipients.filter((recipient) => !recipient.respondedAt && !recipient.revokedAt).length,
-    optedOut: selectedFormRecipients.filter((recipient) =>
-      smsEligibilityByMemberId?.[recipient.memberId]?.status === "opted_out",
-    ).length,
-  }), [selectedFormRecipients, smsDeliveryAttempts, smsEligibilityByMemberId]);
+  const intakeMessageCounts = useMemo(() => {
+    const latestByRecipient = new Map<string, NotificationIntent>();
+    formNotificationIntents.forEach((intent) => {
+      if (!intent.recipientId) return;
+      const current = latestByRecipient.get(intent.recipientId);
+      if (!current || intent.createdAt > current.createdAt) latestByRecipient.set(intent.recipientId, intent);
+    });
+    const latestFor = (recipientId: string) => latestByRecipient.get(recipientId);
+    const invitedRecipientIds = new Set(selectedFormRecipients
+      .filter(({ recipientId }) => {
+        const intent = latestFor(recipientId);
+        const attempt = latestSmsAttemptByRecipientId.get(recipientId);
+        return intent?.status === "sent" || ["accepted", "sent", "delivered"].includes(intent?.attemptStatus || "") || ["accepted", "sent", "delivered"].includes(attempt?.status || "");
+      })
+      .map(({ recipientId }) => recipientId));
+    const latestAttempts = selectedFormRecipients.map(({ recipientId }) => latestFor(recipientId)).filter((intent): intent is NotificationIntent => Boolean(intent));
+    return {
+      invited: invitedRecipientIds.size,
+      delivered: selectedFormRecipients.filter(({ recipientId }) => latestFor(recipientId)?.attemptStatus === "delivered" || latestSmsAttemptByRecipientId.get(recipientId)?.status === "delivered").length,
+      failed: latestAttempts.filter((intent) => intent.status === "failed" || ["failed", "undelivered"].includes(intent.attemptStatus || "") || ["failed", "undelivered"].includes(latestSmsAttemptByRecipientId.get(intent.recipientId || "")?.status || "")).length,
+      uncertain: latestAttempts.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown" || latestSmsAttemptByRecipientId.get(intent.recipientId || "")?.outcome === "unknown").length,
+      responded: selectedFormRecipients.filter((recipient) => Boolean(recipient.respondedAt)).length,
+      waiting: selectedFormRecipients.filter((recipient) => invitedRecipientIds.has(recipient.recipientId) && !recipient.respondedAt && !recipient.revokedAt).length,
+      optedOut: selectedFormRecipients.filter((recipient) => smsEligibilityByMemberId?.[recipient.memberId]?.status === "opted_out").length,
+    };
+  }, [formNotificationIntents, latestSmsAttemptByRecipientId, selectedFormRecipients, smsEligibilityByMemberId]);
 
   const applicableMembers = useMemo(() => {
     if (!activeSelectedForm) return [];
@@ -695,6 +779,7 @@ const IntakeManager = ({
   const sendRecipientSms = async (recipient: TeamIntakeRecipient) => {
     if (!canEdit || recipientActionKey || recipient.revokedAt) return;
     setRecipientActionKey(`${recipient.recipientId}:sms`);
+    let awaitingConfirmation = false;
     try {
       const prepared = await prepareTeamIntakeRecipientSms(
         churchId,
@@ -706,9 +791,31 @@ const IntakeManager = ({
         return;
       }
       const recipientName = memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null);
-      if (!window.confirm(`Send one intake form SMS to ${recipientName} at ${prepared.preview.phoneNumberSnapshot}?\n\n${prepared.preview.message}\n\n${prepared.preview.segmentCount} SMS segment${prepared.preview.segmentCount === 1 ? "" : "s"}.`)) return;
-      const response = await sendNotificationIntent(churchId, prepared.preview.intentId, prepared.preview.approvalVersion);
-      if (prepared.recipient) onRecipientSaved(prepared.recipient);
+      setRecipientSmsPreview({
+        intentId: prepared.preview.intentId,
+        approvalVersion: prepared.preview.approvalVersion,
+        recipientName,
+        phoneNumberSnapshot: prepared.preview.phoneNumberSnapshot,
+        message: prepared.preview.message,
+        segmentCount: prepared.preview.segmentCount,
+        recipient: prepared.recipient,
+      });
+      awaitingConfirmation = true;
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not prepare this SMS.");
+    } finally {
+      if (!awaitingConfirmation) setRecipientActionKey("");
+    }
+  };
+
+  const confirmRecipientSms = async () => {
+    const preview = recipientSmsPreview;
+    if (!preview || recipientSmsSendLockRef.current) return;
+    recipientSmsSendLockRef.current = true;
+    setRecipientSmsPreview(null);
+    try {
+      const response = await sendNotificationIntent(churchId, preview.intentId, preview.approvalVersion);
+      if (preview.recipient) onRecipientSaved(preview.recipient);
       const attempt = response.attempt;
       if (!attempt) throw new Error(response.errorMessage || "The provider outcome is uncertain. Refresh delivery history before trying again.");
       setSmsDeliveryAttempts((current) => [
@@ -720,8 +827,15 @@ const IntakeManager = ({
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this SMS.");
     } finally {
+      recipientSmsSendLockRef.current = false;
       setRecipientActionKey("");
     }
+  };
+
+  const cancelRecipientSms = () => {
+    if (recipientSmsSendLockRef.current) return;
+    setRecipientSmsPreview(null);
+    setRecipientActionKey("");
   };
 
   const revokeRecipient = async (recipient: TeamIntakeRecipient) => {
@@ -1262,10 +1376,14 @@ const IntakeManager = ({
       <DateRangePicker
         label="Date range"
         value={{ startDate: draft.startDate, endDate: draft.endDate }}
+        disabled={editingFormHasIssuedRequests}
         onChange={({ startDate, endDate }) =>
           updateDraftDates({ startDate, endDate })
         }
       />
+      {editingFormHasIssuedRequests ? (
+        <p className="text-sm text-sky-200">This form already has private links or responses. Its covered service dates are saved and won’t change here.</p>
+      ) : null}
       <Input
         label="Response deadline"
         type="date"
@@ -1310,38 +1428,43 @@ const IntakeManager = ({
         onChange={(teamIds) => setDraft((d) => ({ ...d, teamIds }))}
         emptyText="No teams yet."
       />
-      <EntityMultiSelect
-        label="Show services for availability"
-        description="Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."
-        options={availabilityServiceOptions.map((option) => ({
-          id: option.id,
-          label: option.label,
-          sublabel: option.sublabel,
-        }))}
-        value={selectedAvailabilityServiceOptionIds}
-        onChange={(optionIds) => {
-          const serviceIds = availabilityServiceOptions
-            .filter((option) => optionIds.includes(option.id))
-            .flatMap((option) => option.serviceIds);
-          setDraft((current) => ({
-            ...current,
-            availabilityServices: serviceIds.map((serviceId) => {
-              const service = services.find(
-                (item) => item.serviceId === serviceId,
-              );
-              return {
-                serviceId,
-                name: service?.name || "",
-              };
-            }),
-          }));
-        }}
-        emptyText={
-          draft.startDate && draft.endDate
-            ? "No services fall in this date range."
-            : "Set the form start and end dates first."
-        }
-      />
+      {editingFormHasIssuedRequests ? (
+        <p className="text-sm text-gray-300">Availability services: {(editing?.availabilityServices || []).map(({ name }) => name).join(", ") || "None"}</p>
+      ) : (
+        <EntityMultiSelect
+          label="Show services for availability"
+          description="Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."
+          options={availabilityServiceOptions.map((option) => ({
+            id: option.id,
+            label: option.label,
+            sublabel: option.sublabel,
+          }))}
+          value={selectedAvailabilityServiceOptionIds}
+          onChange={(optionIds) => {
+            setPreserveSuggestedOccurrences(false);
+            const serviceIds = availabilityServiceOptions
+              .filter((option) => optionIds.includes(option.id))
+              .flatMap((option) => option.serviceIds);
+            setDraft((current) => ({
+              ...current,
+              availabilityServices: serviceIds.map((serviceId) => {
+                const service = services.find(
+                  (item) => item.serviceId === serviceId,
+                );
+                return {
+                  serviceId,
+                  name: service?.name || "",
+                };
+              }),
+            }));
+          }}
+          emptyText={
+            draft.startDate && draft.endDate
+              ? "No services fall in this date range."
+              : "Set the form start and end dates first."
+          }
+        />
+      )}
       <fieldset className="space-y-3">
         <legend className="p-1 text-sm font-semibold">Form wording</legend>
         <p className="px-1 text-xs text-gray-400">
@@ -1471,11 +1594,10 @@ const IntakeManager = ({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-100">
-              Individual requests
+              Individual links and manual SMS
             </h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-400">
-              Create a private response link for members in this form&apos;s team
-              scope. Nothing is sent automatically.
+              For offline sharing or one-off SMS. Use Send form above for the normal invitation workflow.
             </p>
           </div>
           <Button
@@ -1484,20 +1606,23 @@ const IntakeManager = ({
             isLoading={recipientBusy}
             onClick={() => void createRecipientRequests()}
           >
-            Create {recipientMemberIds.size || ""} request
+            Create {recipientMemberIds.size || ""} private link
             {recipientMemberIds.size === 1 ? "" : "s"}
           </Button>
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400" aria-label="Intake message and response counts">
-          <span>Requested <strong className="text-gray-200">{intakeMessageCounts.requested}</strong></span>
-          <span>Provider accepted <strong className="text-gray-200">{intakeMessageCounts.accepted}</strong></span>
+          <span>Invited <strong className="text-gray-200">{intakeMessageCounts.invited}</strong></span>
           <span>Delivered <strong className="text-gray-200">{intakeMessageCounts.delivered}</strong></span>
-          <span>Failed <strong className="text-gray-200">{intakeMessageCounts.failed}</strong></span>
-          <span>Uncertain <strong className="text-gray-200">{intakeMessageCounts.uncertain}</strong></span>
           <span>Responded <strong className="text-gray-200">{intakeMessageCounts.responded}</strong></span>
           <span>Waiting <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
-          <span>Opted out <strong className="text-gray-200">{intakeMessageCounts.optedOut}</strong></span>
         </div>
+        {intakeMessageCounts.failed || intakeMessageCounts.uncertain || intakeMessageCounts.optedOut ? (
+          <p className="text-xs text-amber-200">{[
+            intakeMessageCounts.failed ? `${intakeMessageCounts.failed} failed` : "",
+            intakeMessageCounts.uncertain ? `${intakeMessageCounts.uncertain} uncertain` : "",
+            intakeMessageCounts.optedOut ? `${intakeMessageCounts.optedOut} opted out` : "",
+          ].filter(Boolean).join(" · ")}</p>
+        ) : null}
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <Input
             label="Search members"
@@ -1544,6 +1669,8 @@ const IntakeManager = ({
                 (intent) => intent.intentType === "availability_reminder",
               ).length;
               const latestIntent = recipientIntents[0];
+              const latestDeliveryStatus = latestSmsAttempt?.status || latestIntent?.attemptStatus;
+              const latestDeliveryOutcome = latestSmsAttempt?.outcome || latestIntent?.attemptOutcome;
               const smsStatus = recipient?.respondedAt
                 ? "Responded"
                 : smsEligibility.status === "no_mobile"
@@ -1552,16 +1679,16 @@ const IntakeManager = ({
                     ? "SMS consent needed"
                     : smsEligibility.status === "opted_out"
                       ? "SMS opted out"
-                      : latestSmsAttempt?.status === "delivered"
+                      : latestDeliveryStatus === "delivered"
                         ? "Delivered"
-                      : latestSmsAttempt?.status === "failed" ||
-                            latestSmsAttempt?.status === "undelivered"
+                      : latestDeliveryStatus === "failed" ||
+                            latestDeliveryStatus === "undelivered" || latestIntent?.status === "failed"
                           ? "Failed"
-                          : latestSmsAttempt?.outcome === "unknown"
+                          : latestDeliveryOutcome === "unknown" || latestIntent?.status === "unknown"
                             ? "Delivery uncertain"
-                          : latestSmsAttempt?.status === "pending"
+                          : latestDeliveryStatus === "pending"
                             ? "Sending"
-                            : latestSmsAttempt
+                            : latestSmsAttempt || latestIntent?.status === "sent"
                               ? "Sent"
                               : "Ready to send";
               const status = recipient?.revokedAt
@@ -1596,17 +1723,6 @@ const IntakeManager = ({
                     >
                       {status}
                     </span>
-                    {recipient?.linkCopiedAt ? (
-                      <span className="text-gray-500">Link requested</span>
-                    ) : null}
-                    {reminderCount > 0 ? (
-                      <span className="text-gray-400">
-                        {reminderCount} reminder{reminderCount === 1 ? "" : "s"}
-                      </span>
-                    ) : null}
-                    {latestIntent?.status === "unknown" ? (
-                      <span className="text-amber-200">Delivery uncertain</span>
-                    ) : null}
                     <span
                       className={cn(
                         "rounded border px-1.5 py-0.5",
@@ -1620,8 +1736,12 @@ const IntakeManager = ({
                               : "border-gray-600 text-gray-300",
                       )}
                     >
-                      {smsStatus}
+                      {recipient?.respondedAt
+                        ? `Responded ${new Date(recipient.respondedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                        : `${status} · ${smsStatus}`}
                     </span>
+                    {reminderCount > 0 ? <span className="text-gray-400">{reminderCount} reminder{reminderCount === 1 ? "" : "s"}</span> : null}
+                    {latestIntent?.status === "unknown" ? <span className="text-amber-200">Delivery uncertain</span> : null}
                     {recipient && !recipient.revokedAt ? (
                       <>
                         <Button
@@ -1629,11 +1749,14 @@ const IntakeManager = ({
                           padding="px-0 py-0"
                           disabled={
                             Boolean(recipientActionKey) ||
-                            !smsEligibility.eligible
+                            !smsEligibility.eligible ||
+                            Boolean(recipient.respondedAt)
                           }
                           isLoading={recipientActionKey === `${recipient.recipientId}:sms`}
                           title={
-                            smsEligibility.eligible
+                            recipient.respondedAt
+                              ? "This member has already responded"
+                              : smsEligibility.eligible
                               ? "Send this intake request by SMS"
                               : smsStatus
                           }
@@ -1641,33 +1764,15 @@ const IntakeManager = ({
                         >
                           Send SMS
                         </Button>
-                        <Button
-                          variant="textLink"
-                          padding="px-0 py-0"
-                          disabled={Boolean(recipientActionKey)}
-                          isLoading={recipientActionKey === recipient.recipientId}
-                          onClick={() =>
-                            void getRecipientLink(recipient, { copy: true })
-                          }
-                        >
-                          Copy link
-                        </Button>
-                        <Button
-                          variant="textLink"
-                          padding="px-0 py-0"
-                          disabled={Boolean(recipientActionKey)}
-                          onClick={() => void getRecipientLink(recipient)}
-                        >
-                          Open
-                        </Button>
-                        <Button
-                          variant="textLink"
-                          padding="px-0 py-0"
-                          disabled={Boolean(recipientActionKey)}
-                          onClick={() => void revokeRecipient(recipient)}
-                        >
-                          Revoke
-                        </Button>
+                        <details className="relative">
+                          <summary className="cursor-pointer text-gray-300 underline decoration-gray-600 underline-offset-2">More</summary>
+                          <div className="absolute right-0 z-20 mt-1 flex min-w-36 flex-col rounded border border-gray-600 bg-gray-900 p-2 shadow-lg">
+                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} isLoading={recipientActionKey === recipient.recipientId} onClick={() => void getRecipientLink(recipient, { copy: true })}>Copy private link</Button>
+                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} onClick={() => void getRecipientLink(recipient)}>Open form</Button>
+                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} onClick={() => void revokeRecipient(recipient)}>Revoke request</Button>
+                            {recipientIntents.length ? <div className="mt-1 border-t border-gray-700 px-1 pt-2"><p className="text-xs font-semibold text-gray-300">Message history</p><ul className="mt-1 space-y-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul></div> : null}
+                          </div>
+                        </details>
                       </>
                     ) : null}
                   </div>
@@ -1749,6 +1854,20 @@ const IntakeManager = ({
           ) : null}
         </div>
       </div>
+      {activeSelectedForm?.active && showSendForm ? (
+        <AvailabilityFormSendFlow
+          key={`${churchId}:${activeSelectedForm.formId}`}
+          churchId={churchId}
+          form={activeSelectedForm}
+          members={members}
+          positions={positions}
+          teams={teams}
+          recipients={intakeRecipients}
+          eligibilityByMemberId={smsEligibilityByMemberId}
+          onBatchUpdated={handleAvailabilityBatchUpdated}
+          onClose={() => setShowSendForm(false)}
+        />
+      ) : null}
       {renderRecipientSection()}
       {allSubmissionBlockouts.length > 0 || allSubmissionNotes.length > 0 ? (
         <div className="rounded-md border border-gray-700 bg-gray-950/60 px-3 pb-3">
@@ -1856,22 +1975,28 @@ const IntakeManager = ({
               >
                 Back
               </Button>
-              {activeSelectedForm && !showingEditForm && canEdit ? (
-                <Button
-                  variant="secondary"
-                  svg={Pencil}
-                  iconSize="sm"
-                  padding="px-2 py-1"
-                  onClick={() => openFormEditor(activeSelectedForm)}
-                >
-                  Edit
-                </Button>
+              {activeSelectedForm?.active && !showingEditForm && canEdit ? (
+                <>
+                  <Button variant="secondary" padding="px-2 py-1" onClick={() => setShowSendForm(true)}>
+                    Send form
+                  </Button>
+                  <Button
+                    variant="tertiary"
+                    svg={Pencil}
+                    iconSize="sm"
+                    padding="px-2 py-1"
+                    onClick={() => openFormEditor(activeSelectedForm)}
+                  >
+                    Edit
+                  </Button>
+                </>
               ) : null}
             </div>
           ) : null
         }
         list={
           <>
+            {listHeader}
             {lastCreatedPublicUrl && canEdit && !panelOpen ? (
               <div className="mb-3 rounded-md border border-emerald-400/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
                 <p className="font-semibold">New public link ready.</p>
@@ -1886,10 +2011,23 @@ const IntakeManager = ({
                 </Button>
               </div>
             ) : null}
+            {upcomingAvailabilitySuggestion && !panelOpen && canEdit ? (
+              <section className="mb-4 space-y-2 rounded-lg border border-sky-600/70 bg-sky-950/30 p-4" aria-labelledby="upcoming-availability-heading">
+                <div>
+                  <h2 id="upcoming-availability-heading" className="font-semibold text-sky-100">Upcoming availability</h2>
+                  <p className="mt-1 text-sm text-gray-200">{upcomingAvailabilitySuggestion.name}</p>
+                  <p className="text-sm text-gray-300">{formatPlainDateRangeLabel(upcomingAvailabilitySuggestion.startDate, upcomingAvailabilitySuggestion.endDate)} · {upcomingAvailabilitySuggestion.occurrenceCount} upcoming service{upcomingAvailabilitySuggestion.occurrenceCount === 1 ? "" : "s"}</p>
+                </div>
+                <Button variant="secondary" onClick={openUpcomingAvailabilityDraft}>Review form</Button>
+              </section>
+            ) : null}
             {forms.length === 0 ? (
               <p className="text-sm text-gray-300">No intake forms yet.</p>
             ) : null}
-            {forms.map((form) => (
+            {forms.length > 0 && visibleForms.length === 0 ? (
+              <p className="text-sm text-gray-300">No intake forms match this date range.</p>
+            ) : null}
+            {visibleForms.map((form) => (
               <EntityRow
                 key={form.formId}
                 title={form.name}
@@ -1948,12 +2086,13 @@ const IntakeManager = ({
           showingEditForm ? (
             <FormActionButtons
               pinFooter
-              saveLabel="Save form"
+              entityLabel="form"
+              isCreate={!editing}
+              isSaving={saving}
               onSave={() => void submit()}
               onCancel={cancelFormEdit}
               hasPendingChanges={hasPendingChanges}
-              disabled={!canEdit}
-              isLoading={saving}
+              disabled={!canEdit || saving}
             />
           ) : undefined
         }
@@ -1964,6 +2103,15 @@ const IntakeManager = ({
             ? renderSubmissionsPanel()
             : null}
       </CreatePanel>
+      {recipientSmsPreview ? <SmsConfirmationModal
+        isOpen
+        recipientName={recipientSmsPreview.recipientName}
+        phoneNumberSnapshot={recipientSmsPreview.phoneNumberSnapshot}
+        message={recipientSmsPreview.message}
+        segmentCount={recipientSmsPreview.segmentCount}
+        onCancel={cancelRecipientSms}
+        onSend={() => void confirmRecipientSms()}
+      /> : null}
     </div>
   );
 };

@@ -56,23 +56,48 @@ import {
 import {
   getCreateScheduleDefaultRange,
   getCreateScheduleDefaultServiceIds,
+  formatSuggestedScheduleName,
 } from "./scheduleCreateDefaults";
+import {
+  ensureTeamScheduleForPeriod,
+} from "../../../api/auth";
+import {
+  findReusablePeriodSchedule,
+  filterOccurrencesToRange,
+  formatSchedulePeriodName,
+  persistedScheduleRange,
+  type SchedulePeriodPreset,
+} from "./schedulePeriodUtils";
+import {
+  buildTeamSchedulePeriod,
+  findInitialTeamSchedulePeriod,
+} from "./teamSchedulePeriod";
+import { mergeScheduleNotificationIntents } from "./scheduleNotificationHistory";
+import RangeSelector from "../components/RangeSelector";
+import {
+  resolveRangePreset,
+  rangeSelectionStorageKey,
+  shiftRange,
+  useRangeSelection,
+} from "../rangeSelection";
 import {
   createTeamRosterMember,
   getTeamScheduleDetail,
   sendTeamSchedule,
   getTeamSchedulePublicLink,
   getServicePlanMicrophones,
+  getServiceEquipment,
   updateTeam,
   updateTeamSchedule,
   updateTeamScheduleAssignment,
+  updateTeamScheduleAssignmentsBatch,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
   updateTeamScheduleAssignmentSwap,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
   getNotificationIntents,
   getNotificationIntentPreview,
-  prepareReplacementNotificationIntent,
   resolveReplacementNotificationIntent,
   sendNotificationIntent,
 } from "../../../api/auth";
@@ -82,11 +107,10 @@ import {
   rekeyScheduleOccurrenceRowsByServiceDate,
 } from "./scheduleDraftUtils";
 import { buildScheduleExportModel } from "./scheduleExport";
-import {
-  BROWSE_ALL_SCHEDULES_VALUE,
-  buildSchedulePickerOptions,
-} from "./schedulePickerOptions";
 import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
+import PortableDataImportDialog from "../../../components/PortableDataTransfer/PortableDataImportDialog";
+import { createScheduleCsvMenuItems } from "./scheduleCsvActions";
+import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import {
   ALL_TEAMS_SCHEDULE_FILTER,
   readScheduleTeamFilter,
@@ -123,13 +147,12 @@ import {
   type TeamScheduleShadowKind,
   type NotificationIntent,
 } from "../../../api/authTypes";
-import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
-import { resolvePositionLucideIcon } from "../lucidePositionIcons";
+import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import {
   panelClassName,
-  panelHeaderPaddingClassName,
   panelShellClassName,
   scheduleGridScrollClassName,
   scheduleGridFrameClassName,
@@ -176,6 +199,7 @@ import {
   useTeamsReturnNavigation,
 } from "../hooks/useTeamsReturnNavigation";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import TeamsReturnBackButton from "../components/TeamsReturnBackButton";
 import type { TeamsReturnTo } from "../teamsReturnNavigation";
 import {
@@ -184,6 +208,7 @@ import {
   getRequiredCount,
   isOccurrenceStaffingSlot,
   makeSlotKey,
+  parseSlotKey,
   resolveOccurrenceRequirements,
   type OccurrenceFill,
   type ScheduleSlotColumn,
@@ -216,13 +241,16 @@ import {
 } from "./scheduleConflicts";
 import type { RowPasteApplyEntry } from "./schedulePasteRow";
 import ScheduleEditForm from "./ScheduleEditForm";
-import type { ScheduleMicrophoneHolder } from "./ScheduleMicrophoneSelect";
-import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
+import type { ScheduleEquipmentHolder } from "./ScheduleEquipmentSelect";
+import {
+  buildScheduleCopyDraft,
+  CUSTOM_SCHEDULE_DRAFT_KEY,
+  getScheduleCopyDraftKey,
+} from "./scheduleDraftUtils";
 import {
   cellsMatch,
-  diffCellToVerbs,
-  type ScheduleAssignmentVerb,
   type ScheduleCellChange,
+  type ScheduleCellState,
   type ScheduleUndoEntry,
 } from "./scheduleUndo";
 import { useScheduleUndoStack } from "./useScheduleUndoStack";
@@ -283,9 +311,37 @@ type ScheduleAssignmentSwapPlan = ScheduleAssignmentSwapRecommendation & {
 type PendingCrossTeamConflict = {
   memberId: string;
   warning: string;
+  fingerprint: string;
+  conflicts: Array<{
+    memberId: string;
+    scheduleId: string;
+    scheduleName?: string;
+    teamId?: string;
+    occurrenceId: string;
+    conflictingOccurrenceId?: string;
+    cellKeys?: string[];
+  }>;
   isMove?: boolean;
   onConfirm: () => void;
   onCancel?: () => void;
+};
+
+type OccurrenceConflictDetails = Pick<PendingCrossTeamConflict, "fingerprint" | "conflicts">;
+
+type ScheduleFormState =
+  | { mode: "edit"; scheduleId: string }
+  | { mode: "create-custom" }
+  | { mode: "copy"; sourceScheduleId: string; sourceSchedule: TeamSchedule };
+
+const getOccurrenceConflictDetails = (error: unknown): OccurrenceConflictDetails | null => {
+  const details = (error as { details?: unknown } | null)?.details;
+  if (!details || typeof details !== "object") return null;
+  const payload = details as { conflictFingerprint?: unknown; occurrenceConflicts?: unknown };
+  if (typeof payload.conflictFingerprint !== "string" || !Array.isArray(payload.occurrenceConflicts)) return null;
+  return {
+    fingerprint: payload.conflictFingerprint,
+    conflicts: payload.occurrenceConflicts as PendingCrossTeamConflict["conflicts"],
+  };
 };
 
 type PendingAvailabilityConfirmation = {
@@ -297,7 +353,7 @@ type PendingAvailabilityConfirmation = {
 
 const ScheduleTab = ({
   data,
-  canEdit,
+  canEdit: canEditSelectedSchedule,
   editableTeamIds,
   canEditMember,
   onEditMember,
@@ -312,6 +368,7 @@ const ScheduleTab = ({
   onScheduleDraftFlush,
   onScheduleDraftClear,
   trackTeamsSave,
+  onImported,
 }: {
   data: TeamsData;
   canEdit: boolean;
@@ -320,7 +377,7 @@ const ScheduleTab = ({
   canEditMember?: (member: TeamRosterMember) => boolean;
   onEditMember?: (memberId: string, returnTo: TeamsReturnTo) => void;
   selectedScheduleId: string;
-  setSelectedScheduleId: (scheduleId: string) => void;
+  setSelectedScheduleId: (scheduleId: string, hydrate?: boolean) => void;
   scheduleDrafts: TeamsScheduleDrafts;
   onScheduleSaved: (schedule: TeamSchedule, replaceId?: string) => void;
   onScheduleRemoved: (scheduleId: string) => void;
@@ -328,59 +385,26 @@ const ScheduleTab = ({
   onTeamSaved: (team: TeamRecord, replaceId?: string) => void;
   onScheduleDraftChanged: (draftKey: string, draft: TeamSchedulePayload) => void;
   onScheduleDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;
-  /** Clears a draft key after a successful create so New schedule starts fresh. */
+  /** Clears an intent-specific draft key after a successful create. */
   onScheduleDraftClear: (draftKey: string) => void;
   // Registers an in-flight schedule save with the page so inbound sync stays
   // gated until it settles (prevents a bootstrap/SSE from reverting pending edits).
   trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
+  onImported: () => void;
 }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
+  const isChurchAdmin = context?.role === "admin";
   const churchName = context?.churchName || "";
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
   const schedules = data.schedules;
-  // The picker lists every schedule (summaries included); the grid needs the
-  // hydrated record. `selectedScheduleRecord` backs the header and the picker so
-  // the chosen name still shows while its assignments are being fetched, while
-  // `selectedSchedule` stays null until the cells have actually arrived.
-  const selectedScheduleRecord = selectedScheduleId
-    ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
-    : null;
-  const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
-    ? selectedScheduleRecord
-    : null;
-  const scheduleDisplayMembers = useMemo(
-    () => [
-      ...data.members,
-      ...(selectedSchedule?.guests || []).map((guest) =>
-        scheduleGuestToDisplayMember(guest, churchId),
-      ),
-    ],
-    [churchId, data.members, selectedSchedule?.guests],
-  );
-  const recentScheduleGuests = useMemo(() => {
-    const byId = new Map<string, TeamScheduleGuest>();
-    const newestFirst = [...schedules].sort(
-      (left, right) =>
-        String(right.startDate || "").localeCompare(String(left.startDate || "")),
-    );
-    [selectedScheduleRecord, ...newestFirst].forEach((schedule) => {
-      (schedule?.guests || []).forEach((guest) => {
-        if (!byId.has(guest.guestId)) byId.set(guest.guestId, guest);
-      });
-    });
-    return [...byId.values()];
-  }, [schedules, selectedScheduleRecord]);
-  const isSelectedScheduleLoading = Boolean(
-    selectedScheduleRecord && !selectedSchedule,
-  );
-  const draftKey = selectedScheduleRecord?.scheduleId || "new";
-  const selectedTeam =
-    data.teams.find((team) => team.teamId === selectedScheduleRecord?.teamId) || null;
+  const [viewingSavedSchedule, setViewingSavedSchedule] = useState(false);
   // Archived schedules stay out of the quick-switcher; the browse dialog's
   // status filter is the one place to go through everything.
   const [isBrowsingSchedules, setIsBrowsingSchedules] = useState(false);
+  const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
+  const [scheduleCsvBusy, setScheduleCsvBusy] = useState(false);
 
   // Team narrowing for the picker, remembered per church. Most operators work a
   // single team, so re-narrowing a church-wide list on every visit is friction.
@@ -388,7 +412,10 @@ const ScheduleTab = ({
   // teams" from "nothing chosen yet", which is what lets the default below
   // apply only once.
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState<string | null>(
-    null,
+    () => {
+      const stored = churchId ? readScheduleTeamFilter(churchId) : null;
+      return stored ? (stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored) : null;
+    },
   );
   useEffect(() => {
     if (!churchId) return;
@@ -406,6 +433,7 @@ const ScheduleTab = ({
   const updateScheduleTeamFilter = useCallback(
     (teamId: string) => {
       setScheduleTeamFilter(teamId);
+      setViewingSavedSchedule(false);
       writeScheduleTeamFilter(churchId, teamId || ALL_TEAMS_SCHEDULE_FILTER);
     },
     [churchId],
@@ -425,6 +453,211 @@ const ScheduleTab = ({
     );
     return firstEditable?.teamId || activeTeams[0]?.teamId || "";
   }, [activeTeams, editableTeamIds, scheduleTeamFilter]);
+  const workspaceTeamId = (scheduleTeamFilter || defaultTeamId) ?? "";
+  const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
+  const initialTeamPeriodResult = useMemo(
+    () => findInitialTeamSchedulePeriod({
+      services: activeServices,
+      positions: data.positions,
+      teamId: workspaceTeamId,
+      schedules: data.schedules,
+    }),
+    [activeServices, data.positions, data.schedules, workspaceTeamId],
+  );
+  const initialPeriodRange = useMemo(() => resolveRangePreset("upcoming"), []);
+  const resolveSchedulePresetRange = useCallback(
+    (preset: Exclude<SchedulePeriodPreset, "custom">) =>
+      resolveRangePreset(preset),
+    [],
+  );
+  const {
+    preset: periodPreset,
+    range: periodRange,
+    selectPreset: selectRangePreset,
+    selectCustomRange,
+    setSelection: setPeriodSelection,
+    restoredFromPersistence,
+  } = useRangeSelection({
+    initialPreset: initialTeamPeriodResult.preset,
+    initialRange: initialPeriodRange,
+    persistence: {
+      key: churchId ? rangeSelectionStorageKey("schedules", churchId) : null,
+    },
+    resolvePresetRange: resolveSchedulePresetRange,
+  });
+  const hasExplicitPeriodSelectionRef = useRef(restoredFromPersistence);
+  const periodTeamIdRef = useRef(workspaceTeamId);
+  useEffect(() => {
+    if (periodTeamIdRef.current !== workspaceTeamId) {
+      periodTeamIdRef.current = workspaceTeamId;
+      hasExplicitPeriodSelectionRef.current = false;
+    }
+    if (hasExplicitPeriodSelectionRef.current) return;
+    setPeriodSelection(initialTeamPeriodResult.preset, initialPeriodRange, { persist: false });
+  }, [initialPeriodRange, initialTeamPeriodResult.preset, setPeriodSelection, workspaceTeamId]);
+  const canEdit = viewingSavedSchedule
+    ? canEditSelectedSchedule
+    : Boolean(
+      (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
+      (!editableTeamIds && canEditSelectedSchedule),
+    );
+  const persistedPeriodRange = useMemo(
+    () => persistedScheduleRange(periodPreset, periodRange),
+    [periodPreset, periodRange],
+  );
+  const teamPeriod = useMemo(
+    () => buildTeamSchedulePeriod({
+      services: activeServices,
+      positions: data.positions,
+      teamId: workspaceTeamId,
+      startDate: persistedPeriodRange.start,
+      endDate: persistedPeriodRange.end,
+    }),
+    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, workspaceTeamId],
+  );
+  const periodServiceIds = teamPeriod.serviceIds;
+  const generatedPeriodOccurrences = useMemo(
+    () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange),
+    [periodRange, teamPeriod.occurrences],
+  );
+  const periodScheduleMatch = findReusablePeriodSchedule({
+    schedules,
+    churchId,
+    teamId: workspaceTeamId,
+    startDate: persistedPeriodRange.start,
+    endDate: persistedPeriodRange.end,
+    serviceIds: periodServiceIds,
+    occurrences: generatedPeriodOccurrences,
+    visibleStartDate: periodRange.start,
+    visibleEndDate: periodRange.end,
+  });
+  const matchedPeriodSchedule = periodScheduleMatch.schedule;
+  const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && periodScheduleMatch.ambiguous;
+  const virtualPeriodSchedule = useMemo(() => {
+    if (
+      hasAmbiguousPeriodSchedules ||
+      !workspaceTeamId ||
+      generatedPeriodOccurrences.length === 0
+    ) {
+      return null;
+    }
+    return {
+      scheduleId: `virtual:${workspaceTeamId}:${persistedPeriodRange.start}:${persistedPeriodRange.end}`,
+      churchId,
+      name: formatSchedulePeriodName(persistedPeriodRange.start, persistedPeriodRange.end),
+      teamId: workspaceTeamId,
+      startDate: persistedPeriodRange.start,
+      endDate: persistedPeriodRange.end,
+      serviceIds: periodServiceIds,
+      occurrences: generatedPeriodOccurrences,
+      assignments: {},
+      guests: [],
+      source: "generated-period" as const,
+    };
+  }, [
+    churchId,
+    generatedPeriodOccurrences,
+    hasAmbiguousPeriodSchedules,
+    persistedPeriodRange.end,
+    persistedPeriodRange.start,
+    periodServiceIds,
+    workspaceTeamId,
+  ]);
+  // Normal navigation is occurrence-first. Saved schedule history is opened
+  // only by an explicit history/deep-link action.
+  const selectedScheduleRecord = viewingSavedSchedule
+    ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
+    : matchedPeriodSchedule || virtualPeriodSchedule;
+  useEffect(() => {
+    if (viewingSavedSchedule) return;
+    const nextId = matchedPeriodSchedule?.scheduleId || "";
+    if (selectedScheduleId !== nextId) setSelectedScheduleId(nextId, Boolean(nextId));
+  }, [matchedPeriodSchedule, selectedScheduleId, setSelectedScheduleId, viewingSavedSchedule]);
+  const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
+    ? selectedScheduleRecord
+    : null;
+  const latestScheduleRef = useRef(selectedSchedule);
+  useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
+  const [ensuringScheduleId, setEnsuringScheduleId] = useState("");
+  const pendingScheduleEnsureRef = useRef<{
+    virtualScheduleId: string;
+    promise: Promise<TeamSchedule>;
+  } | null>(null);
+  const ensureActiveSchedule = useCallback(async () => {
+    const active = latestScheduleRef.current;
+    if (!active) throw new Error("Choose a service period before scheduling.");
+    if (!active.scheduleId.startsWith("virtual:")) return active;
+    const virtualScheduleId = active.scheduleId;
+    if (!churchId) throw new Error("Church information is unavailable.");
+    const pending = pendingScheduleEnsureRef.current;
+    if (pending?.virtualScheduleId === virtualScheduleId) return pending.promise;
+    const request: { virtualScheduleId: string; promise: Promise<TeamSchedule> } = {
+      virtualScheduleId,
+      promise: Promise.resolve().then(async () => {
+        setEnsuringScheduleId(virtualScheduleId);
+        try {
+          const result = await trackTeamsSave(ensureTeamScheduleForPeriod(churchId, {
+            name: formatSuggestedScheduleName(persistedPeriodRange.start, persistedPeriodRange.end),
+            teamId: workspaceTeamId,
+            startDate: persistedPeriodRange.start,
+            endDate: persistedPeriodRange.end,
+            serviceIds: periodServiceIds,
+            occurrences: teamPeriod.occurrences,
+            visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          }));
+          onScheduleSaved(result.schedule);
+          if (latestScheduleRef.current?.scheduleId === virtualScheduleId) {
+            setSelectedScheduleId(result.schedule.scheduleId);
+            setViewingSavedSchedule(false);
+          }
+          return result.schedule;
+        } finally {
+          if (pendingScheduleEnsureRef.current === request) {
+            pendingScheduleEnsureRef.current = null;
+            setEnsuringScheduleId("");
+          }
+        }
+      }),
+    };
+    pendingScheduleEnsureRef.current = request;
+    return request.promise;
+  }, [
+    churchId,
+    generatedPeriodOccurrences,
+    teamPeriod.occurrences,
+    onScheduleSaved,
+    persistedPeriodRange.end,
+    persistedPeriodRange.start,
+    periodServiceIds,
+    setSelectedScheduleId,
+    trackTeamsSave,
+    workspaceTeamId,
+  ]);
+  const scheduleDisplayMembers = useMemo(
+    () => [
+      ...data.members,
+      ...(selectedSchedule?.guests || []).map((guest) => scheduleGuestToDisplayMember(guest, churchId)),
+    ],
+    [churchId, data.members, selectedSchedule?.guests],
+  );
+  const recentScheduleGuests = useMemo(() => {
+    const byId = new Map<string, TeamScheduleGuest>();
+    const newestFirst = [...schedules].sort((left, right) =>
+      String(right.startDate || "").localeCompare(String(left.startDate || "")),
+    );
+    [selectedScheduleRecord, ...newestFirst].forEach((schedule) => {
+      (schedule?.guests || []).forEach((guest) => {
+        if (!byId.has(guest.guestId)) byId.set(guest.guestId, guest);
+      });
+    });
+    return [...byId.values()];
+  }, [schedules, selectedScheduleRecord]);
+  const isSelectedScheduleLoading = Boolean(selectedScheduleRecord && !selectedSchedule);
+  const scheduleDraftKey = selectedScheduleRecord?.scheduleId || "new";
+  const [formState, setFormState] = useState<ScheduleFormState | null>(null);
+  const showForm = formState !== null;
+  const selectedTeam = data.teams.find((team) => team.teamId === selectedScheduleRecord?.teamId) || null;
   const defaultRange = useMemo(
     () =>
       getCreateScheduleDefaultRange({
@@ -444,24 +677,17 @@ const ScheduleTab = ({
     [data.schedules, data.services, defaultRange, defaultTeamId],
   );
 
-  const scheduleTeamFilterOptions = useMemo(
-    () => [
-      { label: "All teams", value: "" },
-      ...activeTeams.map((team) => ({ label: team.name, value: team.teamId })),
-    ],
-    [activeTeams],
-  );
+  const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
+    hasExplicitPeriodSelectionRef.current = true;
+    selectRangePreset(preset);
+    setViewingSavedSchedule(false);
+  };
+  const shiftPeriod = (direction: -1 | 1) => {
+    hasExplicitPeriodSelectionRef.current = true;
+    setPeriodSelection(periodPreset, shiftRange(periodPreset, periodRange, direction));
+    setViewingSavedSchedule(false);
+  };
 
-  const scheduleOptions = useMemo(
-    () =>
-      buildSchedulePickerOptions({
-        schedules,
-        teams: data.teams,
-        selectedScheduleId,
-        teamId: scheduleTeamFilter || "",
-      }),
-    [data.teams, schedules, scheduleTeamFilter, selectedScheduleId],
-  );
   // Positions are owned by a team, so a schedule's positions are the team's own positions.
   const schedulePositions = useMemo(
     () =>
@@ -474,23 +700,35 @@ const ScheduleTab = ({
     () => schedulePositions.map((position) => position.positionId),
     [schedulePositions],
   );
+  const serviceById = useMemo(
+    () => new Map(data.services.map((service) => [service.serviceId, service])),
+    [data.services],
+  );
   // Stable placeholder for dateless services in legacy schedules that carry no
   // occurrences and no date range. Computed once so it never drifts as the memo
   // below recomputes on data refreshes.
   const fallbackStartsAt = useMemo(() => new Date().toISOString(), []);
-  const scheduleOccurrences = useMemo(() => {
+  // What occurrences this schedule's services + date range would produce right
+  // now. Compared against the stored shape to detect grouping/timing drift.
+  const regeneratedOccurrences = useMemo(() => {
+    if (
+      !selectedSchedule?.startDate ||
+      !selectedSchedule?.endDate ||
+      selectedSchedule.scheduleId.startsWith("virtual:")
+    ) return null;
+    return generateScheduleOccurrences({
+      services: data.services,
+      serviceIds: selectedSchedule.serviceIds || [],
+      startDate: selectedSchedule.startDate,
+      endDate: selectedSchedule.endDate,
+    });
+  }, [data.services, selectedSchedule]);
+  const baseScheduleOccurrences = useMemo(() => {
     if (selectedSchedule?.occurrences?.length) return selectedSchedule.occurrences;
-    if (selectedSchedule?.startDate && selectedSchedule.endDate) {
-      return generateScheduleOccurrences({
-        services: data.services,
-        serviceIds: selectedSchedule.serviceIds || [],
-        startDate: selectedSchedule.startDate,
-        endDate: selectedSchedule.endDate,
-      });
-    }
+    if (regeneratedOccurrences) return regeneratedOccurrences;
     return (selectedSchedule?.serviceIds || [])
       .map((serviceId) => {
-        const service = data.services.find((item) => item.serviceId === serviceId);
+        const service = serviceById.get(serviceId);
         if (!service) return null;
         return {
           occurrenceId: service.serviceId,
@@ -500,18 +738,7 @@ const ScheduleTab = ({
         };
       })
       .filter(Boolean) as TeamScheduleOccurrence[];
-  }, [data.services, selectedSchedule, fallbackStartsAt]);
-  // What occurrences this schedule's services + date range would produce right
-  // now. Compared against the stored shape to detect grouping/timing drift.
-  const regeneratedOccurrences = useMemo(() => {
-    if (!selectedSchedule?.startDate || !selectedSchedule?.endDate) return null;
-    return generateScheduleOccurrences({
-      services: data.services,
-      serviceIds: selectedSchedule.serviceIds || [],
-      startDate: selectedSchedule.startDate,
-      endDate: selectedSchedule.endDate,
-    });
-  }, [data.services, selectedSchedule]);
+  }, [fallbackStartsAt, regeneratedOccurrences, selectedSchedule, serviceById]);
   // A saved schedule keeps its stored occurrence shape (so the grid stays stable);
   // if the services changed since — combined/un-combined, or a time/recurrence
   // edit — the stored occurrence ids drift from what we'd generate now, and the
@@ -547,6 +774,9 @@ const ScheduleTab = ({
   const [microphoneCatalogStatus, setMicrophoneCatalogStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
+  const [iems, setIems] = useState<ServiceEquipment[]>([]);
+  const [iemCatalogStatus, setIemCatalogStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(
     null,
   );
@@ -573,6 +803,11 @@ const ScheduleTab = ({
       targetOccurrences: regeneratedOccurrences,
       rows: selectedSchedule.microphoneAssignments,
     });
+    const iemAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
+      sourceOccurrences,
+      targetOccurrences: regeneratedOccurrences,
+      rows: selectedSchedule.iemAssignments,
+    });
     const additionalPositionSlots = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
       targetOccurrences: regeneratedOccurrences,
@@ -587,6 +822,7 @@ const ScheduleTab = ({
       occurrences: regeneratedOccurrences,
       assignments,
       microphoneAssignments,
+      iemAssignments,
       additionalPositionSlots,
     });
     try {
@@ -603,6 +839,7 @@ const ScheduleTab = ({
           occurrences: regeneratedOccurrences,
           assignments,
           microphoneAssignments,
+          iemAssignments,
           additionalPositionSlots,
         },
       );
@@ -623,19 +860,42 @@ const ScheduleTab = ({
     selectedSchedule,
     showToast,
   ]);
-  const requirementsByOccurrence = useMemo(() => {
+  const allRequirementsByOccurrence = useMemo(() => {
     const map = new Map<string, PositionRequirement[]>();
-    scheduleOccurrences.forEach((occurrence) => {
-      const service = data.services.find(
-        (item) => item.serviceId === occurrence.serviceId,
-      );
+    const allowLegacyFallback =
+      viewingSavedSchedule || selectedSchedule?.source == null;
+    baseScheduleOccurrences.forEach((occurrence) => {
+      const service = serviceById.get(occurrence.serviceId);
       map.set(
         occurrence.occurrenceId,
-        resolveOccurrenceRequirements({ occurrence, service, teamPositionIds }),
+        resolveOccurrenceRequirements({
+          occurrence,
+          service,
+          teamPositionIds,
+          fallbackToAllTeamPositions: allowLegacyFallback,
+        }),
       );
     });
     return map;
-  }, [data.services, scheduleOccurrences, teamPositionIds]);
+  }, [baseScheduleOccurrences, selectedSchedule?.source, serviceById, teamPositionIds, viewingSavedSchedule]);
+  const scheduleOccurrences = useMemo(() => {
+    if (viewingSavedSchedule) return baseScheduleOccurrences;
+    return filterOccurrencesToRange(baseScheduleOccurrences, periodRange).filter((occurrence) =>
+      (allRequirementsByOccurrence.get(occurrence.occurrenceId)?.length || 0) > 0 ||
+      (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
+        .some((slotKey) => {
+          const slot = parseSlotKey(slotKey);
+          return Boolean(slot && teamPositionIds.includes(slot.positionId));
+        }),
+    );
+  }, [allRequirementsByOccurrence, baseScheduleOccurrences, periodRange, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
+  const requirementsByOccurrence = useMemo(
+    () => new Map(scheduleOccurrences.map((occurrence) => [
+      occurrence.occurrenceId,
+      allRequirementsByOccurrence.get(occurrence.occurrenceId) || [],
+    ])),
+    [allRequirementsByOccurrence, scheduleOccurrences],
+  );
   const scheduleColumns = useMemo(
     () =>
       buildScheduleColumns({
@@ -653,29 +913,32 @@ const ScheduleTab = ({
       teamPositionIds,
     ],
   );
-  // Load the catalog only for a schedule whose team uses microphones. The
-  // selectors live alongside each role, so the list must be ready in the grid.
+  // Load each catalog only when its independent team option is enabled.
   useEffect(() => {
-    if (!selectedTeam?.usesMicrophoneAssignments || !churchId) {
+    if (!churchId) {
       setMicrophones([]);
       setMicrophoneCatalogStatus("idle");
+      setIems([]);
+      setIemCatalogStatus("idle");
       return undefined;
     }
     let cancelled = false;
-    setMicrophoneCatalogStatus("loading");
-    getServicePlanMicrophones(churchId)
-      .then((result) => {
-        if (cancelled) return;
-        setMicrophones(result.microphones);
-        setMicrophoneCatalogStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) setMicrophoneCatalogStatus("error");
-      });
+    if (selectedTeam?.usesMicrophoneAssignments) {
+      setMicrophoneCatalogStatus("loading");
+      getServicePlanMicrophones(churchId).then((result) => {
+        if (!cancelled) { setMicrophones(result.microphones); setMicrophoneCatalogStatus("ready"); }
+      }).catch(() => { if (!cancelled) setMicrophoneCatalogStatus("error"); });
+    } else { setMicrophones([]); setMicrophoneCatalogStatus("idle"); }
+    if (selectedTeam?.usesIemAssignments) {
+      setIemCatalogStatus("loading");
+      Promise.resolve().then(() => getServiceEquipment(churchId)).then((result) => {
+        if (!cancelled) { setIems(result.equipment.filter((item) => item.category === "iem")); setIemCatalogStatus("ready"); }
+      }).catch(() => { if (!cancelled) setIemCatalogStatus("error"); });
+    } else { setIems([]); setIemCatalogStatus("idle"); }
     return () => {
       cancelled = true;
     };
-  }, [churchId, selectedTeam?.usesMicrophoneAssignments]);
+  }, [churchId, selectedTeam?.usesIemAssignments, selectedTeam?.usesMicrophoneAssignments]);
   const teamMembers = useMemo(() => {
     if (!selectedTeam) return [] as TeamRosterMember[];
     const membersById = new Map(
@@ -708,8 +971,6 @@ const ScheduleTab = ({
       data.schedules,
     );
   }, [activeTeamMembers, data.schedules, selectedTeam]);
-  const [showForm, setShowForm] = useState(false);
-
   useEffect(() => {
     if (!showForm) return;
     const scrollContainer = document.querySelector(".teams-section-scroll");
@@ -732,14 +993,36 @@ const ScheduleTab = ({
   const [scheduleNotificationNextCursor, setScheduleNotificationNextCursor] = useState("");
   const [loadingScheduleNotifications, setLoadingScheduleNotifications] = useState(false);
   const [sendingNotificationIntentId, setSendingNotificationIntentId] = useState("");
-  const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
+  const [scheduleSmsPreview, setScheduleSmsPreview] = useState<{
+    intent: NotificationIntent;
+    recipientName: string;
+    phoneNumberSnapshot: string;
+    message: string;
+    segmentCount: number;
+    approvalVersion: string;
+  } | null>(null);
+  const [sendingScheduleSms, setSendingScheduleSms] = useState(false);
+  const scheduleSmsSendLockRef = useRef(false);
+  const [replacementIntentToClose, setReplacementIntentToClose] = useState<NotificationIntent | null>(null);
+  const [closingReplacement, setClosingReplacement] = useState(false);
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
   const wasMembersDrawerOpenRef = useRef(false);
+  const scheduleHistoryScheduleIdRef = useRef(selectedScheduleId);
+  const refreshScheduleNotificationHistory = useCallback(async (scheduleId: string) => {
+    const response = await getNotificationIntents(churchId, { scheduleId });
+    if (scheduleHistoryScheduleIdRef.current === scheduleId) {
+      setScheduleNotificationIntents((current) =>
+        mergeScheduleNotificationIntents(current, response.intents || []),
+      );
+      setScheduleNotificationNextCursor(response.nextCursor || "");
+    }
+  }, [churchId]);
   useEffect(() => {
     let active = true;
+    scheduleHistoryScheduleIdRef.current = selectedScheduleId;
     setScheduleNotificationIntents([]);
     setScheduleNotificationNextCursor("");
     if (!churchId || !selectedScheduleId || !canEdit) return () => { active = false; };
@@ -749,14 +1032,14 @@ const ScheduleTab = ({
       .catch((error) => { if (active) showApiErrorToast(showToast, error, "Could not load schedule message status."); })
       .finally(() => { if (active) setLoadingScheduleNotifications(false); });
     return () => { active = false; };
-  }, [canEdit, churchId, selectedSchedule?.assignments, selectedSchedule?.responses, selectedScheduleId, showToast]);
+  }, [canEdit, churchId, selectedScheduleId, showToast]);
 
   const loadOlderScheduleNotifications = async () => {
     if (!scheduleNotificationNextCursor || loadingScheduleNotifications || !selectedScheduleId) return;
     setLoadingScheduleNotifications(true);
     try {
       const response = await getNotificationIntents(churchId, { scheduleId: selectedScheduleId, cursor: scheduleNotificationNextCursor });
-      setScheduleNotificationIntents((current) => [...current, ...(response.intents || [])]);
+      setScheduleNotificationIntents((current) => mergeScheduleNotificationIntents(current, response.intents || []));
       setScheduleNotificationNextCursor(response.nextCursor || "");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not load older schedule message history.");
@@ -794,8 +1077,9 @@ const ScheduleTab = ({
   ).length;
 
   const handleSendScheduleIntent = async (intent: NotificationIntent) => {
-    if (!canEdit || sendingNotificationIntentId) return;
+    if (!canEdit || sendingNotificationIntentId || scheduleSmsPreview || intent.churchId !== churchId) return;
     setSendingNotificationIntentId(intent.intentId);
+    let awaitingConfirmation = false;
     try {
       const preview = await getNotificationIntentPreview(churchId, intent.intentId);
       if (!preview.preview.eligible) {
@@ -804,38 +1088,82 @@ const ScheduleTab = ({
       }
       const memberName = data.members.find((member) => member.memberId === intent.memberId);
       const recipient = memberName ? `${memberName.firstName} ${memberName.lastName}`.trim() : "this volunteer";
-      if (!window.confirm(`Send one SMS to ${recipient} at ${preview.preview.phoneNumberSnapshot}?\n\n${preview.preview.message}\n\n${preview.preview.segmentCount} SMS segment${preview.preview.segmentCount === 1 ? "" : "s"}.`)) return;
-      const result = await sendNotificationIntent(churchId, intent.intentId, preview.preview.approvalVersion);
-      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
-      setScheduleNotificationIntents(latest.intents || []);
-      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      setScheduleSmsPreview({
+        intent: { ...intent, intentId: preview.preview.intentId },
+        recipientName: recipient,
+        phoneNumberSnapshot: preview.preview.phoneNumberSnapshot,
+        message: preview.preview.message,
+        segmentCount: preview.preview.segmentCount,
+        approvalVersion: preview.preview.approvalVersion,
+      });
+      awaitingConfirmation = true;
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not send this schedule message.");
+      try {
+        await refreshScheduleNotificationHistory(intent.sourceId);
+      } catch { /* Keep the last known queue visible. */ }
+    } finally {
+      if (!awaitingConfirmation) setSendingNotificationIntentId("");
+    }
+  };
+
+  const confirmScheduleSms = async () => {
+    const preview = scheduleSmsPreview;
+    if (!preview || scheduleSmsSendLockRef.current) return;
+    if (preview.intent.churchId !== churchId) {
+      setScheduleSmsPreview(null);
+      setSendingNotificationIntentId("");
+      return;
+    }
+    scheduleSmsSendLockRef.current = true;
+    setScheduleSmsPreview(null);
+    setSendingScheduleSms(true);
+    try {
+      const result = await sendNotificationIntent(churchId, preview.intent.intentId, preview.approvalVersion);
+      await refreshScheduleNotificationHistory(preview.intent.sourceId);
       showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule message.");
       try {
-        const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
-        setScheduleNotificationIntents(latest.intents || []);
-        setScheduleNotificationNextCursor(latest.nextCursor || "");
+        await refreshScheduleNotificationHistory(preview.intent.sourceId);
       } catch { /* Keep the last known queue visible. */ }
     } finally {
+      scheduleSmsSendLockRef.current = false;
+      setSendingScheduleSms(false);
       setSendingNotificationIntentId("");
     }
   };
 
+  const cancelScheduleSms = () => {
+    if (scheduleSmsSendLockRef.current) return;
+    setScheduleSmsPreview(null);
+    setSendingNotificationIntentId("");
+  };
+
   const handleResolveReplacementIntent = async (intent: NotificationIntent) => {
     if (!canEdit || intent.replacementResolvedAt || ["sending", "unknown"].includes(intent.status)) return;
-    if (!window.confirm("Close this replacement invitation and allow the administrator to choose another candidate? The schedule assignment will not change.")) return;
+    setReplacementIntentToClose(intent);
+  };
+
+  const confirmResolveReplacementIntent = async () => {
+    const intent = replacementIntentToClose;
+    if (!intent || closingReplacement) return;
+    if (intent.churchId !== churchId) {
+      setReplacementIntentToClose(null);
+      return;
+    }
+    setClosingReplacement(true);
     setSendingNotificationIntentId(intent.intentId);
     try {
       await resolveReplacementNotificationIntent(churchId, intent.intentId);
-      const latest = await getNotificationIntents(churchId, { scheduleId: intent.sourceId });
-      setScheduleNotificationIntents(latest.intents || []);
-      setScheduleNotificationNextCursor(latest.nextCursor || "");
+      await refreshScheduleNotificationHistory(intent.sourceId);
       showToast("Invitation closed. The schedule remains unchanged.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not close this replacement invitation.");
     } finally {
+      setClosingReplacement(false);
       setSendingNotificationIntentId("");
+      setReplacementIntentToClose(null);
     }
   };
   const [autoFillConfirmOpen, setAutoFillConfirmOpen] = useState(false);
@@ -960,6 +1288,8 @@ const ScheduleTab = ({
   const pickerInputRef = useRef<HTMLInputElement>(null);
   const [pendingCellAssignment, setPendingCellAssignment] =
     useState<PendingCellAssignment | null>(null);
+  const [pendingMoveAssignment, setPendingMoveAssignment] =
+    useState<PendingCellAssignment | null>(null);
   const pendingCellAssignmentRef = useRef<PendingCellAssignment | null>(null);
   const [pendingCrossTeamConflict, setPendingCrossTeamConflict] =
     useState<PendingCrossTeamConflict | null>(null);
@@ -988,7 +1318,18 @@ const ScheduleTab = ({
     [trackTeamsSave],
   );
   const [detailOccurrenceId, setDetailOccurrenceId] = useState<string | null>(null);
-  const persistedDraft = scheduleDrafts[draftKey];
+  const formDraftKey = !formState
+    ? scheduleDraftKey
+    : formState.mode === "edit"
+      ? formState.scheduleId
+      : formState.mode === "copy"
+        ? getScheduleCopyDraftKey(formState.sourceScheduleId)
+        : CUSTOM_SCHEDULE_DRAFT_KEY;
+  const formSelectedSchedule = formState?.mode === "edit" ? selectedSchedule : null;
+  const formCopySourceSchedule = formState?.mode === "copy"
+    ? formState.sourceSchedule
+    : null;
+  const persistedDraft = scheduleDrafts[formDraftKey];
 
   useEffect(() => {
     pendingCellAssignmentRef.current = pendingCellAssignment;
@@ -1008,6 +1349,9 @@ const ScheduleTab = ({
 
   useEffect(() => {
     setPendingCellAssignment(null);
+    setPendingMoveAssignment((pending) =>
+      pending?.scheduleId === selectedScheduleId ? pending : null,
+    );
     setDetailOccurrenceId(null);
     setHighlightedMemberIds([]);
     setMemberPositionFilterIds([]);
@@ -1055,6 +1399,7 @@ const ScheduleTab = ({
             schedule.teamId !== selectedSchedule.teamId &&
             !schedule.archivedAt &&
             !isHydratedSchedule(schedule) &&
+            !selectedSchedule?.scheduleId.startsWith("virtual:") &&
             scheduleDateRangesOverlap(selectedSchedule, schedule),
         ),
       ),
@@ -1068,10 +1413,15 @@ const ScheduleTab = ({
       isMove,
       onConfirm,
       onCancel,
-    }: PendingCrossTeamConflict) => {
+      fingerprint = "",
+      conflicts = [],
+    }: Omit<PendingCrossTeamConflict, "fingerprint" | "conflicts"> &
+      Partial<Pick<PendingCrossTeamConflict, "fingerprint" | "conflicts">>) => {
       setPendingCrossTeamConflict({
         memberId,
         warning,
+        fingerprint,
+        conflicts,
         isMove,
         onConfirm,
         onCancel,
@@ -1091,8 +1441,10 @@ const ScheduleTab = ({
     setPendingAvailabilityConfirmation(null);
   }, []);
 
-  const assignmentConflictPayload = (allowCrossTeamConflict?: boolean) =>
-    allowCrossTeamConflict ? { allowOccurrenceConflict: true as const } : {};
+  const assignmentConflictPayload = (fingerprint?: string | boolean) =>
+    typeof fingerprint === "string" && fingerprint
+      ? { confirmedOccurrenceConflictFingerprint: fingerprint }
+      : {};
 
   const positionNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1131,24 +1483,26 @@ const ScheduleTab = ({
     [recordUndoEntry, selectedSchedule],
   );
 
-  // Re-apply one side of an undo entry against the live grid. Each cell is guarded
-  // against concurrent edits: if a teammate changed a cell since the entry was
-  // recorded, that cell is skipped rather than clobbered. Returns whether any cell
-  // was applied (false ⇒ the entry is stale, deferred for confirmation, or discarded).
+  // Re-apply an undo/redo entry as one atomic server mutation. The server compares
+  // the captured expected values again so a concurrent edit is skipped safely.
   const applyUndoEntry = useCallback(
-    (
-      entry: ScheduleUndoEntry,
-      direction: "undo" | "redo",
-      allowCrossTeamConflict = false,
-    ) => {
-      if (!canEdit || !selectedSchedule) return false;
-      if (selectedSchedule.scheduleId !== entry.scheduleId) return false;
+    (entry: ScheduleUndoEntry, direction: "undo" | "redo") => {
+      if (!canEdit || !selectedSchedule || selectedSchedule.scheduleId !== entry.scheduleId) {
+        if (direction === "undo") pushUndo(entry);
+        else pushRedo(entry);
+        return;
+      }
       const previousSchedule = selectedSchedule;
       let nextAssignments: TeamScheduleAssignments = {
         ...(selectedSchedule.assignments || {}),
       };
-      const verbs: ScheduleAssignmentVerb[] = [];
-      let applied = 0;
+      const changes: Array<{
+        serviceId: string;
+        positionSlotKey: string;
+        serviceDate: string;
+        expectedCell: ScheduleCellState;
+        assignment: ScheduleCellState;
+      }> = [];
       let skipped = 0;
       // Undo restores each cell's "before"; redo re-applies its "after". Process
       // undo in reverse so a member is cleared from a slot before being restored
@@ -1179,14 +1533,13 @@ const ScheduleTab = ({
           delete trimmed[change.occurrenceId];
           nextAssignments = trimmed;
         }
-        verbs.push(
-          ...diffCellToVerbs(liveCell, desired, {
-            serviceId: change.occurrenceId,
-            positionSlotKey: change.cellKey,
-            serviceDate: change.serviceDate,
-          }),
-        );
-        applied += 1;
+        changes.push({
+          serviceId: change.occurrenceId,
+          positionSlotKey: change.cellKey,
+          serviceDate: change.serviceDate,
+          expectedCell: liveCell,
+          assignment: serialized || "",
+        });
       }
       if (skipped > 0) {
         showToast(
@@ -1194,66 +1547,71 @@ const ScheduleTab = ({
           "neutral",
         );
       }
-      if (applied === 0) return false;
-
-      // Preflight cross-team conflicts before any write so a mid-batch 409 cannot
-      // leave earlier verbs persisted while the optimistic grid rolls back.
-      if (!allowCrossTeamConflict) {
-        for (const verb of verbs) {
-          if (!verb.memberId || verb.shadowAction === "remove") continue;
-          const warning = getCrossTeamConflictWarning(
-            verb.memberId,
-            verb.serviceId,
-          );
-          if (!warning) continue;
-          requestCrossTeamConflictConfirmation({
-            memberId: verb.memberId,
-            warning,
-            onConfirm: () => {
-              if (applyUndoEntry(entry, direction, true)) {
-                if (direction === "undo") pushRedo(entry);
-                else pushUndo(entry);
-              }
-            },
-            onCancel: () => {
-              if (direction === "undo") pushUndo(entry);
-              else pushRedo(entry);
-            },
-          });
-          return false;
-        }
+      if (changes.length === 0) {
+        if (direction === "undo") pushUndo(entry);
+        else pushRedo(entry);
+        return;
       }
 
       const mutationSeq = ++scheduleMutationSeqRef.current;
-      onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+      const optimisticSchedule = { ...selectedSchedule, assignments: nextAssignments };
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
       clearActiveSlot();
-      void enqueueAssignmentSave(async () => {
+      const persist = async (fingerprint?: string): Promise<void> => {
         try {
-          for (const verb of verbs) {
-            await updateTeamScheduleAssignment(
-              churchId,
-              previousSchedule.scheduleId,
-              {
-                ...verb,
-                ...assignmentConflictPayload(allowCrossTeamConflict),
-              },
-            );
-          }
-        } catch (error) {
+          const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentsBatch(
+            churchId,
+            previousSchedule.scheduleId,
+            {
+              changes,
+              skipChangedCells: true,
+              ...assignmentConflictPayload(fingerprint),
+            },
+          ));
           if (scheduleMutationSeqRef.current === mutationSeq) {
+            latestScheduleRef.current = response.schedule;
+            onScheduleSaved(response.schedule);
+          }
+          if (response.skipped.length) {
+            showToast("Some changes were edited by someone else and were left as they are.", "neutral");
+          }
+          if (direction === "undo") pushRedo(entry);
+          else pushUndo(entry);
+        } catch (error) {
+          const conflictDetails = getOccurrenceConflictDetails(error);
+          if (scheduleMutationSeqRef.current === mutationSeq) {
+            latestScheduleRef.current = previousSchedule;
             onScheduleSaved(previousSchedule);
           }
+          if (conflictDetails) {
+            requestCrossTeamConflictConfirmation({
+              memberId: conflictDetails.conflicts[0]?.memberId || "",
+              warning: "already scheduled in an overlapping service",
+              ...conflictDetails,
+              onConfirm: () => {
+                if (scheduleMutationSeqRef.current === mutationSeq) onScheduleSaved(optimisticSchedule);
+                void persist(conflictDetails.fingerprint);
+              },
+              onCancel: () => {
+                if (direction === "undo") pushUndo(entry);
+                else pushRedo(entry);
+              },
+            });
+            return;
+          }
+          if (direction === "undo") pushUndo(entry);
+          else pushRedo(entry);
           showApiErrorToast(showToast, error, "Could not undo that change.");
         }
-      });
-      return true;
+      };
+      void persist();
     },
     [
       canEdit,
       churchId,
       clearActiveSlot,
       enqueueAssignmentSave,
-      getCrossTeamConflictWarning,
       onScheduleSaved,
       pushRedo,
       pushUndo,
@@ -1270,15 +1628,15 @@ const ScheduleTab = ({
     if (autoFilling) return;
     const entry = takeUndo();
     if (!entry) return;
-    if (applyUndoEntry(entry, "undo")) pushRedo(entry);
-  }, [applyUndoEntry, autoFilling, pushRedo, takeUndo]);
+    applyUndoEntry(entry, "undo");
+  }, [applyUndoEntry, autoFilling, takeUndo]);
 
   const handleRedo = useCallback(() => {
     if (autoFilling) return;
     const entry = takeRedo();
     if (!entry) return;
-    if (applyUndoEntry(entry, "redo")) pushUndo(entry);
-  }, [applyUndoEntry, autoFilling, pushUndo, takeRedo]);
+    applyUndoEntry(entry, "redo");
+  }, [applyUndoEntry, autoFilling, takeRedo]);
 
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
@@ -1338,11 +1696,31 @@ const ScheduleTab = ({
   // "Who's serving" panel — so they aren't stranded in the schedule.
   const { returnTo: scheduleReturnTo, finishEditing: returnFromSchedule } =
     useTeamsReturnNavigation();
+  const { requestDiscardAction } = useTeamsNavigationGuard();
 
   useTeamsRestoreOnMount({
+    onSchedulePeriodRestore: (restore) => {
+      hasExplicitPeriodSelectionRef.current = true;
+      setViewingSavedSchedule(false);
+      updateScheduleTeamFilter(restore.teamId);
+      setPeriodSelection("custom", { start: restore.startDate, end: restore.endDate });
+      setSelectedScheduleId("");
+      setDetailOccurrenceId(restore.occurrenceId);
+    },
     onScheduleRestore: (restore) => {
       if (restore.scheduleId) {
-        setSelectedScheduleId(restore.scheduleId);
+        const restoredSchedule = schedules.find(
+          (schedule) => schedule.scheduleId === restore.scheduleId,
+        );
+        setViewingSavedSchedule(true);
+        if (restoredSchedule?.startDate && restoredSchedule.endDate) {
+          setPeriodSelection(
+            "custom",
+            { start: restoredSchedule.startDate, end: restoredSchedule.endDate },
+            { persist: false },
+          );
+        }
+        setSelectedScheduleId(restore.scheduleId, true);
       }
       if (restore.membersPanelOpen !== undefined) {
         setMembersPanelOpen(restore.membersPanelOpen);
@@ -1516,12 +1894,47 @@ const ScheduleTab = ({
         </p>
       );
     }
-    if (!selectedSchedule || !selectedTeam) {
+    if (!workspaceTeamId) {
       return (
         <p className={messageClassName}>
-          Create a team, services, and a schedule to start assigning members.
+          Choose a team to see its service occurrences.
         </p>
       );
+    }
+    if (hasAmbiguousPeriodSchedules) {
+      return (
+        <p className={messageClassName}>
+          Several saved schedules use this team and date range. Open{" "}
+          <button
+            type="button"
+            className="font-medium text-cyan-300 underline"
+            onClick={() => setIsBrowsingSchedules(true)}
+          >
+            Schedule history
+          </button>
+          {" "}to choose which schedule to use.
+        </p>
+      );
+    }
+    if (generatedPeriodOccurrences.length === 0 && !viewingSavedSchedule) {
+      return (
+        <p className={messageClassName}>
+          No service occurrences are configured for this period. Visit{" "}
+          <a className="font-medium text-cyan-300 underline" href="/teams-and-services/service-setup">Service Setup</a>{" "}
+          to review service schedules.
+        </p>
+      );
+    }
+    if (scheduleOccurrences.length > 0 && scheduleColumns.length === 0) {
+      return (
+        <p className={messageClassName}>
+          These services do not have any positions configured for this team. Update position requirements in{" "}
+          <a className="font-medium text-cyan-300 underline" href="/teams-and-services/service-setup">Service Setup</a>.
+        </p>
+      );
+    }
+    if (!selectedSchedule || !selectedTeam) {
+      return <p className={messageClassName}>Choose a team and date range to view scheduling needs.</p>;
     }
     return (
       <p className={messageClassName}>
@@ -1622,10 +2035,12 @@ const ScheduleTab = ({
     if (!selectedSchedule || !churchId) return;
     setIsSendingSchedule(true);
     try {
+      const schedule = await ensureActiveSchedule();
       const result = await sendTeamSchedule(
         churchId,
-        selectedSchedule.scheduleId,
+        schedule.scheduleId,
       );
+      await refreshScheduleNotificationHistory(schedule.scheduleId);
       const unreachable = result.unreachableMemberIds?.length || 0;
       const sentLabel =
         result.notified === 0
@@ -1639,14 +2054,14 @@ const ScheduleTab = ({
           : sentLabel,
         unreachable > 0 ? "warning" : "success",
       );
-      onScheduleSaved({ ...selectedSchedule, sentAt: result.sentAt });
+      onScheduleSaved({ ...schedule, sentAt: result.sentAt });
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule.");
     } finally {
       setIsSendingSchedule(false);
       setIsConfirmingSend(false);
     }
-  }, [churchId, onScheduleSaved, selectedSchedule, showToast]);
+  }, [churchId, ensureActiveSchedule, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -1657,7 +2072,7 @@ const ScheduleTab = ({
     sourcePositionSlotKey,
     allowBlockout = false,
     allowRecurringAvailability = false,
-    allowCrossTeamConflict = false,
+    confirmedOccurrenceConflictFingerprint,
   }: {
     serviceId: string;
     cellKey: string;
@@ -1667,11 +2082,11 @@ const ScheduleTab = ({
     sourcePositionSlotKey?: string;
     allowBlockout?: boolean;
     allowRecurringAvailability?: boolean;
-    allowCrossTeamConflict?: boolean;
+    confirmedOccurrenceConflictFingerprint?: string;
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     if (memberId) {
       const issue = getAssignmentIssue(memberId, serviceId, basePositionId, {
@@ -1729,29 +2144,14 @@ const ScheduleTab = ({
         showToast(blockingIssue, "neutral");
         return;
       }
-      const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
-      if (conflictWarning && !allowCrossTeamConflict) {
-        requestCrossTeamConflictConfirmation({
-          memberId,
-          warning: conflictWarning,
-          isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
-          onConfirm: () =>
-            void commitAssignment({
-              serviceId,
-              cellKey,
-              basePositionId,
-              memberId,
-              sourceServiceId,
-              sourcePositionSlotKey,
-              allowBlockout,
-              allowRecurringAvailability,
-              allowCrossTeamConflict: true,
-            }),
-        });
-        return;
-      }
     }
-    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+    const nextAssignments = { ...(previousSchedule.assignments || {}) };
     let targetRow = { ...(nextAssignments[serviceId] || {}) };
     if (sourceServiceId && sourcePositionSlotKey) {
       const sourceRow = { ...(nextAssignments[sourceServiceId] || {}) };
@@ -1822,15 +2222,19 @@ const ScheduleTab = ({
       undoChanges,
     );
 
-    const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    const optimisticSchedule = { ...previousSchedule, assignments: nextAssignments };
+    latestScheduleRef.current = optimisticSchedule;
+    onScheduleSaved(optimisticSchedule);
     clearActiveSlot();
 
-    await enqueueAssignmentSave(async () => {
+    const saveAssignment = async (fingerprint?: string) => {
+      const attemptSeq = ++scheduleMutationSeqRef.current;
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
       try {
         await updateTeamScheduleAssignment(
           churchId,
-          selectedSchedule.scheduleId,
+          previousSchedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -1842,62 +2246,35 @@ const ScheduleTab = ({
             ...(allowRecurringAvailability
               ? { allowRecurringAvailability: true }
               : {}),
-            ...assignmentConflictPayload(allowCrossTeamConflict),
+            ...assignmentConflictPayload(fingerprint),
           },
         );
       } catch (error) {
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(previousSchedule);
-        }
-        if (
-          memberId &&
-          !allowCrossTeamConflict &&
-          (error as { status?: number })?.status === 409
-        ) {
+        const conflictDetails = memberId ? getOccurrenceConflictDetails(error) : null;
+        if (conflictDetails) {
+          if (scheduleMutationSeqRef.current === attemptSeq) {
+            latestScheduleRef.current = previousSchedule;
+            onScheduleSaved(previousSchedule);
+          }
           requestCrossTeamConflictConfirmation({
-            memberId,
-            warning: "already scheduled on another team or in another role",
+            memberId: memberId || "",
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
             isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
             onConfirm: () => {
-              const retryMutationSeq = ++scheduleMutationSeqRef.current;
-              onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
-              void enqueueAssignmentSave(async () => {
-                try {
-                  await updateTeamScheduleAssignment(
-                    churchId,
-                    selectedSchedule.scheduleId,
-                    {
-                      serviceId,
-                      positionSlotKey: cellKey,
-                      memberId,
-                      serviceDate,
-                      sourceServiceId,
-                      sourcePositionSlotKey,
-                      ...(allowBlockout ? { allowBlockout: true } : {}),
-                      ...(allowRecurringAvailability
-                        ? { allowRecurringAvailability: true }
-                        : {}),
-                      ...assignmentConflictPayload(true),
-                    },
-                  );
-                } catch (retryError) {
-                  if (scheduleMutationSeqRef.current === retryMutationSeq) {
-                    onScheduleSaved(previousSchedule);
-                  }
-                  showApiErrorToast(
-                    showToast,
-                    retryError,
-                    "Could not update this assignment.",
-                  );
-                }
-              });
+              void enqueueAssignmentSave(() => saveAssignment(conflictDetails.fingerprint));
             },
           });
           return;
         }
+        if (scheduleMutationSeqRef.current === attemptSeq) {
+          latestScheduleRef.current = previousSchedule;
+          onScheduleSaved(previousSchedule);
+        }
         showApiErrorToast(showToast, error, "Could not update this assignment.");
       }
-    });
+    };
+    void enqueueAssignmentSave(() => saveAssignment(confirmedOccurrenceConflictFingerprint));
   };
 
   const commitGuestAssignment = async (
@@ -1912,14 +2289,15 @@ const ScheduleTab = ({
     );
     if (!occurrence || !column) return;
 
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const before =
       previousSchedule.assignments?.[activeSlot.occurrenceId]?.[
       activeSlot.columnKey
       ] ?? "";
     try {
+      const schedule = await ensureActiveSchedule();
       const response = await enqueueAssignmentSave(() =>
-        updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
+        updateTeamScheduleAssignment(churchId, schedule.scheduleId, {
           serviceId: activeSlot.occurrenceId,
           positionSlotKey: activeSlot.columnKey,
           memberId: null,
@@ -1951,23 +2329,25 @@ const ScheduleTab = ({
 
   const commitGuestEdit = async (guest: TeamScheduleGuest) => {
     if (!canEdit || !selectedSchedule) return;
-    const guests = (selectedSchedule.guests || []).map((existingGuest) =>
-      existingGuest.guestId === guest.guestId ? guest : existingGuest,
-    );
     try {
+      const schedule = await ensureActiveSchedule();
+      const guests = (schedule.guests || []).map((existingGuest) =>
+        existingGuest.guestId === guest.guestId ? guest : existingGuest,
+      );
       const response = await enqueueAssignmentSave(() =>
-        updateTeamSchedule(churchId, selectedSchedule.scheduleId, {
-          name: selectedSchedule.name,
-          description: selectedSchedule.description || "",
-          teamId: selectedSchedule.teamId,
-          startDate: selectedSchedule.startDate || "",
-          endDate: selectedSchedule.endDate || "",
-          serviceIds: selectedSchedule.serviceIds || [],
-          occurrences: selectedSchedule.occurrences,
-          assignments: selectedSchedule.assignments,
+        updateTeamSchedule(churchId, schedule.scheduleId, {
+          name: schedule.name,
+          description: schedule.description || "",
+          teamId: schedule.teamId,
+          startDate: schedule.startDate || "",
+          endDate: schedule.endDate || "",
+          serviceIds: schedule.serviceIds || [],
+          occurrences: schedule.occurrences,
+          assignments: schedule.assignments,
           guests,
-          microphoneAssignments: selectedSchedule.microphoneAssignments,
-          additionalPositionSlots: selectedSchedule.additionalPositionSlots,
+          microphoneAssignments: schedule.microphoneAssignments,
+          iemAssignments: schedule.iemAssignments,
+          additionalPositionSlots: schedule.additionalPositionSlots,
         }),
       );
       onScheduleSaved(response.schedule);
@@ -1999,6 +2379,7 @@ const ScheduleTab = ({
     if (memberId === currentPrimaryMemberId) return;
     if (currentPrimaryMemberId) {
       const nextPending: PendingCellAssignment = {
+        scheduleId: selectedSchedule?.scheduleId,
         serviceId,
         cellKey,
         basePositionId,
@@ -2008,6 +2389,18 @@ const ScheduleTab = ({
       };
       pendingCellAssignmentRef.current = nextPending;
       setPendingCellAssignment(nextPending);
+      return;
+    }
+    if (sourceServiceId && sourcePositionSlotKey) {
+      setPendingMoveAssignment({
+        scheduleId: selectedSchedule?.scheduleId,
+        serviceId,
+        cellKey,
+        basePositionId,
+        memberId,
+        sourceServiceId,
+        sourcePositionSlotKey,
+      });
       return;
     }
     void commitAssignment({
@@ -2025,6 +2418,29 @@ const ScheduleTab = ({
     const pending = pendingCellAssignmentRef.current;
     if (!pending) return;
     setPendingCellAssignment(null);
+    if (pending.sourceServiceId && pending.sourcePositionSlotKey) {
+      setPendingMoveAssignment(pending);
+      return;
+    }
+    void commitAssignment({
+      serviceId: pending.serviceId,
+      cellKey: pending.cellKey,
+      basePositionId: pending.basePositionId,
+      memberId: pending.memberId,
+      sourceServiceId: pending.sourceServiceId,
+      sourcePositionSlotKey: pending.sourcePositionSlotKey,
+    });
+  };
+
+  const confirmPendingMove = () => {
+    if (!canEdit || !pendingMoveAssignment) return;
+    const pending = pendingMoveAssignment;
+    if (!selectedSchedule || pending.scheduleId !== selectedSchedule.scheduleId) {
+      setPendingMoveAssignment(null);
+      showToast("The schedule changed. Choose this move again.", "neutral");
+      return;
+    }
+    setPendingMoveAssignment(null);
     void commitAssignment({
       serviceId: pending.serviceId,
       cellKey: pending.cellKey,
@@ -2118,7 +2534,7 @@ const ScheduleTab = ({
     action,
     allowBlockout = false,
     allowRecurringAvailability = false,
-    allowCrossTeamConflict = false,
+    confirmedOccurrenceConflictFingerprint,
   }: {
     serviceId: string;
     cellKey: string;
@@ -2128,11 +2544,11 @@ const ScheduleTab = ({
     action: "add" | "remove";
     allowBlockout?: boolean;
     allowRecurringAvailability?: boolean;
-    allowCrossTeamConflict?: boolean;
+    confirmedOccurrenceConflictFingerprint?: string;
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     if (action === "add") {
       const issue = getAssignmentIssue(
@@ -2191,29 +2607,15 @@ const ScheduleTab = ({
         showToast(blockingIssue, "neutral");
         return;
       }
-      const conflictWarning = getCrossTeamConflictWarning(memberId, serviceId);
-      if (conflictWarning && !allowCrossTeamConflict) {
-        requestCrossTeamConflictConfirmation({
-          memberId,
-          warning: conflictWarning,
-          onConfirm: () =>
-            void commitShadowAssignment({
-              serviceId,
-              cellKey,
-              basePositionId,
-              memberId,
-              shadowKind,
-              action,
-              allowBlockout,
-              allowRecurringAvailability,
-              allowCrossTeamConflict: true,
-            }),
-        });
-        return;
-      }
     }
 
-    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+    const nextAssignments = { ...(previousSchedule.assignments || {}) };
     const targetRow = { ...(nextAssignments[serviceId] || {}) };
     const targetCell = normalizeAssignmentCell(targetRow[cellKey]);
     const nextShadows =
@@ -2255,7 +2657,7 @@ const ScheduleTab = ({
     );
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
     if (action === "add") {
       clearActiveSlot();
     }
@@ -2264,7 +2666,7 @@ const ScheduleTab = ({
       try {
         await updateTeamScheduleAssignment(
           churchId,
-          selectedSchedule.scheduleId,
+          previousSchedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -2276,12 +2678,34 @@ const ScheduleTab = ({
             ...(allowRecurringAvailability
               ? { allowRecurringAvailability: true }
               : {}),
-            ...assignmentConflictPayload(allowCrossTeamConflict),
+            ...assignmentConflictPayload(confirmedOccurrenceConflictFingerprint),
           },
         );
       } catch (error) {
+        const conflictDetails = action === "add" ? getOccurrenceConflictDetails(error) : null;
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
+        }
+        if (conflictDetails) {
+          requestCrossTeamConflictConfirmation({
+            memberId,
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
+            onConfirm: () =>
+              void commitShadowAssignment({
+                serviceId,
+                cellKey,
+                basePositionId,
+                memberId,
+                shadowKind,
+                action,
+                allowBlockout,
+                allowRecurringAvailability,
+                confirmedOccurrenceConflictFingerprint: conflictDetails.fingerprint,
+              }),
+          });
+          return;
         }
         showApiErrorToast(showToast, error, "Could not update this assignment.");
       }
@@ -2296,17 +2720,17 @@ const ScheduleTab = ({
   const commitRowAssignments = async (
     occurrenceId: string,
     entries: RowPasteApplyEntry[],
-    allowCrossTeamConflict = false,
+    confirmedOccurrenceConflictFingerprint?: string,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find(
       (item) => item.occurrenceId === occurrenceId,
     );
     const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
 
-    const nextAssignments = { ...(selectedSchedule.assignments || {}) };
-    const targetRow = { ...(nextAssignments[occurrenceId] || {}) };
+    let nextAssignments = { ...(selectedSchedule.assignments || {}) };
+    let targetRow = { ...(nextAssignments[occurrenceId] || {}) };
     const applied: RowPasteApplyEntry[] = [];
     const usedMemberIds = new Set<string>();
     for (const entry of entries) {
@@ -2327,20 +2751,18 @@ const ScheduleTab = ({
       return;
     }
 
-    // Confirm every cross-team conflict before writing so a mid-batch 409 cannot
-    // leave earlier cells persisted while the optimistic row rolls back.
-    if (!allowCrossTeamConflict) {
-      for (const entry of applied) {
-        const warning = getCrossTeamConflictWarning(entry.memberId, occurrenceId);
-        if (!warning) continue;
-        requestCrossTeamConflictConfirmation({
-          memberId: entry.memberId,
-          warning,
-          onConfirm: () =>
-            void commitRowAssignments(occurrenceId, entries, true),
-        });
-        return;
-      }
+    try {
+      previousSchedule = await ensureActiveSchedule();
+      nextAssignments = { ...(previousSchedule.assignments || {}) };
+      targetRow = { ...(nextAssignments[occurrenceId] || {}) };
+      applied.forEach((entry) => {
+        const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
+        const nextCell = serializeAssignmentCell({ primaryMemberId: entry.memberId, shadows: cell.shadows });
+        if (nextCell) targetRow[entry.columnKey] = nextCell;
+      });
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
     }
 
     if (Object.keys(targetRow).length > 0) {
@@ -2349,31 +2771,62 @@ const ScheduleTab = ({
       delete nextAssignments[occurrenceId];
     }
 
+    const changes = applied.map((entry) => ({
+      serviceId: occurrenceId,
+      positionSlotKey: entry.columnKey,
+      serviceDate,
+      expectedCell: previousSchedule.assignments?.[occurrenceId]?.[entry.columnKey] || "" as const,
+      assignment: nextAssignments[occurrenceId]?.[entry.columnKey] || "" as const,
+    }));
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    const optimisticSchedule = { ...previousSchedule, assignments: nextAssignments };
+    latestScheduleRef.current = optimisticSchedule;
+    onScheduleSaved(optimisticSchedule);
+    recordAssignmentChange(`paste ${applied.length} assignments`, changes.map((change) => ({
+      occurrenceId: change.serviceId,
+      cellKey: change.positionSlotKey,
+      serviceDate: change.serviceDate,
+      before: change.expectedCell,
+      after: change.assignment,
+    })));
 
-    await enqueueAssignmentSave(async () => {
+    const save = async (fingerprint?: string): Promise<void> => {
       try {
-        for (const entry of applied) {
-          await updateTeamScheduleAssignment(churchId, selectedSchedule.scheduleId, {
-            serviceId: occurrenceId,
-            positionSlotKey: entry.columnKey,
-            memberId: entry.memberId,
-            serviceDate,
-            ...assignmentConflictPayload(allowCrossTeamConflict),
-          });
+        const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentsBatch(
+          churchId,
+          previousSchedule.scheduleId,
+          { changes, ...assignmentConflictPayload(fingerprint) },
+        ));
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
+          onScheduleSaved(response.schedule);
         }
         showToast(
           `Assigned ${applied.length} ${applied.length === 1 ? "person" : "people"} from your pasted row.`,
           "success",
         );
       } catch (error) {
+        const conflictDetails = getOccurrenceConflictDetails(error);
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
+        }
+        if (conflictDetails) {
+          requestCrossTeamConflictConfirmation({
+            memberId: conflictDetails.conflicts[0]?.memberId || applied[0].memberId,
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
+            onConfirm: () => {
+              if (scheduleMutationSeqRef.current === mutationSeq) onScheduleSaved(optimisticSchedule);
+              void save(conflictDetails.fingerprint);
+            },
+          });
+          return;
         }
         showApiErrorToast(showToast, error, "Could not paste this row.");
       }
-    });
+    };
+    await save(confirmedOccurrenceConflictFingerprint);
   };
 
   // Writes an auto-fill plan's entries the same way commitRowAssignments does,
@@ -2389,7 +2842,13 @@ const ScheduleTab = ({
     unfilledCount: number,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
-    const previousSchedule = selectedSchedule;
+    let previousSchedule: TeamSchedule;
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
     const serviceDateByOccurrenceId = new Map(
       scheduleOccurrences.map((occurrence) => [
         occurrence.occurrenceId,
@@ -2399,11 +2858,22 @@ const ScheduleTab = ({
 
     // Precompute the full before/after diff up front so undo/redo treats the
     // whole batch as one step, independent of how the reveal below is paced.
-    const finalAssignments = { ...(selectedSchedule.assignments || {}) };
+    const finalAssignments = { ...(previousSchedule.assignments || {}) };
     const undoChanges: ScheduleCellChange[] = [];
+    const batchChanges: Array<{
+      serviceId: string;
+      positionSlotKey: string;
+      serviceDate: string;
+      expectedCell: ScheduleCellState;
+      assignment: ScheduleCellState;
+    }> = [];
     entries.forEach((entry) => {
       const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
-      const before = previousSchedule.assignments?.[entry.occurrenceId]?.[entry.columnKey] ?? "";
+      const before = serializeAssignmentCell(
+        normalizeAssignmentCell(
+          previousSchedule.assignments?.[entry.occurrenceId]?.[entry.columnKey],
+        ),
+      ) || "";
       const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
       const nextCell = serializeAssignmentCell({
         primaryMemberId: entry.memberId,
@@ -2420,6 +2890,13 @@ const ScheduleTab = ({
         before,
         after: finalAssignments[entry.occurrenceId]?.[entry.columnKey] ?? "",
       });
+      batchChanges.push({
+        serviceId: entry.occurrenceId,
+        positionSlotKey: entry.columnKey,
+        serviceDate: serviceDateByOccurrenceId.get(entry.occurrenceId) || "",
+        expectedCell: before,
+        assignment: nextCell || "",
+      });
     });
     recordAssignmentChange(
       `auto-fill ${entries.length} ${entries.length === 1 ? "slot" : "slots"}`,
@@ -2432,25 +2909,56 @@ const ScheduleTab = ({
       ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${unfilledCount === 1 ? "needs" : "need"
       } a person you'll have to assign manually.`
       : "";
-    // Persist the completed plan as one schedule update. Sending each entry one
-    // at a time made a large auto-fill slow and left it vulnerable to a page
-    // change midway through. Start saving before the local reveal so the two
-    // can run together, then keep autoFilling true until this request settles.
+    // Persist the completed plan as one targeted assignment batch. This keeps
+    // the save independent of filtered occurrence lists and unrelated schedule
+    // state. Start saving before the local reveal so both run together, then
+    // keep autoFilling true until this request settles.
     let saveFailed = false;
-    const save = enqueueAssignmentSave(() =>
-      updateTeamSchedule(churchId, selectedSchedule.scheduleId, {
-        name: selectedSchedule.name,
-        description: selectedSchedule.description || "",
-        teamId: selectedSchedule.teamId,
-        startDate: selectedSchedule.startDate || "",
-        endDate: selectedSchedule.endDate || "",
-        serviceIds: selectedSchedule.serviceIds || [],
-        occurrences: scheduleOccurrences,
-        assignments: finalAssignments,
-        microphoneAssignments: selectedSchedule.microphoneAssignments,
-        additionalPositionSlots: selectedSchedule.additionalPositionSlots,
-      }),
-    );
+    const saveWithConflictConfirmation = async (fingerprint?: string): Promise<void> => {
+      try {
+        const response = await enqueueAssignmentSave(() =>
+          updateTeamScheduleAssignmentsBatch(churchId, previousSchedule.scheduleId, {
+            changes: batchChanges,
+            ...assignmentConflictPayload(fingerprint),
+          }),
+        );
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(response.schedule);
+        }
+        showToast(
+          `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
+          "success",
+        );
+      } catch (error) {
+        const conflictDetails = getOccurrenceConflictDetails(error);
+        if (conflictDetails) {
+          saveFailed = true;
+          setJustFilledCellKeys(() => new Set());
+          if (scheduleMutationSeqRef.current === mutationSeq) {
+            onScheduleSaved(previousSchedule);
+          }
+          requestCrossTeamConflictConfirmation({
+            memberId: conflictDetails.conflicts[0]?.memberId || "",
+            warning: "already scheduled in an overlapping service",
+            ...conflictDetails,
+            onConfirm: () => {
+              if (scheduleMutationSeqRef.current === mutationSeq) {
+                onScheduleSaved({ ...previousSchedule, assignments: finalAssignments });
+              }
+              void saveWithConflictConfirmation(conflictDetails.fingerprint);
+            },
+          });
+          return;
+        }
+        saveFailed = true;
+        setJustFilledCellKeys(() => new Set());
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          onScheduleSaved(previousSchedule);
+        }
+        showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+      }
+    };
+    const save = saveWithConflictConfirmation();
     // The reveal may outlast a fast rejected request. Observe it immediately so
     // the browser does not report a transient unhandled rejection; stop adding
     // highlight keys and clear any already shown so rolled-back cells do not
@@ -2465,7 +2973,7 @@ const ScheduleTab = ({
     // pacing is capped so a big schedule doesn't take forever to watch, but a
     // small one still gets a visible beat per slot.
     const stepDelayMs = Math.round(Math.max(35, Math.min(150, 1800 / entries.length)));
-    let revealedAssignments = { ...(selectedSchedule.assignments || {}) };
+    let revealedAssignments = { ...(previousSchedule.assignments || {}) };
     for (const entry of entries) {
       if (saveFailed) break;
       const targetRow = { ...(revealedAssignments[entry.occurrenceId] || {}) };
@@ -2495,22 +3003,7 @@ const ScheduleTab = ({
       await sleep(stepDelayMs);
     }
 
-    try {
-      const response = await save;
-      if (scheduleMutationSeqRef.current === mutationSeq) {
-        onScheduleSaved(response.schedule);
-      }
-      showToast(
-        `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
-        "success",
-      );
-    } catch (error) {
-      setJustFilledCellKeys(() => new Set());
-      if (scheduleMutationSeqRef.current === mutationSeq) {
-        onScheduleSaved(previousSchedule);
-      }
-      showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
-    }
+    await save;
   };
 
   const handleAutoFillSchedule = async () => {
@@ -2529,6 +3022,10 @@ const ScheduleTab = ({
     autoFillRunningRef.current = true;
     try {
       let getAutoFillCrossTeamConflictWarning = getCrossTeamConflictWarning;
+      const overlappingSchedule = data.schedules.find(
+        (schedule) => schedule.teamId !== selectedSchedule.teamId &&
+          !schedule.archivedAt && scheduleDateRangesOverlap(selectedSchedule, schedule),
+      );
       const hasOverlappingTeamSchedule = data.schedules.some(
         (schedule) =>
           schedule.scheduleId !== selectedSchedule.scheduleId &&
@@ -2544,7 +3041,9 @@ const ScheduleTab = ({
           // person who is already serving elsewhere.
           const detail = await getTeamScheduleDetail(
             churchId,
-            selectedSchedule.scheduleId,
+            selectedSchedule.scheduleId.startsWith("virtual:")
+              ? overlappingSchedule?.scheduleId || ""
+              : selectedSchedule.scheduleId,
           );
           getAutoFillCrossTeamConflictWarning = (memberId, occurrenceId) =>
             formatCrossTeamScheduleConflictWarning(
@@ -2625,6 +3124,7 @@ const ScheduleTab = ({
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
     try {
+      const schedule = await ensureActiveSchedule();
       const { member } = await createTeamRosterMember(churchId, {
         firstName: trimmedFirst,
         lastName: lastName.trim(),
@@ -2640,7 +3140,7 @@ const ScheduleTab = ({
       await enqueueAssignmentSave(async () => {
         const response = await updateTeamScheduleAssignment(
           churchId,
-          selectedSchedule.scheduleId,
+          schedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -2868,9 +3368,10 @@ const ScheduleTab = ({
     if (!selectedSchedule) return;
     setCopyingLink(true);
     try {
+      const schedule = await ensureActiveSchedule();
       const { publicToken } = await getTeamSchedulePublicLink(
         churchId,
-        selectedSchedule.scheduleId,
+        schedule.scheduleId,
       );
       const url = buildTeamSchedulePublicUrl(publicToken);
       await navigator.clipboard.writeText(url);
@@ -2880,29 +3381,31 @@ const ScheduleTab = ({
     } finally {
       setCopyingLink(false);
     }
-  }, [canEdit, churchId, selectedSchedule, showToast]);
+  }, [canEdit, churchId, ensureActiveSchedule, selectedSchedule, showToast]);
 
 
-  // Seed the "new schedule" draft from the selected schedule and open the form
-  // in create mode. The operator typically just changes the date; assignments are
-  // remapped onto the new dates on save.
+  // Seed a copy-specific draft and open an explicit create flow. The operator
+  // typically just changes the date; assignments are remapped onto the new
+  // dates on save.
   const handleCopySchedule = useCallback(() => {
     if (!canEdit || !selectedSchedule) return;
     onScheduleDraftFlush(
-      "new",
+      getScheduleCopyDraftKey(selectedSchedule.scheduleId),
       buildScheduleCopyDraft({
         source: selectedSchedule,
         occurrences: scheduleOccurrences,
       }),
     );
-    setSelectedScheduleId("");
-    setShowForm(true);
+    setFormState({
+      mode: "copy",
+      sourceScheduleId: selectedSchedule.scheduleId,
+      sourceSchedule: selectedSchedule,
+    });
   }, [
     canEdit,
     onScheduleDraftFlush,
     scheduleOccurrences,
     selectedSchedule,
-    setSelectedScheduleId,
   ]);
 
   const occurrenceTimingById = useMemo(() => {
@@ -3278,42 +3781,6 @@ const ScheduleTab = ({
     });
   };
 
-  const handlePrepareReplacementInvite = async (memberId: string) => {
-    if (!canEdit || !activeSlot || !activeSlotMeta || !selectedSchedule || preparingReplacementMemberId) return;
-    if (!activeSlotMeta.isVacantOrDeclined) {
-      showToast("Replacement invitations are available for empty or declined slots.", "warning");
-      return;
-    }
-    const issue = activeSlotGetIssue(memberId);
-    const warning = activeSlotGetWarning(memberId);
-    const assignedElsewhere = getActiveSlotMoveSource(memberId);
-    const crossTeamWarning = getCrossTeamConflictWarning(memberId, activeSlot.occurrenceId);
-    const hardWarnings = ["Marked this service unavailable on intake", "Blocked out", "Unavailable this week of the month"];
-    if (issue || assignedElsewhere || crossTeamWarning || hardWarnings.some((value) => warning.includes(value))) {
-      showToast(issue || (assignedElsewhere ? "This volunteer is already assigned to another position in this service." : crossTeamWarning || warning), "warning");
-      return;
-    }
-    setPreparingReplacementMemberId(memberId);
-    showToast("Preparing a replacement invitation for review…", "neutral");
-    try {
-      await prepareReplacementNotificationIntent(churchId, {
-        scheduleId: selectedSchedule.scheduleId,
-        occurrenceId: activeSlot.occurrenceId,
-        cellKey: activeSlot.columnKey,
-        memberId,
-      });
-      const response = await getNotificationIntents(churchId, { scheduleId: selectedSchedule.scheduleId });
-      setScheduleNotificationIntents(response.intents || []);
-      setScheduleNotificationNextCursor(response.nextCursor || "");
-      setScheduleMessagesOpen(true);
-      showToast("Replacement invitation prepared for review. No schedule assignment was changed.", "success");
-    } catch (error) {
-      showApiErrorToast(showToast, error, "Could not prepare this replacement invitation.");
-    } finally {
-      setPreparingReplacementMemberId("");
-    }
-  };
-
   const activeSlotGetIssue = useCallback(
     (memberId: string) => {
       if (!activeSlot || !activeSlotMeta) return "Not available";
@@ -3473,7 +3940,7 @@ const ScheduleTab = ({
 
   const commitActiveSlotSwapRecommendation = async (
     recommendation: ScheduleAssignmentSwapRecommendation,
-    allowCrossTeamConflict = false,
+    confirmedFingerprint?: string,
   ) => {
     if (!canEdit || !selectedSchedule) return;
     const plan = activeSlotSwapRecommendations.find(
@@ -3507,39 +3974,23 @@ const ScheduleTab = ({
       showToast(issue, "neutral");
       return;
     }
-    const candidateConflictWarning = getCrossTeamConflictWarning(
-      plan.candidateMemberId,
-      plan.serviceId,
-    );
-    const currentConflictWarning = getCrossTeamConflictWarning(
-      plan.currentMemberId,
-      plan.serviceId,
-    );
-    const conflictWarning = candidateConflictWarning || currentConflictWarning;
-    if (conflictWarning && !allowCrossTeamConflict) {
-      requestCrossTeamConflictConfirmation({
-        memberId: candidateConflictWarning
-          ? plan.candidateMemberId
-          : plan.currentMemberId,
-        warning: conflictWarning,
-        isMove: true,
-        onConfirm: () =>
-          void commitActiveSlotSwapRecommendation(recommendation, true),
-      });
+    let previousSchedule: TeamSchedule;
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;
     }
-
-    const previousSchedule = selectedSchedule;
     const nextAssignments: TeamScheduleAssignments = {
-      ...(selectedSchedule.assignments || {}),
+      ...(previousSchedule.assignments || {}),
     };
     const occurrenceAssignments = {
       ...(nextAssignments[plan.serviceId] || {}),
     };
     const previousTargetValue =
-      selectedSchedule.assignments?.[plan.serviceId]?.[plan.targetCellKey] ?? "";
+      previousSchedule.assignments?.[plan.serviceId]?.[plan.targetCellKey] ?? "";
     const previousSourceValue =
-      selectedSchedule.assignments?.[plan.serviceId]?.[plan.sourceCellKey] ?? "";
+      previousSchedule.assignments?.[plan.serviceId]?.[plan.sourceCellKey] ?? "";
     const targetCell = normalizeAssignmentCell(previousTargetValue);
     const sourceCell = normalizeAssignmentCell(previousSourceValue);
     const nextTargetValue = serializeAssignmentCell({
@@ -3581,23 +4032,39 @@ const ScheduleTab = ({
     ]);
 
     const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...selectedSchedule, assignments: nextAssignments });
+    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
     clearActiveSlot();
 
     await enqueueAssignmentSave(async () => {
       try {
-        await updateTeamScheduleAssignmentSwap(churchId, selectedSchedule.scheduleId, {
+        await updateTeamScheduleAssignmentSwap(churchId, previousSchedule.scheduleId, {
           serviceId: plan.serviceId,
           targetPositionSlotKey: plan.targetCellKey,
           sourcePositionSlotKey: plan.sourceCellKey,
           currentMemberId: plan.currentMemberId,
           candidateMemberId: plan.candidateMemberId,
           serviceDate: plan.serviceDate,
-          ...assignmentConflictPayload(allowCrossTeamConflict),
+          ...assignmentConflictPayload(confirmedFingerprint),
         });
       } catch (error) {
+        const conflictDetails = getOccurrenceConflictDetails(error);
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = previousSchedule;
           onScheduleSaved(previousSchedule);
+        }
+        if (conflictDetails) {
+          requestCrossTeamConflictConfirmation({
+            memberId: conflictDetails.conflicts[0]?.memberId || plan.candidateMemberId,
+            warning: "already scheduled in an overlapping service",
+            isMove: true,
+            ...conflictDetails,
+            onConfirm: () =>
+              void commitActiveSlotSwapRecommendation(
+                recommendation,
+                conflictDetails.fingerprint,
+              ),
+          });
+          return;
         }
         showApiErrorToast(showToast, error, "Could not apply this swap.");
       }
@@ -3723,6 +4190,13 @@ const ScheduleTab = ({
     // over SSE — the count would only catch up on a full reload.
     selectedSchedule?.responses,
   ]);
+  const staffingProgress = useMemo(
+    () => [...fillByOccurrence.values()].reduce(
+      (total, fill) => ({ required: total.required + fill.required, filled: total.filled + fill.filled }),
+      { required: 0, filled: 0 },
+    ),
+    [fillByOccurrence],
+  );
 
   // The soonest service from today onward, highlighted in every layout.
   const nextUpcomingOccurrenceId = useMemo(
@@ -3733,7 +4207,7 @@ const ScheduleTab = ({
   const microphoneHoldersByOccurrence = useMemo(() => {
     const holdersByOccurrence = new Map<
       string,
-      Map<string, ScheduleMicrophoneHolder[]>
+      Map<string, ScheduleEquipmentHolder[]>
     >();
     if (!selectedSchedule || !selectedTeam?.usesMicrophoneAssignments) {
       return holdersByOccurrence;
@@ -3742,7 +4216,7 @@ const ScheduleTab = ({
       const requirements = requirementsByOccurrence.get(occurrence.occurrenceId);
       const additionalSlots =
         selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId] || [];
-      const holdersByMicrophone = new Map<string, ScheduleMicrophoneHolder[]>();
+      const holdersByMicrophone = new Map<string, ScheduleEquipmentHolder[]>();
       scheduleColumns.forEach((column) => {
         if (!isOccurrenceStaffingSlot(column, requirements, additionalSlots)) return;
         const memberId = getCellPrimaryMemberId(
@@ -3776,14 +4250,43 @@ const ScheduleTab = ({
     selectedTeam?.usesMicrophoneAssignments,
   ]);
 
+  const iemHoldersByOccurrence = useMemo(() => {
+    const holdersByOccurrence = new Map<string, Map<string, { slotKey: string; label: string }[]>>();
+    if (!selectedTeam?.usesIemAssignments || !selectedSchedule) return holdersByOccurrence;
+    scheduleOccurrences.forEach((occurrence) => {
+      const holdersByIem = new Map<string, { slotKey: string; label: string }[]>();
+      scheduleColumns.forEach((column) => {
+        const cell = selectedSchedule.assignments?.[occurrence.occurrenceId]?.[column.columnKey];
+        const memberId = getCellPrimaryMemberId(cell);
+        const member = scheduleDisplayMembers.find((item) => item.memberId === memberId);
+        const label = member ? scheduleMemberName(member, duplicateScheduleFirstNames) : column.label;
+        const slotKey = `${occurrence.occurrenceId}:${column.columnKey}`;
+        (selectedSchedule.iemAssignments?.[occurrence.occurrenceId]?.[column.columnKey] || []).forEach((iemId) => {
+          const holders = holdersByIem.get(iemId) || [];
+          holders.push({ slotKey, label });
+          holdersByIem.set(iemId, holders);
+        });
+      });
+      holdersByOccurrence.set(occurrence.occurrenceId, holdersByIem);
+    });
+    return holdersByOccurrence;
+  }, [duplicateScheduleFirstNames, scheduleColumns, scheduleDisplayMembers, scheduleOccurrences, selectedSchedule, selectedTeam?.usesIemAssignments]);
+
   const saveMicrophoneAssignment = useCallback(
     async (
       { occurrenceId, columnKey }: { occurrenceId: string; columnKey: string },
       microphoneIds: string[],
     ) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      const previousSchedule = selectedSchedule;
-      const assignments = { ...(selectedSchedule.microphoneAssignments || {}) };
+      let baseSchedule: TeamSchedule;
+      try {
+        baseSchedule = await ensureActiveSchedule();
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not start this schedule.");
+        return;
+      }
+      const previousSchedule = baseSchedule;
+      const assignments = { ...(baseSchedule.microphoneAssignments || {}) };
       const occurrenceAssignments = { ...(assignments[occurrenceId] || {}) };
       if (microphoneIds.length) occurrenceAssignments[columnKey] = microphoneIds;
       else delete occurrenceAssignments[columnKey];
@@ -3794,11 +4297,13 @@ const ScheduleTab = ({
       }
 
       const mutationSeq = ++scheduleMutationSeqRef.current;
-      setSavingMicrophoneSlot(`${selectedSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
-      onScheduleSaved({ ...selectedSchedule, microphoneAssignments: assignments });
+      setSavingMicrophoneSlot(`${baseSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
+      const optimisticSchedule = { ...baseSchedule, microphoneAssignments: assignments };
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
       try {
         const response = await enqueueAssignmentSave(() =>
-          updateTeamScheduleAssignmentMicrophones(churchId, selectedSchedule.scheduleId, {
+          updateTeamScheduleAssignmentMicrophones(churchId, baseSchedule.scheduleId, {
             serviceId: occurrenceId,
             positionSlotKey: columnKey,
             microphoneIds,
@@ -3808,11 +4313,22 @@ const ScheduleTab = ({
         // replace a newer optimistic microphone choice made while it was in
         // flight; the queued request will persist that newer choice next.
         if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
           onScheduleSaved(response.schedule);
         }
       } catch (error) {
         if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(previousSchedule);
+          const current = latestScheduleRef.current || previousSchedule;
+          const microphoneAssignments = { ...(current.microphoneAssignments || {}) };
+          const row = { ...(microphoneAssignments[occurrenceId] || {}) };
+          const previousIds = previousSchedule.microphoneAssignments?.[occurrenceId]?.[columnKey];
+          if (previousIds?.length) row[columnKey] = previousIds;
+          else delete row[columnKey];
+          if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
+          else delete microphoneAssignments[occurrenceId];
+          const rolledBack = { ...current, microphoneAssignments };
+          latestScheduleRef.current = rolledBack;
+          onScheduleSaved(rolledBack);
         }
         showApiErrorToast(showToast, error, "Could not update microphone assignments.");
       } finally {
@@ -3823,10 +4339,66 @@ const ScheduleTab = ({
       canEdit,
       churchId,
       enqueueAssignmentSave,
+      ensureActiveSchedule,
       onScheduleSaved,
       selectedSchedule,
       showToast,
     ],
+  );
+
+  const saveIemAssignment = useCallback(
+    async ({ occurrenceId, columnKey }: { occurrenceId: string; columnKey: string }, iemIds: string[]) => {
+      if (!canEdit || !churchId || !selectedSchedule) return;
+      let baseSchedule: TeamSchedule;
+      try {
+        baseSchedule = await ensureActiveSchedule();
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not start this schedule.");
+        return;
+      }
+      const previousSchedule = baseSchedule;
+      const assignments = { ...(baseSchedule.iemAssignments || {}) };
+      const row = { ...(assignments[occurrenceId] || {}) };
+      if (iemIds.length) row[columnKey] = iemIds;
+      else delete row[columnKey];
+      if (Object.keys(row).length) assignments[occurrenceId] = row;
+      else delete assignments[occurrenceId];
+      const mutationSeq = ++scheduleMutationSeqRef.current;
+      const slotId = `${baseSchedule.scheduleId}:${occurrenceId}:${columnKey}`;
+      setSavingIemSlot(slotId);
+      const optimisticSchedule = { ...baseSchedule, iemAssignments: assignments };
+      latestScheduleRef.current = optimisticSchedule;
+      onScheduleSaved(optimisticSchedule);
+      try {
+        const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentIems(
+          churchId,
+          baseSchedule.scheduleId,
+          { serviceId: occurrenceId, positionSlotKey: columnKey, iemIds },
+        ));
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
+          onScheduleSaved(response.schedule);
+        }
+      } catch (error) {
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          const current = latestScheduleRef.current || previousSchedule;
+          const iemAssignments = { ...(current.iemAssignments || {}) };
+          const row = { ...(iemAssignments[occurrenceId] || {}) };
+          const previousIds = previousSchedule.iemAssignments?.[occurrenceId]?.[columnKey];
+          if (previousIds?.length) row[columnKey] = previousIds;
+          else delete row[columnKey];
+          if (Object.keys(row).length) iemAssignments[occurrenceId] = row;
+          else delete iemAssignments[occurrenceId];
+          const rolledBack = { ...current, iemAssignments };
+          latestScheduleRef.current = rolledBack;
+          onScheduleSaved(rolledBack);
+        }
+        showApiErrorToast(showToast, error, "Could not update IEM assignments.");
+      } finally {
+        setSavingIemSlot((current) => current === slotId ? null : current);
+      }
+    },
+    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
   );
 
   // Grid occurrence headers are sticky (positioned), so the badge anchors to the
@@ -4011,31 +4583,53 @@ const ScheduleTab = ({
   const addPositionSlot = useCallback(
     async ({ serviceId, cellKey }: { serviceId: string; cellKey: string }) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      const previousSchedule = selectedSchedule;
+      let previousSchedule: TeamSchedule;
+      try {
+        previousSchedule = await ensureActiveSchedule();
+      } catch (error) {
+        showApiErrorToast(showToast, error, "Could not start this schedule.");
+        return;
+      }
       const additionalPositionSlots = {
-        ...(selectedSchedule.additionalPositionSlots || {}),
+        ...(previousSchedule.additionalPositionSlots || {}),
         [serviceId]: [
           ...new Set([
-            ...(selectedSchedule.additionalPositionSlots?.[serviceId] || []),
+            ...(previousSchedule.additionalPositionSlots?.[serviceId] || []),
             cellKey,
           ]),
         ],
       };
-      onScheduleSaved({ ...selectedSchedule, additionalPositionSlots });
+      const mutationSeq = ++scheduleMutationSeqRef.current;
+      latestScheduleRef.current = { ...previousSchedule, additionalPositionSlots };
+      onScheduleSaved({ ...previousSchedule, additionalPositionSlots });
       try {
-        const response = await addTeamSchedulePositionSlot(
-          churchId,
-          selectedSchedule.scheduleId,
-          { serviceId, positionSlotKey: cellKey },
+        const response = await enqueueAssignmentSave(() =>
+          addTeamSchedulePositionSlot(
+            churchId,
+            previousSchedule.scheduleId,
+            { serviceId, positionSlotKey: cellKey },
+          ),
         );
-        onScheduleSaved(response.schedule);
+        if (scheduleMutationSeqRef.current === mutationSeq) {
+          latestScheduleRef.current = response.schedule;
+          onScheduleSaved(response.schedule);
+        }
         showToast("Position added for this date.", "success");
       } catch (error) {
-        onScheduleSaved(previousSchedule);
+        // Remove only this optimistic slot. A later assignment or equipment
+        // edit may already be visible in the current schedule state.
+        const current = latestScheduleRef.current || previousSchedule;
+        const slots = { ...(current.additionalPositionSlots || {}) };
+        const row = (slots[serviceId] || []).filter((key) => key !== cellKey);
+        if (row.length) slots[serviceId] = row;
+        else delete slots[serviceId];
+        const rolledBack = { ...current, additionalPositionSlots: slots };
+        latestScheduleRef.current = rolledBack;
+        onScheduleSaved(rolledBack);
         showApiErrorToast(showToast, error, "Could not add this position.");
       }
     },
-    [canEdit, churchId, onScheduleSaved, selectedSchedule, showToast],
+    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
   );
 
   const addAdditionalPosition = useCallback(
@@ -4087,47 +4681,77 @@ const ScheduleTab = ({
   const confirmRemoveAdditionalPosition = useCallback(async () => {
     if (!churchId || !selectedSchedule || !pendingAdditionalPositionRemoval) return;
     const { serviceId, cellKey } = pendingAdditionalPositionRemoval;
-    const previousSchedule = selectedSchedule;
-    const additionalPositionSlots = { ...(selectedSchedule.additionalPositionSlots || {}) };
+    let previousSchedule: TeamSchedule;
+    try {
+      previousSchedule = await ensureActiveSchedule();
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not start this schedule.");
+      return;
+    }
+    const additionalPositionSlots = { ...(previousSchedule.additionalPositionSlots || {}) };
     const nextSlots = (additionalPositionSlots[serviceId] || []).filter(
       (slotKey) => slotKey !== cellKey,
     );
     if (nextSlots.length) additionalPositionSlots[serviceId] = nextSlots;
     else delete additionalPositionSlots[serviceId];
 
-    const assignments = { ...(selectedSchedule.assignments || {}) };
+    const assignments = { ...(previousSchedule.assignments || {}) };
     const assignmentRow = { ...(assignments[serviceId] || {}) };
     delete assignmentRow[cellKey];
     if (Object.keys(assignmentRow).length) assignments[serviceId] = assignmentRow;
     else delete assignments[serviceId];
 
-    const microphoneAssignments = { ...(selectedSchedule.microphoneAssignments || {}) };
+    const microphoneAssignments = { ...(previousSchedule.microphoneAssignments || {}) };
     const microphoneRow = { ...(microphoneAssignments[serviceId] || {}) };
     delete microphoneRow[cellKey];
     if (Object.keys(microphoneRow).length) microphoneAssignments[serviceId] = microphoneRow;
     else delete microphoneAssignments[serviceId];
+    const iemAssignments = { ...(previousSchedule.iemAssignments || {}) };
+    const iemRow = { ...(iemAssignments[serviceId] || {}) };
+    delete iemRow[cellKey];
+    if (Object.keys(iemRow).length) iemAssignments[serviceId] = iemRow;
+    else delete iemAssignments[serviceId];
 
     setPendingAdditionalPositionRemoval(null);
-    onScheduleSaved({
-      ...selectedSchedule,
+    const mutationSeq = ++scheduleMutationSeqRef.current;
+    latestScheduleRef.current = {
+      ...previousSchedule,
       additionalPositionSlots,
       assignments,
       microphoneAssignments,
+      iemAssignments,
+    };
+    onScheduleSaved({
+      ...previousSchedule,
+      additionalPositionSlots,
+      assignments,
+      microphoneAssignments,
+      iemAssignments,
     });
     try {
-      const response = await removeTeamSchedulePositionSlot(
-        churchId,
-        selectedSchedule.scheduleId,
-        { serviceId, positionSlotKey: cellKey },
+      const response = await enqueueAssignmentSave(() =>
+        removeTeamSchedulePositionSlot(
+          churchId,
+          previousSchedule.scheduleId,
+          { serviceId, positionSlotKey: cellKey },
+        ),
       );
-      onScheduleSaved(response.schedule);
+      if (scheduleMutationSeqRef.current === mutationSeq) {
+        latestScheduleRef.current = response.schedule;
+        onScheduleSaved(response.schedule);
+      }
       showToast("Position removed from this service.", "success");
     } catch (error) {
-      onScheduleSaved(previousSchedule);
+      if (scheduleMutationSeqRef.current === mutationSeq) {
+        latestScheduleRef.current = previousSchedule;
+        onScheduleSaved(previousSchedule);
+      }
       showApiErrorToast(showToast, error, "Could not remove this position.");
     }
   }, [
     churchId,
+    enqueueAssignmentSave,
+    ensureActiveSchedule,
     onScheduleSaved,
     pendingAdditionalPositionRemoval,
     selectedSchedule,
@@ -4226,6 +4850,17 @@ const ScheduleTab = ({
             );
           }
           : undefined,
+        iems: selectedTeam?.usesIemAssignments ? iems : undefined,
+        iemLoading: iemCatalogStatus === "loading",
+        iemUnavailable: iemCatalogStatus === "error",
+        iemIds: selectedSchedule?.iemAssignments?.[occurrence.occurrenceId]?.[column.columnKey],
+        iemHoldersByIem: selectedTeam?.usesIemAssignments
+          ? iemHoldersByOccurrence.get(occurrence.occurrenceId)
+          : undefined,
+        savingIem: savingIemSlot === `${selectedSchedule?.scheduleId}:${occurrence.occurrenceId}:${column.columnKey}`,
+        onIemChange: selectedTeam?.usesIemAssignments
+          ? (iemIds: string[]) => { void saveIemAssignment({ occurrenceId: occurrence.occurrenceId, columnKey: column.columnKey }, iemIds); }
+          : undefined,
       };
     },
     [
@@ -4239,11 +4874,17 @@ const ScheduleTab = ({
       microphoneCatalogStatus,
       microphoneHoldersByOccurrence,
       microphones,
+      iems,
+      iemCatalogStatus,
+      iemHoldersByOccurrence,
       requirementsByOccurrence,
       saveMicrophoneAssignment,
+      saveIemAssignment,
       savingMicrophoneSlot,
+      savingIemSlot,
       selectedSchedule,
       selectedTeam?.usesMicrophoneAssignments,
+      selectedTeam?.usesIemAssignments,
     ],
   );
 
@@ -4302,9 +4943,11 @@ const ScheduleTab = ({
 
   const scheduleEditForm = (
     <ScheduleEditForm
-      draftKey={draftKey}
+      mode={formState?.mode || "create-custom"}
+      draftKey={formDraftKey}
       persistedDraft={persistedDraft}
-      selectedSchedule={selectedSchedule}
+      selectedSchedule={formSelectedSchedule}
+      copySourceSchedule={formCopySourceSchedule}
       defaultTeamId={defaultTeamId}
       defaultServiceIds={defaultServiceIds}
       defaultRange={defaultRange}
@@ -4320,12 +4963,175 @@ const ScheduleTab = ({
       onScheduleSaved={onScheduleSaved}
       onScheduleRemoved={onScheduleRemoved}
       setSelectedScheduleId={setSelectedScheduleId}
-      onCancel={() => setShowForm(false)}
+      onCancel={() => requestDiscardAction(() => setFormState(null))}
     />
   );
 
+  const scheduleActionsMenuItems: MenuItemType[] = [
+    ...(isChurchAdmin ? createScheduleCsvMenuItems({
+      churchId,
+      onImport: () => setScheduleImportOpen(true),
+      onExportError: (error) => showApiErrorToast(showToast, error, "Could not download schedules CSV."),
+      exportBusy: scheduleCsvBusy,
+      setExportBusy: setScheduleCsvBusy,
+    }) : []),
+    ...(canEdit
+      ? [{
+        element: (
+          <span className="flex items-center gap-2">
+            <Plus className="h-4 w-4" aria-hidden />
+            Create schedule
+          </span>
+        ),
+        onClick: () => setFormState({ mode: "create-custom" }),
+      }]
+      : []),
+    {
+      text: "Schedule history",
+      onClick: () => setIsBrowsingSchedules(true),
+    },
+    ...(canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:")
+      ? [
+        {
+          element: (
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="flex items-center gap-2">
+                <MessageSquareText className="h-4 w-4" aria-hidden />
+                Messages
+                {scheduleMessagesRequiringAttention > 0 ? (
+                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
+                    {scheduleMessagesRequiringAttention}
+                  </span>
+                ) : null}
+              </span>
+              {scheduleNotificationIntents.length > 0 ? (
+                <span className="pl-6 text-xs text-gray-400">
+                  {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
+                </span>
+              ) : null}
+            </span>
+          ),
+          onClick: () => {
+            if (shouldOverlayMembers) setMembersPanelOpen(false);
+            setScheduleMessagesOpen(true);
+          },
+          "aria-expanded": scheduleMessagesOpen,
+        },
+        {
+          element: (
+            <span className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" aria-hidden />
+              {selectedSchedule.source === "generated-period"
+                ? "Schedule details"
+                : "Edit schedule"}
+            </span>
+          ),
+          onClick: () => setFormState({
+            mode: "edit",
+            scheduleId: selectedSchedule.scheduleId,
+          }),
+        },
+        {
+          element: (
+            <span className="flex items-center gap-2">
+              <Copy className="h-4 w-4" aria-hidden />
+              Copy schedule
+            </span>
+          ),
+          onClick: handleCopySchedule,
+        },
+      ]
+      : []),
+  ];
+
+  const scheduleWorkflowActions = (
+    <div
+      className="flex flex-wrap items-center justify-end gap-2"
+      role="group"
+      aria-label="Schedule actions"
+    >
+      {canEdit && selectedSchedule ? (
+        <Popover
+          open={isConfirmingSend}
+          onOpenChange={(open) => {
+            if (!open && isSendingSchedule) return;
+            setIsConfirmingSend(open);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              variant="cta"
+              svg={Send}
+              iconSize="sm"
+              disabled={isSendingSchedule || sendRecipientCount === 0}
+            >
+              {selectedSchedule.sentAt ? "Send updates" : "Send schedule"}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
+          >
+            <p className="text-sm text-gray-300">
+              Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                variant="cta"
+                svg={Send}
+                iconSize="sm"
+                disabled={isSendingSchedule}
+                onClick={handleSendSchedule}
+              >
+                {isSendingSchedule ? "Sending…" : "Yes, send"}
+              </Button>
+              <Button
+                variant="tertiary"
+                iconSize="sm"
+                disabled={isSendingSchedule}
+                onClick={() => setIsConfirmingSend(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+      <Menu
+        align="end"
+        menuItems={scheduleActionsMenuItems}
+        TriggeringButton={
+          <Button
+            variant="tertiary"
+            svg={MoreHorizontal}
+            iconSize="sm"
+            ref={scheduleActionsTriggerRef}
+            aria-label="More schedule options"
+          />
+        }
+      />
+    </div>
+  );
+  const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
+    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:") && ensuringScheduleId === selectedSchedule.scheduleId
+      ? "Starting schedule…"
+      : selectedSchedule.scheduleId.startsWith("virtual:")
+        ? "Staffing not started"
+        : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
+    }`
+    : undefined;
+
   return (
     <div className={scheduleTabRootClassName}>
+      {isChurchAdmin ? (
+        <PortableDataImportDialog
+          open={scheduleImportOpen}
+          onOpenChange={setScheduleImportOpen}
+          churchId={churchId}
+          type="schedules"
+          onImported={onImported}
+        />
+      ) : null}
       {showForm ? (
         <div
           className={cn(
@@ -4346,182 +5152,46 @@ const ScheduleTab = ({
       ) : (
         <>
           <h2 className="sr-only">Schedules</h2>
-          <section className={cn(panelShellClassName, "w-full shrink-0")}>
-            <div className={cn(panelHeaderPaddingClassName, "pb-3")}>
+          <header className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div role="group" aria-label="Team schedule identity" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
               {scheduleReturnTo ? (
-                <div className="mb-2">
-                  <TeamsReturnBackButton
-                    returnTo={scheduleReturnTo}
-                    onClick={() => returnFromSchedule()}
-                  />
-                </div>
+                <TeamsReturnBackButton
+                  returnTo={scheduleReturnTo}
+                  onClick={() => returnFromSchedule()}
+                />
               ) : null}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end sm:gap-4">
-                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-                  {/* Narrowing the picker to one team is remembered per church,
-                      so an operator who only runs Praise Team doesn't scroll
-                      past every other team's months on each visit. */}
-                  {activeTeams.length > 1 ? (
-                    <Select
-                      className="w-full sm:min-w-40 sm:w-auto"
-                      label="Filter schedules by team"
-                      hideLabel
-                      value={scheduleTeamFilter || ""}
-                      onChange={updateScheduleTeamFilter}
-                      options={scheduleTeamFilterOptions}
-                    />
-                  ) : null}
-                  <Select
-                    className="w-full sm:min-w-48 sm:w-auto"
-                    label="Open schedule"
-                    hideLabel
-                    // Bind to the record, not the hydrated schedule, so the name
-                    // stays in the trigger while its assignments load.
-                    value={selectedScheduleRecord?.scheduleId || ""}
-                    selectedValueLabel={
-                      selectedScheduleRecord
-                        ? `${selectedScheduleRecord.name} — ${selectedTeam?.name || "No team"}`
-                        : undefined
-                    }
-                    onChange={(scheduleId) => {
-                      if (scheduleId === BROWSE_ALL_SCHEDULES_VALUE) {
-                        setIsBrowsingSchedules(true);
-                        return;
-                      }
-                      setSelectedScheduleId(scheduleId);
-                      setShowForm(false);
-                    }}
-                    options={scheduleOptions}
-                  />
-                  {canEdit ? (
-                    <Button
-                      variant="secondary"
-                      svg={Plus}
-                      iconSize="sm"
-                      onClick={() => {
-                        setSelectedScheduleId("");
-                        setShowForm(true);
-                      }}
-                    >
-                      New schedule
-                    </Button>
-                  ) : null}
-                  {/* Confirm in a popover so the toolbar stays put; the
-                      recipient count is still the whole point of asking. */}
-                  {canEdit && selectedSchedule ? (
-                    <Popover
-                      open={isConfirmingSend}
-                      onOpenChange={(open) => {
-                        if (!open && isSendingSchedule) return;
-                        setIsConfirmingSend(open);
-                      }}
-                    >
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="cta"
-                          svg={Send}
-                          iconSize="sm"
-                          disabled={
-                            isSendingSchedule || sendRecipientCount === 0
-                          }
-                        >
-                          {selectedSchedule.sentAt
-                            ? "Send updates"
-                            : "Send schedule"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="end"
-                        className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
-                      >
-                        <p className="text-sm text-gray-300">
-                          Email {sendRecipientCount}{" "}
-                          {sendRecipientCount === 1 ? "person" : "people"} on
-                          this schedule?
-                        </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="cta"
-                            svg={Send}
-                            iconSize="sm"
-                            disabled={isSendingSchedule}
-                            onClick={handleSendSchedule}
-                          >
-                            {isSendingSchedule ? "Sending…" : "Yes, send"}
-                          </Button>
-                          <Button
-                            variant="tertiary"
-                            iconSize="sm"
-                            disabled={isSendingSchedule}
-                            onClick={() => setIsConfirmingSend(false)}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  ) : null}
-                  {canEdit && selectedSchedule ? (
-                    <Menu
-                      align="end"
-                      menuItems={[
-                        {
-                          element: (
-                            <span className="flex min-w-0 flex-col gap-0.5">
-                              <span className="flex items-center gap-2">
-                                <MessageSquareText className="h-4 w-4" aria-hidden />
-                                Messages
-                                {scheduleMessagesRequiringAttention > 0 ? (
-                                  <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-xs font-semibold text-amber-200">
-                                    {scheduleMessagesRequiringAttention}
-                                  </span>
-                                ) : null}
-                              </span>
-                              {scheduleNotificationIntents.length > 0 ? (
-                                <span className="pl-6 text-xs text-gray-400">
-                                  {pendingScheduleMessageCount} pending · {scheduleNotificationCounts.delivered} delivered · {scheduleNotificationCounts.failed} failed
-                                </span>
-                              ) : null}
-                            </span>
-                          ),
-                          onClick: () => {
-                            if (shouldOverlayMembers) setMembersPanelOpen(false);
-                            setScheduleMessagesOpen(true);
-                          },
-                          "aria-expanded": scheduleMessagesOpen,
-                        },
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <Pencil className="h-4 w-4" aria-hidden />
-                              Edit schedule
-                            </span>
-                          ),
-                          onClick: () => setShowForm(true),
-                        },
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <Copy className="h-4 w-4" aria-hidden />
-                              Copy schedule
-                            </span>
-                          ),
-                          onClick: handleCopySchedule,
-                        },
-                      ]}
-                      TriggeringButton={
-                        <Button
-                          variant="tertiary"
-                          svg={MoreHorizontal}
-                          iconSize="sm"
-                          ref={scheduleActionsTriggerRef}
-                          aria-label="More schedule options"
-                        />
-                      }
-                    />
-                  ) : null}
-                </div>
-              </div>
+              <h1 className="sr-only flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100 sm:not-sr-only">
+                <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
+                <span className="truncate">Team schedule</span>
+              </h1>
+            </div>
+            {scheduleWorkflowActions}
+          </header>
+
+          <section className={cn(panelShellClassName, "w-full shrink-0 px-3 py-3")}>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
+              <Select
+                className="w-full sm:w-60"
+                label="Team"
+                labelLayout="inline"
+                value={workspaceTeamId}
+                onChange={updateScheduleTeamFilter}
+                options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
+                disabled={!activeTeams.length}
+              />
+              <RangeSelector
+                preset={periodPreset}
+                range={periodRange}
+                onPresetChange={selectPeriodPreset}
+                onCustomRangeChange={(range) => {
+                  hasExplicitPeriodSelectionRef.current = true;
+                  selectCustomRange(range);
+                  setViewingSavedSchedule(false);
+                }}
+                onNavigate={shiftPeriod}
+                className="min-w-0 flex-1 sm:min-w-0"
+                labelLayout="inline"
+              />
             </div>
           </section>
 
@@ -4531,29 +5201,16 @@ const ScheduleTab = ({
               className={cn(panelClassName, scheduleWorkspacePanelClassName)}
             >
               <div className="shrink-0">
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <div
-                    role="group"
-                    aria-label="Team schedule identity"
-                    className="flex min-w-0 flex-1 items-center gap-2"
-                  >
-                    <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
-                      <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
-                      <span className="truncate">Team schedule</span>
-                    </h2>
-                    {/* The picker shows only the schedule name, and teams reuse the
-                        same names — name the team the grid belongs to. */}
-                    {selectedTeam ? (
-                      <span className="flex min-w-0 shrink items-center gap-1.5 rounded-md bg-gray-800/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-gray-300">
-                        <Users className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                        <span className="truncate">{selectedTeam.name}</span>
-                      </span>
-                    ) : null}
-                  </div>
+                <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                  {scheduleRangeSummary ? (
+                    <p role="status" className="min-w-0 px-0.5 text-xs text-gray-400">
+                      {scheduleRangeSummary}
+                    </p>
+                  ) : null}
                   <div
                     role="group"
                     aria-label="Team schedule controls"
-                    className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                    className="flex min-w-0 shrink-0 flex-nowrap items-center justify-end gap-2 lg:ml-auto"
                   >
                     {selectedSchedule && shouldOverlayMembers ? (
                       <Button
@@ -4587,8 +5244,8 @@ const ScheduleTab = ({
                     {!isNarrowViewport ? (
                       <>
                         {scheduleHasMultipleServices ? (
-                          <div className="flex flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2 py-1.5">
-                            <span className="px-0.5 text-xs font-semibold text-gray-300">
+                          <div className="flex flex-col gap-1">
+                            <span className="px-0.5 text-xs font-semibold text-gray-400">
                               Organize
                             </span>
                             <SegmentedControl
@@ -4600,8 +5257,8 @@ const ScheduleTab = ({
                             />
                           </div>
                         ) : null}
-                        <div className="flex flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2 py-1.5">
-                          <span className="px-0.5 text-xs font-semibold text-gray-300">
+                        <div className="flex flex-col gap-1">
+                          <span className="px-0.5 text-xs font-semibold text-gray-400">
                             Layout
                           </span>
                           <SegmentedControl
@@ -4854,9 +5511,6 @@ const ScheduleTab = ({
                     />
                   </div>
                 </div>
-                <p className="mt-1 text-sm text-gray-400">
-                  Select a date to view and copy that service&apos;s assignments.
-                </p>
               </div>
 
               {occurrencesStale && !showForm ? (
@@ -5005,7 +5659,6 @@ const ScheduleTab = ({
                               </thead>
                               <tbody>
                                 {scheduleColumns.map((column, columnIndex) => {
-                                  const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                   const rowTone = scheduleRowTone(columnIndex);
                                   const stickyTone = scheduleStickyRowTone(columnIndex);
                                   return (
@@ -5028,8 +5681,12 @@ const ScheduleTab = ({
                                         )}
                                       >
                                         <span className="inline-flex min-w-0 max-w-full items-center gap-2">
-                                          {PositionIcon ? (
-                                            <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" />
+                                          {column.position.icon ? (
+                                            <PositionIconBadge
+                                              icon={column.position.icon}
+                                              className="h-6 w-6 rounded"
+                                              iconClassName="h-4 w-4"
+                                            />
                                           ) : null}
                                           <span className={cn(scheduleStickyPositionLabelClassName, "font-medium text-white")}>
                                             {column.label}
@@ -5080,11 +5737,16 @@ const ScheduleTab = ({
                                     Date &amp; time
                                   </th>
                                   {scheduleColumns.map((column) => {
-                                    const PositionIcon = resolvePositionLucideIcon(column.position.icon);
                                     return (
                                       <th key={column.columnKey} className={cn("sticky top-0 z-10 border-b bg-gray-950 text-gray-200", scheduleGridBottomBorderClassName, scheduleGridLeftBorderClassName, schedulePositionColumnClassName, scheduleCellPaddingClassName, getAxisHighlightClassName(undefined, column.columnKey, { surface: "header" }))}>
                                         <span className="inline-flex items-center gap-2">
-                                          {PositionIcon ? <PositionIcon className="h-4 w-4 shrink-0 text-cyan-200" /> : null}
+                                          {column.position.icon ? (
+                                            <PositionIconBadge
+                                              icon={column.position.icon}
+                                              className="h-6 w-6 rounded"
+                                              iconClassName="h-4 w-4"
+                                            />
+                                          ) : null}
                                           <span>{column.label}</span>
                                           {column.position.archivedAt ? <span className="text-xs text-gray-500">(archived)</span> : null}
                                         </span>
@@ -5315,8 +5977,6 @@ const ScheduleTab = ({
                     }
                     getWarning={activeSlotGetWarning}
                     onSelectMember={handleActiveSlotMemberSelect}
-                    onPrepareReplacementInvite={activeSlotMeta?.isVacantOrDeclined ? handlePrepareReplacementInvite : undefined}
-                    preparingReplacementMemberId={preparingReplacementMemberId}
                     onAssignmentAction={handleActiveSlotAssignmentAction}
                     swapRecommendations={activeSlotSwapRecommendations}
                     onApplySwapRecommendation={(recommendation) =>
@@ -5388,6 +6048,28 @@ const ScheduleTab = ({
                   onLoadOlder={() => void loadOlderScheduleNotifications()}
                 />
               ) : null}
+              {scheduleSmsPreview ? <SmsConfirmationModal
+                isOpen
+                recipientName={scheduleSmsPreview.recipientName}
+                phoneNumberSnapshot={scheduleSmsPreview.phoneNumberSnapshot}
+                message={scheduleSmsPreview.message}
+                segmentCount={scheduleSmsPreview.segmentCount}
+                busy={sendingScheduleSms}
+                onCancel={cancelScheduleSms}
+                onSend={() => void confirmScheduleSms()}
+              /> : null}
+              <Modal
+                isOpen={Boolean(replacementIntentToClose)}
+                onClose={() => { if (!closingReplacement) setReplacementIntentToClose(null); }}
+                title="Close replacement invitation?"
+                description="This allows the administrator to choose another candidate. The schedule assignment will not change."
+                size="sm"
+              >
+                <div className="flex justify-end gap-2 text-sm">
+                  <Button variant="secondary" disabled={closingReplacement} onClick={() => setReplacementIntentToClose(null)}>Cancel</Button>
+                  <Button disabled={closingReplacement} isLoading={closingReplacement} onClick={() => void confirmResolveReplacementIntent()}>Close invitation</Button>
+                </div>
+              </Modal>
               {canEdit ? (
                 <SchedulePasteRowDialog
                   open={pasteRowOpen}
@@ -5427,10 +6109,24 @@ const ScheduleTab = ({
         teams={data.teams}
         selectedScheduleId={selectedScheduleId}
         // Opens already narrowed to the team the picker is showing.
-        initialTeamId={scheduleTeamFilter || ""}
+        initialTeamId={workspaceTeamId}
         onSelectSchedule={(scheduleId) => {
-          setSelectedScheduleId(scheduleId);
-          setShowForm(false);
+          const selectedHistorySchedule = schedules.find(
+            (schedule) => schedule.scheduleId === scheduleId,
+          );
+          setViewingSavedSchedule(true);
+          if (selectedHistorySchedule?.startDate && selectedHistorySchedule.endDate) {
+            setPeriodSelection(
+              "custom",
+              {
+                start: selectedHistorySchedule.startDate,
+                end: selectedHistorySchedule.endDate,
+              },
+              { persist: false },
+            );
+          }
+          setSelectedScheduleId(scheduleId, true);
+          setFormState(null);
         }}
       />
       <Modal
@@ -5468,17 +6164,16 @@ const ScheduleTab = ({
               <div className="rounded-md border border-gray-700 bg-gray-950/60 p-3">
                 <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2">
                   {detailSummaryGroups.flatMap((group) => group.positions).map((position) => {
-                    const PositionIcon = resolvePositionLucideIcon(
-                      positionIconById.get(position.positionId),
-                    );
+                    const positionIcon = positionIconById.get(position.positionId);
                     const empty = position.members.length === 0;
                     return (
                       <Fragment key={position.positionId}>
                         <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-white">
-                          {PositionIcon ? (
-                            <PositionIcon
-                              className="h-4 w-4 shrink-0 text-cyan-200"
-                              aria-hidden
+                          {positionIcon ? (
+                            <PositionIconBadge
+                              icon={positionIcon}
+                              className="h-6 w-6 rounded"
+                              iconClassName="h-4 w-4"
                             />
                           ) : null}
                           {position.name}:
@@ -5499,6 +6194,31 @@ const ScheduleTab = ({
                 </div>
               </div>
             )}
+          </div>
+        ) : null}
+      </Modal>
+      <Modal
+        isOpen={Boolean(pendingMoveAssignment)}
+        onClose={() => setPendingMoveAssignment(null)}
+        title="Move assignment"
+        size="sm"
+        description="Confirm the volunteer's new position in this service."
+      >
+        {pendingMoveAssignment ? (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-200">
+              Move {describeMemberName(pendingMoveAssignment.memberId)} from{" "}
+              {positionNameById.get(pendingMoveAssignment.sourcePositionSlotKey?.split("::")[0] || "") || "their current position"}{" "}
+              to {positionNameById.get(pendingMoveAssignment.basePositionId) || "this position"}?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="tertiary" onClick={() => setPendingMoveAssignment(null)}>
+                Cancel
+              </Button>
+              <Button type="button" variant="primary" onClick={confirmPendingMove}>
+                Move anyway
+              </Button>
+            </div>
           </div>
         ) : null}
       </Modal>
@@ -5559,15 +6279,28 @@ const ScheduleTab = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-200">
-            {pendingCrossTeamConflictMemberLabel} is{" "}
-            {pendingCrossTeamConflict?.warning
-              ? pendingCrossTeamConflict.warning.charAt(0).toLowerCase() +
-              pendingCrossTeamConflict.warning.slice(1)
-              : "already scheduled on another team"}{" "}
-            for this service.
+            {pendingCrossTeamConflictMemberLabel} has these overlapping schedule assignments:
           </p>
+          {pendingCrossTeamConflict?.conflicts.length ? (
+            <ul className="max-h-48 space-y-2 overflow-y-auto rounded border border-gray-700 p-3 text-sm text-gray-300">
+              {pendingCrossTeamConflict.conflicts.map((conflict, index) => {
+                const teamName = data.teams.find((team) => team.teamId === conflict.teamId)?.name;
+                return (
+                  <li key={`${conflict.scheduleId}:${conflict.conflictingOccurrenceId || conflict.occurrenceId}:${index}`}>
+                    {teamName || conflict.teamId || "Another team"}
+                    {conflict.scheduleName ? ` · ${conflict.scheduleName}` : ""}
+                    {conflict.conflictingOccurrenceId ? ` · ${conflict.conflictingOccurrenceId}` : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : pendingCrossTeamConflict?.fingerprint ? (
+            <p className="text-sm text-amber-300">The conflict set changed. There are no current overlaps; confirm again to continue.</p>
+          ) : (
+            <p className="text-sm text-gray-200">{pendingCrossTeamConflict?.warning}</p>
+          )}
           <p className="text-sm text-gray-400">
-            Confirm if this is intentional.
+            Confirm only if these schedule overlaps are intentional.
           </p>
           <div className="flex flex-wrap justify-end gap-2">
             <Button

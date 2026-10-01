@@ -653,6 +653,11 @@ test("detailed snapshots expose microphones only to their selected roles", () =>
               ...plan.sections[0].elements[0],
               microphoneAssignments,
             },
+            {
+              ...plan.sections[0].elements[0],
+              id: "iem-only-element",
+              assignees: [{ id: "iem-slot", iemIds: ["iem-3"] }],
+            },
           ],
         },
       ],
@@ -675,6 +680,7 @@ test("detailed snapshots expose microphones only to their selected roles", () =>
       },
     ],
   );
+  assert.equal(JSON.stringify(detailed.service).includes("iem-3"), false);
 
   const general = buildPublicServicePlanSnapshot({
     plan: {
@@ -805,6 +811,80 @@ test("draft or malformed public plans are never serialized", () => {
     buildPublicServicePlanSnapshot({ plan: { ...plan, startsAt: "invalid" } }),
     null,
   );
+});
+
+test("authenticated snapshots keep detailed metadata before publish", () => {
+  const draft = {
+    ...plan,
+    published: false,
+    publicLinkToken: undefined,
+  };
+  const sharedSnapshot = buildPublicServicePlanSnapshot({
+    plan,
+    churchName: "Northside",
+    churchLogoUrl: "https://res.cloudinary.com/example/image/upload/church.png",
+    churchPrimaryColor: "#112233",
+    churchSecondaryColor: "#AABBCC",
+    positions: [{ positionId: "sound", name: "Sound", teamId: "media" }],
+    teams: [{ teamId: "media", name: "Media Team" }],
+    shareId: "published-token",
+  });
+  const draftSnapshot = buildPublicServicePlanSnapshot({
+    plan: draft,
+    churchName: "Northside",
+    churchLogoUrl: "https://res.cloudinary.com/example/image/upload/church.png",
+    churchPrimaryColor: "#112233",
+    churchSecondaryColor: "#AABBCC",
+    positions: [{ positionId: "sound", name: "Sound", teamId: "media" }],
+    teams: [{ teamId: "media", name: "Media Team" }],
+    shareId: "current-service-viewer:draft",
+    allowUnpublished: true,
+  });
+
+  const comparable = (snapshot) => ({
+    ...snapshot,
+    serverNowMs: 0,
+    service: {
+      ...snapshot.service,
+      shareId: "same-display-data",
+    },
+  });
+  assert.deepEqual(comparable(draftSnapshot), comparable(sharedSnapshot));
+  assert.equal(draftSnapshot.service.sections[0].items[0].assignedMemberId, undefined);
+  assert.deepEqual(draftSnapshot.roles, sharedSnapshot.roles);
+  assert.equal(draftSnapshot.churchLogoUrl, sharedSnapshot.churchLogoUrl);
+  assert.equal(draftSnapshot.churchPrimaryColor, sharedSnapshot.churchPrimaryColor);
+  assert.equal(draftSnapshot.churchSecondaryColor, sharedSnapshot.churchSecondaryColor);
+});
+
+test("controller snapshots expose assigned IEM equipment without changing public snapshots", () => {
+  const controllerSnapshot = buildPublicServicePlanSnapshot({
+    plan: {
+      ...plan,
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          assignees: [{ id: "member-1", name: "Avery Stone", iemIds: ["iem-1"] }],
+        }],
+      }],
+    },
+    equipment: [{ id: "iem-1", name: "Avery's IEM", category: "iem", subtype: "In-ear" }],
+    includeControllerEquipment: true,
+  });
+  assert.deepEqual(
+    controllerSnapshot.service.sections[0].items[0].equipmentAssignments,
+    [{
+      equipment: { id: "iem-1", name: "Avery's IEM", category: "iem", subtype: "In-ear" },
+      holderName: "Avery Stone",
+    }],
+  );
+
+  const publicSnapshot = buildPublicServicePlanSnapshot({
+    plan,
+    equipment: [{ id: "iem-1", name: "Avery's IEM", category: "iem" }],
+  });
+  assert.equal(publicSnapshot.service.sections[0].items[0].equipmentAssignments, undefined);
 });
 
 test("public snapshot anchors the timeline at a pre-service first item", () => {

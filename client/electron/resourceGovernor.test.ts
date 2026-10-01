@@ -1,11 +1,14 @@
 import {
   createResourceGovernorSample,
   createResourceGovernorState,
+  registerResourceGovernorSubscriber,
+  subscribeResourceGovernorToPreparedMetrics,
   RESOURCE_GOVERNOR_THRESHOLDS,
   RESOURCE_GOVERNOR_TIMING,
   updateResourceGovernor,
   type ResourceGovernorSample,
 } from "./resourceGovernor";
+import { PreparedVideoMetricsSampler, type PreparedVideoMetricsResponse } from "./preparedVideoMetrics";
 
 const sample = (timestamp: number, cpu = 20, memory = 45, cores = 4): ResourceGovernorSample => ({
   timestamp,
@@ -26,6 +29,33 @@ const updateAt = (
 }, timestamp);
 
 describe("runtime resource governor", () => {
+  it("sends the current snapshot to every new subscriber, including after a full unsubscribe", () => {
+    const subscribers = new Map<number, { id: number; isDestroyed: () => boolean; send: jest.Mock }>();
+    const policy = createResourceGovernorState("efficiency").policy;
+    const first = { id: 1, isDestroyed: () => false, send: jest.fn() };
+    const second = { id: 2, isDestroyed: () => false, send: jest.fn() };
+
+    registerResourceGovernorSubscriber(subscribers, first, policy);
+    registerResourceGovernorSubscriber(subscribers, second, policy);
+    expect(first.send).toHaveBeenCalledWith("resource-governor-policy", policy);
+    expect(second.send).toHaveBeenCalledWith("resource-governor-policy", policy);
+    expect(subscribers.size).toBe(2);
+
+    subscribers.clear(); // mirrors the main process after the last renderer leaves
+    const remounted = { id: 3, isDestroyed: () => false, send: jest.fn() };
+    registerResourceGovernorSubscriber(subscribers, remounted, policy);
+
+    expect(remounted.send).toHaveBeenCalledTimes(1);
+    expect(remounted.send).toHaveBeenCalledWith("resource-governor-policy", policy);
+    expect(subscribers.get(3)).toBe(remounted);
+  });
+
+  it("does not send a snapshot to a renderer already destroyed", () => {
+    const sender = { id: 4, isDestroyed: () => true, send: jest.fn() };
+    registerResourceGovernorSubscriber(new Map(), sender, createResourceGovernorState().policy);
+    expect(sender.send).not.toHaveBeenCalled();
+  });
+
   it("starts healthy in Auto and leaves audience playback protected", () => {
     const state = createResourceGovernorState();
     expect(state.policy).toMatchObject({
@@ -181,6 +211,65 @@ describe("runtime resource governor", () => {
       },
     }, 8);
     expect(adapted).toEqual({ timestamp: 12_000, appCpuPercent: 360, rendererCpuPercent: 45, logicalCpuCount: 8 });
+  });
+
+  it("uses actual system RAM pressure supplied on the shared sampler tick", () => {
+    const adapted = createResourceGovernorSample({
+      status: "available",
+      timestamp: 500,
+      memory: {
+        private: { status: "available", value: 300 },
+        workingSet: { status: "available", value: 900_000 },
+      },
+      cpu: { status: "unsupported" },
+      total: {
+        privateMemory: { status: "available", value: 10_000 },
+        workingSetMemory: { status: "available", value: 20_000_000 },
+        cpu: { status: "unsupported" },
+        processCount: 5,
+      },
+    }, 8, 97);
+    expect(adapted).toEqual({ timestamp: 500, logicalCpuCount: 8, systemMemoryUsedPercent: 97 });
+  });
+
+  it("drives runtime policy from the existing shared metrics sampler", () => {
+    let tick: (() => void) | undefined;
+    let now = 0;
+    const metrics = (): PreparedVideoMetricsResponse => ({
+      status: "available",
+      timestamp: now,
+      memory: {},
+      cpu: { status: "unsupported" },
+      total: {
+        privateMemory: { status: "unsupported" },
+        workingSetMemory: { status: "unsupported" },
+        cpu: { status: "available", value: 360 },
+        processCount: 5,
+      },
+    });
+    const sampler = new PreparedVideoMetricsSampler(
+      metrics,
+      4_000,
+      (callback) => {
+        tick = callback;
+        return 1 as unknown as ReturnType<typeof setInterval>;
+      },
+      jest.fn(),
+    );
+    const states: ReturnType<typeof createResourceGovernorState>[] = [];
+    const stop = subscribeResourceGovernorToPreparedMetrics(sampler, {
+      logicalCpuCount: 4,
+      getSystemMemoryUsedPercent: () => 45,
+      onState: (state) => states.push(state),
+      now: () => now,
+    });
+    for (now = 4_000; now <= 16_000; now += 4_000) tick?.();
+    expect(states.at(-1)?.policy).toMatchObject({
+      tier: 1,
+      metrics: "available",
+      recommendations: { audiencePlayback: "protected" },
+    });
+    stop();
   });
 
   it("does not normalize away valid multicore CPU totals over 100 percent", () => {

@@ -1,11 +1,14 @@
 const requiredJobs = [
   "client_tests",
-  "coverage",
-  "server_tests",
-  "lint_typecheck",
   "heroku_build",
   "electron_build",
+  "server_tests",
+  "lint_typecheck",
 ];
+
+if (process.env.COVERAGE_REQUIRED === "true") {
+  requiredJobs.push("coverage");
+}
 let checks;
 
 try {

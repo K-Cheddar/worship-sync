@@ -23,6 +23,7 @@ import type {
   ServicePlanTemplatePayload,
   ServicePlanMicrophone,
   ServicePlanMicrophoneAudience,
+  ServiceEquipment,
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
@@ -67,10 +68,14 @@ import type {
   TeamRosterMember,
   TeamSchedule,
   TeamScheduleAssignments,
+  TeamScheduleCellAssignment,
   TeamScheduleGuest,
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
   TeamsBootstrap,
+  PortableDataType,
+  PortableImportRow,
+  PortableImportResolution,
   TrustedHumanDeviceListItem,
   WorkstationDeviceClient,
 } from "./authTypes";
@@ -1131,19 +1136,21 @@ export type TeamRosterMemberPayload = {
 export type TeamPositionPayload = {
   name: string;
   description?: string;
-  icon?: string;
+  icon?: import("../components/icons/iconTypes").PositionIcon;
   groupId?: string;
   qualificationAreaId?: string;
   defaultMicrophoneId?: string;
+  defaultIemId?: string;
   teamId: string;
 };
 
 export type TeamPayload = {
   name: string;
   description?: string;
-  icon?: string;
+  icon?: import("../components/icons/iconTypes").EntityIcon;
   memberIds: string[];
   usesMicrophoneAssignments?: boolean;
+  usesIemAssignments?: boolean;
 };
 
 export type TeamRolePayload = {
@@ -1176,8 +1183,16 @@ export type TeamSchedulePayload = {
   assignments?: TeamScheduleAssignments;
   guests?: TeamScheduleGuest[];
   microphoneAssignments?: TeamSchedule["microphoneAssignments"];
+  iemAssignments?: TeamSchedule["iemAssignments"];
   additionalPositionSlots?: TeamSchedule["additionalPositionSlots"];
-  allowCrossTeamConflict?: boolean;
+  confirmedOccurrenceConflictFingerprint?: string;
+};
+
+export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
+  /** IANA zone used to validate each generated service occurrence. */
+  timeZone: string;
+  /** Visible Upcoming occurrences used to reuse an older wider generated period safely. */
+  visibleOccurrenceIds?: string[];
 };
 
 export type TeamIntakeFormPayload = {
@@ -2070,6 +2085,15 @@ export const createTeamSchedule = async (
     },
   );
 
+export const ensureTeamScheduleForPeriod = async (
+  churchId: string,
+  body: EnsureTeamScheduleForPeriodPayload,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule; created: boolean }>(
+    `api/churches/${churchId}/team-schedules/ensure`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
 export const updateTeamSchedule = async (
   churchId: string,
   scheduleId: string,
@@ -2124,8 +2148,8 @@ export const updateTeamScheduleAssignment = async (
     allowBlockout?: boolean;
     /** Explicit acknowledgement that recurring availability excludes this service. */
     allowRecurringAvailability?: boolean;
-    allowCrossTeamConflict?: boolean;
-    allowOccurrenceConflict?: boolean;
+    /** A server-issued fingerprint for the exact occurrence conflicts reviewed by the operator. */
+    confirmedOccurrenceConflictFingerprint?: string;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
@@ -2134,6 +2158,31 @@ export const updateTeamScheduleAssignment = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const updateTeamScheduleAssignmentsBatch = async (
+  churchId: string,
+  scheduleId: string,
+  body: {
+    changes: Array<{
+      serviceId: string;
+      positionSlotKey: string;
+      serviceDate: string;
+      expectedCell: TeamScheduleCellAssignment | "";
+      assignment: TeamScheduleCellAssignment | "";
+    }>;
+    skipChangedCells?: boolean;
+    confirmedOccurrenceConflictFingerprint?: string;
+  },
+) =>
+  apiFetch<{
+    success: boolean;
+    schedule: TeamSchedule;
+    accepted: Array<{ serviceId: string; positionSlotKey: string }>;
+    skipped: Array<{ serviceId: string; positionSlotKey: string }>;
+  }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignments/batch`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const updateTeamScheduleAssignmentMicrophones = async (
@@ -2147,6 +2196,16 @@ export const updateTeamScheduleAssignmentMicrophones = async (
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
     `api/churches/${churchId}/team-schedules/${scheduleId}/assignment-microphones`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+
+export const updateTeamScheduleAssignmentIems = async (
+  churchId: string,
+  scheduleId: string,
+  body: { serviceId: string; positionSlotKey: string; iemIds: string[] },
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/assignment-iems`,
     { method: "POST", body: JSON.stringify(body) },
   );
 
@@ -2180,8 +2239,8 @@ export const updateTeamScheduleAssignmentSwap = async (
     currentMemberId: string;
     candidateMemberId: string;
     serviceDate?: string;
-    allowCrossTeamConflict?: boolean;
-    allowOccurrenceConflict?: boolean;
+    /** A server-issued fingerprint for the exact occurrence conflicts reviewed by the operator. */
+    confirmedOccurrenceConflictFingerprint?: string;
   },
 ) =>
   apiFetch<{ success: boolean; schedule: TeamSchedule }>(
@@ -2262,6 +2321,35 @@ export const saveServicePlan = async (
       body: JSON.stringify(body),
     },
   );
+
+export type BulkServicePlanTarget = {
+  serviceId: string;
+  serviceIds: string[];
+  groupId?: string;
+  occurrenceId: string;
+  startsAt: string;
+  date: string;
+};
+
+export const applyServicePlanTemplateBulk = async (
+  churchId: string,
+  body: {
+    templateId?: string;
+    useServiceDefaults?: boolean;
+    timeZone: string;
+    targets: BulkServicePlanTarget[];
+    existingPlanMode: "skip";
+  },
+) => apiFetch<{
+  success: boolean;
+  created: string[];
+  skippedExisting: string[];
+  skippedNoTemplate: string[];
+  failed: { planKey: string; error: string }[];
+}>(`api/churches/${churchId}/service-plans/apply-template-bulk`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
 
 export const publishServicePlan = async (churchId: string, planKey: string) =>
   apiFetch<{
@@ -2402,6 +2490,21 @@ export const saveServicePlanMicrophones = async (
     method: "POST",
     body: JSON.stringify({ microphones, audiences }),
   });
+
+/** New equipment catalog; existing microphones remain in their legacy API. */
+export const getServiceEquipment = async (churchId: string) =>
+  apiFetch<{ success: boolean; equipment: ServiceEquipment[] }>(
+    `api/churches/${churchId}/service-equipment`, { method: "GET" },
+  );
+
+export const saveServiceEquipment = async (
+  churchId: string,
+  equipment: ServiceEquipment[],
+) =>
+  apiFetch<{ success: boolean; equipment: ServiceEquipment[] }>(
+    `api/churches/${churchId}/service-equipment`,
+    { method: "POST", body: JSON.stringify({ equipment }) },
+  );
 
 export const createAdminInvite = async (churchId: string, body: JsonBody) =>
   apiFetch<{ success: boolean; invite: ChurchInviteRow }>(
@@ -2670,3 +2773,76 @@ export const confirmRecoveryRequest = async (token: string) =>
     method: "POST",
     body: JSON.stringify({ token }),
   });
+
+export const inspectPortableImport = async (
+  churchId: string,
+  type: PortableDataType,
+  csv: string,
+) => apiFetch<{
+  success: boolean;
+  headers: string[];
+  rowCount: number;
+  columnCount: number;
+  issues: Array<{ row: number; code: string; message: string }>;
+  mapping: Record<string, string>;
+  sampleRows: Array<Record<string, string>>;
+}>(`api/churches/${churchId}/data-transfer/inspect`, {
+  method: "POST",
+  body: JSON.stringify({ type, csv }),
+});
+
+export const previewPortableImport = async (
+  churchId: string,
+  type: PortableDataType,
+  csv: string,
+  mapping: Record<string, string>,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+) => apiFetch<{
+  success: boolean;
+  rows: PortableImportRow[];
+  issues: Array<{ row: number; code: string; message: string }>;
+  summary: { total: number; create: number; update: number; review: number; invalid: number };
+}>(`api/churches/${churchId}/data-transfer/preview`, {
+  method: "POST",
+  body: JSON.stringify({ type, csv, mapping, timeZone }),
+});
+
+export const commitPortableImport = async (
+  churchId: string,
+  type: PortableDataType,
+  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string>; resolutions?: PortableImportResolution[] }>,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+) => apiFetch<{
+  success: boolean;
+  results: Array<{ row: number; status: "created" | "updated" | "failed"; id?: string; code?: string; message?: string }>;
+  summary: { created: number; updated: number; failed: number };
+}>(`api/churches/${churchId}/data-transfer/commit`, {
+  method: "POST",
+  body: JSON.stringify({ type, approvedRows, timeZone }),
+});
+
+export const downloadPortableData = async (
+  churchId: string,
+  type: PortableDataType | "all",
+  template = false,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+) => {
+  const query = new URLSearchParams({ timeZone, ...(template ? { template: "true" } : {}) });
+  const url = `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}?${query.toString()}`;
+  const response = await fetch(url, {
+    credentials: "include",
+    headers: {
+      ...(isPackagedElectronRenderer() && getHumanApiToken()
+        ? { Authorization: `Bearer ${getHumanApiToken()}` }
+        : {}),
+      ...(getWorkstationToken() ? { "x-workstation-token": getWorkstationToken() } : {}),
+    },
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { errorMessage?: string } | null;
+    throw new Error(payload?.errorMessage || "Could not download this file. Check the connection and try again.");
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `${type}${type === "all" ? ".zip" : ".csv"}`;
+  return { blob: await response.blob(), filename };
+};

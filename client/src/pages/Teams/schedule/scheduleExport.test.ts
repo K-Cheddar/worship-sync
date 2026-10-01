@@ -223,6 +223,72 @@ describe("buildScheduleExportModel", () => {
     const director = model.groups[0].rows[0].cells[0];
     expect(director.highlighted).toBe(false);
   });
+
+  it("resolves both microphone and IEM assignments on one slot", () => {
+    const model = buildScheduleExportModel(baseInput({
+      equipmentAssignments: {
+        o1: { "dir::0": [
+          { id: "mic-1", category: "microphone" },
+          { id: "iem-1", category: "iem" },
+        ] },
+      },
+      equipmentCatalog: [
+        { id: "mic-1", category: "microphone", name: "Black", type: "Handheld", color: "#123456" },
+        { id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack", color: "#654321" },
+      ],
+    }));
+    const director = model.groups[0].rows[0].cells[0];
+    expect(director.equipment).toEqual([
+      { id: "mic-1", category: "microphone", name: "Black", type: "Handheld", color: "#123456" },
+      { id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack", color: "#654321" },
+    ]);
+    expect(formatExportCellText(director)).toBe("Brandon\nMic: Black\nIEM: IEM 1");
+  });
+
+  it("keeps assigned equipment visible when the slot has no person", () => {
+    const model = buildScheduleExportModel(baseInput({
+      assignments: { o1: {} },
+      equipmentAssignments: { o1: { "dir::0": [{ id: "iem-1", category: "iem" }] } },
+      equipmentCatalog: [{ id: "iem-1", category: "iem", name: "IEM 1" }],
+    }));
+    const director = model.groups[0].rows[0].cells[0];
+    expect(director).toMatchObject({ state: "filled", tokens: [] });
+    expect(formatExportCellText(director)).toBe("IEM: IEM 1");
+  });
+
+  it("ignores missing catalog IDs and equipment on inactive slots", () => {
+    const model = buildScheduleExportModel(baseInput({
+      equipmentAssignments: {
+        o1: {
+          "dir::0": [{ id: "deleted", category: "microphone" }],
+          "cam::0": [{ id: "iem-1", category: "iem" }],
+        },
+      },
+      equipmentCatalog: [{ id: "iem-1", category: "iem", name: "IEM 1" }],
+      requiredCountFor: (_occurrenceId, positionId) => positionId === "dir" ? 1 : 0,
+    }));
+    expect(model.groups[0].rows[0].cells[0].equipment).toEqual([]);
+    expect(model.groups[0].rows[0].cells[1]).toMatchObject({ state: "inactive", equipment: [] });
+  });
+
+  it("keeps equipment separate from member highlighting and supports added slots", () => {
+    const model = buildScheduleExportModel(baseInput({
+      columns: [
+        { columnKey: "dir::0", positionId: "dir", slot: 0, label: "Director" },
+        { columnKey: "dir::1", positionId: "dir", slot: 1, label: "Director 2" },
+      ],
+      requiredCountFor: () => 1,
+      additionalPositionSlots: { o1: ["dir::1"] },
+      assignments: { o1: { "dir::0": cell("m1") } },
+      equipmentAssignments: {
+        o1: { "dir::0": [{ id: "iem-1", category: "iem" }], "dir::1": [{ id: "iem-1", category: "iem" }] },
+      },
+      equipmentCatalog: [{ id: "iem-1", category: "iem", name: "IEM 1" }],
+      highlightMemberId: "m1",
+    }));
+    expect(model.groups[0].rows[0].cells[0]).toMatchObject({ highlighted: true, tokens: [{ highlighted: true }] });
+    expect(model.groups[0].rows[0].cells[1]).toMatchObject({ state: "filled", highlighted: false, tokens: [], equipment: [{ name: "IEM 1" }] });
+  });
 });
 
 describe("formatExportCellText", () => {

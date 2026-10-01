@@ -26,6 +26,7 @@ jest.mock("../../utils/authStorage", () => ({
 // Imports follow jest.mock factories; module under test must load after mocks.
 // eslint-disable-next-line import/first -- see above
 import {
+  createHumanSession,
   getAuthBootstrap,
   logoutSession,
   removeChurchMember,
@@ -326,6 +327,67 @@ describe("api/auth", () => {
     expect(recoveryHandler).toHaveBeenCalledTimes(1);
     expect(authErrorHandler).not.toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("recreates a lost server session from Firebase and retries without a global toast", async () => {
+    setAuthenticatedSessionExpected(true);
+    const persistedFirebaseUser = {
+      getIdToken: jest.fn((_forceRefresh: boolean) =>
+        Promise.resolve("fresh-firebase-id-token"),
+      ),
+    };
+    const recoveryHandler = jest.fn(async () => {
+      const idToken = await persistedFirebaseUser.getIdToken(true);
+      await createHumanSession(
+        { idToken, deviceId: "device-1" },
+        { notifyAuthError: false },
+      );
+      return true;
+    });
+    const authErrorHandler = jest.fn();
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    const unsubscribeError = registerAuthErrorHandler(authErrorHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true, bootstrap: { authenticated: true } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true }),
+      });
+
+    try {
+      await removeChurchMember("church-1", "user-7");
+    } finally {
+      unsubscribeRecovery();
+      unsubscribeError();
+    }
+
+    expect(persistedFirebaseUser.getIdToken).toHaveBeenCalledWith(true);
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect((global.fetch as jest.Mock).mock.calls[2][0]).toBe(
+      (global.fetch as jest.Mock).mock.calls[0][0],
+    );
+    expect((global.fetch as jest.Mock).mock.calls[2][1].method).toBe(
+      (global.fetch as jest.Mock).mock.calls[0][1].method,
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:5000/api/auth/session",
+      expect.objectContaining({
+        body: JSON.stringify({ idToken: "fresh-firebase-id-token", deviceId: "device-1" }),
+      }),
+    );
+    expect(authErrorHandler).not.toHaveBeenCalled();
   });
 
   it("announces a 401 when silent recovery cannot restore the session", async () => {

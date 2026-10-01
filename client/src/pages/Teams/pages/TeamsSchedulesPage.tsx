@@ -27,6 +27,7 @@ const TeamsSchedulesPage = () => {
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
+    refresh,
   } = useTeamsPage();
   const selectedSchedule = pageData.schedules.find(
     (schedule) => schedule.scheduleId === selectedScheduleId,
@@ -98,6 +99,7 @@ const TeamsSchedulesPage = () => {
       onScheduleDraftFlush={flushScheduleDraft}
       onScheduleDraftClear={clearScheduleDraft}
       trackTeamsSave={trackTeamsSave}
+      onImported={() => void refresh()}
     />
   );
 };

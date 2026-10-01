@@ -1,5 +1,4 @@
 import {
-  lazy,
   Suspense,
   useEffect,
   useMemo,
@@ -28,6 +27,7 @@ import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
+import { lazyRoute } from "../../utils/lazyRoute";
 import {
   getActiveTeamsNavSection,
   servicesNavSections,
@@ -38,18 +38,18 @@ import {
   saveTeamsAndServicesRoute,
 } from "./teamsRoutePersistence";
 
-const TeamsSchedulesPage = lazy(() => import("./pages/TeamsSchedulesPage"));
-const TeamsMessagesPage = lazy(() => import("./pages/TeamsMessagesPage"));
-const TeamsFormsPage = lazy(() => import("./pages/TeamsFormsPage"));
-const TeamsMembersPage = lazy(() => import("./pages/TeamsMembersPage"));
-const TeamsPositionsPage = lazy(() => import("./pages/TeamsPositionsPage"));
-const TeamsGroupsPage = lazy(() => import("./pages/TeamsGroupsPage"));
-const TeamsRolesPage = lazy(() => import("./pages/TeamsRolesPage"));
-const TeamsQualificationsPage = lazy(() => import("./pages/TeamsQualificationsPage"));
-const TeamsPlansPage = lazy(() => import("./pages/TeamsPlansPage"));
-const TeamsTemplatesPage = lazy(() => import("./pages/TeamsTemplatesPage"));
-const TeamsMicrophonesPage = lazy(() => import("./pages/TeamsMicrophonesPage"));
-const TeamsServiceSettingsPage = lazy(() => import("./pages/TeamsServiceSettingsPage"));
+const TeamsSchedulesPage = lazyRoute(() => import("./pages/TeamsSchedulesPage"));
+const TeamsMessagesPage = lazyRoute(() => import("./pages/TeamsMessagesPage"));
+const TeamsFormsPage = lazyRoute(() => import("./pages/TeamsFormsPage"));
+const TeamsMembersPage = lazyRoute(() => import("./pages/TeamsMembersPage"));
+const TeamsPositionsPage = lazyRoute(() => import("./pages/TeamsPositionsPage"));
+const TeamsGroupsPage = lazyRoute(() => import("./pages/TeamsGroupsPage"));
+const TeamsRolesPage = lazyRoute(() => import("./pages/TeamsRolesPage"));
+const TeamsQualificationsPage = lazyRoute(() => import("./pages/TeamsQualificationsPage"));
+const TeamsPlansPage = lazyRoute(() => import("./pages/TeamsPlansPage"));
+const TeamsTemplatesPage = lazyRoute(() => import("./pages/TeamsTemplatesPage"));
+const TeamsMicrophonesPage = lazyRoute(() => import("./pages/TeamsMicrophonesPage"));
+const TeamsServiceSettingsPage = lazyRoute(() => import("./pages/TeamsServiceSettingsPage"));
 
 const TeamsSectionLoadingFallback = () => {
   const location = useLocation();

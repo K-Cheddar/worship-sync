@@ -1,3 +1,5 @@
+import { X } from "lucide-react";
+import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 
 type EntityListSearchProps = {
@@ -6,6 +8,7 @@ type EntityListSearchProps = {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  clearable?: boolean;
 };
 
 const EntityListSearch = ({
@@ -14,6 +17,7 @@ const EntityListSearch = ({
   value,
   onChange,
   className,
+  clearable = false,
 }: EntityListSearchProps) => (
   <Input
     className={className}
@@ -22,6 +26,19 @@ const EntityListSearch = ({
     placeholder={placeholder ?? `Search ${label.toLowerCase()}…`}
     value={value}
     onChange={(next) => onChange(String(next))}
+    endAdornment={
+      clearable && value ? (
+        <Button
+          type="button"
+          variant="tertiary"
+          svg={X}
+          iconSize="sm"
+          padding="p-1"
+          aria-label="Clear search"
+          onClick={() => onChange("")}
+        />
+      ) : null
+    }
   />
 );
 

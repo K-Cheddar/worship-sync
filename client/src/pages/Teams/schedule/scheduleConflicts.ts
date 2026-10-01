@@ -3,6 +3,7 @@ import type {
   TeamSchedule,
   TeamScheduleOccurrence,
 } from "../../../api/authTypes";
+import { getOccurrenceDate } from "../../../utils/teamScheduleOccurrences";
 import { getCellMemberIds } from "../teamsUtils";
 
 export type ScheduleAssignmentConflict = {
@@ -49,10 +50,10 @@ export const scheduleDateRangesOverlap = (
 };
 
 /**
- * Whether two occurrences describe the same service moment. Prefer shared
- * identity / start time; when either side lacks `startsAt` (legacy schedules),
- * fall back to shared service ids only if the parent schedules' date ranges
- * overlap — so unrelated months do not false-positive.
+ * Whether two occurrences describe the same service moment. Joined occurrences
+ * use their earliest member service as `startsAt`, so a joined occurrence can
+ * match a standalone member at a different time on the same stored date.
+ * Legacy schedules without `startsAt` still require overlapping date ranges.
  */
 export const scheduleOccurrencesConflict = (
   current?: TeamScheduleOccurrence | null,
@@ -69,20 +70,22 @@ export const scheduleOccurrencesConflict = (
   ) {
     return true;
   }
-  if (current.startsAt && other.startsAt) {
-    if (current.startsAt !== other.startsAt) return false;
-    const currentServiceIds = occurrenceServiceIds(current);
-    const otherServiceIds = occurrenceServiceIds(other);
-    return [...currentServiceIds].some((serviceId) =>
-      otherServiceIds.has(serviceId),
-    );
-  }
-  if (!options?.schedulesOverlap) return false;
   const currentServiceIds = occurrenceServiceIds(current);
   const otherServiceIds = occurrenceServiceIds(other);
-  return [...currentServiceIds].some((serviceId) =>
+  const sharesServiceId = [...currentServiceIds].some((serviceId) =>
     otherServiceIds.has(serviceId),
   );
+  if (!sharesServiceId) return false;
+  if (current.startsAt && other.startsAt) {
+    if (current.startsAt === other.startsAt) return true;
+    const includesJoinedServices =
+      currentServiceIds.size > 1 || otherServiceIds.size > 1;
+    return (
+      includesJoinedServices &&
+      getOccurrenceDate(current) === getOccurrenceDate(other)
+    );
+  }
+  return Boolean(options?.schedulesOverlap);
 };
 
 export const findCrossTeamScheduleOccurrenceConflicts = ({

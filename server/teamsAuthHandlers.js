@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { emitTeamsEvent } from "./teamsSse.js";
 import {
   addServiceFlowSseClient,
@@ -53,6 +54,26 @@ import {
   resolveTeamIntakeRecipientTokenSecret,
 } from "./teamIntakeRecipientToken.js";
 import { hasPersonalizedIntakeResponseFields } from "./teamIntakeFields.js";
+import { encodeCsv, parseCsv } from "./dataTransfer/csv.js";
+import {
+  PORTABLE_SCHEMAS,
+  buildPortableDatasets,
+  LIST_DELIMITER,
+  parsePortableEntityIcon,
+} from "./dataTransfer/schemas.js";
+import {
+  classifyPortablePreviewAction,
+  findPortableMatch,
+  normalizePortableMatchValue,
+  portableServiceMatches,
+} from "./dataTransfer/matching.js";
+import { createZip } from "./dataTransfer/zip.js";
+import { persistPortableCreate } from "./dataTransfer/portableCreatePersister.js";
+import {
+  isValidPortablePlainDate,
+  isValidPortableTimeZone,
+  portableWallClockToIso,
+} from "./dataTransfer/time.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -70,8 +91,7 @@ const teamIntakeTokenSecret =
   process.env.AUTH_SESSION_SECRET ||
   "dev-auth-secret";
 
-const teamIntakeRecipientTokenSecret =
-  resolveTeamIntakeRecipientTokenSecret();
+const teamIntakeRecipientTokenSecret = resolveTeamIntakeRecipientTokenSecret();
 
 // Upper bound for a single church's per-collection bootstrap query. Sized to
 // cover realistic roster/submission growth while still bounding Firestore reads.
@@ -127,6 +147,10 @@ export const createTeamsAuthHandlers = ({
   queryDocs,
   randomSecret,
   readChurchServiceTimes = async () => [],
+  readChurchServiceTimesForTransfer = readChurchServiceTimes,
+  updateChurchServiceTimes = async () => {
+    throw new Error("Service storage is unavailable.");
+  },
   readChurchPublicBoardHeaderLogoUrl,
   readChurchPublicBrandingChrome,
   requireAdminSession,
@@ -177,21 +201,34 @@ export const createTeamsAuthHandlers = ({
     return uid;
   };
   // The in-memory store used by local development and tests has no
-  // transactions. Serialize microphone-map writes there so it retains the
-  // same no-lost-update guarantee as Firestore transactions.
-  const inMemoryMicrophoneSaveQueues = new Map();
-  const enqueueInMemoryMicrophoneSave = (scheduleId, task) => {
+  // transactions. Serialize writes to one schedule so they retain the same
+  // no-lost-update guarantee as Firestore transactions.
+  const inMemoryScheduleSaveQueues = new Map();
+  const portableCreateQueues = new Map();
+  const enqueuePortableCreate = (key, task) => {
+    const previous = portableCreateQueues.get(key) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    portableCreateQueues.set(key, settled);
+    void settled.finally(() => {
+      if (portableCreateQueues.get(key) === settled) {
+        portableCreateQueues.delete(key);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryScheduleSave = (scheduleId, task) => {
     const previous =
-      inMemoryMicrophoneSaveQueues.get(scheduleId) || Promise.resolve();
+      inMemoryScheduleSaveQueues.get(scheduleId) || Promise.resolve();
     const run = previous.then(task, task);
     const settled = run.then(
       () => undefined,
       () => undefined,
     );
-    inMemoryMicrophoneSaveQueues.set(scheduleId, settled);
+    inMemoryScheduleSaveQueues.set(scheduleId, settled);
     void settled.finally(() => {
-      if (inMemoryMicrophoneSaveQueues.get(scheduleId) === settled) {
-        inMemoryMicrophoneSaveQueues.delete(scheduleId);
+      if (inMemoryScheduleSaveQueues.get(scheduleId) === settled) {
+        inMemoryScheduleSaveQueues.delete(scheduleId);
       }
     });
     return run;
@@ -219,6 +256,12 @@ export const createTeamsAuthHandlers = ({
         statusCode < 500 && error?.message
           ? error.message
           : withTeamsErrorNextStep(fallbackMessage),
+      ...(Array.isArray(error?.occurrenceConflicts)
+        ? {
+            occurrenceConflicts: error.occurrenceConflicts,
+            conflictFingerprint: error.conflictFingerprint || "",
+          }
+        : {}),
     });
   };
 
@@ -803,6 +846,42 @@ export const createTeamsAuthHandlers = ({
     },
   };
 
+  // The document id is deterministic so concurrent admins ensuring the same
+  // team/range contend on one Firestore document instead of creating siblings.
+  const generatedPeriodKeyFor = ({ churchId, teamId, startDate, endDate }) =>
+    crypto
+      .createHash("sha256")
+      .update(`${churchId}\u0000${teamId}\u0000${startDate}\u0000${endDate}`)
+      .digest("hex");
+  // Keep discovering generated-period documents written before churchId was
+  // included in the deterministic key. They are reused in place, without a
+  // collection-wide migration.
+  const legacyGeneratedPeriodKeyFor = ({ teamId, startDate, endDate }) =>
+    crypto
+      .createHash("sha256")
+      .update(`${teamId}\u0000${startDate}\u0000${endDate}`)
+      .digest("hex");
+  const generatedPeriodScheduleId = (key) => `generated_${key}`;
+  const generatedPeriodEnsureQueues = new Map();
+
+  const withGeneratedPeriodEnsureLock = async (key, operation) => {
+    const previous = generatedPeriodEnsureQueues.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => {
+      release = resolve;
+    });
+    generatedPeriodEnsureQueues.set(key, current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (generatedPeriodEnsureQueues.get(key) === current) {
+        generatedPeriodEnsureQueues.delete(key);
+      }
+    }
+  };
+
   const normalizeShortText = (value, { max = 160 } = {}) =>
     String(value || "")
       .trim()
@@ -857,17 +936,197 @@ export const createTeamsAuthHandlers = ({
 
   const assertPlainDate = (value, fieldLabel) => {
     const date = String(value || "").trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw httpError(400, `${fieldLabel} must be a valid date.`);
-    }
-    const parsed = new Date(`${date}T00:00:00.000Z`);
-    if (
-      Number.isNaN(parsed.getTime()) ||
-      parsed.toISOString().slice(0, 10) !== date
-    ) {
+    if (!isValidPortablePlainDate(date)) {
       throw httpError(400, `${fieldLabel} must be a valid date.`);
     }
     return date;
+  };
+
+  const getOccurrenceCalendarParts = (startsAt, timeZone) => {
+    const instant = new Date(startsAt);
+    if (Number.isNaN(instant.getTime())) {
+      throw httpError(400, "Choose a valid service occurrence.");
+    }
+    let parts;
+    try {
+      parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(instant);
+    } catch {
+      throw httpError(400, "Choose a valid time zone for service occurrences.");
+    }
+    const values = Object.fromEntries(
+      parts.map(({ type, value }) => [type, value]),
+    );
+    const weekdayIndex = [
+      "Sun",
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+    ].indexOf(values.weekday);
+    return {
+      date: `${values.year}-${values.month}-${values.day}`,
+      time: `${values.hour}:${values.minute}`,
+      weekday: weekdayIndex,
+      startsAt: instant.toISOString(),
+    };
+  };
+
+  const getServiceOccurrenceTime = (service, localDate, timeZone) => {
+    if (!service || service.archivedAt) return null;
+    if (service.startDateISO && localDate < service.startDateISO) return null;
+    if (service.endDateISO && localDate > service.endDateISO) return null;
+    const date = new Date(`${localDate}T00:00:00.000Z`);
+    const weekday = date.getUTCDay();
+    if (service.reccurence === "one_time") {
+      if (!service.dateTimeISO) return null;
+      const serviceInstant = new Date(service.dateTimeISO);
+      if (Number.isNaN(serviceInstant.getTime())) return null;
+      if (
+        getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone)
+          .date !== localDate
+      )
+        return null;
+      if (service.archivedAt && serviceInstant > new Date(service.archivedAt))
+        return null;
+      return getOccurrenceCalendarParts(serviceInstant.toISOString(), timeZone)
+        .time;
+    }
+    if (service.reccurence === "weekly") {
+      return Number(service.dayOfWeek) === weekday &&
+        /^\d{2}:\d{2}$/.test(String(service.time || ""))
+        ? service.time
+        : null;
+    }
+    if (service.reccurence === "multi_weekly") {
+      return (
+        (service.daysOfWeek || []).find(
+          (item) =>
+            Number(item?.day) === weekday &&
+            /^\d{2}:\d{2}$/.test(String(item?.time || "")),
+        )?.time || null
+      );
+    }
+    if (service.reccurence === "monthly") {
+      const [year, month, day] = localDate.split("-").map(Number);
+      const occurrenceDate = new Date(Date.UTC(year, month - 1, day));
+      const ordinal = Number(service.ordinal);
+      const isLastWeekday =
+        day + 7 > new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const matchesOrdinal =
+        ordinal === 5 ? isLastWeekday : Math.ceil(day / 7) === ordinal;
+      return occurrenceDate.getUTCDay() === Number(service.weekday) &&
+        matchesOrdinal &&
+        /^\d{2}:\d{2}$/.test(String(service.time || ""))
+        ? service.time
+        : null;
+    }
+    return null;
+  };
+
+  const assertServiceOccurrence = ({ service, localParts, timeZone }) => {
+    const scheduledTime = getServiceOccurrenceTime(
+      service,
+      localParts.date,
+      timeZone,
+    );
+    if (!scheduledTime || scheduledTime !== localParts.time) {
+      throw httpError(
+        400,
+        "A target does not match its current service recurrence.",
+      );
+    }
+    if (
+      service.reccurence === "one_time" &&
+      new Date(service.dateTimeISO).toISOString() !== localParts.startsAt
+    ) {
+      throw httpError(
+        400,
+        "A target does not match its one-time service occurrence.",
+      );
+    }
+    return scheduledTime;
+  };
+
+  const assertOccurrenceServiceGroup = ({
+    serviceId,
+    serviceIds,
+    groupId,
+    occurrenceId,
+    startsAt,
+    localParts,
+    timeZone,
+    servicesById,
+  }) => {
+    const primaryService = servicesById.get(serviceId);
+    assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    const configuredGroupId = normalizeShortText(
+      primaryService?.serviceGroupId,
+      { max: 160 },
+    );
+    const occurringGroupServices = configuredGroupId
+      ? [...servicesById.entries()]
+          .filter(
+            ([, service]) =>
+              normalizeShortText(service?.serviceGroupId, { max: 160 }) ===
+              configuredGroupId,
+          )
+          .map(([id, service]) => ({
+            id,
+            service,
+            time: getServiceOccurrenceTime(service, localParts.date, timeZone),
+          }))
+          .filter((entry) => entry.time)
+          .sort(
+            (left, right) =>
+              left.time.localeCompare(right.time) ||
+              String(left.service?.name || "").localeCompare(
+                String(right.service?.name || ""),
+              ),
+          )
+      : [];
+
+    if (groupId) {
+      const expectedIds = occurringGroupServices.map((entry) => entry.id);
+      if (
+        configuredGroupId !== groupId ||
+        expectedIds.length < 2 ||
+        serviceIds.length !== expectedIds.length ||
+        serviceIds.some((id, index) => id !== expectedIds[index]) ||
+        serviceId !== expectedIds[0]
+      ) {
+        throw httpError(
+          400,
+          "A combined occurrence does not match its configured service group.",
+        );
+      }
+      if (occurrenceId !== `group:${groupId}@${startsAt.slice(0, 10)}`) {
+        throw httpError(400, "A combined occurrence has an invalid identity.");
+      }
+      return;
+    }
+
+    if (
+      serviceIds.length !== 1 ||
+      serviceIds[0] !== serviceId ||
+      occurringGroupServices.length > 1 ||
+      occurrenceId !== `${serviceId}@${startsAt}`
+    ) {
+      throw httpError(
+        400,
+        "A service occurrence has an invalid identity or grouping.",
+      );
+    }
   };
 
   const normalizeOptionalPlainDate = (value, fieldLabel) => {
@@ -1098,6 +1357,37 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  // Compatibility phase: microphone records remain writable only through
+  // servicePlanMicrophones. The generic catalog accepts IEMs today and keeps
+  // the category field ready for a later ID-preserving microphone migration.
+  const MAX_SERVICE_EQUIPMENT = 80;
+  const normalizeServiceEquipment = (raw) => {
+    if (!raw || typeof raw !== "object" || raw.category !== "iem") return null;
+    const name = normalizeShortText(raw.name, { max: 80 });
+    if (!name) return null;
+    const subtype = normalizeShortText(raw.subtype, { max: 80 });
+    const color = String(raw.color || "").trim();
+    return {
+      id:
+        normalizeShortText(raw.id, { max: 160 }) ||
+        createId("serviceEquipment"),
+      category: "iem",
+      name,
+      ...(subtype ? { subtype } : {}),
+      color: /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#9ca3af",
+    };
+  };
+
+  const normalizeServiceEquipmentCatalog = (raw) =>
+    (Array.isArray(raw) ? raw : [])
+      .map(normalizeServiceEquipment)
+      .filter(Boolean)
+      .filter(
+        (item, index, values) =>
+          values.findIndex((candidate) => candidate.id === item.id) === index,
+      )
+      .slice(0, MAX_SERVICE_EQUIPMENT);
+
   const normalizeServicePlanMicrophoneAudience = (raw) => {
     if (!raw || typeof raw !== "object") return null;
     const positionId = normalizeShortText(raw.positionId, { max: 160 });
@@ -1126,12 +1416,13 @@ export const createTeamsAuthHandlers = ({
       .slice(0, MAX_SERVICE_PLAN_MICROPHONE_AUDIENCES);
 
   /**
-   * Everyone doing an item, and the microphones each of them carries. An entry
+   * Everyone doing an item, and the microphones/IEMs each of them carries. An entry
    * with no name and no memberId is the unassigned slot: a stand or spare mic.
    * Entries holding nothing at all are dropped rather than stored as blanks.
    */
   const normalizeServicePlanAssignees = (raw) => {
     const usedMicrophoneIds = new Set();
+    const usedIemIds = new Set();
     return (Array.isArray(raw) ? raw : [])
       .map((assignee) => {
         if (!assignee || typeof assignee !== "object") return null;
@@ -1149,7 +1440,17 @@ export const createTeamsAuthHandlers = ({
             return true;
           })
           .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
-        if (!name && !memberId && !microphoneIds.length) return null;
+        // IEM IDs have a separate uniqueness domain; raw IDs may overlap mics.
+        const iemIds = (Array.isArray(assignee.iemIds) ? assignee.iemIds : [])
+          .map((iemId) => normalizeShortText(iemId, { max: 160 }))
+          .filter((iemId) => {
+            if (!iemId || usedIemIds.has(iemId)) return false;
+            usedIemIds.add(iemId);
+            return true;
+          })
+          .slice(0, MAX_SERVICE_PLAN_ATTACHMENTS);
+        if (!name && !memberId && !microphoneIds.length && !iemIds.length)
+          return null;
         return {
           id:
             normalizeShortText(assignee.id, { max: 160 }) ||
@@ -1157,6 +1458,7 @@ export const createTeamsAuthHandlers = ({
           ...(name ? { name } : {}),
           ...(memberId ? { memberId } : {}),
           ...(microphoneIds.length ? { microphoneIds } : {}),
+          ...(iemIds.length ? { iemIds } : {}),
         };
       })
       .filter(Boolean)
@@ -1277,23 +1579,36 @@ export const createTeamsAuthHandlers = ({
     const provider = normalizeShortText(raw.provider, { max: 120 });
     const mediaId = normalizeShortText(raw.mediaId, { max: 300 });
     const data = normalizeServicePlanResourceData(raw.data);
-    const metadata = raw.metadata && typeof raw.metadata === "object"
-      ? {
-          ...(normalizeShortText(raw.metadata.subtitle, { max: 300 })
-            ? { subtitle: normalizeShortText(raw.metadata.subtitle, { max: 300 }) }
-            : {}),
-          ...(Number.isFinite(Number(raw.metadata.duration)) &&
-          Number(raw.metadata.duration) >= 0
-            ? { duration: Number(raw.metadata.duration) }
-            : {}),
-          ...(normalizeShortText(raw.metadata.thumbnailUrl, { max: 2_000 })
-            ? { thumbnailUrl: normalizeShortText(raw.metadata.thumbnailUrl, { max: 2_000 }) }
-            : {}),
-          ...(normalizeShortText(raw.metadata.mimeType, { max: 160 })
-            ? { mimeType: normalizeShortText(raw.metadata.mimeType, { max: 160 }) }
-            : {}),
-        }
-      : undefined;
+    const metadata =
+      raw.metadata && typeof raw.metadata === "object"
+        ? {
+            ...(normalizeShortText(raw.metadata.subtitle, { max: 300 })
+              ? {
+                  subtitle: normalizeShortText(raw.metadata.subtitle, {
+                    max: 300,
+                  }),
+                }
+              : {}),
+            ...(Number.isFinite(Number(raw.metadata.duration)) &&
+            Number(raw.metadata.duration) >= 0
+              ? { duration: Number(raw.metadata.duration) }
+              : {}),
+            ...(normalizeShortText(raw.metadata.thumbnailUrl, { max: 2_000 })
+              ? {
+                  thumbnailUrl: normalizeShortText(raw.metadata.thumbnailUrl, {
+                    max: 2_000,
+                  }),
+                }
+              : {}),
+            ...(normalizeShortText(raw.metadata.mimeType, { max: 160 })
+              ? {
+                  mimeType: normalizeShortText(raw.metadata.mimeType, {
+                    max: 160,
+                  }),
+                }
+              : {}),
+          }
+        : undefined;
     return {
       id:
         normalizeShortText(raw.id, { max: 160 }) ||
@@ -1370,60 +1685,110 @@ export const createTeamsAuthHandlers = ({
         return { kind, ...(id ? { id } : {}), name };
       })
       .filter(Boolean);
-    return assignments.length ? assignments.slice(0, MAX_SERVICE_PLAN_POSITIONS) : undefined;
+    return assignments.length
+      ? assignments.slice(0, MAX_SERVICE_PLAN_POSITIONS)
+      : undefined;
   };
 
   const normalizeServicePlanImportAmbiguity = (raw) => {
-    if (!raw || typeof raw !== "object" || raw.source !== "servicePlanning") return undefined;
+    if (!raw || typeof raw !== "object" || raw.source !== "servicePlanning")
+      return undefined;
     const sourceKey = normalizeShortText(raw.sourceKey, { max: 300 });
-    const sourceFingerprint = normalizeLongText(raw.sourceFingerprint, { max: 3000 });
-    const statuses = new Set(["unresolved", "deferred", "confirmed", "acknowledged"]);
-    if (!sourceKey || !sourceFingerprint || !statuses.has(raw.status)) return undefined;
+    const sourceFingerprint = normalizeLongText(raw.sourceFingerprint, {
+      max: 3000,
+    });
+    const statuses = new Set([
+      "unresolved",
+      "deferred",
+      "confirmed",
+      "acknowledged",
+    ]);
+    if (!sourceKey || !sourceFingerprint || !statuses.has(raw.status))
+      return undefined;
     const kinds = new Set(["scripture", "url", "person", "description"]);
-    const destinations = new Set(["scripture", "resource", "assignee", "content", "notes", "unassigned"]);
+    const destinations = new Set([
+      "scripture",
+      "resource",
+      "assignee",
+      "content",
+      "notes",
+      "unassigned",
+    ]);
     const parts = Array.isArray(raw.parts)
-      ? raw.parts.flatMap((part) => {
-          if (!part || typeof part !== "object" || !kinds.has(part.kind) || !destinations.has(part.destination)) return [];
-          const value = normalizeLongText(part.value, { max: 1000 });
-          if (!value) return [];
-          const sourceField = ["title", "note", "ledBy"].includes(part.sourceField)
-            ? part.sourceField
-            : undefined;
-          const managedKind = ["assignee", "scripture", "resource", "note"].includes(part.managed?.kind)
-            ? part.managed.kind
-            : undefined;
-          const managedId = managedKind
-            ? normalizeShortText(part.managed.id, { max: 160 })
-            : "";
-          const fingerprint = managedId
-            ? normalizeLongText(part.managed.fingerprint, { max: 3000 })
-            : "";
-          return [{
-            kind: part.kind,
-            value,
-            destination: part.destination,
-            ...(sourceField ? { sourceField } : {}),
-            ...(managedKind && managedId && fingerprint
-              ? { managed: { kind: managedKind, id: managedId, fingerprint } }
-              : {}),
-          }];
-        }).slice(0, 40)
+      ? raw.parts
+          .flatMap((part) => {
+            if (
+              !part ||
+              typeof part !== "object" ||
+              !kinds.has(part.kind) ||
+              !destinations.has(part.destination)
+            )
+              return [];
+            const value = normalizeLongText(part.value, { max: 1000 });
+            if (!value) return [];
+            const sourceField = ["title", "note", "ledBy"].includes(
+              part.sourceField,
+            )
+              ? part.sourceField
+              : undefined;
+            const managedKind = [
+              "assignee",
+              "scripture",
+              "resource",
+              "note",
+            ].includes(part.managed?.kind)
+              ? part.managed.kind
+              : undefined;
+            const managedId = managedKind
+              ? normalizeShortText(part.managed.id, { max: 160 })
+              : "";
+            const fingerprint = managedId
+              ? normalizeLongText(part.managed.fingerprint, { max: 3000 })
+              : "";
+            return [
+              {
+                kind: part.kind,
+                value,
+                destination: part.destination,
+                ...(sourceField ? { sourceField } : {}),
+                ...(managedKind && managedId && fingerprint
+                  ? {
+                      managed: {
+                        kind: managedKind,
+                        id: managedId,
+                        fingerprint,
+                      },
+                    }
+                  : {}),
+              },
+            ];
+          })
+          .slice(0, 40)
       : [];
     const reasons = Array.isArray(raw.reasons)
-      ? raw.reasons.map((reason) => normalizeShortText(reason, { max: 300 })).filter(Boolean).slice(0, 20)
+      ? raw.reasons
+          .map((reason) => normalizeShortText(reason, { max: 300 }))
+          .filter(Boolean)
+          .slice(0, 20)
       : [];
     return {
       source: "servicePlanning",
       sourceKey,
-      sourceElementType: normalizeShortText(raw.sourceElementType, { max: 200 }),
+      sourceElementType: normalizeShortText(raw.sourceElementType, {
+        max: 200,
+      }),
       sourceTitle: normalizeLongText(raw.sourceTitle, { max: 2000 }),
       sourceLedBy: normalizeLongText(raw.sourceLedBy, { max: 2000 }),
-      ...(raw.sourceNote ? { sourceNote: normalizeLongText(raw.sourceNote, { max: 2000 }) } : {}),
+      ...(raw.sourceNote
+        ? { sourceNote: normalizeLongText(raw.sourceNote, { max: 2000 }) }
+        : {}),
       parts,
       reasons,
       status: raw.status,
       sourceFingerprint,
-      ...(raw.authorizationPending === true ? { authorizationPending: true } : {}),
+      ...(raw.authorizationPending === true
+        ? { authorizationPending: true }
+        : {}),
     };
   };
 
@@ -1443,7 +1808,9 @@ export const createTeamsAuthHandlers = ({
     if (!observed || !applied) return undefined;
     const fields = new Set(["elementType", "title", "ledBy", "note"]);
     const pendingFields = Array.isArray(raw.pendingFields)
-      ? [...new Set(raw.pendingFields.filter((field) => fields.has(field)))].slice(0, 4)
+      ? [
+          ...new Set(raw.pendingFields.filter((field) => fields.has(field))),
+        ].slice(0, 4)
       : [];
     return { observed, applied, pendingFields };
   };
@@ -1478,8 +1845,12 @@ export const createTeamsAuthHandlers = ({
       raw?.durationSeconds,
       raw?.durationMinutes,
     );
-    const importAmbiguity = normalizeServicePlanImportAmbiguity(raw?.importAmbiguity);
-    const servicePlanningImport = normalizeServicePlanningSourceState(raw?.servicePlanningImport);
+    const importAmbiguity = normalizeServicePlanImportAmbiguity(
+      raw?.importAmbiguity,
+    );
+    const servicePlanningImport = normalizeServicePlanningSourceState(
+      raw?.servicePlanningImport,
+    );
     return {
       id:
         normalizeShortText(raw?.id, { max: 160 }) ||
@@ -1637,7 +2008,8 @@ export const createTeamsAuthHandlers = ({
       timezone: timezone ?? null,
       sections,
       sourceImport: sourceImport ?? null,
-      ...(typeof body?.saveOperationId === "string" && /^[A-Za-z0-9_-]{8,100}$/.test(body.saveOperationId)
+      ...(typeof body?.saveOperationId === "string" &&
+      /^[A-Za-z0-9_-]{8,100}$/.test(body.saveOperationId)
         ? { saveOperationId: body.saveOperationId }
         : {}),
       ...(clonedFromPlanKey ? { clonedFromPlanKey } : {}),
@@ -1841,7 +2213,10 @@ export const createTeamsAuthHandlers = ({
     const trimmed = value.trim();
     if (!trimmed) throw httpError(400, `${label} is required.`);
     if (trimmed.length > maxLength) {
-      throw httpError(400, `${label} must be ${maxLength} characters or fewer.`);
+      throw httpError(
+        400,
+        `${label} must be ${maxLength} characters or fewer.`,
+      );
     }
     return trimmed;
   };
@@ -2133,27 +2508,34 @@ export const createTeamsAuthHandlers = ({
     return { plan: generalPlan, viewMode: "general", token: trimmed };
   };
 
-  const buildPublicServicePlan = async ({ plan, viewMode, token }) => {
+  const buildPublicServicePlan = async ({
+    plan,
+    viewMode,
+    token,
+    includeTeamDetails = true,
+    allowUnpublished = false,
+    includeControllerEquipment = false,
+  }) => {
     const isGeneralView = viewMode === "general";
     const [church, brandingChrome, positions, teams, schedules] =
       await Promise.all([
         getDoc(COLLECTIONS.churches, plan.churchId),
         readChurchPublicBrandingChrome(plan.churchId),
-        isGeneralView
+        isGeneralView || !includeTeamDetails
           ? Promise.resolve([])
           : listTeamCollectionForChurch(
               COLLECTIONS.teamPositions,
               "positionId",
               plan.churchId,
             ),
-        isGeneralView
+        isGeneralView || !includeTeamDetails
           ? Promise.resolve([])
           : listTeamCollectionForChurch(
               COLLECTIONS.teams,
               "teamId",
               plan.churchId,
             ),
-        isGeneralView
+        isGeneralView || !includeTeamDetails
           ? Promise.resolve([])
           : listTeamCollectionForChurch(
               COLLECTIONS.teamSchedules,
@@ -2161,7 +2543,7 @@ export const createTeamsAuthHandlers = ({
               plan.churchId,
             ),
       ]);
-    const memberIds = isGeneralView
+    const memberIds = isGeneralView || !includeTeamDetails
       ? []
       : publicServingMemberIdsForPlan({
           plan,
@@ -2196,6 +2578,9 @@ export const createTeamsAuthHandlers = ({
       churchSecondaryColor: brandingChrome.secondaryColor,
       viewMode,
       shareId: token,
+      allowUnpublished,
+      includeControllerEquipment,
+      equipment: church?.serviceEquipment || [],
     });
   };
 
@@ -2852,11 +3237,7 @@ export const createTeamsAuthHandlers = ({
 
   const sanitizeSmsDeliveryAttemptForAdmin = (attempt) => {
     if (!attempt) return null;
-    const {
-      phoneNumberSnapshot,
-      providerMessageId,
-      ...safeAttempt
-    } = attempt;
+    const { phoneNumberSnapshot, providerMessageId, ...safeAttempt } = attempt;
     return safeAttempt;
   };
 
@@ -3003,6 +3384,15 @@ export const createTeamsAuthHandlers = ({
     return {
       ...summary,
       assignmentsOmitted: true,
+      hasScheduleData: Boolean(
+        Object.keys(assignments || {}).length ||
+          Object.keys(microphoneAssignments || {}).length ||
+          Object.keys(schedule?.iemAssignments || {}).length ||
+          Object.keys(additionalPositionSlots || {}).length ||
+          Object.keys(optionalPositionSlots || {}).length ||
+          Object.keys(schedule?.responses || {}).length ||
+          schedule?.guests?.length,
+      ),
       assignmentCounts: buildScheduleAssignmentCounts(
         assignments,
         schedule.occurrences,
@@ -3164,7 +3554,9 @@ export const createTeamsAuthHandlers = ({
         : {}),
       intakeForms,
       intakeSubmissions,
-      intakeRecipients: intakeRecipients.map(sanitizeTeamIntakeRecipientForAdmin),
+      intakeRecipients: intakeRecipients.map(
+        sanitizeTeamIntakeRecipientForAdmin,
+      ),
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
     };
   };
@@ -3480,7 +3872,50 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
-  const validateTeamPositionPayload = async (body, churchId) => {
+  const validateEntityIcon = (value, existingIcon, entityLabel) => {
+    const label = `${entityLabel} icon`;
+    if (value === undefined) return undefined;
+    if (value === null || value === "") return "";
+    if (typeof value === "string") {
+      return normalizeShortText(value, { max: 40 });
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, `${label} is invalid.`);
+    }
+    const source = typeof value.source === "string"
+      ? normalizeShortText(value.source, { max: 20 })
+      : "";
+    if (source === "custom") {
+      if (isDeepStrictEqual(value, existingIcon)) return value;
+      throw httpError(400, `Custom ${entityLabel.toLowerCase()} icons are not supported yet.`);
+    }
+    const color = value.color === undefined
+      ? undefined
+      : typeof value.color === "string"
+        ? normalizeShortText(value.color, { max: 7 })
+        : "invalid";
+    if (color && !/^#[0-9a-f]{6}$/i.test(color)) {
+      throw httpError(
+        400,
+        `${label} color must be a six-digit hex color.`,
+      );
+    }
+    const colorField = color ? { color: color.toLowerCase() } : {};
+    if (
+      source !== "lucide" &&
+      source !== "tabler" &&
+      source !== "worshipsync"
+    ) {
+      throw httpError(400, `${label} source is invalid.`);
+    }
+    const name = typeof value.name === "string"
+      ? normalizeShortText(value.name, { max: 120 })
+      : "";
+    if (!name) throw httpError(400, `${label} name is required.`);
+    return { source, name, ...colorField };
+  };
+
+  const validateTeamPositionPayload = async (body, churchId, existingPosition = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Position name is required.");
@@ -3514,6 +3949,7 @@ export const createTeamsAuthHandlers = ({
     const defaultMicrophoneId = normalizeShortText(body?.defaultMicrophoneId, {
       max: 160,
     });
+    const defaultIemId = normalizeShortText(body?.defaultIemId, { max: 160 });
     if (defaultMicrophoneId) {
       if (!team.usesMicrophoneAssignments) {
         throw httpError(
@@ -3535,18 +3971,39 @@ export const createTeamsAuthHandlers = ({
         );
       }
     }
+    if (defaultIemId) {
+      if (!team.usesIemAssignments) {
+        throw httpError(
+          400,
+          "Enable IEM assignments for this team before setting a default IEM.",
+        );
+      }
+      const church = await getDoc(COLLECTIONS.churches, churchId);
+      const knownIemIds = new Set(
+        normalizeServiceEquipmentCatalog(church?.serviceEquipment)
+          .filter((item) => item.category === "iem")
+          .map((item) => item.id),
+      );
+      if (!knownIemIds.has(defaultIemId))
+        throw httpError(
+          400,
+          "Default IEM is not in this church's equipment list.",
+        );
+    }
+    const icon = validateEntityIcon(body?.icon, existingPosition?.icon, "Position");
     return {
       name,
       description: normalizeLongText(body?.description),
-      icon: normalizeShortText(body?.icon, { max: 40 }),
+      ...(icon !== undefined ? { icon } : {}),
       groupId: normalizeShortText(body?.groupId, { max: 160 }) || null,
       qualificationAreaId: qualificationAreaId || null,
       defaultMicrophoneId: defaultMicrophoneId || null,
+      defaultIemId: defaultIemId || null,
       teamId: team.teamId,
     };
   };
 
-  const validateTeamPayload = async (body, churchId) => {
+  const validateTeamPayload = async (body, churchId, existingTeam = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Team name is required.");
@@ -3562,9 +4019,10 @@ export const createTeamsAuthHandlers = ({
     return {
       name,
       description: normalizeLongText(body?.description),
-      icon: normalizeShortText(body?.icon, { max: 40 }),
+      icon: validateEntityIcon(body?.icon, existingTeam?.icon, "Team") || "",
       memberIds,
       usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
+      usesIemAssignments: body?.usesIemAssignments === true,
     };
   };
 
@@ -3700,6 +4158,26 @@ export const createTeamsAuthHandlers = ({
     return assignments;
   };
 
+  const normalizeTeamScheduleIemAssignments = (value) => {
+    if (!value || typeof value !== "object") return {};
+    const assignments = {};
+    for (const [occurrenceId, rawRow] of Object.entries(value)) {
+      const normalizedOccurrenceId = normalizeShortText(occurrenceId, {
+        max: 260,
+      });
+      if (!normalizedOccurrenceId || !rawRow || typeof rawRow !== "object")
+        continue;
+      const row = {};
+      for (const [slotKey, iemIds] of Object.entries(rawRow)) {
+        if (!parseScheduleSlotKey(slotKey)) continue;
+        const ids = normalizeIdArray(iemIds).slice(0, 12);
+        if (ids.length) row[slotKey] = ids;
+      }
+      if (Object.keys(row).length) assignments[normalizedOccurrenceId] = row;
+    }
+    return assignments;
+  };
+
   const normalizeTeamScheduleAdditionalPositionSlots = (value) => {
     if (!value || typeof value !== "object") return {};
     const slots = {};
@@ -3762,6 +4240,9 @@ export const createTeamsAuthHandlers = ({
     const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
       body?.microphoneAssignments,
     );
+    const iemAssignments = normalizeTeamScheduleIemAssignments(
+      body?.iemAssignments,
+    );
     const additionalPositionSlots =
       normalizeTeamScheduleAdditionalPositionSlots(
         body?.additionalPositionSlots ?? body?.optionalPositionSlots,
@@ -3785,7 +4266,7 @@ export const createTeamsAuthHandlers = ({
         }
       }
     }
-    return {
+    const payload = {
       name,
       description: normalizeLongText(body?.description),
       teamId: team.teamId,
@@ -3796,8 +4277,49 @@ export const createTeamsAuthHandlers = ({
       assignments,
       guests,
       microphoneAssignments,
+      iemAssignments,
       additionalPositionSlots,
+      ...(existing?.source === "generated-period" ||
+      existing?.source === "custom"
+        ? { source: existing.source }
+        : {}),
+      ...(existing?.generatedPeriodKey
+        ? { generatedPeriodKey: existing.generatedPeriodKey }
+        : {}),
     };
+    // Enforce this at the shared payload boundary so regular edits and bulk
+    // schedule imports cannot change an existing generated period's identity.
+    if (existing?.source === "generated-period") {
+      const sameIds = (left, right) => {
+        if (
+          !Array.isArray(left) ||
+          !Array.isArray(right) ||
+          left.length !== right.length
+        ) {
+          return false;
+        }
+        const sortedLeft = [...left].sort();
+        const sortedRight = [...right].sort();
+        return sortedLeft.every((id, index) => id === sortedRight[index]);
+      };
+      const sameOccurrenceIds = sameIds(
+        existing.occurrences?.map((occurrence) => occurrence?.occurrenceId),
+        payload.occurrences.map((occurrence) => occurrence.occurrenceId),
+      );
+      if (
+        payload.teamId !== existing.teamId ||
+        payload.startDate !== existing.startDate ||
+        payload.endDate !== existing.endDate ||
+        !sameIds(existing.serviceIds, payload.serviceIds) ||
+        !sameOccurrenceIds
+      ) {
+        throw httpError(
+          409,
+          "Generated service-period schedules cannot change their team, date range, or services. Copy this schedule to create a custom version.",
+        );
+      }
+    }
+    return payload;
   };
 
   const upsertTeamEntity = async ({
@@ -3806,10 +4328,13 @@ export const createTeamsAuthHandlers = ({
     id,
     payload,
     adminUserId,
+    portableCreateKey,
   }) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const now = nowIso();
-    const nextId = id || createId(config.idPrefix);
+    const nextId = id || (portableCreateKey
+      ? `${config.idPrefix}_${portableCreateKey.slice(0, 40)}`
+      : createId(config.idPrefix));
     if (id) {
       await assertTeamEntityInChurch(kind, id, churchId, {
         active: false,
@@ -3830,6 +4355,32 @@ export const createTeamsAuthHandlers = ({
             createdByUid: adminUserId,
           }),
     };
+    if (!id && portableCreateKey) {
+      const ledgerId = crypto.createHash("sha256")
+        .update(`${churchId}\u0000${kind}\u0000${portableCreateKey}`)
+        .digest("hex");
+      const ledger = {
+        churchId,
+        kind,
+        entityId: nextId,
+        entityCollection: config.collection,
+        createKey: portableCreateKey,
+      };
+      const saved = await persistPortableCreate({
+        db: requireFirestore(),
+        entityCollection: config.collection,
+        entityId: nextId,
+        entity: doc,
+        ledgerCollection: COLLECTIONS.portableImportCreates,
+        ledgerId,
+        ledger,
+        enqueue: enqueuePortableCreate,
+        getDoc,
+        setDoc,
+        conflict: () => httpError(409, "This import row could not be safely retried. Preview the file again."),
+      });
+      return { [config.idField]: nextId, ...saved };
+    }
     await setDoc(config.collection, nextId, doc, { merge: Boolean(id) });
     return {
       [config.idField]: nextId,
@@ -4212,6 +4763,61 @@ export const createTeamsAuthHandlers = ({
     return { ...payload, microphoneAssignments };
   };
 
+  const applyPositionDefaultIems = async ({ churchId, payload }) => {
+    const team = await assertTeamEntityInChurch(
+      "team",
+      payload.teamId,
+      churchId,
+      { label: "Team" },
+    );
+    if (!team.usesIemAssignments) return payload;
+    const [positions, church] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamPositions,
+        "positionId",
+        churchId,
+      ),
+      getDoc(COLLECTIONS.churches, churchId),
+    ]);
+    const knownIemIds = new Set(
+      normalizeServiceEquipmentCatalog(church?.serviceEquipment).map(
+        (item) => item.id,
+      ),
+    );
+    const defaultsByPositionId = new Map(
+      positions
+        .filter((position) => position.teamId === payload.teamId)
+        .map((position) => [
+          position.positionId,
+          String(position.defaultIemId || "").trim(),
+        ])
+        .filter(([, iemId]) => knownIemIds.has(iemId)),
+    );
+    if (!defaultsByPositionId.size) return payload;
+    const iemAssignments = normalizeTeamScheduleIemAssignments(
+      payload.iemAssignments,
+    );
+    for (const occurrence of payload.occurrences) {
+      const requirements = await resolveScheduleOccurrenceRequirements({
+        churchId,
+        occurrence,
+      });
+      const row = { ...(iemAssignments[occurrence.occurrenceId] || {}) };
+      requirements.forEach((requirement) => {
+        const iemId = defaultsByPositionId.get(requirement.positionId);
+        if (!iemId) return;
+        const count = Math.max(0, Math.floor(Number(requirement.count) || 0));
+        for (let slot = 0; slot < count; slot += 1) {
+          const slotKey = makeScheduleSlotKey(requirement.positionId, slot);
+          if (!row[slotKey]) row[slotKey] = [iemId];
+        }
+      });
+      if (Object.keys(row).length)
+        iemAssignments[occurrence.occurrenceId] = row;
+    }
+    return { ...payload, iemAssignments };
+  };
+
   const getServicePlanKeyForOccurrence = (occurrence) => {
     const date = String(occurrence?.startsAt || "").slice(0, 10);
     return occurrence?.groupId
@@ -4517,9 +5123,10 @@ export const createTeamsAuthHandlers = ({
     }
     const normalizedFields = [
       ...new Set(
-        (Array.isArray(rawFields) ? rawFields : LEGACY_TEAM_INTAKE_FIELDS).filter(
-          (field) => TEAM_INTAKE_FIELD_IDS.has(field),
-        ),
+        (Array.isArray(rawFields)
+          ? rawFields
+          : LEGACY_TEAM_INTAKE_FIELDS
+        ).filter((field) => TEAM_INTAKE_FIELD_IDS.has(field)),
       ),
     ];
     return normalizedFields.includes("schedulingPreferences")
@@ -4640,13 +5247,13 @@ export const createTeamsAuthHandlers = ({
     const firstName = personalizedMember
       ? normalizeShortText(personalizedMember.firstName, { max: 80 })
       : enabledFields.has("firstName")
-      ? normalizeShortText(body?.firstName, { max: 80 })
-      : "";
+        ? normalizeShortText(body?.firstName, { max: 80 })
+        : "";
     const lastName = personalizedMember
       ? normalizeShortText(personalizedMember.lastName, { max: 80 })
       : enabledFields.has("lastName")
-      ? normalizeShortText(body?.lastName, { max: 80 })
-      : "";
+        ? normalizeShortText(body?.lastName, { max: 80 })
+        : "";
     if (enabledFields.has("firstName") && !firstName) {
       throw httpError(400, "First name is required.");
     }
@@ -4664,24 +5271,24 @@ export const createTeamsAuthHandlers = ({
     const email = personalizedMember
       ? ""
       : enabledFields.has("email")
-      ? normalizeMemberEmail(body?.email)
-      : "";
+        ? normalizeMemberEmail(body?.email)
+        : "";
     if (!personalizedMember && enabledFields.has("email") && !email) {
       throw httpError(400, "Email is required.");
     }
     const title = personalizedMember
       ? ""
       : enabledFields.has("title")
-      ? normalizeShortText(body?.title, { max: 40 })
-      : "";
+        ? normalizeShortText(body?.title, { max: 40 })
+        : "";
     if (!personalizedMember && enabledFields.has("title") && !title) {
       throw httpError(400, "Title is required.");
     }
     const birthDate = personalizedMember
       ? null
       : enabledFields.has("birthDate")
-      ? normalizeBirthDate(body?.birthDate)
-      : null;
+        ? normalizeBirthDate(body?.birthDate)
+        : null;
     if (!personalizedMember && enabledFields.has("birthDate") && !birthDate) {
       throw httpError(400, "Birthday is required.");
     }
@@ -4930,25 +5537,13 @@ export const createTeamsAuthHandlers = ({
 
   const buildPublicTeamScheduleSnapshot = async (schedule) => {
     const churchId = schedule.churchId;
-    const scheduleGuests = normalizeTeamScheduleGuests(schedule.guests);
-    const scheduleGuestById = new Map(
-      scheduleGuests.map((guest) => [guest.guestId, guest]),
-    );
-    const assignedMemberIds = new Set();
-    Object.values(schedule.assignments || {}).forEach((row) => {
-      Object.values(row || {}).forEach((cell) => {
-        getScheduleAssignmentCellMemberIds(cell).forEach((memberId) =>
-          assignedMemberIds.add(memberId),
-        );
-      });
-    });
     const church = await getDoc(COLLECTIONS.churches, churchId);
     const team = schedule.teamId
       ? await getTeamEntity("team", schedule.teamId)
       : null;
-    const [positions, members, churchLogoUrl] = await Promise.all([
+    const positions =
       team && team.churchId === churchId
-        ? queryDocs(
+        ? await queryDocs(
             COLLECTIONS.teamPositions,
             [
               { field: "churchId", value: churchId },
@@ -4956,7 +5551,116 @@ export const createTeamsAuthHandlers = ({
             ],
             { limit: TEAM_COLLECTION_QUERY_LIMIT },
           )
-        : [],
+        : [];
+    const teamPositionIds = new Set(
+      positions
+        .filter((position) => !position.archivedAt)
+        .map((position) => position.positionId),
+    );
+    const microphoneAssignments = normalizeTeamScheduleMicrophoneAssignments(
+      schedule.microphoneAssignments,
+    );
+    const iemAssignments = normalizeTeamScheduleIemAssignments(
+      schedule.iemAssignments,
+    );
+    let publicOccurrences = schedule.occurrences || [];
+    if (schedule.source === "generated-period" && teamPositionIds.size > 0) {
+      const services = await readChurchServiceTimes(churchId);
+      const additionalSlots = normalizeTeamScheduleAdditionalPositionSlots(
+        schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+      );
+      publicOccurrences = publicOccurrences.filter((occurrence) => {
+        const storedRequirements = sanitizePositionRequirements(
+          occurrence.positionRequirements,
+        );
+        const occurrenceServiceIds = new Set(
+          [occurrence.serviceId, ...(occurrence.serviceIds || [])].filter(
+            Boolean,
+          ),
+        );
+        const requirements = storedRequirements.length
+          ? storedRequirements
+          : mergeServicePositionRequirements(
+              services.filter((service) =>
+                occurrenceServiceIds.has(service.serviceId || service.id),
+              ),
+            );
+        const hasTeamRequirement = requirements.some((item) =>
+          teamPositionIds.has(item.positionId),
+        );
+        const hasTeamSlot = (
+          additionalSlots[occurrence.occurrenceId] || []
+        ).some((key) => {
+          const slot = parseScheduleSlotKey(key);
+          return Boolean(slot && teamPositionIds.has(slot.positionId));
+        });
+        const hasTeamAssignment = Object.keys(
+          schedule.assignments?.[occurrence.occurrenceId] || {},
+        ).some((key) => {
+          const slot = parseScheduleSlotKey(key);
+          return Boolean(slot && teamPositionIds.has(slot.positionId));
+        });
+        const hasTeamEquipmentAssignment = [
+          microphoneAssignments[occurrence.occurrenceId],
+          iemAssignments[occurrence.occurrenceId],
+        ].some((row) =>
+          Object.keys(row || {}).some((key) => {
+            const slot = parseScheduleSlotKey(key);
+            return Boolean(slot && teamPositionIds.has(slot.positionId));
+          }),
+        );
+        return (
+          hasTeamRequirement ||
+          hasTeamSlot ||
+          hasTeamAssignment ||
+          hasTeamEquipmentAssignment
+        );
+      });
+    }
+    const publicOccurrenceIds = new Set(
+      publicOccurrences.map((occurrence) => occurrence.occurrenceId),
+    );
+    const filterOccurrenceRows = (rows) =>
+      Object.fromEntries(
+        Object.entries(rows || {}).filter(([occurrenceId]) =>
+          publicOccurrenceIds.has(occurrenceId),
+        ),
+      );
+    const publicAssignments =
+      schedule.source === "generated-period"
+        ? filterOccurrenceRows(schedule.assignments)
+        : schedule.assignments || {};
+    const publicMicrophoneAssignments =
+      schedule.source === "generated-period"
+        ? filterOccurrenceRows(microphoneAssignments)
+        : microphoneAssignments;
+    const publicIemAssignments =
+      schedule.source === "generated-period"
+        ? filterOccurrenceRows(iemAssignments)
+        : iemAssignments;
+    const referencedMicrophoneIds = new Set(
+      Object.values(publicMicrophoneAssignments).flatMap((row) =>
+        Object.values(row).flat(),
+      ),
+    );
+    const referencedIemIds = new Set(
+      Object.values(publicIemAssignments).flatMap((row) =>
+        Object.values(row).flat(),
+      ),
+    );
+    const scheduleGuests = normalizeTeamScheduleGuests(schedule.guests);
+    const scheduleGuestById = new Map(
+      scheduleGuests.map((guest) => [guest.guestId, guest]),
+    );
+    const assignedMemberIds = new Set();
+    Object.values(publicAssignments).forEach((row) => {
+      Object.values(row || {}).forEach((cell) => {
+        getScheduleAssignmentCellMemberIds(cell).forEach((memberId) =>
+          assignedMemberIds.add(memberId),
+        );
+      });
+    });
+    const [members, churchLogoUrl] = await Promise.all([
       Promise.all(
         [...assignedMemberIds]
           .filter((memberId) => !scheduleGuestById.has(memberId))
@@ -4968,6 +5672,20 @@ export const createTeamsAuthHandlers = ({
     const assignedMembers = members.filter(
       (member) => member && member.churchId === churchId,
     );
+    const microphones = (
+      Array.isArray(church?.servicePlanMicrophones)
+        ? church.servicePlanMicrophones
+        : []
+    )
+      .map(normalizeServicePlanMicrophone)
+      .filter(
+        (microphone) =>
+          microphone && referencedMicrophoneIds.has(microphone.id),
+      )
+      .map((microphone) => ({ ...microphone, category: "microphone" }));
+    const serviceEquipment = normalizeServiceEquipmentCatalog(
+      church?.serviceEquipment,
+    ).filter((equipment) => referencedIemIds.has(equipment.id));
     const referencedPositions = positions.filter(
       (position) =>
         position &&
@@ -5009,9 +5727,13 @@ export const createTeamsAuthHandlers = ({
         teamId: schedule.teamId || "",
         startDate: schedule.startDate || "",
         endDate: schedule.endDate || "",
-        occurrences: schedule.occurrences || [],
-        assignments: schedule.assignments || {},
+        occurrences: publicOccurrences,
+        assignments: publicAssignments,
+        microphoneAssignments: publicMicrophoneAssignments,
+        iemAssignments: publicIemAssignments,
       },
+      microphones,
+      serviceEquipment,
       positions: sortPositionsByOrder(referencedPositions).map((position) => ({
         positionId: position.positionId,
         name: position.name,
@@ -5044,8 +5766,13 @@ export const createTeamsAuthHandlers = ({
   };
 
   const assertTeamIntakeFormResponseDeadline = (form) => {
-    const responseDeadline = String(form?.responseDeadline || form?.endDate || "").trim();
-    if (responseDeadline && responseDeadline < new Date().toISOString().slice(0, 10)) {
+    const responseDeadline = String(
+      form?.responseDeadline || form?.endDate || "",
+    ).trim();
+    if (
+      responseDeadline &&
+      responseDeadline < new Date().toISOString().slice(0, 10)
+    ) {
       throw httpError(409, "The response deadline for this form has passed.");
     }
   };
@@ -5064,13 +5791,15 @@ export const createTeamsAuthHandlers = ({
     );
     const canReuseToken = Boolean(
       existingToken &&
-        looksLikeTeamIntakeRecipientToken(existingToken) &&
-        hashTeamIntakeRecipientToken(
-          existingToken,
-          teamIntakeRecipientTokenSecret,
-        ) === recipient.recipientTokenHash,
+      looksLikeTeamIntakeRecipientToken(existingToken) &&
+      hashTeamIntakeRecipientToken(
+        existingToken,
+        teamIntakeRecipientTokenSecret,
+      ) === recipient.recipientTokenHash,
     );
-    const token = canReuseToken ? existingToken : createTeamIntakeRecipientToken();
+    const token = canReuseToken
+      ? existingToken
+      : createTeamIntakeRecipientToken();
     const update = {
       ...(canReuseToken
         ? {}
@@ -5103,7 +5832,9 @@ export const createTeamsAuthHandlers = ({
     recipient,
     { requireTokenHash = true } = {},
   ) => {
-    const recipientId = String(recipient?.recipientId || recipient?.id || "").trim();
+    const recipientId = String(
+      recipient?.recipientId || recipient?.id || "",
+    ).trim();
     if (
       !recipientId ||
       (requireTokenHash && !recipient?.recipientTokenHash) ||
@@ -5200,9 +5931,12 @@ export const createTeamsAuthHandlers = ({
     const submissionAvailability = normalizeServiceAvailability(
       submission.occurrenceAvailability,
     );
-    const formTeamIds = formBelongsToChurch ? normalizeIdArray(form.teamIds) : [];
+    const formTeamIds = formBelongsToChurch
+      ? normalizeIdArray(form.teamIds)
+      : [];
     const addedTeamIds = new Set();
-    const trackTeams = (ids) => (ids || []).forEach((id) => addedTeamIds.add(id));
+    const trackTeams = (ids) =>
+      (ids || []).forEach((id) => addedTeamIds.add(id));
     let member;
 
     if (createMember) {
@@ -5278,7 +6012,11 @@ export const createTeamsAuthHandlers = ({
           desiredPositionIds: nextDesiredPositionIds,
           serviceAvailability: nextServiceAvailability,
           blockoutDates: nextBlockoutDates,
-          ...(member.email ? {} : submittedEmail ? { email: submittedEmail } : {}),
+          ...(member.email
+            ? {}
+            : submittedEmail
+              ? { email: submittedEmail }
+              : {}),
           ...(!member.title && submittedTitle ? { title: submittedTitle } : {}),
           ...(!member.birthDate && submittedBirthDate
             ? {
@@ -5398,7 +6136,10 @@ export const createTeamsAuthHandlers = ({
       const positionTeamIds = new Set();
       for (const positionSnapshot of positionSnapshots) {
         if (!positionSnapshot.exists) {
-          throw httpError(400, "One or more selected positions are no longer available.");
+          throw httpError(
+            400,
+            "One or more selected positions are no longer available.",
+          );
         }
         const position = positionSnapshot.data();
         if (
@@ -5569,85 +6310,88 @@ export const createTeamsAuthHandlers = ({
   };
 
   const submitTeamIntakeRecipient = async (req, token) => {
-    const result = await enqueueTeamIntakeRecipientSubmission(token, async () => {
-      const { recipient, form, member } =
-        await getTeamIntakeRecipientContextByToken(token);
-      const payload = await validateTeamIntakeSubmissionPayload(
-        req.body,
-        form,
-        { member },
-      );
-      const transactionalResult =
-        await submitTeamIntakeRecipientWithFirestoreTransaction({
-          token,
-          payload,
-        });
-      if (transactionalResult) return transactionalResult;
-      const submittedAt = nowIso();
-      const submissionId =
-        recipient.submissionId ||
-        `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
-      const submission = {
-        ...payload,
-        submissionId,
-        formId: form.formId,
-        churchId: form.churchId,
-        status: "new",
-        submittedAt,
-      };
+    const result = await enqueueTeamIntakeRecipientSubmission(
+      token,
+      async () => {
+        const { recipient, form, member } =
+          await getTeamIntakeRecipientContextByToken(token);
+        const payload = await validateTeamIntakeSubmissionPayload(
+          req.body,
+          form,
+          { member },
+        );
+        const transactionalResult =
+          await submitTeamIntakeRecipientWithFirestoreTransaction({
+            token,
+            payload,
+          });
+        if (transactionalResult) return transactionalResult;
+        const submittedAt = nowIso();
+        const submissionId =
+          recipient.submissionId ||
+          `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+        const submission = {
+          ...payload,
+          submissionId,
+          formId: form.formId,
+          churchId: form.churchId,
+          status: "new",
+          submittedAt,
+        };
 
-      // A recipient has one current response. Reusing its deterministic audit
-      // record makes retries safe: a lost response or a second submission never
-      // creates a second applied side effect or a second queue row.
-      if (persistTeamIntakeSubmission) {
-        await persistTeamIntakeSubmission(submission);
-      } else {
+        // A recipient has one current response. Reusing its deterministic audit
+        // record makes retries safe: a lost response or a second submission never
+        // creates a second applied side effect or a second queue row.
+        if (persistTeamIntakeSubmission) {
+          await persistTeamIntakeSubmission(submission);
+        } else {
+          await setDoc(
+            COLLECTIONS.teamIntakeSubmissions,
+            submissionId,
+            submission,
+            { merge: false },
+          );
+        }
+        const application = await applyTeamIntakeSubmissionToMember({
+          submission,
+          form,
+          churchId: form.churchId,
+          memberId: member.memberId,
+          adminUserId: `recipient:${recipient.recipientId}`,
+          now: submittedAt,
+        });
+        const applicationUpdate = {
+          ...application.application,
+          reviewedAt: submittedAt,
+          reviewedByUid: `recipient:${recipient.recipientId}`,
+          updatedAt: submittedAt,
+          updatedByUid: `recipient:${recipient.recipientId}`,
+        };
         await setDoc(
           COLLECTIONS.teamIntakeSubmissions,
           submissionId,
-          submission,
-          { merge: false },
+          applicationUpdate,
+          { merge: true },
         );
-      }
-      const application = await applyTeamIntakeSubmissionToMember({
-        submission,
-        form,
-        churchId: form.churchId,
-        memberId: member.memberId,
-        adminUserId: `recipient:${recipient.recipientId}`,
-        now: submittedAt,
-      });
-      const applicationUpdate = {
-        ...application.application,
-        reviewedAt: submittedAt,
-        reviewedByUid: `recipient:${recipient.recipientId}`,
-        updatedAt: submittedAt,
-        updatedByUid: `recipient:${recipient.recipientId}`,
-      };
-      await setDoc(
-        COLLECTIONS.teamIntakeSubmissions,
-        submissionId,
-        applicationUpdate,
-        { merge: true },
-      );
-      await setDoc(
-        COLLECTIONS.teamIntakeRecipients,
-        recipient.recipientId,
-        {
-          respondedAt: submittedAt,
+        await setDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          recipient.recipientId,
+          {
+            respondedAt: submittedAt,
+            submissionId,
+            updatedAt: submittedAt,
+            updatedByUid: `recipient:${recipient.recipientId}`,
+          },
+          { merge: true },
+        );
+        return {
+          success: true,
           submissionId,
-          updatedAt: submittedAt,
-          updatedByUid: `recipient:${recipient.recipientId}`,
-        },
-        { merge: true },
-      );
-      return {
-        success: true,
-        submissionId,
-        formId: form.formId,
-        submittedAt,
-      };
-    });
+          formId: form.formId,
+          submittedAt,
+        };
+      },
+    );
     // Both the Firestore transaction and the fallback have committed all
     // submission effects before this shared scheduling point.
     if (scheduleIntakeSubmissionDigest) {
@@ -5683,12 +6427,12 @@ export const createTeamsAuthHandlers = ({
   const CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE =
     "This person is already scheduled on another team or in another role for this service. Confirm to schedule them anyway.";
 
-  const normalizeAllowCrossTeamConflict = (value) => value === true;
-  // Canonical name for all occurrence conflicts. Keep the old field accepted
-  // through this release so older clients can still acknowledge warnings.
+  // Legacy boolean fields are deliberately ignored. A conflict can only be
+  // acknowledged with the fingerprint returned for the exact server conflict set.
   const normalizeAllowOccurrenceConflict = (body) =>
-    body?.allowOccurrenceConflict === true ||
-    body?.allowCrossTeamConflict === true;
+    typeof body?.confirmedOccurrenceConflictFingerprint === "string"
+      ? body.confirmedOccurrenceConflictFingerprint
+      : "";
   const normalizeAllowBlockout = (value) => value === true;
   const normalizeAllowRecurringAvailability = (value) => value === true;
 
@@ -5732,9 +6476,9 @@ export const createTeamsAuthHandlers = ({
     return aStart <= bEnd && aEnd >= bStart;
   };
 
-  // Prefer shared occurrence identity / start time. When either side lacks
-  // startsAt (legacy schedules), match on shared service ids only if the parent
-  // schedules' date ranges overlap — so unrelated months do not false-positive.
+  // Joined occurrences use their earliest member time, so shared service ids
+  // also match on the same stored calendar date when either side is combined.
+  // Legacy schedules without startsAt require overlapping parent date ranges.
   const scheduleOccurrencesConflict = (current, other, options = {}) => {
     if (!current || !other) return false;
     if (
@@ -5746,20 +6490,23 @@ export const createTeamsAuthHandlers = ({
     ) {
       return true;
     }
-    if (current.startsAt && other.startsAt) {
-      if (current.startsAt !== other.startsAt) return false;
-      const currentServiceIds = getScheduleOccurrenceServiceIds(current);
-      const otherServiceIds = getScheduleOccurrenceServiceIds(other);
-      return [...currentServiceIds].some((serviceId) =>
-        otherServiceIds.has(serviceId),
-      );
-    }
-    if (!options.schedulesOverlap) return false;
     const currentServiceIds = getScheduleOccurrenceServiceIds(current);
     const otherServiceIds = getScheduleOccurrenceServiceIds(other);
-    return [...currentServiceIds].some((serviceId) =>
+    const sharesServiceId = [...currentServiceIds].some((serviceId) =>
       otherServiceIds.has(serviceId),
     );
+    if (!sharesServiceId) return false;
+    if (current.startsAt && other.startsAt) {
+      if (current.startsAt === other.startsAt) return true;
+      const includesJoinedServices =
+        currentServiceIds.size > 1 || otherServiceIds.size > 1;
+      return (
+        includesJoinedServices &&
+        String(current.startsAt).slice(0, 10) ===
+          String(other.startsAt).slice(0, 10)
+      );
+    }
+    return Boolean(options.schedulesOverlap);
   };
 
   const findCrossTeamScheduleAssignmentConflicts = ({
@@ -5769,6 +6516,9 @@ export const createTeamsAuthHandlers = ({
     memberIds,
     targetCellKey,
     targetOccurrenceId,
+    targetCellKeysByOccurrence,
+    targetOccurrenceIds,
+    targetMemberIdsByOccurrence,
   }) => {
     const memberIdSet = memberIds?.size
       ? memberIds
@@ -5783,7 +6533,9 @@ export const createTeamsAuthHandlers = ({
 
     const occurrences = getScheduleOccurrencesForConflict(schedule).filter(
       (occurrence) =>
-        !targetOccurrenceId || occurrence.occurrenceId === targetOccurrenceId,
+        targetOccurrenceIds?.length
+          ? targetOccurrenceIds.includes(occurrence.occurrenceId)
+          : !targetOccurrenceId || occurrence.occurrenceId === targetOccurrenceId,
     );
     const conflicts = [];
     for (const currentOccurrence of occurrences) {
@@ -5791,9 +6543,10 @@ export const createTeamsAuthHandlers = ({
       const rowMemberIds = new Set(
         Object.values(row).flatMap(getScheduleAssignmentCellMemberIds),
       );
-      const targetMemberIds = [...rowMemberIds].filter((memberId) =>
-        memberIdSet.has(memberId),
-      );
+      const occurrenceMemberIds = targetMemberIdsByOccurrence?.[currentOccurrence.occurrenceId]
+        ? new Set(targetMemberIdsByOccurrence[currentOccurrence.occurrenceId])
+        : memberIdSet;
+      const targetMemberIds = [...rowMemberIds].filter((memberId) => occurrenceMemberIds.has(memberId));
       if (targetMemberIds.length === 0) continue;
 
       for (const otherSchedule of schedules || []) {
@@ -5801,43 +6554,47 @@ export const createTeamsAuthHandlers = ({
         // Bulk validation does not know which cell is being edited and keeps
         // the historical cross-team-only behavior. Direct assignment writes
         // provide the target cell, allowing same-schedule role conflicts too.
-        if (otherSchedule.scheduleId === schedule.scheduleId && !targetCellKey)
+        if (
+          otherSchedule.scheduleId === schedule.scheduleId &&
+          !targetCellKey &&
+          !targetCellKeysByOccurrence
+        )
           continue;
-        const otherOccurrence = getScheduleOccurrencesForConflict(
-          otherSchedule,
-        ).find((candidate) =>
-          scheduleOccurrencesConflict(currentOccurrence, candidate, {
-            schedulesOverlap: scheduleDateRangesOverlap(
-              schedule,
-              otherSchedule,
-            ),
-          }),
-        );
-        if (!otherOccurrence) continue;
-        const otherRow =
-          otherSchedule.scheduleId === schedule.scheduleId
+        const otherOccurrences = getScheduleOccurrencesForConflict(otherSchedule)
+          .filter((candidate) => scheduleOccurrencesConflict(currentOccurrence, candidate, {
+            schedulesOverlap: scheduleDateRangesOverlap(schedule, otherSchedule),
+          }));
+        otherOccurrences.forEach((otherOccurrence) => {
+          const otherRow = otherSchedule.scheduleId === schedule.scheduleId
             ? assignments?.[otherOccurrence.occurrenceId] || {}
             : otherSchedule.assignments?.[otherOccurrence.occurrenceId] || {};
-        const otherMemberIds = new Set(
-          Object.entries(otherRow)
-            .filter(
-              ([cellKey]) =>
-                !(
-                  otherSchedule.scheduleId === schedule.scheduleId &&
-                  cellKey === targetCellKey
+          const isExcludedTargetCell = (cellKey) =>
+            otherSchedule.scheduleId === schedule.scheduleId && (
+              cellKey === targetCellKey ||
+              (otherOccurrence.occurrenceId === currentOccurrence.occurrenceId &&
+                (targetCellKeysByOccurrence?.[otherOccurrence.occurrenceId] || []).includes(cellKey))
+            );
+          const otherMemberIds = new Set(
+            Object.entries(otherRow)
+              .filter(([cellKey]) => !isExcludedTargetCell(cellKey))
+              .flatMap(([, cell]) => getScheduleAssignmentCellMemberIds(cell)),
+          );
+          targetMemberIds.forEach((memberId) => {
+            if (otherMemberIds.has(memberId)) {
+              conflicts.push({
+                memberId,
+                scheduleId: otherSchedule.scheduleId,
+                scheduleName: otherSchedule.name || "",
+                teamId: otherSchedule.teamId || "",
+                occurrenceId: currentOccurrence.occurrenceId,
+                conflictingOccurrenceId: otherOccurrence.occurrenceId,
+                cellKeys: Object.keys(otherRow).filter((cellKey) =>
+                  !isExcludedTargetCell(cellKey) &&
+                  getScheduleAssignmentCellMemberIds(otherRow[cellKey]).includes(memberId),
                 ),
-            )
-            .flatMap(([, cell]) => getScheduleAssignmentCellMemberIds(cell)),
-        );
-        targetMemberIds.forEach((memberId) => {
-          if (otherMemberIds.has(memberId)) {
-            conflicts.push({
-              memberId,
-              scheduleId: otherSchedule.scheduleId,
-              teamId: otherSchedule.teamId,
-              occurrenceId: currentOccurrence.occurrenceId,
-            });
-          }
+              });
+            }
+          });
         });
       }
     }
@@ -5849,11 +6606,13 @@ export const createTeamsAuthHandlers = ({
     assignments,
     schedules,
     memberIds,
-    allowCrossTeamConflict,
+    confirmedFingerprint,
     targetCellKey,
     targetOccurrenceId,
+    targetCellKeysByOccurrence,
+    targetOccurrenceIds,
+    targetMemberIdsByOccurrence,
   }) => {
-    if (allowCrossTeamConflict) return;
     const conflicts = findCrossTeamScheduleAssignmentConflicts({
       schedule,
       assignments,
@@ -5861,9 +6620,37 @@ export const createTeamsAuthHandlers = ({
       memberIds,
       targetCellKey,
       targetOccurrenceId,
+      targetCellKeysByOccurrence,
+      targetOccurrenceIds,
+      targetMemberIdsByOccurrence,
     });
-    if (conflicts.length > 0) {
-      throw httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
+    const canonicalConflicts = [...new Map(conflicts.map((conflict) => [
+      JSON.stringify(conflict), conflict,
+    ])).values()].sort((a, b) =>
+      JSON.stringify(a).localeCompare(JSON.stringify(b)),
+    );
+    const fingerprint = hashValue(JSON.stringify({
+      churchId: schedule.churchId,
+      scheduleId: schedule.scheduleId,
+      targetOccurrenceId: targetOccurrenceId || "",
+      targetCellKey: targetCellKey || "",
+      targetOccurrenceIds: targetOccurrenceIds || [],
+      targetCellKeysByOccurrence: targetCellKeysByOccurrence || {},
+      targetMemberIdsByOccurrence: targetMemberIdsByOccurrence || {},
+      memberIds: [...(memberIds || [])].sort(),
+      conflicts: canonicalConflicts,
+    }));
+    if (canonicalConflicts.length > 0 && confirmedFingerprint !== fingerprint) {
+      const error = httpError(409, CROSS_TEAM_SCHEDULE_CONFLICT_MESSAGE);
+      error.occurrenceConflicts = canonicalConflicts;
+      error.conflictFingerprint = fingerprint;
+      throw error;
+    }
+    if (confirmedFingerprint && confirmedFingerprint !== fingerprint) {
+      const error = httpError(409, "The schedule conflicts changed. Review the updated conflict details before continuing.");
+      error.occurrenceConflicts = canonicalConflicts;
+      error.conflictFingerprint = fingerprint;
+      throw error;
     }
   };
 
@@ -5924,50 +6711,16 @@ export const createTeamsAuthHandlers = ({
     allowOccurrenceConflict = false,
     guestAssignment = false,
   }) => {
-    const rowIds = (schedule.occurrences || []).map(
-      (occurrence) => occurrence.occurrenceId,
-    );
-    const allowedRowIds =
-      rowIds.length > 0 ? rowIds : schedule.serviceIds || [];
-    if (!allowedRowIds.includes(serviceId)) {
-      throw httpError(400, "That service occurrence is not in this schedule.");
-    }
-    const targetSlot = parseScheduleSlotKey(positionSlotKey);
-    if (!targetSlot) {
-      throw httpError(400, "Position slot key is invalid.");
-    }
+    const validatedSlot = await assertSchedulePositionSlotExists({
+      churchId,
+      schedule,
+      occurrenceId: serviceId,
+      positionSlotKey,
+    });
+    const targetSlot = validatedSlot.slot;
     const basePositionId = targetSlot.positionId;
     const cellKey = makeScheduleSlotKey(basePositionId, targetSlot.slot);
-    const occurrence = (schedule.occurrences || []).find(
-      (item) => item.occurrenceId === serviceId,
-    );
-    const requirements = await resolveScheduleOccurrenceRequirements({
-      churchId,
-      occurrence,
-    });
-    // Services with no explicit requirements use one slot for each team
-    // position in the scheduling UI. Preserve that fallback after checking the
-    // saved snapshot and, for legacy occurrences, the live service definition.
-    const requirement = requirements.find(
-      (item) => item?.positionId === basePositionId,
-    );
-    {
-      let requiredCount = Math.max(
-        0,
-        Math.floor(Number(requirement?.count) || 0),
-      );
-      if (!requirement && requirements.length === 0) {
-        requiredCount = 1;
-      }
-      const additionalSlots = new Set(
-        normalizeTeamScheduleAdditionalPositionSlots(
-          schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
-        )[serviceId] || [],
-      );
-      if (targetSlot.slot >= requiredCount && !additionalSlots.has(cellKey)) {
-        throw httpError(400, "Add this position before assigning it.");
-      }
-    }
+    const occurrence = validatedSlot.occurrence;
     if (!position || position.churchId !== churchId || position.archivedAt) {
       throw httpError(400, "Position is archived.");
     }
@@ -6199,6 +6952,65 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const assertSchedulePositionSlotExists = async ({
+    churchId,
+    schedule,
+    occurrenceId,
+    positionSlotKey,
+    errorMessage = "Add this position before assigning it.",
+    staleSchedule = false,
+  }) => {
+    const slot = parseScheduleSlotKey(positionSlotKey);
+    if (!slot) throw httpError(400, "Position slot key is invalid.");
+    if (staleSchedule) {
+      const rowIds = (schedule.occurrences || []).map(
+        (item) => item.occurrenceId,
+      );
+      const allowedRowIds =
+        rowIds.length > 0 ? rowIds : schedule.serviceIds || [];
+      if (!allowedRowIds.includes(occurrenceId))
+        throw httpError(409, errorMessage);
+    } else {
+      assertScheduleRowContains(schedule, occurrenceId);
+    }
+    const occurrence = (schedule.occurrences || []).find(
+      (item) => item.occurrenceId === occurrenceId,
+    );
+    const requirements = await resolveScheduleOccurrenceRequirements({
+      churchId,
+      occurrence,
+    });
+    const requirement = requirements.find(
+      (item) => item?.positionId === slot.positionId,
+    );
+    let requiredCount = Math.max(
+      0,
+      Math.floor(Number(requirement?.count) || 0),
+    );
+    if (!requirement && requirements.length === 0) {
+      requiredCount = 1;
+    }
+    const normalizedSlotKey = makeScheduleSlotKey(slot.positionId, slot.slot);
+    const additionalSlots = new Set(
+      normalizeTeamScheduleAdditionalPositionSlots(
+        schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+      )[occurrenceId] || [],
+    );
+    if (slot.slot >= requiredCount && !additionalSlots.has(normalizedSlotKey)) {
+      throw httpError(staleSchedule ? 409 : 400, errorMessage);
+    }
+    return {
+      slot,
+      positionId: slot.positionId,
+      slotIndex: slot.slot,
+      normalizedSlotKey,
+      occurrence,
+      requirements,
+      requirement,
+      requiredCount,
+    };
+  };
+
   const assertSchedulePositionForTeam = ({
     churchId,
     team,
@@ -6357,9 +7169,9 @@ export const createTeamsAuthHandlers = ({
       primaryMemberId: normalizedCurrentMemberId,
       shadows: sourceCell.shadows,
     });
-    if (!allowOccurrenceConflict) {
-      assertNoDuplicateScheduleMembersForService(row);
-    }
+    // A cross-schedule confirmation never grants permission to put one person
+    // in two roles in this service row.
+    assertNoDuplicateScheduleMembersForService(row);
     assignments[serviceId] = row;
     return assignments;
   };
@@ -6448,17 +7260,17 @@ export const createTeamsAuthHandlers = ({
       !resolvedGuest.guest &&
       shadowAction !== "remove"
     ) {
-      const schedules = await listTeamCollectionForChurch(
-        COLLECTIONS.teamSchedules,
-        "scheduleId",
+      const schedules = await listScheduleConflictCandidates({
         churchId,
-      );
+        schedule,
+        occurrenceId: serviceId,
+      });
       assertNoCrossTeamScheduleAssignmentConflicts({
         schedule,
         assignments,
         schedules,
         memberIds: new Set([normalizedMemberId]),
-        allowCrossTeamConflict,
+        confirmedFingerprint: allowCrossTeamConflict,
         targetCellKey: positionSlotKey,
         targetOccurrenceId: serviceId,
       });
@@ -6466,26 +7278,80 @@ export const createTeamsAuthHandlers = ({
     return { assignments, guests: resolvedGuest.guests };
   };
 
-  const listTransactionSchedulesForChurch = async (
+  const getScheduleConflictDateRange = (schedule, occurrenceId) => {
+    const occurrence = getScheduleOccurrencesForConflict(schedule).find(
+      (item) => item.occurrenceId === occurrenceId,
+    );
+    const occurrenceDate = String(occurrence?.startsAt || "").slice(0, 10);
+    // Most writes target one concrete service date. Query only that day; use
+    // the wider custom schedule range only for legacy occurrences without time
+    // details, whose conflict relation depends on overlapping parent ranges.
+    const startDate = /^\d{4}-\d{2}-\d{2}$/.test(occurrenceDate)
+      ? occurrenceDate
+      : schedule?.startDate || schedule?.endDate || "";
+    const endDate = /^\d{4}-\d{2}-\d{2}$/.test(occurrenceDate)
+      ? occurrenceDate
+      : schedule?.endDate || schedule?.startDate || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      throw httpError(409, "Schedule dates are incomplete, so conflicts cannot be checked safely.");
+    }
+    return { startDate, endDate };
+  };
+
+  const getScheduleConflictDateRangeForOccurrences = (schedule, occurrenceIds) => {
+    const ranges = [...new Set(occurrenceIds)].map((occurrenceId) =>
+      getScheduleConflictDateRange(schedule, occurrenceId),
+    );
+    return {
+      startDate: ranges.map((range) => range.startDate).sort()[0],
+      endDate: ranges.map((range) => range.endDate).sort().at(-1),
+    };
+  };
+
+  const listScheduleConflictCandidates = async ({
+    churchId,
+    schedule,
+    occurrenceId,
     transaction,
     db,
-    churchId,
-  ) => {
-    const snapshot = await transaction.get(
-      db
-        .collection(COLLECTIONS.teamSchedules)
-        .where("churchId", "==", churchId)
-        .limit(TEAM_COLLECTION_QUERY_LIMIT),
-    );
-    if (snapshot.docs.length >= TEAM_COLLECTION_QUERY_LIMIT) {
-      console.warn(
-        `Teams: ${COLLECTIONS.teamSchedules} returned the ${TEAM_COLLECTION_QUERY_LIMIT}-row query cap for church ${churchId}; conflict checks may be truncated.`,
-      );
+    occurrenceIds,
+  }) => {
+    const { startDate, endDate } = occurrenceIds?.length
+      ? getScheduleConflictDateRangeForOccurrences(schedule, occurrenceIds)
+      : getScheduleConflictDateRange(schedule, occurrenceId);
+    const matchesRange = (candidate) => {
+      if (!candidate || candidate.churchId !== churchId) return false;
+      const candidateStart = candidate.startDate || candidate.endDate || "";
+      const candidateEnd = candidate.endDate || candidate.startDate || "";
+      // Date-less legacy candidates cannot be excluded safely after a bounded
+      // query, so the target write fails closed when one appears in fallback data.
+      if (!candidateStart || !candidateEnd) {
+        throw httpError(409, "A schedule has incomplete dates, so conflicts cannot be checked safely.");
+      }
+      return candidateStart <= endDate && candidateEnd >= startDate;
+    };
+    const firestore = db || requireFirestore();
+    if (!transaction && !firestore) {
+      const docs = await queryDocs(COLLECTIONS.teamSchedules, [
+        { field: "churchId", value: churchId },
+      ], { limit: 0 });
+      return docs
+        .map((doc) => ({ scheduleId: doc.id, ...doc }))
+        .filter(matchesRange);
     }
-    return snapshot.docs.map((doc) => ({
-      scheduleId: doc.id,
-      ...doc.data(),
-    }));
+
+    // The parent range is intentionally used here: legacy rows can have
+    // incomplete occurrence details, in which case conflict matching falls
+    // back to overlapping schedule ranges. Firestore uses this composite index
+    // to read only schedules whose ranges can overlap this schedule window.
+    let query = firestore.collection(COLLECTIONS.teamSchedules)
+      .where("churchId", "==", churchId)
+      .where("startDate", "<=", endDate)
+      .where("endDate", ">=", startDate);
+    const snapshot = transaction
+      ? await transaction.get(query)
+      : await query.get();
+    return snapshot.docs.map((doc) => ({ scheduleId: doc.id, ...doc.data() }));
   };
 
   const readTransactionTeamEntity = (
@@ -6644,17 +7510,19 @@ export const createTeamsAuthHandlers = ({
         !resolvedGuest.guest &&
         shadowAction !== "remove"
       ) {
-        const schedules = await listTransactionSchedulesForChurch(
+        const schedules = await listScheduleConflictCandidates({
           transaction,
           db,
           churchId,
-        );
+          schedule,
+          occurrenceId: serviceId,
+        });
         assertNoCrossTeamScheduleAssignmentConflicts({
           schedule,
           assignments,
           schedules,
           memberIds: new Set([normalizedMemberId]),
-          allowCrossTeamConflict,
+          confirmedFingerprint: allowCrossTeamConflict,
           targetCellKey: positionSlotKey,
           targetOccurrenceId: serviceId,
         });
@@ -6677,6 +7545,166 @@ export const createTeamsAuthHandlers = ({
       // cleared/moved cell keys we deleted and resurrect old assignments.
       transaction.update(scheduleRef, update);
       return { ...schedule, ...update };
+    });
+  };
+
+  const updateTeamScheduleAssignmentsBatchInStore = async ({
+    churchId,
+    scheduleId,
+    changes,
+    confirmedFingerprint,
+    skipChangedCells,
+    adminUserId,
+  }) => {
+    const db = requireFirestore();
+    const applyBatch = async (schedule, team, candidateSchedules) => {
+      const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
+      const accepted = [];
+      const skipped = [];
+      const targetCellKeysByOccurrence = {};
+      const targetOccurrenceIds = [...new Set(changes.map((change) => change.serviceId))];
+      const introducedMemberIds = new Set();
+      const targetMemberIdsByOccurrence = {};
+
+      for (const change of changes) {
+        const occurrence = getScheduleOccurrencesForConflict(schedule).find(
+          (item) => item.occurrenceId === change.serviceId,
+        );
+        if (!occurrence) throw httpError(400, "That service is not on this schedule.");
+        const slot = await assertSchedulePositionSlotExists({
+          churchId,
+          schedule,
+          occurrenceId: change.serviceId,
+          positionSlotKey: change.positionSlotKey,
+        });
+        const position = await assertTeamEntityInChurch("position", slot.slot.positionId, churchId, { label: "Position" });
+        if (position.teamId !== team.teamId) throw httpError(400, "That position is not part of this team.");
+
+        const row = { ...(assignments[change.serviceId] || {}) };
+        const currentCell = serializeScheduleAssignmentCell(
+          normalizeScheduleAssignmentCell(row[change.positionSlotKey]),
+        ) || "";
+        const expectedCell = serializeScheduleAssignmentCell(
+          normalizeScheduleAssignmentCell(change.expectedCell),
+        ) || "";
+        if (currentCell !== expectedCell) {
+          if (skipChangedCells) {
+            skipped.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
+            continue;
+          }
+          throw httpError(409, "This schedule changed while the assignments were being prepared. Reload and try again.");
+        }
+
+        const desired = serializeScheduleAssignmentCell(
+          normalizeScheduleAssignmentCell(change.assignment),
+        ) || "";
+        const currentMemberIds = new Set(getScheduleAssignmentCellMemberIds(currentCell));
+        const desiredMemberIds = getScheduleAssignmentCellMemberIds(desired);
+        desiredMemberIds.forEach((memberId) => {
+          if (!currentMemberIds.has(memberId)) {
+            introducedMemberIds.add(memberId);
+            targetMemberIdsByOccurrence[change.serviceId] ||= new Set();
+            targetMemberIdsByOccurrence[change.serviceId].add(memberId);
+          }
+        });
+
+        const serviceDate = String(change.serviceDate || occurrence.startsAt || "").slice(0, 10);
+        const normalized = normalizeScheduleAssignmentCell(desired);
+        for (const memberId of desiredMemberIds) {
+          const member = await assertTeamEntityInChurch("member", memberId, churchId, { label: "Member" });
+          if (!(team.memberIds || []).includes(memberId)) throw httpError(400, "That member is not part of this team.");
+          if (normalized.primaryMemberId === memberId && !(member.positionIds || []).includes(slot.slot.positionId)) {
+            throw httpError(400, "That member cannot serve in this position.");
+          }
+          if (isMemberBlockedOutForService(member, { date: serviceDate }) || !isMemberAvailableDuringServiceWeek(member, { date: serviceDate })) {
+            throw httpError(400, "That member is unavailable for this service.");
+          }
+        }
+
+        if (desired) row[change.positionSlotKey] = desired;
+        else delete row[change.positionSlotKey];
+        if (Object.keys(row).length) assignments[change.serviceId] = row;
+        else delete assignments[change.serviceId];
+        targetCellKeysByOccurrence[change.serviceId] ||= [];
+        targetCellKeysByOccurrence[change.serviceId].push(change.positionSlotKey);
+        accepted.push({ serviceId: change.serviceId, positionSlotKey: change.positionSlotKey });
+      }
+
+      for (const occurrenceId of targetOccurrenceIds) {
+        assertNoDuplicateScheduleMembersForService(assignments[occurrenceId] || {});
+      }
+
+      if (introducedMemberIds.size) {
+        assertNoCrossTeamScheduleAssignmentConflicts({
+          schedule,
+          assignments,
+          schedules: candidateSchedules,
+          memberIds: introducedMemberIds,
+          confirmedFingerprint,
+          targetCellKeysByOccurrence,
+          targetOccurrenceIds,
+          targetMemberIdsByOccurrence: Object.fromEntries(
+            Object.entries(targetMemberIdsByOccurrence).map(([id, memberIds]) => [id, [...memberIds]]),
+          ),
+        });
+      } else if (confirmedFingerprint) {
+        assertNoCrossTeamScheduleAssignmentConflicts({
+          schedule,
+          assignments,
+          schedules: candidateSchedules,
+          memberIds: new Set(),
+          confirmedFingerprint,
+          targetCellKeysByOccurrence,
+          targetOccurrenceIds,
+          targetMemberIdsByOccurrence: {},
+        });
+      }
+
+      return { assignments, accepted, skipped };
+    };
+
+    if (!db) {
+      return enqueueInMemoryScheduleSave(scheduleId, async () => {
+        const schedule = await assertTeamEntityInChurch("schedule", scheduleId, churchId, { label: "Schedule", active: false });
+        const team = await assertTeamEntityInChurch("team", schedule.teamId, churchId, { label: "Team" });
+        const candidateSchedules = await listScheduleConflictCandidates({ churchId, schedule, occurrenceIds: [...new Set(changes.map((change) => change.serviceId))] });
+        const result = await applyBatch(schedule, team, candidateSchedules);
+        const update = {
+          assignments: result.assignments,
+          responses: prunedResponsesForAssignments(schedule.responses, result.assignments),
+          updatedAt: nowIso(),
+          updatedByUid: adminUserId,
+        };
+        const nextSchedule = { ...schedule, ...update };
+        await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, { merge: false });
+        return { schedule: nextSchedule, accepted: result.accepted, skipped: result.skipped };
+      });
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+      const scheduleSnap = await transaction.get(scheduleRef);
+      const schedule = readTransactionTeamEntity(scheduleSnap, "scheduleId", "Schedule", { active: false });
+      if (schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+      const teamSnap = await transaction.get(db.collection(COLLECTIONS.teams).doc(schedule.teamId));
+      const team = readTransactionTeamEntity(teamSnap, "teamId", "Team");
+      if (team.churchId !== churchId) throw httpError(404, "Team not found.");
+      const candidateSchedules = await listScheduleConflictCandidates({
+        transaction,
+        db,
+        churchId,
+        schedule,
+        occurrenceIds: [...new Set(changes.map((change) => change.serviceId))],
+      });
+      const result = await applyBatch(schedule, team, candidateSchedules);
+      const update = {
+        assignments: result.assignments,
+        responses: prunedResponsesForAssignments(schedule.responses, result.assignments),
+        updatedAt: nowIso(),
+        updatedByUid: adminUserId,
+      };
+      transaction.update(scheduleRef, update);
+      return { schedule: { ...schedule, ...update }, accepted: result.accepted, skipped: result.skipped };
     });
   };
 
@@ -6785,7 +7813,7 @@ export const createTeamsAuthHandlers = ({
           normalizedCurrentMemberId,
           normalizedCandidateMemberId,
         ]),
-        allowCrossTeamConflict,
+        confirmedFingerprint: allowCrossTeamConflict,
         targetOccurrenceId: serviceId,
       });
       await setDoc(
@@ -6888,11 +7916,13 @@ export const createTeamsAuthHandlers = ({
         serviceDate,
         allowOccurrenceConflict: allowCrossTeamConflict,
       });
-      const schedules = await listTransactionSchedulesForChurch(
+      const schedules = await listScheduleConflictCandidates({
         transaction,
         db,
         churchId,
-      );
+        schedule,
+        occurrenceId: serviceId,
+      });
       assertNoCrossTeamScheduleAssignmentConflicts({
         schedule,
         assignments,
@@ -6901,7 +7931,7 @@ export const createTeamsAuthHandlers = ({
           normalizedCurrentMemberId,
           normalizedCandidateMemberId,
         ]),
-        allowCrossTeamConflict,
+        confirmedFingerprint: allowCrossTeamConflict,
         targetOccurrenceId: serviceId,
       });
       const update = {
@@ -6917,9 +7947,13 @@ export const createTeamsAuthHandlers = ({
   const teamIntakeNotificationRecipientQueues = new Map();
   const withTeamIntakeRecipientLock = (recipientId, task) => {
     const previous =
-      teamIntakeNotificationRecipientQueues.get(recipientId) || Promise.resolve();
+      teamIntakeNotificationRecipientQueues.get(recipientId) ||
+      Promise.resolve();
     const run = previous.then(task, task);
-    const settled = run.then(() => undefined, () => undefined);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
     teamIntakeNotificationRecipientQueues.set(recipientId, settled);
     void settled.finally(() => {
       if (teamIntakeNotificationRecipientQueues.get(recipientId) === settled) {
@@ -6934,20 +7968,35 @@ export const createTeamsAuthHandlers = ({
     member,
     actorUid,
   }) => {
-    const recipientId = createTeamIntakeRecipientId(form.formId, member.memberId);
+    const recipientId = createTeamIntakeRecipientId(
+      form.formId,
+      member.memberId,
+    );
     const db = requireFirestore?.();
-    const buildOrReuse = (existing, transaction = null, recipientRef = null) => {
-      if (existing?.revokedAt) return { recipient: existing, token: "", reason: "revoked" };
-      if (existing?.respondedAt) return { recipient: existing, token: "", reason: "responded" };
+    const buildOrReuse = (
+      existing,
+      transaction = null,
+      recipientRef = null,
+    ) => {
+      if (existing?.revokedAt)
+        return { recipient: existing, token: "", reason: "revoked" };
+      if (existing?.respondedAt)
+        return { recipient: existing, token: "", reason: "responded" };
       const existingToken = decryptTeamIntakeRecipientToken(
         existing?.recipientTokenCiphertext,
         teamIntakeRecipientTokenSecret,
       );
       const canReuseToken = Boolean(
-        existingToken && looksLikeTeamIntakeRecipientToken(existingToken) &&
-        hashTeamIntakeRecipientToken(existingToken, teamIntakeRecipientTokenSecret) === existing?.recipientTokenHash,
+        existingToken &&
+        looksLikeTeamIntakeRecipientToken(existingToken) &&
+        hashTeamIntakeRecipientToken(
+          existingToken,
+          teamIntakeRecipientTokenSecret,
+        ) === existing?.recipientTokenHash,
       );
-      const token = canReuseToken ? existingToken : createTeamIntakeRecipientToken();
+      const token = canReuseToken
+        ? existingToken
+        : createTeamIntakeRecipientToken();
       const now = nowIso();
       const recipient = {
         ...(existing || {}),
@@ -6957,11 +8006,19 @@ export const createTeamsAuthHandlers = ({
         memberId: member.memberId,
         createdAt: existing?.createdAt || now,
         ...(existing?.createdByUid ? {} : { createdByUid: actorUid }),
-        ...(!canReuseToken ? {
-          recipientTokenHash: hashTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret),
-          recipientTokenCiphertext: encryptTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret),
-          tokenIssuedAt: now,
-        } : {}),
+        ...(!canReuseToken
+          ? {
+              recipientTokenHash: hashTeamIntakeRecipientToken(
+                token,
+                teamIntakeRecipientTokenSecret,
+              ),
+              recipientTokenCiphertext: encryptTeamIntakeRecipientToken(
+                token,
+                teamIntakeRecipientTokenSecret,
+              ),
+              tokenIssuedAt: now,
+            }
+          : {}),
         revokedAt: null,
         updatedAt: now,
         updatedByUid: actorUid,
@@ -6974,7 +8031,9 @@ export const createTeamsAuthHandlers = ({
 
     if (db) {
       return db.runTransaction(async (transaction) => {
-        const ref = db.collection(COLLECTIONS.teamIntakeRecipients).doc(recipientId);
+        const ref = db
+          .collection(COLLECTIONS.teamIntakeRecipients)
+          .doc(recipientId);
         const snapshot = await transaction.get(ref);
         const existing = snapshot.exists
           ? { recipientId: snapshot.id, ...snapshot.data() }
@@ -6983,25 +8042,53 @@ export const createTeamsAuthHandlers = ({
       });
     }
     return withTeamIntakeRecipientLock(recipientId, async () => {
-      const existing = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+      const existing = await getDoc(
+        COLLECTIONS.teamIntakeRecipients,
+        recipientId,
+      );
       const result = buildOrReuse(existing);
       if (!existing && !result.reason) {
-        await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, result.recipient, { merge: false });
-      } else if (existing && !result.reason && result.recipient.recipientTokenHash !== existing.recipientTokenHash) {
-        await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, result.recipient, { merge: true });
+        await setDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          recipientId,
+          result.recipient,
+          { merge: false },
+        );
+      } else if (
+        existing &&
+        !result.reason &&
+        result.recipient.recipientTokenHash !== existing.recipientTokenHash
+      ) {
+        await setDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          recipientId,
+          result.recipient,
+          { merge: true },
+        );
       }
       return result;
     });
   };
 
-  const assertMemberWithinIntakeFormScope = ({ form, member, positions, teams }) => {
+  const assertMemberWithinIntakeFormScope = ({
+    form,
+    member,
+    positions,
+    teams,
+  }) => {
     const formTeamIds = new Set(normalizeIdArray(form.teamIds));
     if (formTeamIds.size === 0) return true;
-    const positionTeamById = new Map(positions.map((position) => [position.positionId, position.teamId]));
+    const positionTeamById = new Map(
+      positions.map((position) => [position.positionId, position.teamId]),
+    );
     const memberTeamIds = new Set([
       ...Object.keys(member.teamMemberships || {}),
-      ...(member.positionIds || []).map((positionId) => positionTeamById.get(positionId)).filter(Boolean),
-      ...teams.filter((team) => (team.memberIds || []).includes(member.memberId)).map((team) => team.teamId),
+      ...(member.positionIds || [])
+        .map((positionId) => positionTeamById.get(positionId))
+        .filter(Boolean),
+      ...teams
+        .filter((team) => (team.memberIds || []).includes(member.memberId))
+        .map((team) => team.teamId),
     ]);
     return [...formTeamIds].some((teamId) => memberTeamIds.has(teamId));
   };
@@ -7019,13 +8106,32 @@ export const createTeamsAuthHandlers = ({
     }
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
-    const enabledFields = normalizeTeamIntakeFields(undefined, form.enabledFields);
-    if (!hasPersonalizedIntakeResponseFields(enabledFields, form.availabilityOccurrences)) {
-      throw httpError(409, "This intake form has no response fields for an existing volunteer.");
+    const enabledFields = normalizeTeamIntakeFields(
+      undefined,
+      form.enabledFields,
+    );
+    if (
+      !hasPersonalizedIntakeResponseFields(
+        enabledFields,
+        form.availabilityOccurrences,
+      )
+    ) {
+      throw httpError(
+        409,
+        "This intake form has no response fields for an existing volunteer.",
+      );
     }
     const [members, positions, teams, church] = await Promise.all([
-      listTeamCollectionForChurch(COLLECTIONS.teamRosterMembers, "memberId", churchId),
-      listTeamCollectionForChurch(COLLECTIONS.teamPositions, "positionId", churchId),
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamRosterMembers,
+        "memberId",
+        churchId,
+      ),
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamPositions,
+        "positionId",
+        churchId,
+      ),
       listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
       getChurchById(churchId),
     ]);
@@ -7033,46 +8139,97 @@ export const createTeamsAuthHandlers = ({
     for (const memberId of [...new Set(memberIds)].slice(0, 500)) {
       const member = members.find((item) => item.memberId === memberId);
       if (!member || member.archivedAt) {
-        results.push({ memberId, eligible: false, exclusionReason: "Volunteer is no longer active on this roster." });
+        results.push({
+          memberId,
+          eligible: false,
+          exclusionReason: "Volunteer is no longer active on this roster.",
+        });
         continue;
       }
-      if (!assertMemberWithinIntakeFormScope({ form, member, positions, teams })) {
-        results.push({ memberId, eligible: false, exclusionReason: "Volunteer is outside this form's team scope." });
+      if (
+        !assertMemberWithinIntakeFormScope({ form, member, positions, teams })
+      ) {
+        results.push({
+          memberId,
+          eligible: false,
+          exclusionReason: "Volunteer is outside this form's team scope.",
+        });
         continue;
       }
       const recipientId = createTeamIntakeRecipientId(formId, memberId);
-      let recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+      let recipient = await getDoc(
+        COLLECTIONS.teamIntakeRecipients,
+        recipientId,
+      );
       let token = "";
       if (purpose === "availability_request") {
-        const ensured = await ensureTeamIntakeNotificationRecipient({ form, member, actorUid });
+        const ensured = await ensureTeamIntakeNotificationRecipient({
+          form,
+          member,
+          actorUid,
+        });
         recipient = ensured.recipient;
         token = ensured.token;
         if (ensured.reason) {
-          results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: ensured.reason });
+          results.push({
+            memberId,
+            recipientId,
+            recipient,
+            eligible: false,
+            exclusionReason: ensured.reason,
+          });
           continue;
         }
       } else if (!recipient) {
-        results.push({ memberId, recipientId, eligible: false, exclusionReason: "No individual intake request exists." });
+        results.push({
+          memberId,
+          recipientId,
+          eligible: false,
+          exclusionReason: "No individual intake request exists.",
+        });
         continue;
       }
       if (recipient?.revokedAt) {
-        results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: "Request was revoked." });
+        results.push({
+          memberId,
+          recipientId,
+          recipient,
+          eligible: false,
+          exclusionReason: "Request was revoked.",
+        });
         continue;
       }
       if (recipient?.respondedAt) {
-        results.push({ memberId, recipientId, recipient, eligible: false, exclusionReason: "Form response already received." });
+        results.push({
+          memberId,
+          recipientId,
+          recipient,
+          eligible: false,
+          exclusionReason: "Form response already received.",
+        });
         continue;
       }
       if (purpose === "availability_reminder") {
-        const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
+        const ensured = await ensureTeamIntakeRecipientToken(
+          recipient,
+          actorUid,
+        );
         recipient = ensured.recipient;
         token = ensured.token;
       }
-      const preliminary = resolveSmsMemberEligibility({ member, churchId, consent: null });
+      const preliminary = resolveSmsMemberEligibility({
+        member,
+        churchId,
+        consent: null,
+      });
       const consent = preliminary.phoneNumber
         ? await getSmsConsentForChurchPhone(churchId, preliminary.phoneNumber)
         : null;
-      const eligibility = resolveSmsMemberEligibility({ member, churchId, consent });
+      const eligibility = resolveSmsMemberEligibility({
+        member,
+        churchId,
+        consent,
+      });
       const publicUrl = token ? buildTeamIntakeRecipientPublicUrl(token) : "";
       results.push({
         memberId,
@@ -7083,31 +8240,58 @@ export const createTeamsAuthHandlers = ({
         churchName: church?.name || "WorshipSync",
         publicUrl,
         phoneNumber: eligibility.phoneNumber,
-        maskedPhoneNumber: eligibility.phoneNumber ? `••• ••• ${eligibility.phoneNumber.slice(-4)}` : "",
+        maskedPhoneNumber: eligibility.phoneNumber
+          ? `••• ••• ${eligibility.phoneNumber.slice(-4)}`
+          : "",
         eligibilityStatus: eligibility.status,
         eligible: eligibility.eligible,
-        exclusionReason: eligibility.eligible ? "" : ({
-          no_mobile: "No valid mobile number.",
-          consent_needed: "SMS consent is needed.",
-          opted_out: "This phone number opted out.",
-        })[eligibility.status],
+        exclusionReason: eligibility.eligible
+          ? ""
+          : {
+              no_mobile: "No valid mobile number.",
+              consent_needed: "SMS consent is needed.",
+              opted_out: "This phone number opted out.",
+            }[eligibility.status],
       });
     }
     return { form: { formId, ...form }, results };
   };
 
-  const resolveAvailabilityNotificationContext = async (intent, actorUid = "") => {
-    const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, intent.recipientId || intent.sourceId);
-    if (!recipient || recipient.churchId !== intent.churchId || (intent.formId && recipient.formId !== intent.formId)) {
-      throw httpError(409, "The individual intake request is no longer available.");
+  const resolveAvailabilityNotificationContext = async (
+    intent,
+    actorUid = "",
+  ) => {
+    const recipient = await getDoc(
+      COLLECTIONS.teamIntakeRecipients,
+      intent.recipientId || intent.sourceId,
+    );
+    if (
+      !recipient ||
+      recipient.churchId !== intent.churchId ||
+      (intent.formId && recipient.formId !== intent.formId)
+    ) {
+      throw httpError(
+        409,
+        "The individual intake request is no longer available.",
+      );
     }
     const { form, member } = await getTeamIntakeRecipientContext(recipient);
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
-    if (recipient.revokedAt) throw httpError(409, "This intake request was revoked.");
-    if (recipient.respondedAt) throw httpError(409, "This volunteer has already responded.");
-    if (!hasPersonalizedIntakeResponseFields(normalizeTeamIntakeFields(undefined, form.enabledFields), form.availabilityOccurrences)) {
-      throw httpError(409, "This intake form no longer has response fields for an existing volunteer.");
+    if (recipient.revokedAt)
+      throw httpError(409, "This intake request was revoked.");
+    if (recipient.respondedAt)
+      throw httpError(409, "This volunteer has already responded.");
+    if (
+      !hasPersonalizedIntakeResponseFields(
+        normalizeTeamIntakeFields(undefined, form.enabledFields),
+        form.availabilityOccurrences,
+      )
+    ) {
+      throw httpError(
+        409,
+        "This intake form no longer has response fields for an existing volunteer.",
+      );
     }
     const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
     return {
@@ -7121,12 +8305,20 @@ export const createTeamsAuthHandlers = ({
 
   const resolveScheduleNotificationContext = async (intent) => {
     const schedule = await getDoc(COLLECTIONS.teamSchedules, intent.sourceId);
-    if (!schedule || schedule.churchId !== intent.churchId || schedule.archivedAt) {
+    if (
+      !schedule ||
+      schedule.churchId !== intent.churchId ||
+      schedule.archivedAt
+    ) {
       throw httpError(409, "The source schedule is no longer available.");
     }
     const member = await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
-    const occurrence = (schedule.occurrences || []).find((item) => item.occurrenceId === intent.occurrenceId);
-    const positionId = String(intent.cellKey || "").split(SCHEDULE_SLOT_KEY_SEPARATOR)[0];
+    const occurrence = (schedule.occurrences || []).find(
+      (item) => item.occurrenceId === intent.occurrenceId,
+    );
+    const positionId = String(intent.cellKey || "").split(
+      SCHEDULE_SLOT_KEY_SEPARATOR,
+    )[0];
     const [position, church] = await Promise.all([
       positionId ? getDoc(COLLECTIONS.teamPositions, positionId) : null,
       getChurchById(intent.churchId),
@@ -7146,22 +8338,49 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const closeResolvedReplacementInvitations = async ({ churchId, scheduleId, occurrenceId, cellKey }) => {
-    const intents = await queryDocs(COLLECTIONS.notificationIntents, [
-      { field: "churchId", value: churchId },
-      { field: "sourceId", value: scheduleId },
-      { field: "sourceType", value: "team_schedule" },
-    ], { limit: 250 });
+  const closeResolvedReplacementInvitations = async ({
+    churchId,
+    scheduleId,
+    occurrenceId,
+    cellKey,
+  }) => {
+    const intents = await queryDocs(
+      COLLECTIONS.notificationIntents,
+      [
+        { field: "churchId", value: churchId },
+        { field: "sourceId", value: scheduleId },
+        { field: "sourceType", value: "team_schedule" },
+      ],
+      { limit: 250 },
+    );
     const now = nowIso();
     for (const intent of intents) {
-      if (intent.intentType !== "replacement_request" || intent.occurrenceId !== occurrenceId || intent.cellKey !== cellKey || intent.replacementResolvedAt) continue;
-      await setDoc(COLLECTIONS.notificationIntents, intent.intentId || intent.id, {
-        replacementResolvedAt: now,
-        replacementResolvedBy: "schedule_assignment",
-        updatedAt: now,
-      }, { merge: true });
-      const claimId = hashValue(`${churchId}|replacement-vacancy|${scheduleId}|${occurrenceId}|${cellKey}`);
-      await setDoc(COLLECTIONS.notificationBatches, claimId, { releasedAt: now, status: "released" }, { merge: true });
+      if (
+        intent.intentType !== "replacement_request" ||
+        intent.occurrenceId !== occurrenceId ||
+        intent.cellKey !== cellKey ||
+        intent.replacementResolvedAt
+      )
+        continue;
+      await setDoc(
+        COLLECTIONS.notificationIntents,
+        intent.intentId || intent.id,
+        {
+          replacementResolvedAt: now,
+          replacementResolvedBy: "schedule_assignment",
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+      const claimId = hashValue(
+        `${churchId}|replacement-vacancy|${scheduleId}|${occurrenceId}|${cellKey}`,
+      );
+      await setDoc(
+        COLLECTIONS.notificationBatches,
+        claimId,
+        { releasedAt: now, status: "released" },
+        { merge: true },
+      );
     }
   };
 
@@ -7177,26 +8396,56 @@ export const createTeamsAuthHandlers = ({
     if (!schedule || schedule.churchId !== churchId || schedule.archivedAt) {
       throw httpError(404, "Schedule not found.");
     }
-    const occurrence = (schedule.occurrences || []).find((item) => item?.occurrenceId === occurrenceId);
-    if (!occurrence) throw httpError(409, "This service occurrence is no longer on the schedule.");
+    const occurrence = (schedule.occurrences || []).find(
+      (item) => item?.occurrenceId === occurrenceId,
+    );
+    if (!occurrence)
+      throw httpError(
+        409,
+        "This service occurrence is no longer on the schedule.",
+      );
     const positionId = String(cellKey || "").split("::")[0];
     const cell = schedule.assignments?.[occurrenceId]?.[cellKey];
-    const holderId = typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+    const holderId =
+      typeof cell === "string" ? cell : cell?.primaryMemberId || "";
     const response = schedule.responses?.[occurrenceId]?.[cellKey]?.response;
     if (holderId && response !== "declined") {
-      throw httpError(409, "Replacement invitations are available only for a vacant or declined assignment.");
+      throw httpError(
+        409,
+        "Replacement invitations are available only for a vacant or declined assignment.",
+      );
     }
-    if (memberId === holderId || (originalMemberId && memberId === originalMemberId)) {
-      throw httpError(400, "The volunteer who declined cannot receive the replacement invitation.");
+    if (
+      memberId === holderId ||
+      (originalMemberId && memberId === originalMemberId)
+    ) {
+      throw httpError(
+        400,
+        "The volunteer who declined cannot receive the replacement invitation.",
+      );
     }
     const churchTeam = await getDoc(COLLECTIONS.teams, schedule.teamId);
     const position = await getDoc(COLLECTIONS.teamPositions, positionId);
     const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
-    if (!churchTeam || churchTeam.churchId !== churchId || !position || position.churchId !== churchId || !member || member.churchId !== churchId || member.archivedAt) {
-      throw httpError(404, "Replacement candidate or schedule position not found in this church.");
+    if (
+      !churchTeam ||
+      churchTeam.churchId !== churchId ||
+      !position ||
+      position.churchId !== churchId ||
+      !member ||
+      member.churchId !== churchId ||
+      member.archivedAt
+    ) {
+      throw httpError(
+        404,
+        "Replacement candidate or schedule position not found in this church.",
+      );
     }
     if (member.serviceAvailability?.[occurrenceId] === "unavailable") {
-      throw httpError(409, "This volunteer marked the service unavailable on intake.");
+      throw httpError(
+        409,
+        "This volunteer marked the service unavailable on intake.",
+      );
     }
     const vacancySchedule = {
       ...schedule,
@@ -7209,7 +8458,8 @@ export const createTeamsAuthHandlers = ({
         primaryMemberId: "",
         shadows: normalizedCell.shadows,
       });
-      if (clearedCell) vacancySchedule.assignments[occurrenceId][cellKey] = clearedCell;
+      if (clearedCell)
+        vacancySchedule.assignments[occurrenceId][cellKey] = clearedCell;
       else delete vacancySchedule.assignments[occurrenceId][cellKey];
     }
     const serviceDate = String(occurrence.startsAt || "").slice(0, 10);
@@ -7237,17 +8487,2647 @@ export const createTeamsAuthHandlers = ({
       assignments: validated.assignments,
       schedules,
       memberIds: new Set([memberId]),
-      allowCrossTeamConflict: false,
+      confirmedFingerprint: "",
       targetCellKey: cellKey,
       targetOccurrenceId: occurrenceId,
     });
-    return { schedule, occurrence, member, team: churchTeam, position, holderId };
+    return {
+      schedule,
+      occurrence,
+      member,
+      team: churchTeam,
+      position,
+      holderId,
+    };
+  };
+
+  const readPortableDatasets = async (churchId) => {
+    const [members, teams, positions, schedules, services] = await Promise.all([
+      queryDocs(
+        COLLECTIONS.teamRosterMembers,
+        [{ field: "churchId", value: churchId }],
+        { limit: 0 },
+      ),
+      queryDocs(COLLECTIONS.teams, [{ field: "churchId", value: churchId }], {
+        limit: 0,
+      }),
+      queryDocs(
+        COLLECTIONS.teamPositions,
+        [{ field: "churchId", value: churchId }],
+        { limit: 0 },
+      ),
+      queryDocs(
+        COLLECTIONS.teamSchedules,
+        [{ field: "churchId", value: churchId }],
+        { limit: 0 },
+      ),
+      readChurchServiceTimesForTransfer(churchId),
+    ]);
+    return {
+      members: members.map(({ id, ...item }) => ({
+        ...item,
+        memberId: item.memberId || id,
+      })),
+      teams: teams.map(({ id, ...item }) => ({
+        ...item,
+        teamId: item.teamId || id,
+      })),
+      positions: positions.map(({ id, ...item }) => ({
+        ...item,
+        positionId: item.positionId || id,
+      })),
+      schedules: schedules.map(({ id, ...item }) => ({
+        ...item,
+        scheduleId: item.scheduleId || id,
+      })),
+      services: (Array.isArray(services) ? services : []).map((service) => ({
+        ...service,
+        serviceId: service.serviceId || service.id,
+      })),
+    };
+  };
+
+  const dataTransferError = (res, error, fallback) => {
+    const statusCode =
+      Number.isInteger(error?.statusCode) && error.statusCode >= 400
+        ? error.statusCode
+        : 500;
+    if (statusCode >= 500) console.error(fallback, error);
+    return res
+      .status(statusCode)
+      .json({
+        success: false,
+        errorMessage:
+          statusCode < 500 && error?.message ? error.message : fallback,
+      });
+  };
+
+  const PORTABLE_FIELDS = {
+    members: [
+      "firstName",
+      "lastName",
+      "name",
+      "title",
+      "email",
+      "phone",
+      "teams",
+      "positions",
+      "notes",
+      "servingFrequency",
+      "archived",
+      "memberId",
+      "teamIds",
+      "positionIds",
+    ],
+    teams: [
+      "name",
+      "description",
+      "usesMicrophones",
+      "usesIems",
+      "archived",
+      "teamId",
+      "icon",
+    ],
+    positions: [
+      "name",
+      "team",
+      "description",
+      "group",
+      "order",
+      "archived",
+      "positionId",
+      "teamId",
+      "icon",
+    ],
+    services: [
+      "name",
+      "recurrence",
+      "time",
+      "date",
+      "daysOfWeek",
+      "startDate",
+      "endDate",
+      "weekOrdinal",
+      "weekday",
+      "combinedGroup",
+      "position",
+      "requiredSlots",
+      "archived",
+      "serviceId",
+      "positionId",
+    ],
+    schedules: [
+      "name",
+      "startDate",
+      "endDate",
+      "service",
+      "date",
+      "startTime",
+      "team",
+      "position",
+      "slot",
+      "person",
+      "email",
+      "assignmentType",
+      "guest",
+      "scheduleId",
+      "occurrenceId",
+      "serviceId",
+      "teamId",
+      "positionId",
+      "memberId",
+    ],
+  };
+  const HEADER_ALIASES = {
+    firstName: ["first name", "firstname", "given name", "forename"],
+    lastName: ["last name", "lastname", "surname", "family name"],
+    name: [
+      "name",
+      "team",
+      "position",
+      "service",
+      "schedule",
+      "person",
+      "volunteer",
+      "member",
+    ],
+    teams: ["teams", "team", "ministry", "ministries"],
+    positions: ["positions", "position", "role", "roles"],
+    email: ["email", "email address"],
+    phone: ["phone", "phone number", "mobile", "cell"],
+    date: ["date", "service date", "occurrence date"],
+    startDate: ["start date", "schedule start"],
+    endDate: ["end date", "schedule end"],
+    startTime: ["start time", "service time", "time"],
+    recurrence: ["recurrence", "frequency", "repeat"],
+    team: ["team", "ministry"],
+    person: ["person", "volunteer", "member", "name"],
+    assignmentType: ["assignment type", "assignment", "shadow type"],
+    memberId: ["worshipsync member id", "member id"],
+    teamId: ["worshipsync team id", "team id"],
+    positionId: ["worshipsync position id", "position id"],
+    teamIds: ["worshipsync team ids", "team ids"],
+    positionIds: ["worshipsync position ids", "position ids"],
+    serviceId: ["worshipsync service id", "service id"],
+    scheduleId: ["worshipsync schedule id", "schedule id"],
+    occurrenceId: ["worshipsync occurrence id", "occurrence id"],
+    description: ["description", "notes"],
+    icon: ["icon", "position icon"],
+    combinedGroup: ["combined group", "combined services", "service group"],
+  };
+  const normalizeHeader = (value) =>
+    normalizePortableMatchValue(value).replace(/[^a-z0-9]/g, "");
+  const mappingSuggestions = (headers, type) =>
+    Object.fromEntries(
+      PORTABLE_FIELDS[type].map((field) => {
+        const contextualAliases =
+          field === "name"
+            ? type === "schedules"
+              ? ["schedule", "schedule name"]
+              : type === "teams"
+                ? ["team", "team name", "name"]
+                : type === "positions"
+                  ? ["position", "role", "position name"]
+                  : type === "members"
+                    ? [
+                        "name",
+                        "person",
+                        "member",
+                        "volunteer",
+                        "full name",
+                        "display name",
+                      ]
+                    : ["service", "service name", "name"]
+            : HEADER_ALIASES[field];
+        const aliases = contextualAliases || [
+          field
+            .toLowerCase()
+            .replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`),
+        ];
+        const normalizedAliases = aliases.map(normalizeHeader);
+        const header = headers.find((candidate) =>
+          normalizedAliases.includes(normalizeHeader(candidate)),
+        );
+        return [field, header || ""];
+      }),
+    );
+  const mappedPortableRows = ({ parsed, type, mapping = {} }) =>
+    parsed.rows.map(({ rowNumber, values }) => {
+      const record = {};
+      PORTABLE_FIELDS[type].forEach((field) => {
+        const source = mapping[field];
+        if (source && Object.hasOwn(values, source))
+          record[field] = values[source];
+      });
+      if (type === "members" && !record.firstName && record.name) {
+        const name = String(record.name).trim().split(/\s+/);
+        record.firstName = name.shift() || "";
+        record.lastName = name.join(" ");
+      }
+      return { row: rowNumber, record };
+    });
+  const portableResolutionId = (approved, field, referenceIndex = 0) => {
+    if (Array.isArray(approved?.resolutions)) {
+      return (
+        approved.resolutions.find(
+          (item) =>
+            item?.field === field &&
+            Number(item.referenceIndex) === referenceIndex,
+        )?.selectedId || ""
+      );
+    }
+    const legacy =
+      approved?.resolutions && typeof approved.resolutions === "object"
+        ? approved.resolutions
+        : {};
+    return referenceIndex === 0
+      ? String(legacy[field] || legacy[`${field}Id`] || "")
+      : "";
   };
 
   return {
     prepareAvailabilityNotificationRecipients,
     resolveAvailabilityNotificationContext,
     resolveScheduleNotificationContext,
+    async exportPortableData(req, res) {
+      try {
+        const churchId = String(req.params.churchId || "").trim();
+        await requireAdminSession(req, churchId);
+        const type = String(req.params.type || "")
+          .trim()
+          .toLowerCase();
+        const timeZone = String(req.query?.timeZone || "UTC").trim();
+        if (!isValidPortableTimeZone(timeZone))
+          throw httpError(400, "Choose a valid time zone for this export.");
+        if (type === "all") {
+          const datasets = buildPortableDatasets(
+            await readPortableDatasets(churchId),
+            { timeZone },
+          );
+          const now = new Date().toISOString();
+          const entries = Object.keys(PORTABLE_SCHEMAS).map((name) => ({
+            name: `${name}.csv`,
+            content: encodeCsv(PORTABLE_SCHEMAS[name], datasets[name]),
+          }));
+          entries.push({
+            name: "metadata.json",
+            content: JSON.stringify(
+              {
+                format: "worshipsync-data-transfer",
+                version: 1,
+                exportedAt: now,
+                files: Object.keys(PORTABLE_SCHEMAS).map(
+                  (name) => `${name}.csv`,
+                ),
+              },
+              null,
+              2,
+            ),
+          });
+          res.set("Content-Type", "application/zip");
+          res.set(
+            "Content-Disposition",
+            'attachment; filename="worshipsync-data-transfer.zip"',
+          );
+          return res.send(createZip(entries));
+        }
+        if (!Object.hasOwn(PORTABLE_SCHEMAS, type))
+          throw httpError(404, "Choose a supported data type.");
+        res.set("Content-Type", "text/csv; charset=utf-8");
+        res.set("Content-Disposition", `attachment; filename="${type}.csv"`);
+        if (req.query?.template === "true")
+          return res.send(encodeCsv(PORTABLE_SCHEMAS[type], []));
+        const datasets = buildPortableDatasets(
+          await readPortableDatasets(churchId),
+          { timeZone },
+        );
+        return res.send(encodeCsv(PORTABLE_SCHEMAS[type], datasets[type]));
+      } catch (error) {
+        return dataTransferError(
+          res,
+          error,
+          "Could not export this data. Try again.",
+        );
+      }
+    },
+    async inspectPortableImport(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = String(req.params.churchId || "").trim();
+        await requireAdminSession(req, churchId);
+        const type = String(req.body?.type || "")
+          .trim()
+          .toLowerCase();
+        if (!Object.hasOwn(PORTABLE_SCHEMAS, type))
+          throw httpError(400, "Choose a data type before uploading a CSV.");
+        const csv = String(req.body?.csv || "");
+        if (!csv || Buffer.byteLength(csv, "utf8") > 8 * 1024 * 1024)
+          throw httpError(400, "Choose a CSV file smaller than 8 MB.");
+        const parsed = parseCsv(csv);
+        return res.json({
+          success: true,
+          headers: parsed.headers,
+          rowCount: parsed.totalRows,
+          columnCount: parsed.headers.length,
+          issues: parsed.issues,
+          mapping: mappingSuggestions(parsed.headers, type),
+          sampleRows: parsed.rows.slice(0, 5).map((row) => row.values),
+        });
+      } catch (error) {
+        return dataTransferError(
+          res,
+          error,
+          "Could not read this CSV. Check the file and try again.",
+        );
+      }
+    },
+    async previewPortableImport(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = String(req.params.churchId || "").trim();
+        await requireAdminSession(req, churchId);
+        const type = String(req.body?.type || "")
+          .trim()
+          .toLowerCase();
+        if (!Object.hasOwn(PORTABLE_SCHEMAS, type))
+          throw httpError(400, "Choose a supported data type.");
+        const parsed = parseCsv(String(req.body?.csv || ""));
+        if (parsed.issues.some((issue) => issue.row === 1))
+          throw httpError(
+            400,
+            parsed.issues.find((issue) => issue.row === 1)?.message ||
+              "Check the CSV column headers.",
+          );
+        const records = await readPortableDatasets(churchId);
+        const mapped = mappedPortableRows({
+          parsed,
+          type,
+          mapping: req.body?.mapping,
+        });
+        const rows = mapped.map(({ row, record }) => {
+          const issues = parsed.issues
+            .filter((issue) => issue.row === row)
+            .map((issue) => ({
+              field: "csv",
+              code: issue.code,
+              message: issue.message,
+            }));
+          let match = null;
+          let candidates = [];
+          if (type === "members") {
+            if (!record.firstName || !record.lastName)
+              issues.push({
+                field: "firstName",
+                code: "required",
+                message: "First and last name are required.",
+              });
+            const importedId = String(record.memberId || "").trim();
+            if (importedId) {
+              match =
+                records.members.find((item) => item.memberId === importedId) ||
+                null;
+              if (!match) {
+                candidates = records.members.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    normalizePortableMatchValue(item.firstName) ===
+                      normalizePortableMatchValue(record.firstName) &&
+                    normalizePortableMatchValue(item.lastName) ===
+                      normalizePortableMatchValue(record.lastName),
+                );
+                issues.push({
+                  field: "memberId",
+                  code: "foreign_or_unknown_record_id",
+                  message:
+                    "This WorshipSync Member ID does not belong to this church. Choose a local match explicitly or create a new member.",
+                  candidates: candidates.map((item) => ({
+                    id: item.memberId,
+                    name: [item.firstName, item.lastName]
+                      .filter(Boolean)
+                      .join(" "),
+                  })),
+                });
+              }
+            } else if (record.firstName && record.lastName) {
+              candidates = records.members.filter(
+                (item) =>
+                  normalizePortableMatchValue(item.firstName) ===
+                    normalizePortableMatchValue(record.firstName) &&
+                  normalizePortableMatchValue(item.lastName) ===
+                    normalizePortableMatchValue(record.lastName) &&
+                  !item.archivedAt,
+              );
+              if (candidates.length === 1) match = candidates[0];
+            }
+            const referenceIssue = (
+              field,
+              name,
+              collection,
+              key,
+              label,
+              ids,
+            ) => {
+              if (!name) return;
+              const parts = String(name)
+                .split(LIST_DELIMITER)
+                .map((value) => value.trim())
+                .filter(Boolean);
+              const idParts = String(ids || "")
+                .split(LIST_DELIMITER)
+                .map((value) => value.trim());
+              for (const [index, part] of parts.entries()) {
+                const found = idParts[index]
+                  ? collection.filter(
+                      (item) =>
+                        item[key] === idParts[index] &&
+                        !item.archivedAt &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(part),
+                    )
+                  : collection.filter(
+                      (item) =>
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(part) && !item.archivedAt,
+                    );
+                const candidatesForChoice =
+                  idParts[index] && !found.length
+                    ? collection.filter(
+                        (item) =>
+                          normalizePortableMatchValue(item.name) ===
+                            normalizePortableMatchValue(part) &&
+                          !item.archivedAt,
+                      )
+                    : found;
+                if (found.length !== 1)
+                  issues.push({
+                    field,
+                    referenceIndex: index,
+                    referenceValue: part,
+                    code: found.length
+                      ? "ambiguous_reference"
+                      : idParts[index]
+                        ? "foreign_or_unknown_reference_id"
+                        : candidatesForChoice.length
+                          ? "ambiguous_reference"
+                          : "missing_reference",
+                    message:
+                      found.length || candidatesForChoice.length > 1
+                        ? `Choose which ${label} "${part}" to use.`
+                        : idParts[index]
+                          ? `This WorshipSync ${label} ID does not belong to this church.`
+                          : `Import or map ${label} "${part}" before importing this member.`,
+                    candidates: candidatesForChoice.map((item) => ({
+                      id: item[key],
+                      name: item.name,
+                    })),
+                  });
+              }
+            };
+            const importedTeamNames = String(record.teams || "")
+              .split(LIST_DELIMITER)
+              .map((value) => normalizePortableMatchValue(value))
+              .filter(Boolean);
+            const matchedTeams = records.teams.filter(
+              (item) =>
+                !item.archivedAt &&
+                importedTeamNames.includes(
+                  normalizePortableMatchValue(item.name),
+                ),
+            );
+            referenceIssue(
+              "teams",
+              record.teams,
+              records.teams,
+              "teamId",
+              "team",
+              record.teamIds,
+            );
+            const positionCandidates = matchedTeams.length
+              ? records.positions.filter((item) =>
+                  matchedTeams.some((team) => team.teamId === item.teamId),
+                )
+              : records.positions;
+            referenceIssue(
+              "positions",
+              record.positions,
+              positionCandidates,
+              "positionId",
+              "position",
+              record.positionIds,
+            );
+          } else if (type === "teams") {
+            if (!record.name)
+              issues.push({
+                field: "name",
+                code: "required",
+                message: "Team name is required.",
+              });
+            const found = findPortableMatch({
+              records: records.teams,
+              id: record.teamId,
+              idField: "teamId",
+              label: record.name,
+              includeArchived: true,
+            });
+            match = found.record;
+            candidates = found.foreignOrUnknownId
+              ? records.teams.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(record.name),
+                )
+              : found.candidates || [];
+            if (found.foreignOrUnknownId)
+              issues.push({
+                field: "teamId",
+                code: "foreign_or_unknown_record_id",
+                message:
+                  "This WorshipSync Team ID does not belong to this church. Choose a local match explicitly or create a new team.",
+                candidates: candidates.map((item) => ({
+                  id: item.teamId,
+                  name: item.name,
+                })),
+              });
+          } else if (type === "positions") {
+            if (!record.name || !record.team)
+              issues.push({
+                field: "team",
+                code: "required",
+                message: "Position and team are required.",
+              });
+            const localTeamIdMatch =
+              record.teamId &&
+              records.teams.find(
+                (item) => !item.archivedAt && item.teamId === record.teamId,
+              );
+            const teamMatches = localTeamIdMatch
+              ? [localTeamIdMatch]
+              : record.teamId
+                ? []
+                : records.teams.filter(
+                    (item) =>
+                      !item.archivedAt &&
+                      normalizePortableMatchValue(item.name) ===
+                        normalizePortableMatchValue(record.team),
+                  );
+            if (teamMatches.length !== 1) {
+              const choiceCandidates =
+                record.teamId && !teamMatches.length
+                  ? records.teams.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(record.team),
+                    )
+                  : teamMatches;
+              const unknownTeamId = Boolean(record.teamId && !localTeamIdMatch);
+              const code = unknownTeamId
+                ? "foreign_or_unknown_reference_id"
+                : choiceCandidates.length
+                  ? "ambiguous_reference"
+                  : "missing_reference";
+              let message;
+              if (unknownTeamId && choiceCandidates.length)
+                message =
+                  "This WorshipSync Team ID is not in this church. Choose which team owns this position.";
+              else if (unknownTeamId)
+                message = `This WorshipSync Team ID is not in this church, and team "${record.team || ""}" is unavailable. Import the team first.`;
+              else if (choiceCandidates.length)
+                message = "Choose which team owns this position.";
+              else
+                message = `Import or map team "${record.team || ""}" before importing this position.`;
+              issues.push({
+                field: "team",
+                referenceIndex: 0,
+                referenceValue: record.team,
+                code,
+                message,
+                candidates: choiceCandidates.map((item) => ({
+                  id: item.teamId,
+                  name: item.name,
+                })),
+              });
+            } else {
+              const localPositionIdMatch =
+                record.positionId &&
+                records.positions.find(
+                  (item) =>
+                    item.teamId === teamMatches[0].teamId &&
+                    item.positionId === record.positionId,
+                );
+              const matches = localPositionIdMatch
+                ? [localPositionIdMatch]
+                : record.positionId
+                  ? []
+                  : records.positions.filter(
+                      (item) =>
+                        item.teamId === teamMatches[0].teamId &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(record.name),
+                    );
+              if (record.positionId && !localPositionIdMatch) {
+                candidates = records.positions.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    item.teamId === teamMatches[0].teamId &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(record.name),
+                );
+                issues.push({
+                  field: "positionId",
+                  code: "foreign_or_unknown_record_id",
+                  message:
+                    "This WorshipSync Position ID does not identify an active position in the selected team. Choose a local match explicitly or create a new position.",
+                  candidates: candidates.map((item) => ({
+                    id: item.positionId,
+                    name: item.name,
+                  })),
+                });
+              }
+              if (matches.length === 1) match = matches[0];
+              else candidates = matches;
+            }
+          } else if (type === "services") {
+            if (!record.name || !record.recurrence)
+              issues.push({
+                field: "name",
+                code: "required",
+                message: "Service name and recurrence are required.",
+              });
+            const serviceDateFields = record.recurrence === "one_time"
+              ? [["date", record.date, "Date"]]
+              : [["startDate", record.startDate, "Start Date"], ["endDate", record.endDate, "End Date"]];
+            for (const [field, value, label] of serviceDateFields) {
+              if ((!value && field === "date") || (value && !isValidPortablePlainDate(String(value)))) {
+                issues.push({
+                  field,
+                  code: "invalid_value",
+                  message: `${label} must be a real calendar date in YYYY-MM-DD format.`,
+                });
+              }
+            }
+            if (record.startDate && record.endDate
+              && isValidPortablePlainDate(String(record.startDate))
+              && isValidPortablePlainDate(String(record.endDate))
+              && record.startDate > record.endDate) {
+              issues.push({
+                field: "endDate",
+                code: "invalid_value",
+                message: "End Date must be on or after Start Date.",
+              });
+            }
+            const positionName = String(record.position || "").trim();
+            if (positionName) {
+              let positionMatches = record.positionId
+                ? records.positions.filter(
+                    (item) =>
+                      !item.archivedAt && item.positionId === record.positionId,
+                  )
+                : records.positions.filter(
+                    (item) =>
+                      !item.archivedAt &&
+                      normalizePortableMatchValue(item.name) ===
+                        normalizePortableMatchValue(positionName),
+                  );
+              const unknownId = Boolean(
+                record.positionId && !positionMatches.length,
+              );
+              if (unknownId)
+                positionMatches = records.positions.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(positionName),
+                );
+              if (positionMatches.length !== 1 || unknownId)
+                issues.push({
+                  field: "position",
+                  referenceIndex: 0,
+                  referenceValue: positionName,
+                  code: unknownId
+                    ? "foreign_or_unknown_reference_id"
+                    : positionMatches.length
+                      ? "ambiguous_reference"
+                      : "missing_reference",
+                  message: unknownId
+                    ? "This WorshipSync Position ID does not belong to this church. Choose a local position explicitly."
+                    : positionMatches.length
+                      ? `Choose which position "${positionName}" this service uses.`
+                      : `Import or map position "${positionName}" before importing this service.`,
+                  candidates: positionMatches.map((item) => ({
+                    id: item.positionId,
+                    name: item.name,
+                  })),
+                });
+            }
+            const importedId = String(record.serviceId || "").trim();
+            const localIdMatch =
+              importedId &&
+              records.services.find(
+                (item) => (item.serviceId || item.id) === importedId,
+              );
+            const serviceMatches = localIdMatch
+              ? [localIdMatch]
+              : importedId
+                ? []
+                : records.services.filter(
+                    (item) =>
+                      normalizePortableMatchValue(item.name) ===
+                        normalizePortableMatchValue(record.name) &&
+                      portableServiceMatches(item, record, records.services),
+                  );
+            if (importedId && !localIdMatch) {
+              candidates = records.services.filter(
+                (item) =>
+                  !item.archivedAt &&
+                  normalizePortableMatchValue(item.name) ===
+                    normalizePortableMatchValue(record.name) &&
+                  portableServiceMatches(item, record, records.services),
+              );
+              issues.push({
+                field: "serviceId",
+                code: "foreign_or_unknown_record_id",
+                message:
+                  "This WorshipSync Service ID does not belong to this church. Choose a local match explicitly or create a new service.",
+                candidates: candidates.map((item) => ({
+                  id: item.serviceId || item.id,
+                  name: item.name,
+                })),
+              });
+            }
+            if (serviceMatches.length === 1) match = serviceMatches[0];
+            else if (!importedId) candidates = serviceMatches;
+          } else if (type === "schedules") {
+            if (!record.name || !record.team || !record.date || !record.service)
+              issues.push({
+                field: "date",
+                code: "required",
+                message: "Schedule, team, service, and date are required.",
+              });
+            const localTeamIdMatch =
+              record.teamId &&
+              records.teams.find(
+                (item) => !item.archivedAt && item.teamId === record.teamId,
+              );
+            const teamMatches = localTeamIdMatch
+              ? [localTeamIdMatch]
+              : record.teamId
+                ? []
+                : records.teams.filter(
+                    (item) =>
+                      !item.archivedAt &&
+                      normalizePortableMatchValue(item.name) ===
+                        normalizePortableMatchValue(record.team),
+                  );
+            const team = teamMatches.length === 1 ? teamMatches[0] : null;
+            const candidateTeamIds = team
+              ? [team.teamId]
+              : record.teamId
+                ? records.teams
+                    .filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(record.team),
+                    )
+                    .map((item) => item.teamId)
+                : teamMatches.map((item) => item.teamId);
+            if (!team) {
+              const choiceCandidates =
+                record.teamId && !teamMatches.length
+                  ? records.teams.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(record.team),
+                    )
+                  : teamMatches;
+              const unknownTeamId = Boolean(record.teamId && !localTeamIdMatch);
+              const code = unknownTeamId
+                ? "foreign_or_unknown_reference_id"
+                : choiceCandidates.length
+                  ? "ambiguous_reference"
+                  : "missing_reference";
+              let message;
+              if (unknownTeamId && choiceCandidates.length)
+                message = `This WorshipSync Team ID is not in this church. Choose which ${record.team} team to use.`;
+              else if (unknownTeamId)
+                message = `This WorshipSync Team ID is not in this church, and team "${record.team || ""}" is unavailable.`;
+              else if (choiceCandidates.length)
+                message = `Choose which ${record.team} team to use.`;
+              else message = `Import or map team "${record.team || ""}" first.`;
+              issues.push({
+                field: "team",
+                referenceIndex: 0,
+                referenceValue: record.team,
+                code,
+                message,
+                candidates: choiceCandidates.map((item) => ({
+                  id: item.teamId,
+                  name: item.name,
+                })),
+              });
+            }
+            const serviceNames = String(record.service || "")
+              .split(LIST_DELIMITER)
+              .map((name) => name.trim())
+              .filter(Boolean);
+            const serviceMatches = serviceNames.map((name) =>
+              records.services.filter(
+                (item) =>
+                  !item.archivedAt &&
+                  (record.serviceId && serviceNames.length === 1
+                    ? (item.serviceId || item.id) === record.serviceId
+                    : normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(name)),
+              ),
+            );
+            if (
+              record.serviceId &&
+              serviceMatches.every((matches) => !matches.length)
+            ) {
+              const localByName = records.services.filter(
+                (item) =>
+                  !item.archivedAt &&
+                  normalizePortableMatchValue(item.name) ===
+                    normalizePortableMatchValue(serviceNames[0]),
+              );
+              issues.push({
+                field: "serviceId",
+                referenceIndex: 0,
+                referenceValue: serviceNames[0],
+                code: "foreign_or_unknown_reference_id",
+                message:
+                  "This WorshipSync Service ID does not belong to this church. Choose a local service explicitly.",
+                candidates: localByName.map((item) => ({
+                  id: item.serviceId || item.id,
+                  name: item.name,
+                })),
+              });
+              if (serviceNames.length === 1 && localByName.length)
+                serviceMatches[0].push(...localByName);
+            }
+            serviceMatches.forEach((matches, index) => {
+              if (
+                matches.length !== 1 &&
+                !(
+                  record.serviceId &&
+                  serviceNames.length === 1 &&
+                  matches.length > 0
+                )
+              )
+                issues.push({
+                  field:
+                    serviceNames.length === 1 ? "service" : `service${index}`,
+                  referenceIndex: index,
+                  referenceValue: serviceNames[index],
+                  code: matches.length
+                    ? "ambiguous_reference"
+                    : "missing_reference",
+                  message: matches.length
+                    ? `Choose which ${serviceNames[index]} service to use.`
+                    : `Import or map service "${serviceNames[index]}" first.`,
+                  candidates: matches.map((item) => ({
+                    id: item.serviceId || item.id,
+                    name: item.name,
+                  })),
+                });
+            });
+            if (record.position) {
+              const localPositionIdMatch =
+                record.positionId &&
+                records.positions.find(
+                  (item) =>
+                    !item.archivedAt &&
+                    candidateTeamIds.includes(item.teamId) &&
+                    item.positionId === record.positionId,
+                );
+              const positions = localPositionIdMatch
+                ? [localPositionIdMatch]
+                : record.positionId
+                  ? []
+                  : records.positions.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        candidateTeamIds.includes(item.teamId) &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(record.position),
+                    );
+              if (record.positionId && !localPositionIdMatch) {
+                const localByName = records.positions.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    candidateTeamIds.includes(item.teamId) &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(record.position),
+                );
+                issues.push({
+                  field: "position",
+                  referenceIndex: 0,
+                  referenceValue: record.position,
+                  code: "foreign_or_unknown_reference_id",
+                  message:
+                    "This WorshipSync Position ID is not active within the selected team. Choose a local position explicitly.",
+                  candidates: localByName.map((item) => ({
+                    id: item.positionId,
+                    name: item.name,
+                  })),
+                });
+                if (localByName.length) positions.push(...localByName);
+              }
+              if (
+                positions.length !== 1 &&
+                !(
+                  record.positionId &&
+                  !localPositionIdMatch &&
+                  positions.length > 0
+                )
+              )
+                issues.push({
+                  field: "position",
+                  referenceIndex: 0,
+                  referenceValue: record.position,
+                  code: positions.length
+                    ? "ambiguous_reference"
+                    : "missing_reference",
+                  message: positions.length
+                    ? `Choose which ${record.position} position to use.`
+                    : `Import or map position "${record.position}" first.`,
+                  candidates: positions.map((item) => ({
+                    id: item.positionId,
+                    name: item.name,
+                  })),
+                });
+            }
+            const guest = String(record.guest || "").toLowerCase() === "true";
+            if (record.person && !guest && candidateTeamIds.length) {
+              const candidateMemberIds = new Set(
+                records.teams
+                  .filter((item) => candidateTeamIds.includes(item.teamId))
+                  .flatMap((item) => item.memberIds || []),
+              );
+              const localMemberIdMatch =
+                record.memberId &&
+                records.members.find(
+                  (item) =>
+                    !item.archivedAt &&
+                    candidateMemberIds.has(item.memberId) &&
+                    item.memberId === record.memberId,
+                );
+              const people = localMemberIdMatch
+                ? [localMemberIdMatch]
+                : record.memberId
+                  ? []
+                  : records.members.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        candidateMemberIds.has(item.memberId) &&
+                        normalizePortableMatchValue(
+                          [item.firstName, item.lastName]
+                            .filter(Boolean)
+                            .join(" "),
+                        ) === normalizePortableMatchValue(record.person),
+                    );
+              if (record.memberId && !localMemberIdMatch) {
+                const localByName = records.members.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    candidateMemberIds.has(item.memberId) &&
+                    normalizePortableMatchValue(
+                      [item.firstName, item.lastName].filter(Boolean).join(" "),
+                    ) === normalizePortableMatchValue(record.person),
+                );
+                issues.push({
+                  field: "person",
+                  referenceIndex: 0,
+                  referenceValue: record.person,
+                  code: "foreign_or_unknown_reference_id",
+                  message:
+                    "This WorshipSync Member ID is not active on the selected team. Choose a local member explicitly.",
+                  candidates: localByName.map((item) => ({
+                    id: item.memberId,
+                    name: [item.firstName, item.lastName]
+                      .filter(Boolean)
+                      .join(" "),
+                  })),
+                });
+                if (localByName.length) people.push(...localByName);
+              }
+              if (
+                people.length !== 1 &&
+                !(record.memberId && !localMemberIdMatch)
+              )
+                issues.push({
+                  field: "person",
+                  referenceIndex: 0,
+                  referenceValue: record.person,
+                  code: people.length
+                    ? "ambiguous_reference"
+                    : "missing_reference",
+                  message: people.length
+                    ? `Choose which ${record.person} member to use.`
+                    : `Person "${record.person}" is not on this team. Import the member or mark this assignment as a guest.`,
+                  candidates: people.map((item) => ({
+                    id: item.memberId,
+                    name: [item.firstName, item.lastName]
+                      .filter(Boolean)
+                      .join(" "),
+                  })),
+                });
+            }
+            const assignmentType = String(record.assignmentType || "primary")
+              .toLowerCase()
+              .replace(/[ -]/g, "_");
+            if (
+              record.person &&
+              !["primary", "shadow", "reverse_shadow"].includes(assignmentType)
+            )
+              issues.push({
+                field: "assignmentType",
+                code: "invalid_value",
+                message:
+                  "Assignment type must be primary, shadow, or reverse_shadow.",
+              });
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(String(record.date || "")))
+              issues.push({
+                field: "date",
+                code: "invalid_value",
+                message: "Use a date in YYYY-MM-DD format.",
+              });
+            const importedScheduleId = String(record.scheduleId || "").trim();
+            const idMatch =
+              importedScheduleId &&
+              records.schedules.find(
+                (item) => item.scheduleId === importedScheduleId,
+              );
+            const scheduleMatches = idMatch
+              ? [idMatch]
+              : records.schedules.filter(
+                  (item) =>
+                    !item.archivedAt &&
+                    item.teamId === team?.teamId &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(record.name) &&
+                    String(item.startDate || "") ===
+                      String(record.startDate || record.date || ""),
+                );
+            if (importedScheduleId && !idMatch)
+              issues.push({
+                field: "scheduleId",
+                code: "foreign_or_unknown_record_id",
+                message:
+                  "This WorshipSync Schedule ID does not belong to this church. Choose a local schedule explicitly or create a new schedule.",
+                candidates: scheduleMatches.map((item) => ({
+                  id: item.scheduleId,
+                  name: item.name,
+                })),
+              });
+            if (
+              scheduleMatches.length === 1 &&
+              (!importedScheduleId || idMatch)
+            )
+              match = scheduleMatches[0];
+            else if (
+              scheduleMatches.length > 1 ||
+              (importedScheduleId && !idMatch)
+            )
+              candidates = scheduleMatches;
+          }
+          if (String(record.archived || "").toLowerCase() === "true")
+            issues.push({
+              field: "archived",
+              code: "archive_import_unsupported",
+              message:
+                "Archived rows are included in exports, but importing does not archive or restore records. Skip this row or clear the Archived value.",
+            });
+          if (match?.archivedAt)
+            issues.push({
+              field: "id",
+              code: "archived_match",
+              message:
+                "This ID matches an archived record. Choose another row or skip it; imports do not restore archived records.",
+            });
+          const rowCandidates = candidates.map((item) => ({
+            id:
+              item.memberId ||
+              item.scheduleId ||
+              item.teamId ||
+              item.positionId ||
+              item.serviceId ||
+              item.id,
+            name:
+              item.name ||
+              [item.firstName, item.lastName].filter(Boolean).join(" "),
+          }));
+          const action = classifyPortablePreviewAction({
+            issues,
+            match,
+            candidates: rowCandidates,
+          });
+          return {
+            row,
+            record,
+            action,
+            matchedId: match
+              ? match.scheduleId ||
+                match.memberId ||
+                match.teamId ||
+                match.positionId ||
+                match.serviceId ||
+                match.id
+              : null,
+            candidates: rowCandidates,
+            issues,
+          };
+        });
+        const representedRows = new Set(rows.map((row) => row.row));
+        parsed.issues.forEach((issue) => {
+          if (issue.row > 1 && !representedRows.has(issue.row)) {
+            rows.push({
+              row: issue.row,
+              record: {},
+              action: "invalid",
+              matchedId: null,
+              candidates: [],
+              issues: [
+                { field: "csv", code: issue.code, message: issue.message },
+              ],
+            });
+            representedRows.add(issue.row);
+          }
+        });
+        rows.sort((left, right) => left.row - right.row);
+        return res.json({
+          success: true,
+          rows,
+          issues: parsed.issues,
+          summary: {
+            total: parsed.totalRows,
+            create: rows.filter((item) => item.action === "create").length,
+            update: rows.filter((item) => item.action === "update").length,
+            review: rows.filter((item) => item.action === "review").length,
+            invalid: rows.filter((item) => item.action === "invalid").length,
+          },
+        });
+      } catch (error) {
+        return dataTransferError(
+          res,
+          error,
+          "Could not validate this CSV. Check the file and try again.",
+        );
+      }
+    },
+    async commitPortableImport(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = String(req.params.churchId || "").trim();
+        const admin = await requireAdminSession(req, churchId);
+        const type = String(req.body?.type || "")
+          .trim()
+          .toLowerCase();
+        if (!Object.hasOwn(PORTABLE_SCHEMAS, type))
+          throw httpError(400, "Choose a supported data type.");
+        const approvedRows = Array.isArray(req.body?.approvedRows)
+          ? req.body.approvedRows
+          : [];
+        if (!approvedRows.length || approvedRows.length > 2000)
+          throw httpError(400, "Choose up to 2,000 valid rows to import.");
+        const stablePortableValue = (value) => {
+          if (Array.isArray(value)) return value.map(stablePortableValue);
+          if (value && typeof value === "object")
+            return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stablePortableValue(value[key])]));
+          return value;
+        };
+        const createBatchIdentity = crypto.createHash("sha256")
+          .update(JSON.stringify(stablePortableValue([churchId, type, approvedRows])))
+          .digest("hex");
+        const portableCreateKey = (approved) => {
+          const record = approved.record && typeof approved.record === "object"
+            ? approved.record
+            : {};
+          let identity;
+          if (type === "teams") {
+            identity = ["team", normalizePortableMatchValue(record.name)];
+          } else if (type === "positions") {
+            identity = [
+              "position",
+              String(record.teamId || approved.resolutions?.teamId || "").trim() || normalizePortableMatchValue(record.team),
+              normalizePortableMatchValue(record.name),
+            ];
+          } else if (type === "members") {
+            // Only identical imported member rows coalesce. Names and emails
+            // alone are not global identity keys; shared email is supported.
+            const hasContact = Boolean(
+              normalizePortableMatchValue(record.email)
+              || String(record.phone || "").replace(/\D/g, ""),
+            );
+            identity = hasContact
+              ? ["member", stablePortableValue(record), stablePortableValue(approved.resolutions || {})]
+              : ["member-row", Number(approved.row)];
+          } else {
+            identity = [type, Number(approved.row)];
+          }
+          return crypto.createHash("sha256")
+            .update(`${createBatchIdentity}:${JSON.stringify(identity)}`)
+            .digest("hex");
+        };
+        const data = await readPortableDatasets(churchId);
+        const results = [];
+        const replaceDatasetEntity = (key, idField, saved) => {
+          const index = data[key].findIndex((item) => item[idField] === saved[idField]);
+          if (index < 0) data[key].push(saved);
+          else data[key][index] = saved;
+        };
+        if (type === "services") {
+          const groups = new Map();
+          approvedRows.forEach((approved) => {
+            const record = approved.record || {};
+            const key = JSON.stringify([
+              approved.recordId || record.serviceId || "",
+              record.name || "",
+              record.recurrence || "",
+              record.time || "",
+              record.date || "",
+              record.daysOfWeek || "",
+              record.startDate || "",
+              record.endDate || "",
+              record.weekOrdinal || "",
+              record.weekday || "",
+              record.combinedGroup || "",
+              record.archived || "",
+            ]);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(approved);
+          });
+          const dayNumber = (value) => {
+            const index = [
+              "sunday",
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday",
+              "saturday",
+            ].indexOf(normalizePortableMatchValue(value));
+            return index >= 0 ? index : Number(value);
+          };
+          for (const groupRows of groups.values()) {
+            const rowNumbers = groupRows.map((item) => Number(item.row));
+            try {
+              const records = groupRows.map((item) => {
+                const record = { ...(item.record || {}) };
+                const selectedPosition = portableResolutionId(
+                  item,
+                  "position",
+                  0,
+                );
+                if (selectedPosition)
+                  record.positionId = String(selectedPosition);
+                return record;
+              });
+              const first = records[0];
+              const importedId = String(groupRows[0].recordId || "").trim();
+              const existing = importedId
+                ? data.services.find(
+                    (item) =>
+                      (item.serviceId || item.id) === importedId &&
+                      !item.archivedAt,
+                  )
+                : null;
+              if (importedId && !existing)
+                throw httpError(
+                  400,
+                  "Service ID is missing from this church or archived.",
+                );
+              if ((groupRows[0].action === "update") !== Boolean(existing))
+                throw httpError(
+                  409,
+                  "This service no longer matches the preview. Preview the file again.",
+                );
+              const recurrence = String(first.recurrence || "").trim();
+              if (
+                !["one_time", "weekly", "monthly", "multi_weekly"].includes(
+                  recurrence,
+                )
+              )
+                throw httpError(400, "Choose a supported service recurrence.");
+              const requirements = [];
+              for (const record of records) {
+                const positionName = String(record.position || "").trim();
+                if (!positionName) continue;
+                const matches = data.positions.filter(
+                  (position) =>
+                    !position.archivedAt &&
+                    (record.positionId
+                      ? position.positionId === record.positionId &&
+                        normalizePortableMatchValue(position.name) ===
+                          normalizePortableMatchValue(positionName)
+                      : normalizePortableMatchValue(position.name) ===
+                        normalizePortableMatchValue(positionName)),
+                );
+                if (matches.length !== 1)
+                  throw httpError(
+                    400,
+                    `Position "${positionName}" is missing or ambiguous. Import positions first.`,
+                  );
+                const count = Math.max(
+                  1,
+                  Math.floor(Number(record.requiredSlots) || 1),
+                );
+                const previous = requirements.find(
+                  (requirement) =>
+                    requirement.positionId === matches[0].positionId,
+                );
+                if (previous) previous.count = count;
+                else
+                  requirements.push({
+                    positionId: matches[0].positionId,
+                    count,
+                  });
+              }
+              const time = String(first.time || "");
+              if (
+                recurrence !== "one_time" &&
+                recurrence !== "multi_weekly" &&
+                !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)
+              )
+                throw httpError(400, "Enter the service time as HH:mm.");
+              const weekday = dayNumber(first.weekday);
+              if (
+                (recurrence === "weekly" || recurrence === "monthly") &&
+                (!Number.isInteger(weekday) || weekday < 0 || weekday > 6)
+              )
+                throw httpError(
+                  400,
+                  "Choose a valid weekday for this service.",
+                );
+              const daysOfWeek =
+                recurrence === "multi_weekly"
+                  ? String(first.daysOfWeek || "")
+                      .split(LIST_DELIMITER)
+                      .filter(Boolean)
+                      .map((entry) => {
+                        const [day, dayTime] = entry.split("@");
+                        return { day: dayNumber(day), time: dayTime };
+                      })
+                  : undefined;
+              if (
+                recurrence === "multi_weekly" &&
+                (!daysOfWeek?.length ||
+                  daysOfWeek.some(
+                    (entry) =>
+                      !Number.isInteger(entry.day) ||
+                      entry.day < 0 ||
+                      entry.day > 6 ||
+                      !/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.time),
+                  ))
+              )
+                throw httpError(
+                  400,
+                  "Add at least one valid weekday and time for this multi-day service.",
+                );
+              const serviceDate = recurrence === "one_time"
+                ? assertPlainDate(first.date, "Service date")
+                : "";
+              const startDate = recurrence !== "one_time" && first.startDate
+                ? assertPlainDate(first.startDate, "Service start date")
+                : "";
+              const endDate = recurrence !== "one_time" && first.endDate
+                ? assertPlainDate(first.endDate, "Service end date")
+                : "";
+              if (startDate && endDate && startDate > endDate)
+                throw httpError(400, "Service start date must be on or before its end date.");
+              if (
+                recurrence === "monthly" &&
+                (!Number.isInteger(Number(first.weekOrdinal)) ||
+                  Number(first.weekOrdinal) < 1 ||
+                  Number(first.weekOrdinal) > 5)
+              )
+                throw httpError(
+                  400,
+                  "Choose a valid week ordinal for this monthly service.",
+                );
+              const id =
+                existing?.serviceId || existing?.id || createId("service");
+              const existingWithoutGroup = { ...(existing || {}) };
+              delete existingWithoutGroup.serviceGroupId;
+              const combinedGroupLabel = String(
+                first.combinedGroup || "",
+              ).trim();
+              const serviceGroupId = combinedGroupLabel
+                ? `transfer_${crypto.createHash("sha256").update(normalizePortableMatchValue(combinedGroupLabel)).digest("hex").slice(0, 32)}`
+                : undefined;
+              const nextService = {
+                ...existingWithoutGroup,
+                id,
+                serviceId: id,
+                churchId,
+                name: String(first.name || "").trim(),
+                timerType: "countdown",
+                reccurence: recurrence,
+                ...(serviceGroupId ? { serviceGroupId } : {}),
+                ...(time ? { time } : {}),
+                ...(recurrence === "one_time"
+                  ? {
+                      dateTimeISO: `${serviceDate}T${String(time || "10:00")}:00`,
+                    }
+                  : {}),
+                ...(recurrence === "multi_weekly" ? { daysOfWeek } : {}),
+                ...(recurrence === "weekly" ? { dayOfWeek: weekday } : {}),
+                ...(recurrence === "monthly"
+                  ? { ordinal: Number(first.weekOrdinal), weekday }
+                  : {}),
+                ...(startDate ? { startDateISO: startDate } : {}),
+                ...(endDate ? { endDateISO: endDate } : {}),
+                positionRequirements: requirements,
+                updatedAt: nowIso(),
+              };
+              if (!nextService.name)
+                throw httpError(400, "Service name is required.");
+              await updateChurchServiceTimes(churchId, (current) => {
+                const found = current.findIndex(
+                  (item) => (item.serviceId || item.id) === id,
+                );
+                if (found < 0) return [...current, nextService];
+                const updated = [...current];
+                updated[found] = { ...updated[found], ...nextService };
+                if (!serviceGroupId) delete updated[found].serviceGroupId;
+                return updated;
+              });
+              rowNumbers.forEach((row) =>
+                results.push({
+                  row,
+                  status: existing ? "updated" : "created",
+                  id,
+                }),
+              );
+            } catch (error) {
+              rowNumbers.forEach((row) =>
+                results.push({
+                  row,
+                  status: "failed",
+                  code:
+                    error?.statusCode === 409 ||
+                    groupRows.some(
+                      (item) => Object.keys(item.resolutions || {}).length,
+                    )
+                      ? "stale_preview"
+                      : "row_invalid",
+                  message: error?.message || "Could not import this service.",
+                }),
+              );
+            }
+          }
+          return res.json({
+            success: true,
+            results,
+            summary: {
+              created: results.filter((item) => item.status === "created")
+                .length,
+              updated: results.filter((item) => item.status === "updated")
+                .length,
+              failed: results.filter((item) => item.status === "failed").length,
+            },
+          });
+        }
+        if (type === "schedules") {
+          const groups = new Map();
+          approvedRows.forEach((approved) => {
+            const record =
+              approved.record && typeof approved.record === "object"
+                ? approved.record
+                : {};
+            const groupKey = JSON.stringify([
+              approved.recordId || record.scheduleId || "",
+              record.name || "",
+              record.teamId || record.team || "",
+              record.startDate || "",
+              record.endDate || "",
+            ]);
+            if (!groups.has(groupKey)) groups.set(groupKey, []);
+            groups.get(groupKey).push(approved);
+          });
+          for (const groupRows of groups.values()) {
+            const rowNumbers = groupRows.map((item) => Number(item.row));
+            try {
+              const records = groupRows.map((item) => {
+                const record = { ...(item.record || {}) };
+                const selectedTeam =
+                  portableResolutionId(item, "team", 0) ||
+                  portableResolutionId(item, "teamId", 0);
+                const selectedPosition =
+                  portableResolutionId(item, "position", 0) ||
+                  portableResolutionId(item, "positionId", 0);
+                const selectedPerson =
+                  portableResolutionId(item, "person", 0) ||
+                  portableResolutionId(item, "memberId", 0);
+                if (selectedTeam) record.teamId = String(selectedTeam);
+                if (selectedPosition)
+                  record.positionId = String(selectedPosition);
+                if (selectedPerson) record.memberId = String(selectedPerson);
+                const serviceNames = String(record.service || "")
+                  .split(LIST_DELIMITER)
+                  .map((name) => name.trim())
+                  .filter(Boolean);
+                const serviceIds = serviceNames.map(
+                  (_, index) =>
+                    portableResolutionId(
+                      item,
+                      serviceNames.length === 1 ? "service" : `service${index}`,
+                      index,
+                    ) || portableResolutionId(item, "serviceId", index),
+                );
+                if (serviceIds.some(Boolean))
+                  record.resolvedServiceIds = serviceIds.join(LIST_DELIMITER);
+                return record;
+              });
+              const first = records[0];
+              const localTeam =
+                first.teamId &&
+                data.teams.find(
+                  (item) =>
+                    !item.archivedAt &&
+                    item.teamId === first.teamId &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(first.team),
+                );
+              if (first.teamId && !localTeam)
+                throw httpError(
+                  409,
+                  "The selected team is no longer active in this church. Preview the file again.",
+                );
+              const teamMatches = localTeam
+                ? [localTeam]
+                : data.teams.filter(
+                    (item) =>
+                      !item.archivedAt &&
+                      normalizePortableMatchValue(item.name) ===
+                        normalizePortableMatchValue(first.team),
+                  );
+              if (teamMatches.length !== 1)
+                throw httpError(
+                  400,
+                  `Team "${first.team || ""}" is missing or ambiguous. Import and resolve teams first.`,
+                );
+              const team = teamMatches[0];
+              const importedScheduleId = String(
+                groupRows[0].recordId || "",
+              ).trim();
+              const existing = importedScheduleId
+                ? data.schedules.find(
+                    (item) =>
+                      item.scheduleId === importedScheduleId &&
+                      !item.archivedAt,
+                  )
+                : null;
+              if (importedScheduleId && !existing)
+                throw httpError(
+                  409,
+                  "The selected schedule is no longer active in this church. Preview the file again.",
+                );
+              const existingByName = data.schedules.filter(
+                (item) =>
+                  !item.archivedAt &&
+                  item.teamId === team.teamId &&
+                  normalizePortableMatchValue(item.name) ===
+                    normalizePortableMatchValue(first.name) &&
+                  String(item.startDate || "") ===
+                    String(first.startDate || first.date || ""),
+              );
+              if (!existing && existingByName.length)
+                throw httpError(
+                  409,
+                  "A schedule with this name and date range already exists. Add its WorshipSync Schedule ID or skip these rows.",
+                );
+              const occurrencesByKey = new Map();
+              const importedGuests = [];
+              let assignmentsByOccurrence = JSON.parse(
+                JSON.stringify(existing?.assignments || {}),
+              );
+              let additionalByOccurrence = JSON.parse(
+                JSON.stringify(existing?.additionalPositionSlots || {}),
+              );
+              for (const record of records) {
+                const date = String(record.date || "").slice(0, 10);
+                const serviceNames = String(record.service || "")
+                  .split(LIST_DELIMITER)
+                  .map((name) => name.trim())
+                  .filter(Boolean);
+                if (!date || !serviceNames.length)
+                  throw httpError(
+                    400,
+                    "Schedule rows need a service name and date.",
+                  );
+                const resolvedServiceIds = String(
+                  record.resolvedServiceIds || "",
+                )
+                  .split(LIST_DELIMITER)
+                  .map((value) => value.trim());
+                const services = serviceNames.map((name, index) => {
+                  const serviceId =
+                    resolvedServiceIds[index] ||
+                    (serviceNames.length === 1
+                      ? String(record.serviceId || "").trim()
+                      : "");
+                  const idMatch =
+                    serviceId &&
+                    data.services.find(
+                      (service) =>
+                        !service.archivedAt &&
+                        (service.serviceId || service.id) === serviceId &&
+                        normalizePortableMatchValue(service.name) ===
+                          normalizePortableMatchValue(name),
+                    );
+                  if (serviceId && !idMatch)
+                    throw httpError(
+                      409,
+                      "The selected service is no longer active in this church. Preview the file again.",
+                    );
+                  const matches = idMatch
+                    ? [idMatch]
+                    : data.services.filter(
+                        (service) =>
+                          !service.archivedAt &&
+                          normalizePortableMatchValue(service.name) ===
+                            normalizePortableMatchValue(name),
+                      );
+                  if (matches.length !== 1)
+                    throw httpError(
+                      400,
+                      `Service "${name}" is missing or ambiguous.`,
+                    );
+                  return matches[0];
+                });
+                const serviceIds = services.map(
+                  (service) => service.serviceId || service.id,
+                );
+                if (
+                  serviceIds.length > 1 &&
+                  (!services[0].serviceGroupId ||
+                    services.some(
+                      (service) =>
+                        service.serviceGroupId !== services[0].serviceGroupId,
+                    ))
+                )
+                  throw httpError(
+                    400,
+                    "Combined services must share one service group before they can share an occurrence.",
+                  );
+                const startTime = String(
+                  record.startTime || services[0].time || "10:00",
+                );
+                if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime))
+                  throw httpError(
+                    400,
+                    "Use a valid 24-hour start time, such as 10:30.",
+                  );
+                const timeZone = String(req.body?.timeZone || "UTC").trim();
+                const startsAt = portableWallClockToIso(
+                  date,
+                  startTime,
+                  timeZone,
+                );
+                if (!startsAt)
+                  throw httpError(
+                    400,
+                    "Use a valid service date, time, and time zone.",
+                  );
+                const priorOccurrence = existing?.occurrences?.find(
+                  (item) =>
+                    item.occurrenceId === record.occurrenceId &&
+                    String(item.startsAt || "").slice(0, 10) === date,
+                );
+                const occurrenceId = String(
+                  priorOccurrence?.occurrenceId ||
+                    (serviceIds.length > 1
+                      ? `group:${services[0].serviceGroupId}@${date}`
+                      : `${serviceIds[0]}@${startsAt}`),
+                );
+                const occurrenceKey = `${date}\u0000${startTime}\u0000${serviceIds.join(",")}`;
+                if (!occurrencesByKey.has(occurrenceKey)) {
+                  const requirementMap = new Map();
+                  services.forEach((service) =>
+                    (service.positionRequirements || []).forEach(
+                      ({ positionId, count }) =>
+                        requirementMap.set(
+                          positionId,
+                          Math.max(
+                            requirementMap.get(positionId) || 0,
+                            Number(count) || 0,
+                          ),
+                        ),
+                    ),
+                  );
+                  occurrencesByKey.set(occurrenceKey, {
+                    occurrenceId,
+                    serviceId: serviceIds[0],
+                    ...(serviceIds.length > 1
+                      ? { groupId: services[0].serviceGroupId }
+                      : {}),
+                    ...(serviceIds.length > 1 ? { serviceIds } : {}),
+                    name: services.map((service) => service.name).join(" + "),
+                    startsAt,
+                    positionRequirements: [...requirementMap].map(
+                      ([positionId, count]) => ({ positionId, count }),
+                    ),
+                  });
+                }
+                const occurrence = occurrencesByKey.get(occurrenceKey);
+                const positionName = String(record.position || "").trim();
+                const localPosition =
+                  record.positionId &&
+                  data.positions.find(
+                    (position) =>
+                      !position.archivedAt &&
+                      position.teamId === team.teamId &&
+                      position.positionId === record.positionId &&
+                      normalizePortableMatchValue(position.name) ===
+                        normalizePortableMatchValue(positionName),
+                  );
+                if (record.positionId && !localPosition)
+                  throw httpError(
+                    409,
+                    "The selected position is no longer active on this team. Preview the file again.",
+                  );
+                const positionMatches = positionName
+                  ? localPosition
+                    ? [localPosition]
+                    : data.positions.filter(
+                        (position) =>
+                          !position.archivedAt &&
+                          position.teamId === team.teamId &&
+                          normalizePortableMatchValue(position.name) ===
+                            normalizePortableMatchValue(positionName),
+                      )
+                  : [];
+                if (positionName && positionMatches.length !== 1)
+                  throw httpError(
+                    400,
+                    `Position "${positionName}" is missing or ambiguous within ${team.name}.`,
+                  );
+                const slot = Math.max(1, Number(record.slot) || 1) - 1;
+                if (positionMatches.length) {
+                  const position = positionMatches[0];
+                  const key = `${position.positionId}::${slot}`;
+                  const coreCount = Math.max(
+                    0,
+                    Number(
+                      occurrence.positionRequirements?.find(
+                        (item) => item.positionId === position.positionId,
+                      )?.count,
+                    ) || 0,
+                  );
+                  if (slot >= coreCount)
+                    additionalByOccurrence[occurrence.occurrenceId] = [
+                      ...new Set([
+                        ...(additionalByOccurrence[occurrence.occurrenceId] ||
+                          []),
+                        key,
+                      ]),
+                    ];
+                  const assignmentType = String(
+                    record.assignmentType || "primary",
+                  )
+                    .toLowerCase()
+                    .replace(/[ -]/g, "_");
+                  const guest =
+                    record.guest === true ||
+                    String(record.guest).toLowerCase() === "true";
+                  const personName = String(record.person || "").trim();
+                  if (personName) {
+                    let member = null;
+                    let memberId = String(record.memberId || "").trim();
+                    if (memberId)
+                      member =
+                        data.members.find(
+                          (item) =>
+                            item.memberId === memberId &&
+                            !item.archivedAt &&
+                            (team.memberIds || []).includes(item.memberId) &&
+                            normalizePortableMatchValue(
+                              [item.firstName, item.lastName]
+                                .filter(Boolean)
+                                .join(" "),
+                            ) === normalizePortableMatchValue(personName),
+                        ) || null;
+                    if (memberId && !member && !guest)
+                      throw httpError(
+                        409,
+                        "The selected member is no longer active in this church. Preview the file again.",
+                      );
+                    if ((!memberId || (!member && !guest)) && !guest) {
+                      const parts = personName.split(/\s+/);
+                      const matches = data.members.filter(
+                        (item) =>
+                          !item.archivedAt &&
+                          (team.memberIds || []).includes(item.memberId) &&
+                          normalizePortableMatchValue(
+                            [item.firstName, item.lastName]
+                              .filter(Boolean)
+                              .join(" "),
+                          ) === normalizePortableMatchValue(personName),
+                      );
+                      if (matches.length !== 1)
+                        throw httpError(
+                          400,
+                          `Person "${personName}" is missing or ambiguous on ${team.name}.`,
+                        );
+                      member = matches[0];
+                      memberId = member.memberId;
+                    }
+                    if (guest) {
+                      const guestEmail = String(record.email || "")
+                        .trim()
+                        .toLowerCase();
+                      const priorGuests = [
+                        ...(existing?.guests || []),
+                        ...importedGuests,
+                      ];
+                      const prior = priorGuests.find(
+                        (item) =>
+                          (guestEmail &&
+                            String(item.email || "")
+                              .trim()
+                              .toLowerCase() === guestEmail) ||
+                          normalizePortableMatchValue(item.name) ===
+                            normalizePortableMatchValue(personName),
+                      );
+                      const guestId = prior?.guestId || createId("guest");
+                      if (!prior)
+                        importedGuests.push({
+                          guestId,
+                          name: personName,
+                          ...(record.email
+                            ? { email: String(record.email) }
+                            : {}),
+                        });
+                      memberId = guestId;
+                    } else if (!member)
+                      throw httpError(
+                        400,
+                        `Member "${personName}" was not found in this church.`,
+                      );
+                    const scheduleDraft = {
+                      ...(existing || {}),
+                      churchId,
+                      teamId: team.teamId,
+                      serviceIds: [
+                        ...new Set([
+                          ...(existing?.serviceIds || []),
+                          ...Array.from(occurrencesByKey.values()).flatMap(
+                            (item) => [
+                              item.serviceId,
+                              ...(item.serviceIds || []),
+                            ],
+                          ),
+                        ]),
+                      ],
+                      occurrences: [
+                        ...(existing?.occurrences || []),
+                        ...Array.from(occurrencesByKey.values()),
+                      ],
+                      assignments: assignmentsByOccurrence,
+                      additionalPositionSlots: additionalByOccurrence,
+                      guests: [...(existing?.guests || []), ...importedGuests],
+                    };
+                    const existingCell = normalizeScheduleAssignmentCell(
+                      assignmentsByOccurrence[occurrence.occurrenceId]?.[key],
+                    );
+                    if (
+                      assignmentType === "primary" &&
+                      existingCell.primaryMemberId === memberId
+                    )
+                      continue;
+                    if (
+                      (assignmentType === "shadow" ||
+                        assignmentType === "reverse_shadow") &&
+                      existingCell.shadows.some(
+                        (shadow) =>
+                          shadow.memberId === memberId &&
+                          shadow.kind === assignmentType,
+                      )
+                    )
+                      continue;
+                    if (
+                      assignmentType === "primary" &&
+                      existingCell.primaryMemberId &&
+                      existingCell.primaryMemberId !== memberId
+                    ) {
+                      const clearedAssignments = JSON.parse(
+                        JSON.stringify(assignmentsByOccurrence),
+                      );
+                      const clearedCell = serializeScheduleAssignmentCell({
+                        primaryMemberId: "",
+                        shadows: existingCell.shadows,
+                      });
+                      if (clearedCell)
+                        clearedAssignments[occurrence.occurrenceId][key] =
+                          clearedCell;
+                      else
+                        delete clearedAssignments[occurrence.occurrenceId][key];
+                      assignmentsByOccurrence = clearedAssignments;
+                    }
+                    let validated;
+                    if (
+                      assignmentType === "shadow" ||
+                      assignmentType === "reverse_shadow"
+                    ) {
+                      if (!member)
+                        throw httpError(
+                          400,
+                          "Guests can only be imported as primary assignments.",
+                        );
+                      validated = await buildValidatedScheduleAssignments({
+                        churchId,
+                        schedule: scheduleDraft,
+                        team,
+                        position,
+                        member,
+                        serviceId: occurrence.occurrenceId,
+                        positionSlotKey: key,
+                        memberId,
+                        shadowAction: "add",
+                        shadowKind: assignmentType,
+                        allowBlockout: false,
+                        allowRecurringAvailability: false,
+                        allowOccurrenceConflict: false,
+                      });
+                    } else if (
+                      assignmentType === "primary" ||
+                      assignmentType === ""
+                    ) {
+                      validated = await buildValidatedScheduleAssignments({
+                        churchId,
+                        schedule: scheduleDraft,
+                        team,
+                        position,
+                        member,
+                        serviceId: occurrence.occurrenceId,
+                        positionSlotKey: key,
+                        memberId,
+                        serviceDate: date,
+                        allowBlockout: false,
+                        allowRecurringAvailability: false,
+                        allowOccurrenceConflict: false,
+                        guestAssignment: guest,
+                      });
+                    } else
+                      throw httpError(
+                        400,
+                        `Assignment type "${record.assignmentType}" is not supported.`,
+                      );
+                    assignmentsByOccurrence = validated;
+                  }
+                }
+              }
+              const allOccurrences = [
+                ...(existing?.occurrences || []),
+                ...Array.from(occurrencesByKey.values()),
+              ].filter(
+                (occurrence, index, list) =>
+                  list.findIndex(
+                    (item) => item.occurrenceId === occurrence.occurrenceId,
+                  ) === index,
+              );
+              const serviceIds = [
+                ...new Set([
+                  ...(existing?.serviceIds || []),
+                  ...allOccurrences.flatMap((occurrence) => [
+                    occurrence.serviceId,
+                    ...(occurrence.serviceIds || []),
+                  ]),
+                ]),
+              ];
+              const allAssignments = {
+                ...(existing?.assignments || {}),
+                ...assignmentsByOccurrence,
+              };
+              const allAdditional = {
+                ...(existing?.additionalPositionSlots || {}),
+                ...additionalByOccurrence,
+              };
+              const startDate = String(
+                first.startDate ||
+                  existing?.startDate ||
+                  records.map((item) => item.date).sort()[0] ||
+                  "",
+              ).slice(0, 10);
+              const endDate = String(
+                first.endDate ||
+                  existing?.endDate ||
+                  records
+                    .map((item) => item.date)
+                    .sort()
+                    .at(-1) ||
+                  "",
+              ).slice(0, 10);
+              const payload = await validateTeamSchedulePayload(
+                {
+                  ...(existing || {}),
+                  name: first.name,
+                  teamId: team.teamId,
+                  startDate,
+                  endDate,
+                  serviceIds,
+                  occurrences: allOccurrences,
+                  assignments: allAssignments,
+                  additionalPositionSlots: allAdditional,
+                  guests: [...(existing?.guests || []), ...importedGuests],
+                },
+                churchId,
+                existing,
+              );
+              const allSchedules = data.schedules;
+              assertNoCrossTeamScheduleAssignmentConflicts({
+                schedule: {
+                  churchId,
+                  scheduleId: existing?.scheduleId || "portable-import",
+                  ...payload,
+                },
+                assignments: payload.assignments,
+                schedules: allSchedules,
+                confirmedFingerprint: "",
+              });
+              let saved;
+              if (!existing) {
+                saved = await upsertTeamEntity({
+                  kind: "schedule",
+                  churchId,
+                  payload,
+                  adminUserId: admin.user.uid,
+                });
+              } else {
+                const changedCells = [];
+                Object.entries(assignmentsByOccurrence).forEach(
+                  ([occurrenceId, row]) => {
+                    Object.entries(row || {}).forEach(([cellKey, cell]) => {
+                      const before =
+                        existing.assignments?.[occurrenceId]?.[cellKey];
+                      if (JSON.stringify(before) !== JSON.stringify(cell))
+                        changedCells.push({
+                          occurrenceId,
+                          cellKey,
+                          before,
+                          cell,
+                        });
+                    });
+                  },
+                );
+                const mergeUpdate = (current) => {
+                  if (
+                    !current ||
+                    current.churchId !== churchId ||
+                    current.archivedAt
+                  )
+                    throw httpError(
+                      409,
+                      "This schedule is no longer available. Preview the file again.",
+                    );
+                  if (
+                    current.teamId !== team.teamId ||
+                    current.name !== existing.name
+                  )
+                    throw httpError(
+                      409,
+                      "This schedule changed while the import was being reviewed. Preview the file again.",
+                    );
+                  const assignments = JSON.parse(
+                    JSON.stringify(current.assignments || {}),
+                  );
+                  changedCells.forEach(
+                    ({ occurrenceId, cellKey, before, cell }) => {
+                      const latest = assignments[occurrenceId]?.[cellKey];
+                      if (JSON.stringify(latest) !== JSON.stringify(before))
+                        throw httpError(
+                          409,
+                          "A schedule slot changed while the import was being reviewed. Preview the file again.",
+                        );
+                      if (!assignments[occurrenceId])
+                        assignments[occurrenceId] = {};
+                      assignments[occurrenceId][cellKey] = cell;
+                    },
+                  );
+                  const occurrences = [...(current.occurrences || [])];
+                  const occurrenceIds = new Set(
+                    occurrences.map((item) => item.occurrenceId),
+                  );
+                  Array.from(occurrencesByKey.values()).forEach(
+                    (occurrence) => {
+                      if (!occurrenceIds.has(occurrence.occurrenceId))
+                        occurrences.push(occurrence);
+                    },
+                  );
+                  const additionalPositionSlots = JSON.parse(
+                    JSON.stringify(current.additionalPositionSlots || {}),
+                  );
+                  Object.entries(additionalByOccurrence).forEach(
+                    ([occurrenceId, slots]) => {
+                      additionalPositionSlots[occurrenceId] = [
+                        ...new Set([
+                          ...(additionalPositionSlots[occurrenceId] || []),
+                          ...slots,
+                        ]),
+                      ];
+                    },
+                  );
+                  const guests = [...(current.guests || [])];
+                  const guestIds = new Set(
+                    guests.map((guest) => guest.guestId),
+                  );
+                  importedGuests.forEach((guest) => {
+                    if (!guestIds.has(guest.guestId)) guests.push(guest);
+                  });
+                  return {
+                    ...current,
+                    name: payload.name,
+                    serviceIds: [
+                      ...new Set([
+                        ...(current.serviceIds || []),
+                        ...payload.serviceIds,
+                      ]),
+                    ],
+                    startDate: [current.startDate, payload.startDate]
+                      .filter(Boolean)
+                      .sort()[0],
+                    endDate: [current.endDate, payload.endDate]
+                      .filter(Boolean)
+                      .sort()
+                      .at(-1),
+                    occurrences,
+                    assignments,
+                    additionalPositionSlots,
+                    guests,
+                    updatedAt: nowIso(),
+                    updatedByUid: admin.user.uid,
+                  };
+                };
+                const db = requireFirestore();
+                if (db) {
+                  const reference = db
+                    .collection(COLLECTIONS.teamSchedules)
+                    .doc(existing.scheduleId);
+                  await db.runTransaction(async (transaction) => {
+                    const snapshot = await transaction.get(reference);
+                    const current = snapshot.exists
+                      ? { scheduleId: snapshot.id, ...snapshot.data() }
+                      : null;
+                    if (!current)
+                      throw httpError(
+                        409,
+                        "This schedule is no longer available. Preview the file again.",
+                      );
+                    transaction.set(reference, mergeUpdate(current), {
+                      merge: false,
+                    });
+                  });
+                  const current = await getDoc(
+                    COLLECTIONS.teamSchedules,
+                    existing.scheduleId,
+                  );
+                  saved = { scheduleId: existing.scheduleId, ...current };
+                } else {
+                  const updated = await enqueueInMemoryScheduleSave(
+                    existing.scheduleId,
+                    async () => {
+                      const current = await getDoc(
+                        COLLECTIONS.teamSchedules,
+                        existing.scheduleId,
+                      );
+                      const next = mergeUpdate(current);
+                      await setDoc(
+                        COLLECTIONS.teamSchedules,
+                        existing.scheduleId,
+                        next,
+                        { merge: false },
+                      );
+                      return next;
+                    },
+                  );
+                  saved = { scheduleId: existing.scheduleId, ...updated };
+                }
+                saved = await syncScheduleResponsesToAssignments(saved);
+              }
+              emitTeamsEvent(churchId, "schedule-updated", { schedule: saved });
+              rowNumbers.forEach((row) =>
+                results.push({
+                  row,
+                  status: existing ? "updated" : "created",
+                  id: saved.scheduleId,
+                }),
+              );
+            } catch (error) {
+              rowNumbers.forEach((row) =>
+                results.push({
+                  row,
+                  status: "failed",
+                  code:
+                    error?.statusCode === 409 ||
+                    groupRows.some(
+                      (item) => Object.keys(item.resolutions || {}).length,
+                    )
+                      ? "stale_preview"
+                      : "row_invalid",
+                  message: error?.message || "Could not import this schedule.",
+                }),
+              );
+            }
+          }
+          return res.json({
+            success: true,
+            results,
+            summary: {
+              created: results.filter((item) => item.status === "created")
+                .length,
+              updated: results.filter((item) => item.status === "updated")
+                .length,
+              failed: results.filter((item) => item.status === "failed").length,
+            },
+          });
+        }
+        for (const approved of approvedRows) {
+          const row = Number(approved.row);
+          const record =
+            approved.record && typeof approved.record === "object"
+              ? { ...approved.record }
+              : {};
+          const resolutions =
+            approved.resolutions && typeof approved.resolutions === "object"
+              ? approved.resolutions
+              : [];
+          const selectedTeam =
+            portableResolutionId(approved, "team", 0) ||
+            portableResolutionId(approved, "teamId", 0);
+          const selectedPosition =
+            portableResolutionId(approved, "position", 0) ||
+            portableResolutionId(approved, "positionId", 0);
+          if (selectedTeam) record.teamId = String(selectedTeam);
+          if (selectedPosition) record.positionId = String(selectedPosition);
+          if (
+            portableResolutionId(approved, "service", 0) ||
+            portableResolutionId(approved, "serviceId", 0)
+          )
+            record.serviceId =
+              portableResolutionId(approved, "service", 0) ||
+              portableResolutionId(approved, "serviceId", 0);
+          if (
+            portableResolutionId(approved, "person", 0) ||
+            portableResolutionId(approved, "memberId", 0)
+          )
+            record.memberId =
+              portableResolutionId(approved, "person", 0) ||
+              portableResolutionId(approved, "memberId", 0);
+          const requestedAction = approved.action;
+          const importKey = requestedAction === "create" ? portableCreateKey(approved) : "";
+          try {
+            if (requestedAction !== "create" && requestedAction !== "update")
+              throw httpError(400, "Choose create or update for this row.");
+            if (type === "teams") {
+              const id = String(approved.recordId || record.teamId || "").trim();
+              const byId = id
+                ? data.teams.find((item) => item.teamId === id)
+                : null;
+              const createMatches = !id && !record.teamId
+                ? data.teams.filter((item) => !item.archivedAt
+                  && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name))
+                : [];
+              const idempotentMatch = importKey && data.teams.find((item) => item._portableCreateKey === importKey);
+              if (requestedAction === "create" && createMatches.length && !idempotentMatch) {
+                throw httpError(409, "A team with this name changed after preview. Preview the file again.");
+              }
+              const existing = byId || idempotentMatch;
+              const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
+              if (id && (!existing || existing.archivedAt))
+                throw httpError(
+                  409,
+                  "The selected team is no longer active in this church. Preview the file again.",
+                );
+              if ((requestedAction === "update") !== Boolean(existing) && !alreadyCreated)
+                throw httpError(
+                  409,
+                  "This row no longer matches the preview. Preview it again.",
+                );
+              const payload = await validateTeamPayload(
+                {
+                  ...(existing || {}),
+                  name: record.name,
+                  description: record.description ?? existing?.description,
+                  usesMicrophoneAssignments:
+                    record.usesMicrophones !== undefined
+                      ? record.usesMicrophones === true ||
+                        String(record.usesMicrophones).toLowerCase() === "true"
+                      : existing?.usesMicrophoneAssignments,
+                  usesIemAssignments:
+                    record.usesIems !== undefined
+                      ? record.usesIems === true ||
+                        String(record.usesIems).toLowerCase() === "true"
+                      : existing?.usesIemAssignments,
+                  ...(record.icon !== undefined
+                    ? { icon: parsePortableEntityIcon(record.icon) }
+                    : {}),
+                },
+                churchId,
+                existing,
+              );
+              if (importKey) payload._portableCreateKey = importKey;
+              const saved = await upsertTeamEntity({
+                kind: "team",
+                churchId,
+                id: existing?.teamId,
+                payload,
+                adminUserId: admin.user.uid,
+                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
+              });
+              replaceDatasetEntity("teams", "teamId", saved);
+              results.push({
+                row,
+                status: existing && !alreadyCreated ? "updated" : "created",
+                id: saved.teamId,
+              });
+              continue;
+            }
+            if (type === "positions") {
+              const localTeam =
+                record.teamId &&
+                data.teams.find(
+                  (item) =>
+                    item.teamId === String(record.teamId).trim() &&
+                    normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(record.team),
+                );
+              if (record.teamId && (!localTeam || localTeam.archivedAt))
+                throw httpError(
+                  409,
+                  "The selected team is no longer active in this church. Preview the file again.",
+                );
+              const teamMatches = localTeam
+                ? [localTeam]
+                : data.teams.filter(
+                    (item) =>
+                      normalizePortableMatchValue(item.name) ===
+                      normalizePortableMatchValue(record.team),
+                  );
+              const team = teamMatches.length === 1 ? teamMatches[0] : null;
+              if (!team || team.archivedAt)
+                throw httpError(
+                  409,
+                  `The selected team "${record.team || ""}" is no longer active. Preview the file again.`,
+                );
+              // Position previews may use matchedId for their referenced team;
+              // the portable position ID is the entity identity for updates.
+              const id = String(record.positionId || approved.recordId || "").trim();
+              const byId = id
+                ? data.positions.find(
+                    (item) =>
+                      item.positionId === id && item.teamId === team.teamId,
+                  )
+                : null;
+              const createMatches = !id && !record.positionId
+                ? data.positions.filter((item) => !item.archivedAt
+                  && item.teamId === team.teamId
+                  && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(record.name))
+                : [];
+              const idempotentMatch = importKey && data.positions.find((item) => item._portableCreateKey === importKey);
+              if (requestedAction === "create" && createMatches.length && !idempotentMatch) {
+                throw httpError(409, "A position with this name changed after preview. Preview the file again.");
+              }
+              const existing = byId || idempotentMatch;
+              const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
+              if (id && (!existing || existing.archivedAt))
+                throw httpError(
+                  409,
+                  "The selected position is no longer active in this team. Preview the file again.",
+                );
+              if ((requestedAction === "update") !== Boolean(existing) && !alreadyCreated)
+                throw httpError(
+                  409,
+                  "This row no longer matches the preview. Preview it again.",
+                );
+              const payload = await validateTeamPositionPayload(
+                {
+                  ...(existing || {}),
+                  name: record.name,
+                  teamId: team.teamId,
+                  description: record.description ?? existing?.description,
+                  groupId: record.group ?? existing?.groupId,
+                  ...(record.order !== "" && record.order != null
+                    ? { order: Number(record.order) }
+                    : {}),
+                  ...(record.icon !== undefined
+                    ? { icon: parsePortableEntityIcon(record.icon) }
+                    : {}),
+                },
+                churchId,
+                existing,
+              );
+              if (importKey) payload._portableCreateKey = importKey;
+              const saved = await upsertTeamEntity({
+                kind: "position",
+                churchId,
+                id: existing?.positionId,
+                payload,
+                adminUserId: admin.user.uid,
+                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
+              });
+              replaceDatasetEntity("positions", "positionId", saved);
+              results.push({
+                row,
+                status: existing && !alreadyCreated ? "updated" : "created",
+                id: saved.positionId,
+              });
+              continue;
+            }
+            if (type === "members") {
+              const id = String(approved.recordId || record.memberId || "").trim();
+              const byId = id
+                ? data.members.find((item) => item.memberId === id)
+                : null;
+              const importedEmail = normalizePortableMatchValue(record.email);
+              const importedPhone = String(record.phone || "").replace(/\D/g, "");
+              const hasStableContact = Boolean(importedEmail || importedPhone);
+              const createMatches = !id && !record.memberId && hasStableContact
+                ? data.members.filter((item) => !item.archivedAt
+                  && normalizePortableMatchValue(item.firstName) === normalizePortableMatchValue(record.firstName)
+                  && normalizePortableMatchValue(item.lastName) === normalizePortableMatchValue(record.lastName)
+                  && (!importedEmail || normalizePortableMatchValue(item.email) === importedEmail)
+                  && (!importedPhone || String(item.phoneNumber || "").replace(/\D/g, "") === importedPhone))
+                : [];
+              const idempotentMatch = importKey && data.members.find((item) => item._portableCreateKey === importKey);
+              const exactImportMatches = createMatches.filter((item) =>
+                ["title", "email", "phoneNumber", "notes", "servingFrequency"].every((field) => {
+                  const importedField = field === "phoneNumber" ? record.phone : record[field];
+                  return importedField === undefined || String(item[field] || "") === String(importedField || "");
+                }),
+              );
+              if (requestedAction === "create" && exactImportMatches.length && !idempotentMatch) {
+                throw httpError(409, "A matching member changed after preview. Preview the file again.");
+              }
+              const existing = byId || idempotentMatch;
+              const alreadyCreated = requestedAction === "create" && Boolean(existing) && !byId;
+              if (id && (!existing || existing.archivedAt))
+                throw httpError(
+                  409,
+                  "The selected member is no longer active in this church. Preview the file again.",
+                );
+              if ((requestedAction === "update") !== Boolean(existing) && !alreadyCreated)
+                throw httpError(
+                  409,
+                  "This row no longer matches the preview. Preview it again.",
+                );
+              const teamNames = String(record.teams || "")
+                .split(LIST_DELIMITER)
+                .map((name) => name.trim())
+                .filter(Boolean);
+              const teamIds = String(record.teamIds || "")
+                .split(LIST_DELIMITER)
+                .map((value) => value.trim());
+              const teams = teamNames.map((name, index) => {
+                const resolvedId =
+                  portableResolutionId(approved, "teams", index) ||
+                  teamIds[index];
+                return resolvedId
+                  ? data.teams.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        item.teamId === resolvedId &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(name),
+                    )
+                  : data.teams.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(name),
+                    );
+              });
+              if (teams.some((matches) => matches.length !== 1))
+                throw httpError(
+                  400,
+                  "A team is missing or ambiguous. Import teams first and preview this file again.",
+                );
+              const positionNames = String(record.positions || "")
+                .split(LIST_DELIMITER)
+                .map((name) => name.trim())
+                .filter(Boolean);
+              const positionIds = String(record.positionIds || "")
+                .split(LIST_DELIMITER)
+                .map((value) => value.trim());
+              const positions = positionNames.map((name, index) => {
+                const resolvedId =
+                  portableResolutionId(approved, "positions", index) ||
+                  positionIds[index];
+                const belongsToSelectedTeams = (item) =>
+                  !teams.length ||
+                  teams.some((group) =>
+                    group.some((team) => team.teamId === item.teamId),
+                  );
+                return resolvedId
+                  ? data.positions.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        item.positionId === resolvedId &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(name) &&
+                        belongsToSelectedTeams(item),
+                    )
+                  : data.positions.filter(
+                      (item) =>
+                        !item.archivedAt &&
+                        normalizePortableMatchValue(item.name) ===
+                          normalizePortableMatchValue(name) &&
+                        belongsToSelectedTeams(item),
+                    );
+              });
+              if (positions.some((matches) => matches.length !== 1))
+                throw httpError(
+                  400,
+                  "A position is missing or ambiguous. Import positions first and preview this file again.",
+                );
+              const priorTeamIds = data.teams
+                .filter((team) =>
+                  (team.memberIds || []).includes(existing?.memberId),
+                )
+                .map((team) => team.teamId);
+              const body = {
+                firstName: record.firstName ?? existing?.firstName,
+                lastName: record.lastName ?? existing?.lastName,
+                positionIds:
+                  record.positions !== undefined
+                    ? positions.map((matches) => matches[0].positionId)
+                    : existing?.positionIds || [],
+                ...(record.teams !== undefined
+                  ? { teamIds: teams.map((matches) => matches[0].teamId) }
+                  : { teamIds: priorTeamIds }),
+                ...(record.title !== undefined ? { title: record.title } : {}),
+                ...(record.email !== undefined ? { email: record.email } : {}),
+                ...(record.phone !== undefined
+                  ? { phoneNumber: record.phone }
+                  : {}),
+                ...(record.notes !== undefined ? { notes: record.notes } : {}),
+                ...(record.servingFrequency !== undefined
+                  ? { servingFrequency: record.servingFrequency }
+                  : {}),
+              };
+              const payload = await validateTeamMemberPayload(body, churchId);
+              if (importKey) payload._portableCreateKey = importKey;
+              const requestedTeamIds = await validateMemberTeamIds(
+                body,
+                churchId,
+              );
+              const saved = await upsertTeamEntity({
+                kind: "member",
+                churchId,
+                id: existing?.memberId,
+                payload,
+                adminUserId: admin.user.uid,
+                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
+              });
+              const reconciled = await syncMemberTeamMembership({
+                req,
+                churchId,
+                member: saved,
+                positionIds: payload.positionIds,
+                requestedTeamIds,
+                adminUserId: admin.user.uid,
+              });
+              replaceDatasetEntity("members", "memberId", reconciled.member);
+              results.push({
+                row,
+                status: existing && !alreadyCreated ? "updated" : "created",
+                id: reconciled.member.memberId,
+              });
+              continue;
+            }
+            throw httpError(400, "This data type cannot be imported.");
+          } catch (error) {
+            results.push({
+              row,
+              status: "failed",
+              code:
+                error?.statusCode === 409 || Object.keys(resolutions).length
+                  ? "stale_preview"
+                  : "row_invalid",
+              message: error?.message || "Could not import this row.",
+            });
+          }
+        }
+        return res.json({
+          success: true,
+          results,
+          summary: {
+            created: results.filter((item) => item.status === "created").length,
+            updated: results.filter((item) => item.status === "updated").length,
+            failed: results.filter((item) => item.status === "failed").length,
+          },
+        });
+      } catch (error) {
+        return dataTransferError(
+          res,
+          error,
+          "Could not import these rows. Check the connection and try again.",
+        );
+      }
+    },
     async getTeamsBootstrap(req, res) {
       try {
         await requireTeamsView(req, req.params.churchId);
@@ -7289,7 +11169,9 @@ export const createTeamsAuthHandlers = ({
           { limit: TEAM_COLLECTION_QUERY_LIMIT },
         );
         const recipientIds = recipients
-          .map((recipient) => String(recipient.recipientId || recipient.id || "").trim())
+          .map((recipient) =>
+            String(recipient.recipientId || recipient.id || "").trim(),
+          )
           .filter(Boolean);
         const attempts = [];
         for (let index = 0; index < recipientIds.length; index += 30) {
@@ -8100,7 +11982,10 @@ export const createTeamsAuthHandlers = ({
               })),
             });
           } catch (error) {
-            console.error("Could not record assignment response message previews", error);
+            console.error(
+              "Could not record assignment response message previews",
+              error,
+            );
           }
         }
         emitTeamsEvent(churchId, "schedule-updated", { schedule });
@@ -8793,7 +12678,10 @@ export const createTeamsAuthHandlers = ({
         const recipients = [];
         const existingRecipients = await Promise.all(
           memberIds.map((memberId) =>
-            getDoc(COLLECTIONS.teamIntakeRecipients, createTeamIntakeRecipientId(req.params.formId, memberId)),
+            getDoc(
+              COLLECTIONS.teamIntakeRecipients,
+              createTeamIntakeRecipientId(req.params.formId, memberId),
+            ),
           ),
         );
         const writes = [];
@@ -8834,20 +12722,23 @@ export const createTeamsAuthHandlers = ({
             : null;
           const canReuseToken = Boolean(
             isActive &&
-              existing.recipientTokenHash &&
-              existingToken &&
-              looksLikeTeamIntakeRecipientToken(existingToken) &&
-              hashTeamIntakeRecipientToken(
-                existingToken,
-                teamIntakeRecipientTokenSecret,
-              ) === existing.recipientTokenHash,
+            existing.recipientTokenHash &&
+            existingToken &&
+            looksLikeTeamIntakeRecipientToken(existingToken) &&
+            hashTeamIntakeRecipientToken(
+              existingToken,
+              teamIntakeRecipientTokenSecret,
+            ) === existing.recipientTokenHash,
           );
           const token = canReuseToken
             ? existingToken
             : createTeamIntakeRecipientToken();
           const tokenHash = canReuseToken
             ? existing.recipientTokenHash
-            : hashTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret);
+            : hashTeamIntakeRecipientToken(
+                token,
+                teamIntakeRecipientTokenSecret,
+              );
           const tokenCiphertext = canReuseToken
             ? existing.recipientTokenCiphertext
             : encryptTeamIntakeRecipientToken(
@@ -8928,9 +12819,12 @@ export const createTeamsAuthHandlers = ({
         if (!recipient || recipient.churchId !== req.params.churchId) {
           throw httpError(404, "Individual request not found.");
         }
-        const { form, member } = await getTeamIntakeRecipientContext(recipient, {
-          requireTokenHash: false,
-        });
+        const { form, member } = await getTeamIntakeRecipientContext(
+          recipient,
+          {
+            requireTokenHash: false,
+          },
+        );
         const markCopied = req.body?.markCopied === true;
         const copiedAt = nowIso();
         const ensured = await ensureTeamIntakeRecipientToken(
@@ -8940,7 +12834,7 @@ export const createTeamsAuthHandlers = ({
         const update = {
           ...(markCopied
             ? {
-              linkCopiedAt: copiedAt,
+                linkCopiedAt: copiedAt,
                 linkCopiedByUid: admin.user.uid,
               }
             : {}),
@@ -8993,11 +12887,18 @@ export const createTeamsAuthHandlers = ({
           blockMs: 10 * 60 * 1000,
         });
         if (typeof sendTeamIntakeNotificationIntent !== "function") {
-          throw httpError(503, "The shared volunteer message dispatcher is unavailable.");
+          throw httpError(
+            503,
+            "The shared volunteer message dispatcher is unavailable.",
+          );
         }
         return await sendTeamIntakeNotificationIntent(req, res);
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not send the individual intake SMS.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not send the individual intake SMS.",
+        );
       }
     },
 
@@ -9006,11 +12907,18 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         await requireTeamsEdit(req, req.params.churchId);
         if (typeof prepareTeamIntakeNotificationIntent !== "function") {
-          throw httpError(503, "The shared volunteer message preview is unavailable.");
+          throw httpError(
+            503,
+            "The shared volunteer message preview is unavailable.",
+          );
         }
         return await prepareTeamIntakeNotificationIntent(req, res);
       } catch (error) {
-        return sendTeamsJsonError(res, error, "Could not prepare the individual intake SMS.");
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not prepare the individual intake SMS.",
+        );
       }
     },
 
@@ -9231,14 +13139,22 @@ export const createTeamsAuthHandlers = ({
     async updateTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
+        const admin = await requireTeamsEdit(req, churchId);
+        const existing = await assertTeamEntityInChurch(
+          "position",
+          req.params.positionId,
+          churchId,
+          { active: false, label: "Position" },
+        );
         const position = await upsertTeamEntity({
           kind: "position",
-          churchId: req.params.churchId,
+          churchId,
           id: req.params.positionId,
           payload: await validateTeamPositionPayload(
             req.body,
-            req.params.churchId,
+            churchId,
+            existing,
           ),
           adminUserId: admin.user.uid,
         });
@@ -9680,11 +13596,17 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existingTeam = await assertTeamEntityInChurch(
+          "team",
+          req.params.teamId,
+          req.params.churchId,
+          { label: "Team", active: false },
+        );
         const team = await upsertTeamEntity({
           kind: "team",
           churchId: req.params.churchId,
           id: req.params.teamId,
-          payload: await validateTeamPayload(req.body, req.params.churchId),
+          payload: await validateTeamPayload(req.body, req.params.churchId, existingTeam),
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -9721,6 +13643,392 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async ensureTeamScheduleForPeriod(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        let payload = await validateTeamSchedulePayload(req.body, churchId);
+        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
+        if (!timeZone)
+          throw httpError(400, "Choose a time zone for this schedule period.");
+        const admin = await requireTeamsEditForTeam(
+          req,
+          churchId,
+          payload.teamId,
+        );
+        const activeServicesById = new Map(
+          (await readChurchServiceTimes(churchId))
+            .filter((service) => !service?.archivedAt)
+            .map((service) => [
+              normalizeShortText(service?.serviceId || service?.id, {
+                max: 160,
+              }),
+              service,
+            ]),
+        );
+        if (
+          payload.serviceIds.some(
+            (serviceId) => !activeServicesById.has(serviceId),
+          )
+        ) {
+          throw httpError(
+            400,
+            "Choose active services for this schedule period.",
+          );
+        }
+        for (const occurrence of payload.occurrences) {
+          const localParts = getOccurrenceCalendarParts(
+            occurrence.startsAt,
+            timeZone,
+          );
+          if (
+            localParts.date < payload.startDate ||
+            localParts.date > payload.endDate
+          ) {
+            throw httpError(
+              400,
+              "A service occurrence falls outside this schedule period.",
+            );
+          }
+          const occurrenceServiceIds = normalizeIdArray(
+            occurrence.serviceIds?.length
+              ? occurrence.serviceIds
+              : [occurrence.serviceId],
+          );
+          if (
+            occurrenceServiceIds.some(
+              (serviceId) => !payload.serviceIds.includes(serviceId),
+            )
+          ) {
+            throw httpError(
+              400,
+              "A schedule occurrence uses a service outside the selected period.",
+            );
+          }
+          assertOccurrenceServiceGroup({
+            serviceId: occurrence.serviceId,
+            serviceIds: occurrenceServiceIds,
+            groupId:
+              normalizeShortText(occurrence.groupId, { max: 160 }) || undefined,
+            occurrenceId: occurrence.occurrenceId,
+            startsAt: occurrence.startsAt,
+            localParts,
+            timeZone,
+            servicesById: activeServicesById,
+          });
+        }
+        const generatedPeriodKey = generatedPeriodKeyFor({
+          churchId,
+          ...payload,
+        });
+        const legacyGeneratedPeriodKey = legacyGeneratedPeriodKeyFor(payload);
+        const canonicalOccurrences = payload.occurrences.map((occurrence) => {
+          const serviceIds = normalizeIdArray(
+            occurrence.serviceIds?.length
+              ? occurrence.serviceIds
+              : [occurrence.serviceId],
+          );
+          const requirements = occurrence.groupId
+            ? mergeServicePositionRequirements(
+                serviceIds.map((id) => activeServicesById.get(id)),
+              )
+            : sanitizePositionRequirements(
+                activeServicesById.get(occurrence.serviceId)
+                  ?.positionRequirements,
+              );
+          return {
+            ...occurrence,
+            ...(requirements.length
+              ? { positionRequirements: requirements }
+              : { positionRequirements: [] }),
+          };
+        });
+        payload = {
+          ...payload,
+          occurrences: canonicalOccurrences,
+          source: "generated-period",
+          generatedPeriodKey,
+        };
+        const visibleOccurrenceIds = normalizeIdArray(
+          req.body?.visibleOccurrenceIds,
+        );
+        if (
+          visibleOccurrenceIds.some(
+            (occurrenceId) =>
+              !payload.occurrences.some(
+                (occurrence) => occurrence.occurrenceId === occurrenceId,
+              ),
+          )
+        ) {
+          throw httpError(
+            400,
+            "Choose visible occurrences from this schedule period.",
+          );
+        }
+
+        const createIfMissing = async () => {
+          const sameIds = (left, right) => {
+            if (
+              !Array.isArray(left) ||
+              !Array.isArray(right) ||
+              left.length !== right.length
+            )
+              return false;
+            const leftIds = [...left].sort();
+            const rightIds = [...right].sort();
+            return leftIds.every((id, index) => id === rightIds[index]);
+          };
+          const equivalentLegacy = (schedule) =>
+            schedule.source == null &&
+            schedule.churchId === churchId &&
+            schedule.teamId === payload.teamId &&
+            schedule.startDate === payload.startDate &&
+            schedule.endDate === payload.endDate &&
+            sameIds(schedule.serviceIds, payload.serviceIds) &&
+            sameIds(
+              schedule.occurrences?.map(
+                (occurrence) => occurrence?.occurrenceId,
+              ),
+              payload.occurrences.map((occurrence) => occurrence.occurrenceId),
+            );
+          const activeTeamSchedules = (
+            await listTeamCollectionForChurch(
+              COLLECTIONS.teamSchedules,
+              "scheduleId",
+              churchId,
+            )
+          ).filter(
+            (schedule) =>
+              !schedule.archivedAt &&
+              schedule.teamId === payload.teamId,
+          );
+          const samePeriod = activeTeamSchedules.filter(
+            (schedule) =>
+              schedule.startDate === payload.startDate &&
+              schedule.endDate === payload.endDate,
+          );
+          // Match by explicit priority: current church-aware identity, old
+          // generated identity (which omitted churchId), then equivalent
+          // source-less legacy. A lower-priority match never makes a unique
+          // generated record ambiguous.
+          const currentGenerated = samePeriod.filter(
+            (schedule) =>
+              schedule.source === "generated-period" &&
+              schedule.generatedPeriodKey === generatedPeriodKey &&
+              schedule.scheduleId ===
+                generatedPeriodScheduleId(generatedPeriodKey),
+          );
+          const oldGenerated = samePeriod.filter(
+            (schedule) =>
+              schedule.source === "generated-period" &&
+              schedule.generatedPeriodKey === legacyGeneratedPeriodKey &&
+              schedule.scheduleId ===
+                generatedPeriodScheduleId(legacyGeneratedPeriodKey),
+          );
+          const equivalentLegacySchedules = samePeriod.filter(equivalentLegacy);
+          const reusable = currentGenerated.length
+            ? currentGenerated
+            : oldGenerated.length
+              ? oldGenerated
+              : equivalentLegacySchedules;
+          // Upcoming is a moving display window. If an older generated period
+          // already contains every visible occurrence, reuse its persisted
+          // identity instead of creating a second overlapping record.
+          let containingGenerated = [];
+          const hasScheduleData = (schedule) =>
+            Boolean(
+              schedule.guests?.length ||
+                Object.keys(schedule.assignments || {}).length ||
+                Object.keys(schedule.microphoneAssignments || {}).length ||
+                Object.keys(schedule.iemAssignments || {}).length ||
+                Object.keys(schedule.additionalPositionSlots || {}).length ||
+                Object.keys(schedule.responses || {}).length,
+            );
+          if (visibleOccurrenceIds.length > 0) {
+            const visibleDates = payload.occurrences
+              .filter((occurrence) =>
+                visibleOccurrenceIds.includes(occurrence.occurrenceId),
+              )
+              .map((occurrence) =>
+                getOccurrenceCalendarParts(
+                  occurrence.startsAt,
+                  timeZone,
+                ).date,
+              )
+              .sort();
+            const firstVisibleDate = visibleDates[0];
+            const lastVisibleDate = visibleDates[visibleDates.length - 1];
+            const visibleIds = new Set(visibleOccurrenceIds);
+            containingGenerated = activeTeamSchedules.filter(
+              (schedule) => {
+                if (
+                  schedule.source !== "generated-period" ||
+                  !schedule.generatedPeriodKey ||
+                  schedule.scheduleId !==
+                    generatedPeriodScheduleId(schedule.generatedPeriodKey) ||
+                  !schedule.startDate ||
+                  !schedule.endDate ||
+                  schedule.startDate > firstVisibleDate ||
+                  schedule.endDate < lastVisibleDate
+                ) {
+                  return false;
+                }
+                const storedIds = new Set(
+                  (schedule.occurrences || []).map(
+                    (occurrence) => occurrence?.occurrenceId,
+                  ),
+                );
+                return [...visibleIds].every((id) => storedIds.has(id));
+              },
+            );
+          }
+          const candidates = [
+            ...new Map(
+              [...reusable, ...containingGenerated].map((schedule) => [
+                schedule.scheduleId,
+                schedule,
+              ]),
+            ).values(),
+          ];
+          if (candidates.length > 0) {
+            const populated = candidates.filter(hasScheduleData);
+            if (populated.length === 1) {
+              return { schedule: populated[0], created: false };
+            }
+            if (populated.length > 1) {
+              throw httpError(
+                409,
+                "Several schedules match this period. Choose one from Schedule history before editing it.",
+              );
+            }
+            if (reusable.length === 1) {
+              return { schedule: reusable[0], created: false };
+            }
+            if (reusable.length > 1 || candidates.length > 1) {
+              throw httpError(
+                409,
+                "Several schedules match this period. Choose one from Schedule history before editing it.",
+              );
+            }
+            return { schedule: candidates[0], created: false };
+          }
+
+          const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
+          const db = requireFirestore();
+          if (db) {
+            return db.runTransaction(async (transaction) => {
+              const ref = db
+                .collection(COLLECTIONS.teamSchedules)
+                .doc(scheduleId);
+              const snapshot = await transaction.get(ref);
+              if (snapshot.exists) {
+                const existing = {
+                  scheduleId: snapshot.id,
+                  ...snapshot.data(),
+                };
+                if (
+                  existing.churchId !== churchId ||
+                  existing.generatedPeriodKey !== generatedPeriodKey
+                ) {
+                  throw httpError(
+                    409,
+                    "The generated schedule identity is unavailable.",
+                  );
+                }
+                return { schedule: existing, created: false };
+              }
+              const now = nowIso();
+              const document = {
+                ...payload,
+                scheduleId,
+                churchId,
+                archivedAt: null,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+                createdAt: now,
+                createdByUid: admin.user.uid,
+              };
+              transaction.create(ref, document);
+              return { schedule: document, created: true };
+            });
+          }
+
+          return withGeneratedPeriodEnsureLock(generatedPeriodKey, async () => {
+            const existing = await getDoc(
+              COLLECTIONS.teamSchedules,
+              scheduleId,
+            );
+            if (existing)
+              return { schedule: { scheduleId, ...existing }, created: false };
+            const now = nowIso();
+            const document = {
+              ...payload,
+              scheduleId,
+              churchId,
+              archivedAt: null,
+              updatedAt: now,
+              updatedByUid: admin.user.uid,
+              createdAt: now,
+              createdByUid: admin.user.uid,
+            };
+            await setDoc(COLLECTIONS.teamSchedules, scheduleId, document);
+            return { schedule: document, created: true };
+          });
+        };
+
+        // Seed position-default microphone/IEM choices exactly as normal new
+        // schedule creation does, before the deterministic record is committed.
+        if (
+          !Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "microphoneAssignments",
+          )
+        ) {
+          payload = await applyPositionDefaultMicrophones({
+            churchId,
+            payload,
+          });
+        }
+        if (
+          !Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "iemAssignments",
+          )
+        ) {
+          payload = await applyPositionDefaultIems({ churchId, payload });
+        }
+        payload = {
+          ...payload,
+          source: "generated-period",
+          generatedPeriodKey,
+        };
+        const result = await createIfMissing();
+        if (result.created) {
+          await addSecurityEvent({
+            type: "team_schedule_created",
+            churchId,
+            userId: admin.user.uid,
+            scheduleId: result.schedule.scheduleId,
+          });
+          emitTeamsEvent(churchId, "schedule-updated", {
+            schedule: result.schedule,
+          });
+          await emitPublicPlansForScheduleOccurrences({
+            churchId,
+            occurrences: result.schedule.occurrences,
+            revision: result.schedule.updatedAt || nowIso(),
+          });
+        }
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not open this schedule period.",
+        );
+      }
+    },
+
     async createTeamSchedule(req, res) {
       try {
         await assertCsrf(req);
@@ -9742,22 +14050,33 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         }
+        if (
+          !Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "iemAssignments",
+          )
+        ) {
+          payload = await applyPositionDefaultIems({
+            churchId: req.params.churchId,
+            payload,
+          });
+        }
+        payload = { ...payload, source: "custom" };
         const admin = await requireTeamsEditForTeam(
           req,
           req.params.churchId,
           payload.teamId,
         );
         if (Object.keys(payload.assignments || {}).length > 0) {
-          const schedules = await listTeamCollectionForChurch(
-            COLLECTIONS.teamSchedules,
-            "scheduleId",
-            req.params.churchId,
-          );
+          const schedules = await listScheduleConflictCandidates({
+            churchId: req.params.churchId,
+            schedule: { churchId: req.params.churchId, ...payload },
+          });
           assertNoCrossTeamScheduleAssignmentConflicts({
             schedule: { churchId: req.params.churchId, ...payload },
             assignments: payload.assignments,
             schedules,
-            allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
+            confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
           });
         }
         const schedule = await upsertTeamEntity({
@@ -9863,11 +14182,10 @@ export const createTeamsAuthHandlers = ({
             nextAssignments: payload.assignments,
           });
         if (Object.keys(newAssignmentConflictChecks).length > 0) {
-          const schedules = await listTeamCollectionForChurch(
-            COLLECTIONS.teamSchedules,
-            "scheduleId",
-            req.params.churchId,
-          );
+          const schedules = await listScheduleConflictCandidates({
+            churchId: req.params.churchId,
+            schedule: { ...existing, ...payload, scheduleId: req.params.scheduleId },
+          });
           assertNoCrossTeamScheduleAssignmentConflicts({
             schedule: {
               scheduleId: req.params.scheduleId,
@@ -9876,7 +14194,7 @@ export const createTeamsAuthHandlers = ({
             },
             assignments: newAssignmentConflictChecks,
             schedules,
-            allowCrossTeamConflict: normalizeAllowOccurrenceConflict(req.body),
+            confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
           });
         }
         const saved = await upsertTeamEntity({
@@ -9897,21 +14215,41 @@ export const createTeamsAuthHandlers = ({
         ])) {
           const beforeRow = existing.assignments?.[occurrenceId] || {};
           const afterRow = schedule.assignments?.[occurrenceId] || {};
-          for (const cellKey of new Set([...Object.keys(beforeRow), ...Object.keys(afterRow)])) {
+          for (const cellKey of new Set([
+            ...Object.keys(beforeRow),
+            ...Object.keys(afterRow),
+          ])) {
             const beforeCell = beforeRow[cellKey];
             const afterCell = afterRow[cellKey];
-            const beforeId = typeof beforeCell === "string" ? beforeCell : beforeCell?.primaryMemberId || "";
-            const afterId = typeof afterCell === "string" ? afterCell : afterCell?.primaryMemberId || "";
+            const beforeId =
+              typeof beforeCell === "string"
+                ? beforeCell
+                : beforeCell?.primaryMemberId || "";
+            const afterId =
+              typeof afterCell === "string"
+                ? afterCell
+                : afterCell?.primaryMemberId || "";
             if (beforeId === afterId) continue;
-            if (beforeId) removedEntries.push({ memberId: beforeId, occurrenceId, cellKey });
-            if (afterId) addedEntries.push({ memberId: afterId, occurrenceId, cellKey });
+            if (beforeId)
+              removedEntries.push({
+                memberId: beforeId,
+                occurrenceId,
+                cellKey,
+              });
+            if (afterId)
+              addedEntries.push({ memberId: afterId, occurrenceId, cellKey });
           }
         }
         try {
           for (const { intentType, entries } of [
             { intentType: "schedule_change", entries: removedEntries },
             ...(schedule.sentAt
-              ? [{ intentType: "assignment_notification", entries: addedEntries }]
+              ? [
+                  {
+                    intentType: "assignment_notification",
+                    entries: addedEntries,
+                  },
+                ]
               : []),
           ]) {
             await saveNotificationEventIntents({
@@ -9922,7 +14260,10 @@ export const createTeamsAuthHandlers = ({
             });
           }
         } catch (error) {
-          console.error("Could not record schedule change message previews", error);
+          console.error(
+            "Could not record schedule change message previews",
+            error,
+          );
         }
         if (schedule.sentAt) {
           for (const entry of addedEntries) {
@@ -9934,7 +14275,10 @@ export const createTeamsAuthHandlers = ({
                 cellKey: entry.cellKey,
               });
             } catch (error) {
-              console.error("Could not close resolved replacement invitation", error);
+              console.error(
+                "Could not close resolved replacement invitation",
+                error,
+              );
             }
           }
         }
@@ -10261,17 +14605,20 @@ export const createTeamsAuthHandlers = ({
           return res.json({ success: true, plan: null, snapshot: null });
         }
 
+        const hasTeamDetails = hasTeamsPlanAccess(reader);
         const plan = withoutServicePlanAssignments(servicePlan, reader);
-        const snapshot =
-          hasTeamsPlanAccess(reader) &&
-          servicePlan.published &&
-          servicePlan.publicLinkToken
-            ? await buildPublicServicePlan({
-                plan: servicePlan,
-                viewMode: "team",
-                token: servicePlan.publicLinkToken,
-              })
-            : null;
+        const snapshot = await buildPublicServicePlan({
+          // Use the same display-only sanitizer as published team links. A
+          // plan-only reader keeps assignment and roster data stripped.
+          plan: hasTeamDetails ? servicePlan : plan,
+          viewMode: "team",
+          token:
+            servicePlan.publicLinkToken ||
+            `current-service-viewer:${servicePlan.planKey}`,
+          includeTeamDetails: hasTeamDetails,
+          allowUnpublished: true,
+          includeControllerEquipment: hasTeamDetails,
+        });
         return res.json({ success: true, plan, snapshot });
       } catch (error) {
         return sendTeamsJsonError(
@@ -10380,7 +14727,10 @@ export const createTeamsAuthHandlers = ({
             servicePlan: {
               ...withoutServicePlanSecrets(error.servicePlanConflict),
               ...(error.servicePlanConflict.lastSaveOperationId
-                ? { lastSaveOperationId: error.servicePlanConflict.lastSaveOperationId }
+                ? {
+                    lastSaveOperationId:
+                      error.servicePlanConflict.lastSaveOperationId,
+                  }
                 : {}),
             },
           });
@@ -10389,6 +14739,256 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not save this service plan.",
+        );
+      }
+    },
+
+    async applyServicePlanTemplateBulk(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireServicesEdit(req, churchId);
+        const actorUid = sessionActorUid(admin);
+        const rawTargets = Array.isArray(req.body?.targets)
+          ? req.body.targets
+          : [];
+        if (!rawTargets.length || rawTargets.length > 100) {
+          throw httpError(400, "Choose between 1 and 100 service dates.");
+        }
+        if (req.body?.existingPlanMode !== "skip") {
+          throw httpError(400, "Existing plans can only be skipped.");
+        }
+        const useServiceDefaults = req.body?.useServiceDefaults === true;
+        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
+        if (!timeZone)
+          throw httpError(400, "Choose a time zone for service occurrences.");
+        const templateId = normalizeShortText(req.body?.templateId, {
+          max: 160,
+        });
+        if (!useServiceDefaults && !templateId) {
+          throw httpError(400, "Choose a service plan template.");
+        }
+        const selectedTemplate = templateId
+          ? await getDoc(COLLECTIONS.servicePlanTemplates, templateId)
+          : null;
+        if (templateId && selectedTemplate?.churchId !== churchId) {
+          throw httpError(
+            404,
+            "That service plan template is no longer available.",
+          );
+        }
+        const services = await readChurchServiceTimes(churchId);
+        const servicesById = new Map(
+          services.map((service) => [
+            normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
+            service,
+          ]),
+        );
+        const targets = rawTargets.map((raw) => {
+          const serviceId = normalizeShortText(raw?.serviceId, { max: 160 });
+          const serviceIds = normalizeIdArray(
+            raw?.serviceIds?.length ? raw.serviceIds : [serviceId],
+          );
+          const date = assertPlainDate(raw?.date, "Service plan date");
+          const startsAt = assertTeamScheduleDateTime(
+            raw?.startsAt,
+            "Service occurrence date",
+          );
+          const groupId =
+            normalizeShortText(raw?.groupId, { max: 160 }) || undefined;
+          const occurrenceId = normalizeShortText(raw?.occurrenceId, {
+            max: 260,
+          });
+          if (!serviceId || !serviceIds.includes(serviceId)) {
+            throw httpError(
+              400,
+              "A target occurrence is missing its service identity.",
+            );
+          }
+          const expectedOccurrenceId = groupId
+            ? `group:${groupId}@${date}`
+            : `${serviceId}@${startsAt}`;
+          if (
+            !occurrenceId ||
+            occurrenceId !== expectedOccurrenceId ||
+            startsAt.slice(0, 10) !== date
+          ) {
+            throw httpError(
+              400,
+              "The target does not match its service occurrence.",
+            );
+          }
+          if (
+            serviceIds.some(
+              (id) => !servicesById.has(id) || servicesById.get(id)?.archivedAt,
+            )
+          ) {
+            throw httpError(
+              400,
+              "Every target must use active service definitions.",
+            );
+          }
+          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
+          assertOccurrenceServiceGroup({
+            serviceId,
+            serviceIds,
+            groupId,
+            occurrenceId,
+            startsAt,
+            localParts,
+            timeZone,
+            servicesById,
+          });
+          const planKey = groupId
+            ? `group:${groupId}@${date}`
+            : `${serviceId}@${date}`;
+          const payload = validateServicePlanPayload(
+            {
+              serviceId,
+              serviceIds,
+              groupId,
+              date,
+              startsAt,
+              name: servicesById.get(serviceId)?.name || "Service Plan",
+              sections: [],
+            },
+            { churchId, planKey },
+          );
+          return {
+            planKey,
+            docId: buildServicePlanDocId(churchId, planKey),
+            payload,
+            serviceId,
+          };
+        });
+        if (
+          new Set(targets.map((target) => target.planKey)).size !==
+          targets.length
+        ) {
+          throw httpError(
+            400,
+            "The selected dates contain duplicate plan occurrences.",
+          );
+        }
+
+        const created = [];
+        const skippedExisting = [];
+        const skippedNoTemplate = [];
+        const failed = [];
+        const db = requireFirestore();
+        for (const target of targets) {
+          const service = servicesById.get(target.serviceId);
+          const targetTemplateId = useServiceDefaults
+            ? normalizeShortText(service?.defaultPlanTemplateId, { max: 160 })
+            : templateId;
+          if (!targetTemplateId) {
+            skippedNoTemplate.push(target.planKey);
+            continue;
+          }
+          const template =
+            targetTemplateId === templateId
+              ? selectedTemplate
+              : await getDoc(
+                  COLLECTIONS.servicePlanTemplates,
+                  targetTemplateId,
+                );
+          if (!template || template.churchId !== churchId) {
+            skippedNoTemplate.push(target.planKey);
+            continue;
+          }
+          const sections = (template.sections || []).map((section) => ({
+            ...section,
+            id: createId("servicePlanSection"),
+            elements: (section.elements || []).map((element) => ({
+              ...element,
+              id: createId("servicePlanElement"),
+              assignees: (element.assignees || []).map((assignee) => ({
+                ...assignee,
+                id: createId("servicePlanAssignee"),
+              })),
+            })),
+          }));
+          const payload = validateServicePlanPayload(
+            {
+              ...target.payload,
+              sections,
+              clonedFromPlanKey: template.templateId,
+            },
+            { churchId, planKey: target.planKey },
+          );
+          try {
+            let wasCreated = false;
+            if (db) {
+              wasCreated = await db.runTransaction(async (transaction) => {
+                const ref = db
+                  .collection(COLLECTIONS.servicePlans)
+                  .doc(target.docId);
+                const snapshot = await transaction.get(ref);
+                if (snapshot.exists) return false;
+                transaction.create(
+                  ref,
+                  buildServicePlanSaveDocument({
+                    existing: null,
+                    payload,
+                    docId: target.docId,
+                    adminUid: actorUid,
+                    now: nowIso(),
+                  }),
+                );
+                return true;
+              });
+            } else {
+              wasCreated = await withGeneratedPeriodEnsureLock(
+                `service-plan:${target.docId}`,
+                async () => {
+                  if (await getDoc(COLLECTIONS.servicePlans, target.docId))
+                    return false;
+                  await setDoc(
+                    COLLECTIONS.servicePlans,
+                    target.docId,
+                    buildServicePlanSaveDocument({
+                      existing: null,
+                      payload,
+                      docId: target.docId,
+                      adminUid: actorUid,
+                      now: nowIso(),
+                    }),
+                  );
+                  return true;
+                },
+              );
+            }
+            if (wasCreated) created.push(target.planKey);
+            else skippedExisting.push(target.planKey);
+          } catch (error) {
+            failed.push({
+              planKey: target.planKey,
+              error: error?.message || "Could not create this plan.",
+            });
+          }
+        }
+        for (const planKey of created) {
+          const plan = await getDoc(
+            COLLECTIONS.servicePlans,
+            buildServicePlanDocId(churchId, planKey),
+          );
+          if (plan)
+            emitTeamsEvent(churchId, "service-plan-updated", {
+              servicePlan: withoutServicePlanSecrets(plan),
+            });
+        }
+        return res.json({
+          success: true,
+          created,
+          skippedExisting,
+          skippedNoTemplate,
+          failed,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not apply this service plan template.",
         );
       }
     },
@@ -10673,6 +15273,64 @@ export const createTeamsAuthHandlers = ({
           res,
           error,
           "Could not save the microphone list.",
+        );
+      }
+    },
+
+    async getServiceEquipment(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        await requireTeamsView(req, churchId);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        return res.json({
+          success: true,
+          equipment: normalizeServiceEquipmentCatalog(church?.serviceEquipment),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load service equipment.",
+        );
+      }
+    },
+
+    async saveServiceEquipment(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const admin = await requireServicesEdit(req, churchId);
+        const rawEquipment = req.body?.equipment;
+        if (!Array.isArray(rawEquipment)) {
+          throw httpError(400, "Equipment must be a list.");
+        }
+        if (
+          rawEquipment.some(
+            (item) =>
+              !item ||
+              item.category !== "iem" ||
+              !normalizeServiceEquipment(item),
+          )
+        ) {
+          throw httpError(400, "Equipment category or name is invalid.");
+        }
+        const equipment = normalizeServiceEquipmentCatalog(req.body?.equipment);
+        await setDoc(
+          COLLECTIONS.churches,
+          churchId,
+          {
+            serviceEquipment: equipment,
+            updatedAt: nowIso(),
+            updatedByUid: sessionActorUid(admin),
+          },
+          { merge: true },
+        );
+        return res.json({ success: true, equipment });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not save service equipment.",
         );
       }
     },
@@ -11197,10 +15855,18 @@ export const createTeamsAuthHandlers = ({
         });
         const changedOccurrenceId = String(req.body?.serviceId || "").trim();
         const changedCellKey = String(req.body?.positionSlotKey || "").trim();
-        const previousCell = existing.assignments?.[changedOccurrenceId]?.[changedCellKey];
-        const previousMemberId = typeof previousCell === "string" ? previousCell : previousCell?.primaryMemberId || "";
-        const currentCell = schedule.assignments?.[changedOccurrenceId]?.[changedCellKey];
-        const currentMemberId = typeof currentCell === "string" ? currentCell : currentCell?.primaryMemberId || "";
+        const previousCell =
+          existing.assignments?.[changedOccurrenceId]?.[changedCellKey];
+        const previousMemberId =
+          typeof previousCell === "string"
+            ? previousCell
+            : previousCell?.primaryMemberId || "";
+        const currentCell =
+          schedule.assignments?.[changedOccurrenceId]?.[changedCellKey];
+        const currentMemberId =
+          typeof currentCell === "string"
+            ? currentCell
+            : currentCell?.primaryMemberId || "";
         if (schedule.sentAt && currentMemberId !== previousMemberId) {
           if (currentMemberId) {
             try {
@@ -11211,7 +15877,10 @@ export const createTeamsAuthHandlers = ({
                 cellKey: changedCellKey,
               });
             } catch (error) {
-              console.error("Could not close resolved replacement invitation", error);
+              console.error(
+                "Could not close resolved replacement invitation",
+                error,
+              );
             }
           }
           try {
@@ -11220,7 +15889,13 @@ export const createTeamsAuthHandlers = ({
                 churchId: req.params.churchId,
                 schedule,
                 intentType: "schedule_change",
-                entries: [{ memberId: previousMemberId, occurrenceId: changedOccurrenceId, cellKey: changedCellKey }],
+                entries: [
+                  {
+                    memberId: previousMemberId,
+                    occurrenceId: changedOccurrenceId,
+                    cellKey: changedCellKey,
+                  },
+                ],
               });
             }
             if (currentMemberId) {
@@ -11228,11 +15903,20 @@ export const createTeamsAuthHandlers = ({
                 churchId: req.params.churchId,
                 schedule,
                 intentType: "assignment_notification",
-                entries: [{ memberId: currentMemberId, occurrenceId: changedOccurrenceId, cellKey: changedCellKey }],
+                entries: [
+                  {
+                    memberId: currentMemberId,
+                    occurrenceId: changedOccurrenceId,
+                    cellKey: changedCellKey,
+                  },
+                ],
               });
             }
           } catch (error) {
-            console.error("Could not record schedule assignment message previews", error);
+            console.error(
+              "Could not record schedule assignment message previews",
+              error,
+            );
           }
         }
         await addSecurityEvent({
@@ -11303,44 +15987,14 @@ export const createTeamsAuthHandlers = ({
         const slotKey = normalizeShortText(req.body?.positionSlotKey, {
           max: 260,
         });
-        const slot = parseScheduleSlotKey(slotKey);
-        if (!slot) throw httpError(400, "Position slot key is invalid.");
-        assertScheduleRowContains(schedule, occurrenceId);
-        const occurrence = (schedule.occurrences || []).find(
-          (item) => item.occurrenceId === occurrenceId,
-        );
-        const requirements = await resolveScheduleOccurrenceRequirements({
+        const validatedSlot = await assertSchedulePositionSlotExists({
           churchId,
-          occurrence,
+          schedule,
+          occurrenceId,
+          positionSlotKey: slotKey,
+          errorMessage: "Add this position before assigning microphones.",
         });
-        const requirement = requirements.find(
-          (item) => item?.positionId === slot.positionId,
-        );
-        {
-          const requiredCount = Math.max(
-            0,
-            Math.floor(Number(requirement?.count) || 0),
-          );
-          const additionalSlots = new Set(
-            normalizeTeamScheduleAdditionalPositionSlots(
-              schedule.additionalPositionSlots ??
-                schedule.optionalPositionSlots,
-            )[occurrenceId] || [],
-          );
-          const normalizedSlotKey = makeScheduleSlotKey(
-            slot.positionId,
-            slot.slot,
-          );
-          if (
-            slot.slot >= requiredCount &&
-            !additionalSlots.has(normalizedSlotKey)
-          ) {
-            throw httpError(
-              400,
-              "Add this position before assigning microphones.",
-            );
-          }
-        }
+        const { slot, occurrence } = validatedSlot;
         const position = await assertTeamEntityInChurch(
           "position",
           slot.positionId,
@@ -11355,9 +16009,20 @@ export const createTeamsAuthHandlers = ({
             : []
           ).map((microphone) => String(microphone?.id || "").trim()),
         );
-        const microphoneIds = normalizeIdArray(req.body?.microphoneIds)
-          .filter((microphoneId) => knownMicrophoneIds.has(microphoneId))
-          .slice(0, 12);
+        const microphoneIds = normalizeIdArray(req.body?.microphoneIds);
+        if (microphoneIds.length > 12) {
+          throw httpError(400, "Choose no more than 12 microphones.");
+        }
+        if (
+          microphoneIds.some(
+            (microphoneId) => !knownMicrophoneIds.has(microphoneId),
+          )
+        ) {
+          throw httpError(
+            409,
+            "One or more microphones are no longer available. Reload and try again.",
+          );
+        }
         const applyMicrophoneAssignment = (currentSchedule) => {
           const microphoneAssignments =
             normalizeTeamScheduleMicrophoneAssignments(
@@ -11395,12 +16060,27 @@ export const createTeamsAuthHandlers = ({
             if (currentSchedule.churchId !== churchId) {
               throw httpError(404, "Schedule not found.");
             }
+            if (currentSchedule.teamId !== schedule.teamId) {
+              throw httpError(
+                409,
+                "This schedule changed. Reload and try again.",
+              );
+            }
+            await assertSchedulePositionSlotExists({
+              churchId,
+              schedule: currentSchedule,
+              occurrenceId,
+              positionSlotKey: slotKey,
+              errorMessage:
+                "This position slot was removed. Reload the schedule and try again.",
+              staleSchedule: true,
+            });
             const update = applyMicrophoneAssignment(currentSchedule);
             transaction.update(scheduleRef, update);
             return { ...currentSchedule, ...update };
           });
         } else {
-          updatedSchedule = await enqueueInMemoryMicrophoneSave(
+          updatedSchedule = await enqueueInMemoryScheduleSave(
             schedule.scheduleId,
             async () => {
               const currentSchedule = await assertTeamEntityInChurch(
@@ -11409,6 +16089,21 @@ export const createTeamsAuthHandlers = ({
                 churchId,
                 { label: "Schedule", active: false },
               );
+              if (currentSchedule.teamId !== schedule.teamId) {
+                throw httpError(
+                  409,
+                  "This schedule changed. Reload and try again.",
+                );
+              }
+              await assertSchedulePositionSlotExists({
+                churchId,
+                schedule: currentSchedule,
+                occurrenceId,
+                positionSlotKey: slotKey,
+                errorMessage:
+                  "This position slot was removed. Reload the schedule and try again.",
+                staleSchedule: true,
+              });
               const update = applyMicrophoneAssignment(currentSchedule);
               await setDoc(
                 COLLECTIONS.teamSchedules,
@@ -11440,6 +16135,180 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async updateTeamScheduleAssignmentIems(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const schedule = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireScheduleMicrophoneEdit(
+          req,
+          churchId,
+          schedule.teamId,
+        );
+        const actorUid = sessionActorUid(admin);
+        const team = await assertTeamEntityInChurch(
+          "team",
+          schedule.teamId,
+          churchId,
+          {
+            label: "Team",
+          },
+        );
+        if (!team.usesIemAssignments) {
+          throw httpError(400, "This team does not use IEM assignments.");
+        }
+        const occurrenceId = normalizeShortText(req.body?.serviceId, {
+          max: 260,
+        });
+        const slotKey = normalizeShortText(req.body?.positionSlotKey, {
+          max: 260,
+        });
+        const validatedSlot = await assertSchedulePositionSlotExists({
+          churchId,
+          schedule,
+          occurrenceId,
+          positionSlotKey: slotKey,
+          errorMessage: "Add this position before assigning IEMs.",
+        });
+        const { slot, occurrence } = validatedSlot;
+        const position = await assertTeamEntityInChurch(
+          "position",
+          slot.positionId,
+          churchId,
+          { label: "Position" },
+        );
+        assertSchedulePositionForTeam({ churchId, team, position });
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const knownIemIds = new Set(
+          normalizeServiceEquipmentCatalog(church?.serviceEquipment)
+            .filter((item) => item.category === "iem")
+            .map((item) => item.id),
+        );
+        const iemIds = normalizeIdArray(req.body?.iemIds);
+        if (iemIds.length > 12) {
+          throw httpError(400, "Choose no more than 12 IEMs.");
+        }
+        if (iemIds.some((iemId) => !knownIemIds.has(iemId))) {
+          throw httpError(
+            409,
+            "One or more IEMs are no longer available. Reload and try again.",
+          );
+        }
+        const applyIEMAssignment = (currentSchedule) => {
+          const iemAssignments = normalizeTeamScheduleIemAssignments(
+            currentSchedule.iemAssignments,
+          );
+          const row = { ...(iemAssignments[occurrenceId] || {}) };
+          if (iemIds.length) row[slotKey] = iemIds;
+          else delete row[slotKey];
+          if (Object.keys(row).length) iemAssignments[occurrenceId] = row;
+          else delete iemAssignments[occurrenceId];
+          return {
+            iemAssignments,
+            updatedAt: nowIso(),
+            updatedByUid: actorUid,
+          };
+        };
+        const db = requireFirestore();
+        let updatedSchedule;
+        if (db) {
+          // IEM controls can be used simultaneously from another
+          // browser or device. Re-read and replace the map inside a
+          // transaction so a late save cannot restore an older map snapshot.
+          updatedSchedule = await db.runTransaction(async (transaction) => {
+            const scheduleRef = db
+              .collection(COLLECTIONS.teamSchedules)
+              .doc(schedule.scheduleId);
+            const snapshot = await transaction.get(scheduleRef);
+            const currentSchedule = readTransactionTeamEntity(
+              snapshot,
+              "scheduleId",
+              "Schedule",
+              { active: false },
+            );
+            if (currentSchedule.churchId !== churchId) {
+              throw httpError(404, "Schedule not found.");
+            }
+            if (currentSchedule.teamId !== schedule.teamId) {
+              throw httpError(
+                409,
+                "This schedule changed. Reload and try again.",
+              );
+            }
+            await assertSchedulePositionSlotExists({
+              churchId,
+              schedule: currentSchedule,
+              occurrenceId,
+              positionSlotKey: slotKey,
+              errorMessage:
+                "This position slot was removed. Reload the schedule and try again.",
+              staleSchedule: true,
+            });
+            const update = applyIEMAssignment(currentSchedule);
+            transaction.update(scheduleRef, update);
+            return { ...currentSchedule, ...update };
+          });
+        } else {
+          updatedSchedule = await enqueueInMemoryScheduleSave(
+            schedule.scheduleId,
+            async () => {
+              const currentSchedule = await assertTeamEntityInChurch(
+                "schedule",
+                schedule.scheduleId,
+                churchId,
+                { label: "Schedule", active: false },
+              );
+              if (currentSchedule.teamId !== schedule.teamId) {
+                throw httpError(
+                  409,
+                  "This schedule changed. Reload and try again.",
+                );
+              }
+              await assertSchedulePositionSlotExists({
+                churchId,
+                schedule: currentSchedule,
+                occurrenceId,
+                positionSlotKey: slotKey,
+                errorMessage:
+                  "This position slot was removed. Reload the schedule and try again.",
+                staleSchedule: true,
+              });
+              const update = applyIEMAssignment(currentSchedule);
+              await setDoc(
+                COLLECTIONS.teamSchedules,
+                schedule.scheduleId,
+                update,
+                {
+                  merge: true,
+                },
+              );
+              return { ...currentSchedule, ...update };
+            },
+          );
+        }
+        emitTeamsEvent(churchId, "schedule-updated", {
+          schedule: updatedSchedule,
+        });
+        await emitPublicPlansForScheduleOccurrence({
+          churchId,
+          occurrence,
+          revision: updatedSchedule.updatedAt,
+        });
+        return res.json({ success: true, schedule: updatedSchedule });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update IEM assignments.",
+        );
+      }
+    },
+
     async addTeamSchedulePositionSlot(req, res) {
       try {
         await assertCsrf(req);
@@ -11463,58 +16332,65 @@ export const createTeamsAuthHandlers = ({
         });
         const slot = parseScheduleSlotKey(slotKey);
         if (!slot) throw httpError(400, "Position slot key is invalid.");
-        assertScheduleRowContains(schedule, occurrenceId);
-        const occurrence = (schedule.occurrences || []).find(
-          (item) => item.occurrenceId === occurrenceId,
-        );
-        const requirements = await resolveScheduleOccurrenceRequirements({
-          churchId,
-          occurrence,
-        });
-        const requirement = requirements.find(
-          (item) => item?.positionId === slot.positionId,
-        );
-        const requiredCount = Math.max(
-          0,
-          Math.floor(Number(requirement?.count) || 0),
-        );
-        if (slot.slot < requiredCount || slot.slot > 99) {
-          throw httpError(
-            400,
-            "That additional position slot is not available for this service.",
+        const normalizedSlotKey = makeScheduleSlotKey(slot.positionId, slot.slot);
+        const buildUpdate = async (currentSchedule, currentTeam, currentPosition) => {
+          if (currentSchedule.churchId !== churchId || currentSchedule.teamId !== schedule.teamId) {
+            throw httpError(409, "This schedule changed. Reload and try again.");
+          }
+          assertScheduleRowContains(currentSchedule, occurrenceId);
+          const occurrence = (currentSchedule.occurrences || []).find(
+            (item) => item.occurrenceId === occurrenceId,
           );
-        }
-        const position = await assertTeamEntityInChurch(
-          "position",
-          slot.positionId,
-          churchId,
-          { label: "Position" },
-        );
-        const team = await assertTeamEntityInChurch(
-          "team",
-          schedule.teamId,
-          churchId,
-          {
-            label: "Team",
-          },
-        );
-        assertSchedulePositionForTeam({ churchId, team, position });
-        const additionalPositionSlots =
-          normalizeTeamScheduleAdditionalPositionSlots(
-            schedule.additionalPositionSlots ?? schedule.optionalPositionSlots,
+          if (!occurrence) throw httpError(400, "That service is not on this schedule.");
+          const requirements = await resolveScheduleOccurrenceRequirements({ churchId, occurrence });
+          const requirement = requirements.find((item) => item?.positionId === slot.positionId);
+          const requiredCount = Math.max(0, Math.floor(Number(requirement?.count) || 0));
+          if (slot.slot < requiredCount || slot.slot > 99) {
+            throw httpError(400, "That additional position slot is not available for this service.");
+          }
+          assertSchedulePositionForTeam({ churchId, team: currentTeam, position: currentPosition });
+          const additionalPositionSlots = normalizeTeamScheduleAdditionalPositionSlots(
+            currentSchedule.additionalPositionSlots ?? currentSchedule.optionalPositionSlots,
           );
-        const row = new Set(additionalPositionSlots[occurrenceId] || []);
-        row.add(makeScheduleSlotKey(slot.positionId, slot.slot));
-        additionalPositionSlots[occurrenceId] = [...row];
-        const update = {
-          additionalPositionSlots,
-          updatedAt: nowIso(),
-          updatedByUid: admin.user.uid,
+          const row = new Set(additionalPositionSlots[occurrenceId] || []);
+          row.add(normalizedSlotKey);
+          additionalPositionSlots[occurrenceId] = [...row];
+          return {
+            additionalPositionSlots,
+            updatedAt: nowIso(),
+            updatedByUid: admin.user.uid,
+          };
         };
-        await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, update, {
-          merge: true,
-        });
-        const updatedSchedule = { ...schedule, ...update };
+        const db = requireFirestore();
+        let updatedSchedule;
+        if (db) {
+          updatedSchedule = await db.runTransaction(async (transaction) => {
+            const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(schedule.scheduleId);
+            const teamRef = db.collection(COLLECTIONS.teams).doc(schedule.teamId);
+            const positionRef = db.collection(COLLECTIONS.teamPositions).doc(slot.positionId);
+            const [scheduleSnapshot, teamSnapshot, positionSnapshot] = await Promise.all([
+              transaction.get(scheduleRef),
+              transaction.get(teamRef),
+              transaction.get(positionRef),
+            ]);
+            const currentSchedule = readTransactionTeamEntity(scheduleSnapshot, "scheduleId", "Schedule", { active: false });
+            const currentTeam = readTransactionTeamEntity(teamSnapshot, "teamId", "Team");
+            const currentPosition = readTransactionTeamEntity(positionSnapshot, "positionId", "Position");
+            const update = await buildUpdate(currentSchedule, currentTeam, currentPosition);
+            transaction.update(scheduleRef, update);
+            return { ...currentSchedule, ...update };
+          });
+        } else {
+          updatedSchedule = await enqueueInMemoryScheduleSave(schedule.scheduleId, async () => {
+            const currentSchedule = await assertTeamEntityInChurch("schedule", schedule.scheduleId, churchId, { label: "Schedule", active: false });
+            const currentTeam = await assertTeamEntityInChurch("team", currentSchedule.teamId, churchId, { label: "Team" });
+            const currentPosition = await assertTeamEntityInChurch("position", slot.positionId, churchId, { label: "Position" });
+            const update = await buildUpdate(currentSchedule, currentTeam, currentPosition);
+            const nextSchedule = { ...currentSchedule, ...update };
+            await setDoc(COLLECTIONS.teamSchedules, schedule.scheduleId, nextSchedule, { merge: false });
+            return nextSchedule;
+          });
+        }
         emitTeamsEvent(churchId, "schedule-updated", {
           schedule: updatedSchedule,
         });
@@ -11606,10 +16482,19 @@ export const createTeamsAuthHandlers = ({
               delete microphoneAssignments[occurrenceId];
             }
           }
+          const iemAssignments = normalizeTeamScheduleIemAssignments(
+            schedule.iemAssignments,
+          );
+          if (iemAssignments[occurrenceId]) {
+            delete iemAssignments[occurrenceId][normalizedSlotKey];
+            if (Object.keys(iemAssignments[occurrenceId]).length === 0)
+              delete iemAssignments[occurrenceId];
+          }
           return {
             additionalPositionSlots,
             assignments,
             microphoneAssignments,
+            iemAssignments,
             updatedAt: nowIso(),
             updatedByUid: admin.user.uid,
           };
@@ -11639,14 +16524,24 @@ export const createTeamsAuthHandlers = ({
             return { ...current, ...update };
           });
         } else {
-          const update = buildUpdate(existing);
-          schedule = { ...existing, ...update };
-          await setDoc(
-            COLLECTIONS.teamSchedules,
+          schedule = await enqueueInMemoryScheduleSave(
             existing.scheduleId,
-            schedule,
-            {
-              merge: false,
+            async () => {
+              const current = await assertTeamEntityInChurch(
+                "schedule",
+                existing.scheduleId,
+                churchId,
+                { label: "Schedule", active: false },
+              );
+              const update = buildUpdate(current);
+              const nextSchedule = { ...current, ...update };
+              await setDoc(
+                COLLECTIONS.teamSchedules,
+                existing.scheduleId,
+                nextSchedule,
+                { merge: false },
+              );
+              return nextSchedule;
             },
           );
         }
@@ -11665,6 +16560,53 @@ export const createTeamsAuthHandlers = ({
           error,
           "Could not remove this position.",
         );
+      }
+    },
+
+    async updateTeamScheduleAssignmentsBatch(req, res) {
+      try {
+        await assertCsrf(req);
+        const existing = await assertTeamEntityInChurch(
+          "schedule",
+          req.params.scheduleId,
+          req.params.churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(req, req.params.churchId, existing.teamId);
+        const rawChanges = req.body?.changes;
+        if (!Array.isArray(rawChanges) || rawChanges.length === 0 || rawChanges.length > 250) {
+          throw httpError(400, "Assignment changes must contain between 1 and 250 cells.");
+        }
+        const seen = new Set();
+        const changes = rawChanges.map((raw) => {
+          const serviceId = normalizeShortText(raw?.serviceId, { max: 260 });
+          const positionSlotKey = normalizeShortText(raw?.positionSlotKey, { max: 260 });
+          if (!serviceId || !positionSlotKey || !parseScheduleSlotKey(positionSlotKey)) {
+            throw httpError(400, "An assignment cell is invalid.");
+          }
+          const key = `${serviceId}\u0000${positionSlotKey}`;
+          if (seen.has(key)) throw httpError(400, "An assignment cell was included more than once.");
+          seen.add(key);
+          return {
+            serviceId,
+            positionSlotKey,
+            serviceDate: normalizeOptionalPlainDate(raw?.serviceDate, "Service date"),
+            expectedCell: raw?.expectedCell || "",
+            assignment: raw?.assignment || "",
+          };
+        });
+        const result = await updateTeamScheduleAssignmentsBatchInStore({
+          churchId: req.params.churchId,
+          scheduleId: req.params.scheduleId,
+          changes,
+          confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
+          skipChangedCells: req.body?.skipChangedCells === true,
+          adminUserId: admin.user.uid,
+        });
+        emitTeamsEvent(req.params.churchId, "schedule-updated", { schedule: result.schedule });
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not update these assignments.");
       }
     },
 

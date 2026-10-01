@@ -5,6 +5,7 @@ import * as SelectPrimitive from "@radix-ui/react-select";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 import { cn } from "../../utils/cnHelper";
+import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
 
 const Select = ({
   ...props
@@ -74,14 +75,17 @@ const SelectContent = ({
   contentBackgroundColor,
   contentTextColor,
   portal = true,
+  updatePositionStrategy,
+  style,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content> & {
   contentBackgroundColor?: string;
   contentTextColor?: string;
-  /** Mirrors PopoverContent: a portaled menu escapes a FloatingWindow's
-   * stacking context and never receives the click. */
+  /** Set false only for an intentionally inline menu; normal overlays use the
+   * nearest owner-aware portal host automatically. */
   portal?: boolean;
 }) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   const content = (
     <SelectPrimitive.Content
       data-slot="select-content"
@@ -97,6 +101,10 @@ const SelectContent = ({
       align={align}
       side={side}
       sideOffset={sideOffset}
+      updatePositionStrategy={
+        updatePositionStrategy ?? (overlayPortalContainer ? "always" : undefined)
+      }
+      style={{ pointerEvents: "auto", ...style }}
       {...props}
     >
       <SelectScrollUpButton />
@@ -114,7 +122,11 @@ const SelectContent = ({
   );
 
   if (portal) {
-    return <SelectPrimitive.Portal>{content}</SelectPrimitive.Portal>;
+    return (
+      <SelectPrimitive.Portal container={overlayPortalContainer ?? undefined}>
+        {content}
+      </SelectPrimitive.Portal>
+    );
   }
   return content;
 };

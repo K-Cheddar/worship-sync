@@ -1,7 +1,7 @@
 import { AudioLines, Headset, Mic, MicVocal, type LucideIcon } from "lucide-react";
 import type { CSSProperties } from "react";
-import { cn } from "@/utils/cnHelper";
-import { contrastingInkForFill, normalizeHexColor } from "../utils/richTextColorContrast";
+import ColoredIconBadge from "./ColoredIconBadge";
+import { normalizeHexColor } from "../utils/richTextColorContrast";
 import type { ServicePlanMicrophone } from "../types/servicePlan";
 
 export const SERVICE_PLAN_MICROPHONE_CUSTOM_TYPE = "__custom__";
@@ -82,19 +82,10 @@ export const ServicePlanMicrophoneIcon = ({
     return <Icon className={className} style={style} aria-hidden />;
   }
 
-  const ink = contrastingInkForFill(fill);
-
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-md border border-current/40",
-        className,
-      )}
-      style={{ backgroundColor: fill, color: ink, ...style }}
-      aria-hidden
-    >
+    <ColoredIconBadge fillColor={fill} className={className} style={style}>
       {/* `text-current` opts out of menu/select `[&_svg:not([class*='text-'])]` defaults */}
-      <Icon className="size-[90%] text-current" style={{ color: ink }} />
-    </span>
+      <Icon className="size-[90%] text-current" />
+    </ColoredIconBadge>
   );
 };

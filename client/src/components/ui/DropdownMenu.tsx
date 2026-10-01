@@ -6,6 +6,7 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react";
 
 import { cn } from "../../utils/cnHelper";
 import { menuItemTouchTargetClassName } from "./menuStyles";
+import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
 
 /** Default Lucide color for menu row icons; chevrons and explicit overrides stay muted. */
 const dropdownMenuItemIconClassName =
@@ -18,10 +19,16 @@ const DropdownMenu = ({
 };
 
 const DropdownMenuPortal = ({
+  container,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   return (
-    <DropdownMenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
+    <DropdownMenuPrimitive.Portal
+      data-slot="dropdown-menu-portal"
+      container={container ?? overlayPortalContainer ?? undefined}
+      {...props}
+    />
   );
 };
 
@@ -40,12 +47,19 @@ const DropdownMenuContent = ({
   className,
   sideOffset = 4,
   portal = true,
+  updatePositionStrategy,
+  style,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & { portal?: boolean }) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   const content = (
     <DropdownMenuPrimitive.Content
       data-slot="dropdown-menu-content"
       sideOffset={sideOffset}
+      updatePositionStrategy={
+        updatePositionStrategy ?? (overlayPortalContainer ? "always" : undefined)
+      }
+      style={{ pointerEvents: "auto", ...style }}
       className={cn(
         // Portaled menus sit outside AppPageShell, so use scrollbar-portal
         // (thin + dark) rather than the OS default scrollbar.
@@ -56,7 +70,9 @@ const DropdownMenuContent = ({
     />
   );
   return portal ? (
-    <DropdownMenuPrimitive.Portal>{content}</DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal container={overlayPortalContainer ?? undefined}>
+      {content}
+    </DropdownMenuPrimitive.Portal>
   ) : content;
 };
 
@@ -242,11 +258,18 @@ const DropdownMenuSubTrigger = ({
 
 const DropdownMenuSubContent = ({
   className,
+  updatePositionStrategy,
+  style,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) => {
+  const overlayPortalContainer = useOverlayPortalContainer();
   return (
     <DropdownMenuPrimitive.SubContent
       data-slot="dropdown-menu-sub-content"
+      updatePositionStrategy={
+        updatePositionStrategy ?? (overlayPortalContainer ? "always" : undefined)
+      }
+      style={{ pointerEvents: "auto", ...style }}
       className={cn(
         "scrollbar-portal bg-gray-800 border border-gray-600 text-white min-w-40 p-1 shadow-lg rounded-md z-50 max-h-(--radix-dropdown-menu-content-available-height) origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto overscroll-contain duration-200 ease-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 motion-reduce:data-[state=open]:animate-none motion-reduce:data-[state=closed]:animate-none",
         className

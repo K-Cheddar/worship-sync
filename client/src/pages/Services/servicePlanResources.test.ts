@@ -9,6 +9,7 @@ import {
   getServicePlanCustomDocumentDisplayLabel,
   getServicePlanChurchResourceId,
   getServicePlanResourceDisplayLabel,
+  getImportedTextResourceTitle,
   isServicePlanChurchResourceReference,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
@@ -61,6 +62,21 @@ describe("service-plan content resources", () => {
     const resource = createServicePlanTextResource({ title: "Notes", text: document });
 
     expect(normalizeServicePlanResourceForPreview(resource).richTextContent).toEqual(document);
+  });
+
+  it("derives a concise imported text title and keeps the full rich text body", () => {
+    expect(getImportedTextResourceTitle("Pathfinder Pledge")).toBe("Pathfinder Pledge");
+    expect(getImportedTextResourceTitle("\nWalking With Jesus\nAdditional detail")).toBe("Walking With Jesus");
+
+    const paragraph = "A meaningful imported paragraph that continues with more detail. ".repeat(3);
+    const resource = createServicePlanTextResource({
+      title: getImportedTextResourceTitle(paragraph),
+      text: plainTextToRichText(paragraph),
+    });
+    expect(resource.title.length).toBeLessThanOrEqual(72);
+    expect(resource.title.length).toBeLessThan(paragraph.length);
+    expect(getServicePlanResourceDisplayLabel(resource)).toBe(resource.title);
+    expect(resource.data?.text).toEqual(plainTextToRichText(paragraph));
   });
 
   it("creates a generic resource without requiring a URL", () => {

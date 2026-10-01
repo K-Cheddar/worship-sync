@@ -9,7 +9,7 @@ export const EXTERNAL_RESULT_ROW_HEIGHT = 148;
 // virtualizer's ResizeObserver once mounted. Keeping them near the real DOM
 // height avoids a visible jump between the estimated and measured layout.
 const TITLE_LINE_HEIGHT = 24; // text-base line box
-const ARTIST_LINE_HEIGHT = 22; // text-sm line + gap-0.5
+const ARTIST_LINE_HEIGHT = 20; // text-sm line with no gap below the title
 const ROW_VERTICAL_PADDING = 8; // py-1 (top + bottom)
 const ROW_BORDER = 2; // 1px border top + bottom
 const ACTION_ROW_HEIGHT = 28; // "Add to outline" button line

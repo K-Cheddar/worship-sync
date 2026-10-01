@@ -136,7 +136,11 @@ const elementToRow = (
   const sourceLedByRaw = element.sourceLedByRaw?.trim() || "";
 
   const base: EventData = {
-    ...(sourcePlanKey ? { sourcePlanKey, sourcePlanElementId: element.id } : {}),
+    ...(sourcePlanKey ? {
+      sourcePlanKey,
+      sourcePlanElementId: element.id,
+      sourceOccurrenceId: element.sourceOccurrenceId || element.id,
+    } : {}),
     elementType: element.sourceElementTypeRaw?.trim() || element.type,
     title,
     ledBy: assigneeNames.join(", ") || sourceLedByRaw,

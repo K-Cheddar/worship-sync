@@ -60,7 +60,7 @@ export const buildTeamIntakeSms = ({ churchName, formName, publicUrl, intentType
   if (!safePublicUrl) throw new Error("An intake URL is required for SMS.");
   const action = intentType === "availability_reminder" ? "Reminder: Please" : "Please";
   const request = collectsAvailability
-    ? `submit your service availability for ${safeFormName}`
+    ? `submit your ${safeFormName}`
     : `complete the ${safeFormName} form`;
   const body = `${safeChurchName}: ${action} ${request}: ${safePublicUrl} Reply STOP to opt out.`;
   return { body, ...measureSmsMessage(body) };

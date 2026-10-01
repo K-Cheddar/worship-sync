@@ -6,6 +6,14 @@ import reportWebVitals from "./reportWebVitals";
 import * as Sentry from "@sentry/react";
 import { initConsoleLogForwarder } from "./utils/consoleLogForwarder";
 import { isPublicSharePathname } from "./utils/publicSharePathRedirect";
+import BootstrapLoadingScreen from "./components/BootstrapLoadingScreen";
+import BootstrapRecoveryScreen from "./components/BootstrapRecoveryScreen";
+import {
+  isModuleLoadError,
+  loadSelectedBootstrapModule,
+  normalizeBootstrapPathname,
+  type BootstrapFailureStage,
+} from "./utils/bootstrapRecovery";
 
 initConsoleLogForwarder();
 
@@ -39,11 +47,120 @@ const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement,
 );
 
+const renderBootstrapRecovery = () =>
+  root.render(
+    <BootstrapRecoveryScreen onReload={() => window.location.reload()} />,
+  );
+
+type ServiceWorkerDiagnostic = {
+  available: boolean;
+  active: string | null;
+  waiting: string | null;
+  installing: string | null;
+};
+
+const getServiceWorkerDiagnostic = async (): Promise<ServiceWorkerDiagnostic> => {
+  try {
+    if (!("serviceWorker" in navigator)) {
+      return { available: false, active: null, waiting: null, installing: null };
+    }
+
+    const registration = await Promise.race([
+      navigator.serviceWorker.getRegistration(),
+      new Promise<undefined>((resolve) => window.setTimeout(() => resolve(undefined), 250)),
+    ]);
+    return {
+      available: true,
+      active: registration?.active?.state ?? null,
+      waiting: registration?.waiting?.state ?? null,
+      installing: registration?.installing?.state ?? null,
+    };
+  } catch {
+    return { available: "serviceWorker" in navigator, active: null, waiting: null, installing: null };
+  }
+};
+
+const captureBootstrapFailure = async (
+  stage: BootstrapFailureStage,
+  error: unknown,
+  isPublic: boolean,
+  previousError?: unknown,
+) => {
+  const serviceWorker = await getServiceWorkerDiagnostic();
+  const reloadAttempted = (() => {
+    try {
+      return window.sessionStorage.getItem("worshipsync:bootstrap-chunk-reload") === "1";
+    } catch {
+      return null;
+    }
+  })();
+
+  const context = {
+    pathname: normalizeBootstrapPathname(window.location.pathname),
+    bootstrap: isPublic ? "public" : "operator",
+    stage,
+    online: navigator.onLine,
+    user_agent: navigator.userAgent,
+    service_worker_controller: Boolean(navigator.serviceWorker?.controller),
+    service_worker_registration: serviceWorker,
+    reload_attempted: reloadAttempted,
+    recovery_outcome:
+      stage === "retry failure" && isModuleLoadError(error)
+        ? "reload_required"
+        : stage === "post-reload retry failure"
+          ? "exhausted"
+          : "terminal_failure",
+    previous_error:
+      previousError instanceof Error
+        ? { name: previousError.name, message: previousError.message }
+        : previousError === undefined
+          ? null
+          : { message: String(previousError) },
+  };
+  const isTransientModuleFailure =
+    (stage === "first failure" || stage === "post-reload failure") &&
+    isModuleLoadError(error);
+
+  if (isTransientModuleFailure) {
+    Sentry.addBreadcrumb({
+      category: "bootstrap.recovery",
+      message: "Bootstrap module load failed; retrying",
+      level: "warning",
+      data: context,
+    });
+    return;
+  }
+
+  Sentry.withScope((scope) => {
+    scope.setTag("failure_type", "bootstrap_import_failure");
+    scope.setTag("recovery_stage", stage);
+    scope.setTag("recovery_outcome", context.recovery_outcome);
+    scope.setContext("bootstrap_recovery", context);
+    Sentry.captureException(error);
+  });
+};
+
 const boot = async () => {
   // Dynamic import so public path URLs do not download the operator HashRouter graph.
-  const Root = isPublicSharePathname(window.location.pathname)
-    ? (await import("./public/PublicApp")).default
-    : (await import("./App")).default;
+  const isPublic = isPublicSharePathname(window.location.pathname);
+  const result = await loadSelectedBootstrapModule(
+    isPublic,
+    {
+      public: () => import("./public/PublicApp"),
+      operator: () => import("./App"),
+    },
+    {
+      onFailure: (stage, error, previousError) =>
+        captureBootstrapFailure(stage, error, isPublic, previousError),
+    },
+  );
+
+  if (result.status === "failed") {
+    renderBootstrapRecovery();
+    return;
+  }
+
+  const Root = result.module.default;
 
   root.render(
     <React.StrictMode>
@@ -61,4 +178,12 @@ const boot = async () => {
   reportWebVitals();
 };
 
-void boot();
+root.render(<BootstrapLoadingScreen />);
+void boot().catch((error: unknown) => {
+  try {
+    Sentry.captureException(error);
+  } catch {
+    // Reporting must not block the bootstrap recovery screen.
+  }
+  renderBootstrapRecovery();
+});

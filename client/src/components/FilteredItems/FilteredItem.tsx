@@ -127,7 +127,7 @@ const FilteredItem = ({
             "col-start-2 row-start-1 flex w-full min-w-0 items-start justify-between gap-2 md:justify-start md:pr-0",
           )}
         >
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5" title={item.name}>
+          <div className="flex min-w-0 flex-1 flex-col gap-0" title={item.name}>
             <HighlightWords
               searchValue={searchValue}
               string={item.name.trimStart()}

@@ -1,3 +1,40 @@
+# [2.39.0](https://github.com/K-Cheddar/worship-sync/compare/v2.38.0...v2.39.0) (2026-09-29)
+
+
+### Bug Fixes
+
+* allow cancelling pending SMS consent verification ([9b6a924](https://github.com/K-Cheddar/worship-sync/commit/9b6a924e2034cc03cca3cbe1e5fbaf5c56b01b81))
+* **chat:** refresh context after weekly rollover ([8a1128e](https://github.com/K-Cheddar/worship-sync/commit/8a1128e095a0089127389f8b041508127e30852e))
+* **chat:** reset snapshot state on weekly rollover ([a024fe8](https://github.com/K-Cheddar/worship-sync/commit/a024fe827f0368aafe9210b235477236e58859e4))
+* close native service plan controller gaps ([98bbd4b](https://github.com/K-Cheddar/worship-sync/commit/98bbd4be40ce120c0e47aa4079a868b0760d6034))
+* confirm content hidden status on reconnect ([84817c3](https://github.com/K-Cheddar/worship-sync/commit/84817c3837de3c7c1be58bcd06fa283a61d46284))
+* correct position controls in overlay editor ([555760b](https://github.com/K-Cheddar/worship-sync/commit/555760bf5775b88897efc88b06b75bc7ae11849b))
+* explain disabled SMS opt-in form ([41f795b](https://github.com/K-Cheddar/worship-sync/commit/41f795b6a177bf06f1cac0e42d83bc62767e4e69))
+* harden Canva background imports ([afc6bc4](https://github.com/K-Cheddar/worship-sync/commit/afc6bc43184b1995aeedd8f68be0e3c856828da3))
+* make public SMS opt-in voluntary ([ded64ca](https://github.com/K-Cheddar/worship-sync/commit/ded64ca7e2496945c81855bed455ce0ea36c5f21))
+* **media:** improve remote video readiness recovery ([8c5c57e](https://github.com/K-Cheddar/worship-sync/commit/8c5c57ed8e51dfedad33e59db48a77dc0200ad6e))
+* **media:** keep folders in vertical rows ([ca50ee4](https://github.com/K-Cheddar/worship-sync/commit/ca50ee4703857ea80d84e7a04ed58f5bd10e35c0))
+* **media:** make folder grid responsive ([4607b86](https://github.com/K-Cheddar/worship-sync/commit/4607b86a2bc8a4a15432e8bcb01ac3de890d2aea))
+* **media:** report bounded video readiness accurately ([772fa51](https://github.com/K-Cheddar/worship-sync/commit/772fa51b350ba26dbb6c92cb83f5488a5dbbc53a))
+* service plan import review reconciliation ([e1b6725](https://github.com/K-Cheddar/worship-sync/commit/e1b672517e430ff359290c33df3cbc80a71dc618))
+* **service-planning:** reconcile import ownership safely ([27b5ead](https://github.com/K-Cheddar/worship-sync/commit/27b5ead635ba0a46e1b049b6c3262cff31763d2c))
+* **service-planning:** reconcile imported review state ([e55b905](https://github.com/K-Cheddar/worship-sync/commit/e55b905bff1a717487441b2c77416a959d79fba5))
+* **service-planning:** resolve church file names in previews ([fa53efa](https://github.com/K-Cheddar/worship-sync/commit/fa53efaefbe84afa8155a839ea972c2244112c82))
+* **service-plans:** restore safe plan recovery and merge ([9977474](https://github.com/K-Cheddar/worship-sync/commit/99774745efbb9da6cbfae937e1731543da1d9efb))
+* show full service plan content in controller preview ([8589d42](https://github.com/K-Cheddar/worship-sync/commit/8589d420c6b9927ae8ff91788c72d62cf8a74c2b))
+* show SMS opt-in disabled reason ([bdc8c05](https://github.com/K-Cheddar/worship-sync/commit/bdc8c053a840b35717d8d0a0ef6192384873ef79))
+* stabilize Follow Live plan scrolling ([f0850a0](https://github.com/K-Cheddar/worship-sync/commit/f0850a04d10fed4d326a88aca8dce3351c83951b))
+
+
+### Features
+
+* add manual volunteer messaging workflows ([ab97960](https://github.com/K-Cheddar/worship-sync/commit/ab97960e459594a6733eea3f7fd62713f2a5c774))
+* **controller:** add content hidden indicators ([4cba8b6](https://github.com/K-Cheddar/worship-sync/commit/4cba8b696b527c913b0126c6be828d265547db34))
+* improve service planning import review ([8f3d107](https://github.com/K-Cheddar/worship-sync/commit/8f3d107cedb5b12204882d9c2c71650658f4b2cc))
+* modernize service plan controller sync and credits ([a684f99](https://github.com/K-Cheddar/worship-sync/commit/a684f99f49239f408b6a39888fbb608ac06ca886))
+* **teams:** improve schedule messaging layout ([dde0d68](https://github.com/K-Cheddar/worship-sync/commit/dde0d684c93ddb05fc2fd0c02cefc3f02aff3c51))
+* **video:** improve preparation reliability and diagnostics ([1e5d22f](https://github.com/K-Cheddar/worship-sync/commit/1e5d22f570cceb69e580eaa9a80f2f0c0a5d857c))
+
 # [2.38.0](https://github.com/K-Cheddar/worship-sync/compare/v2.37.1...v2.38.0) (2026-09-24)
 
 

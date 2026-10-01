@@ -3,25 +3,30 @@ import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
+  FilePlus,
   Users,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
+import Modal from "../../../components/Modal/Modal";
+import SelectAllButton from "../../../components/SelectAllButton";
+import Select from "../../../components/Select/Select";
 import Icon from "../../../components/Icon/Icon";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
-import DateRangePicker from "@/components/ui/DateRangePicker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
+  applyServicePlanTemplateBulk,
+  listServicePlanTemplates,
   listServicePlans,
   updateTeamScheduleAssignmentMicrophones,
+  updateTeamScheduleAssignmentIems,
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { formatPlainDate } from "../../../utils/plainDate";
@@ -45,14 +50,13 @@ import {
 import {
   readPlansFilterPreferences,
   writePlansFilterPreferences,
-  type PlansRangePreset,
 } from "../plansFilterPersistence";
 import {
   getOccurrenceAssignmentSummary,
-  getScheduledMicrophoneHolders,
+  getScheduledEquipmentHolders,
   getUnhydratedOccurrenceScheduleIds,
   groupAssignmentSummaryByTeam,
-  teamMicrophoneSlotKey,
+  teamEquipmentSlotKey,
   type TeamsAssignmentSummaryRow,
 } from "./teamsAssignmentsSummary";
 import WhosServingPanel from "./WhosServingPanel";
@@ -70,67 +74,28 @@ import {
   scheduleTodayBorderClassName,
   scheduleUpNextBorderClassName,
 } from "../schedule/scheduleUtils";
+import {
+  rangeFromPreset,
+} from "../schedule/schedulePeriodUtils";
+import RangeSelector from "../components/RangeSelector";
+import {
+  formatResolvedDateRange,
+  rangeSelectionStorageKey,
+  useRangeSelection,
+} from "../rangeSelection";
 import { cn } from "@/utils/cnHelper";
 import type {
   TeamScheduleOccurrence,
   TeamService,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
+import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
-type RangePreset = PlansRangePreset;
+export { rangeFromPreset } from "../schedule/schedulePeriodUtils";
 
-const RANGE_PRESET_OPTIONS: { value: RangePreset; label: string }[] = [
-  { value: "thisMonth", label: "This month" },
-  { value: "nextMonth", label: "Next month" },
-  { value: "thisQuarter", label: "This quarter" },
-  { value: "nextQuarter", label: "Next quarter" },
-  { value: "custom", label: "Custom" },
-];
-
-export const rangeFromPreset = (
-  preset: Exclude<RangePreset, "custom">,
-  now = new Date(),
-) => {
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const quarterStartMonth = Math.floor(month / 3) * 3;
-  let start: Date;
-  let end: Date;
-
-  switch (preset) {
-    case "thisMonth":
-      start = new Date(year, month, 1);
-      end = new Date(year, month + 1, 0);
-      break;
-    case "nextMonth":
-      start = new Date(year, month + 1, 1);
-      end = new Date(year, month + 2, 0);
-      break;
-    case "thisQuarter":
-      start = new Date(year, quarterStartMonth, 1);
-      end = new Date(year, quarterStartMonth + 3, 0);
-      break;
-    case "nextQuarter":
-      start = new Date(year, quarterStartMonth + 3, 1);
-      end = new Date(year, quarterStartMonth + 6, 0);
-      break;
-  }
-
-  return {
-    start: formatPlainDate(start),
-    end: formatPlainDate(end),
-  };
-};
-
-const defaultRange = () => rangeFromPreset("thisMonth");
-
-const formatRangeDate = (value: string) =>
-  new Date(`${value}T12:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+const defaultRange = () => rangeFromPreset("upcoming");
 
 /**
  * Plain date `days` away from `date`. Noon keeps the shift clear of DST edges.
@@ -369,22 +334,46 @@ const TeamsPlansPage = () => {
   } = useTeamsPage();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const initialRange = useMemo(() => defaultRange(), []);
-  const [windowStart, setWindowStart] = useState(initialRange.start);
-  const [windowEnd, setWindowEnd] = useState(initialRange.end);
-  const [rangePreset, setRangePreset] = useState<RangePreset>("thisMonth");
-  const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const initialRange = useMemo(defaultRange, []);
+  const rangePersistence = useMemo(
+    () => ({
+      key: churchId ? rangeSelectionStorageKey("services", churchId) : null,
+      legacyKeys: churchId ? [`worshipSync:teamsPlansFilters:${churchId}`] : [],
+    }),
+    [churchId],
+  );
+  const {
+    preset: rangePreset,
+    range: selectedRange,
+    selectPreset: selectRangePreset,
+    selectCustomRange: setCustomRange,
+    setSelection: setRangeSelection,
+  } = useRangeSelection({ initialRange, persistence: rangePersistence });
+  const windowStart = selectedRange.start;
+  const windowEnd = selectedRange.end;
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
     readPlansOrganizeMode,
   );
   const [filtersHydratedForChurchId, setFiltersHydratedForChurchId] = useState<string | null>(null);
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
+  const [bulkApplyOpen, setBulkApplyOpen] = useState(false);
+  const [bulkTemplates, setBulkTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [bulkTemplatesLoaded, setBulkTemplatesLoaded] = useState(false);
+  const [bulkTemplateId, setBulkTemplateId] = useState("");
+  const [bulkServiceIds, setBulkServiceIds] = useState<string[]>([]);
+  const [bulkUseDefaults, setBulkUseDefaults] = useState(false);
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkApplyRevision, setBulkApplyRevision] = useState(0);
   // Mild placeholders for planned chips / progress / checks until listServicePlans
   // resolves. Stays false on revision refreshes so badges do not flash.
   const [planStatusLoading, setPlanStatusLoading] = useState(Boolean(churchId));
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(null);
+  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
+  const microphoneMutationSeqRef = useRef(0);
+  const iemMutationSeqRef = useRef(0);
+  const equipmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const planStatusChurchIdRef = useRef<string | null>(null);
   const [selection, setSelection] = useState<{
     service: TeamService;
@@ -402,24 +391,21 @@ const TeamsPlansPage = () => {
     if (preferences) {
       setSelectedServiceIds(preferences.serviceIds);
       setOrganizeMode(preferences.organizeMode);
-      setRangePreset(preferences.rangePreset);
-      if (preferences.rangePreset === "custom") {
-        setWindowStart(preferences.customStartDate || initialRange.start);
-        setWindowEnd(preferences.customEndDate || initialRange.end);
-      } else {
-        const restoredRange = rangeFromPreset(preferences.rangePreset);
-        setWindowStart(restoredRange.start);
-        setWindowEnd(restoredRange.end);
-      }
     } else {
       setSelectedServiceIds([]);
       setOrganizeMode(readPlansOrganizeMode());
-      setRangePreset("thisMonth");
-      setWindowStart(initialRange.start);
-      setWindowEnd(initialRange.end);
     }
     setFiltersHydratedForChurchId(churchId);
-  }, [churchId, filtersHydratedForChurchId, initialRange.end, initialRange.start]);
+  }, [churchId, filtersHydratedForChurchId]);
+
+  const enqueueEquipmentSave = <T,>(task: () => Promise<T>) => {
+    const run = equipmentSaveQueueRef.current.then(task, task);
+    equipmentSaveQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return trackTeamsSave(run);
+  };
 
   // Coming back from a schedule the user opened out of "Who's serving".
   useTeamsRestoreOnMount({ onPlansRestore: setPendingPlanRestore });
@@ -447,13 +433,16 @@ const TeamsPlansPage = () => {
     microphoneIds: string[],
   ) => {
     if (!churchId || !row.scheduleId) return;
-    setSavingMicrophoneSlot(teamMicrophoneSlotKey(row));
+    const scheduleId = row.scheduleId;
+    const slotKey = teamEquipmentSlotKey(row);
+    const mutationSeq = ++microphoneMutationSeqRef.current;
+    setSavingMicrophoneSlot(slotKey);
     try {
       // Success feedback is the toolbar Syncing → Synced chip via trackTeamsSave.
-      const result = await trackTeamsSave(
+      const result = await enqueueEquipmentSave(() =>
         updateTeamScheduleAssignmentMicrophones(
           churchId,
-          row.scheduleId,
+          scheduleId,
           {
             serviceId: row.occurrenceId,
             positionSlotKey: row.columnKey,
@@ -465,7 +454,40 @@ const TeamsPlansPage = () => {
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update team microphones.");
     } finally {
-      setSavingMicrophoneSlot(null);
+      if (microphoneMutationSeqRef.current === mutationSeq) {
+        setSavingMicrophoneSlot(null);
+      }
+    }
+  };
+
+  const saveScheduledIems = async (
+    row: TeamsAssignmentSummaryRow,
+    iemIds: string[],
+  ) => {
+    if (!churchId || !row.scheduleId) return;
+    const scheduleId = row.scheduleId;
+    const slotKey = teamEquipmentSlotKey(row);
+    const mutationSeq = ++iemMutationSeqRef.current;
+    setSavingIemSlot(slotKey);
+    try {
+      const result = await enqueueEquipmentSave(() =>
+        updateTeamScheduleAssignmentIems(
+          churchId,
+          scheduleId,
+          {
+            serviceId: row.occurrenceId,
+            positionSlotKey: row.columnKey,
+            iemIds,
+          },
+        ),
+      );
+      upsertData("schedules", "scheduleId", result.schedule);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not update team IEM assignments.");
+    } finally {
+      if (iemMutationSeqRef.current === mutationSeq) {
+        setSavingIemSlot(null);
+      }
     }
   };
 
@@ -492,14 +514,12 @@ const TeamsPlansPage = () => {
     setSelection({ service, occurrence: match });
     // Keep the list behind the editor showing this plan once the user backs out.
     if (date < windowStart) {
-      setWindowStart(date);
-      setRangePreset("custom");
+      setRangeSelection("custom", { start: date, end: windowEnd });
     }
     if (date > windowEnd) {
-      setWindowEnd(date);
-      setRangePreset("custom");
+      setRangeSelection("custom", { start: windowStart, end: date });
     }
-  }, [pendingPlanRestore, pageData.services, windowStart, windowEnd]);
+  }, [pendingPlanRestore, pageData.services, setRangeSelection, windowStart, windowEnd]);
 
   useEffect(() => {
     if (!churchId) {
@@ -538,7 +558,7 @@ const TeamsPlansPage = () => {
     };
     // servicePlansRevision changes when another admin saves/deletes a plan, so
     // the "Add plan"/"Open plan" badges refresh instead of going stale.
-  }, [churchId, servicePlansRevision]);
+  }, [bulkApplyRevision, churchId, servicePlansRevision]);
 
   const activeServices = useMemo(
     () => pageData.services.filter(isActive),
@@ -556,20 +576,13 @@ const TeamsPlansPage = () => {
     writePlansFilterPreferences(churchId, {
       serviceIds: selectedServiceIds,
       organizeMode,
-      rangePreset,
-      ...(rangePreset === "custom"
-        ? { customStartDate: windowStart, customEndDate: windowEnd }
-        : {}),
     });
   }, [
     activeServices,
     churchId,
     filtersHydratedForChurchId,
     organizeMode,
-    rangePreset,
     selectedServiceIds,
-    windowEnd,
-    windowStart,
   ]);
 
   const groups: ServiceGroup[] = useMemo(() => {
@@ -677,6 +690,118 @@ const TeamsPlansPage = () => {
     [chronologicalEntries, planKeysWithPlans],
   );
 
+  const bulkApplyEntries = useMemo(
+    () => groups.flatMap((group) => group.occurrences.map((occurrence) => ({
+      service: group.service,
+      serviceName: group.name,
+      occurrence,
+    }))).filter((entry) =>
+      bulkServiceIds.length > 0 && (
+        entry.occurrence.serviceIds?.some((id) => bulkServiceIds.includes(id)) ||
+        bulkServiceIds.includes(entry.occurrence.serviceId)
+      ),
+    ),
+    [bulkServiceIds, groups],
+  );
+  const bulkTemplate = bulkTemplates.find((template) => template.templateId === bulkTemplateId);
+  const allBulkServicesSelected =
+    activeServices.length > 0 &&
+    activeServices.every((service) => bulkServiceIds.includes(service.serviceId));
+  const bulkPreview = calculateBulkTemplatePreview({
+    entries: bulkApplyEntries.map(({ occurrence }) => ({
+      planKey: getServicePlanKey(occurrence),
+      serviceId: occurrence.serviceId,
+    })),
+    existingPlanKeys: planKeysWithPlans,
+    services: activeServices,
+    useServiceDefaults: bulkUseDefaults,
+    availableTemplateIds: new Set(bulkTemplates.map((template) => template.templateId)),
+    templatesLoaded: bulkTemplatesLoaded,
+  });
+  const bulkApplyEligibleCount = bulkPreview.willCreate;
+  const bulkApplyButtonLabel = (() => {
+    if (bulkApplying) return "Applying…";
+    if (planStatusLoading || (bulkUseDefaults && !bulkTemplatesLoaded)) return "Checking…";
+    return `Apply to ${bulkApplyEligibleCount} dates`;
+  })();
+
+  useEffect(() => {
+    if (!bulkApplyOpen || !churchId) return undefined;
+    let cancelled = false;
+    setBulkTemplatesLoaded(false);
+    listServicePlanTemplates(churchId)
+      .then((response) => {
+        if (!cancelled) {
+          setBulkTemplates(response.templates || []);
+          setBulkTemplatesLoaded(true);
+          setBulkTemplateId((current) => current || response.templates?.[0]?.templateId || "");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setBulkTemplates([]);
+          setBulkTemplatesLoaded(true);
+          showApiErrorToast(showToast, error, "Could not load service plan templates.");
+        }
+      });
+    return () => { cancelled = true; };
+  }, [bulkApplyOpen, churchId, showToast]);
+
+  const openBulkApply = (serviceIds?: string[]) => {
+    const requestedServiceIds = serviceIds ?? (
+      selectedServiceIds.length
+        ? selectedServiceIds
+        : activeServices.map((service) => service.serviceId)
+    );
+    setBulkServiceIds(requestedServiceIds.filter((id) =>
+      activeServices.some((service) => service.serviceId === id),
+    ));
+    setBulkUseDefaults(false);
+    setBulkTemplatesLoaded(false);
+    setBulkApplyOpen(true);
+  };
+
+  const applyBulkTemplate = async () => {
+    if (!churchId || !canEditServices || bulkApplying || planStatusLoading || bulkApplyEligibleCount === 0 || (bulkUseDefaults && !bulkTemplatesLoaded)) return;
+    setBulkApplying(true);
+    try {
+      const activeServiceIds = new Set(activeServices.map((service) => service.serviceId));
+      const targets = bulkApplyEntries
+        .filter((entry) => !planKeysWithPlans.has(getServicePlanKey(entry.occurrence)))
+        .map(({ occurrence }) => {
+          const serviceIds = (occurrence.serviceIds || [occurrence.serviceId])
+            .filter((serviceId) => activeServiceIds.has(serviceId));
+          const serviceId = serviceIds.includes(occurrence.serviceId)
+            ? occurrence.serviceId
+            : serviceIds[0] || occurrence.serviceId;
+          return {
+            serviceId,
+            serviceIds,
+            ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
+            occurrenceId: occurrence.occurrenceId,
+            startsAt: occurrence.startsAt,
+            date: getOccurrenceDate(occurrence),
+          };
+        });
+      const response = await trackTeamsSave(applyServicePlanTemplateBulk(churchId, {
+        ...(bulkUseDefaults ? { useServiceDefaults: true } : { templateId: bulkTemplateId }),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        targets,
+        existingPlanMode: "skip",
+      }));
+      setBulkApplyRevision((revision) => revision + 1);
+      showToast(
+        `Applied templates to ${response.created.length} service ${response.created.length === 1 ? "date" : "dates"}.${response.skippedExisting.length ? ` ${response.skippedExisting.length} existing ${response.skippedExisting.length === 1 ? "plan was" : "plans were"} skipped.` : ""}${response.skippedNoTemplate.length ? ` ${response.skippedNoTemplate.length} without a default template were skipped.` : ""}${response.failed.length ? ` ${response.failed.length} could not be created.` : ""}`,
+        response.failed.length ? "neutral" : "success",
+      );
+      setBulkApplyOpen(false);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not apply the service plan template.");
+    } finally {
+      setBulkApplying(false);
+    }
+  };
+
   const entryByOccurrenceId = useMemo(() => {
     const map = new Map<
       string,
@@ -714,33 +839,6 @@ const TeamsPlansPage = () => {
     return `${selectedServiceIds.length} services selected`;
   }, [selectedServiceIds, serviceFilterOptions]);
 
-  const applyPreset = (preset: Exclude<RangePreset, "custom">) => {
-    const next = rangeFromPreset(preset);
-    setWindowStart(next.start);
-    setWindowEnd(next.end);
-    setRangePreset(preset);
-  };
-
-  const selectRangePreset = (preset: RangePreset) => {
-    if (preset === "custom") {
-      setRangePreset("custom");
-      return;
-    }
-    applyPreset(preset);
-  };
-
-  const setCustomRange = ({
-    startDate,
-    endDate,
-  }: {
-    startDate: string;
-    endDate: string;
-  }) => {
-    setWindowStart(startDate);
-    setWindowEnd(endDate);
-    setRangePreset("custom");
-  };
-
   /**
    * Open the schedule behind this plan, focused on one slot when given. The
    * returnTo lands the user back on this same plan when they're done.
@@ -773,6 +871,44 @@ const TeamsPlansPage = () => {
     },
     [navigate, selection],
   );
+
+  const openGeneratedSchedulePeriod = useCallback(() => {
+    if (!selection) return;
+    const date = getOccurrenceDate(selection.occurrence);
+    const parsedDate = new Date(`${date}T12:00:00`);
+    const startDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth(), 1));
+    const endDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth() + 1, 0));
+    const requirementPositionIds = new Set(
+      selection.occurrence.positionRequirements?.map((requirement) => requirement.positionId) || [],
+    );
+    const relatedTeamIds = pageData.positions
+      .filter((position) => requirementPositionIds.has(position.positionId))
+      .map((position) => position.teamId);
+    const teamId = pageData.teams.find((team) => relatedTeamIds.includes(team.teamId) && isActive(team))?.teamId
+      || pageData.teams.find(isActive)?.teamId;
+    if (!teamId) {
+      showToast("Add a team before opening its schedule.", "neutral");
+      return;
+    }
+    const returnTo = buildPlansReturnTo({
+      serviceId: selection.service.serviceId,
+      occurrenceId: selection.occurrence.occurrenceId,
+      date,
+    });
+    persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
+    navigate(TEAMS_SECTION_PATHS.schedules, {
+      state: buildPlanToScheduleNavigationState({
+        returnTo,
+        restore: {
+          kind: "schedulePeriod",
+          teamId,
+          startDate,
+          endDate,
+          occurrenceId: selection.occurrence.occurrenceId,
+        },
+      }),
+    });
+  }, [navigate, pageData.positions, pageData.teams, selection, showToast]);
 
   /**
    * Previous/next within the current date window. By service stays on that
@@ -875,7 +1011,7 @@ const TeamsPlansPage = () => {
         hydratingScheduleIds.includes(scheduleId))
         ? "loading"
         : "unavailable";
-    const scheduledMicrophoneHolders = getScheduledMicrophoneHolders(
+    const scheduledEquipmentHolders = getScheduledEquipmentHolders(
       assignments,
       pageData.teams,
     );
@@ -893,7 +1029,8 @@ const TeamsPlansPage = () => {
               members={pageData.members}
               positions={pageData.positions}
               teams={pageData.teams}
-              scheduledMicrophoneHolders={scheduledMicrophoneHolders}
+              scheduledEquipmentHolders={scheduledEquipmentHolders}
+              scheduledEquipmentStatus={assignmentsStatus}
               scheduledAssignmentRows={assignments}
               onOpenScheduledAssignment={(row) => {
                 if (!row.scheduleId) return;
@@ -902,16 +1039,19 @@ const TeamsPlansPage = () => {
                   slot: { occurrenceId: row.occurrenceId, columnKey: row.columnKey },
                 });
               }}
-              teamMicrophones={{
+              teamEquipment={{
                 rows: assignments,
                 assignmentsStatus,
-                savingSlot: savingMicrophoneSlot,
-                onChange: (row, microphoneIds) => {
+                savingMicrophoneSlot,
+                savingIemSlot,
+                onMicrophoneChange: (row, microphoneIds) => {
                   void saveScheduledMicrophones(row, microphoneIds);
+                },
+                onIemChange: (row, iemIds) => {
+                  void saveScheduledIems(row, iemIds);
                 },
               }}
               canEdit={canEditPlan}
-              initialEditing
               backLabel="Back to Services"
               onBack={() => {
                 setOpenServingTabOnSelection(false);
@@ -920,14 +1060,26 @@ const TeamsPlansPage = () => {
               planNavigation={planNavigation}
               initialTab={openServingTabOnSelection ? "serving" : "plan"}
               mobileServingContent={
-                <WhosServingPanel
-                  assignmentTeams={assignmentTeams}
-                  onOpenSchedule={openSchedule}
-                  microphones={microphones}
-                  assignmentsStatus={assignmentsStatus}
-                  showHeading={false}
-                  canEdit={canEditPlan}
-                />
+                <div className="flex flex-col gap-3">
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={CalendarDays}
+                      onClick={openGeneratedSchedulePeriod}
+                    >
+                      View schedule
+                    </Button>
+                  </div>
+                  <WhosServingPanel
+                    assignmentTeams={assignmentTeams}
+                    onOpenSchedule={openSchedule}
+                    microphones={microphones}
+                    assignmentsStatus={assignmentsStatus}
+                    showHeading={false}
+                    canEdit={canEditPlan}
+                  />
+                </div>
               }
             />
           </div>
@@ -986,7 +1138,7 @@ const TeamsPlansPage = () => {
     <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <div className="shrink-0 space-y-4">
         <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-md:p-2">
-          <div className="grid items-end gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_auto_minmax(0,1fr)]">
+          <div className="grid items-start gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
             {activeServices.length > 1 ? (
               <div className="min-w-0 max-md:col-span-2">
                 <span className="block p-1 text-sm font-semibold">Service:</span>
@@ -1035,6 +1187,27 @@ const TeamsPlansPage = () => {
               </div>
             ) : null}
 
+            <div className={cn(
+              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 pb-2 pt-1 max-md:col-span-2 max-md:px-2 max-md:pb-1.5 max-md:pt-1",
+              activeServices.length <= 1 && "md:col-span-2",
+            )}>
+              <RangeSelector
+                preset={rangePreset}
+                range={{ start: windowStart, end: windowEnd }}
+                onPresetChange={selectRangePreset}
+                onCustomRangeChange={setCustomRange}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section
+        aria-label="Service results"
+        className="min-w-0 space-y-3"
+      >
+        <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-700/80 bg-gray-950/80 px-3.5 py-3 shadow-sm shadow-black/20">
+          <div className="flex min-w-0 flex-1 flex-wrap items-start gap-3">
             {showOrganizeToggle ? (
               <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5">
                 <span className="px-0.5 text-sm font-semibold">Organize</span>
@@ -1047,372 +1220,398 @@ const TeamsPlansPage = () => {
                 />
               </div>
             ) : null}
+            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+              <Icon svg={CalendarDays} size="sm" className="text-orange-300" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-base font-semibold text-gray-50">
+                {serviceFilterLabel}
+              </h3>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                  {chronologicalEntries.length === 1
+                    ? "1 date"
+                    : `${chronologicalEntries.length} dates`}
+                </span>
+                {planStatusLoading ? (
+                  <span
+                    className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                    aria-hidden
+                  />
+                ) : (
+                  <span
+                    className={cn(
+                      "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                      chronologicalPlannedCount > 0
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                        : "border-gray-700 bg-gray-900/70 text-gray-400",
+                    )}
+                  >
+                    {chronologicalPlannedCount === 0
+                      ? "None planned"
+                      : `${chronologicalPlannedCount} planned`}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
+            {canEditServices &&
+            groups.length > 0 &&
+            visibleGroups.length > 0 &&
+            effectiveOrganizeMode === "byDate" ? (
+              <Button
+                type="button"
+                variant="primary"
+                svg={FilePlus}
+                iconSize="sm"
+                className="shrink-0"
+                onClick={() => openBulkApply()}
+              >
+                Apply template
+              </Button>
+            ) : null}
+          </div>
+        </header>
 
-            <div className={cn(
-              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5",
-              !showOrganizeToggle && "max-md:col-span-2",
-            )}>
-              <div className="flex flex-col gap-1.5">
-                <span className="px-0.5 text-sm font-semibold">Range</span>
-                {isDesktop ? (
-                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Date range presets">
-                    {RANGE_PRESET_OPTIONS.map((option) => (
-                      <Button
-                        key={option.value}
-                        type="button"
-                        variant="tertiary"
-                        isSelected={rangePreset === option.value}
-                        className={cn(
-                          "text-xs",
-                          rangePreset === option.value &&
-                          "border border-cyan-500/50 bg-cyan-950/40 text-cyan-100",
-                        )}
-                        onClick={() => selectRangePreset(option.value)}
-                      >
-                        {option.label}
-                      </Button>
+        <div
+          {...(planStatusLoading
+            ? {
+              role: "status" as const,
+              "aria-busy": true,
+              "aria-label": "Loading plan status",
+            }
+            : {})}
+        >
+        {groups.length === 0 ? (
+          <p className="text-sm text-gray-400">
+            No services occur in this date range. Add a service or widen the range
+            above.
+          </p>
+        ) : visibleGroups.length === 0 ? (
+          <p className="text-sm text-gray-400">
+            No dates for this service in the selected range. Choose another
+            service or widen the range.
+          </p>
+        ) : effectiveOrganizeMode === "byDate" ? (
+          <div
+            className="space-y-4 rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
+          >
+            <div className="space-y-4 bg-black/20 p-3">
+              {chronologicalMonths.map((month) => (
+                <div key={month.key} className="space-y-2">
+                  <div className="flex items-center gap-2 px-0.5">
+                    <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                      {month.label}
+                    </h4>
+                    <div className="h-px flex-1 bg-gray-800" aria-hidden />
+                    <span className="text-[11px] text-gray-500">
+                      {month.occurrences.length}
+                    </span>
+                  </div>
+                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    {month.occurrences.map((occurrence) => {
+                      const entry = entryByOccurrenceId.get(
+                        occurrence.occurrenceId,
+                      );
+                      if (!entry) return null;
+                      const hasPlan =
+                        !planStatusLoading &&
+                        planKeysWithPlans.has(getServicePlanKey(occurrence));
+                      const isPast =
+                        getOccurrenceDate(occurrence) <
+                        formatPlainDate(new Date());
+                      return (
+                        <PlansOccurrenceTile
+                          key={occurrence.occurrenceId}
+                          occurrence={occurrence}
+                          shared={BY_DATE_TILE_SHARED}
+                          serviceName={
+                            selectedServiceIds.length !== 1
+                              ? entry.serviceName
+                              : undefined
+                          }
+                          hasPlan={hasPlan}
+                          isPast={isPast}
+                          isNextUpcoming={
+                            occurrence.occurrenceId === nextUpcomingOccurrenceId
+                          }
+                          planStatusLoading={planStatusLoading}
+                          onOpen={() => {
+                            setOpenServingTabOnSelection(false);
+                            setSelection({
+                              service: entry.service,
+                              occurrence,
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            className={cn(
+              // Top padding leaves room for the absolute "Up next" / "Today" badge so the
+              // Plans scrollport does not clip it (same pattern as schedule board).
+              "grid grid-cols-1 items-start gap-4 pt-3",
+              visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",
+            )}
+          >
+            {visibleGroups.map(({ key, name, service, serviceIds, occurrences }) => {
+              const shared = getSharedOccurrenceTiming(occurrences);
+              const plannedCount = occurrences.filter((occurrence) =>
+                planKeysWithPlans.has(getServicePlanKey(occurrence)),
+              ).length;
+              const months = groupOccurrencesByMonth(occurrences);
+              const timingLabel = serviceTimingLabel(shared);
+              const plannedRatio =
+                occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
+
+              return (
+                <section
+                  key={key}
+                  className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
+                >
+                  <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+                        <Icon
+                          svg={CalendarDays}
+                          size="sm"
+                          className="text-orange-300"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-base font-semibold text-gray-50">
+                          {name}
+                        </h3>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                            {occurrences.length === 1
+                              ? "1 date"
+                              : `${occurrences.length} dates`}
+                          </span>
+                          {planStatusLoading ? (
+                            <span
+                              className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                              aria-hidden
+                            />
+                          ) : (
+                            <span
+                              className={cn(
+                                "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                                plannedCount > 0
+                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                  : "border-gray-700 bg-gray-900/70 text-gray-400",
+                              )}
+                            >
+                              {plannedCount === 0
+                                ? "None planned"
+                                : `${plannedCount} planned`}
+                            </span>
+                          )}
+                          {timingLabel ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
+                              <Icon
+                                svg={Clock}
+                                size="xs"
+                                className="text-amber-300"
+                              />
+                              {timingLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      {canEditServices ? (
+                        <Button
+                          type="button"
+                          variant="primary"
+                          svg={FilePlus}
+                          iconSize="sm"
+                          className="shrink-0 max-md:min-h-0"
+                          onClick={() => openBulkApply(serviceIds)}
+                        >
+                          Apply template
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div
+                      className={cn(
+                        "h-1 overflow-hidden rounded-full bg-gray-800",
+                        planStatusLoading && "animate-pulse",
+                      )}
+                      aria-hidden
+                    >
+                      {planStatusLoading ? (
+                        <div className="h-full w-2/5 rounded-full bg-white/10" />
+                      ) : (
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-[width]",
+                            plannedCount > 0
+                              ? "bg-emerald-400/80"
+                              : "bg-transparent",
+                          )}
+                          style={{
+                            width: `${Math.round(plannedRatio * 100)}%`,
+                          }}
+                        />
+                      )}
+                    </div>
+                  </header>
+
+                  <div className="space-y-4 bg-black/20 p-3">
+                    {months.map((month) => (
+                      <div key={month.key} className="space-y-2">
+                        <div className="flex items-center gap-2 px-0.5">
+                          <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                            {month.label}
+                          </h4>
+                          <div className="h-px flex-1 bg-gray-800" aria-hidden />
+                          <span className="text-[11px] text-gray-500">
+                            {month.occurrences.length}
+                          </span>
+                        </div>
+                        <ul
+                          className={cn(
+                            "grid grid-cols-2 gap-2 sm:grid-cols-3",
+                            visibleGroups.length > 1
+                              ? "xl:grid-cols-2 2xl:grid-cols-3"
+                              : "lg:grid-cols-4 xl:grid-cols-5",
+                          )}
+                        >
+                          {month.occurrences.map((occurrence) => {
+                            const hasPlan =
+                              !planStatusLoading &&
+                              planKeysWithPlans.has(
+                                getServicePlanKey(occurrence),
+                              );
+                            const isPast =
+                              getOccurrenceDate(occurrence) <
+                              formatPlainDate(new Date());
+                            return (
+                              <PlansOccurrenceTile
+                                key={occurrence.occurrenceId}
+                                occurrence={occurrence}
+                                shared={shared}
+                                hasPlan={hasPlan}
+                                isPast={isPast}
+                                isNextUpcoming={
+                                  occurrence.occurrenceId ===
+                                  nextUpcomingOccurrenceId
+                                }
+                                planStatusLoading={planStatusLoading}
+                                onOpen={() => {
+                                  setOpenServingTabOnSelection(false);
+                                  setSelection({ service, occurrence });
+                                }}
+                              />
+                            );
+                          })}
+                        </ul>
+                      </div>
                     ))}
                   </div>
-                ) : (
-                  <Popover open={rangePopoverOpen} onOpenChange={setRangePopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        aria-label="Date range"
-                        aria-haspopup="dialog"
-                        className="w-full justify-between bg-gray-800/80 text-left text-xs max-md:min-h-0 max-md:px-2 max-md:py-1"
-                      >
-                        <span>{RANGE_PRESET_OPTIONS.find((option) => option.value === rangePreset)?.label}</span>
-                        <ChevronDown className="size-4 text-gray-300" aria-hidden />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="start" className="w-56 border-gray-700 bg-gray-900 p-1.5 text-gray-100">
-                      <div className="flex flex-col gap-1" role="group" aria-label="Date range presets">
-                        {RANGE_PRESET_OPTIONS.map((option) => (
-                          <Button
-                            key={option.value}
-                            type="button"
-                            variant="tertiary"
-                            isSelected={rangePreset === option.value}
-                            className={cn(
-                              "w-full text-left text-sm max-md:min-h-0 max-md:px-2 max-md:py-1.5",
-                              rangePreset === option.value && "bg-cyan-950/40 text-cyan-100",
-                            )}
-                            onClick={() => {
-                              selectRangePreset(option.value);
-                              setRangePopoverOpen(false);
-                            }}
-                          >
-                            {option.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+                </section>
+              );
+            })}
+          </div>
+        )}
+        </div>
+      </section>
+      <Modal
+        isOpen={bulkApplyOpen}
+        onClose={() => { if (!bulkApplying) setBulkApplyOpen(false); }}
+        title="Apply plan templates"
+        description="Apply a template to empty service plans in the selected date range. Existing plans are skipped."
+        size="lg"
+      >
+        <div className="space-y-4">
+          <Checkbox
+            label="Apply each service's default template"
+            checked={bulkUseDefaults}
+            onCheckedChange={() => setBulkUseDefaults((current) => !current)}
+          />
+          {!bulkUseDefaults ? (
+            <Select
+              label="Template"
+              labelClassName="text-gray-100"
+              value={bulkTemplateId}
+              options={bulkTemplates.map((template) => ({ label: template.name, value: template.templateId }))}
+              onChange={setBulkTemplateId}
+            />
+          ) : null}
+          <fieldset className="space-y-1">
+            <legend className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold text-gray-100">
+              <span>Services</span>
+              <SelectAllButton
+                allSelected={allBulkServicesSelected}
+                selectLabel="Select all"
+                clearLabel="Deselect all"
+                disabled={bulkApplying || activeServices.length === 0}
+                onClick={() => setBulkServiceIds(
+                  allBulkServicesSelected
+                    ? []
+                    : activeServices.map((service) => service.serviceId),
                 )}
-                <p className="px-0.5 text-xs text-gray-400">
-                  {formatRangeDate(windowStart)} – {formatRangeDate(windowEnd)}
-                </p>
-                {rangePreset === "custom" ? (
-                  <DateRangePicker
-                    label="Date range"
-                    hideLabel
-                    value={{ startDate: windowStart, endDate: windowEnd }}
-                    onChange={setCustomRange}
-                    className="w-full max-w-xs"
-                    inputClassName="py-1 text-xs"
-                  />
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {groups.length === 0 ? (
-        <p className="text-sm text-gray-400">
-          No services occur in this date range. Add a service or widen the range
-          above.
-        </p>
-      ) : visibleGroups.length === 0 ? (
-        <p className="text-sm text-gray-400">
-          No dates for this service in the selected range. Choose another
-          service or widen the range.
-        </p>
-      ) : effectiveOrganizeMode === "byDate" ? (
-        <div
-          className="space-y-4 rounded-xl border border-gray-700/80 bg-gray-950/80 pt-3 shadow-sm shadow-black/20"
-          {...(planStatusLoading
-            ? {
-              role: "status" as const,
-              "aria-busy": true,
-              "aria-label": "Loading plan status",
-            }
-            : {})}
-        >
-          <header className="space-y-3 border-b border-gray-800 px-3.5 pb-3">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
-                <Icon
-                  svg={CalendarDays}
-                  size="sm"
-                  className="text-orange-300"
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-base font-semibold text-gray-50">
-                  {serviceFilterLabel}
-                </h3>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                    {chronologicalEntries.length === 1
-                      ? "1 date"
-                      : `${chronologicalEntries.length} dates`}
-                  </span>
-                  {planStatusLoading ? (
-                    <span
-                      className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
-                      aria-hidden
-                    />
-                  ) : (
-                    <span
-                      className={cn(
-                        "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                        chronologicalPlannedCount > 0
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                          : "border-gray-700 bg-gray-900/70 text-gray-400",
-                      )}
-                    >
-                      {chronologicalPlannedCount === 0
-                        ? "None planned"
-                        : `${chronologicalPlannedCount} planned`}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </header>
-
-          <div className="space-y-4 bg-black/20 p-3">
-            {chronologicalMonths.map((month) => (
-              <div key={month.key} className="space-y-2">
-                <div className="flex items-center gap-2 px-0.5">
-                  <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
-                    {month.label}
-                  </h4>
-                  <div className="h-px flex-1 bg-gray-800" aria-hidden />
-                  <span className="text-[11px] text-gray-500">
-                    {month.occurrences.length}
-                  </span>
-                </div>
-                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                  {month.occurrences.map((occurrence) => {
-                    const entry = entryByOccurrenceId.get(
-                      occurrence.occurrenceId,
-                    );
-                    if (!entry) return null;
-                    const hasPlan =
-                      !planStatusLoading &&
-                      planKeysWithPlans.has(getServicePlanKey(occurrence));
-                    const isPast =
-                      getOccurrenceDate(occurrence) <
-                      formatPlainDate(new Date());
-                    return (
-                      <PlansOccurrenceTile
-                        key={occurrence.occurrenceId}
-                        occurrence={occurrence}
-                        shared={BY_DATE_TILE_SHARED}
-                        serviceName={
-                          selectedServiceIds.length !== 1
-                            ? entry.serviceName
-                            : undefined
-                        }
-                        hasPlan={hasPlan}
-                        isPast={isPast}
-                        isNextUpcoming={
-                          occurrence.occurrenceId === nextUpcomingOccurrenceId
-                        }
-                        planStatusLoading={planStatusLoading}
-                        onOpen={() => {
-                          setOpenServingTabOnSelection(false);
-                          setSelection({
-                            service: entry.service,
-                            occurrence,
-                          });
-                        }}
-                      />
-                    );
-                  })}
-                </ul>
-              </div>
+              />
+            </legend>
+            {activeServices.map((service) => (
+              <Checkbox
+                key={service.serviceId}
+                label={service.name}
+                checked={bulkServiceIds.includes(service.serviceId)}
+                onCheckedChange={() => setBulkServiceIds((current) =>
+                  current.includes(service.serviceId)
+                    ? current.filter((id) => id !== service.serviceId)
+                    : [...current, service.serviceId],
+                )}
+              />
             ))}
+          </fieldset>
+          <section className="rounded-md border border-gray-700 bg-gray-950/60 p-3" aria-live="polite">
+            <p className="font-medium text-white">
+              {bulkUseDefaults ? "Each service’s default template" : bulkTemplate?.name || "Choose a template"}
+            </p>
+            <p className="mt-1 text-sm text-gray-300">
+              {bulkServiceIds.length
+                ? activeServices.filter((service) => bulkServiceIds.includes(service.serviceId)).map((service) => service.name).join(", ")
+                : "No services selected"}
+              {" · "}{formatResolvedDateRange({ start: windowStart, end: windowEnd })}
+            </p>
+            <p className="mt-2 text-sm text-gray-200">
+              {planStatusLoading
+                ? "Checking saved plans…"
+                : `${bulkPreview.total} service ${bulkPreview.total === 1 ? "date" : "dates"}; ${bulkPreview.existing} already have plans.`}
+            </p>
+            {bulkUseDefaults ? (
+              <p className="mt-1 text-sm text-gray-400">
+                {bulkTemplatesLoaded
+                  ? `${bulkPreview.noDefault + bulkPreview.unavailableDefault} have no available default template; ${bulkApplyEligibleCount} will be created.`
+                  : "Checking service defaults…"}
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-gray-400">
+                {bulkApplyEligibleCount} empty {bulkApplyEligibleCount === 1 ? "plan" : "plans"} will be created.
+              </p>
+            )}
+          </section>
+          <div className="flex justify-end gap-2">
+            <Button variant="tertiary" disabled={bulkApplying} onClick={() => setBulkApplyOpen(false)}>Cancel</Button>
+            <Button
+              variant="cta"
+              disabled={bulkApplying || planStatusLoading || !bulkServiceIds.length || (!bulkUseDefaults && !bulkTemplateId) || (bulkUseDefaults && !bulkTemplatesLoaded) || bulkApplyEligibleCount === 0}
+              onClick={() => void applyBulkTemplate()}
+            >
+              {bulkApplyButtonLabel}
+            </Button>
           </div>
         </div>
-      ) : (
-        <div
-          className={cn(
-            // Top padding leaves room for the absolute "Up next" / "Today" badge so the
-            // Plans scrollport does not clip it (same pattern as schedule board).
-            "grid grid-cols-1 items-start gap-4 pt-3",
-            visibleGroups.length > 1 && "xl:grid-cols-2 2xl:grid-cols-3",
-          )}
-          {...(planStatusLoading
-            ? {
-              role: "status" as const,
-              "aria-busy": true,
-              "aria-label": "Loading plan status",
-            }
-            : {})}
-        >
-          {visibleGroups.map(({ key, name, service, occurrences }) => {
-            const shared = getSharedOccurrenceTiming(occurrences);
-            const plannedCount = occurrences.filter((occurrence) =>
-              planKeysWithPlans.has(getServicePlanKey(occurrence)),
-            ).length;
-            const months = groupOccurrencesByMonth(occurrences);
-            const timingLabel = serviceTimingLabel(shared);
-            const plannedRatio =
-              occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
-
-            return (
-              <section
-                key={key}
-                className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
-              >
-                <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
-                      <Icon
-                        svg={CalendarDays}
-                        size="sm"
-                        className="text-orange-300"
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate text-base font-semibold text-gray-50">
-                        {name}
-                      </h3>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                          {occurrences.length === 1
-                            ? "1 date"
-                            : `${occurrences.length} dates`}
-                        </span>
-                        {planStatusLoading ? (
-                          <span
-                            className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
-                            aria-hidden
-                          />
-                        ) : (
-                          <span
-                            className={cn(
-                              "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                              plannedCount > 0
-                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                                : "border-gray-700 bg-gray-900/70 text-gray-400",
-                            )}
-                          >
-                            {plannedCount === 0
-                              ? "None planned"
-                              : `${plannedCount} planned`}
-                          </span>
-                        )}
-                        {timingLabel ? (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
-                            <Icon
-                              svg={Clock}
-                              size="xs"
-                              className="text-amber-300"
-                            />
-                            {timingLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    className={cn(
-                      "h-1 overflow-hidden rounded-full bg-gray-800",
-                      planStatusLoading && "animate-pulse",
-                    )}
-                    aria-hidden
-                  >
-                    {planStatusLoading ? (
-                      <div className="h-full w-2/5 rounded-full bg-white/10" />
-                    ) : (
-                      <div
-                        className={cn(
-                          "h-full rounded-full transition-[width]",
-                          plannedCount > 0
-                            ? "bg-emerald-400/80"
-                            : "bg-transparent",
-                        )}
-                        style={{
-                          width: `${Math.round(plannedRatio * 100)}%`,
-                        }}
-                      />
-                    )}
-                  </div>
-                </header>
-
-                <div className="space-y-4 bg-black/20 p-3">
-                  {months.map((month) => (
-                    <div key={month.key} className="space-y-2">
-                      <div className="flex items-center gap-2 px-0.5">
-                        <h4 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
-                          {month.label}
-                        </h4>
-                        <div className="h-px flex-1 bg-gray-800" aria-hidden />
-                        <span className="text-[11px] text-gray-500">
-                          {month.occurrences.length}
-                        </span>
-                      </div>
-                      <ul
-                        className={cn(
-                          "grid grid-cols-2 gap-2 sm:grid-cols-3",
-                          visibleGroups.length > 1
-                            ? "xl:grid-cols-2 2xl:grid-cols-3"
-                            : "lg:grid-cols-4 xl:grid-cols-5",
-                        )}
-                      >
-                        {month.occurrences.map((occurrence) => {
-                          const hasPlan =
-                            !planStatusLoading &&
-                            planKeysWithPlans.has(
-                              getServicePlanKey(occurrence),
-                            );
-                          const isPast =
-                            getOccurrenceDate(occurrence) <
-                            formatPlainDate(new Date());
-                          return (
-                            <PlansOccurrenceTile
-                              key={occurrence.occurrenceId}
-                              occurrence={occurrence}
-                              shared={shared}
-                              hasPlan={hasPlan}
-                              isPast={isPast}
-                              isNextUpcoming={
-                                occurrence.occurrenceId ===
-                                nextUpcomingOccurrenceId
-                              }
-                              planStatusLoading={planStatusLoading}
-                              onOpen={() => {
-                                setOpenServingTabOnSelection(false);
-                                setSelection({ service, occurrence });
-                              }}
-                            />
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      )}
+      </Modal>
     </div>
   );
 };

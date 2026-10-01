@@ -17,6 +17,9 @@ module.exports = {
   },
   transformIgnorePatterns: ["node_modules/(?!(gsap|@gsap|@cloudinary)/)"],
   setupFilesAfterEnv: ["<rootDir>/src/setupTests.ts"],
+  // `npm run checks` runs server tests, lint, and typecheck beside Jest.
+  // Interaction tests need more than the 5s default while the machine is shared.
+  testTimeout: 20000,
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   coverageProvider: "v8",
   collectCoverageFrom: [

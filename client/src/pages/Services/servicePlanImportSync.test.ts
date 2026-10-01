@@ -39,6 +39,26 @@ const section = (
 ): ServicePlanSection => ({ id, name, elements, sourcePlanningManaged });
 
 describe("getNewServicePlanImportAmbiguityIds", () => {
+  it("does not queue an empty-title-only ambiguity", () => {
+    const informational = {
+      source: "servicePlanning" as const,
+      sourceKey: "Worship:0",
+      sourceElementType: "Special Feature",
+      sourceTitle: "",
+      sourceLedBy: "",
+      parts: [],
+      reasons: ["The source title is empty."],
+      status: "unresolved" as const,
+      sourceFingerprint: "empty-title",
+    };
+    const current = [section("s1", "Worship", [element("e1", "Untitled", { importAmbiguity: informational })])];
+    const next = [section("s1", "Worship", [element("e1", "Untitled", {
+      importAmbiguity: { ...informational, status: "confirmed" },
+    })])];
+
+    expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual([]);
+  });
+
   it("does not repeat an unchanged review after source rows move", () => {
     const current = [section("section", "Worship", [element("same-id", "Skit", {
       importAmbiguity: {
@@ -170,6 +190,211 @@ describe("getNewServicePlanImportAmbiguityIds", () => {
     })])];
 
     expect(getNewServicePlanImportAmbiguityIds(current, next)).toEqual([]);
+  });
+});
+
+describe("ambiguity reassignment and assignee equipment", () => {
+  it("moves a source-managed person out of assignees without deleting their IEM", () => {
+    const before = element("row", "Reading", {
+      assignees: [{ id: "source-person", name: "Jamie", iemIds: ["iem-1"] }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading Jamie", sourceLedBy: "",
+        parts: [{
+          kind: "person", value: "Jamie", destination: "assignee", sourceField: "title",
+          managed: { kind: "assignee", id: "source-person", fingerprint: JSON.stringify({ name: "Jamie" }) },
+        }],
+        reasons: [], status: "confirmed", sourceFingerprint: "source-person",
+      },
+    });
+    const reviewed = applyReviewedServicePlanParts(before, [
+      { ...before.importAmbiguity!.parts[0], destination: "unassigned" },
+    ]);
+    expect(reviewed.element.assignees).toEqual([{ id: "source-person", iemIds: ["iem-1"] }]);
+  });
+});
+
+describe("stable external row identity", () => {
+  it("keeps local notes, equipment, and review state with duplicate rows through insertion and reorder", () => {
+    const build = (rows: Array<{ sourceOccurrenceId: string; title: string }>) => buildServicePlanSectionsFromImport({
+      planLabel: "Sunday worship",
+      sections: [{ sectionName: "Worship", rows: rows.map((row) => ({ elementType: "Moment", ...row, ledBy: "" })) }],
+      teamAssignments: [],
+    }, []);
+    const parsed = build([
+      { sourceOccurrenceId: "prayer-1", title: "Prayer" },
+      { sourceOccurrenceId: "prayer-2", title: "Prayer" },
+      { sourceOccurrenceId: "music-1", title: "Special Music" },
+      { sourceOccurrenceId: "music-2", title: "Special Music" },
+    ]);
+    const current = [section("section", "Worship", parsed[0].elements.map((item) => ({
+      ...item,
+      notes: plainTextToRichText(`Local note ${item.sourceOccurrenceId}`),
+      assignees: [{ id: `slot-${item.sourceOccurrenceId}`, iemIds: [`iem-${item.sourceOccurrenceId}`], microphoneIds: [`mic-${item.sourceOccurrenceId}`] }],
+      importAmbiguity: {
+        source: "servicePlanning" as const,
+        sourceKey: item.sourceOccurrenceId!,
+        sourceElementType: "Moment",
+        sourceTitle: "same source title",
+        sourceLedBy: "",
+        parts: [{ kind: "description" as const, value: `review-${item.sourceOccurrenceId}`, destination: "notes" as const }],
+        reasons: [],
+        status: "confirmed" as const,
+        sourceFingerprint: item.sourceOccurrenceId!,
+      },
+    })) )];
+    const incoming = build([
+      { sourceOccurrenceId: "new-prayer", title: "Prayer" },
+      { sourceOccurrenceId: "music-2", title: "Special Music" },
+      { sourceOccurrenceId: "prayer-2", title: "Prayer" },
+      { sourceOccurrenceId: "music-1", title: "Special Music" },
+      { sourceOccurrenceId: "prayer-1", title: "Prayer" },
+    ]);
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const originalRows = refreshed[0].elements.filter((item) => item.sourceOccurrenceId !== "new-prayer");
+
+    expect(originalRows.map((item) => item.sourceOccurrenceId)).toEqual(["prayer-1", "prayer-2", "music-1", "music-2"]);
+    originalRows.forEach((item) => {
+      expect(richTextToPlainText(item.notes)).toBe(`Local note ${item.sourceOccurrenceId}`);
+      expect(item.assignees?.[0]).toMatchObject({
+        microphoneIds: [`mic-${item.sourceOccurrenceId}`],
+        iemIds: [`iem-${item.sourceOccurrenceId}`],
+      });
+      expect(item.importAmbiguity?.sourceKey).toBe(item.sourceOccurrenceId);
+    });
+    const saved = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(saved, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated).toEqual(saved);
+  });
+
+  it.each([false, true])("moves a source row across sections and keeps its local state (removeMissing=%s)", (removeMissing) => {
+    const ambiguity = {
+      source: "servicePlanning" as const,
+      sourceKey: "pc-123",
+      sourceElementType: "Moment",
+      sourceTitle: "Prayer",
+      sourceLedBy: "Jamie Lee",
+      parts: [{ kind: "person" as const, value: "Jamie Lee", destination: "assignee" as const }],
+      reasons: ["Review the imported assignment."],
+      status: "confirmed" as const,
+      sourceFingerprint: "reviewed-prayer",
+    };
+    const existing = element("worshipsync-prayer-id", "Prayer", {
+      sourceOccurrenceId: "pc-123",
+      sourcePlanningManaged: true,
+      sourceElementTypeRaw: "Moment",
+      sourceContentTitleRaw: "Prayer",
+      sourceLedByRaw: "Jamie Lee",
+      notes: plainTextToRichText("Local note"),
+      teamNotes: [{ id: "team-note", scope: "role", positionId: "worship-lead", label: "Worship · Lead", note: plainTextToRichText("Local team note") }],
+      assignees: [{ id: "jamie-slot", name: "Jamie Lee", memberId: "member-jamie", microphoneIds: ["mic-orange"], iemIds: ["iem-one"] }],
+      servicePlanningImport: {
+        observed: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+        applied: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+        pendingFields: [],
+        managedAssignees: [{ id: "jamie-slot", fields: ["ledBy"], ledByIdentity: "jamie-source-id", fingerprint: JSON.stringify({ name: "Jamie Lee" }) }],
+      },
+      importAmbiguity: ambiguity,
+      pushedOutlineListId: "outline-list",
+      pushedOutlineListIds: ["outline-list", "outline-prayer"],
+    });
+    const current = [
+      section("opening", "Opening", [existing]),
+      section("worship", "Worship", [element("song", "Song", { sourcePlanningManaged: true })]),
+    ];
+    const incoming = [
+      section("incoming-opening", "Opening", []),
+      section("incoming-worship", "Worship", [
+        element("new-prayer-id", "Prayer", {
+          sourceOccurrenceId: "pc-123",
+          sourcePlanningManaged: true,
+          sourceElementTypeRaw: "Moment",
+          sourceContentTitleRaw: "Prayer",
+          sourceLedByRaw: "Jamie Lee",
+          assignees: [{ id: "imported-jamie", name: "Jamie Lee" }],
+          servicePlanningImport: {
+            observed: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+            applied: { elementType: "Moment", title: "Prayer", ledBy: "Jamie Lee", note: "" },
+            pendingFields: [],
+            managedAssignees: [{ id: "imported-jamie", fields: ["ledBy"], ledByIdentity: "jamie-source-id", fingerprint: JSON.stringify({ name: "Jamie Lee" }) }],
+          },
+        }),
+        element("incoming-song", "Song", { sourcePlanningManaged: true }),
+      ]),
+    ];
+    const options = { ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS, removeMissing };
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, options);
+    const oldSection = refreshed.find((candidate) => candidate.name === "Opening");
+    const newSection = refreshed.find((candidate) => candidate.name === "Worship");
+    const moved = newSection?.elements.filter((candidate) => candidate.sourceOccurrenceId === "pc-123") || [];
+
+    expect(oldSection?.elements.some((candidate) => candidate.sourceOccurrenceId === "pc-123")).toBeFalsy();
+    expect(moved).toHaveLength(1);
+    expect(moved[0]).toMatchObject({
+      id: "worshipsync-prayer-id",
+      sourceOccurrenceId: "pc-123",
+      pushedOutlineListId: "outline-list",
+      pushedOutlineListIds: ["outline-list", "outline-prayer"],
+      importAmbiguity: ambiguity,
+    });
+    expect(richTextToPlainText(moved[0].notes)).toBe("Local note");
+    expect(richTextToPlainText(moved[0].teamNotes?.[0].note)).toBe("Local team note");
+    expect(moved[0].assignees?.[0]).toMatchObject({
+      memberId: "member-jamie",
+      microphoneIds: ["mic-orange"],
+      iemIds: ["iem-one"],
+    });
+
+    const reloaded = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    expect(refreshServicePlanFromImport(reloaded, incoming, options)).toEqual(reloaded);
+  });
+
+  it("keeps duplicate-title moved rows attached to their own durable identities", () => {
+    const current = [
+      section("a", "Section A", [
+        element("prayer-one", "Prayer", { sourceOccurrenceId: "pc-prayer-1", sourcePlanningManaged: true, notes: plainTextToRichText("one") }),
+        element("prayer-two", "Prayer", { sourceOccurrenceId: "pc-prayer-2", sourcePlanningManaged: true, notes: plainTextToRichText("two") }),
+        element("local-prayer", "Prayer", { notes: plainTextToRichText("operator row") }),
+      ]),
+      section("b", "Section B", []),
+    ];
+    const incoming = [
+      section("new-a", "Section A", []),
+      section("new-b", "Section B", [
+        element("new-two", "Prayer", { sourceOccurrenceId: "pc-prayer-2", sourcePlanningManaged: true }),
+        element("new-one", "Prayer", { sourceOccurrenceId: "pc-prayer-1", sourcePlanningManaged: true }),
+      ]),
+    ];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const movedRows = refreshed.find((candidate) => candidate.name === "Section B")?.elements || [];
+
+    expect(movedRows.map(({ id, sourceOccurrenceId }) => [id, sourceOccurrenceId])).toEqual([
+      ["prayer-two", "pc-prayer-2"],
+      ["prayer-one", "pc-prayer-1"],
+    ]);
+    expect(movedRows.map((candidate) => richTextToPlainText(candidate.notes))).toEqual(["two", "one"]);
+    expect(refreshed.flatMap((candidate) => candidate.elements).find(({ id }) => id === "local-prayer")).toBeDefined();
+  });
+
+  it("fails safe when Planning Center returns duplicate occurrence IDs", () => {
+    const current = [section("a", "Section A", [
+      element("original", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true, notes: plainTextToRichText("Keep local state") }),
+    ])];
+    const incoming = [section("b", "Section B", [
+      element("incoming-one", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true }),
+      element("incoming-two", "Prayer", { sourceOccurrenceId: "duplicate-id", sourcePlanningManaged: true }),
+    ])];
+
+    const refreshed = refreshServicePlanFromImport(current, incoming, {
+      ...DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+      removeMissing: true,
+    });
+
+    expect(refreshed.flatMap((candidate) => candidate.elements)).toEqual(current.flatMap((candidate) => candidate.elements));
+    expect(richTextToPlainText(refreshed[0].elements[0].notes)).toBe("Keep local state");
   });
 });
 
@@ -525,7 +750,7 @@ describe("remaining Service Planning import reconciliation defects", () => {
 
     const expectedResources = nextDestination === "resource"
       ? [manualResource, expect.objectContaining({ url: "https://example.org/service" })]
-      : [manualResource, expect.objectContaining({ title: "Imported description" })];
+      : [manualResource, expect.objectContaining({ title: nextValue })];
     expect(applied.resources).toContainEqual(manualResource);
     expect(applied.importAmbiguity?.parts[0].managed).toBeDefined();
     expect(applied.resources).toEqual(expectedResources);
@@ -2014,8 +2239,382 @@ describe("refresh source snapshots and field selections", () => {
 });
 
 describe("refreshing reviewed source-owned occurrences", () => {
+  const managedAssigneeElement = (
+    people: Array<{ id: string; name: string; sourceId: string; memberId?: string; microphoneIds?: string[]; iemIds?: string[] }>,
+    ledBy: string,
+  ) => element("source-row", "Prayer", {
+    sourcePlanningManaged: true,
+    sourceElementTypeRaw: "Prayer",
+    sourceLedByRaw: ledBy,
+    assignees: people.map(({ sourceId, ...person }) => person),
+    servicePlanningImport: {
+      observed: { elementType: "Prayer", title: "Prayer", ledBy, note: "" },
+      applied: { elementType: "Prayer", title: "Prayer", ledBy, note: "" },
+      pendingFields: [],
+      managedAssignees: people.map(({ id, name, sourceId }) => ({
+        id,
+        fields: ["ledBy" as const],
+        ledByIdentity: sourceId,
+        fingerprint: JSON.stringify({ name }),
+      })),
+    },
+  });
+
+  const managedRefresh = (currentElement: ServicePlanElement, importedElement: ServicePlanElement) =>
+    refreshServicePlanFromImport(
+      [section("section", "Worship", [currentElement])],
+      [section("section", "Worship", [importedElement])],
+      DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS,
+    );
+
+  const importedDescription = (title: string) => buildServicePlanSectionsFromImport({
+    planLabel: "Sunday",
+    sections: [{ sectionName: "Special", rows: [{ elementType: "Special Feature", title, ledBy: "" }] }],
+    teamAssignments: [],
+  }, [], { classifyExternalTitle: true });
+
+  it("reconciles a meaningful-title imported text resource on accepted source refresh", () => {
+    const [oldImport] = importedDescription("Skit/Mime – Pathfinder Pledge");
+    const [newImport] = importedDescription("Skit/Mime – Walking With Jesus");
+    const oldResource = oldImport.elements[0].resources![0];
+    const current = element("source-row", "Special Feature", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Skit/Mime – Pathfinder Pledge",
+      resources: [oldResource],
+      importAmbiguity: oldImport.elements[0].importAmbiguity,
+      servicePlanningImport: {
+        observed: { elementType: "Special Feature", title: "Skit/Mime – Pathfinder Pledge", ledBy: "", note: "" },
+        applied: { elementType: "Special Feature", title: "Skit/Mime – Pathfinder Pledge", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+    });
+    const refreshed = managedRefresh(current, newImport.elements[0])[0].elements[0];
+
+    expect(refreshed.resources).toHaveLength(1);
+    expect(refreshed.resources![0]).toMatchObject({ title: "Skit/Mime – Walking With Jesus", type: "text" });
+    expect(richTextToPlainText(refreshed.resources![0].data!.text as never)).toBe("Skit/Mime – Walking With Jesus");
+    expect(refreshed.importAmbiguity?.parts[0].managed).toMatchObject({
+      kind: "resource",
+      id: refreshed.resources![0].id,
+      fingerprint: servicePlanResourceFingerprint(refreshed.resources![0]),
+    });
+  });
+
+  it("keeps imported text titles stable across serialize and repeated import", () => {
+    const [fresh] = importedDescription("Skit/Mime – Walking With Jesus");
+    const imported = [section("section", "Worship", [fresh.elements[0]])];
+    const firstRefresh = refreshServicePlanFromImport(imported, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const serialized = JSON.parse(JSON.stringify(firstRefresh)) as ServicePlanSection[];
+    const repeatedRefresh = refreshServicePlanFromImport(serialized, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(serialized[0].elements[0].resources?.[0].title).toBe("Skit/Mime – Walking With Jesus");
+    expect(repeatedRefresh).toEqual(serialized);
+  });
+
+  it("upgrades a legacy placeholder only when its saved managed provenance matches", () => {
+    const [incoming] = importedDescription("Walking With Jesus");
+    const legacyResource = { ...createServicePlanTextResource({
+      title: "Imported description",
+      text: plainTextToRichText("Walking With Jesus"),
+    }), id: "legacy-imported-description" };
+    const current = element("source-row", "Special Feature", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Walking With Jesus",
+      resources: [legacyResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special Feature",
+        sourceTitle: "Walking With Jesus", sourceLedBy: "", parts: [{
+          kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title",
+          managed: { kind: "resource", id: legacyResource.id, fingerprint: servicePlanResourceFingerprint(legacyResource) },
+        }], reasons: [], status: "confirmed", sourceFingerprint: "legacy-description",
+      },
+      servicePlanningImport: {
+        observed: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        applied: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+    });
+    const refreshed = managedRefresh(current, incoming.elements[0]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+
+    expect(serialized[0].elements[0].resources![0]).toMatchObject({ id: legacyResource.id, title: "Walking With Jesus" });
+    expect(serialized[0].elements[0].importAmbiguity?.parts[0].managed?.fingerprint)
+      .toBe(servicePlanResourceFingerprint(serialized[0].elements[0].resources![0]));
+    expect(refreshServicePlanFromImport(serialized, [section("section", "Worship", [incoming.elements[0]])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS)).toEqual(serialized);
+  });
+
+  it("does not claim or rename an operator resource with matching imported text", () => {
+    const [incoming] = importedDescription("Walking With Jesus");
+    const operatorResource = createServicePlanTextResource({
+      title: "Operator attachment",
+      text: plainTextToRichText("Walking With Jesus"),
+    });
+    const current = element("source-row", "Special Feature", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: "Walking With Jesus",
+      resources: [operatorResource],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Special:0", sourceElementType: "Special Feature",
+        sourceTitle: "Walking With Jesus", sourceLedBy: "", parts: [{
+          kind: "description", value: "Walking With Jesus", destination: "content", sourceField: "title",
+        }], reasons: [], status: "confirmed", sourceFingerprint: "legacy-with-operator-resource",
+      },
+      servicePlanningImport: {
+        observed: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        applied: { elementType: "Special Feature", title: "Walking With Jesus", ledBy: "", note: "" },
+        pendingFields: [],
+      },
+    });
+
+    const refreshed = managedRefresh(current, incoming.elements[0])[0].elements[0];
+    expect(refreshed.resources).toEqual([operatorResource]);
+    expect(refreshed.importAmbiguity?.parts[0].managed).toBeUndefined();
+  });
+
+  it.each([
+    ["IEM only", { iemIds: ["iem-2"] }],
+    ["microphone and IEM", { microphoneIds: ["mic-1"], iemIds: ["iem-2"] }],
+  ])("preserves %s when an imported Led By person is renamed", (_label, equipment) => {
+    const current = managedAssigneeElement([{ id: "managed", name: "Jamie", sourceId: "person-1", ...equipment }], "Jamie");
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Jamey", sourceId: "person-1" }], "Jamey");
+    const refreshed = managedRefresh(current, incoming);
+    expect(refreshed[0].elements[0].assignees).toEqual([{ id: "managed", name: "Jamey", ...equipment }]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(serialized, [section("section", "Worship", [incoming])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated).toEqual(serialized);
+  });
+
+  it.each([
+    ["IEM-only", { iemIds: ["iem-1"] }],
+    ["microphone and IEM", { microphoneIds: ["mic-1"], iemIds: ["iem-1"] }],
+  ])("leaves a removed imported person as an unassigned %s equipment slot", (_label, equipment) => {
+    const current = managedAssigneeElement([{ id: "managed", name: "Jamie", sourceId: "person-1", ...equipment }], "Jamie");
+    const removed = managedAssigneeElement([], "");
+    const refreshed = managedRefresh(current, removed);
+    expect(refreshed[0].elements[0].assignees).toEqual([{ id: "managed", ...equipment }]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    const repeated = refreshServicePlanFromImport(serialized, [section("section", "Worship", [removed])], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(repeated).toEqual(serialized);
+  });
+
+  it("keeps equipment attached to the stable person identity when imported people reorder", () => {
+    const current = managedAssigneeElement([
+      { id: "one", name: "Jamie", sourceId: "person-1", iemIds: ["iem-1"] },
+      { id: "two", name: "Riley", sourceId: "person-2", microphoneIds: ["mic-2"], iemIds: ["iem-2"] },
+    ], "Jamie, Riley");
+    const incoming = managedAssigneeElement([
+      { id: "new-two", name: "Riley", sourceId: "person-2" },
+      { id: "new-one", name: "Jamie", sourceId: "person-1" },
+    ], "Riley, Jamie");
+    const refreshed = managedRefresh(current, incoming);
+    expect(refreshed[0].elements[0].assignees).toEqual([
+      { id: "one", name: "Jamie", iemIds: ["iem-1"] },
+      { id: "two", name: "Riley", microphoneIds: ["mic-2"], iemIds: ["iem-2"] },
+    ]);
+  });
+
+  const blankEquipmentElement = (
+    assignees: NonNullable<ServicePlanElement["assignees"]>,
+  ) => element("source-row", "Prayer", {
+    sourcePlanningManaged: true,
+    sourceLedByRaw: "",
+    assignees,
+    servicePlanningImport: {
+      observed: { elementType: "Prayer", title: "Prayer", ledBy: "", note: "" },
+      applied: { elementType: "Prayer", title: "Prayer", ledBy: "", note: "" },
+      pendingFields: [],
+    },
+  });
+
+  it("gives one imported person the first existing unassigned microphone slot", () => {
+    const current = blankEquipmentElement([
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", microphoneIds: ["mic-spare"] },
+      { id: "slot-3", microphoneIds: ["mic-lapel"] },
+    ]);
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Clarence Jones", sourceId: "clarence" }], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", microphoneIds: ["mic-spare"] },
+      { id: "slot-3", microphoneIds: ["mic-lapel"] },
+    ]);
+  });
+
+  it("assigns multiple imported people to mixed equipment slots in stable order", () => {
+    const current = blankEquipmentElement([
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", iemIds: ["iem-vocal"] },
+      { id: "slot-3", microphoneIds: ["mic-band"], iemIds: ["iem-band"] },
+    ]);
+    const incoming = managedAssigneeElement([
+      { id: "fresh-1", name: "Clarence Jones", sourceId: "clarence", memberId: "unverified-member" },
+      { id: "fresh-2", name: "Jordan Smith", sourceId: "jordan" },
+    ], "Clarence Jones, Jordan Smith");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", name: "Jordan Smith", iemIds: ["iem-vocal"] },
+      { id: "slot-3", microphoneIds: ["mic-band"], iemIds: ["iem-band"] },
+    ]);
+  });
+
+  it("appends only the people who exceed available equipment slots", () => {
+    const current = blankEquipmentElement([{ id: "slot-1", microphoneIds: ["mic-lead"] }]);
+    const incoming = managedAssigneeElement([
+      { id: "fresh-1", name: "Clarence Jones", sourceId: "clarence" },
+      { id: "fresh-2", name: "Jordan Smith", sourceId: "jordan" },
+    ], "Clarence Jones, Jordan Smith");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "fresh-2", name: "Jordan Smith" },
+    ]);
+  });
+
+  it("does not displace a manually assigned person and does not claim that row", () => {
+    const current = blankEquipmentElement([
+      { id: "manual", name: "Operator choice", memberId: "member-7", microphoneIds: ["mic-manual"] },
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+    ]);
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Clarence Jones", sourceId: "clarence" }], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "manual", name: "Operator choice", memberId: "member-7", microphoneIds: ["mic-manual"] },
+      { id: "slot-1", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+    ]);
+    expect(refreshed.elements[0].servicePlanningImport?.managedAssignees).toEqual([
+      expect.objectContaining({ id: "slot-1", ledByIdentity: "clarence" }),
+    ]);
+  });
+
+  it("reuses a same-name operator row without assigning it source ownership", () => {
+    const current = blankEquipmentElement([
+      { id: "manual", name: "Clarence Jones", memberId: "member-clarence", microphoneIds: ["mic-manual"] },
+    ]);
+    const incoming = managedAssigneeElement([{ id: "fresh", name: "Clarence Jones", sourceId: "clarence" }], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "manual", name: "Clarence Jones", memberId: "member-clarence", microphoneIds: ["mic-manual"] },
+    ]);
+    expect(refreshed.elements[0].servicePlanningImport?.managedAssignees).toBeUndefined();
+  });
+
+  it("lets a source identity match win over a blank-slot fallback", () => {
+    const current = managedAssigneeElement([
+      { id: "managed", name: "Clarence Jones", sourceId: "clarence", microphoneIds: ["mic-lead"] },
+    ], "Clarence Jones");
+    current.assignees = [
+      ...(current.assignees || []),
+      { id: "slot-1", microphoneIds: ["mic-spare"] },
+    ];
+    const incoming = managedAssigneeElement([
+      { id: "fresh", name: "Clarence Jones", sourceId: "clarence" },
+    ], "Clarence Jones");
+
+    const [refreshed] = managedRefresh(current, incoming);
+
+    expect(refreshed.elements[0].assignees).toEqual([
+      { id: "managed", name: "Clarence Jones", microphoneIds: ["mic-lead"] },
+      { id: "slot-1", microphoneIds: ["mic-spare"] },
+    ]);
+  });
+
+  it("keeps the fallback result stable across repeated serialized refreshes", () => {
+    const current = blankEquipmentElement([
+      { id: "slot-1", microphoneIds: ["mic-lead"] },
+      { id: "slot-2", iemIds: ["iem-vocal"] },
+    ]);
+    const incoming = managedAssigneeElement([
+      { id: "fresh-1", name: "Clarence Jones", sourceId: "clarence" },
+      { id: "fresh-2", name: "Jordan Smith", sourceId: "jordan" },
+    ], "Clarence Jones, Jordan Smith");
+
+    const [once] = managedRefresh(current, incoming);
+    const serialized = JSON.parse(JSON.stringify(once.elements[0])) as ServicePlanElement;
+    const [twice] = managedRefresh(serialized, incoming);
+
+    expect(twice).toEqual(once);
+  });
+
   const source = (title: string, ledBy: string) => ({
     elementType: "Reading the Word", title, ledBy, note: "",
+  });
+
+  it("imports title-derived people on new and matching items and stays stable after serialization", () => {
+    const title = "Co-Hosts - Oniel Campbell, Jackie Mullings, Candice Bailey";
+    const sourceData: ServicePlanningImportData = {
+      planLabel: "Sunday worship",
+      sections: [{ sectionName: "Reading", rows: [{ elementType: "Reading the Word", title, ledBy: "Clarence Jones" }] }],
+      teamAssignments: [],
+    };
+    const [fresh] = buildServicePlanSectionsFromImport(sourceData, [], {
+      classifyExternalTitle: true,
+      knownPeople: ["Oniel Campbell", "Jackie Mullings", "Candice Bailey", "Clarence Jones"],
+    });
+    const freshElement = fresh.elements[0];
+    expect(freshElement.assignees?.map(({ name }) => name)).toEqual([
+      "Clarence Jones", "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+    expect(freshElement.sourceContentTitleRaw).toBe(title);
+    expect(freshElement.importAmbiguity?.sourceTitle).toBe(title);
+    expect(freshElement.importAmbiguity?.parts.map(({ value }) => value)).toEqual([
+      "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+
+    const current = [section("current", "Reading", [element("same", "Reading the Word", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: title,
+      sourceLedByRaw: "Clarence Jones",
+      assignees: [{ id: "lead", name: "Clarence Jones" }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading the Word",
+        sourceTitle: title, sourceLedBy: "Clarence Jones", parts: [], reasons: [],
+        status: "confirmed", sourceFingerprint: "prior-import",
+      },
+      servicePlanningImport: {
+        observed: source(title, "Clarence Jones"), applied: source(title, "Clarence Jones"), pendingFields: [],
+        managedAssignees: [{ id: "lead", fields: ["ledBy"], fingerprint: JSON.stringify({ name: "Clarence Jones" }) }],
+      },
+    })])];
+    const refreshed = refreshServicePlanFromImport(current, [fresh], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual([
+      "Clarence Jones", "Oniel Campbell", "Jackie Mullings", "Candice Bailey",
+    ]);
+    const serialized = JSON.parse(JSON.stringify(refreshed)) as ServicePlanSection[];
+    expect(refreshServicePlanFromImport(serialized, [fresh], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS)).toEqual(serialized);
+  });
+
+  it("continues reconciling an explicitly confirmed title assignee when the title is unchanged", () => {
+    const title = "Psalms 97 (NLT) Jasmine Williams";
+    const [incoming] = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday", sections: [{ sectionName: "Reading", rows: [{ elementType: "Reading", title, ledBy: "" }] }], teamAssignments: [],
+    }, [], { classifyExternalTitle: true, knownPeople: ["Jasmine Williams"] });
+    const current = [section("current", "Reading", [element("same", "Reading", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: title,
+      assignees: [],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: title,
+        sourceLedBy: "", parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "reviewed-title-person",
+      },
+      servicePlanningImport: {
+        observed: source(title, ""), applied: source(title, ""), pendingFields: [],
+      },
+    })])];
+    const refreshed = refreshServicePlanFromImport(current, [incoming], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual(["Jasmine Williams"]);
   });
 
   it("updates Led By without restoring a Title person moved out of assignees", () => {
@@ -2265,7 +2864,7 @@ describe("refreshing reviewed source-owned occurrences", () => {
     );
 
     expect(applied[0].elements[0].resources).toEqual([
-      expect.objectContaining({ title: "Imported description" }), manualResource,
+      expect.objectContaining({ title: "Skit/Mime – The Good Samaritan" }), manualResource,
     ]);
     expect(JSON.stringify(applied[0].elements[0].resources?.[0])).toContain("The Good Samaritan");
     expect(JSON.stringify(applied[0].elements[0].resources?.[0])).not.toContain("Walking With Jesus");

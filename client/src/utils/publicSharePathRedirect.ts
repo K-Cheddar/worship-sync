@@ -11,6 +11,24 @@ const normalizePathname = (pathname: string): string => {
   return raw;
 };
 
+/** Classify public board URLs using the same reserved-route rules as the router. */
+export const getPublicBoardRouteKind = (
+  pathname: string,
+): "board" | "present" | null => {
+  const path = normalizePathname(pathname);
+  const presentMatch = path.match(/^\/boards\/present\/([^/]+)$/);
+  if (presentMatch && !RESERVED_BOARD_SEGMENTS.has(presentMatch[1])) {
+    return "present";
+  }
+
+  const boardMatch = path.match(/^\/boards\/([^/]+)$/);
+  if (boardMatch && !RESERVED_BOARD_SEGMENTS.has(boardMatch[1])) {
+    return "board";
+  }
+
+  return null;
+};
+
 /** Whether this pathname should mount the public BrowserRouter shell. */
 export const isPublicSharePathname = (pathname: string): boolean => {
   const path = normalizePathname(pathname);
@@ -32,11 +50,5 @@ export const isPublicSharePathname = (pathname: string): boolean => {
     return true;
   }
 
-  let match = path.match(/^\/boards\/present\/([^/]+)$/);
-  if (match && !RESERVED_BOARD_SEGMENTS.has(match[1])) return true;
-
-  match = path.match(/^\/boards\/([^/]+)$/);
-  if (match && !RESERVED_BOARD_SEGMENTS.has(match[1])) return true;
-
-  return false;
+  return getPublicBoardRouteKind(path) !== null;
 };

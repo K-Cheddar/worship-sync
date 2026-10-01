@@ -42,19 +42,17 @@ export function useLoadMoreOnScroll({
     const el = scrollRef.current;
     if (!el || !enabled) return;
 
-    setShownCount((prev) => {
-      const max = totalRef.current;
-      if (prev >= max) return prev;
+    const max = totalRef.current;
+    const { scrollTop, clientHeight, scrollHeight } = el;
+    const fromBottom = scrollHeight - scrollTop - clientHeight;
+    const hasMeasuredLayout = scrollHeight > 0 && clientHeight > 0;
+    const listFitsWithoutScroll = hasMeasuredLayout && scrollHeight <= clientHeight + 2;
+    if (shownCount >= max || !hasMeasuredLayout || (!listFitsWithoutScroll && fromBottom > thresholdPx)) {
+      return;
+    }
 
-      const { scrollTop, clientHeight, scrollHeight } = el;
-      const fromBottom = scrollHeight - scrollTop - clientHeight;
-      const listFitsWithoutScroll = scrollHeight <= clientHeight + 2;
-      if (listFitsWithoutScroll || fromBottom <= thresholdPx) {
-        return Math.min(prev + batchSize, max);
-      }
-      return prev;
-    });
-  }, [batchSize, enabled, scrollRef, setShownCount, thresholdPx]);
+    setShownCount((prev) => Math.min(prev + batchSize, max));
+  }, [batchSize, enabled, scrollRef, setShownCount, shownCount, thresholdPx]);
 
   useLayoutEffect(() => {
     if (!enabled) return;

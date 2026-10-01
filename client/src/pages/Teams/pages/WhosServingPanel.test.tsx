@@ -44,6 +44,37 @@ describe("WhosServingPanel", () => {
     expect(getServingMasonryColumnCount(700, 4)).toBe(1);
   });
 
+  it("keeps a small number of team columns compact in a wide panel", () => {
+    const clientWidthSpy = jest
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(1_800);
+    try {
+      render(
+        <WhosServingPanel
+          assignmentTeams={[
+            assignmentTeams[0],
+            {
+              ...assignmentTeams[0],
+              teamId: "team-worship",
+              teamName: "Worship",
+              scheduleId: "schedule-worship",
+            },
+          ]}
+          onOpenSchedule={jest.fn()}
+        />,
+      );
+
+      const columns = screen.getAllByTestId("serving-team-column");
+      expect(columns).toHaveLength(2);
+      columns.forEach((column) => {
+        expect(column).toHaveClass("w-full", "max-w-[28rem]");
+        expect(column).not.toHaveClass("flex-1");
+      });
+    } finally {
+      clientWidthSpy.mockRestore();
+    }
+  });
+
   it("opens a popover with the full member name, role, and microphones", async () => {
     const user = userEvent.setup();
     const onOpenSchedule = jest.fn();

@@ -698,6 +698,25 @@ const serializePublicMicrophoneAssignments = (
     })
     .filter(Boolean);
 
+const serializePublicEquipmentAssignments = (element, equipmentById) =>
+  readServicePlanAssignees(element)
+    .flatMap((assignee) =>
+      (Array.isArray(assignee?.iemIds) ? assignee.iemIds : []).map((equipmentId) => ({
+        assignee,
+        equipmentId,
+      })),
+    )
+    .map(({ assignee, equipmentId }) => {
+      const equipment = equipmentById.get(String(equipmentId || "").trim());
+      if (!equipment) return null;
+      const holderName = String(assignee?.name || "").trim();
+      return {
+        equipment,
+        ...(holderName ? { holderName } : {}),
+      };
+    })
+    .filter(Boolean);
+
 /**
  * Slim role roster for the public detailed-view notes/mic filter. Quiet roles
  * (no notes/mics on the plan) must still be selectable so viewers can hide
@@ -757,8 +776,17 @@ export const buildPublicServicePlanSnapshot = ({
   serverNowMs = Date.now(),
   viewMode = "team",
   shareId,
+  /** Authenticated viewers reuse this sanitizer before a plan is shared. */
+  allowUnpublished = false,
+  includeControllerEquipment = false,
+  equipment = [],
 }) => {
-  if (!plan?.published || !plan.publicLinkToken || !plan.startsAt) return null;
+  if (
+    (!allowUnpublished && (!plan?.published || !plan.publicLinkToken)) ||
+    !plan?.startsAt
+  ) {
+    return null;
+  }
   const startsAtMs = Date.parse(plan.startsAt);
   if (Number.isNaN(startsAtMs)) return null;
 
@@ -808,6 +836,28 @@ export const buildPublicServicePlanSnapshot = ({
   const configuredAudiences = isGeneralView
     ? null
     : normalizePublicMicrophoneAudiences(microphoneAudiences);
+  const equipmentById = new Map(
+    (Array.isArray(equipment) ? equipment : [])
+      .filter((item) => item?.category === "iem")
+      .map((item) => {
+        const id = String(item?.id || "").trim();
+        const name = String(item?.name || "").trim();
+        return id && name
+          ? [id, {
+              id,
+              name,
+              category: "iem",
+              ...(String(item?.subtype || "").trim()
+                ? { subtype: String(item.subtype).trim() }
+                : {}),
+              ...(String(item?.color || "").trim()
+                ? { color: String(item.color).trim() }
+                : {}),
+            }]
+          : null;
+      })
+      .filter(Boolean),
+  );
   const roles = isGeneralView ? [] : buildPublicFilterRoles(positions, teams);
   const servingTeams = isGeneralView
     ? []
@@ -877,6 +927,14 @@ export const buildPublicServicePlanSnapshot = ({
                   configuredAudiences,
                   hasConfiguredAudiences,
                 ),
+            ...(includeControllerEquipment && !isGeneralView
+              ? {
+                  equipmentAssignments: serializePublicEquipmentAssignments(
+                    element,
+                    equipmentById,
+                  ),
+                }
+              : {}),
             ...(publicAssigneeCredit(element)
               ? { creditName: publicAssigneeCredit(element) }
               : {}),

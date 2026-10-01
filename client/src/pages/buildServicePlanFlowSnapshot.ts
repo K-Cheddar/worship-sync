@@ -24,6 +24,11 @@ export type ServicePlanFlowSnapshotOptions = {
   plan: ServicePlan;
   startsAt: string;
   churchName?: string;
+  /** Explicit public-safe chrome supplied by the owning authenticated surface. */
+  branding?: Pick<
+    PublicServiceFlowSnapshot,
+    "churchLogoUrl" | "churchPrimaryColor" | "churchSecondaryColor"
+  >;
   serverNowMs?: number;
 };
 
@@ -72,6 +77,7 @@ export const buildServicePlanFlowSnapshot = ({
   plan,
   startsAt,
   churchName = "",
+  branding,
   serverNowMs = Date.now(),
 }: ServicePlanFlowSnapshotOptions): PublicServiceFlowSnapshot => {
   const timezone = plan.timezone || "UTC";
@@ -105,6 +111,15 @@ export const buildServicePlanFlowSnapshot = ({
   return {
     success: true,
     churchName,
+    ...(branding?.churchLogoUrl
+      ? { churchLogoUrl: branding.churchLogoUrl }
+      : {}),
+    ...(branding?.churchPrimaryColor
+      ? { churchPrimaryColor: branding.churchPrimaryColor }
+      : {}),
+    ...(branding?.churchSecondaryColor
+      ? { churchSecondaryColor: branding.churchSecondaryColor }
+      : {}),
     serverNowMs,
     service: {
       shareId: `current-service-viewer:${plan.planKey}`,

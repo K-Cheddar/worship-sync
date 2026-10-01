@@ -13,9 +13,7 @@
  *   - a "pending" song (lyrics captured but no song doc yet) → that attachment
  *     alone is skipped and reported, since there's no library doc to reference;
  *     everything else on the same element still goes out;
- *   - anything unattached → a blank free-form item stamped with the element's
- *     title/notes: a real, editable placeholder in the correct running order
- *     rather than nothing at all.
+ *   - unattached elements and generic resources → no outline item.
  *
  * Idempotency is per attachment, not per element: every item an element pushes
  * takes a listId derived from the element and what is attached to it (see
@@ -23,24 +21,18 @@
  * from the live list. That is what lets an element push its resolved songs now
  * and the one that was still unmatched later, and what stops a re-push from
  * duplicating an element's surviving items after the operator deleted one of
- * them. If a section has nothing new to add, no fresh heading is created for it
- * either. True update-in-place for an edited-then-re-pushed element
+ * them. True update-in-place for an edited-then-re-pushed element
  * (repositioning it back under its original heading) is out of scope for v1.
  */
 import type PouchDB from "pouchdb-browser";
 import type { DBItem, ServiceItem } from "../../types";
-import { createNewFreeForm, createNewHeading } from "../../utils/itemUtil";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
-import generateRandomId from "../../utils/generateRandomId";
-import {
-  richTextToFormattedPlainText,
-  richTextToPlainText,
-} from "../../types/richText";
+import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
+import { richTextToPlainText } from "../../types/richText";
 import type {
   ServicePlan,
   ServicePlanElement,
   ServicePlanScriptureReference,
-  ServicePlanSection,
 } from "../../types/servicePlan";
 import {
   getServicePlanCustomDocumentId,
@@ -48,11 +40,8 @@ import {
 } from "../../types/servicePlan";
 
 export type ServicePlanOutlinePushResult = {
-  /** New items to append to the live list, in order (headings + content). */
+  /** New actionable content items to append to the live list, in order. */
   items: ServiceItem[];
-  /** Plan sections with pushedOutlineListId stamped onto newly-pushed elements. */
-  updatedSections: ServicePlanSection[];
-  /** Count of content items actually added (excludes heading items). */
   insertedCount: number;
   /** Titles of elements carrying an attachment that still can't be pushed. */
   skippedTitles: string[];
@@ -108,15 +97,13 @@ const outlineListIdFor = (
 
 /** One item an element would put on the list, and the listId it would take. */
 type PlannedOutlineItem =
-  | { kind: "song"; listId: string; songId: string; songName: string }
+  | { kind: "song"; listId: string; song: ServiceItem }
   | { kind: "scripture"; listId: string; scriptureRef: ServicePlanScriptureReference }
   | {
       kind: "custom-document";
       listId: string;
       document: Pick<DBItem, "_id" | "name" | "type">;
-    }
-  /** No attachment: a blank placeholder standing in for the element itself. */
-  | { kind: "placeholder"; listId: string };
+    };
 
 type ElementOutlinePlan = {
   element: ServicePlanElement;
@@ -126,12 +113,19 @@ type ElementOutlinePlan = {
   hasUnresolvedAttachment: boolean;
 };
 
+export type ServicePlanOutlineStep = {
+  planned: PlannedOutlineItem;
+  element: ElementOutlinePlan;
+};
+
+export type ServicePlanOutlinePlan = {
+  steps: ServicePlanOutlineStep[];
+  skippedTitles: string[];
+};
+
 /**
  * What an element would push, worked out without touching the database so the
- * heading decision and the idempotency checks can be made before anything is
- * created. Deliberately total: an element whose only song is unresolved plans
- * nothing at all, which is what keeps a re-push from stamping a fresh heading
- * above an item it can't add.
+ * idempotency checks can be made before anything is created.
  */
 const planElementOutlineItems = (
   element: ServicePlanElement,
@@ -160,13 +154,8 @@ const planElementOutlineItems = (
         ? songs.find((candidate) => candidate._id === linkedSongId && candidate.type === "song")
         : null;
       if (linkedSong) {
-      planned.push({
-        kind: "song",
-        listId,
-        songId: linkedSong._id,
-        songName: linkedSong.name,
-      });
-      continue;
+        planned.push({ kind: "song", listId, song: linkedSong });
+        continue;
       }
       // A saved-plan link is authoritative. Never substitute a same-titled
       // song when its id is missing or no longer resolves.
@@ -180,8 +169,19 @@ const planElementOutlineItems = (
         : resource.data && typeof resource.data.book === "string"
             ? resource.data as unknown as ServicePlanScriptureReference
             : undefined;
-      if (scriptureRef?.book && scriptureRef.chapter && scriptureRef.verseRange) {
-        planned.push({ kind: "scripture", listId, scriptureRef });
+      const parsedReference = scriptureRef?.book && scriptureRef.chapter && scriptureRef.verseRange
+        ? parseBibleReference(`${scriptureRef.book} ${scriptureRef.chapter}:${scriptureRef.verseRange}`)
+        : null;
+      if (parsedReference && scriptureRef) {
+        planned.push({
+          kind: "scripture",
+          listId,
+          scriptureRef: {
+            ...parsedReference,
+            label: scriptureRef.label,
+            version: scriptureRef.version || parsedReference.version,
+          },
+        });
       } else {
         hasUnresolvedAttachment = true;
       }
@@ -199,13 +199,8 @@ const planElementOutlineItems = (
       planned.push({ kind: "custom-document", listId, document });
       continue;
     }
-    // Other resource references remain available in the controller plan but
-    // are not outline items. If no presentation attachment exists, the plan
-    // element still gets its ordinary editable placeholder below.
-  }
-
-  if (!planned.length && !hasUnresolvedAttachment) {
-    planned.push({ kind: "placeholder", listId: outlineListIdFor(element, "item", 0) });
+    // Generic resources, URLs, attachments and text fields are not outline
+    // documents. Only explicit references above are actionable here.
   }
 
   return { element, title, planned, hasUnresolvedAttachment };
@@ -220,24 +215,21 @@ const missingPlannedItems = (
     ? []
     : plan.planned.filter(({ listId }) => !findExistingListId(list, listId));
 
-const buildOutlineItem = async ({
-  planned,
-  plan,
+export const buildServicePlanOutlineItem = async ({
+  step,
   list,
   db,
   bibleDb,
 }: {
-  planned: PlannedOutlineItem;
-  plan: ElementOutlinePlan;
+  step: ServicePlanOutlineStep;
   list: ServiceItem[];
   db: PouchDB.Database | undefined;
   bibleDb: PouchDB.Database | undefined;
 }): Promise<ServiceItem> => {
+  const { planned } = step;
   if (planned.kind === "song") {
     return {
-      _id: planned.songId,
-      name: planned.songName,
-      type: "song",
+      ...planned.song,
       listId: planned.listId,
     };
   }
@@ -276,26 +268,55 @@ const buildOutlineItem = async ({
     };
   }
 
-  if (plan.element.type === "heading") {
-    const result = await createNewHeading({ name: plan.title, list, db });
-    return { ...result, listId: planned.listId };
+  throw new Error("Unsupported service plan outline item");
+};
+
+export const planServicePlanOutlineItems = ({
+  plan,
+  currentList,
+  songs,
+  customDocuments = [],
+}: {
+  plan: ServicePlan;
+  currentList: ServiceItem[];
+  /** The song library as it stands now, for re-checking unmatched imports.
+   * Required rather than defaulted: omitting it silently drops songs. */
+  songs: ServiceItem[];
+  /** Current church free-form library, used to resolve custom-document refs. */
+  customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
+}): ServicePlanOutlinePlan => {
+  const steps: ServicePlanOutlineStep[] = [];
+  const skippedTitles: string[] = [];
+  let workingList = currentList;
+
+  for (const section of plan.sections) {
+    const elementPlans = section.elements.map((element) =>
+      planElementOutlineItems(element, songs, customDocuments),
+    );
+
+    // A song with nothing behind it in the library is the operator's to fix, so
+    // it is reported whether or not the rest of the element gets pushed.
+    for (const elementPlan of elementPlans) {
+      if (elementPlan.hasUnresolvedAttachment) {
+        skippedTitles.push(elementPlan.title);
+      }
+    }
+
+    for (const elementPlan of elementPlans) {
+      const additions = missingPlannedItems(workingList, elementPlan);
+      for (const planned of additions) {
+        steps.push({ planned, element: elementPlan });
+        workingList = [...workingList, {
+          _id: planned.kind === "song" ? planned.song._id : planned.kind === "custom-document" ? planned.document._id : `planned:${planned.listId}`,
+          name: planned.kind === "song" ? planned.song.name : planned.kind === "custom-document" ? planned.document.name : elementPlan.title,
+          type: planned.kind === "song" ? "song" : planned.kind === "custom-document" ? "free" : "bible",
+          listId: planned.listId,
+        }];
+      }
+    }
   }
 
-  const result = await createNewFreeForm({
-    name: plan.title,
-    text: richTextToFormattedPlainText(plan.element.notes),
-    list,
-    db,
-    background: "",
-    brightness: 100,
-  });
-  return {
-    _id: result._id,
-    name: result.name,
-    type: "free",
-    background: result.background,
-    listId: planned.listId,
-  };
+  return { steps, skippedTitles };
 };
 
 export const buildServicePlanOutlineItems = async ({
@@ -311,12 +332,8 @@ export const buildServicePlanOutlineItems = async ({
   currentList: ServiceItem[];
   db: PouchDB.Database | undefined;
   bibleDb?: PouchDB.Database | undefined;
-  /** The song library as it stands now, for re-checking unmatched imports.
-   * Required rather than defaulted: omitting it silently drops songs. */
   songs: ServiceItem[];
-  /** Current church free-form library, used to resolve custom-document refs. */
   customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
-  /** Prevents stale async work from adding to another selected live outline. */
   isContextCurrent?: () => boolean;
 }): Promise<ServicePlanOutlinePushResult> => {
   const assertCurrentContext = () => {
@@ -324,87 +341,16 @@ export const buildServicePlanOutlineItems = async ({
       throw new Error("The selected outline changed before the service plan could be imported.");
     }
   };
+  const planned = planServicePlanOutlineItems({ plan, currentList, songs, customDocuments });
   const items: ServiceItem[] = [];
-  const skippedTitles: string[] = [];
-  const updatedSections: ServicePlanSection[] = [];
   let workingList = currentList;
-  let insertedCount = 0;
-
-  for (const section of plan.sections) {
+  for (const step of planned.steps) {
     assertCurrentContext();
-    const elementPlans = section.elements.map((element) =>
-      planElementOutlineItems(element, songs, customDocuments),
-    );
-
-    // A song with nothing behind it in the library is the operator's to fix, so
-    // it is reported whether or not the rest of the element gets pushed.
-    for (const elementPlan of elementPlans) {
-      if (elementPlan.hasUnresolvedAttachment) {
-        skippedTitles.push(elementPlan.title);
-      }
-    }
-
-    // Resolved against the list as it stands before this section adds anything;
-    // each element's ids are its own, so nothing here interferes.
-    const listBeforeSection = workingList;
-    const sectionAdditions = elementPlans.map((elementPlan) =>
-      missingPlannedItems(listBeforeSection, elementPlan),
-    );
-    if (!sectionAdditions.some((additions) => additions.length)) {
-      updatedSections.push(section);
-      continue;
-    }
-
-    assertCurrentContext();
-    const headingResult = await createNewHeading({
-      name: section.name || "Section",
-      list: workingList,
-      db,
-    });
-    const headingItem: ServiceItem = {
-      ...headingResult,
-      listId: generateRandomId(),
-    };
-    workingList = [...workingList, headingItem];
-    items.push(headingItem);
-
-    const updatedElements: ServicePlanElement[] = [];
-    for (const [index, elementPlan] of elementPlans.entries()) {
-      const additions = sectionAdditions[index];
-      if (!additions.length) {
-        updatedElements.push(elementPlan.element);
-        continue;
-      }
-
-      const elementItems: ServiceItem[] = [];
-      for (const planned of additions) {
-        assertCurrentContext();
-        // eslint-disable-next-line no-await-in-loop -- each item may write a new library doc, order matters
-        const item = await buildOutlineItem({
-          planned,
-          plan: elementPlan,
-          list: workingList,
-          db,
-          bibleDb,
-        });
-        elementItems.push(item);
-        workingList = [...workingList, item];
-      }
-
-      items.push(...elementItems);
-      insertedCount += elementItems.length;
-      updatedElements.push({
-        ...elementPlan.element,
-        // Every planned id, not just the ones added now: the rest are already
-        // on the list, and the stamp describes the element as a whole.
-        pushedOutlineListId: elementPlan.planned[0].listId,
-        pushedOutlineListIds: elementPlan.planned.map(({ listId }) => listId),
-      });
-    }
-
-    updatedSections.push({ ...section, elements: updatedElements });
+    // eslint-disable-next-line no-await-in-loop -- build and append in content order
+    const item = await buildServicePlanOutlineItem({ step, list: workingList, db, bibleDb });
+    items.push(item);
+    workingList = [...workingList, item];
   }
-
   assertCurrentContext();
-  return { items, updatedSections, insertedCount, skippedTitles };
+  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles };
 };

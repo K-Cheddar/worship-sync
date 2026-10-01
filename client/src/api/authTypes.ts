@@ -336,7 +336,8 @@ export type TeamPosition = {
   teamId: string;
   name: string;
   description?: string;
-  icon?: string;
+  /** Structured icon ref, with legacy Lucide export-name strings still supported. */
+  icon?: import("../components/icons/iconTypes").PositionIcon;
   // optional umbrella grouping (e.g. "Camera" for Roving/Stationary Camera)
   groupId?: string;
   // explicit display order within the team; also drives schedule column order
@@ -350,6 +351,7 @@ export type TeamPosition = {
   qualificationAreaId?: string;
   /** Default church microphone for new schedule slots in this position. */
   defaultMicrophoneId?: string | null;
+  defaultIemId?: string | null;
   archivedAt?: string | null;
 };
 
@@ -358,10 +360,12 @@ export type TeamRecord = {
   churchId: string;
   name: string;
   description?: string;
-  icon?: string;
+  /** Structured icon ref, with legacy Lucide export-name strings still supported. */
+  icon?: import("../components/icons/iconTypes").EntityIcon;
   memberIds: string[];
   /** Whether scheduled role slots for this team can receive church microphones. */
   usesMicrophoneAssignments?: boolean;
+  usesIemAssignments?: boolean;
   // a team's positions are derived from positions where position.teamId === teamId
   archivedAt?: string | null;
 };
@@ -427,6 +431,7 @@ export type TeamScheduleMicrophoneAssignments = Record<
   string,
   Record<string, string[]>
 >;
+export type TeamScheduleIemAssignments = Record<string, Record<string, string[]>>;
 
 /** Additional role slots added to a specific schedule occurrence. */
 export type TeamScheduleAdditionalPositionSlots = Record<string, string[]>;
@@ -468,11 +473,29 @@ export type TeamSchedulePublicSnapshot = {
     endDate: string;
     occurrences: TeamScheduleOccurrence[];
     assignments: TeamScheduleAssignments;
+    microphoneAssignments?: TeamScheduleMicrophoneAssignments;
+    iemAssignments?: TeamScheduleIemAssignments;
   };
+  /** Only sanitized catalog entries referenced by this schedule are returned. */
+  microphones?: {
+    id: string;
+    category: "microphone";
+    name: string;
+    type: string;
+    color: string;
+  }[];
+  /** The public snapshot currently includes only referenced IEM equipment. */
+  serviceEquipment?: {
+    id: string;
+    category: "iem";
+    name: string;
+    subtype?: string;
+    color?: string;
+  }[];
   positions: {
     positionId: string;
     name: string;
-    icon: string;
+    icon: import("../components/icons/iconTypes").PositionIcon;
     groupId: string;
     archivedAt: string | null;
   }[];
@@ -499,6 +522,10 @@ export type TeamScheduleSummary = {
   startDate?: string;
   endDate?: string;
   serviceIds: string[];
+  /** Identifies schedules created lazily for a generated team/date period. */
+  source?: "generated-period" | "custom";
+  /** Stable logical key used by the idempotent generated-period endpoint. */
+  generatedPeriodKey?: string;
   occurrences?: TeamScheduleOccurrence[];
   /** Schedule-only people available for guest assignments and recent reuse. */
   guests?: TeamScheduleGuest[];
@@ -520,6 +547,8 @@ export type TeamScheduleSummary = {
     /** Latest occurrence date assigned to each member in this schedule. */
     lastAssignmentDateByMemberId?: Record<string, string>;
   };
+  /** Whether any assignment, response, equipment, extra slot, or guest data exists. */
+  hasScheduleData?: boolean;
 };
 
 export type TeamSchedule = TeamScheduleSummary & {
@@ -527,6 +556,7 @@ export type TeamSchedule = TeamScheduleSummary & {
   /** Accept/decline state, keyed occurrenceId -> cellKey. */
   responses?: TeamScheduleResponses;
   microphoneAssignments?: TeamScheduleMicrophoneAssignments;
+  iemAssignments?: TeamScheduleIemAssignments;
   additionalPositionSlots?: TeamScheduleAdditionalPositionSlots;
 };
 
@@ -573,6 +603,27 @@ export type TeamsBootstrap = {
   smsDeliveryAttempts?: SmsDeliveryAttempt[];
   /** True when any collection hit the server row cap, so this view is partial. */
   truncated?: boolean;
+};
+
+export type PortableDataType = "members" | "teams" | "positions" | "services" | "schedules";
+export type PortableImportAction = "create" | "update" | "review" | "invalid";
+export type PortableImportCandidate = { id: string; name: string };
+export type PortableImportIssue = {
+  field: string;
+  code: string;
+  message: string;
+  candidates?: PortableImportCandidate[];
+  referenceIndex?: number;
+  referenceValue?: string;
+};
+export type PortableImportResolution = { field: string; referenceIndex: number; selectedId: string };
+export type PortableImportRow = {
+  row: number;
+  record: Record<string, string>;
+  action: PortableImportAction;
+  matchedId: string | null;
+  candidates: PortableImportCandidate[];
+  issues: PortableImportIssue[];
 };
 
 export type TeamIntakeAvailabilityService = {
@@ -750,6 +801,8 @@ export type NotificationBatch = {
   status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
+  /** Persisted form recipients for the selected batch members, without token secrets. */
+  intakeRecipients?: TeamIntakeRecipient[];
   intentIds: string[];
   approvalVersion: string;
   summary: {

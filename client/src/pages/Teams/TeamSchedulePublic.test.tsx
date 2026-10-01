@@ -124,6 +124,56 @@ test("renders the read-only schedule from the public snapshot", async () => {
   expect(mockGet).toHaveBeenCalledWith("tok_123");
 });
 
+test("renders compact equipment in all layouts, including an unstaffed slot", async () => {
+  const user = userEvent.setup();
+  const equipmentSnapshot = {
+    ...snapshot,
+    schedule: {
+      ...snapshot.schedule,
+      microphoneAssignments: {
+        [occurrenceId]: {
+          "pos_1::0": ["mic-1"],
+          "pos_1::1": ["mic-2"],
+        },
+      },
+      iemAssignments: {
+        [occurrenceId]: { "pos_1::0": ["iem-1"] },
+      },
+    },
+    microphones: [
+      { id: "mic-1", name: "Black", type: "Handheld", color: "#123456" },
+      { id: "mic-2", name: "Spare", type: "Lapel", color: "#abcdef" },
+    ],
+    serviceEquipment: [
+      { id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack", color: "#654321" },
+    ],
+  };
+  mockGet.mockResolvedValue(equipmentSnapshot as never);
+  writeTeamSchedulePublicLayout("byDate");
+  writeTeamSchedulePublicTheme("light");
+  renderPage();
+
+  await screen.findByText("June Schedule");
+  expect(screen.getByText("Jordan")).toBeInTheDocument();
+  expect(screen.getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(screen.getByLabelText("iem: IEM 1")).toBeInTheDocument();
+  expect(screen.getByLabelText("microphone: Spare")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "By position" }));
+  expect(screen.getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(screen.getByLabelText("iem: IEM 1")).toBeInTheDocument();
+  expect(screen.getByLabelText("microphone: Spare")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Grid" }));
+  expect(screen.getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(screen.getByLabelText("iem: IEM 1")).toBeInTheDocument();
+  expect(screen.getByLabelText("microphone: Spare")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+  expect(screen.getByLabelText("microphone: Black")).toBeInTheDocument();
+  expect(screen.getByLabelText("iem: IEM 1")).toBeInTheDocument();
+});
+
 test("shows an error state when the link is no longer valid", async () => {
   mockGet.mockRejectedValue(new Error("Invalid or expired link."));
   renderPage();

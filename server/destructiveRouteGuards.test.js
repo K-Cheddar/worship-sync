@@ -35,6 +35,14 @@ test("oauth callbacks stay registered for Restream, YouTube, Canva, and Planning
   assert.match(serverSource, /\/api\/planning-center\/oauth\/callback/);
 });
 
+test("bulk service-plan route is registered before the parameterized plan save route", () => {
+  const bulkHandler = serverSource.indexOf("authHandlers.applyServicePlanTemplateBulk");
+  const singlePlanSaveHandler = serverSource.indexOf("authHandlers.saveServicePlan");
+  assert.notEqual(bulkHandler, -1);
+  assert.notEqual(singlePlanSaveHandler, -1);
+  assert.ok(bulkHandler < singlePlanSaveHandler);
+});
+
 test("cloudinary delete and mux upload routes remain registered", () => {
   assert.match(
     serverSource,
