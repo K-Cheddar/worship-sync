@@ -18,7 +18,7 @@ export const getEntityIconColor = (
 /** @deprecated Use getEntityIconColor. */
 export const getPositionIconColor = getEntityIconColor;
 
-type EntityIconBadgeProps = {
+export type EntityIconBadgeProps = {
   icon?: EntityIcon | null;
   /** Render-only fill for candidate previews; never copied into the icon ref. */
   color?: string;

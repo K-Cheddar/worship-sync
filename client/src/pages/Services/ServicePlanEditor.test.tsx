@@ -1780,7 +1780,7 @@ describe("ServicePlanEditor", () => {
 
     expect(await screen.findByText("1 imported item needs a quick interpretation review.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review items" }));
-    expect(await screen.findAllByText("Unknown free-text Title")).toHaveLength(2);
+    expect(await screen.findAllByText("Unknown free-text Title")).toHaveLength(3);
     expect(screen.getAllByText("Source note")).toHaveLength(2);
   });
 

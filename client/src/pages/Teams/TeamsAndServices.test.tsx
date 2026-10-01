@@ -42,7 +42,7 @@ import type {
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
-import { rangeSelectionStorageKey } from "./rangeSelection";
+import { rangeSelectionStorageKey, resolveRangePreset, shiftRange } from "./rangeSelection";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -708,21 +708,23 @@ describe("Teams", () => {
       };
       return { success: true, created: true, schedule: ensuredSchedule };
     });
+    const firstFuturePeriod = shiftRange("upcoming", resolveRangePreset("upcoming"), 1);
+    const secondFuturePeriod = shiftRange("upcoming", firstFuturePeriod, 1);
     mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => ({
       success: true,
       schedule: {
         scheduleId,
         churchId: "church-1",
-        name: "October 2026",
+        name: "Future period",
         teamId: "team-main",
-        startDate: "2026-10-01",
-        endDate: "2026-10-31",
+        startDate: firstFuturePeriod.start,
+        endDate: firstFuturePeriod.end,
         serviceIds: [serviceId],
         occurrences: [{
           occurrenceId: body.serviceId,
           serviceId,
           name: "Saturday service",
-          startsAt: "2026-10-03T10:00:00.000Z",
+          startsAt: `${firstFuturePeriod.start}T10:00:00.000Z`,
           positionRequirements: [{ positionId, count: 1 }],
         }],
         assignments: { [body.serviceId]: { [body.positionSlotKey]: body.memberId ? { primaryMemberId: body.memberId } : {} } },
@@ -750,7 +752,9 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod.mock.invocationCallOrder[0]).toBeLessThan(
       mockUpdateTeamScheduleAssignment.mock.invocationCallOrder[0],
     );
-    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe("generated-period-2026-10-01");
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(
+      `generated-period-${firstFuturePeriod.start}`,
+    );
 
     mockAddTeamSchedulePositionSlot.mockImplementation(async (_churchId, _scheduleId, body) => ({
       success: true,
@@ -771,7 +775,9 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod.mock.invocationCallOrder[1]).toBeLessThan(
       mockAddTeamSchedulePositionSlot.mock.invocationCallOrder[0],
     );
-    expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe("generated-period-2026-11-01");
+    expect(mockAddTeamSchedulePositionSlot.mock.calls[0][1]).toBe(
+      `generated-period-${secondFuturePeriod.start}`,
+    );
   });
 
   it("defaults Schedules to Upcoming and restores its own saved Range", async () => {
@@ -2723,7 +2729,12 @@ describe("Teams", () => {
     expect(screen.getByRole("button", { name: /Send schedule/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     const scheduleActionItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
-    expect(scheduleActionItems.slice(0, 2)).toEqual(["Create schedule", "Schedule history"]);
+    expect(scheduleActionItems.slice(0, 2)).toEqual([
+      "Import CSV…",
+      "Export CSVAll schedules",
+    ]);
+    expect(screen.getByRole("menuitem", { name: "Create schedule" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Schedule history" })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Create schedule" }));
     expect(await screen.findByRole("heading", { name: "New schedule" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));

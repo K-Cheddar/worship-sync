@@ -276,7 +276,18 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
   });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [{ positionId: positionIds.Camera, count: 3, minLevelId: "lead" }] }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        positionRequirements: [
+          { positionId: positionIds.Camera, count: 3, minLevelId: "lead" },
+        ],
+      },
+    ],
   });
   const body = {
     name: "October 2026",
@@ -285,13 +296,15 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
     endDate: "2026-10-31",
     timeZone: "UTC",
     serviceIds: ["service-sabbath"],
-    occurrences: [{
-      occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
-      serviceId: "service-sabbath",
-      name: "Sabbath Service",
-      startsAt: "2026-10-03T10:00:00.000Z",
-      positionRequirements: [{ positionId: positionIds.Camera, count: 2 }],
-    }],
+    occurrences: [
+      {
+        occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
+        serviceId: "service-sabbath",
+        name: "Sabbath Service",
+        startsAt: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: positionIds.Camera, count: 2 }],
+      },
+    ],
   };
   const [first, second] = await Promise.all([
     callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body }),
@@ -299,26 +312,39 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
   ]);
   assert.equal(first.statusCode, 200);
   assert.equal(second.statusCode, 200);
-  assert.equal(first.payload.schedule.scheduleId, second.payload.schedule.scheduleId);
+  assert.equal(
+    first.payload.schedule.scheduleId,
+    second.payload.schedule.scheduleId,
+  );
   assert.equal(first.payload.schedule.source, "generated-period");
   assert.deepEqual(first.payload.schedule.occurrences[0].positionRequirements, [
     { positionId: positionIds.Camera, count: 3, minLevelId: "lead" },
   ]);
-  const schedules = await queryDocs("teamSchedules", [{ field: "churchId", value: context.churchId }]);
-  assert.equal(schedules.filter((schedule) => schedule.generatedPeriodKey).length, 1);
-  const assignment = await callHandler(authHandlers.updateTeamScheduleAssignment, {
-    context,
-    params: { scheduleId: first.payload.schedule.scheduleId },
-    body: {
-      serviceId: body.occurrences[0].occurrenceId,
-      positionSlotKey: `${positionIds.Camera}::0`,
-      memberId: memberIds.Alex,
-      serviceDate: "2026-10-03",
+  const schedules = await queryDocs("teamSchedules", [
+    { field: "churchId", value: context.churchId },
+  ]);
+  assert.equal(
+    schedules.filter((schedule) => schedule.generatedPeriodKey).length,
+    1,
+  );
+  const assignment = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: first.payload.schedule.scheduleId },
+      body: {
+        serviceId: body.occurrences[0].occurrenceId,
+        positionSlotKey: `${positionIds.Camera}::0`,
+        memberId: memberIds.Alex,
+        serviceDate: "2026-10-03",
+      },
     },
-  });
+  );
   assert.equal(assignment.statusCode, 200);
   assert.equal(
-    assignment.payload.schedule.assignments[body.occurrences[0].occurrenceId][`${positionIds.Camera}::0`].primaryMemberId,
+    assignment.payload.schedule.assignments[body.occurrences[0].occurrenceId][
+      `${positionIds.Camera}::0`
+    ].primaryMemberId,
     memberIds.Alex,
   );
 
@@ -329,12 +355,18 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
     source: undefined,
     generatedPeriodKey: undefined,
   });
-  const preferred = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context,
-    body,
-  });
+  const preferred = await callHandler(
+    authHandlers.ensureTeamScheduleForPeriod,
+    {
+      context,
+      body,
+    },
+  );
   assert.equal(preferred.statusCode, 200);
-  assert.equal(preferred.payload.schedule.scheduleId, first.payload.schedule.scheduleId);
+  assert.equal(
+    preferred.payload.schedule.scheduleId,
+    first.payload.schedule.scheduleId,
+  );
 
   const otherTeam = await callHandler(authHandlers.createTeam, {
     context,
@@ -349,12 +381,19 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
       assignments: assignment.payload.schedule.assignments,
       microphoneAssignments: assignment.payload.schedule.microphoneAssignments,
       iemAssignments: assignment.payload.schedule.iemAssignments,
-      additionalPositionSlots: assignment.payload.schedule.additionalPositionSlots,
+      additionalPositionSlots:
+        assignment.payload.schedule.additionalPositionSlots,
     },
   });
   assert.equal(metadataUpdate.statusCode, 200);
-  assert.equal(metadataUpdate.payload.schedule.description, "Metadata remains editable.");
-  assert.equal(metadataUpdate.payload.schedule.generatedPeriodKey, first.payload.schedule.generatedPeriodKey);
+  assert.equal(
+    metadataUpdate.payload.schedule.description,
+    "Metadata remains editable.",
+  );
+  assert.equal(
+    metadataUpdate.payload.schedule.generatedPeriodKey,
+    first.payload.schedule.generatedPeriodKey,
+  );
 
   const generatedSchedule = metadataUpdate.payload.schedule;
   const updateBody = {
@@ -385,24 +424,37 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
     body: { ...updateBody, serviceIds: ["service-sabbath", "another-service"] },
   });
   assert.equal(changedServices.statusCode, 409);
-  const changedOccurrences = await callHandler(authHandlers.updateTeamSchedule, {
-    context,
-    params: { scheduleId: generatedSchedule.scheduleId },
-    body: {
-      ...updateBody,
-      occurrences: generatedSchedule.occurrences.map((occurrence) => ({
-        ...occurrence,
-        occurrenceId: "unrelated-occurrence",
-      })),
+  const changedOccurrences = await callHandler(
+    authHandlers.updateTeamSchedule,
+    {
+      context,
+      params: { scheduleId: generatedSchedule.scheduleId },
+      body: {
+        ...updateBody,
+        occurrences: generatedSchedule.occurrences.map((occurrence) => ({
+          ...occurrence,
+          occurrenceId: "unrelated-occurrence",
+        })),
+      },
     },
-  });
+  );
   assert.equal(changedOccurrences.statusCode, 409);
 
-  const legacyContext = await createAdminContext("generated_schedule_legacy_reuse");
+  const legacyContext = await createAdminContext(
+    "generated_schedule_legacy_reuse",
+  );
   const legacyTeam = await seedTeam(legacyContext, { teamName: "Media" });
   seedChurchServiceTimesForServerTests({
     churchId: legacyContext.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+    ],
   });
   const legacy = await callHandler(authHandlers.createTeamSchedule, {
     context: legacyContext,
@@ -414,13 +466,18 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
   });
   assert.equal(reused.statusCode, 200);
   assert.equal(reused.payload.created, true);
-  assert.notEqual(reused.payload.schedule.scheduleId, legacy.payload.schedule.scheduleId);
+  assert.notEqual(
+    reused.payload.schedule.scheduleId,
+    legacy.payload.schedule.scheduleId,
+  );
   assert.equal(reused.payload.schedule.source, "generated-period");
 });
 
 test("generated schedule ensure merges combined-service requirements from current services", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const context = await createAdminContext("generated_schedule_combined_requirements");
+  const context = await createAdminContext(
+    "generated_schedule_combined_requirements",
+  );
   const { teamId, positionIds } = await seedTeam(context, {
     teamName: "Media",
     positions: [{ name: "Camera" }, { name: "Audio" }],
@@ -430,27 +487,61 @@ test("generated schedule ensure merges combined-service requirements from curren
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
-      { id: "combined-a", name: "First", serviceGroupId: "combined", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [{ positionId: cameraId, count: 1, minLevelId: "basic" }] },
-      { id: "combined-b", name: "Second", serviceGroupId: "combined", reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [{ positionId: cameraId, count: 3, minLevelId: "lead" }, { positionId: audioId, count: 1 }] },
+      {
+        id: "combined-a",
+        name: "First",
+        serviceGroupId: "combined",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        positionRequirements: [
+          { positionId: cameraId, count: 1, minLevelId: "basic" },
+        ],
+      },
+      {
+        id: "combined-b",
+        name: "Second",
+        serviceGroupId: "combined",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        positionRequirements: [
+          { positionId: cameraId, count: 3, minLevelId: "lead" },
+          { positionId: audioId, count: 1 },
+        ],
+      },
     ],
   });
   const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
     body: {
-      name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
-      timeZone: "UTC", serviceIds: ["combined-a", "combined-b"],
-      occurrences: [{
-        occurrenceId: "group:combined@2026-10-03", serviceId: "combined-a", serviceIds: ["combined-a", "combined-b"],
-        groupId: "combined", name: "First & Second", startsAt: "2026-10-03T10:00:00.000Z",
-        positionRequirements: [{ positionId: cameraId, count: 1 }],
-      }],
+      name: "October 2026",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+      serviceIds: ["combined-a", "combined-b"],
+      occurrences: [
+        {
+          occurrenceId: "group:combined@2026-10-03",
+          serviceId: "combined-a",
+          serviceIds: ["combined-a", "combined-b"],
+          groupId: "combined",
+          name: "First & Second",
+          startsAt: "2026-10-03T10:00:00.000Z",
+          positionRequirements: [{ positionId: cameraId, count: 1 }],
+        },
+      ],
     },
   });
   assert.equal(result.statusCode, 200);
-  assert.deepEqual(result.payload.schedule.occurrences[0].positionRequirements, [
-    { positionId: cameraId, count: 3, minLevelId: "lead" },
-    { positionId: audioId, count: 1 },
-  ]);
+  assert.deepEqual(
+    result.payload.schedule.occurrences[0].positionRequirements,
+    [
+      { positionId: cameraId, count: 3, minLevelId: "lead" },
+      { positionId: audioId, count: 1 },
+    ],
+  );
 });
 
 test("generated schedule ensure reuses an older rolling record containing every visible occurrence", async (t) => {
@@ -464,13 +555,20 @@ test("generated schedule ensure reuses an older rolling record containing every 
   const occurrenceId = "service-sabbath@2026-10-03T10:00:00.000Z";
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{
-      id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6,
-      time: "10:00", positionRequirements: [{ positionId: cameraId, count: 1 }],
-    }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+        positionRequirements: [{ positionId: cameraId, count: 1 }],
+      },
+    ],
   });
   const oldKey = createHash("sha256")
-    .update(`${teamId}\u00002026-09-29\u00002026-10-31`).digest("hex");
+    .update(`${teamId}\u00002026-09-29\u00002026-10-31`)
+    .digest("hex");
   const oldScheduleId = `generated_${oldKey}`;
   await setDoc("teamSchedules", oldScheduleId, {
     scheduleId: oldScheduleId,
@@ -482,19 +580,24 @@ test("generated schedule ensure reuses an older rolling record containing every 
     serviceIds: ["service-sabbath"],
     source: "generated-period",
     generatedPeriodKey: oldKey,
-    occurrences: [{
-      occurrenceId,
-      serviceId: "service-sabbath",
-      name: "Sabbath Service",
-      startsAt: "2026-10-03T10:00:00.000Z",
-      positionRequirements: [{ positionId: cameraId, count: 1 }],
-    }],
+    occurrences: [
+      {
+        occurrenceId,
+        serviceId: "service-sabbath",
+        name: "Sabbath Service",
+        startsAt: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: cameraId, count: 1 }],
+      },
+    ],
     assignments: {
-      [occurrenceId]: { [`${cameraId}::0`]: { primaryMemberId: "existing-member", shadows: [] } },
+      [occurrenceId]: {
+        [`${cameraId}::0`]: { primaryMemberId: "existing-member", shadows: [] },
+      },
     },
   });
   const emptyOldKey = createHash("sha256")
-    .update(`${teamId}\u00002026-09-01\u00002026-10-31`).digest("hex");
+    .update(`${teamId}\u00002026-09-01\u00002026-10-31`)
+    .digest("hex");
   const emptyOldScheduleId = `generated_${emptyOldKey}`;
   await setDoc("teamSchedules", emptyOldScheduleId, {
     scheduleId: emptyOldScheduleId,
@@ -506,13 +609,15 @@ test("generated schedule ensure reuses an older rolling record containing every 
     serviceIds: ["service-sabbath"],
     source: "generated-period",
     generatedPeriodKey: emptyOldKey,
-    occurrences: [{
-      occurrenceId,
-      serviceId: "service-sabbath",
-      name: "Sabbath Service",
-      startsAt: "2026-10-03T10:00:00.000Z",
-      positionRequirements: [{ positionId: cameraId, count: 1 }],
-    }],
+    occurrences: [
+      {
+        occurrenceId,
+        serviceId: "service-sabbath",
+        name: "Sabbath Service",
+        startsAt: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [{ positionId: cameraId, count: 1 }],
+      },
+    ],
     assignments: {},
   });
 
@@ -526,13 +631,15 @@ test("generated schedule ensure reuses an older rolling record containing every 
       timeZone: "UTC",
       serviceIds: ["service-sabbath"],
       visibleOccurrenceIds: [occurrenceId],
-      occurrences: [{
-        occurrenceId,
-        serviceId: "service-sabbath",
-        name: "Sabbath Service",
-        startsAt: "2026-10-03T10:00:00.000Z",
-        positionRequirements: [{ positionId: cameraId, count: 1 }],
-      }],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-sabbath",
+          name: "Sabbath Service",
+          startsAt: "2026-10-03T10:00:00.000Z",
+          positionRequirements: [{ positionId: cameraId, count: 1 }],
+        },
+      ],
     },
   });
 
@@ -540,18 +647,29 @@ test("generated schedule ensure reuses an older rolling record containing every 
   assert.equal(result.payload.created, false);
   assert.equal(result.payload.schedule.scheduleId, oldScheduleId);
   assert.equal(
-    result.payload.schedule.assignments[occurrenceId][`${cameraId}::0`].primaryMemberId,
+    result.payload.schedule.assignments[occurrenceId][`${cameraId}::0`]
+      .primaryMemberId,
     "existing-member",
   );
 });
 
 test("generated schedule ensure reuses only an equivalent source-less legacy period", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const context = await createAdminContext("generated_schedule_equivalent_legacy");
+  const context = await createAdminContext(
+    "generated_schedule_equivalent_legacy",
+  );
   const { teamId } = await seedTeam(context, { teamName: "Media" });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+    ],
   });
   const occurrence = {
     occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
@@ -575,8 +693,13 @@ test("generated schedule ensure reuses only an equivalent source-less legacy per
   const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
     body: {
-      name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
-      timeZone: "UTC", serviceIds: ["service-sabbath"], occurrences: [occurrence],
+      name: "October 2026",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+      serviceIds: ["service-sabbath"],
+      occurrences: [occurrence],
     },
   });
   assert.equal(result.statusCode, 200);
@@ -590,32 +713,61 @@ test("generated schedule ensure finds existing documents with the old period key
   const { teamId } = await seedTeam(context, { teamName: "Media" });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+    ],
   });
   const legacyKey = createHash("sha256")
-    .update(`${teamId}\u00002026-10-01\u00002026-10-31`).digest("hex");
+    .update(`${teamId}\u00002026-10-01\u00002026-10-31`)
+    .digest("hex");
   const legacyId = `generated_${legacyKey}`;
   const occurrence = {
     occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
-    serviceId: "service-sabbath", name: "Sabbath Service", startsAt: "2026-10-03T10:00:00.000Z",
+    serviceId: "service-sabbath",
+    name: "Sabbath Service",
+    startsAt: "2026-10-03T10:00:00.000Z",
     positionRequirements: [],
   };
   await setDoc("teamSchedules", legacyId, {
-    scheduleId: legacyId, churchId: context.churchId, teamId,
-    name: "October 2026", startDate: "2026-10-01", endDate: "2026-10-31",
-    serviceIds: ["service-sabbath"], source: "generated-period", generatedPeriodKey: legacyKey,
-    occurrences: [occurrence], assignments: {},
+    scheduleId: legacyId,
+    churchId: context.churchId,
+    teamId,
+    name: "October 2026",
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["service-sabbath"],
+    source: "generated-period",
+    generatedPeriodKey: legacyKey,
+    occurrences: [occurrence],
+    assignments: {},
   });
   await setDoc("teamSchedules", "legacy-equivalent-october", {
-    scheduleId: "legacy-equivalent-october", churchId: context.churchId, teamId,
-    name: "October legacy", startDate: "2026-10-01", endDate: "2026-10-31",
-    serviceIds: ["service-sabbath"], occurrences: [occurrence], assignments: {},
+    scheduleId: "legacy-equivalent-october",
+    churchId: context.churchId,
+    teamId,
+    name: "October legacy",
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["service-sabbath"],
+    occurrences: [occurrence],
+    assignments: {},
   });
   const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
     body: {
-      name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
-      timeZone: "UTC", serviceIds: ["service-sabbath"], occurrences: [occurrence],
+      name: "October 2026",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+      serviceIds: ["service-sabbath"],
+      occurrences: [occurrence],
     },
   });
   assert.equal(result.statusCode, 200);
@@ -625,47 +777,97 @@ test("generated schedule ensure finds existing documents with the old period key
 
 test("generated schedule ensure does not adopt a non-equivalent or ambiguous source-less period", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const context = await createAdminContext("generated_schedule_non_equivalent_legacy");
+  const context = await createAdminContext(
+    "generated_schedule_non_equivalent_legacy",
+  );
   const { teamId } = await seedTeam(context, { teamName: "Media" });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+    ],
   });
   const occurrence = {
     occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
-    serviceId: "service-sabbath", name: "Sabbath Service", startsAt: "2026-10-03T10:00:00.000Z",
+    serviceId: "service-sabbath",
+    name: "Sabbath Service",
+    startsAt: "2026-10-03T10:00:00.000Z",
     positionRequirements: [],
   };
   const body = {
-    name: "October 2026", teamId, startDate: "2026-10-01", endDate: "2026-10-31",
-    timeZone: "UTC", serviceIds: ["service-sabbath"], occurrences: [occurrence],
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: ["service-sabbath"],
+    occurrences: [occurrence],
   };
   await setDoc("teamSchedules", "source-less-custom-occurrence", {
-    scheduleId: "source-less-custom-occurrence", churchId: context.churchId, teamId,
-    startDate: body.startDate, endDate: body.endDate, serviceIds: body.serviceIds,
-    occurrences: [{ ...occurrence, occurrenceId: "special-event@2026-10-03T10:00:00.000Z" }], assignments: {},
+    scheduleId: "source-less-custom-occurrence",
+    churchId: context.churchId,
+    teamId,
+    startDate: body.startDate,
+    endDate: body.endDate,
+    serviceIds: body.serviceIds,
+    occurrences: [
+      { ...occurrence, occurrenceId: "special-event@2026-10-03T10:00:00.000Z" },
+    ],
+    assignments: {},
   });
-  const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body,
+  });
   assert.equal(created.statusCode, 200);
   assert.equal(created.payload.created, true);
 
-  const ambiguousContext = await createAdminContext("generated_schedule_ambiguous_legacy");
+  const ambiguousContext = await createAdminContext(
+    "generated_schedule_ambiguous_legacy",
+  );
   const ambiguousTeam = await seedTeam(ambiguousContext, { teamName: "Media" });
   seedChurchServiceTimesForServerTests({
     churchId: ambiguousContext.churchId,
-    services: [{ id: "service-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [
+      {
+        id: "service-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+    ],
   });
   const equivalentBase = {
-    churchId: ambiguousContext.churchId, teamId: ambiguousTeam.teamId,
-    startDate: body.startDate, endDate: body.endDate, serviceIds: body.serviceIds,
-    occurrences: [occurrence], assignments: {},
+    churchId: ambiguousContext.churchId,
+    teamId: ambiguousTeam.teamId,
+    startDate: body.startDate,
+    endDate: body.endDate,
+    serviceIds: body.serviceIds,
+    occurrences: [occurrence],
+    assignments: {},
   };
-  await setDoc("teamSchedules", "legacy-copy-a", { ...equivalentBase, scheduleId: "legacy-copy-a" });
-  await setDoc("teamSchedules", "legacy-copy-b", { ...equivalentBase, scheduleId: "legacy-copy-b" });
-  const ambiguous = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context: ambiguousContext,
-    body: { ...body, teamId: ambiguousTeam.teamId },
+  await setDoc("teamSchedules", "legacy-copy-a", {
+    ...equivalentBase,
+    scheduleId: "legacy-copy-a",
   });
+  await setDoc("teamSchedules", "legacy-copy-b", {
+    ...equivalentBase,
+    scheduleId: "legacy-copy-b",
+  });
+  const ambiguous = await callHandler(
+    authHandlers.ensureTeamScheduleForPeriod,
+    {
+      context: ambiguousContext,
+      body: { ...body, teamId: ambiguousTeam.teamId },
+    },
+  );
   assert.equal(ambiguous.statusCode, 409);
 });
 
@@ -676,8 +878,22 @@ test("generated schedule ensure rejects inactive services and mismatched groups"
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
-      { id: "active-one", name: "First", serviceGroupId: "combined", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
-      { id: "active-two", name: "Second", serviceGroupId: "other", reccurence: "weekly", dayOfWeek: 6, time: "10:00" },
+      {
+        id: "active-one",
+        name: "First",
+        serviceGroupId: "combined",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+      {
+        id: "active-two",
+        name: "Second",
+        serviceGroupId: "other",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
       { id: "archived", name: "Old", archivedAt: "2026-01-01T00:00:00.000Z" },
     ],
   });
@@ -688,44 +904,66 @@ test("generated schedule ensure rejects inactive services and mismatched groups"
     endDate: "2026-10-31",
     timeZone: "UTC",
     serviceIds: ["active-one"],
-    occurrences: [{
-      occurrenceId: "active-one@2026-10-03T10:00:00.000Z",
-      serviceId: "active-one",
-      name: "First",
-      startsAt: "2026-10-03T10:00:00.000Z",
-      positionRequirements: [],
-    }],
+    occurrences: [
+      {
+        occurrenceId: "active-one@2026-10-03T10:00:00.000Z",
+        serviceId: "active-one",
+        name: "First",
+        startsAt: "2026-10-03T10:00:00.000Z",
+        positionRequirements: [],
+      },
+    ],
   };
   const archived = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
-    body: { ...body, serviceIds: ["archived"], occurrences: [{ ...body.occurrences[0], serviceId: "archived", occurrenceId: "archived@2026-10-03T10:00:00.000Z" }] },
+    body: {
+      ...body,
+      serviceIds: ["archived"],
+      occurrences: [
+        {
+          ...body.occurrences[0],
+          serviceId: "archived",
+          occurrenceId: "archived@2026-10-03T10:00:00.000Z",
+        },
+      ],
+    },
   });
   assert.equal(archived.statusCode, 400);
-  const wrongGroup = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context,
-    body: {
-      ...body,
-      serviceIds: ["active-one", "active-two"],
-      occurrences: [{
-        ...body.occurrences[0],
+  const wrongGroup = await callHandler(
+    authHandlers.ensureTeamScheduleForPeriod,
+    {
+      context,
+      body: {
+        ...body,
         serviceIds: ["active-one", "active-two"],
-        groupId: "combined",
-        occurrenceId: "group:combined@2026-10-03",
-      }],
+        occurrences: [
+          {
+            ...body.occurrences[0],
+            serviceIds: ["active-one", "active-two"],
+            groupId: "combined",
+            occurrenceId: "group:combined@2026-10-03",
+          },
+        ],
+      },
     },
-  });
+  );
   assert.equal(wrongGroup.statusCode, 400);
-  const wrongWeekday = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context,
-    body: {
-      ...body,
-      occurrences: [{
-        ...body.occurrences[0],
-        occurrenceId: "active-one@2026-10-04T10:00:00.000Z",
-        startsAt: "2026-10-04T10:00:00.000Z",
-      }],
+  const wrongWeekday = await callHandler(
+    authHandlers.ensureTeamScheduleForPeriod,
+    {
+      context,
+      body: {
+        ...body,
+        occurrences: [
+          {
+            ...body.occurrences[0],
+            occurrenceId: "active-one@2026-10-04T10:00:00.000Z",
+            startsAt: "2026-10-04T10:00:00.000Z",
+          },
+        ],
+      },
     },
-  });
+  );
   assert.equal(wrongWeekday.statusCode, 400);
 });
 
@@ -1056,7 +1294,9 @@ test("team position icon refs persist while legacy values and older omitted save
   });
   assert.equal(updated.statusCode, 200);
   assert.deepEqual(updated.payload.position.icon, {
-    source: "tabler", name: "camera", color: "#22d3ee",
+    source: "tabler",
+    name: "camera",
+    color: "#22d3ee",
   });
 
   const legacyClientSave = await callHandler(authHandlers.updateTeamPosition, {
@@ -1065,8 +1305,13 @@ test("team position icon refs persist while legacy values and older omitted save
     body: { name: "Vocal Updated", teamId },
   });
   assert.equal(legacyClientSave.statusCode, 200);
-  assert.deepEqual(legacyClientSave.payload.position.icon, updated.payload.position.icon);
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.deepEqual(
+    legacyClientSave.payload.position.icon,
+    updated.payload.position.icon,
+  );
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
   const loadedPosition = bootstrap.payload.positions.find(
     (position) => position.positionId === legacy.payload.position.positionId,
   );
@@ -1075,7 +1320,11 @@ test("team position icon refs persist while legacy values and older omitted save
   const invalid = await callHandler(authHandlers.updateTeamPosition, {
     context,
     params: { positionId: legacy.payload.position.positionId },
-    body: { name: "Vocal", teamId, icon: { source: "tabler", name: "camera", color: "red" } },
+    body: {
+      name: "Vocal",
+      teamId,
+      icon: { source: "tabler", name: "camera", color: "red" },
+    },
   });
   assert.equal(invalid.statusCode, 400);
 });
@@ -1093,27 +1342,56 @@ test("team icons accept legacy and structured refs with validated colors", async
   const structured = await callHandler(authHandlers.updateTeam, {
     context,
     params: { teamId: legacy.payload.team.teamId },
-    body: { name: "Music", memberIds: [], icon: { source: "lucide", name: "Music", color: "#22D3EE" } },
+    body: {
+      name: "Music",
+      memberIds: [],
+      icon: { source: "lucide", name: "Music", color: "#22D3EE" },
+    },
   });
   assert.equal(structured.statusCode, 200);
-  assert.deepEqual(structured.payload.team.icon, { source: "lucide", name: "Music", color: "#22d3ee" });
+  assert.deepEqual(structured.payload.team.icon, {
+    source: "lucide",
+    name: "Music",
+    color: "#22d3ee",
+  });
 
   const tabler = await callHandler(authHandlers.updateTeam, {
     context,
     params: { teamId: legacy.payload.team.teamId },
-    body: { name: "Music", memberIds: [], icon: { source: "tabler", name: "camera" } },
+    body: {
+      name: "Music",
+      memberIds: [],
+      icon: { source: "tabler", name: "camera" },
+    },
   });
-  assert.deepEqual(tabler.payload.team.icon, { source: "tabler", name: "camera" });
+  assert.deepEqual(tabler.payload.team.icon, {
+    source: "tabler",
+    name: "camera",
+  });
 
   const worshipSync = await callHandler(authHandlers.updateTeam, {
     context,
     params: { teamId: legacy.payload.team.teamId },
-    body: { name: "Music", memberIds: [], icon: { source: "worshipsync", name: "service" } },
+    body: {
+      name: "Music",
+      memberIds: [],
+      icon: { source: "worshipsync", name: "service" },
+    },
   });
-  assert.deepEqual(worshipSync.payload.team.icon, { source: "worshipsync", name: "service" });
+  assert.deepEqual(worshipSync.payload.team.icon, {
+    source: "worshipsync",
+    name: "service",
+  });
 
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  assert.deepEqual(bootstrap.payload.teams.find((item) => item.teamId === legacy.payload.team.teamId).icon, worshipSync.payload.team.icon);
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.deepEqual(
+    bootstrap.payload.teams.find(
+      (item) => item.teamId === legacy.payload.team.teamId,
+    ).icon,
+    worshipSync.payload.team.icon,
+  );
 
   for (const icon of [
     { source: "unknown", name: "camera" },
@@ -1138,15 +1416,29 @@ test("portable team import and export preserve structured icon refs", async (t) 
     body: {
       type: "teams",
       approvedRows: [
-        { row: 2, action: "create", record: { name: "Portable Music", icon: "Music" } },
-        { row: 3, action: "create", record: { name: "Portable Media", icon: JSON.stringify(icon) } },
+        {
+          row: 2,
+          action: "create",
+          record: { name: "Portable Music", icon: "Music" },
+        },
+        {
+          row: 3,
+          action: "create",
+          record: { name: "Portable Media", icon: JSON.stringify(icon) },
+        },
       ],
     },
   });
   assert.equal(committed.statusCode, 200);
-  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  const music = bootstrap.payload.teams.find((team) => team.name === "Portable Music");
-  const media = bootstrap.payload.teams.find((team) => team.name === "Portable Media");
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  const music = bootstrap.payload.teams.find(
+    (team) => team.name === "Portable Music",
+  );
+  const media = bootstrap.payload.teams.find(
+    (team) => team.name === "Portable Media",
+  );
   assert.equal(music.icon, "Music");
   assert.deepEqual(media.icon, icon);
 
@@ -1156,13 +1448,18 @@ test("portable team import and export preserve structured icon refs", async (t) 
   });
   assert.equal(exported.statusCode, 200);
   assert.match(String(exported.body), /Music/);
-  assert.ok(String(exported.body).includes(JSON.stringify(icon).replaceAll('"', '""')));
+  assert.ok(
+    String(exported.body).includes(JSON.stringify(icon).replaceAll('"', '""')),
+  );
 });
 
 test("unrelated position edits preserve legacy custom icons while supported changes and clearing work", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("legacy_custom_position_icon");
-  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Production" } });
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Production" },
+  });
   const icon = { source: "custom", id: "church-icon" };
   const positionId = "legacy_custom_position";
   await setDoc(COLLECTIONS.teamPositions, positionId, {
@@ -1178,14 +1475,24 @@ test("unrelated position edits preserve legacy custom icons while supported chan
   const renamed = await callHandler(authHandlers.updateTeamPosition, {
     context,
     params: { positionId },
-    body: { name: "Video Camera", teamId: team.payload.team.teamId, description: "Original description", icon },
+    body: {
+      name: "Video Camera",
+      teamId: team.payload.team.teamId,
+      description: "Original description",
+      icon,
+    },
   });
   assert.equal(renamed.statusCode, 200);
   assert.deepEqual(renamed.payload.position.icon, icon);
   const described = await callHandler(authHandlers.updateTeamPosition, {
     context,
     params: { positionId },
-    body: { name: "Video Camera", teamId: team.payload.team.teamId, description: "Updated description", icon },
+    body: {
+      name: "Video Camera",
+      teamId: team.payload.team.teamId,
+      description: "Updated description",
+      icon,
+    },
   });
   assert.equal(described.statusCode, 200);
   assert.deepEqual(described.payload.position.icon, icon);
@@ -1193,10 +1500,17 @@ test("unrelated position edits preserve legacy custom icons while supported chan
   const changed = await callHandler(authHandlers.updateTeamPosition, {
     context,
     params: { positionId },
-    body: { name: "Video Camera", teamId: team.payload.team.teamId, icon: { source: "lucide", name: "Camera" } },
+    body: {
+      name: "Video Camera",
+      teamId: team.payload.team.teamId,
+      icon: { source: "lucide", name: "Camera" },
+    },
   });
   assert.equal(changed.statusCode, 200);
-  assert.deepEqual(changed.payload.position.icon, { source: "lucide", name: "Camera" });
+  assert.deepEqual(changed.payload.position.icon, {
+    source: "lucide",
+    name: "Camera",
+  });
   const cleared = await callHandler(authHandlers.updateTeamPosition, {
     context,
     params: { positionId },
@@ -1205,23 +1519,69 @@ test("unrelated position edits preserve legacy custom icons while supported chan
   assert.equal(cleared.statusCode, 200);
   assert.equal(cleared.payload.position.icon, "");
 
-  await setDoc(COLLECTIONS.teamPositions, positionId, { ...cleared.payload.position, icon }, { merge: false });
-  const exported = await callHandler(authHandlers.exportPortableData, { context, params: { type: "positions" } });
+  await setDoc(
+    COLLECTIONS.teamPositions,
+    positionId,
+    { ...cleared.payload.position, icon },
+    { merge: false },
+  );
+  const exported = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "positions" },
+  });
   const csv = String(exported.body);
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "positions", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "positions", csv, mapping: inspected.payload.mapping } });
-  assert.equal(preview.payload.rows[0].action, "update", JSON.stringify(preview.payload.rows[0]));
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context,
+    body: { type: "positions", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context,
+    body: { type: "positions", csv, mapping: inspected.payload.mapping },
+  });
+  assert.equal(
+    preview.payload.rows[0].action,
+    "update",
+    JSON.stringify(preview.payload.rows[0]),
+  );
   const roundTrip = await callHandler(authHandlers.commitPortableImport, {
     context,
-    body: { type: "positions", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId, record })) },
+    body: {
+      type: "positions",
+      approvedRows: preview.payload.rows.map(
+        ({ row, action, matchedId, record }) => ({
+          row,
+          action,
+          recordId: matchedId,
+          record,
+        }),
+      ),
+    },
   });
-  assert.equal(roundTrip.payload.summary.updated, 1, JSON.stringify({ row: preview.payload.rows[0], result: roundTrip.payload }));
+  assert.equal(
+    roundTrip.payload.summary.updated,
+    1,
+    JSON.stringify({ row: preview.payload.rows[0], result: roundTrip.payload }),
+  );
   const persisted = await getDoc(COLLECTIONS.teamPositions, positionId);
   assert.deepEqual(persisted.icon, icon);
 
   const rejectedCreate = await callHandler(authHandlers.commitPortableImport, {
     context,
-    body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "New Custom", team: "Production", teamId: team.payload.team.teamId, icon: JSON.stringify(icon) } }] },
+    body: {
+      type: "positions",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: {
+            name: "New Custom",
+            team: "Production",
+            teamId: team.payload.team.teamId,
+            icon: JSON.stringify(icon),
+          },
+        },
+      ],
+    },
   });
   assert.equal(rejectedCreate.payload.summary.failed, 1);
 });
@@ -2018,7 +2378,9 @@ test("atomic assignment batches reject a row as a whole and require the current 
     serviceId: "svc",
     name: "Sunday",
     startsAt: "2026-07-05T10:00:00.000Z",
-    positionRequirements: Object.values(worship.positionIds).map((positionId) => ({ positionId, count: 1 })),
+    positionRequirements: Object.values(worship.positionIds).map(
+      (positionId) => ({ positionId, count: 1 }),
+    ),
   };
   const target = await callHandler(authHandlers.createTeamSchedule, {
     context,
@@ -2031,7 +2393,10 @@ test("atomic assignment batches reject a row as a whole and require the current 
       occurrences: [occurrence],
     },
   });
-  const otherOccurrence = { ...occurrence, positionRequirements: [{ positionId: cameraId, count: 1 }] };
+  const otherOccurrence = {
+    ...occurrence,
+    positionRequirements: [{ positionId: cameraId, count: 1 }],
+  };
   const other = await callHandler(authHandlers.createTeamSchedule, {
     context,
     body: {
@@ -2065,55 +2430,107 @@ test("atomic assignment batches reject a row as a whole and require the current 
     expectedCell: "",
     assignment: { primaryMemberId: memberId },
   }));
-  const blocked = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
-    context,
-    params: { scheduleId: target.payload.schedule.scheduleId },
-    body: { changes },
-  });
+  const blocked = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentsBatch,
+    {
+      context,
+      params: { scheduleId: target.payload.schedule.scheduleId },
+      body: { changes },
+    },
+  );
   assert.equal(blocked.statusCode, 409);
   assert.ok(blocked.payload.conflictFingerprint);
   assert.equal(blocked.payload.occurrenceConflicts.length, 1);
-  assert.deepEqual((await getDoc("teamSchedules", target.payload.schedule.scheduleId)).assignments, {});
+  assert.deepEqual(
+    (await getDoc("teamSchedules", target.payload.schedule.scheduleId))
+      .assignments,
+    {},
+  );
 
-  const otherSchedule = await getDoc("teamSchedules", other.payload.schedule.scheduleId);
+  const otherSchedule = await getDoc(
+    "teamSchedules",
+    other.payload.schedule.scheduleId,
+  );
   await setDoc("teamSchedules", other.payload.schedule.scheduleId, {
     ...otherSchedule,
     occurrences: [
       ...otherSchedule.occurrences,
-      { ...otherOccurrence, occurrenceId: "svc-joined@2026-07-05T10:00:00.000Z", serviceIds: ["svc", "svc-joined"] },
+      {
+        ...otherOccurrence,
+        occurrenceId: "svc-joined@2026-07-05T10:00:00.000Z",
+        serviceIds: ["svc", "svc-joined"],
+      },
     ],
     serviceIds: ["svc", "svc-joined"],
     assignments: {
       ...otherSchedule.assignments,
-      "svc-joined@2026-07-05T10:00:00.000Z": { [`${cameraId}::0`]: { primaryMemberId: caseyId } },
+      "svc-joined@2026-07-05T10:00:00.000Z": {
+        [`${cameraId}::0`]: { primaryMemberId: caseyId },
+      },
     },
   });
-  const stale = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
-    context,
-    params: { scheduleId: target.payload.schedule.scheduleId },
-    body: {
-      changes,
-      confirmedOccurrenceConflictFingerprint: blocked.payload.conflictFingerprint,
+  const stale = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentsBatch,
+    {
+      context,
+      params: { scheduleId: target.payload.schedule.scheduleId },
+      body: {
+        changes,
+        confirmedOccurrenceConflictFingerprint:
+          blocked.payload.conflictFingerprint,
+      },
     },
-  });
+  );
   assert.equal(stale.statusCode, 409);
   assert.equal(stale.payload.occurrenceConflicts.length, 2);
-  assert.notEqual(stale.payload.conflictFingerprint, blocked.payload.conflictFingerprint);
-  assert.deepEqual((await getDoc("teamSchedules", target.payload.schedule.scheduleId)).assignments, {});
+  assert.notEqual(
+    stale.payload.conflictFingerprint,
+    blocked.payload.conflictFingerprint,
+  );
+  assert.deepEqual(
+    (await getDoc("teamSchedules", target.payload.schedule.scheduleId))
+      .assignments,
+    {},
+  );
 
-  const confirmed = await callHandler(authHandlers.updateTeamScheduleAssignmentsBatch, {
-    context,
-    params: { scheduleId: target.payload.schedule.scheduleId },
-    body: {
-      changes,
-      confirmedOccurrenceConflictFingerprint: stale.payload.conflictFingerprint,
+  const confirmed = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentsBatch,
+    {
+      context,
+      params: { scheduleId: target.payload.schedule.scheduleId },
+      body: {
+        changes,
+        confirmedOccurrenceConflictFingerprint:
+          stale.payload.conflictFingerprint,
+      },
     },
-  });
+  );
   assert.equal(confirmed.statusCode, 200);
   assert.equal(confirmed.payload.accepted.length, 3);
-  assert.equal(getMemberId(confirmed.payload.schedule.assignments[occurrenceId][`${worship.positionIds.Vocal}::0`]), worship.memberIds.Avery);
-  assert.equal(getMemberId(confirmed.payload.schedule.assignments[occurrenceId][`${worship.positionIds.Keys}::0`]), worship.memberIds.Blair);
-  assert.equal(getMemberId(confirmed.payload.schedule.assignments[occurrenceId][`${worship.positionIds.Drums}::0`]), caseyId);
+  assert.equal(
+    getMemberId(
+      confirmed.payload.schedule.assignments[occurrenceId][
+        `${worship.positionIds.Vocal}::0`
+      ],
+    ),
+    worship.memberIds.Avery,
+  );
+  assert.equal(
+    getMemberId(
+      confirmed.payload.schedule.assignments[occurrenceId][
+        `${worship.positionIds.Keys}::0`
+      ],
+    ),
+    worship.memberIds.Blair,
+  );
+  assert.equal(
+    getMemberId(
+      confirmed.payload.schedule.assignments[occurrenceId][
+        `${worship.positionIds.Drums}::0`
+      ],
+    ),
+    caseyId,
+  );
 });
 
 test("schedule assignments fall back to one slot when occurrence requirements are missing", async (t) => {
@@ -2375,20 +2792,22 @@ test("schedule assignments require confirmation for cross-team service conflicts
   };
   // More than the former 5,000-schedule cap of unrelated history must not
   // hide the overlapping schedule created below from the assignment check.
-  await Promise.all(Array.from({ length: 5001 }, (_, index) => {
-    const scheduleId = `old-unrelated-schedule-${index}`;
-    return setDoc("teamSchedules", scheduleId, {
-      scheduleId,
-      churchId: context.churchId,
-      teamId: productionTeamId,
-      name: "Old unrelated history",
-      startDate: "2020-01-01",
-      endDate: "2020-01-31",
-      serviceIds: [`old-service-${index}`],
-      occurrences: [],
-      assignments: {},
-    });
-  }));
+  await Promise.all(
+    Array.from({ length: 5001 }, (_, index) => {
+      const scheduleId = `old-unrelated-schedule-${index}`;
+      return setDoc("teamSchedules", scheduleId, {
+        scheduleId,
+        churchId: context.churchId,
+        teamId: productionTeamId,
+        name: "Old unrelated history",
+        startDate: "2020-01-01",
+        endDate: "2020-01-31",
+        serviceIds: [`old-service-${index}`],
+        occurrences: [],
+        assignments: {},
+      });
+    }),
+  );
   const worshipSchedule = await callHandler(authHandlers.createTeamSchedule, {
     context,
     body: {
@@ -2447,12 +2866,19 @@ test("schedule assignments require confirmation for cross-team service conflicts
   // A second overlapping occurrence appears after the operator has reviewed
   // the first warning. The old fingerprint must not authorize the new set.
   const newlyDiscoveredOccurrenceId = "svc-joined@2026-07-05T10:00:00.000Z";
-  const currentWorshipSchedule = await getDoc("teamSchedules", worshipSchedule.payload.schedule.scheduleId);
+  const currentWorshipSchedule = await getDoc(
+    "teamSchedules",
+    worshipSchedule.payload.schedule.scheduleId,
+  );
   await setDoc("teamSchedules", worshipSchedule.payload.schedule.scheduleId, {
     ...currentWorshipSchedule,
     occurrences: [
       ...(currentWorshipSchedule.occurrences || []),
-      { ...occurrence, occurrenceId: newlyDiscoveredOccurrenceId, serviceIds: ["svc", "svc-joined"] },
+      {
+        ...occurrence,
+        occurrenceId: newlyDiscoveredOccurrenceId,
+        serviceIds: ["svc", "svc-joined"],
+      },
     ],
     serviceIds: ["svc", "svc-joined"],
     assignments: {
@@ -2462,20 +2888,27 @@ test("schedule assignments require confirmation for cross-team service conflicts
       },
     },
   });
-  const staleConfirmation = await callHandler(authHandlers.updateTeamScheduleAssignment, {
-    context,
-    params: { scheduleId: productionSchedule.payload.schedule.scheduleId },
-    body: {
-      serviceId: occurrenceId,
-      positionSlotKey: `${cameraId}::0`,
-      memberId: averyId,
-      serviceDate: "2026-07-05",
-      confirmedOccurrenceConflictFingerprint: blocked.payload.conflictFingerprint,
+  const staleConfirmation = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId: productionSchedule.payload.schedule.scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${cameraId}::0`,
+        memberId: averyId,
+        serviceDate: "2026-07-05",
+        confirmedOccurrenceConflictFingerprint:
+          blocked.payload.conflictFingerprint,
+      },
     },
-  });
+  );
   assert.equal(staleConfirmation.statusCode, 409);
   assert.equal(staleConfirmation.payload.occurrenceConflicts.length, 2);
-  assert.notEqual(staleConfirmation.payload.conflictFingerprint, blocked.payload.conflictFingerprint);
+  assert.notEqual(
+    staleConfirmation.payload.conflictFingerprint,
+    blocked.payload.conflictFingerprint,
+  );
 
   const bulkBlocked = await callHandler(authHandlers.updateTeamSchedule, {
     context,
@@ -2506,7 +2939,8 @@ test("schedule assignments require confirmation for cross-team service conflicts
         positionSlotKey: `${cameraId}::0`,
         memberId: averyId,
         serviceDate: "2026-07-05",
-        confirmedOccurrenceConflictFingerprint: staleConfirmation.payload.conflictFingerprint,
+        confirmedOccurrenceConflictFingerprint:
+          staleConfirmation.payload.conflictFingerprint,
       },
     },
   );
@@ -2607,12 +3041,17 @@ test("schedule assignments require confirmation for cross-team service conflicts
     },
   );
   assert.equal(incompleteConflictLookup.statusCode, 409);
-  assert.match(incompleteConflictLookup.payload.errorMessage, /incomplete dates.*checked safely/i);
+  assert.match(
+    incompleteConflictLookup.payload.errorMessage,
+    /incomplete dates.*checked safely/i,
+  );
 });
 
 test("joined and standalone member service occurrences require cross-team conflict confirmation", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const context = await createAdminContext("joined_service_cross_team_conflict");
+  const context = await createAdminContext(
+    "joined_service_cross_team_conflict",
+  );
   const worship = await seedTeam(context, {
     teamName: "Worship",
     positions: [
@@ -2700,7 +3139,13 @@ test("joined and standalone member service occurrences require cross-team confli
   assert.equal(worshipSchedule.statusCode, 200);
   assert.equal(productionSchedule.statusCode, 200);
 
-  const assign = async (scheduleId, occurrenceId, positionId, memberId, fingerprint = "") =>
+  const assign = async (
+    scheduleId,
+    occurrenceId,
+    positionId,
+    memberId,
+    fingerprint = "",
+  ) =>
     callHandler(authHandlers.updateTeamScheduleAssignment, {
       context,
       params: { scheduleId },
@@ -2709,7 +3154,9 @@ test("joined and standalone member service occurrences require cross-team confli
         positionSlotKey: `${positionId}::0`,
         memberId,
         serviceDate: "2026-10-03",
-        ...(fingerprint ? { confirmedOccurrenceConflictFingerprint: fingerprint } : {}),
+        ...(fingerprint
+          ? { confirmedOccurrenceConflictFingerprint: fingerprint }
+          : {}),
       },
     });
 
@@ -2728,7 +3175,10 @@ test("joined and standalone member service occurrences require cross-team confli
     averyId,
   );
   assert.equal(blockedStandalone.statusCode, 409);
-  assert.match(blockedStandalone.payload.errorMessage, /already scheduled on another team/i);
+  assert.match(
+    blockedStandalone.payload.errorMessage,
+    /already scheduled on another team/i,
+  );
   const confirmedStandalone = await assign(
     productionSchedule.payload.schedule.scheduleId,
     standaloneOccurrence.occurrenceId,
@@ -2907,7 +3357,8 @@ test("occurrence conflict checks include same-team roles, different dates, and a
         positionSlotKey: `${worship.positionIds.Vocal}::0`,
         memberId: averyId,
         serviceDate: "2026-07-05",
-        confirmedOccurrenceConflictFingerprint: sameTeam.payload.conflictFingerprint,
+        confirmedOccurrenceConflictFingerprint:
+          sameTeam.payload.conflictFingerprint,
       },
     },
   );
@@ -3810,7 +4261,12 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     body: {
       microphones: [
         { id: "mic-public", name: "Black", type: "Handheld", color: "#123456" },
-        { id: "mic-unrelated", name: "Private mic", type: "Lapel", color: "#abcdef" },
+        {
+          id: "mic-unrelated",
+          name: "Private mic",
+          type: "Lapel",
+          color: "#abcdef",
+        },
       ],
       audiences: [],
     },
@@ -3819,8 +4275,19 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     context,
     body: {
       equipment: [
-        { id: "iem-public", category: "iem", name: "IEM 1", subtype: "wireless-beltpack", color: "#654321" },
-        { id: "iem-unrelated", category: "iem", name: "Private pack", subtype: "wired-beltpack" },
+        {
+          id: "iem-public",
+          category: "iem",
+          name: "IEM 1",
+          subtype: "wireless-beltpack",
+          color: "#654321",
+        },
+        {
+          id: "iem-unrelated",
+          category: "iem",
+          name: "Private pack",
+          subtype: "wired-beltpack",
+        },
       ],
     },
   });
@@ -3866,19 +4333,26 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     },
   });
   const persistedSchedule = await getDoc("teamSchedules", scheduleId);
-  await setDoc("teamSchedules", scheduleId, {
-    source: "generated-period",
-    occurrences: [
-      ...persistedSchedule.occurrences,
-      {
-        occurrenceId: "unrelated-service@2026-06-20T10:00:00.000Z",
-        serviceId: "unrelated-service",
-        name: "Unrelated service",
-        startsAt: "2026-06-20T10:00:00.000Z",
-        positionRequirements: [{ positionId: "another-team-position", count: 1 }],
-      },
-    ],
-  }, { merge: true });
+  await setDoc(
+    "teamSchedules",
+    scheduleId,
+    {
+      source: "generated-period",
+      occurrences: [
+        ...persistedSchedule.occurrences,
+        {
+          occurrenceId: "unrelated-service@2026-06-20T10:00:00.000Z",
+          serviceId: "unrelated-service",
+          name: "Unrelated service",
+          startsAt: "2026-06-20T10:00:00.000Z",
+          positionRequirements: [
+            { positionId: "another-team-position", count: 1 },
+          ],
+        },
+      ],
+    },
+    { merge: true },
+  );
 
   // Admin mints the public link (idempotent: same token on repeat).
   const link = await callHandler(authHandlers.getTeamSchedulePublicLink, {
@@ -3907,7 +4381,9 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
   assert.equal(publicRes.statusCode, 200);
   assert.equal(publicRes.payload.schedule.name, "June 2026");
   assert.deepEqual(
-    publicRes.payload.schedule.occurrences.map((occurrence) => occurrence.occurrenceId),
+    publicRes.payload.schedule.occurrences.map(
+      (occurrence) => occurrence.occurrenceId,
+    ),
     [occurrenceId],
   );
   assert.equal(publicRes.payload.teamName, "Production");
@@ -3917,7 +4393,9 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     kevinId,
   );
   assert.deepEqual(
-    publicRes.payload.schedule.microphoneAssignments[occurrenceId][`${directorId}::0`],
+    publicRes.payload.schedule.microphoneAssignments[occurrenceId][
+      `${directorId}::0`
+    ],
     ["mic-public", "mic-missing"],
   );
   assert.deepEqual(
@@ -3925,7 +4403,13 @@ test("public schedule link returns a sanitized, name-resolved snapshot", async (
     ["iem-public", "iem-missing"],
   );
   assert.deepEqual(publicRes.payload.microphones, [
-    { id: "mic-public", name: "Black", type: "Handheld", color: "#123456", category: "microphone" },
+    {
+      id: "mic-public",
+      name: "Black",
+      type: "Handheld",
+      color: "#123456",
+      category: "microphone",
+    },
   ]);
   assert.deepEqual(publicRes.payload.serviceEquipment, [
     {
@@ -4190,15 +4674,24 @@ test("intake forms expose and enforce the owner's selected fields", async (t) =>
     submitRes,
   );
   assert.equal(submitRes.statusCode, 200);
-  assert.deepEqual(Object.keys(submitRes.payload).sort(), ["submissionId", "success"]);
+  assert.deepEqual(Object.keys(submitRes.payload).sort(), [
+    "submissionId",
+    "success",
+  ]);
   await flushAsyncWork();
-  const scheduledForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+  const scheduledForm = await getDoc(
+    "teamIntakeForms",
+    form.payload.form.formId,
+  );
   assert.ok(scheduledForm.pendingDigestSince);
   const persistedSubmission = await getDoc(
     "teamIntakeSubmissions",
     submitRes.payload.submissionId,
   );
-  assert.equal(persistedSubmission.digestBatchId, scheduledForm.pendingDigestBatchId);
+  assert.equal(
+    persistedSubmission.digestBatchId,
+    scheduledForm.pendingDigestBatchId,
+  );
 
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -4279,13 +4772,19 @@ test("a failed scheduler leaves a persisted regular submission recoverable", asy
       "submissionId",
       "success",
     ]);
-    const storedForm = await getDoc("teamIntakeForms", form.payload.form.formId);
+    const storedForm = await getDoc(
+      "teamIntakeForms",
+      form.payload.form.formId,
+    );
     const storedSubmission = await getDoc(
       "teamIntakeSubmissions",
       response.payload.submissionId,
     );
     assert.ok(storedForm.pendingDigestSince);
-    assert.equal(storedSubmission.digestBatchId, storedForm.pendingDigestBatchId);
+    assert.equal(
+      storedSubmission.digestBatchId,
+      storedForm.pendingDigestBatchId,
+    );
 
     setIntakeDigestSchedulingFailureForServerTests(false);
     await setDoc(
@@ -5429,23 +5928,44 @@ test("service plan normalization retains IEM-only and mixed equipment slots", as
       serviceId: "service",
       date: "2026-09-20",
       name: "Sunday Service",
-      sections: [{ id: "section", name: "Music", elements: [{
-        id: "song",
-        type: "song",
-        title: richText("Song"),
-        assignees: [
-          { id: "iem-slot", iemIds: ["iem-only"] },
-          { id: "mixed-slot", name: "Sarah", microphoneIds: ["same-id"], iemIds: ["same-id", "same-id"] },
-          { id: "duplicate-slot", iemIds: ["same-id"] },
-        ],
-      }] }],
+      sections: [
+        {
+          id: "section",
+          name: "Music",
+          elements: [
+            {
+              id: "song",
+              type: "song",
+              title: richText("Song"),
+              assignees: [
+                { id: "iem-slot", iemIds: ["iem-only"] },
+                {
+                  id: "mixed-slot",
+                  name: "Sarah",
+                  microphoneIds: ["same-id"],
+                  iemIds: ["same-id", "same-id"],
+                },
+                { id: "duplicate-slot", iemIds: ["same-id"] },
+              ],
+            },
+          ],
+        },
+      ],
     },
   });
   assert.equal(saved.statusCode, 200);
-  assert.deepEqual(saved.payload.servicePlan.sections[0].elements[0].assignees, [
-    { id: "iem-slot", iemIds: ["iem-only"] },
-    { id: "mixed-slot", name: "Sarah", microphoneIds: ["same-id"], iemIds: ["same-id"] },
-  ]);
+  assert.deepEqual(
+    saved.payload.servicePlan.sections[0].elements[0].assignees,
+    [
+      { id: "iem-slot", iemIds: ["iem-only"] },
+      {
+        id: "mixed-slot",
+        name: "Sarah",
+        microphoneIds: ["same-id"],
+        iemIds: ["same-id"],
+      },
+    ],
+  );
 });
 
 test("service plan endpoints: create, read, update, delete, permission gating, and SSE", async (t) => {
@@ -5521,7 +6041,11 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
                 sourceLedBy: "Jeriyah Brown",
                 sourceNote: "Read from the printed plan",
                 parts: [
-                  { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
+                  {
+                    kind: "scripture",
+                    value: "Psalms 97 (NLT)",
+                    destination: "scripture",
+                  },
                   {
                     kind: "person",
                     value: "Jasmine Williams",
@@ -5537,7 +6061,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
                 ],
                 reasons: ["Review the remaining title text."],
                 status: "deferred",
-                sourceFingerprint: '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
+                sourceFingerprint:
+                  '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
               },
               sourceLedByAssignments: [
                 { kind: "person", id: "person-1", name: "Jane Doe" },
@@ -5602,7 +6127,11 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       sourceLedBy: "Jeriyah Brown",
       sourceNote: "Read from the printed plan",
       parts: [
-        { kind: "scripture", value: "Psalms 97 (NLT)", destination: "scripture" },
+        {
+          kind: "scripture",
+          value: "Psalms 97 (NLT)",
+          destination: "scripture",
+        },
         {
           kind: "person",
           value: "Jasmine Williams",
@@ -5617,7 +6146,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
       ],
       reasons: ["Review the remaining title text."],
       status: "deferred",
-      sourceFingerprint: '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
+      sourceFingerprint:
+        '["Reading the Word","Psalms 97 (NLT) Jasmine Williams","Jeriyah Brown","Read from the printed plan"]',
     },
   );
   assert.deepEqual(
@@ -5654,11 +6184,13 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     "deferred",
   );
   assert.equal(
-    fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.parts[1].managed.id,
+    fetched.payload.servicePlan.sections[0].elements[0].importAmbiguity.parts[1]
+      .managed.id,
     "title-assignee-1",
   );
   assert.equal(
-    fetched.payload.servicePlan.sections[0].elements[0].servicePlanningImport.observed.note,
+    fetched.payload.servicePlan.sections[0].elements[0].servicePlanningImport
+      .observed.note,
     "Read from the printed plan",
   );
 
@@ -5684,8 +6216,24 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
               id: "el-1",
               type: "song",
               title: richText("Great Are You Lord"),
-              songRefs: [{ id: "song-ref-1", kind: "pending", title: "Draft song", lyricsText: "lyrics" }],
-              scriptureRefs: [{ id: "scripture-ref-1", label: "John 3:16", book: "John", chapter: "3", verseRange: "16", version: "NIV" }],
+              songRefs: [
+                {
+                  id: "song-ref-1",
+                  kind: "pending",
+                  title: "Draft song",
+                  lyricsText: "lyrics",
+                },
+              ],
+              scriptureRefs: [
+                {
+                  id: "scripture-ref-1",
+                  label: "John 3:16",
+                  book: "John",
+                  chapter: "3",
+                  verseRange: "16",
+                  version: "NIV",
+                },
+              ],
               durationMinutes: 5,
               notes: richText("Red mic"),
               teamNotes: [
@@ -5706,14 +6254,29 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(updated.statusCode, 200);
   assert.equal(updated.payload.servicePlan.revision, 2);
   assert.equal(updated.payload.servicePlan.saveOperationId, undefined);
-  const updateEvent = sseClient.events().filter((event) => event.type === "service-plan-updated").at(-1);
+  const updateEvent = sseClient
+    .events()
+    .filter((event) => event.type === "service-plan-updated")
+    .at(-1);
   assert.equal(updateEvent.saveOperationId, "autosave-operation-0001");
   assert.equal(updateEvent.servicePlan.lastSaveOperationId, undefined);
-  const recovered = await callHandler(authHandlers.getServicePlan, { context, params: { planKey } });
-  assert.equal(recovered.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
+  const recovered = await callHandler(authHandlers.getServicePlan, {
+    context,
+    params: { planKey },
+  });
+  assert.equal(
+    recovered.payload.servicePlan.lastSaveOperationId,
+    "autosave-operation-0001",
+  );
   assert.equal(updated.payload.servicePlan.sections[0].elements.length, 2);
-  assert.equal(updated.payload.servicePlan.sections[0].elements[0].songRefs[0].id, "song-ref-1");
-  assert.equal(updated.payload.servicePlan.sections[0].elements[0].scriptureRefs[0].id, "scripture-ref-1");
+  assert.equal(
+    updated.payload.servicePlan.sections[0].elements[0].songRefs[0].id,
+    "song-ref-1",
+  );
+  assert.equal(
+    updated.payload.servicePlan.sections[0].elements[0].scriptureRefs[0].id,
+    "scripture-ref-1",
+  );
   assert.equal(
     updated.payload.servicePlan.sections[0].elements[1].durationMinutes,
     1.5,
@@ -5742,12 +6305,18 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(staleSave.statusCode, 409);
   assert.equal(staleSave.payload.conflict, true);
   assert.equal(staleSave.payload.servicePlan.revision, 2);
-  assert.equal(staleSave.payload.servicePlan.lastSaveOperationId, "autosave-operation-0001");
+  assert.equal(
+    staleSave.payload.servicePlan.lastSaveOperationId,
+    "autosave-operation-0001",
+  );
 
-  const unpublishedViewer = await callHandler(authHandlers.getServicePlanViewer, {
-    context,
-    params: { planKey },
-  });
+  const unpublishedViewer = await callHandler(
+    authHandlers.getServicePlanViewer,
+    {
+      context,
+      params: { planKey },
+    },
+  );
   assert.equal(unpublishedViewer.statusCode, 200);
   assert.equal(unpublishedViewer.payload.plan.published, false);
   assert.equal(
@@ -6010,7 +6579,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(viewerPayload.statusCode, 200);
   assert.equal(viewerPayload.payload.plan.name, "Sunday Service");
   assert.equal(viewerPayload.payload.snapshot.service.title, "Sunday Service");
-  assert.equal(viewerPayload.payload.snapshot.service.sections.length > 0, true);
+  assert.equal(
+    viewerPayload.payload.snapshot.service.sections.length > 0,
+    true,
+  );
   assert.equal(viewerPayload.payload.plan.publicLinkToken, undefined);
 
   // An editor still gets the links back so "copy share link" keeps working.
@@ -6585,24 +7157,39 @@ test("bulk template application creates fresh plans, skips existing plans, and p
   const context = await createAdminContext("service_plan_bulk_apply");
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "bulk-sabbath", name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "10:00" }],
+    services: [
+      {
+        id: "bulk-sabbath",
+        name: "Sabbath Service",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "10:00",
+      },
+    ],
   });
-  const templateResponse = await callHandler(authHandlers.saveServicePlanTemplate, {
-    context,
-    body: {
-      name: "Standard Sabbath",
-      sections: [{
-        id: "template-section",
-        name: "Service",
-        elements: [{
-          id: "template-song",
-          type: "free",
-          title: richText("Opening song"),
-          scheduledPositionIds: ["worship-lead"],
-        }],
-      }],
+  const templateResponse = await callHandler(
+    authHandlers.saveServicePlanTemplate,
+    {
+      context,
+      body: {
+        name: "Standard Sabbath",
+        sections: [
+          {
+            id: "template-section",
+            name: "Service",
+            elements: [
+              {
+                id: "template-song",
+                type: "free",
+                title: richText("Opening song"),
+                scheduledPositionIds: ["worship-lead"],
+              },
+            ],
+          },
+        ],
+      },
     },
-  });
+  );
   const templateId = templateResponse.payload.template.templateId;
   const targets = ["2026-10-03", "2026-10-10"].map((date) => ({
     serviceId: "bulk-sabbath",
@@ -6618,17 +7205,22 @@ test("bulk template application creates fresh plans, skips existing plans, and p
   assert.equal(applied.statusCode, 200);
   assert.equal(applied.payload.created.length, 2);
   assert.deepEqual(applied.payload.skippedExisting, []);
-  const repeated = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
-    context,
-    body: { templateId, targets, existingPlanMode: "skip", timeZone: "UTC" },
-  });
+  const repeated = await callHandler(
+    authHandlers.applyServicePlanTemplateBulk,
+    {
+      context,
+      body: { templateId, targets, existingPlanMode: "skip", timeZone: "UTC" },
+    },
+  );
   assert.deepEqual(repeated.payload.created, []);
   assert.equal(repeated.payload.skippedExisting.length, 2);
 
   const plans = await callHandler(authHandlers.listServicePlans, { context });
-  const planDocs = await Promise.all(applied.payload.created.map((key) =>
-    getDoc("servicePlans", `${context.churchId}::${key}`),
-  ));
+  const planDocs = await Promise.all(
+    applied.payload.created.map((key) =>
+      getDoc("servicePlans", `${context.churchId}::${key}`),
+    ),
+  );
   const sections = planDocs.map((plan) => plan.sections[0]);
   const elements = sections.map((section) => section.elements[0]);
   assert.equal(plans.payload.servicePlans.length, 2);
@@ -6650,21 +7242,56 @@ test("bulk service-default mode skips occurrences without a default template", a
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
-      { id: "bulk-default", name: "With default", defaultPlanTemplateId: template.payload.template.templateId, reccurence: "weekly", dayOfWeek: 0, time: "10:00" },
-      { id: "bulk-no-default", name: "No default", reccurence: "weekly", dayOfWeek: 0, time: "10:00" },
+      {
+        id: "bulk-default",
+        name: "With default",
+        defaultPlanTemplateId: template.payload.template.templateId,
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+      },
+      {
+        id: "bulk-no-default",
+        name: "No default",
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+      },
     ],
   });
   const targets = [
-    { serviceId: "bulk-default", serviceIds: ["bulk-default"], occurrenceId: "bulk-default@2026-11-01T10:00:00.000Z", startsAt: "2026-11-01T10:00:00.000Z", date: "2026-11-01" },
-    { serviceId: "bulk-no-default", serviceIds: ["bulk-no-default"], occurrenceId: "bulk-no-default@2026-11-08T10:00:00.000Z", startsAt: "2026-11-08T10:00:00.000Z", date: "2026-11-08" },
+    {
+      serviceId: "bulk-default",
+      serviceIds: ["bulk-default"],
+      occurrenceId: "bulk-default@2026-11-01T10:00:00.000Z",
+      startsAt: "2026-11-01T10:00:00.000Z",
+      date: "2026-11-01",
+    },
+    {
+      serviceId: "bulk-no-default",
+      serviceIds: ["bulk-no-default"],
+      occurrenceId: "bulk-no-default@2026-11-08T10:00:00.000Z",
+      startsAt: "2026-11-08T10:00:00.000Z",
+      date: "2026-11-08",
+    },
   ];
-  const response = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
-    context,
-    body: { useServiceDefaults: true, targets, existingPlanMode: "skip", timeZone: "UTC" },
-  });
+  const response = await callHandler(
+    authHandlers.applyServicePlanTemplateBulk,
+    {
+      context,
+      body: {
+        useServiceDefaults: true,
+        targets,
+        existingPlanMode: "skip",
+        timeZone: "UTC",
+      },
+    },
+  );
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.payload.created, ["bulk-default@2026-11-01"]);
-  assert.deepEqual(response.payload.skippedNoTemplate, ["bulk-no-default@2026-11-08"]);
+  assert.deepEqual(response.payload.skippedNoTemplate, [
+    "bulk-no-default@2026-11-08",
+  ]);
 });
 
 test("bulk template application preserves combined-service plan keys", async (t) => {
@@ -6677,8 +7304,22 @@ test("bulk template application preserves combined-service plan keys", async (t)
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
-      { id: "combined-early", name: "Early", serviceGroupId: "sabbath", reccurence: "weekly", dayOfWeek: 0, time: "10:00" },
-      { id: "combined-late", name: "Late", serviceGroupId: "sabbath", reccurence: "weekly", dayOfWeek: 0, time: "11:00" },
+      {
+        id: "combined-early",
+        name: "Early",
+        serviceGroupId: "sabbath",
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+      },
+      {
+        id: "combined-late",
+        name: "Late",
+        serviceGroupId: "sabbath",
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "11:00",
+      },
     ],
   });
   const target = {
@@ -6689,18 +7330,24 @@ test("bulk template application preserves combined-service plan keys", async (t)
     startsAt: "2026-11-01T10:00:00.000Z",
     date: "2026-11-01",
   };
-  const response = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
-    context,
-    body: {
-      templateId: template.payload.template.templateId,
-      targets: [target],
-      existingPlanMode: "skip",
-      timeZone: "UTC",
+  const response = await callHandler(
+    authHandlers.applyServicePlanTemplateBulk,
+    {
+      context,
+      body: {
+        templateId: template.payload.template.templateId,
+        targets: [target],
+        existingPlanMode: "skip",
+        timeZone: "UTC",
+      },
     },
-  });
+  );
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.payload.created, ["group:sabbath@2026-11-01"]);
-  const plan = await getDoc("servicePlans", `${context.churchId}::group:sabbath@2026-11-01`);
+  const plan = await getDoc(
+    "servicePlans",
+    `${context.churchId}::group:sabbath@2026-11-01`,
+  );
   assert.deepEqual(plan.serviceIds, ["combined-early", "combined-late"]);
   assert.equal(plan.groupId, "sabbath");
 });
@@ -8551,7 +9198,10 @@ test("an emailed token stops working once the slot moves on", async (t) => {
 test("declining an assignment records a vacancy without messaging the volunteer who declined", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("decline_vacancy_no_invite");
-  const { memberId, scheduleId } = await seedAssignedSchedule(context, "declinevacancy");
+  const { memberId, scheduleId } = await seedAssignedSchedule(
+    context,
+    "declinevacancy",
+  );
   const url = authHandlers.buildAssignmentResponseUrl({
     churchId: context.churchId,
     scheduleId,
@@ -8568,8 +9218,16 @@ test("declining an assignment records a vacancy without messaging the volunteer 
     { field: "churchId", value: context.churchId },
     { field: "sourceId", value: scheduleId },
   ]);
-  assert.equal(intents.filter((intent) => intent.intentType === "replacement_request").length, 0);
-  assert.equal(intents.length, 0, "recording a decline does not create an SMS draft");
+  assert.equal(
+    intents.filter((intent) => intent.intentType === "replacement_request")
+      .length,
+    0,
+  );
+  assert.equal(
+    intents.length,
+    0,
+    "recording a decline does not create an SMS draft",
+  );
 });
 
 test("sending a schedule notifies once and is idempotent", async (t) => {
@@ -9268,7 +9926,9 @@ test("individual intake recipients personalize and automatically apply one audit
   const { teamId, positionIds, memberIds } = await seedTeam(context, {
     teamName: "Worship",
     positions: [{ name: "Vocal", icon: "mic" }],
-    members: [{ firstName: "Kevin", lastName: "Cheddar", positions: ["Vocal"] }],
+    members: [
+      { firstName: "Kevin", lastName: "Cheddar", positions: ["Vocal"] },
+    ],
   });
   const memberId = memberIds.Kevin;
   const occurrenceId = "svc@2026-10-04T10:00:00.000Z";
@@ -9300,22 +9960,31 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(form.statusCode, 200);
   const formId = form.payload.form.formId;
 
-  const firstCreate = await callHandler(authHandlers.createTeamIntakeRecipients, {
-    context,
-    params: { formId },
-    body: { memberIds: [memberId] },
-  });
+  const firstCreate = await callHandler(
+    authHandlers.createTeamIntakeRecipients,
+    {
+      context,
+      params: { formId },
+      body: { memberIds: [memberId] },
+    },
+  );
   assert.equal(firstCreate.statusCode, 200);
   const recipient = firstCreate.payload.recipients[0];
   assert.ok(recipient.recipientId);
 
-  const secondCreate = await callHandler(authHandlers.createTeamIntakeRecipients, {
-    context,
-    params: { formId },
-    body: { memberIds: [memberId] },
-  });
+  const secondCreate = await callHandler(
+    authHandlers.createTeamIntakeRecipients,
+    {
+      context,
+      params: { formId },
+      body: { memberIds: [memberId] },
+    },
+  );
   assert.equal(secondCreate.statusCode, 200);
-  assert.equal(secondCreate.payload.recipients[0].recipientId, recipient.recipientId);
+  assert.equal(
+    secondCreate.payload.recipients[0].recipientId,
+    recipient.recipientId,
+  );
 
   const link = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
     context,
@@ -9340,10 +10009,13 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.ok(!JSON.stringify(storedRecipient).includes(token));
   assert.match(storedRecipient.recipientTokenHash, /^[a-f0-9]{64}$/);
   assert.notEqual(storedRecipient.recipientTokenHash, token);
-  const repeatedLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
-    context,
-    params: { recipientId: recipient.recipientId },
-  });
+  const repeatedLink = await callHandler(
+    authHandlers.getTeamIntakeRecipientLink,
+    {
+      context,
+      params: { recipientId: recipient.recipientId },
+    },
+  );
   assert.equal(repeatedLink.payload.publicUrl, link.payload.publicUrl);
 
   const anonymousPath = createRes();
@@ -9391,9 +10063,7 @@ test("individual intake recipients personalize and automatically apply one audit
           email: "",
           positionIds: [positionIds.Vocal],
           occurrenceAvailability:
-            availability === undefined
-              ? {}
-              : { [occurrenceId]: availability },
+            availability === undefined ? {} : { [occurrenceId]: availability },
           blockoutRanges: [],
           notes: "",
         },
@@ -9404,7 +10074,11 @@ test("individual intake recipients personalize and automatically apply one audit
   };
 
   const firstSubmit = await submit("unavailable");
-  assert.equal(firstSubmit.statusCode, 200, JSON.stringify(firstSubmit.payload));
+  assert.equal(
+    firstSubmit.statusCode,
+    200,
+    JSON.stringify(firstSubmit.payload),
+  );
   await flushAsyncWork();
   assert.ok(
     (await getDoc("teamIntakeForms", formId)).pendingDigestSince,
@@ -9483,11 +10157,14 @@ test("individual intake recipients personalize and automatically apply one audit
   );
   assert.equal(revokedPreview.statusCode, 404);
 
-  const reactivated = await callHandler(authHandlers.createTeamIntakeRecipients, {
-    context,
-    params: { formId },
-    body: { memberIds: [memberId] },
-  });
+  const reactivated = await callHandler(
+    authHandlers.createTeamIntakeRecipients,
+    {
+      context,
+      params: { formId },
+      body: { memberIds: [memberId] },
+    },
+  );
   assert.equal(reactivated.statusCode, 200);
   assert.equal(
     reactivated.payload.recipients[0].recipientId,
@@ -9526,22 +10203,31 @@ test("notification requests accept personalized forms with blockout and notes fi
     context,
     body: {
       name: "September Schedule",
-      startDate: "2026-09-01",
-      endDate: "2026-09-30",
-      responseDeadline: "2026-09-30",
+      startDate: calendarDaysFromToday(0),
+      endDate: calendarDaysFromToday(30),
+      responseDeadline: calendarDaysFromToday(30),
       teamIds: [teamId],
-      enabledFields: ["firstName", "lastName", "email", "blockoutDates", "notes", "birthDate"],
+      enabledFields: [
+        "firstName",
+        "lastName",
+        "email",
+        "blockoutDates",
+        "notes",
+        "birthDate",
+      ],
       active: true,
     },
   });
   assert.equal(form.statusCode, 200);
-  const prepared = await authHandlers.prepareAvailabilityNotificationRecipients({
-    churchId: context.churchId,
-    formId: form.payload.form.formId,
-    memberIds: [memberIds.Kevin],
-    purpose: "availability_request",
-    actorUid: "admin",
-  });
+  const prepared = await authHandlers.prepareAvailabilityNotificationRecipients(
+    {
+      churchId: context.churchId,
+      formId: form.payload.form.formId,
+      memberIds: [memberIds.Kevin],
+      purpose: "availability_request",
+      actorUid: "admin",
+    },
+  );
   assert.equal(prepared.results.length, 1);
   assert.ok(prepared.results[0].recipient.recipientId);
   assert.match(prepared.results[0].publicUrl, /\/a\//);
@@ -9669,29 +10355,40 @@ test("individual intake SMS records one shared notification attempt and blocks d
     body: { memberIds: [memberId] },
   });
   const recipientId = created.payload.recipients[0].recipientId;
-  const previewSms = () => callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
-    context,
-    params: { formId, recipientId },
-  });
+  const previewSms = () =>
+    callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
+      context,
+      params: { formId, recipientId },
+    });
   const fake = createFakeSmsProvider({
     response: { providerMessageId: "SM_first", status: "queued" },
   });
   setSmsProviderForServerTests(fake);
   try {
-    const unconfirmed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
-      context,
-      params: { recipientId },
-      body: {},
-    });
+    const unconfirmed = await callHandler(
+      authHandlers.sendTeamIntakeRecipientSms,
+      {
+        context,
+        params: { recipientId },
+        body: {},
+      },
+    );
     assert.equal(unconfirmed.statusCode, 400);
-    assert.equal(fake.calls.length, 0, "an individual send requires explicit operator confirmation");
+    assert.equal(
+      fake.calls.length,
+      0,
+      "an individual send requires explicit operator confirmation",
+    );
     const preview = await previewSms();
     assert.equal(preview.statusCode, 200);
     assert.equal(preview.payload.preview.eligible, true);
     const first = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { formId, recipientId },
-      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
+      body: {
+        confirmed: true,
+        approvalVersion: preview.payload.preview.approvalVersion,
+      },
     });
     assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
     assert.equal(first.payload.attempt.status, "accepted");
@@ -9712,7 +10409,10 @@ test("individual intake SMS records one shared notification attempt and blocks d
     const second = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { formId, recipientId },
-      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
+      body: {
+        confirmed: true,
+        approvalVersion: preview.payload.preview.approvalVersion,
+      },
     });
     assert.equal(second.statusCode, 409);
     const attempts = await queryDocs("smsDeliveryAttempts", [
@@ -9766,18 +10466,24 @@ test("individual intake SMS records provider failure and blocks missing consent,
     body: { memberIds: [memberId] },
   });
   const recipientId = created.payload.recipients[0].recipientId;
-  const previewSms = () => callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
-    context,
-    params: { formId: form.payload.form.formId, recipientId },
-  });
-  await setDoc("churchMessagingConfigs", context.churchId, {
-    churchId: context.churchId,
-    provider: "twilio",
-    providerAccountId: "AC_test",
-    messagingServiceId: "MG_test",
-    registrationStatus: "approved",
-    enabled: true,
-  }, { merge: false });
+  const previewSms = () =>
+    callHandler(authHandlers.prepareTeamIntakeRecipientSms, {
+      context,
+      params: { formId: form.payload.form.formId, recipientId },
+    });
+  await setDoc(
+    "churchMessagingConfigs",
+    context.churchId,
+    {
+      churchId: context.churchId,
+      provider: "twilio",
+      providerAccountId: "AC_test",
+      messagingServiceId: "MG_test",
+      registrationStatus: "approved",
+      enabled: true,
+    },
+    { merge: false },
+  );
   const noConsent = await previewSms();
   assert.equal(noConsent.statusCode, 200);
   assert.equal(noConsent.payload.preview.eligible, false);
@@ -9814,7 +10520,10 @@ test("individual intake SMS records provider failure and blocks missing consent,
     const failed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
       context,
       params: { formId: form.payload.form.formId, recipientId },
-      body: { confirmed: true, approvalVersion: preview.payload.preview.approvalVersion },
+      body: {
+        confirmed: true,
+        approvalVersion: preview.payload.preview.approvalVersion,
+      },
     });
     assert.equal(failed.statusCode, 502);
     const attempts = await queryDocs("smsDeliveryAttempts", [
@@ -9826,7 +10535,12 @@ test("individual intake SMS records provider failure and blocks missing consent,
     setSmsProviderForServerTests(null);
   }
 
-  await setDoc("churchMessagingConfigs", context.churchId, { enabled: true }, { merge: true });
+  await setDoc(
+    "churchMessagingConfigs",
+    context.churchId,
+    { enabled: true },
+    { merge: true },
+  );
   const beforeDisabled = await previewSms();
 
   await setDoc(
@@ -9838,11 +10552,19 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const disabled = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
     params: { formId: form.payload.form.formId, recipientId },
-    body: { confirmed: true, approvalVersion: beforeDisabled.payload.preview.approvalVersion },
+    body: {
+      confirmed: true,
+      approvalVersion: beforeDisabled.payload.preview.approvalVersion,
+    },
   });
   assert.equal(disabled.statusCode, 503);
 
-  await setDoc("churchMessagingConfigs", context.churchId, { enabled: true }, { merge: true });
+  await setDoc(
+    "churchMessagingConfigs",
+    context.churchId,
+    { enabled: true },
+    { merge: true },
+  );
   await setDoc(
     "teamIntakeForms",
     form.payload.form.formId,
@@ -9850,11 +10572,19 @@ test("individual intake SMS records provider failure and blocks missing consent,
     { merge: true },
   );
   const beforeClosed = await previewSms();
-  await setDoc("teamIntakeForms", form.payload.form.formId, { active: false }, { merge: true });
+  await setDoc(
+    "teamIntakeForms",
+    form.payload.form.formId,
+    { active: false },
+    { merge: true },
+  );
   const closed = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
     context,
     params: { formId: form.payload.form.formId, recipientId },
-    body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
+    body: {
+      confirmed: true,
+      approvalVersion: beforeClosed.payload.preview.approvalVersion,
+    },
   });
   assert.equal(closed.statusCode, 400);
   assert.match(closed.payload.errorMessage, /closed/i);
@@ -9864,11 +10594,17 @@ test("individual intake SMS records provider failure and blocks missing consent,
     params: { recipientId },
   });
   assert.equal(revoked.statusCode, 200);
-  const revokedSend = await callHandler(authHandlers.sendTeamIntakeRecipientSms, {
-    context,
-    params: { formId: form.payload.form.formId, recipientId },
-    body: { confirmed: true, approvalVersion: beforeClosed.payload.preview.approvalVersion },
-  });
+  const revokedSend = await callHandler(
+    authHandlers.sendTeamIntakeRecipientSms,
+    {
+      context,
+      params: { formId: form.payload.form.formId, recipientId },
+      body: {
+        confirmed: true,
+        approvalVersion: beforeClosed.payload.preview.approvalVersion,
+      },
+    },
+  );
   assert.equal(revokedSend.statusCode, 404);
 });
 
@@ -9920,16 +10656,31 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
   assert.equal(missingCatalog.statusCode, 400);
   const invalid = await callHandler(authHandlers.saveServiceEquipment, {
     context,
-    body: { equipment: [{ id: "not-a-mic", category: "microphone", name: "Mic 1" }] },
+    body: {
+      equipment: [{ id: "not-a-mic", category: "microphone", name: "Mic 1" }],
+    },
   });
   assert.equal(invalid.statusCode, 400);
 
   const catalog = await callHandler(authHandlers.saveServiceEquipment, {
     context,
-    body: { equipment: [
-      { id: "iem-1", category: "iem", name: "IEM 1", subtype: "wireless-beltpack" },
-      { id: "iem-custom", category: "iem", name: "Custom pack", subtype: "Auracast receiver", color: "#Ab12Ef" },
-    ] },
+    body: {
+      equipment: [
+        {
+          id: "iem-1",
+          category: "iem",
+          name: "IEM 1",
+          subtype: "wireless-beltpack",
+        },
+        {
+          id: "iem-custom",
+          category: "iem",
+          name: "Custom pack",
+          subtype: "Auracast receiver",
+          color: "#Ab12Ef",
+        },
+      ],
+    },
   });
   assert.equal(catalog.statusCode, 200);
   assert.equal(catalog.payload.equipment[0].category, "iem");
@@ -9938,55 +10689,114 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
   assert.equal(catalog.payload.equipment[1].id, "iem-custom");
   assert.equal(catalog.payload.equipment[1].subtype, "Auracast receiver");
   assert.equal(catalog.payload.equipment[1].color, "#ab12ef");
-  const loadedCatalog = await callHandler(authHandlers.getServiceEquipment, { context });
+  const loadedCatalog = await callHandler(authHandlers.getServiceEquipment, {
+    context,
+  });
   assert.equal(loadedCatalog.statusCode, 200);
   assert.deepEqual(loadedCatalog.payload.equipment, catalog.payload.equipment);
   await callHandler(authHandlers.saveServicePlanMicrophones, {
     context,
-    body: { microphones: [{ id: "iem-1", name: "Mic 1", type: "Handheld", color: "#22d3ee" }], audiences: [] },
+    body: {
+      microphones: [
+        { id: "iem-1", name: "Mic 1", type: "Handheld", color: "#22d3ee" },
+      ],
+      audiences: [],
+    },
   });
-  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Worship", memberIds: [] } });
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
   const teamId = team.payload.team.teamId;
   await callHandler(authHandlers.updateTeam, {
     context,
     params: { teamId },
-    body: { name: "Worship", memberIds: [], usesMicrophoneAssignments: true, usesIemAssignments: true },
+    body: {
+      name: "Worship",
+      memberIds: [],
+      usesMicrophoneAssignments: true,
+      usesIemAssignments: true,
+    },
   });
-  const position = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Lead", teamId, defaultIemId: "iem-1" } });
+  const position = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: { name: "Lead", teamId, defaultIemId: "iem-1" },
+  });
   const positionId = position.payload.position.positionId;
   const occurrenceId = "service-sunday@2026-09-06T10:00:00.000Z";
   const schedule = await callHandler(authHandlers.createTeamSchedule, {
     context,
     body: {
-      name: "September", teamId, startDate: "2026-09-06", endDate: "2026-09-06", serviceIds: ["service-sunday"],
-      occurrences: [{ occurrenceId, serviceId: "service-sunday", name: "Sunday", startsAt: "2026-09-06T10:00:00.000Z", positionRequirements: [{ positionId, count: 1 }] }],
+      name: "September",
+      teamId,
+      startDate: "2026-09-06",
+      endDate: "2026-09-06",
+      serviceIds: ["service-sunday"],
+      occurrences: [
+        {
+          occurrenceId,
+          serviceId: "service-sunday",
+          name: "Sunday",
+          startsAt: "2026-09-06T10:00:00.000Z",
+          positionRequirements: [{ positionId, count: 1 }],
+        },
+      ],
     },
   });
   const scheduleId = schedule.payload.schedule.scheduleId;
   const slotKey = `${positionId}::0`;
   const results = await Promise.all([
-    callHandler(authHandlers.updateTeamScheduleAssignmentMicrophones, { context, params: { scheduleId }, body: { serviceId: occurrenceId, positionSlotKey: slotKey, microphoneIds: ["iem-1"] } }),
-    callHandler(authHandlers.updateTeamScheduleAssignmentIems, { context, params: { scheduleId }, body: { serviceId: occurrenceId, positionSlotKey: slotKey, iemIds: ["iem-1"] } }),
-  ]);
-  assert.equal(results.every((result) => result.statusCode === 200), true);
-  const final = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId } });
-  assert.deepEqual(final.payload.schedule.microphoneAssignments[occurrenceId][slotKey], ["iem-1"]);
-  assert.deepEqual(final.payload.schedule.iemAssignments[occurrenceId][slotKey], ["iem-1"]);
-
-  const saveEquipment = (kind, ids) => callHandler(
-    kind === "microphone"
-      ? authHandlers.updateTeamScheduleAssignmentMicrophones
-      : authHandlers.updateTeamScheduleAssignmentIems,
-    {
+    callHandler(authHandlers.updateTeamScheduleAssignmentMicrophones, {
       context,
       params: { scheduleId },
       body: {
         serviceId: occurrenceId,
         positionSlotKey: slotKey,
-        [kind === "microphone" ? "microphoneIds" : "iemIds"]: ids,
+        microphoneIds: ["iem-1"],
       },
-    },
+    }),
+    callHandler(authHandlers.updateTeamScheduleAssignmentIems, {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: slotKey,
+        iemIds: ["iem-1"],
+      },
+    }),
+  ]);
+  assert.equal(
+    results.every((result) => result.statusCode === 200),
+    true,
   );
+  const final = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId },
+  });
+  assert.deepEqual(
+    final.payload.schedule.microphoneAssignments[occurrenceId][slotKey],
+    ["iem-1"],
+  );
+  assert.deepEqual(
+    final.payload.schedule.iemAssignments[occurrenceId][slotKey],
+    ["iem-1"],
+  );
+
+  const saveEquipment = (kind, ids) =>
+    callHandler(
+      kind === "microphone"
+        ? authHandlers.updateTeamScheduleAssignmentMicrophones
+        : authHandlers.updateTeamScheduleAssignmentIems,
+      {
+        context,
+        params: { scheduleId },
+        body: {
+          serviceId: occurrenceId,
+          positionSlotKey: slotKey,
+          [kind === "microphone" ? "microphoneIds" : "iemIds"]: ids,
+        },
+      },
+    );
   for (const kind of ["microphone", "iem"]) {
     const unknown = await saveEquipment(kind, ["deleted-equipment"]);
     assert.equal(unknown.statusCode, 409);
@@ -9996,22 +10806,31 @@ test("generic IEM catalog rejects microphones and concurrent schedule maps coexi
       context,
       params: { scheduleId },
     });
-    const assignmentMap = kind === "microphone"
-      ? unchanged.payload.schedule.microphoneAssignments
-      : unchanged.payload.schedule.iemAssignments;
+    const assignmentMap =
+      kind === "microphone"
+        ? unchanged.payload.schedule.microphoneAssignments
+        : unchanged.payload.schedule.iemAssignments;
     assert.deepEqual(assignmentMap[occurrenceId][slotKey], ["iem-1"]);
     const cleared = await saveEquipment(kind, []);
     assert.equal(cleared.statusCode, 200);
-    const afterClear = kind === "microphone"
-      ? cleared.payload.schedule.microphoneAssignments
-      : cleared.payload.schedule.iemAssignments;
+    const afterClear =
+      kind === "microphone"
+        ? cleared.payload.schedule.microphoneAssignments
+        : cleared.payload.schedule.iemAssignments;
     assert.equal(afterClear[occurrenceId]?.[slotKey], undefined);
     assert.equal((await saveEquipment(kind, ["iem-1"])).statusCode, 200);
   }
 
-  await setDoc("churches", context.churchId, {
-    serviceEquipment: [{ id: "not-an-iem", category: "speaker", name: "Speaker" }],
-  }, { merge: true });
+  await setDoc(
+    "churches",
+    context.churchId,
+    {
+      serviceEquipment: [
+        { id: "not-an-iem", category: "speaker", name: "Speaker" },
+      ],
+    },
+    { merge: true },
+  );
   const arbitraryEquipment = await saveEquipment("iem", ["not-an-iem"]);
   assert.equal(arbitraryEquipment.statusCode, 409);
 });
@@ -10029,9 +10848,7 @@ test("schedule assignment paths share requirement and implicit slot validation",
   await callHandler(authHandlers.saveServiceEquipment, {
     context,
     body: {
-      equipment: [
-        { id: "iem-1", category: "iem", name: "IEM 1" },
-      ],
+      equipment: [{ id: "iem-1", category: "iem", name: "IEM 1" }],
     },
   });
   const { teamId, positionIds, memberIds } = await seedTeam(context, {
@@ -10131,7 +10948,12 @@ test("schedule assignment paths share requirement and implicit slot validation",
     ["microphone", ["mic-1"]],
     ["iem", ["iem-1"]],
   ];
-  const assertAllPaths = async (occurrenceId, positionId, slotIndex, expected) => {
+  const assertAllPaths = async (
+    occurrenceId,
+    positionId,
+    slotIndex,
+    expected,
+  ) => {
     const slotKey = `${positionId}::${slotIndex}`;
     const results = await Promise.all(
       paths.map(([kind, value]) =>
@@ -10147,7 +10969,8 @@ test("schedule assignment paths share requirement and implicit slot validation",
         ),
       ),
     );
-    for (const result of results) assert.equal(result.statusCode === 200, expected);
+    for (const result of results)
+      assert.equal(result.statusCode === 200, expected);
     return results;
   };
 
@@ -10159,11 +10982,17 @@ test("schedule assignment paths share requirement and implicit slot validation",
   // Explicit count 1 permits slot 0, rejects slot 1, then permits it when added.
   await assertAllPaths(occurrenceIds.one, positionIds.Lead, 0, true);
   await assertAllPaths(occurrenceIds.one, positionIds.Lead, 1, false);
-  const addOneExtra = await callHandler(authHandlers.addTeamSchedulePositionSlot, {
-    context,
-    params: { scheduleId },
-    body: { serviceId: occurrenceIds.one, positionSlotKey: `${positionIds.Lead}::1` },
-  });
+  const addOneExtra = await callHandler(
+    authHandlers.addTeamSchedulePositionSlot,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceIds.one,
+        positionSlotKey: `${positionIds.Lead}::1`,
+      },
+    },
+  );
   assert.equal(addOneExtra.statusCode, 200);
   await assertAllPaths(occurrenceIds.one, positionIds.Lead, 1, true);
 
@@ -10171,11 +11000,17 @@ test("schedule assignment paths share requirement and implicit slot validation",
   await assertAllPaths(occurrenceIds.two, positionIds.Lead, 0, true);
   await assertAllPaths(occurrenceIds.two, positionIds.Lead, 1, true);
   await assertAllPaths(occurrenceIds.two, positionIds.Lead, 2, false);
-  const addTwoExtra = await callHandler(authHandlers.addTeamSchedulePositionSlot, {
-    context,
-    params: { scheduleId },
-    body: { serviceId: occurrenceIds.two, positionSlotKey: `${positionIds.Lead}::2` },
-  });
+  const addTwoExtra = await callHandler(
+    authHandlers.addTeamSchedulePositionSlot,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceIds.two,
+        positionSlotKey: `${positionIds.Lead}::2`,
+      },
+    },
+  );
   assert.equal(addTwoExtra.statusCode, 200);
   await assertAllPaths(occurrenceIds.two, positionIds.Lead, 2, true);
 
@@ -10183,22 +11018,42 @@ test("schedule assignment paths share requirement and implicit slot validation",
     callHandler(authHandlers.addTeamSchedulePositionSlot, {
       context,
       params: { scheduleId },
-      body: { serviceId: occurrenceIds.two, positionSlotKey: `${positionIds.Lead}::3` },
+      body: {
+        serviceId: occurrenceIds.two,
+        positionSlotKey: `${positionIds.Lead}::3`,
+      },
     }),
     callHandler(authHandlers.addTeamSchedulePositionSlot, {
       context,
       params: { scheduleId },
-      body: { serviceId: occurrenceIds.two, positionSlotKey: `${positionIds.Keys}::0` },
+      body: {
+        serviceId: occurrenceIds.two,
+        positionSlotKey: `${positionIds.Keys}::0`,
+      },
     }),
   ]);
-  assert.deepEqual(concurrentAdds.map(({ statusCode }) => statusCode), [200, 200]);
-  const afterConcurrentAdds = await callHandler(authHandlers.getTeamScheduleDetail, {
-    context,
-    params: { scheduleId },
-  });
   assert.deepEqual(
-    new Set(afterConcurrentAdds.payload.schedule.additionalPositionSlots[occurrenceIds.two]),
-    new Set([`${positionIds.Lead}::2`, `${positionIds.Lead}::3`, `${positionIds.Keys}::0`]),
+    concurrentAdds.map(({ statusCode }) => statusCode),
+    [200, 200],
+  );
+  const afterConcurrentAdds = await callHandler(
+    authHandlers.getTeamScheduleDetail,
+    {
+      context,
+      params: { scheduleId },
+    },
+  );
+  assert.deepEqual(
+    new Set(
+      afterConcurrentAdds.payload.schedule.additionalPositionSlots[
+        occurrenceIds.two
+      ],
+    ),
+    new Set([
+      `${positionIds.Lead}::2`,
+      `${positionIds.Lead}::3`,
+      `${positionIds.Keys}::0`,
+    ]),
   );
 
   // Race both equipment writers with removal after the slot has been created.
@@ -10215,13 +11070,33 @@ test("schedule assignment paths share requirement and implicit slot validation",
     }),
   ]);
   assert.equal(raced[2].statusCode, 200);
-  const afterRemovalRace = await callHandler(authHandlers.getTeamScheduleDetail, {
-    context,
-    params: { scheduleId },
-  });
-  assert.equal(Boolean(afterRemovalRace.payload.schedule.additionalPositionSlots?.[occurrenceIds.two]?.includes(racedSlotKey)), false);
-  assert.equal(afterRemovalRace.payload.schedule.microphoneAssignments?.[occurrenceIds.two]?.[racedSlotKey], undefined);
-  assert.equal(afterRemovalRace.payload.schedule.iemAssignments?.[occurrenceIds.two]?.[racedSlotKey], undefined);
+  const afterRemovalRace = await callHandler(
+    authHandlers.getTeamScheduleDetail,
+    {
+      context,
+      params: { scheduleId },
+    },
+  );
+  assert.equal(
+    Boolean(
+      afterRemovalRace.payload.schedule.additionalPositionSlots?.[
+        occurrenceIds.two
+      ]?.includes(racedSlotKey),
+    ),
+    false,
+  );
+  assert.equal(
+    afterRemovalRace.payload.schedule.microphoneAssignments?.[
+      occurrenceIds.two
+    ]?.[racedSlotKey],
+    undefined,
+  );
+  assert.equal(
+    afterRemovalRace.payload.schedule.iemAssignments?.[occurrenceIds.two]?.[
+      racedSlotKey
+    ],
+    undefined,
+  );
 
   // The fallback does not bypass team ownership or position existence checks.
   for (const [kind, value] of paths) {
@@ -10256,19 +11131,27 @@ test("schedule assignment paths share requirement and implicit slot validation",
     params: { scheduleId },
   });
   assert.equal(
-    reloaded.payload.schedule.microphoneAssignments[occurrenceIds.implicit][`${positionIds.Lead}::0`],
+    reloaded.payload.schedule.microphoneAssignments[occurrenceIds.implicit][
+      `${positionIds.Lead}::0`
+    ],
     undefined,
   );
   assert.equal(
-    reloaded.payload.schedule.iemAssignments[occurrenceIds.implicit][`${positionIds.Lead}::0`],
+    reloaded.payload.schedule.iemAssignments[occurrenceIds.implicit][
+      `${positionIds.Lead}::0`
+    ],
     undefined,
   );
   assert.deepEqual(
-    reloaded.payload.schedule.microphoneAssignments[occurrenceIds.implicit][`${positionIds.Keys}::0`],
+    reloaded.payload.schedule.microphoneAssignments[occurrenceIds.implicit][
+      `${positionIds.Keys}::0`
+    ],
     ["mic-1"],
   );
   assert.deepEqual(
-    reloaded.payload.schedule.iemAssignments[occurrenceIds.implicit][`${positionIds.Keys}::0`],
+    reloaded.payload.schedule.iemAssignments[occurrenceIds.implicit][
+      `${positionIds.Keys}::0`
+    ],
     ["iem-1"],
   );
 });
@@ -10276,280 +11159,851 @@ test("schedule assignment paths share requirement and implicit slot validation",
 test("portable CSV preview is read-only and commit never links imported members to accounts", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("data_transfer_import");
-  const csv = "first_name,last_name,email\nJane,Volunteer,shared@example.com\nJohn,Volunteer,shared@example.com\n";
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "members", csv } });
+  const csv =
+    "first_name,last_name,email\nJane,Volunteer,shared@example.com\nJohn,Volunteer,shared@example.com\n";
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context,
+    body: { type: "members", csv },
+  });
   assert.equal(inspected.statusCode, 200);
   assert.equal(inspected.payload.rowCount, 2);
   assert.equal(inspected.payload.mapping.firstName, "first_name");
   assert.equal(inspected.payload.mapping.lastName, "last_name");
   const aliased = await callHandler(authHandlers.inspectPortableImport, {
     context,
-    body: { type: "members", csv: "Volunteer,Ministry,Role,Mobile\nJane Doe,Praise Team,Vocalist,555-0100\n" },
+    body: {
+      type: "members",
+      csv: "Volunteer,Ministry,Role,Mobile\nJane Doe,Praise Team,Vocalist,555-0100\n",
+    },
   });
   assert.equal(aliased.payload.mapping.name, "Volunteer");
   assert.equal(aliased.payload.mapping.teams, "Ministry");
   assert.equal(aliased.payload.mapping.positions, "Role");
   assert.equal(aliased.payload.mapping.phone, "Mobile");
-  const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "members", csv, mapping: inspected.payload.mapping } });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context,
+    body: { type: "members", csv, mapping: inspected.payload.mapping },
+  });
   assert.equal(preview.statusCode, 200);
   assert.equal(preview.payload.summary.create, 2);
   assert.equal(preview.payload.summary.update, 0);
   const before = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  assert.equal(before.payload.members.some((member) => member.email === "shared@example.com"), false);
+  assert.equal(
+    before.payload.members.some(
+      (member) => member.email === "shared@example.com",
+    ),
+    false,
+  );
   const committed = await callHandler(authHandlers.commitPortableImport, {
     context,
-    body: { type: "members", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) },
+    body: {
+      type: "members",
+      approvedRows: preview.payload.rows.map(
+        ({ row, action, matchedId, record }) => ({
+          row,
+          action,
+          recordId: matchedId || undefined,
+          record,
+        }),
+      ),
+    },
   });
   assert.equal(committed.statusCode, 200);
   assert.equal(committed.payload.summary.created, 2);
   const after = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  const imported = after.payload.members.filter((member) => member.email === "shared@example.com");
+  const imported = after.payload.members.filter(
+    (member) => member.email === "shared@example.com",
+  );
   assert.equal(imported.length, 2);
-  assert.equal(imported.every((member) => !member.userId), true);
+  assert.equal(
+    imported.every((member) => !member.userId),
+    true,
+  );
 });
 
 test("portable create commits deduplicate safe entity identities across rows and retries", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("data_transfer_idempotent_creates");
-  const teamRows = [1, 2].map((row) => ({ row, action: "create", record: { name: "Import Team" } }));
-  const teamCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: teamRows } });
+  const teamRows = [1, 2].map((row) => ({
+    row,
+    action: "create",
+    record: { name: "Import Team" },
+  }));
+  const teamCommit = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "teams", approvedRows: teamRows },
+  });
   assert.equal(teamCommit.payload.summary.created, 2);
-  const retry = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: teamRows } });
+  const retry = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "teams", approvedRows: teamRows },
+  });
   assert.equal(retry.payload.summary.created, 2);
-  assert.deepEqual(retry.payload.results.map(({ id }) => id), teamCommit.payload.results.map(({ id }) => id));
-  const teamsAfter = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  assert.equal(teamsAfter.payload.teams.filter((team) => team.name === "Import Team").length, 1);
+  assert.deepEqual(
+    retry.payload.results.map(({ id }) => id),
+    teamCommit.payload.results.map(({ id }) => id),
+  );
+  const teamsAfter = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.equal(
+    teamsAfter.payload.teams.filter((team) => team.name === "Import Team")
+      .length,
+    1,
+  );
 
-  const teamId = teamsAfter.payload.teams.find((team) => team.name === "Import Team").teamId;
-  const unsupportedCustomIcon = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Unsupported Icon", teamId, icon: { source: "custom", id: "church-icon" } } });
+  const teamId = teamsAfter.payload.teams.find(
+    (team) => team.name === "Import Team",
+  ).teamId;
+  const unsupportedCustomIcon = await callHandler(
+    authHandlers.createTeamPosition,
+    {
+      context,
+      body: {
+        name: "Unsupported Icon",
+        teamId,
+        icon: { source: "custom", id: "church-icon" },
+      },
+    },
+  );
   assert.equal(unsupportedCustomIcon.statusCode, 400);
-  const positionRows = [1, 2].map((row) => ({ row, action: "create", record: { name: "Imported Role", team: "Import Team", teamId } }));
-  const firstPositionCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
-  const retriedPositionCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "positions", approvedRows: positionRows } });
-  assert.deepEqual(retriedPositionCommit.payload.results.map(({ id }) => id), firstPositionCommit.payload.results.map(({ id }) => id));
-  const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  assert.equal(afterPositions.payload.positions.filter((position) => position.name === "Imported Role").length, 1);
+  const positionRows = [1, 2].map((row) => ({
+    row,
+    action: "create",
+    record: { name: "Imported Role", team: "Import Team", teamId },
+  }));
+  const firstPositionCommit = await callHandler(
+    authHandlers.commitPortableImport,
+    { context, body: { type: "positions", approvedRows: positionRows } },
+  );
+  const retriedPositionCommit = await callHandler(
+    authHandlers.commitPortableImport,
+    { context, body: { type: "positions", approvedRows: positionRows } },
+  );
+  assert.deepEqual(
+    retriedPositionCommit.payload.results.map(({ id }) => id),
+    firstPositionCommit.payload.results.map(({ id }) => id),
+  );
+  const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.equal(
+    afterPositions.payload.positions.filter(
+      (position) => position.name === "Imported Role",
+    ).length,
+    1,
+  );
 
   const memberRows = [
-    { row: 2, action: "create", record: { firstName: "Alex", lastName: "Same", email: "alex@example.com" } },
-    { row: 3, action: "create", record: { firstName: "Alex", lastName: "Same", email: "alex@example.com" } },
-    { row: 4, action: "create", record: { firstName: "Alex", lastName: "Same", email: "alex2@example.com" } },
-    { row: 5, action: "create", record: { firstName: "Alex", lastName: "Same" } },
-    { row: 6, action: "create", record: { firstName: "Alex", lastName: "Same" } },
+    {
+      row: 2,
+      action: "create",
+      record: {
+        firstName: "Alex",
+        lastName: "Same",
+        email: "alex@example.com",
+      },
+    },
+    {
+      row: 3,
+      action: "create",
+      record: {
+        firstName: "Alex",
+        lastName: "Same",
+        email: "alex@example.com",
+      },
+    },
+    {
+      row: 4,
+      action: "create",
+      record: {
+        firstName: "Alex",
+        lastName: "Same",
+        email: "alex2@example.com",
+      },
+    },
+    {
+      row: 5,
+      action: "create",
+      record: { firstName: "Alex", lastName: "Same" },
+    },
+    {
+      row: 6,
+      action: "create",
+      record: { firstName: "Alex", lastName: "Same" },
+    },
   ];
-  const firstMemberCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
-  const retriedMemberCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: memberRows } });
-  assert.deepEqual(retriedMemberCommit.payload.results.map(({ id }) => id), firstMemberCommit.payload.results.map(({ id }) => id));
-  const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, { context });
-  assert.equal(afterMembers.payload.members.filter((member) => member.firstName === "Alex" && member.lastName === "Same").length, 4);
-  assert.equal(afterMembers.payload.members.filter((member) => member.email === "alex@example.com").length, 1);
+  const firstMemberCommit = await callHandler(
+    authHandlers.commitPortableImport,
+    { context, body: { type: "members", approvedRows: memberRows } },
+  );
+  const retriedMemberCommit = await callHandler(
+    authHandlers.commitPortableImport,
+    { context, body: { type: "members", approvedRows: memberRows } },
+  );
+  assert.deepEqual(
+    retriedMemberCommit.payload.results.map(({ id }) => id),
+    firstMemberCommit.payload.results.map(({ id }) => id),
+  );
+  const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, {
+    context,
+  });
+  assert.equal(
+    afterMembers.payload.members.filter(
+      (member) => member.firstName === "Alex" && member.lastName === "Same",
+    ).length,
+    4,
+  );
+  assert.equal(
+    afterMembers.payload.members.filter(
+      (member) => member.email === "alex@example.com",
+    ).length,
+    1,
+  );
 
-  const existing = afterMembers.payload.members.find((member) => member.email === "alex@example.com");
-  const update = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "members", approvedRows: [{ row: 2, action: "update", recordId: existing.memberId, record: { firstName: "Alex Updated", lastName: "Same", email: "alex@example.com" } }] } });
+  const existing = afterMembers.payload.members.find(
+    (member) => member.email === "alex@example.com",
+  );
+  const update = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "members",
+      approvedRows: [
+        {
+          row: 2,
+          action: "update",
+          recordId: existing.memberId,
+          record: {
+            firstName: "Alex Updated",
+            lastName: "Same",
+            email: "alex@example.com",
+          },
+        },
+      ],
+    },
+  });
   assert.equal(update.payload.summary.updated, 1);
-  assert.equal((await callHandler(authHandlers.getTeamsBootstrap, { context })).payload.members.find((member) => member.memberId === existing.memberId).firstName, "Alex Updated");
+  assert.equal(
+    (
+      await callHandler(authHandlers.getTeamsBootstrap, { context })
+    ).payload.members.find((member) => member.memberId === existing.memberId)
+      .firstName,
+    "Alex Updated",
+  );
 });
 
 test("portable create claims serialize concurrent retries and stay church-scoped", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const churchA = await createAdminContext("portable_claim_church_a");
   const churchB = await createAdminContext("portable_claim_church_b");
-  const createTeamRows = [{ row: 2, action: "create", record: { name: "Concurrent Team" } }];
+  const createTeamRows = [
+    { row: 2, action: "create", record: { name: "Concurrent Team" } },
+  ];
   const teamBody = { type: "teams", approvedRows: createTeamRows };
   const [teamA1, teamA2] = await Promise.all([
-    callHandler(authHandlers.commitPortableImport, { context: churchA, body: teamBody }),
-    callHandler(authHandlers.commitPortableImport, { context: churchA, body: teamBody }),
+    callHandler(authHandlers.commitPortableImport, {
+      context: churchA,
+      body: teamBody,
+    }),
+    callHandler(authHandlers.commitPortableImport, {
+      context: churchA,
+      body: teamBody,
+    }),
   ]);
   assert.equal(teamA1.payload.summary.created, 1);
   assert.equal(teamA2.payload.summary.created, 1);
   // Retrying after the first response has been discarded resolves through the
   // persisted claim to the same entity.
-  await callHandler(authHandlers.commitPortableImport, { context: churchA, body: teamBody });
-  const teamB = await callHandler(authHandlers.commitPortableImport, { context: churchB, body: teamBody });
+  await callHandler(authHandlers.commitPortableImport, {
+    context: churchA,
+    body: teamBody,
+  });
+  const teamB = await callHandler(authHandlers.commitPortableImport, {
+    context: churchB,
+    body: teamBody,
+  });
   assert.equal(teamB.payload.summary.created, 1);
 
-  const bootA = await callHandler(authHandlers.getTeamsBootstrap, { context: churchA });
-  const bootB = await callHandler(authHandlers.getTeamsBootstrap, { context: churchB });
-  const aTeam = bootA.payload.teams.find((item) => item.name === "Concurrent Team");
-  const bTeam = bootB.payload.teams.find((item) => item.name === "Concurrent Team");
+  const bootA = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: churchA,
+  });
+  const bootB = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: churchB,
+  });
+  const aTeam = bootA.payload.teams.find(
+    (item) => item.name === "Concurrent Team",
+  );
+  const bTeam = bootB.payload.teams.find(
+    (item) => item.name === "Concurrent Team",
+  );
   assert.ok(aTeam && bTeam);
   assert.notEqual(aTeam.teamId, bTeam.teamId);
-  assert.equal(bootA.payload.teams.filter((item) => item.name === "Concurrent Team").length, 1);
-  assert.equal(bootB.payload.teams.filter((item) => item.name === "Concurrent Team").length, 1);
-  const churchAClaims = await queryDocs(COLLECTIONS.portableImportCreates, [{ field: "churchId", value: churchA.churchId }], { limit: 0 });
-  const churchBClaims = await queryDocs(COLLECTIONS.portableImportCreates, [{ field: "churchId", value: churchB.churchId }], { limit: 0 });
+  assert.equal(
+    bootA.payload.teams.filter((item) => item.name === "Concurrent Team")
+      .length,
+    1,
+  );
+  assert.equal(
+    bootB.payload.teams.filter((item) => item.name === "Concurrent Team")
+      .length,
+    1,
+  );
+  const churchAClaims = await queryDocs(
+    COLLECTIONS.portableImportCreates,
+    [{ field: "churchId", value: churchA.churchId }],
+    { limit: 0 },
+  );
+  const churchBClaims = await queryDocs(
+    COLLECTIONS.portableImportCreates,
+    [{ field: "churchId", value: churchB.churchId }],
+    { limit: 0 },
+  );
   assert.equal(churchAClaims.length, 1);
   assert.equal(churchBClaims.length, 1);
 
-  const positionRows = [{ row: 2, action: "create", record: { name: "Concurrent Role", team: "Concurrent Team", teamId: aTeam.teamId } }];
+  const positionRows = [
+    {
+      row: 2,
+      action: "create",
+      record: {
+        name: "Concurrent Role",
+        team: "Concurrent Team",
+        teamId: aTeam.teamId,
+      },
+    },
+  ];
   await Promise.all([
-    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "positions", approvedRows: positionRows } }),
-    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "positions", approvedRows: positionRows } }),
+    callHandler(authHandlers.commitPortableImport, {
+      context: churchA,
+      body: { type: "positions", approvedRows: positionRows },
+    }),
+    callHandler(authHandlers.commitPortableImport, {
+      context: churchA,
+      body: { type: "positions", approvedRows: positionRows },
+    }),
   ]);
-  const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, { context: churchA });
-  assert.equal(afterPositions.payload.positions.filter((item) => item.name === "Concurrent Role").length, 1);
+  const afterPositions = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: churchA,
+  });
+  assert.equal(
+    afterPositions.payload.positions.filter(
+      (item) => item.name === "Concurrent Role",
+    ).length,
+    1,
+  );
 
-  const memberRows = [{ row: 2, action: "create", record: { firstName: "Casey", lastName: "Concurrent", email: "shared-concurrent@example.com" } }];
+  const memberRows = [
+    {
+      row: 2,
+      action: "create",
+      record: {
+        firstName: "Casey",
+        lastName: "Concurrent",
+        email: "shared-concurrent@example.com",
+      },
+    },
+  ];
   await Promise.all([
-    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "members", approvedRows: memberRows } }),
-    callHandler(authHandlers.commitPortableImport, { context: churchA, body: { type: "members", approvedRows: memberRows } }),
+    callHandler(authHandlers.commitPortableImport, {
+      context: churchA,
+      body: { type: "members", approvedRows: memberRows },
+    }),
+    callHandler(authHandlers.commitPortableImport, {
+      context: churchA,
+      body: { type: "members", approvedRows: memberRows },
+    }),
   ]);
-  const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, { context: churchA });
-  assert.equal(afterMembers.payload.members.filter((item) => item.email === "shared-concurrent@example.com").length, 1);
-  const allClaims = await queryDocs(COLLECTIONS.portableImportCreates, [{ field: "churchId", value: churchA.churchId }], { limit: 0 });
-  assert.deepEqual(allClaims.map((claim) => claim.kind).sort(), ["member", "position", "team"]);
+  const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: churchA,
+  });
+  assert.equal(
+    afterMembers.payload.members.filter(
+      (item) => item.email === "shared-concurrent@example.com",
+    ).length,
+    1,
+  );
+  const allClaims = await queryDocs(
+    COLLECTIONS.portableImportCreates,
+    [{ field: "churchId", value: churchA.churchId }],
+    { limit: 0 },
+  );
+  assert.deepEqual(allClaims.map((claim) => claim.kind).sort(), [
+    "member",
+    "position",
+    "team",
+  ]);
 });
 
 test("portable create rows with stale natural matches require a fresh preview", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("portable_stale_create_preview");
   const teamRow = { row: 2, action: "create", record: { name: "Media" } };
-  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Media", description: "Do not overwrite" } });
-  const teamImport = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "teams", approvedRows: [teamRow] } });
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Media", description: "Do not overwrite" },
+  });
+  const teamImport = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "teams", approvedRows: [teamRow] },
+  });
   assert.equal(teamImport.payload.summary.failed, 1);
   assert.match(teamImport.payload.results[0].message, /preview/i);
-  assert.equal((await getDoc(COLLECTIONS.teams, team.payload.team.teamId)).description, "Do not overwrite");
+  assert.equal(
+    (await getDoc(COLLECTIONS.teams, team.payload.team.teamId)).description,
+    "Do not overwrite",
+  );
 
-  const position = await callHandler(authHandlers.createTeamPosition, { context, body: { name: "Camera", teamId: team.payload.team.teamId, description: "Keep this" } });
+  const position = await callHandler(authHandlers.createTeamPosition, {
+    context,
+    body: {
+      name: "Camera",
+      teamId: team.payload.team.teamId,
+      description: "Keep this",
+    },
+  });
   const positionImport = await callHandler(authHandlers.commitPortableImport, {
     context,
-    body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Camera", team: "Media", teamId: team.payload.team.teamId, description: "Overwrite attempt" } }] },
+    body: {
+      type: "positions",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: {
+            name: "Camera",
+            team: "Media",
+            teamId: team.payload.team.teamId,
+            description: "Overwrite attempt",
+          },
+        },
+      ],
+    },
   });
   assert.equal(positionImport.payload.summary.failed, 1);
-  assert.equal((await getDoc(COLLECTIONS.teamPositions, position.payload.position.positionId)).description, "Keep this");
+  assert.equal(
+    (
+      await getDoc(
+        COLLECTIONS.teamPositions,
+        position.payload.position.positionId,
+      )
+    ).description,
+    "Keep this",
+  );
 
-  const member = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Taylor", lastName: "Member", email: "taylor@example.com", notes: "Keep this" } });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Taylor",
+      lastName: "Member",
+      email: "taylor@example.com",
+      notes: "Keep this",
+    },
+  });
   const memberImport = await callHandler(authHandlers.commitPortableImport, {
     context,
-    body: { type: "members", approvedRows: [{ row: 2, action: "create", record: { firstName: "Taylor", lastName: "Member", email: "taylor@example.com", notes: "Keep this" } }] },
+    body: {
+      type: "members",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: {
+            firstName: "Taylor",
+            lastName: "Member",
+            email: "taylor@example.com",
+            notes: "Keep this",
+          },
+        },
+      ],
+    },
   });
   assert.equal(memberImport.payload.summary.failed, 1);
-  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId)).notes, "Keep this");
+  assert.equal(
+    (
+      await getDoc(
+        COLLECTIONS.teamRosterMembers,
+        member.payload.member.memberId,
+      )
+    ).notes,
+    "Keep this",
+  );
 });
 
 test("portable service preview and commit validate actual calendar dates", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const context = await createAdminContext("data_transfer_service_calendar_dates");
+  const context = await createAdminContext(
+    "data_transfer_service_calendar_dates",
+  );
   const previewCsv = async (csv) => {
-    const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "services", csv } });
-    return callHandler(authHandlers.previewPortableImport, { context, body: { type: "services", csv, mapping: inspected.payload.mapping } });
+    const inspected = await callHandler(authHandlers.inspectPortableImport, {
+      context,
+      body: { type: "services", csv },
+    });
+    return callHandler(authHandlers.previewPortableImport, {
+      context,
+      body: { type: "services", csv, mapping: inspected.payload.mapping },
+    });
   };
   for (const date of ["2026-02-30", "2026-13-01", "2025-02-29"]) {
-    const preview = await previewCsv(`Service,Recurrence,Date\nHoliday,one_time,${date}\n`);
+    const preview = await previewCsv(
+      `Service,Recurrence,Date\nHoliday,one_time,${date}\n`,
+    );
     assert.equal(preview.payload.rows[0].action, "invalid");
   }
-  const invalidRange = await previewCsv("Service,Recurrence,Start Date,End Date\nSunday,weekly,2026-06-01,2026-05-01\n");
+  const invalidRange = await previewCsv(
+    "Service,Recurrence,Start Date,End Date\nSunday,weekly,2026-06-01,2026-05-01\n",
+  );
   assert.equal(invalidRange.payload.rows[0].action, "invalid");
-  assert.equal(invalidRange.payload.rows[0].issues.some((issue) => issue.field === "endDate"), true);
-  const leap = await previewCsv("Service,Recurrence,Date\nLeap Day,one_time,2024-02-29\n");
+  assert.equal(
+    invalidRange.payload.rows[0].issues.some(
+      (issue) => issue.field === "endDate",
+    ),
+    true,
+  );
+  const leap = await previewCsv(
+    "Service,Recurrence,Date\nLeap Day,one_time,2024-02-29\n",
+  );
   assert.equal(leap.payload.rows[0].action, "create");
-  const approved = leap.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record }));
-  assert.equal((await callHandler(authHandlers.commitPortableImport, { context, body: { type: "services", approvedRows: approved } })).payload.summary.created, 1);
-  const exported = await callHandler(authHandlers.exportPortableData, { context, params: { type: "services" } });
+  const approved = leap.payload.rows.map(
+    ({ row, action, matchedId, record }) => ({
+      row,
+      action,
+      recordId: matchedId || undefined,
+      record,
+    }),
+  );
+  assert.equal(
+    (
+      await callHandler(authHandlers.commitPortableImport, {
+        context,
+        body: { type: "services", approvedRows: approved },
+      })
+    ).payload.summary.created,
+    1,
+  );
+  const exported = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "services" },
+  });
   const roundTrip = await previewCsv(String(exported.body));
   assert.equal(roundTrip.payload.summary.update, 1);
-  const tampered = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "services", approvedRows: [{ row: 2, action: "create", record: { name: "Bad Date", recurrence: "one_time", date: "2026-02-30" } }] } });
+  const tampered = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "services",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: {
+            name: "Bad Date",
+            recurrence: "one_time",
+            date: "2026-02-30",
+          },
+        },
+      ],
+    },
+  });
   assert.equal(tampered.payload.summary.failed, 1);
 });
 
 test("portable member IDs only match records in the current church", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const sourceChurch = await createAdminContext("data_transfer_foreign_id_source");
-  const targetChurch = await createAdminContext("data_transfer_foreign_id_target");
+  const sourceChurch = await createAdminContext(
+    "data_transfer_foreign_id_source",
+  );
+  const targetChurch = await createAdminContext(
+    "data_transfer_foreign_id_target",
+  );
   const foreignMember = await callHandler(authHandlers.createTeamRosterMember, {
     context: sourceChurch,
-    body: { firstName: "Alex", lastName: "Source", teamIds: [], positionIds: [] },
+    body: {
+      firstName: "Alex",
+      lastName: "Source",
+      teamIds: [],
+      positionIds: [],
+    },
   });
   const localMember = await callHandler(authHandlers.createTeamRosterMember, {
     context: targetChurch,
-    body: { firstName: "Alex", lastName: "Source", teamIds: [], positionIds: [] },
+    body: {
+      firstName: "Alex",
+      lastName: "Source",
+      teamIds: [],
+      positionIds: [],
+    },
   });
   const csv = `First Name,Last Name,WorshipSync Member ID\nUpdated,Local,${localMember.payload.member.memberId}\nAlex,Source,${foreignMember.payload.member.memberId}\n`;
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: targetChurch, body: { type: "members", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context: targetChurch, body: { type: "members", csv, mapping: inspected.payload.mapping } });
-  assert.deepEqual(preview.payload.rows.map((row) => row.action), ["update", "review"]);
-  assert.equal(preview.payload.rows[0].matchedId, localMember.payload.member.memberId);
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context: targetChurch,
+    body: { type: "members", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context: targetChurch,
+    body: { type: "members", csv, mapping: inspected.payload.mapping },
+  });
+  assert.deepEqual(
+    preview.payload.rows.map((row) => row.action),
+    ["update", "review"],
+  );
+  assert.equal(
+    preview.payload.rows[0].matchedId,
+    localMember.payload.member.memberId,
+  );
   assert.equal(preview.payload.rows[1].matchedId, null);
-  assert.equal(preview.payload.rows[1].issues.some((issue) => issue.code === "foreign_or_unknown_record_id"), true);
-  assert.equal(preview.payload.rows[1].candidates[0].id, localMember.payload.member.memberId);
+  assert.equal(
+    preview.payload.rows[1].issues.some(
+      (issue) => issue.code === "foreign_or_unknown_record_id",
+    ),
+    true,
+  );
+  assert.equal(
+    preview.payload.rows[1].candidates[0].id,
+    localMember.payload.member.memberId,
+  );
 });
 
 test("portable team ID from another church does not auto-match a same-named local team", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const source = await createAdminContext("data_transfer_team_id_source");
   const target = await createAdminContext("data_transfer_team_id_target");
-  const foreign = await callHandler(authHandlers.createTeam, { context: source, body: { name: "Media", memberIds: [] } });
-  const local = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
+  const foreign = await callHandler(authHandlers.createTeam, {
+    context: source,
+    body: { name: "Media", memberIds: [] },
+  });
+  const local = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Media", memberIds: [] },
+  });
   const csv = `Team,WorshipSync Team ID\nMedia,${foreign.payload.team.teamId}\n`;
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "teams", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "teams", csv, mapping: inspected.payload.mapping } });
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context: target,
+    body: { type: "teams", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context: target,
+    body: { type: "teams", csv, mapping: inspected.payload.mapping },
+  });
   assert.equal(preview.payload.rows[0].action, "review");
   assert.equal(preview.payload.rows[0].matchedId, null);
-  assert.equal(preview.payload.rows[0].candidates[0].id, local.payload.team.teamId);
-  assert.equal(preview.payload.rows[0].issues[0].code, "foreign_or_unknown_record_id");
-  const forgedReference = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Keys", team: "Media" }, resolutions: { team: foreign.payload.team.teamId } }] } });
+  assert.equal(
+    preview.payload.rows[0].candidates[0].id,
+    local.payload.team.teamId,
+  );
+  assert.equal(
+    preview.payload.rows[0].issues[0].code,
+    "foreign_or_unknown_record_id",
+  );
+  const forgedReference = await callHandler(authHandlers.commitPortableImport, {
+    context: target,
+    body: {
+      type: "positions",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: { name: "Keys", team: "Media" },
+          resolutions: { team: foreign.payload.team.teamId },
+        },
+      ],
+    },
+  });
   assert.equal(forgedReference.payload.results[0].code, "stale_preview");
-  const forgedRecord = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "teams", approvedRows: [{ row: 2, action: "update", recordId: foreign.payload.team.teamId, record: { name: "Media" } }] } });
+  const forgedRecord = await callHandler(authHandlers.commitPortableImport, {
+    context: target,
+    body: {
+      type: "teams",
+      approvedRows: [
+        {
+          row: 2,
+          action: "update",
+          recordId: foreign.payload.team.teamId,
+          record: { name: "Media" },
+        },
+      ],
+    },
+  });
   assert.equal(forgedRecord.payload.results[0].code, "stale_preview");
 
-  const secondLocal = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
+  const secondLocal = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Media", memberIds: [] },
+  });
   const positionCsv = "Position,Team\nKeys,Media\n";
-  const positionInspection = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "positions", csv: positionCsv } });
-  const positionPreview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "positions", csv: positionCsv, mapping: positionInspection.payload.mapping } });
-  const relationshipIssue = positionPreview.payload.rows[0].issues.find((issue) => issue.field === "team");
+  const positionInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    { context: target, body: { type: "positions", csv: positionCsv } },
+  );
+  const positionPreview = await callHandler(
+    authHandlers.previewPortableImport,
+    {
+      context: target,
+      body: {
+        type: "positions",
+        csv: positionCsv,
+        mapping: positionInspection.payload.mapping,
+      },
+    },
+  );
+  const relationshipIssue = positionPreview.payload.rows[0].issues.find(
+    (issue) => issue.field === "team",
+  );
   assert.equal(positionPreview.payload.rows[0].action, "review");
   assert.equal(relationshipIssue.code, "ambiguous_reference");
   assert.equal(relationshipIssue.candidates.length, 2);
   const selectedTeamId = relationshipIssue.candidates[0].id;
-  const resolvedCommit = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Keys", team: "Media" }, resolutions: { team: selectedTeamId } }] } });
+  const resolvedCommit = await callHandler(authHandlers.commitPortableImport, {
+    context: target,
+    body: {
+      type: "positions",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: { name: "Keys", team: "Media" },
+          resolutions: { team: selectedTeamId },
+        },
+      ],
+    },
+  });
   assert.equal(resolvedCommit.payload.summary.created, 1);
-  const selectedTeam = [local.payload.team, secondLocal.payload.team].find((team) => team.teamId === selectedTeamId);
-  await setDoc("teams", selectedTeamId, { ...selectedTeam, archivedAt: "2026-09-29T12:00:00.000Z" });
-  const staleResolution = await callHandler(authHandlers.commitPortableImport, { context: target, body: { type: "positions", approvedRows: [{ row: 2, action: "create", record: { name: "Vocal", team: "Media" }, resolutions: { team: selectedTeamId } }] } });
+  const selectedTeam = [local.payload.team, secondLocal.payload.team].find(
+    (team) => team.teamId === selectedTeamId,
+  );
+  await setDoc("teams", selectedTeamId, {
+    ...selectedTeam,
+    archivedAt: "2026-09-29T12:00:00.000Z",
+  });
+  const staleResolution = await callHandler(authHandlers.commitPortableImport, {
+    context: target,
+    body: {
+      type: "positions",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: { name: "Vocal", team: "Media" },
+          resolutions: { team: selectedTeamId },
+        },
+      ],
+    },
+  });
   assert.equal(staleResolution.payload.results[0].code, "stale_preview");
 
   const archivedCsv = "Team,Archived\nOld Media,true\n";
-  const archivedInspection = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "teams", csv: archivedCsv } });
-  const archivedPreview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "teams", csv: archivedCsv, mapping: archivedInspection.payload.mapping } });
+  const archivedInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    { context: target, body: { type: "teams", csv: archivedCsv } },
+  );
+  const archivedPreview = await callHandler(
+    authHandlers.previewPortableImport,
+    {
+      context: target,
+      body: {
+        type: "teams",
+        csv: archivedCsv,
+        mapping: archivedInspection.payload.mapping,
+      },
+    },
+  );
   assert.equal(archivedPreview.payload.rows[0].action, "invalid");
-  assert.equal(archivedPreview.payload.rows[0].issues.some((issue) => issue.code === "archive_import_unsupported"), true);
+  assert.equal(
+    archivedPreview.payload.rows[0].issues.some(
+      (issue) => issue.code === "archive_import_unsupported",
+    ),
+    true,
+  );
 });
 
 test("portable service import offers and applies an explicit local position match", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const source = await createAdminContext("data_transfer_service_position_source");
-  const target = await createAdminContext("data_transfer_service_position_target");
-  const sourceTeam = await callHandler(authHandlers.createTeam, { context: source, body: { name: "Media", memberIds: [] } });
-  const targetTeam = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
-  const foreignPosition = await callHandler(authHandlers.createTeamPosition, { context: source, body: { name: "Keys", teamId: sourceTeam.payload.team.teamId } });
-  const localPosition = await callHandler(authHandlers.createTeamPosition, { context: target, body: { name: "Keys", teamId: targetTeam.payload.team.teamId } });
+  const source = await createAdminContext(
+    "data_transfer_service_position_source",
+  );
+  const target = await createAdminContext(
+    "data_transfer_service_position_target",
+  );
+  const sourceTeam = await callHandler(authHandlers.createTeam, {
+    context: source,
+    body: { name: "Media", memberIds: [] },
+  });
+  const targetTeam = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Media", memberIds: [] },
+  });
+  const foreignPosition = await callHandler(authHandlers.createTeamPosition, {
+    context: source,
+    body: { name: "Keys", teamId: sourceTeam.payload.team.teamId },
+  });
+  const localPosition = await callHandler(authHandlers.createTeamPosition, {
+    context: target,
+    body: { name: "Keys", teamId: targetTeam.payload.team.teamId },
+  });
   const csv = `Service,Recurrence,Time,Weekday,Position,Required Slots,WorshipSync Position ID\nSunday,weekly,10:00,Sunday,Keys,1,${foreignPosition.payload.position.positionId}\n`;
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "services", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "services", csv, mapping: inspected.payload.mapping } });
-  const relationship = preview.payload.rows[0].issues.find((issue) => issue.field === "position");
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context: target,
+    body: { type: "services", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context: target,
+    body: { type: "services", csv, mapping: inspected.payload.mapping },
+  });
+  const relationship = preview.payload.rows[0].issues.find(
+    (issue) => issue.field === "position",
+  );
   assert.equal(preview.payload.rows[0].action, "review");
   assert.equal(relationship.code, "foreign_or_unknown_reference_id");
   assert.equal(relationship.candidates.length, 1);
-  assert.equal(relationship.candidates[0].id, localPosition.payload.position.positionId);
+  assert.equal(
+    relationship.candidates[0].id,
+    localPosition.payload.position.positionId,
+  );
 
   const committed = await callHandler(authHandlers.commitPortableImport, {
     context: target,
-    body: { type: "services", approvedRows: [{ row: preview.payload.rows[0].row, action: "create", record: preview.payload.rows[0].record, resolutions: { position: localPosition.payload.position.positionId } }] },
+    body: {
+      type: "services",
+      approvedRows: [
+        {
+          row: preview.payload.rows[0].row,
+          action: "create",
+          record: preview.payload.rows[0].record,
+          resolutions: { position: localPosition.payload.position.positionId },
+        },
+      ],
+    },
   });
   assert.equal(committed.payload.summary.created, 1);
-  const exported = await callHandler(authHandlers.exportPortableData, { context: target, params: { type: "services" } });
-  assert.match(String(exported.body), new RegExp(localPosition.payload.position.positionId));
-  assert.doesNotMatch(String(exported.body), new RegExp(foreignPosition.payload.position.positionId));
+  const exported = await callHandler(authHandlers.exportPortableData, {
+    context: target,
+    params: { type: "services" },
+  });
+  assert.match(
+    String(exported.body),
+    new RegExp(localPosition.payload.position.positionId),
+  );
+  assert.doesNotMatch(
+    String(exported.body),
+    new RegExp(foreignPosition.payload.position.positionId),
+  );
 });
 
 test("portable CSV transfer requires an admin and export reads complete schedule records", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const nonAdmin = await createHumanContext("data_transfer_member", { role: "member" });
-  const denied = await callHandler(authHandlers.exportPortableData, { context: nonAdmin, params: { type: "members" } });
+  const nonAdmin = await createHumanContext("data_transfer_member", {
+    role: "member",
+  });
+  const denied = await callHandler(authHandlers.exportPortableData, {
+    context: nonAdmin,
+    params: { type: "members" },
+  });
   assert.equal(denied.statusCode, 403);
 
   const context = await createAdminContext("data_transfer_export");
-  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "=1+1", memberIds: [] } });
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "=1+1", memberIds: [] },
+  });
   const teamId = team.payload.team.teamId;
   const scheduleId = "data-transfer-full-schedule";
   await setDoc("teamSchedules", scheduleId, {
@@ -10560,17 +12014,38 @@ test("portable CSV transfer requires an admin and export reads complete schedule
     startDate: "2020-01-05",
     endDate: "2020-01-05",
     serviceIds: ["service-old"],
-    occurrences: [{ occurrenceId: "service-old@2020-01-05T15:00:00.000Z", serviceId: "service-old", name: "Sunday", startsAt: "2020-01-05T15:00:00.000Z", positionRequirements: [] }],
-    assignments: { "service-old@2020-01-05T15:00:00.000Z": { "position-old::0": { primaryMemberId: "member-old" } } },
+    occurrences: [
+      {
+        occurrenceId: "service-old@2020-01-05T15:00:00.000Z",
+        serviceId: "service-old",
+        name: "Sunday",
+        startsAt: "2020-01-05T15:00:00.000Z",
+        positionRequirements: [],
+      },
+    ],
+    assignments: {
+      "service-old@2020-01-05T15:00:00.000Z": {
+        "position-old::0": { primaryMemberId: "member-old" },
+      },
+    },
   });
-  const schedules = await callHandler(authHandlers.exportPortableData, { context, params: { type: "schedules" } });
+  const schedules = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "schedules" },
+  });
   assert.equal(schedules.statusCode, 200);
   assert.match(String(schedules.body), /Older schedule/);
   assert.match(String(schedules.body), /member-old/);
-  const teams = await callHandler(authHandlers.exportPortableData, { context, params: { type: "teams" } });
+  const teams = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "teams" },
+  });
   assert.equal(teams.statusCode, 200);
   assert.match(String(teams.body), /'\\=1\+1/);
-  const archive = await callHandler(authHandlers.exportPortableData, { context, params: { type: "all" } });
+  const archive = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "all" },
+  });
   assert.equal(archive.statusCode, 200);
   assert.equal(archive.body.readUInt32LE(0), 0x04034b50);
 });
@@ -10578,135 +12053,536 @@ test("portable CSV transfer requires an admin and export reads complete schedule
 test("portable schedule import validates and preserves the schedule assignment model", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("data_transfer_schedule_import");
-  const { teamId, positionIds } = await seedTeam(context, { teamName: "Worship", positions: [{ name: "Keys" }] });
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Worship",
+    positions: [{ name: "Keys" }],
+  });
   const positionId = positionIds.Keys;
   const member = await callHandler(authHandlers.createTeamRosterMember, {
     context,
-    body: { firstName: "Sam", lastName: "Singer", teamIds: [teamId], positionIds: [positionId] },
+    body: {
+      firstName: "Sam",
+      lastName: "Singer",
+      teamIds: [teamId],
+      positionIds: [positionId],
+    },
   });
   const memberId = member.payload.member.memberId;
-  const shadowMember = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Taylor", lastName: "Shadow", teamIds: [teamId], positionIds: [positionId] } });
-  const reverseMember = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Morgan", lastName: "Reverse", teamIds: [teamId], positionIds: [positionId] } });
+  const shadowMember = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Taylor",
+      lastName: "Shadow",
+      teamIds: [teamId],
+      positionIds: [positionId],
+    },
+  });
+  const reverseMember = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Morgan",
+      lastName: "Reverse",
+      teamIds: [teamId],
+      positionIds: [positionId],
+    },
+  });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
-    services: [{ id: "service-sunday", serviceId: "service-sunday", name: "Sunday", timerType: "countdown", reccurence: "weekly", time: "20:00", dayOfWeek: 0, positionRequirements: [{ positionId, count: 1 }] }],
+    services: [
+      {
+        id: "service-sunday",
+        serviceId: "service-sunday",
+        name: "Sunday",
+        timerType: "countdown",
+        reccurence: "weekly",
+        time: "20:00",
+        dayOfWeek: 0,
+        positionRequirements: [{ positionId, count: 1 }],
+      },
+    ],
   });
-  const csv = "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest,WorshipSync Service ID,WorshipSync Team ID,WorshipSync Position ID,WorshipSync Member ID\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,Sam Singer,,primary,false,service-sunday," + teamId + "," + positionId + "," + memberId + "\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,Taylor Shadow,,shadow,false,service-sunday," + teamId + "," + positionId + "," + shadowMember.payload.member.memberId + "\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,Morgan Reverse,,reverse_shadow,false,service-sunday," + teamId + "," + positionId + "," + reverseMember.payload.member.memberId + "\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,2,Guest Singer,guest@example.com,primary,true,service-sunday," + teamId + "," + positionId + ",\n";
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
+  const csv =
+    "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest,WorshipSync Service ID,WorshipSync Team ID,WorshipSync Position ID,WorshipSync Member ID\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,Sam Singer,,primary,false,service-sunday," +
+    teamId +
+    "," +
+    positionId +
+    "," +
+    memberId +
+    "\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,Taylor Shadow,,shadow,false,service-sunday," +
+    teamId +
+    "," +
+    positionId +
+    "," +
+    shadowMember.payload.member.memberId +
+    "\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,Morgan Reverse,,reverse_shadow,false,service-sunday," +
+    teamId +
+    "," +
+    positionId +
+    "," +
+    reverseMember.payload.member.memberId +
+    "\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,2,Guest Singer,guest@example.com,primary,true,service-sunday," +
+    teamId +
+    "," +
+    positionId +
+    ",\n";
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context,
+    body: { type: "schedules", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context,
+    body: { type: "schedules", csv, mapping: inspected.payload.mapping },
+  });
   assert.equal(preview.statusCode, 200);
   assert.equal(preview.payload.summary.create, 4);
   const imported = await callHandler(authHandlers.commitPortableImport, {
     context,
-    body: { type: "schedules", timeZone: "America/New_York", approvedRows: preview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) },
+    body: {
+      type: "schedules",
+      timeZone: "America/New_York",
+      approvedRows: preview.payload.rows.map(
+        ({ row, action, matchedId, record }) => ({
+          row,
+          action,
+          recordId: matchedId || undefined,
+          record,
+        }),
+      ),
+    },
   });
   assert.equal(imported.statusCode, 200);
   assert.equal(imported.payload.summary.created, 4);
-  const detail = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: imported.payload.results[0].id } });
+  const detail = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId: imported.payload.results[0].id },
+  });
   const occurrence = detail.payload.schedule.occurrences[0];
   assert.equal(detail.payload.schedule.teamId, teamId);
-  assert.equal(detail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, memberId);
-  assert.deepEqual(detail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].shadows.map(({ memberId: id, kind }) => [id, kind]), [[shadowMember.payload.member.memberId, "shadow"], [reverseMember.payload.member.memberId, "reverse_shadow"]]);
+  assert.equal(
+    detail.payload.schedule.assignments[occurrence.occurrenceId][
+      `${positionId}::0`
+    ].primaryMemberId,
+    memberId,
+  );
+  assert.deepEqual(
+    detail.payload.schedule.assignments[occurrence.occurrenceId][
+      `${positionId}::0`
+    ].shadows.map(({ memberId: id, kind }) => [id, kind]),
+    [
+      [shadowMember.payload.member.memberId, "shadow"],
+      [reverseMember.payload.member.memberId, "reverse_shadow"],
+    ],
+  );
   assert.equal(detail.payload.schedule.guests.length, 1);
   assert.equal(detail.payload.schedule.assignmentsOmitted, undefined);
 
-  const repeatedPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
-  const repeatedImport = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", timeZone: "America/New_York", approvedRows: repeatedPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) } });
+  const repeatedPreview = await callHandler(
+    authHandlers.previewPortableImport,
+    {
+      context,
+      body: { type: "schedules", csv, mapping: inspected.payload.mapping },
+    },
+  );
+  const repeatedImport = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "schedules",
+      timeZone: "America/New_York",
+      approvedRows: repeatedPreview.payload.rows.map(
+        ({ row, action, matchedId, record }) => ({
+          row,
+          action,
+          recordId: matchedId || undefined,
+          record,
+        }),
+      ),
+    },
+  });
   assert.equal(repeatedImport.payload.summary.failed, 0);
-  const replacement = await callHandler(authHandlers.createTeamRosterMember, { context, body: { firstName: "Jordan", lastName: "Replacement", teamIds: [teamId], positionIds: [positionId] } });
-  const replacementCsv = csv.replace("Sam Singer", "Jordan Replacement").replace(memberId, replacement.payload.member.memberId);
-  const replacementInspection = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv: replacementCsv } });
-  const replacementPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv: replacementCsv, mapping: replacementInspection.payload.mapping } });
-  const replaced = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", timeZone: "America/New_York", approvedRows: replacementPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) } });
+  const replacement = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Jordan",
+      lastName: "Replacement",
+      teamIds: [teamId],
+      positionIds: [positionId],
+    },
+  });
+  const replacementCsv = csv
+    .replace("Sam Singer", "Jordan Replacement")
+    .replace(memberId, replacement.payload.member.memberId);
+  const replacementInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    { context, body: { type: "schedules", csv: replacementCsv } },
+  );
+  const replacementPreview = await callHandler(
+    authHandlers.previewPortableImport,
+    {
+      context,
+      body: {
+        type: "schedules",
+        csv: replacementCsv,
+        mapping: replacementInspection.payload.mapping,
+      },
+    },
+  );
+  const replaced = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "schedules",
+      timeZone: "America/New_York",
+      approvedRows: replacementPreview.payload.rows.map(
+        ({ row, action, matchedId, record }) => ({
+          row,
+          action,
+          recordId: matchedId || undefined,
+          record,
+        }),
+      ),
+    },
+  });
   assert.equal(replaced.payload.summary.failed, 0);
-  const afterReplacement = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: detail.payload.schedule.scheduleId } });
-  assert.equal(afterReplacement.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, replacement.payload.member.memberId);
-  const emptySlotCsv = "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,,,,false\n";
-  const emptyInspection = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv: emptySlotCsv } });
-  const emptyPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv: emptySlotCsv, mapping: emptyInspection.payload.mapping } });
-  const emptyCommit = await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", timeZone: "America/New_York", approvedRows: emptyPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record })) } });
+  const afterReplacement = await callHandler(
+    authHandlers.getTeamScheduleDetail,
+    { context, params: { scheduleId: detail.payload.schedule.scheduleId } },
+  );
+  assert.equal(
+    afterReplacement.payload.schedule.assignments[occurrence.occurrenceId][
+      `${positionId}::0`
+    ].primaryMemberId,
+    replacement.payload.member.memberId,
+  );
+  const emptySlotCsv =
+    "Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Email,Assignment Type,Guest\nMay,2026-10-03,2026-10-03,Sunday,2026-10-03,20:00,Worship,Keys,1,,,,false\n";
+  const emptyInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    { context, body: { type: "schedules", csv: emptySlotCsv } },
+  );
+  const emptyPreview = await callHandler(authHandlers.previewPortableImport, {
+    context,
+    body: {
+      type: "schedules",
+      csv: emptySlotCsv,
+      mapping: emptyInspection.payload.mapping,
+    },
+  });
+  const emptyCommit = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "schedules",
+      timeZone: "America/New_York",
+      approvedRows: emptyPreview.payload.rows.map(
+        ({ row, action, matchedId, record }) => ({
+          row,
+          action,
+          recordId: matchedId || undefined,
+          record,
+        }),
+      ),
+    },
+  });
   assert.equal(emptyCommit.payload.summary.failed, 0);
-  const afterEmpty = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: detail.payload.schedule.scheduleId } });
-  assert.equal(afterEmpty.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].primaryMemberId, replacement.payload.member.memberId);
+  const afterEmpty = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context,
+    params: { scheduleId: detail.payload.schedule.scheduleId },
+  });
+  assert.equal(
+    afterEmpty.payload.schedule.assignments[occurrence.occurrenceId][
+      `${positionId}::0`
+    ].primaryMemberId,
+    replacement.payload.member.memberId,
+  );
 
-  const exportResponse = await callHandler(authHandlers.exportPortableData, { context, params: { type: "schedules" }, query: { timeZone: "America/New_York" } });
+  const exportResponse = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "schedules" },
+    query: { timeZone: "America/New_York" },
+  });
   const exportedScheduleCsv = String(exportResponse.body);
-  const invalidTimeZoneExport = await callHandler(authHandlers.exportPortableData, { context, params: { type: "schedules" }, query: { timeZone: "Not/A_Time_Zone" } });
+  const invalidTimeZoneExport = await callHandler(
+    authHandlers.exportPortableData,
+    {
+      context,
+      params: { type: "schedules" },
+      query: { timeZone: "Not/A_Time_Zone" },
+    },
+  );
   assert.equal(invalidTimeZoneExport.statusCode, 400);
-  const roundTripInspection = await callHandler(authHandlers.inspectPortableImport, { context, body: { type: "schedules", csv: exportedScheduleCsv } });
-  const roundTripPreview = await callHandler(authHandlers.previewPortableImport, { context, body: { type: "schedules", csv: exportedScheduleCsv, mapping: roundTripInspection.payload.mapping } });
+  const roundTripInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    { context, body: { type: "schedules", csv: exportedScheduleCsv } },
+  );
+  const roundTripPreview = await callHandler(
+    authHandlers.previewPortableImport,
+    {
+      context,
+      body: {
+        type: "schedules",
+        csv: exportedScheduleCsv,
+        mapping: roundTripInspection.payload.mapping,
+      },
+    },
+  );
   assert.equal(roundTripPreview.payload.summary.update, 4);
   assert.equal(roundTripPreview.payload.rows[0].record.date, "2026-10-03");
   assert.equal(roundTripPreview.payload.rows[0].record.startTime, "20:00");
-  const roundTripRows = roundTripPreview.payload.rows.map(({ row, action, matchedId, record }) => ({ row, action, recordId: matchedId || undefined, record }));
-  assert.equal((await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", timeZone: "America/New_York", approvedRows: roundTripRows } })).payload.summary.failed, 0);
-  assert.equal((await callHandler(authHandlers.commitPortableImport, { context, body: { type: "schedules", timeZone: "America/New_York", approvedRows: roundTripRows } })).payload.summary.failed, 0);
-  const roundTripDetail = await callHandler(authHandlers.getTeamScheduleDetail, { context, params: { scheduleId: detail.payload.schedule.scheduleId } });
+  const roundTripRows = roundTripPreview.payload.rows.map(
+    ({ row, action, matchedId, record }) => ({
+      row,
+      action,
+      recordId: matchedId || undefined,
+      record,
+    }),
+  );
+  assert.equal(
+    (
+      await callHandler(authHandlers.commitPortableImport, {
+        context,
+        body: {
+          type: "schedules",
+          timeZone: "America/New_York",
+          approvedRows: roundTripRows,
+        },
+      })
+    ).payload.summary.failed,
+    0,
+  );
+  assert.equal(
+    (
+      await callHandler(authHandlers.commitPortableImport, {
+        context,
+        body: {
+          type: "schedules",
+          timeZone: "America/New_York",
+          approvedRows: roundTripRows,
+        },
+      })
+    ).payload.summary.failed,
+    0,
+  );
+  const roundTripDetail = await callHandler(
+    authHandlers.getTeamScheduleDetail,
+    { context, params: { scheduleId: detail.payload.schedule.scheduleId } },
+  );
   assert.equal(roundTripDetail.payload.schedule.guests.length, 1);
-  assert.equal(roundTripDetail.payload.schedule.assignments[occurrence.occurrenceId][`${positionId}::0`].shadows.length, 2);
-  assert.equal(roundTripDetail.payload.schedule.occurrences[0].startsAt, "2026-10-04T00:00:00.000Z");
+  assert.equal(
+    roundTripDetail.payload.schedule.assignments[occurrence.occurrenceId][
+      `${positionId}::0`
+    ].shadows.length,
+    2,
+  );
+  assert.equal(
+    roundTripDetail.payload.schedule.occurrences[0].startsAt,
+    "2026-10-04T00:00:00.000Z",
+  );
 });
 
 test("foreign schedule ID does not auto-match a local schedule with the same name and date", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const source = await createAdminContext("data_transfer_schedule_id_source");
   const target = await createAdminContext("data_transfer_schedule_id_target");
-  const sourceTeam = await callHandler(authHandlers.createTeam, { context: source, body: { name: "Worship", memberIds: [] } });
-  const targetTeam = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Worship", memberIds: [] } });
+  const sourceTeam = await callHandler(authHandlers.createTeam, {
+    context: source,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const targetTeam = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Worship", memberIds: [] },
+  });
   const foreignId = "foreign-schedule-id";
   const localId = "local-schedule-id";
-  await setDoc("teamSchedules", foreignId, { scheduleId: foreignId, churchId: source.churchId, name: "May", teamId: sourceTeam.payload.team.teamId, startDate: "2026-05-03", endDate: "2026-05-03", occurrences: [], assignments: {} });
-  await setDoc("teamSchedules", localId, { scheduleId: localId, churchId: target.churchId, name: "May", teamId: targetTeam.payload.team.teamId, startDate: "2026-05-03", endDate: "2026-05-03", occurrences: [], assignments: {} });
-  seedChurchServiceTimesForServerTests({ churchId: target.churchId, services: [{ serviceId: "target-sunday", id: "target-sunday", name: "Sunday", reccurence: "weekly", time: "10:00", dayOfWeek: 0 }] });
+  await setDoc("teamSchedules", foreignId, {
+    scheduleId: foreignId,
+    churchId: source.churchId,
+    name: "May",
+    teamId: sourceTeam.payload.team.teamId,
+    startDate: "2026-05-03",
+    endDate: "2026-05-03",
+    occurrences: [],
+    assignments: {},
+  });
+  await setDoc("teamSchedules", localId, {
+    scheduleId: localId,
+    churchId: target.churchId,
+    name: "May",
+    teamId: targetTeam.payload.team.teamId,
+    startDate: "2026-05-03",
+    endDate: "2026-05-03",
+    occurrences: [],
+    assignments: {},
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: target.churchId,
+    services: [
+      {
+        serviceId: "target-sunday",
+        id: "target-sunday",
+        name: "Sunday",
+        reccurence: "weekly",
+        time: "10:00",
+        dayOfWeek: 0,
+      },
+    ],
+  });
   const csv = `Schedule,Start Date,End Date,Service,Date,Start Time,Team,WorshipSync Schedule ID,Service ID,Team ID\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,${foreignId},target-sunday,${targetTeam.payload.team.teamId}\n`;
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "schedules", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context: target,
+    body: { type: "schedules", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context: target,
+    body: { type: "schedules", csv, mapping: inspected.payload.mapping },
+  });
   assert.equal(preview.payload.rows[0].action, "review");
   assert.equal(preview.payload.rows[0].matchedId, null);
-  assert.equal(preview.payload.rows[0].candidates.some((item) => item.id === localId), true, JSON.stringify(preview.payload.rows[0]));
-  assert.equal(preview.payload.rows[0].issues.some((issue) => issue.code === "foreign_or_unknown_record_id"), true);
+  assert.equal(
+    preview.payload.rows[0].candidates.some((item) => item.id === localId),
+    true,
+    JSON.stringify(preview.payload.rows[0]),
+  );
+  assert.equal(
+    preview.payload.rows[0].issues.some(
+      (issue) => issue.code === "foreign_or_unknown_record_id",
+    ),
+    true,
+  );
 });
 
 test("portable member import resolves repeated team and position references independently", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const target = await createAdminContext("data_transfer_multi_member_references");
-  const praiseA = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Praise", memberIds: [] } });
-  const praiseB = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Praise", memberIds: [] } });
-  const mediaA = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
-  const mediaB = await callHandler(authHandlers.createTeam, { context: target, body: { name: "Media", memberIds: [] } });
-  const vocalist = await callHandler(authHandlers.createTeamPosition, { context: target, body: { name: "Vocalist", teamId: praiseA.payload.team.teamId } });
-  const otherVocalist = await callHandler(authHandlers.createTeamPosition, { context: target, body: { name: "Vocalist", teamId: praiseB.payload.team.teamId } });
-  const camera = await callHandler(authHandlers.createTeamPosition, { context: target, body: { name: "Camera", teamId: mediaB.payload.team.teamId } });
-  const otherCamera = await callHandler(authHandlers.createTeamPosition, { context: target, body: { name: "Camera", teamId: mediaA.payload.team.teamId } });
-  const csv = "First Name,Last Name,Teams,Positions\nJane,Doe,Praise | Media,Vocalist | Camera\n";
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "members", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "members", csv, mapping: inspected.payload.mapping } });
+  const target = await createAdminContext(
+    "data_transfer_multi_member_references",
+  );
+  const praiseA = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Praise", memberIds: [] },
+  });
+  const praiseB = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Praise", memberIds: [] },
+  });
+  const mediaA = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Media", memberIds: [] },
+  });
+  const mediaB = await callHandler(authHandlers.createTeam, {
+    context: target,
+    body: { name: "Media", memberIds: [] },
+  });
+  const vocalist = await callHandler(authHandlers.createTeamPosition, {
+    context: target,
+    body: { name: "Vocalist", teamId: praiseA.payload.team.teamId },
+  });
+  const otherVocalist = await callHandler(authHandlers.createTeamPosition, {
+    context: target,
+    body: { name: "Vocalist", teamId: praiseB.payload.team.teamId },
+  });
+  const camera = await callHandler(authHandlers.createTeamPosition, {
+    context: target,
+    body: { name: "Camera", teamId: mediaB.payload.team.teamId },
+  });
+  const otherCamera = await callHandler(authHandlers.createTeamPosition, {
+    context: target,
+    body: { name: "Camera", teamId: mediaA.payload.team.teamId },
+  });
+  const csv =
+    "First Name,Last Name,Teams,Positions\nJane,Doe,Praise | Media,Vocalist | Camera\n";
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context: target,
+    body: { type: "members", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context: target,
+    body: { type: "members", csv, mapping: inspected.payload.mapping },
+  });
   assert.equal(preview.payload.rows[0].action, "review");
-  const relationshipIssues = preview.payload.rows[0].issues.filter((issue) => ["teams", "positions"].includes(issue.field));
-  assert.deepEqual(relationshipIssues.map(({ field, referenceIndex }) => `${field}:${referenceIndex}`), ["teams:0", "teams:1", "positions:0", "positions:1"]);
+  const relationshipIssues = preview.payload.rows[0].issues.filter((issue) =>
+    ["teams", "positions"].includes(issue.field),
+  );
+  assert.deepEqual(
+    relationshipIssues.map(
+      ({ field, referenceIndex }) => `${field}:${referenceIndex}`,
+    ),
+    ["teams:0", "teams:1", "positions:0", "positions:1"],
+  );
   const resolutions = [
-    { field: "teams", referenceIndex: 0, selectedId: praiseA.payload.team.teamId },
-    { field: "teams", referenceIndex: 1, selectedId: mediaB.payload.team.teamId },
-    { field: "positions", referenceIndex: 0, selectedId: vocalist.payload.position.positionId },
-    { field: "positions", referenceIndex: 1, selectedId: camera.payload.position.positionId },
+    {
+      field: "teams",
+      referenceIndex: 0,
+      selectedId: praiseA.payload.team.teamId,
+    },
+    {
+      field: "teams",
+      referenceIndex: 1,
+      selectedId: mediaB.payload.team.teamId,
+    },
+    {
+      field: "positions",
+      referenceIndex: 0,
+      selectedId: vocalist.payload.position.positionId,
+    },
+    {
+      field: "positions",
+      referenceIndex: 1,
+      selectedId: camera.payload.position.positionId,
+    },
   ];
   const stalePositionId = otherVocalist.payload.position.positionId;
   const stalePosition = await getDoc("teamPositions", stalePositionId);
-  await setDoc("teamPositions", stalePositionId, { ...stalePosition, archivedAt: "2026-09-29T12:00:00.000Z" });
+  await setDoc("teamPositions", stalePositionId, {
+    ...stalePosition,
+    archivedAt: "2026-09-29T12:00:00.000Z",
+  });
   const staleCommit = await callHandler(authHandlers.commitPortableImport, {
     context: target,
-    body: { type: "members", approvedRows: [{ row: 2, action: "create", record: preview.payload.rows[0].record, resolutions: resolutions.map((item) => item.referenceIndex === 0 && item.field === "positions" ? { ...item, selectedId: stalePositionId } : item) }] },
+    body: {
+      type: "members",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: preview.payload.rows[0].record,
+          resolutions: resolutions.map((item) =>
+            item.referenceIndex === 0 && item.field === "positions"
+              ? { ...item, selectedId: stalePositionId }
+              : item,
+          ),
+        },
+      ],
+    },
   });
   assert.equal(staleCommit.payload.results[0].code, "stale_preview");
   const committed = await callHandler(authHandlers.commitPortableImport, {
     context: target,
-    body: { type: "members", approvedRows: [{ row: 2, action: "create", record: preview.payload.rows[0].record, resolutions }] },
+    body: {
+      type: "members",
+      approvedRows: [
+        {
+          row: 2,
+          action: "create",
+          record: preview.payload.rows[0].record,
+          resolutions,
+        },
+      ],
+    },
   });
   assert.equal(committed.payload.summary.created, 1);
-  const imported = await getDoc("teamRosterMembers", committed.payload.results[0].id);
-  assert.deepEqual(imported.positionIds, [vocalist.payload.position.positionId, camera.payload.position.positionId]);
-  assert.deepEqual(imported.positionIds.includes(otherVocalist.payload.position.positionId), false);
-  assert.deepEqual(imported.positionIds.includes(otherCamera.payload.position.positionId), false);
+  const imported = await getDoc(
+    "teamRosterMembers",
+    committed.payload.results[0].id,
+  );
+  assert.deepEqual(imported.positionIds, [
+    vocalist.payload.position.positionId,
+    camera.payload.position.positionId,
+  ]);
+  assert.deepEqual(
+    imported.positionIds.includes(otherVocalist.payload.position.positionId),
+    false,
+  );
+  assert.deepEqual(
+    imported.positionIds.includes(otherCamera.payload.position.positionId),
+    false,
+  );
   const importedPraise = await getDoc("teams", praiseA.payload.team.teamId);
   const importedMedia = await getDoc("teams", mediaB.payload.team.teamId);
   assert.equal(importedPraise.memberIds.includes(imported.memberId), true);
@@ -10753,78 +12629,182 @@ test("portable member imports preserve unmapped positions and clear mapped blank
       context,
       body: {
         type: "members",
-        approvedRows: [{
-          row: preview.payload.rows[0].row,
-          action: "update",
-          recordId: memberId,
-          record: preview.payload.rows[0].record,
-        }],
+        approvedRows: [
+          {
+            row: preview.payload.rows[0].row,
+            action: "update",
+            recordId: memberId,
+            record: preview.payload.rows[0].record,
+          },
+        ],
       },
     });
-    assert.equal(committed.payload.summary.updated, 1, JSON.stringify(committed.payload.results));
+    assert.equal(
+      committed.payload.summary.updated,
+      1,
+      JSON.stringify(committed.payload.results),
+    );
     return getDoc("teamRosterMembers", memberId);
   };
 
-  let saved = await updateFromCsv(`First Name,Last Name,WorshipSync Member ID\nJane,Doe,${memberId}\n`);
-  assert.deepEqual(saved.positionIds, [firstPosition.payload.position.positionId]);
+  let saved = await updateFromCsv(
+    `First Name,Last Name,WorshipSync Member ID\nJane,Doe,${memberId}\n`,
+  );
+  assert.deepEqual(saved.positionIds, [
+    firstPosition.payload.position.positionId,
+  ]);
 
-  saved = await updateFromCsv(`First Name,Last Name,Positions,WorshipSync Member ID\nJane,Doe,,${memberId}\n`);
+  saved = await updateFromCsv(
+    `First Name,Last Name,Positions,WorshipSync Member ID\nJane,Doe,,${memberId}\n`,
+  );
   assert.deepEqual(saved.positionIds, []);
 
-  saved = await updateFromCsv(`First Name,Last Name,Positions,WorshipSync Member ID\nJane,Doe,Sound,${memberId}\n`);
-  assert.deepEqual(saved.positionIds, [secondPosition.payload.position.positionId]);
+  saved = await updateFromCsv(
+    `First Name,Last Name,Positions,WorshipSync Member ID\nJane,Doe,Sound,${memberId}\n`,
+  );
+  assert.deepEqual(saved.positionIds, [
+    secondPosition.payload.position.positionId,
+  ]);
 
-  saved = await updateFromCsv(`First Name,Last Name,Teams,Positions,WorshipSync Member ID\nJane,Doe,,,${memberId}\n`);
+  saved = await updateFromCsv(
+    `First Name,Last Name,Teams,Positions,WorshipSync Member ID\nJane,Doe,,,${memberId}\n`,
+  );
   assert.deepEqual(saved.positionIds, []);
   const clearedTeam = await getDoc("teams", team.payload.team.teamId);
   assert.equal(clearedTeam.memberIds.includes(memberId), false);
   const createCsv = "First Name,Last Name,Positions\nNew,Member,\n";
-  const createInspection = await callHandler(authHandlers.inspectPortableImport, {
-    context,
-    body: { type: "members", csv: createCsv },
-  });
+  const createInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    {
+      context,
+      body: { type: "members", csv: createCsv },
+    },
+  );
   const createPreview = await callHandler(authHandlers.previewPortableImport, {
     context,
-    body: { type: "members", csv: createCsv, mapping: createInspection.payload.mapping },
+    body: {
+      type: "members",
+      csv: createCsv,
+      mapping: createInspection.payload.mapping,
+    },
   });
   const created = await callHandler(authHandlers.commitPortableImport, {
     context,
     body: {
       type: "members",
-      approvedRows: [{ row: createPreview.payload.rows[0].row, action: "create", record: createPreview.payload.rows[0].record }],
+      approvedRows: [
+        {
+          row: createPreview.payload.rows[0].row,
+          action: "create",
+          record: createPreview.payload.rows[0].record,
+        },
+      ],
     },
   });
   assert.equal(created.payload.summary.created, 1);
-  const createdMember = await getDoc("teamRosterMembers", created.payload.results[0].id);
+  const createdMember = await getDoc(
+    "teamRosterMembers",
+    created.payload.results[0].id,
+  );
   assert.deepEqual(createdMember.positionIds, []);
 });
 
 test("portable schedule import can resolve foreign service and member references with local candidates", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
-  const target = await createAdminContext("data_transfer_schedule_relationship_candidates");
-  const { teamId, positionIds } = await seedTeam(target, { teamName: "Worship", positions: [{ name: "Keys" }] });
-  const member = await callHandler(authHandlers.createTeamRosterMember, { context: target, body: { firstName: "Sam", lastName: "Singer", teamIds: [teamId], positionIds: [positionIds.Keys] } });
-  seedChurchServiceTimesForServerTests({ churchId: target.churchId, services: [{ serviceId: "local-sunday", id: "local-sunday", name: "Sunday", reccurence: "weekly", time: "10:00", dayOfWeek: 0 }] });
+  const target = await createAdminContext(
+    "data_transfer_schedule_relationship_candidates",
+  );
+  const { teamId, positionIds } = await seedTeam(target, {
+    teamName: "Worship",
+    positions: [{ name: "Keys" }],
+  });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context: target,
+    body: {
+      firstName: "Sam",
+      lastName: "Singer",
+      teamIds: [teamId],
+      positionIds: [positionIds.Keys],
+    },
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: target.churchId,
+    services: [
+      {
+        serviceId: "local-sunday",
+        id: "local-sunday",
+        name: "Sunday",
+        reccurence: "weekly",
+        time: "10:00",
+        dayOfWeek: 0,
+      },
+    ],
+  });
   const csv = `Schedule,Start Date,End Date,Service,Date,Start Time,Team,Position,Slot,Person,Guest,WorshipSync Service ID,WorshipSync Team ID,WorshipSync Position ID,WorshipSync Member ID\nMay,2026-05-03,2026-05-03,Sunday,2026-05-03,10:00,Worship,Keys,1,Sam Singer,false,foreign-service,${teamId},${positionIds.Keys},foreign-member\n`;
-  const inspected = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "schedules", csv } });
-  const preview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "schedules", csv, mapping: inspected.payload.mapping } });
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context: target,
+    body: { type: "schedules", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context: target,
+    body: { type: "schedules", csv, mapping: inspected.payload.mapping },
+  });
   assert.equal(preview.payload.rows[0].action, "review");
-  const serviceIssue = preview.payload.rows[0].issues.find((issue) => issue.field === "serviceId");
-  const memberIssue = preview.payload.rows[0].issues.find((issue) => issue.field === "person");
+  const serviceIssue = preview.payload.rows[0].issues.find(
+    (issue) => issue.field === "serviceId",
+  );
+  const memberIssue = preview.payload.rows[0].issues.find(
+    (issue) => issue.field === "person",
+  );
   assert.equal(serviceIssue.code, "foreign_or_unknown_reference_id");
   assert.equal(memberIssue.code, "foreign_or_unknown_reference_id");
   assert.equal(serviceIssue.candidates[0].id, "local-sunday");
   assert.equal(memberIssue.candidates[0].id, member.payload.member.memberId);
   const committed = await callHandler(authHandlers.commitPortableImport, {
     context: target,
-    body: { type: "schedules", approvedRows: [{ row: preview.payload.rows[0].row, action: "create", record: preview.payload.rows[0].record, resolutions: [
-      { field: "serviceId", referenceIndex: 0, selectedId: "local-sunday" },
-      { field: "person", referenceIndex: 0, selectedId: member.payload.member.memberId },
-    ] }] },
+    body: {
+      type: "schedules",
+      approvedRows: [
+        {
+          row: preview.payload.rows[0].row,
+          action: "create",
+          record: preview.payload.rows[0].record,
+          resolutions: [
+            {
+              field: "serviceId",
+              referenceIndex: 0,
+              selectedId: "local-sunday",
+            },
+            {
+              field: "person",
+              referenceIndex: 0,
+              selectedId: member.payload.member.memberId,
+            },
+          ],
+        },
+      ],
+    },
   });
   assert.equal(committed.payload.summary.created, 1);
-  const unresolvedCsv = csv.replace("Sunday", "Not imported").replace("Sam Singer", "No Local Member").replace("foreign-service", "unknown-service").replace("foreign-member", "unknown-member");
-  const unresolvedInspection = await callHandler(authHandlers.inspectPortableImport, { context: target, body: { type: "schedules", csv: unresolvedCsv } });
-  const unresolvedPreview = await callHandler(authHandlers.previewPortableImport, { context: target, body: { type: "schedules", csv: unresolvedCsv, mapping: unresolvedInspection.payload.mapping } });
+  const unresolvedCsv = csv
+    .replace("Sunday", "Not imported")
+    .replace("Sam Singer", "No Local Member")
+    .replace("foreign-service", "unknown-service")
+    .replace("foreign-member", "unknown-member");
+  const unresolvedInspection = await callHandler(
+    authHandlers.inspectPortableImport,
+    { context: target, body: { type: "schedules", csv: unresolvedCsv } },
+  );
+  const unresolvedPreview = await callHandler(
+    authHandlers.previewPortableImport,
+    {
+      context: target,
+      body: {
+        type: "schedules",
+        csv: unresolvedCsv,
+        mapping: unresolvedInspection.payload.mapping,
+      },
+    },
+  );
   assert.equal(unresolvedPreview.payload.rows[0].action, "invalid");
 });

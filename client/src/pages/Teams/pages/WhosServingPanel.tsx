@@ -203,7 +203,8 @@ const WhosServingPanel = ({
           {teamColumns.map((teamColumn, columnIndex) => (
             <div
               key={columnIndex}
-              className="flex min-w-0 flex-1 flex-col gap-4"
+              data-testid="serving-team-column"
+              className="flex min-w-0 w-full max-w-[28rem] flex-col gap-4"
             >
               {teamColumn.map((team) => {
                 const scheduleId = team.scheduleId;

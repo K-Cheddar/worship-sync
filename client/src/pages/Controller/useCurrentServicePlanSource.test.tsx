@@ -33,6 +33,7 @@ const mockOtherOccurrence = {
 
 const mockGetServicePlan = jest.fn();
 const mockGetServicePlanAssignments = jest.fn();
+const mockGetServicePlanViewer = jest.fn();
 const mockListServicePlans = jest.fn();
 const mockLoadPlanPreview = jest.fn();
 const mockPersistItemListServicePlanBinding = jest.fn();
@@ -43,6 +44,7 @@ jest.mock("../../api/auth", () => ({
   getServicePlan: (...args: unknown[]) => mockGetServicePlan(...args),
   getServicePlanAssignments: (...args: unknown[]) =>
     mockGetServicePlanAssignments(...args),
+  getServicePlanViewer: (...args: unknown[]) => mockGetServicePlanViewer(...args),
   listServicePlans: (...args: unknown[]) => mockListServicePlans(...args),
 }));
 
@@ -301,6 +303,11 @@ describe("useCurrentServicePlanSource", () => {
       success: true,
       assignments: [{ teamName: "Band", role: "Keys", name: "Dana Robinson" }],
     });
+    mockGetServicePlanViewer.mockResolvedValue({
+      success: true,
+      plan: planFixture,
+      snapshot: null,
+    });
     mockLoadPlanPreview.mockResolvedValue(outlineFixture);
   });
 
@@ -425,11 +432,11 @@ describe("useCurrentServicePlanSource", () => {
           servicePlan:
             planKey === "service-2@2026-08-01"
               ? {
-                  ...planFixture,
-                  planKey,
-                  serviceId: "service-2",
-                  name: "Evening Service",
-                }
+                ...planFixture,
+                planKey,
+                serviceId: "service-2",
+                name: "Evening Service",
+              }
               : planFixture,
         }),
     );
@@ -448,15 +455,15 @@ describe("useCurrentServicePlanSource", () => {
         ): typeof undoableState =>
           action.type === "SWITCH_OUTLINE"
             ? {
-                ...state,
-                present: {
-                  ...state.present,
-                  itemLists: {
-                    ...state.present.itemLists,
-                    selectedList: { _id: "outline-2", name: "Evening" },
-                  },
+              ...state,
+              present: {
+                ...state.present,
+                itemLists: {
+                  ...state.present.itemLists,
+                  selectedList: { _id: "outline-2", name: "Evening" },
                 },
-              }
+              },
+            }
             : state,
       },
     });
@@ -763,11 +770,11 @@ describe("useCurrentServicePlanSource", () => {
           servicePlan:
             planKey === "service-2@2026-08-01"
               ? {
-                  ...planFixture,
-                  planKey,
-                  serviceId: "service-2",
-                  name: "Evening Service",
-                }
+                ...planFixture,
+                planKey,
+                serviceId: "service-2",
+                name: "Evening Service",
+              }
               : planFixture,
         }),
     );
