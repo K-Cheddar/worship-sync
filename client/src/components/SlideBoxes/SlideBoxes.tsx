@@ -6,6 +6,7 @@ import { setSelectedBox, updateBoxes } from "../../store/itemSlice";
 import { setFocusMediaId, setIsMediaExpanded, setRequestOpenMediaPanel } from "../../store/preferencesSlice";
 import { resolveShowInMediaId } from "../../containers/Media/resolveShowInMediaTarget";
 import { createBox } from "../../utils/slideCreation";
+import { getBoxPlainText } from "../../utils/presentationText";
 import { Box } from "../../types";
 import cn from "classnames";
 
@@ -127,7 +128,7 @@ const SlideBoxes = ({
             (boxVideoInput
               ? `Video input: ${boxVideoInput.label.trim() || "Video input"}`
               : undefined) ||
-            box.words?.trim() ||
+            getBoxPlainText(box).trim() ||
             (box.mediaInfo?.name ||
               box.background?.replace(
                 /https:\/\/res\.cloudinary\.com\/.+\/.+\/upload\/v.+\/.+\//g,

@@ -167,6 +167,46 @@ describe("laneBackgroundMedia", () => {
     expect(first).toBe(same);
   });
 
+  it("keeps legacy foreground identity stable for equivalent boxes", () => {
+    const legacyBox: Box = {
+      id: "legacy",
+      words: "Legacy words",
+      width: 100,
+      height: 50,
+      fontSize: 42,
+      isBold: true,
+    };
+
+    expect(getSnapshotForegroundIdentity([legacyBox])).toBe(
+      getSnapshotForegroundIdentity([{ ...legacyBox }]),
+    );
+    expect(getSnapshotForegroundIdentity([legacyBox])).not.toBe(
+      getSnapshotForegroundIdentity([{ ...legacyBox, words: "Changed words" }]),
+    );
+  });
+
+  it("changes foreground identity for formatting-only structured text updates", () => {
+    const box: Box = {
+      id: "structured",
+      words: "Same words",
+      width: 100,
+      height: 50,
+      textDocument: {
+        blocks: [{ spans: [{ text: "Same words" }] }],
+      },
+    };
+    const formattedBox: Box = {
+      ...box,
+      textDocument: {
+        blocks: [{ spans: [{ text: "Same words", color: "red" }] }],
+      },
+    };
+
+    expect(getSnapshotForegroundIdentity([box])).not.toBe(
+      getSnapshotForegroundIdentity([formattedBox]),
+    );
+  });
+
   it("uses box image identity when there is no full-frame media", () => {
     const first = getSnapshotBackgroundIdentity({ kind: "none" }, [
       { ...imageBox, words: "A" },

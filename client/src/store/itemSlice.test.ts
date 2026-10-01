@@ -1,5 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { itemSlice } from "./itemSlice";
+import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import type { ItemState } from "../types";
 
 type ItemSliceState = { item: ItemState };
@@ -14,6 +14,71 @@ const createStore = (preloadedState?: Partial<ItemSliceState>) =>
   });
 
 describe("itemSlice", () => {
+  it("preserves optional presentation text in snapshots without false remote conflicts", () => {
+    const textDocument = {
+      blocks: [
+        { spans: [{ text: "Structured", bold: true }, { text: " lyrics" }] },
+      ],
+    };
+    const item = {
+      ...itemSlice.getInitialState(),
+      _id: "structured-item",
+      name: "Structured item",
+      type: "song" as const,
+      slides: [
+        {
+          id: "slide-1",
+          type: "Verse" as const,
+          name: "Verse 1",
+          boxes: [
+            { words: "Structured lyrics", textDocument, width: 100, height: 50 },
+          ],
+        },
+      ],
+      formattedSections: [
+        {
+          sectionNum: 1,
+          name: "Verse 1",
+          words: "Structured lyrics",
+          slideSpan: 1,
+          id: "section-1",
+          textDocument,
+        },
+      ],
+      arrangements: [
+        {
+          id: "arrangement-1",
+          name: "Default",
+          songOrder: [],
+          slides: [],
+          formattedLyrics: [
+            {
+              type: "Verse",
+              name: "Verse 1",
+              words: "Structured lyrics",
+              slideSpan: 1,
+              id: "lyric-1",
+              textDocument,
+            },
+          ],
+        },
+      ],
+    };
+    const store = createStore();
+
+    store.dispatch(itemSlice.actions.setActiveItem(item));
+
+    const state = store.getState().item;
+    expect(state.baseItem?.slides[0].boxes[0].textDocument).toEqual(textDocument);
+    expect(state.baseItem?.formattedSections?.[0].textDocument).toEqual(
+      textDocument,
+    );
+    expect(
+      state.baseItem?.arrangements?.[0].formattedLyrics[0].textDocument,
+    ).toEqual(textDocument);
+    expect(itemDocMatchesEditorState(state.baseItem!, state)).toBe(true);
+  });
+
   describe("reducer only", () => {
     it("setActiveItem merges partial state", () => {
       const store = createStore();

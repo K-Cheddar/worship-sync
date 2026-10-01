@@ -1,41 +1,25 @@
 import ServiceManager from "../managers/ServiceManager";
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect } from "react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useTeamsPage } from "../TeamsPageContext";
-import { listServicePlanTemplates } from "../../../api/auth";
 import { useToast } from "../../../context/toastContext";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
-import type { ServicePlanTemplate } from "../../../types/servicePlan";
 
 const TeamsServiceSettingsPage = () => {
-  const { pageData, canEditTeams, refresh } = useTeamsPage();
-  const { churchId, canEditServices } = useContext(GlobalInfoContext) || {};
+  const { pageData, canEditTeams, refresh, templates } = useTeamsPage();
+  const { data: planTemplates, ensureLoaded } = templates;
+  const { canEditServices } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
-  const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([]);
 
   useEffect(() => {
-    if (!churchId) {
-      setPlanTemplates([]);
-      return undefined;
-    }
-    let cancelled = false;
-    listServicePlanTemplates(churchId)
-      .then((response) => {
-        if (!cancelled) setPlanTemplates(response.templates);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showApiErrorToast(
-            showToast,
-            error,
-            "Could not load plan templates. Try again.",
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [churchId, showToast]);
+    void ensureLoaded().catch((error: unknown) => {
+      showApiErrorToast(
+        showToast,
+        error,
+        "Could not load plan templates. Try again.",
+      );
+    });
+  }, [ensureLoaded, showToast]);
 
   return (
     <ServiceManager

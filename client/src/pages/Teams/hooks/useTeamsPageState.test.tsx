@@ -61,8 +61,8 @@ const flushMicrotasks = async () =>
 describe("useTeamsPageState bootstrap recovery", () => {
   let churchId: string;
 
-  const renderPageState = () =>
-    renderHook(() => useTeamsPageState(), {
+  const renderPageState = (onTemplateEvent?: Parameters<typeof useTeamsPageState>[0]) =>
+    renderHook(() => useTeamsPageState(onTemplateEvent), {
       wrapper: ({ children }: PropsWithChildren) => (
         <GlobalInfoContext.Provider
           value={
@@ -121,6 +121,36 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
 
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("forwards template events from the existing Teams stream", async () => {
+    const onTemplateEvent = jest.fn();
+    const { unmount } = renderPageState(onTemplateEvent);
+    await flushMicrotasks();
+
+    const source = MockEventSource.instances[0];
+    act(() => source.onmessage?.({
+      data: JSON.stringify({
+        type: "service-plan-template-updated",
+        template: { templateId: "template-1" },
+      }),
+    }));
+    act(() => source.onmessage?.({
+      data: JSON.stringify({
+        type: "service-plan-template-removed",
+        templateId: "template-1",
+      }),
+    }));
+
+    expect(onTemplateEvent).toHaveBeenNthCalledWith(1, {
+      type: "service-plan-template-updated",
+      template: { templateId: "template-1" },
+    });
+    expect(onTemplateEvent).toHaveBeenNthCalledWith(2, {
+      type: "service-plan-template-removed",
+      templateId: "template-1",
+    });
     unmount();
   });
 

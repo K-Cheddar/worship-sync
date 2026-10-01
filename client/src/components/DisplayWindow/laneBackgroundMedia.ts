@@ -1,5 +1,6 @@
 import type { Box, LocalVideoInputPresentation } from "../../types";
 import { getImageFromVideoUrl } from "../../utils/generalUtils";
+import { getBoxTextVisualIdentity } from "../../utils/presentationText";
 import { getVideoBackgroundMediaKey } from "../../utils/videoBackgroundPlayback";
 
 export type LaneBackgroundMedia =
@@ -75,22 +76,7 @@ export const getSnapshotForegroundIdentity = (boxes: Box[] = []): string =>
   JSON.stringify(
     boxes.map((box) => ({
       id: box.id,
-      words: box.words,
-      width: box.width,
-      height: box.height,
-      x: box.x,
-      y: box.y,
-      fontSize: box.fontSize,
-      align: box.align,
-      isBold: box.isBold,
-      isItalic: box.isItalic,
-      fontColor: box.fontColor,
-      brightness: box.brightness,
-      topMargin: box.topMargin,
-      sideMargin: box.sideMargin,
-      transparent: box.transparent,
-      label: box.label,
-      monitorFontSizePx: box.monitorFontSizePx,
+      textVisualIdentity: getBoxTextVisualIdentity(box),
     })),
   );
 

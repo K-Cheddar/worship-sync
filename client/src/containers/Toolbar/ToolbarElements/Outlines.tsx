@@ -40,6 +40,7 @@ import {
 } from "../../../utils/outlineScope";
 import { useActiveControllerProfile } from "../../../context/activeController";
 import { publishPreparedMediaContext } from "../../../utils/preparedMediaContext";
+import { usePresentationControllerMode } from "../../../context/presentationControllerMode";
 
 /** Shared popover chrome (matches service outlines left column). */
 const OUTLINE_POPOVER_CONTENT =
@@ -73,6 +74,8 @@ const Services = ({
     [currentLists, scope],
   );
   const canSetActive = scope === DEFAULT_OUTLINE_SCOPE;
+  const { mode } = usePresentationControllerMode();
+  const isEditMode = mode === "edit";
   const heading = `Current Outlines (${scopedLists.length})`;
 
   const dispatch = useDispatch();
@@ -308,7 +311,7 @@ const Services = ({
 
   return (
     <DndContext
-      onDragEnd={access === "full" ? onDragEnd : undefined}
+      onDragEnd={access === "full" && isEditMode ? onDragEnd : undefined}
       sensors={sensors}
     >
       <div
@@ -357,8 +360,8 @@ const Services = ({
                         key={list._id}
                         list={list}
                         panel
-                        canEdit={access === "full"}
-                        disableDrag={access !== "full"}
+                        canEdit={access === "full" && isEditMode}
+                        disableDrag={access !== "full" || !isEditMode}
                         isSelected={list._id === selectedList?._id}
                         selectList={(listId: string) => selectOutline(listId)}
                         showSetActive={canSetActive}
@@ -427,7 +430,7 @@ const Services = ({
                 </ul>
               </section>
             </div>
-            {access === "full" && (
+            {access === "full" && isEditMode && (
               <Button
                 svg={justAdded ? Check : Plus}
                 color={justAdded ? "#84cc16" : "#22d3ee"}

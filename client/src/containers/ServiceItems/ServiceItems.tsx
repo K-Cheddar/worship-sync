@@ -845,6 +845,9 @@ const ServiceItems = () => {
                         }
                         onItemClick={handleItemClick}
                         canMutateOutline={isEditMode && canMutateHeadingRow}
+                        onDelete={() =>
+                          dispatch(removeItemsFromList([item.listId]))
+                        }
                         dragActiveId={activeId}
                       />
                     );

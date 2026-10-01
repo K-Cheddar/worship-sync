@@ -42,7 +42,14 @@ import {
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { SCHEDULE_DRAFT_PERSIST_DELAY_MS } from "../schedule/scheduleDraftUtils";
 import { normalizeTeamsForSelectors } from "../teamsSelectors";
-import { useTeamsLiveSync, type TeamsStreamEvent } from "./useTeamsLiveSync";
+import {
+  isServicePlanTemplateRemovedEvent,
+  isServicePlanTemplateUpdatedEvent,
+  useTeamsLiveSync,
+  type ServicePlanTemplateRemovedEvent,
+  type ServicePlanTemplateUpdatedEvent,
+  type TeamsStreamEvent,
+} from "./useTeamsLiveSync";
 import {
   isHydratedSchedule,
   type TeamSchedule,
@@ -100,7 +107,11 @@ const deepEqual = (a: unknown, b: unknown): boolean => {
 
 const teamsDataKeyEquals = (a: unknown, b: unknown) => deepEqual(a, b);
 
-export const useTeamsPageState = () => {
+export const useTeamsPageState = (
+  onTemplateEvent?: (
+    event: ServicePlanTemplateUpdatedEvent | ServicePlanTemplateRemovedEvent,
+  ) => void,
+) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const dispatch = useDispatch();
@@ -955,13 +966,19 @@ export const useTeamsPageState = () => {
         event.type === "service-plan-removed"
       ) {
         setServicePlansRevision((current) => current + 1);
+        return;
       }
+      if (
+        isServicePlanTemplateUpdatedEvent(event) ||
+        isServicePlanTemplateRemovedEvent(event)
+      ) onTemplateEvent?.(event);
     },
     [
       isLocalEditCoolingDown,
       removeData,
       scheduleDeferredBackgroundRefresh,
       upsertData,
+      onTemplateEvent,
     ],
   );
 
