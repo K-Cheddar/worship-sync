@@ -126,7 +126,7 @@ function modalTitle(type: ItemType): string {
     case "timer":
       return "Timer details";
     case "free":
-      return "Free form details";
+      return "Custom details";
     case "image":
       return "Image item details";
     default:
@@ -393,6 +393,8 @@ export function ItemDetailsEditorFields({
   };
 
   const handleSave = async () => {
+    if (isSaving) return;
+
     const nextName = localName.trim();
     if (!nextName) {
       return;
@@ -457,6 +459,12 @@ export function ItemDetailsEditorFields({
         label={isSong ? "Song name" : "Item name"}
         value={localName}
         onChange={(v) => setLocalName(v as string)}
+        onKeyDown={(event) => {
+          if (itemType === "free" && event.key === "Enter") {
+            event.preventDefault();
+            void handleSave();
+          }
+        }}
         data-ignore-undo="true"
       />
       {isSong && (

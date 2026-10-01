@@ -360,7 +360,8 @@ export type TeamRecord = {
   churchId: string;
   name: string;
   description?: string;
-  icon?: string;
+  /** Structured icon ref, with legacy Lucide export-name strings still supported. */
+  icon?: import("../components/icons/iconTypes").EntityIcon;
   memberIds: string[];
   /** Whether scheduled role slots for this team can receive church microphones. */
   usesMicrophoneAssignments?: boolean;

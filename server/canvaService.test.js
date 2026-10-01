@@ -435,29 +435,33 @@ test("Canva getDesign explains that public link access does not grant API access
   );
 });
 
-test("Canva resolves an official short link to a validated design id", async () => {
-  const { service } = await createConnectedService({
+test("Canva resolves a short link from its design redirect without fetching the design page", async () => {
+  const shortLink = "https://canva.link/u33bpbxlhewys0e";
+  const designUrl =
+    "https://www.canva.com/design/DAHWKNh8BWo/wTOPd7TrP_8F-Qys_gmxAA/edit";
+  const { service, calls } = await createConnectedService({
     publicLinkResponseForUrl: (url) =>
-      url === "https://canva.link/hy5vwxec3e5yyhg"
+      url === shortLink
         ? {
             status: 302,
             headers: {
-              location:
-                "https://www.canva.com/design/DAHULw6Qfe4/LoMrIvNK-FvSMmjeOXEBWg/edit",
+              location: designUrl,
             },
           }
-        : url ===
-              "https://www.canva.com/design/DAHULw6Qfe4/LoMrIvNK-FvSMmjeOXEBWg/edit"
-          ? { status: 200, headers: {} }
-          : null,
+        : null,
   });
 
   assert.deepEqual(
-    await service.resolveDesignLink({
-      url: "https://canva.link/hy5vwxec3e5yyhg",
-    }),
-    { designId: "DAHULw6Qfe4" },
+    await service.resolveDesignLink({ url: shortLink }),
+    { designId: "DAHWKNh8BWo" },
   );
+  assert.deepEqual(
+    calls
+      .filter(({ url }) => url === shortLink || url === designUrl)
+      .map(({ url }) => url),
+    [shortLink],
+  );
+  assert.equal(calls.some(({ url }) => url === designUrl), false);
 });
 
 test("Canva short-link resolver rejects non-Canva redirects and hosts", async () => {

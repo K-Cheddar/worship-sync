@@ -17,7 +17,7 @@ describe("resolveRangePreset", () => {
   const lateSeptember = new Date(2026, 8, 29, 12);
 
   it.each([
-    ["upcoming", { start: "2026-09-29", end: "2026-10-31" }],
+    ["upcoming", { start: "2026-09-29", end: "2026-10-29" }],
     ["thisMonth", { start: "2026-09-01", end: "2026-09-30" }],
     ["nextMonth", { start: "2026-10-01", end: "2026-10-31" }],
     ["thisQuarter", { start: "2026-07-01", end: "2026-09-30" }],
@@ -29,12 +29,21 @@ describe("resolveRangePreset", () => {
   it("handles the December and quarter-year boundaries", () => {
     expect(resolveRangePreset("upcoming", new Date(2026, 11, 31, 12))).toEqual({
       start: "2026-12-31",
-      end: "2027-01-31",
+      end: "2027-01-30",
     });
     expect(resolveRangePreset("nextQuarter", new Date(2026, 10, 8, 12))).toEqual({
       start: "2027-01-01",
       end: "2027-03-31",
     });
+  });
+
+  it.each([
+    ["beginning of a month", new Date(2026, 9, 1, 12), { start: "2026-10-01", end: "2026-10-31" }],
+    ["middle of a month", new Date(2026, 9, 17, 12), { start: "2026-10-17", end: "2026-11-16" }],
+    ["month end in a non-leap year", new Date(2025, 0, 31, 12), { start: "2025-01-31", end: "2025-03-02" }],
+    ["February in a leap year", new Date(2024, 1, 29, 12), { start: "2024-02-29", end: "2024-03-30" }],
+  ])("resolves Upcoming across %s", (_label, now, expected) => {
+    expect(resolveRangePreset("upcoming", now)).toEqual(expected);
   });
 });
 

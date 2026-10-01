@@ -68,22 +68,6 @@ describe("authRedirectPath", () => {
     ).toBe("/controller/bible?search=John%203%3A16&version=NIV");
   });
 
-  it("preserves the full current route including search and hash", () => {
-    const state = {
-      from: {
-        pathname: "/controller/bible",
-        search: "?search=John%203%3A16",
-        hash: "#verse-16",
-      },
-    };
-    expect(getAuthRedirectToFromState(state)).toBe(
-      "/controller/bible?search=John%203%3A16#verse-16",
-    );
-    expect(getHumanPostAuthPath(loc(state))).toBe(
-      "/controller/bible?search=John%203%3A16#verse-16",
-    );
-  });
-
   it("getAuthRedirectToFromState keeps auxiliary controller deep links", () => {
     // Shared workstations clear the operator name on restart, so reopen bounces
     // through operator entry with `state.from` set to the saved aux route.

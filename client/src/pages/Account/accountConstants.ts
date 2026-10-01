@@ -84,8 +84,8 @@ export const ACCOUNT_SECTIONS: AccountSection[] = [
     id: "data-transfer",
     routePath: "data-transfer",
     path: "/account/data-transfer",
-    label: "Data transfer",
-    description: "Import data from another platform or export WorshipSync data as standard CSV files.",
+    label: "Data export",
+    description: "Download members, teams, positions, services, and schedules as CSV files.",
     icon: ArrowLeftRight,
   },
 ];

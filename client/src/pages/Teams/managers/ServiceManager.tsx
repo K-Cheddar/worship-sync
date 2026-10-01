@@ -32,6 +32,7 @@ import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import PositionIconBadge from "../../../components/icons/PositionIconBadge";
 import { sanitizePositionRequirements } from "../schedule/scheduleRequirements";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import MultiCheckboxGroup from "../components/MultiCheckboxGroup";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
@@ -80,6 +81,7 @@ type ServiceManagerProps = {
   teams: TeamRecord[];
   planTemplates?: ServicePlanTemplate[];
   canEdit: boolean;
+  onImported?: () => void;
 };
 
 const ServiceManager = ({
@@ -88,6 +90,7 @@ const ServiceManager = ({
   teams,
   planTemplates = [],
   canEdit,
+  onImported,
 }: ServiceManagerProps) => {
   const dispatch = useDispatch();
   const { showToast } = useToast();
@@ -489,6 +492,7 @@ const ServiceManager = ({
       sectionTitle="Service settings"
       description="Manage service times used for scheduling."
       createLabel="Create service"
+        listHeaderActions={<PortableDataActions type="services" onImported={onImported} />}
       listToolbar={
         <EntityListFilterToolbar
           entityLabel="Services"

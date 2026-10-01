@@ -454,7 +454,7 @@ const Overlays = ({
       delete copyableOverlay.servicePlanSource;
       delete copyableOverlay.servicePlanBaseline;
       delete copyableOverlay.servicePlanOverrides;
-      delete copyableOverlay.servicePlanReviewRequired;
+      delete (copyableOverlay as Record<string, unknown>).servicePlanReviewRequired;
       const newOverlay: OverlayInfo = {
         ...copyableOverlay,
         id: newId,

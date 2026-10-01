@@ -53,9 +53,16 @@ const renderCell = (props: Partial<typeof baseProps> & Record<string, unknown> =
 
 describe("ScheduleBoardCell", () => {
   it("shows the position label and the assigned member's name", () => {
-    renderCell({ assignmentCell: { primaryMemberId: "m1" } });
+    renderCell({
+      allMembers: [member({ profileImageUrl: "https://example.com/kameal.jpg" })],
+      assignmentCell: { primaryMemberId: "m1" },
+    });
     expect(screen.getByText("Front Of House Audio")).toBeInTheDocument();
     expect(screen.getByText("Kameal")).toBeInTheDocument();
+    expect(screen.getByAltText("")).toHaveAttribute(
+      "src",
+      "https://example.com/kameal.jpg",
+    );
   });
 
   it("shows an unassigned placeholder when the slot is empty", () => {
@@ -66,6 +73,7 @@ describe("ScheduleBoardCell", () => {
     expect(screen.getByText("Unassigned")).toHaveClass(
       ...scheduleAssignmentLabelClassName.split(" "),
     );
+    expect(screen.queryByAltText("")).not.toBeInTheDocument();
   });
 
   it("activates the matching slot, anchored to the row, when clicked (picker parity)", () => {

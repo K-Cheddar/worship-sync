@@ -63,6 +63,7 @@ import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
+import { MediaAddControl, ShowTransfersMenuItem } from "./MediaAddControl";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -286,18 +287,12 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             />
           </div>
           <div className="flex items-center gap-2">
-            {c.uploadProgress.isUploading ? (
-              <Button
-                variant="tertiary"
-                svg={Plus}
-                title={toolbarAddMediaTitle}
-                aria-label="Show upload progress"
-                onClick={() => void c.requestMediaUpload()}
-                disabled={c.isMediaReadOnly}
-              >
-                {`${Math.round(c.uploadProgress.progress)}%`}
-              </Button>
-            ) : (
+            <MediaAddControl
+              uploadProgress={c.uploadProgress}
+              uploadTitle={toolbarAddMediaTitle}
+              onUploadClick={() => void c.requestMediaUpload()}
+              disabled={c.isMediaReadOnly}
+            >
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -309,6 +304,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <ShowTransfersMenuItem />
                   <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
                     <HardDrive
                       className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
@@ -346,7 +342,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
-            )}
+            </MediaAddControl>
             <Button
               variant="tertiary"
               svg={Maximize}

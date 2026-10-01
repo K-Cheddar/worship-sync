@@ -47,6 +47,42 @@ const LocationProbe = () => {
 };
 
 describe("QualificationManager navigation guard", () => {
+  it("closes an individual qualification editor without leaving the Qualifications page", async () => {
+    const user = userEvent.setup();
+    const returnTo = {
+      label: "Back to team",
+      pathname: TEAMS_SECTION_PATHS.groups,
+      restore: { kind: "groups" as const, editTeamId: activeTeam.teamId },
+    };
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.qualifications, state: { teamsReturnTo: returnTo } }]}>
+        <ToastProvider>
+          <TeamsNavigationGuardProvider>
+            <QualificationManager
+              areas={[]}
+              levels={[]}
+              teams={[activeTeam]}
+              canEdit
+              onAreaSaved={jest.fn()}
+              onLevelSaved={jest.fn()}
+              onArchived={jest.fn()}
+              onAreaRemoved={jest.fn()}
+            />
+            <LocationProbe />
+          </TeamsNavigationGuardProvider>
+        </ToastProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create area" }));
+    await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+
+    expect(screen.getByRole("heading", { name: "Qualifications" })).toBeInTheDocument();
+    expect(screen.getByTestId("location-state")).toHaveTextContent(TEAMS_SECTION_PATHS.qualifications);
+    expect(screen.getAllByRole("button", { name: "Back to team" })).not.toHaveLength(0);
+  });
+
   it("does not report unsaved changes before an editor is opened", async () => {
     const user = userEvent.setup();
 
@@ -133,7 +169,7 @@ describe("QualificationManager navigation guard", () => {
 
     await waitFor(() => expect(createTeamQualificationArea).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("heading", { name: "Edit qualification area" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Back to team" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Back to team" })).not.toHaveLength(0);
     expect(screen.getByTestId("location-state")).toHaveTextContent(
       JSON.stringify({
         pathname: TEAMS_SECTION_PATHS.qualifications,
@@ -152,7 +188,7 @@ describe("QualificationManager navigation guard", () => {
     expect(createTeamQualificationArea).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("heading", { name: "Edit qualification area" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Back to team" }));
+    await user.click(screen.getAllByRole("button", { name: "Back to team" }).at(-1)!);
     expect(screen.getByTestId("location-state")).toHaveTextContent(
       JSON.stringify({
         pathname: TEAMS_SECTION_PATHS.groups,
@@ -198,7 +234,7 @@ describe("QualificationManager navigation guard", () => {
 
     await user.click(screen.getByRole("button", { name: "Create area" }));
     await user.type(screen.getByLabelText(/^Area name:?$/), "Unsaved area");
-    await user.click(screen.getByRole("button", { name: "Back to team" }));
+    await user.click(screen.getAllByRole("button", { name: "Back to team" }).at(-1)!);
 
     expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
     expect(screen.getByTestId("location-state")).toHaveTextContent(

@@ -10,8 +10,8 @@ import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
 import type { MenuItemType } from "../../../types";
 import { cn } from "@/utils/cnHelper";
-import PositionIconBadge from "../../../components/icons/PositionIconBadge";
-import type { PositionIcon } from "../../../components/icons/iconTypes";
+import EntityIconBadge from "../../../components/icons/EntityIconBadge";
+import type { EntityIcon } from "../../../components/icons/iconTypes";
 import {
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
@@ -28,7 +28,7 @@ type EntityRowProps = {
   headerBadgePlacement?: "inline" | "top-end";
   /** Secondary detail shown below subtitle with reduced emphasis (e.g. member notes). */
   note?: string;
-  icon?: PositionIcon;
+  icon?: EntityIcon;
   archived?: boolean;
   /** Soft-inactive (e.g. past end date). Shown when not archived. */
   inactive?: boolean;
@@ -45,6 +45,8 @@ type EntityRowProps = {
   actionsPlacement?: "aside" | "footer-end";
   /** Drag handle rendered at the start of the row when the list is sortable. */
   dragHandle?: ReactNode;
+  /** Optional visual rendered before the title, without adding an action. */
+  leadingVisual?: ReactNode;
   /** When false, hides the chevron on clickable rows. Defaults to true. */
   showChevron?: boolean;
   /** Root element ref, used by the sortable wrapper. */
@@ -71,6 +73,7 @@ const EntityRow = ({
   actions,
   actionsPlacement = "aside",
   dragHandle,
+  leadingVisual,
   showChevron = true,
   headerBadgePlacement = "inline",
   rowRef,
@@ -160,8 +163,9 @@ const EntityRow = ({
   const rowContent = (
     <>
       {icon ? (
-        <PositionIconBadge icon={icon} className="h-7 w-7" />
+        <EntityIconBadge icon={icon} className="h-7 w-7" />
       ) : null}
+      {leadingVisual}
       <div className="min-w-0 flex-1">
         {titleBlock}
         {metaBlock}
@@ -178,8 +182,9 @@ const EntityRow = ({
   const stackedCardBody = (
     <>
       {icon ? (
-        <PositionIconBadge icon={icon} className="h-7 w-7" />
+        <EntityIconBadge icon={icon} className="h-7 w-7" />
       ) : null}
+      {leadingVisual}
       <div className="min-w-0 flex-1">
         {titleBlock}
         {metaBlock}

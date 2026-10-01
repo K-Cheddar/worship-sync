@@ -1147,7 +1147,7 @@ export type TeamPositionPayload = {
 export type TeamPayload = {
   name: string;
   description?: string;
-  icon?: string;
+  icon?: import("../components/icons/iconTypes").EntityIcon;
   memberIds: string[];
   usesMicrophoneAssignments?: boolean;
   usesIemAssignments?: boolean;

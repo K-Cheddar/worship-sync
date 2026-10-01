@@ -1,7 +1,5 @@
 import Button from "../components/Button/Button";
 import { AuthApiError } from "../api/auth";
-import { requestUserAuthRecovery } from "../api/authErrorBus";
-import { useState } from "react";
 import { AUTH_SIGN_IN_AGAIN_MESSAGE } from "./authUserMessages";
 import type { ToastData } from "../components/Toast/ToastContainer";
 import type { ToastVariant } from "../components/Toast/Toast";
@@ -59,71 +57,20 @@ export const sanitizePersistedFailureMessages = <T extends Record<string, string
   return next;
 };
 
-export const AuthErrorToastAction = ({
-  onDismiss = () => undefined,
-}: {
-  onDismiss?: () => void;
-}) => {
-  const [isRecovering, setIsRecovering] = useState(false);
-  const [recoveryError, setRecoveryError] = useState("");
-
-  const recoverSession = async () => {
-    if (isRecovering) return;
-    setIsRecovering(true);
-    setRecoveryError("");
-    try {
-      const result = await requestUserAuthRecovery(() => {
-        authErrorToastVisible = false;
-        onDismiss();
-      });
-      if (result === "recovered") {
-        authErrorToastVisible = false;
-        onDismiss();
-        window.location.reload();
-      } else if (result === "unknown") {
-        setRecoveryError(
-          "Could not confirm your session. Check your connection and try again.",
-        );
-      }
-    } finally {
-      setIsRecovering(false);
-    }
-  };
-
-  return (
-    <div className="mt-2 flex flex-col items-center gap-1">
-      <Button
-        variant="cta"
-        className="mx-auto text-sm"
-        isLoading={isRecovering}
-        disabled={isRecovering}
-        aria-busy={isRecovering}
-        onClick={() => void recoverSession()}
-      >
-        Try again
-      </Button>
-      {isRecovering ? (
-        <span role="status" className="text-xs text-gray-200">
-          Checking your session…
-        </span>
-      ) : null}
-      {recoveryError ? (
-        <span role="alert" className="text-xs text-red-200">
-          {recoveryError}
-        </span>
-      ) : null}
-    </div>
-  );
-};
-
-export const authErrorToastContent = (
-  removeToast: (id: string) => void = () => undefined,
-): Omit<ToastData, "id"> => ({
+export const authErrorToastContent = (): Omit<ToastData, "id"> => ({
   message: AUTH_ERROR_TOAST_MESSAGE,
   variant: "error",
   persist: true,
-  children: (id) => (
-    <AuthErrorToastAction onDismiss={() => removeToast(id)} />
+  children: () => (
+    <div className="mt-2">
+      <Button
+        variant="cta"
+        className="text-sm"
+        onClick={() => window.location.reload()}
+      >
+        Refresh page
+      </Button>
+    </div>
   ),
 });
 
@@ -137,13 +84,10 @@ type ShowToastFn = (
  * 401s don't stack it. Used both by call-site error handling and the global
  * 401 listener.
  */
-export const showAuthErrorToast = (
-  showToast: ShowToastFn,
-  removeToast?: (id: string) => void,
-) => {
+export const showAuthErrorToast = (showToast: ShowToastFn) => {
   if (authErrorToastVisible) return;
   authErrorToastVisible = true;
-  showToast(authErrorToastContent(removeToast));
+  showToast(authErrorToastContent());
 };
 
 export const showApiErrorToast = (

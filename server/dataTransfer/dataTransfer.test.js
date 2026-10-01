@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { encodeCsv, parseCsv, protectSpreadsheetFormula } from "./csv.js";
-import { PORTABLE_SCHEMAS, buildPortableDatasets, parsePortablePositionIcon, serializePortablePositionIcon } from "./schemas.js";
+import { PORTABLE_SCHEMAS, buildPortableDatasets, parsePortableEntityIcon, parsePortablePositionIcon, serializePortableEntityIcon, serializePortablePositionIcon } from "./schemas.js";
 import { portableServiceMatches } from "./matching.js";
 import { classifyPortablePreviewAction } from "./matching.js";
 import { isValidPortablePlainDate, portableWallClockToIso } from "./time.js";
@@ -165,6 +165,22 @@ test("position CSV preserves legacy names and structured icon references", () =>
     { source: "tabler", name: "camera" },
     { source: "worshipsync", name: "cross" },
   ]) assert.deepEqual(parsePortablePositionIcon(serializePortablePositionIcon(iconRef)), iconRef);
+});
+
+test("team CSV preserves legacy and structured icon refs", () => {
+  const structured = { source: "tabler", name: "camera", color: "#22d3ee" };
+  const exported = buildPortableDatasets({
+    teams: [
+      { teamId: "t1", name: "Music", icon: "Music" },
+      { teamId: "t2", name: "Media", icon: structured },
+    ],
+  }).teams;
+  assert.equal(PORTABLE_SCHEMAS.teams.at(-1), "Icon");
+  assert.equal(exported[0].at(-1), "Music");
+  assert.equal(exported[1].at(-1), JSON.stringify(structured));
+  assert.equal(parsePortableEntityIcon(exported[0].at(-1)), "Music");
+  assert.deepEqual(parsePortableEntityIcon(exported[1].at(-1)), structured);
+  assert.equal(serializePortableEntityIcon(undefined), "");
 });
 
 test("combined service exports retain recurrence details and match on re-import", () => {

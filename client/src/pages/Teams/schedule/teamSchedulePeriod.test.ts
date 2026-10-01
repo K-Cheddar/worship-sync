@@ -116,7 +116,7 @@ describe("findInitialTeamSchedulePeriod", () => {
       now,
     });
 
-    expect(result).toMatchObject({ start: "2026-09-29", end: "2026-09-30", preset: "upcoming" });
+    expect(result).toMatchObject({ start: "2026-09-29", end: "2026-10-29", preset: "upcoming" });
     expect(result.nextOccurrence?.serviceId).toBe("september");
   });
 
@@ -139,7 +139,7 @@ describe("findInitialTeamSchedulePeriod", () => {
       now,
     });
 
-    expect(result).toMatchObject({ start: "2026-09-29", end: "2026-10-31", preset: "upcoming" });
+    expect(result).toMatchObject({ start: "2026-09-29", end: "2026-10-29", preset: "upcoming" });
     expect(result.nextOccurrence?.serviceId).toBe("october");
   });
 
@@ -155,7 +155,7 @@ describe("findInitialTeamSchedulePeriod", () => {
       now: new Date("2026-09-30T12:00:00.000Z"),
     });
 
-    expect(result).toMatchObject({ start: "2026-09-30", end: "2026-10-31", preset: "upcoming" });
+    expect(result).toMatchObject({ start: "2026-09-30", end: "2026-10-30", preset: "upcoming" });
     expect(result.period.occurrences.map((item) => item.occurrenceId)).toContain(
       "october@2026-10-03T10:00:00.000Z",
     );
@@ -236,10 +236,10 @@ describe("findInitialTeamSchedulePeriod", () => {
   });
 
   it.each([
-    ["month", "2026-11-08T10:00:00.000Z", "2026-11-01", "2026-11-30"],
-    ["cross-month custom", "2026-11-08T10:00:00.000Z", "2026-09-15", "2026-12-15"],
-    ["quarterly", "2026-11-08T10:00:00.000Z", "2026-10-01", "2026-12-31"],
-  ])("finds a team slot in a %s schedule", (_label, startsAt, startDate, endDate) => {
+    ["month", "2026-10-08T10:00:00.000Z", "2026-10-01", "2026-10-31"],
+    ["cross-month custom", "2026-10-15T10:00:00.000Z", "2026-09-15", "2026-12-15"],
+    ["quarterly", "2026-10-20T10:00:00.000Z", "2026-10-01", "2026-12-31"],
+  ])("finds a team slot in a %s schedule inside Upcoming", (_label, startsAt, startDate, endDate) => {
     const occurrenceId = `manual@${startsAt}`;
     const result = findInitialTeamSchedulePeriod({
       services: [service({ serviceId: "manual", dateTimeISO: startsAt })],
@@ -261,10 +261,10 @@ describe("findInitialTeamSchedulePeriod", () => {
     });
 
     expect(result.nextOccurrence?.occurrenceId).toBe(occurrenceId);
-    expect(result.end).toBe("2026-11-30");
+    expect(result.end).toBe("2026-10-29");
   });
 
-  it("ignores past and other-team explicit slots while selecting the next future team slot", () => {
+  it("ignores past and other-team explicit slots and future slots outside Upcoming", () => {
     const pastId = "past@2026-09-20T10:00:00.000Z";
     const futureId = "future@2026-11-08T10:00:00.000Z";
     const schedule = (scheduleId: string, teamId: string, occurrenceId: string, startsAt: string) => ({
@@ -294,8 +294,8 @@ describe("findInitialTeamSchedulePeriod", () => {
       now,
     });
 
-    expect(result.nextOccurrence?.occurrenceId).toBe(futureId);
-    expect(result.period.occurrences.map(({ occurrenceId }) => occurrenceId)).toEqual([futureId]);
+    expect(result.nextOccurrence).toBeNull();
+    expect(result.period.occurrences).toEqual([]);
   });
 
   it("keeps explicit This month selection on its full calendar range", () => {

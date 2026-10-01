@@ -1080,6 +1080,85 @@ test("team position icon refs persist while legacy values and older omitted save
   assert.equal(invalid.statusCode, 400);
 });
 
+test("team icons accept legacy and structured refs with validated colors", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("team_icon_refs");
+  const legacy = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Music", memberIds: [], icon: "Music" },
+  });
+  assert.equal(legacy.statusCode, 200);
+  assert.equal(legacy.payload.team.icon, "Music");
+
+  const structured = await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: legacy.payload.team.teamId },
+    body: { name: "Music", memberIds: [], icon: { source: "lucide", name: "Music", color: "#22D3EE" } },
+  });
+  assert.equal(structured.statusCode, 200);
+  assert.deepEqual(structured.payload.team.icon, { source: "lucide", name: "Music", color: "#22d3ee" });
+
+  const tabler = await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: legacy.payload.team.teamId },
+    body: { name: "Music", memberIds: [], icon: { source: "tabler", name: "camera" } },
+  });
+  assert.deepEqual(tabler.payload.team.icon, { source: "tabler", name: "camera" });
+
+  const worshipSync = await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId: legacy.payload.team.teamId },
+    body: { name: "Music", memberIds: [], icon: { source: "worshipsync", name: "service" } },
+  });
+  assert.deepEqual(worshipSync.payload.team.icon, { source: "worshipsync", name: "service" });
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.deepEqual(bootstrap.payload.teams.find((item) => item.teamId === legacy.payload.team.teamId).icon, worshipSync.payload.team.icon);
+
+  for (const icon of [
+    { source: "unknown", name: "camera" },
+    { source: "tabler", name: "camera", color: "red" },
+  ]) {
+    const invalid = await callHandler(authHandlers.updateTeam, {
+      context,
+      params: { teamId: legacy.payload.team.teamId },
+      body: { name: "Music", memberIds: [], icon },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.match(invalid.payload.errorMessage, /Team icon/);
+  }
+});
+
+test("portable team import and export preserve structured icon refs", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("portable_team_icon");
+  const icon = { source: "tabler", name: "camera", color: "#22d3ee" };
+  const committed = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "teams",
+      approvedRows: [
+        { row: 2, action: "create", record: { name: "Portable Music", icon: "Music" } },
+        { row: 3, action: "create", record: { name: "Portable Media", icon: JSON.stringify(icon) } },
+      ],
+    },
+  });
+  assert.equal(committed.statusCode, 200);
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  const music = bootstrap.payload.teams.find((team) => team.name === "Portable Music");
+  const media = bootstrap.payload.teams.find((team) => team.name === "Portable Media");
+  assert.equal(music.icon, "Music");
+  assert.deepEqual(media.icon, icon);
+
+  const exported = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "teams" },
+  });
+  assert.equal(exported.statusCode, 200);
+  assert.match(String(exported.body), /Music/);
+  assert.ok(String(exported.body).includes(JSON.stringify(icon).replaceAll('"', '""')));
+});
+
 test("unrelated position edits preserve legacy custom icons while supported changes and clearing work", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("legacy_custom_position_icon");

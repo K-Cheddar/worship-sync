@@ -773,21 +773,7 @@ export const useServicePlanningImport = () => {
             ],
           };
         }
-        if (source && target.servicePlanSource && (
-          target.servicePlanSource.planKey !== source.planKey
-          || target.servicePlanSource.elementId !== source.elementId
-          || target.servicePlanSource.candidateId !== source.candidateId
-        )) {
-          return {
-            overlaysUpdated: 0,
-            overlaysCloned: 0,
-            overlaysCreated: 0,
-            overlaysSkipped: 1,
-            reasons: ["This overlay is associated with a different service-plan item. Review the overlay before syncing."],
-          };
-        }
-
-        const next = mergeServicePlanOverlayFields(target, sourceValues, source);
+        const next = mergeServicePlanOverlayFields(target, sourceValues, source, { applyIncoming: true });
         if (JSON.stringify(next) === JSON.stringify(target)) {
           return {
             overlaysUpdated: 0,
@@ -846,7 +832,7 @@ export const useServicePlanningImport = () => {
           : undefined;
 
         if (existingDuplicate) {
-          const next = mergeServicePlanOverlayFields(existingDuplicate, sourceValues, source);
+          const next = mergeServicePlanOverlayFields(existingDuplicate, sourceValues, source, { applyIncoming: true });
           if (JSON.stringify(next) === JSON.stringify(existingDuplicate)) {
             dispatch(selectOverlay(existingDuplicate));
             return {

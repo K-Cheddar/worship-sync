@@ -98,7 +98,6 @@ import {
   removeTeamSchedulePositionSlot,
   getNotificationIntents,
   getNotificationIntentPreview,
-  prepareReplacementNotificationIntent,
   resolveReplacementNotificationIntent,
   sendNotificationIntent,
 } from "../../../api/auth";
@@ -109,6 +108,8 @@ import {
 } from "./scheduleDraftUtils";
 import { buildScheduleExportModel } from "./scheduleExport";
 import ScheduleBrowserDialog from "./ScheduleBrowserDialog";
+import PortableDataImportDialog from "../../../components/PortableDataTransfer/PortableDataImportDialog";
+import { createScheduleCsvMenuItems } from "./scheduleCsvActions";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import {
   ALL_TEAMS_SCHEDULE_FILTER,
@@ -367,6 +368,7 @@ const ScheduleTab = ({
   onScheduleDraftFlush,
   onScheduleDraftClear,
   trackTeamsSave,
+  onImported,
 }: {
   data: TeamsData;
   canEdit: boolean;
@@ -388,10 +390,12 @@ const ScheduleTab = ({
   // Registers an in-flight schedule save with the page so inbound sync stays
   // gated until it settles (prevents a bootstrap/SSE from reverting pending edits).
   trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
+  onImported: () => void;
 }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
+  const isChurchAdmin = context?.role === "admin";
   const churchName = context?.churchName || "";
   const activeTeams = useMemo(() => data.teams.filter(isActive), [data.teams]);
   const schedules = data.schedules;
@@ -399,6 +403,8 @@ const ScheduleTab = ({
   // Archived schedules stay out of the quick-switcher; the browse dialog's
   // status filter is the one place to go through everything.
   const [isBrowsingSchedules, setIsBrowsingSchedules] = useState(false);
+  const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
+  const [scheduleCsvBusy, setScheduleCsvBusy] = useState(false);
 
   // Team narrowing for the picker, remembered per church. Most operators work a
   // single team, so re-narrowing a church-wide list on every visit is friction.
@@ -999,7 +1005,6 @@ const ScheduleTab = ({
   const scheduleSmsSendLockRef = useRef(false);
   const [replacementIntentToClose, setReplacementIntentToClose] = useState<NotificationIntent | null>(null);
   const [closingReplacement, setClosingReplacement] = useState(false);
-  const [preparingReplacementMemberId, setPreparingReplacementMemberId] = useState("");
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -3769,40 +3774,6 @@ const ScheduleTab = ({
     });
   };
 
-  const handlePrepareReplacementInvite = async (memberId: string) => {
-    if (!canEdit || !activeSlot || !activeSlotMeta || !selectedSchedule || preparingReplacementMemberId) return;
-    if (!activeSlotMeta.isVacantOrDeclined) {
-      showToast("Replacement invitations are available for empty or declined slots.", "warning");
-      return;
-    }
-    const issue = activeSlotGetIssue(memberId);
-    const warning = activeSlotGetWarning(memberId);
-    const assignedElsewhere = getActiveSlotMoveSource(memberId);
-    const crossTeamWarning = getCrossTeamConflictWarning(memberId, activeSlot.occurrenceId);
-    const hardWarnings = ["Marked this service unavailable on intake", "Blocked out", "Unavailable this week of the month"];
-    if (issue || assignedElsewhere || crossTeamWarning || hardWarnings.some((value) => warning.includes(value))) {
-      showToast(issue || (assignedElsewhere ? "This volunteer is already assigned to another position in this service." : crossTeamWarning || warning), "warning");
-      return;
-    }
-    setPreparingReplacementMemberId(memberId);
-    showToast("Preparing a replacement invitation for review…", "neutral");
-    try {
-      await prepareReplacementNotificationIntent(churchId, {
-        scheduleId: selectedSchedule.scheduleId,
-        occurrenceId: activeSlot.occurrenceId,
-        cellKey: activeSlot.columnKey,
-        memberId,
-      });
-      await refreshScheduleNotificationHistory(selectedSchedule.scheduleId);
-      setScheduleMessagesOpen(true);
-      showToast("Replacement invitation prepared for review. No schedule assignment was changed.", "success");
-    } catch (error) {
-      showApiErrorToast(showToast, error, "Could not prepare this replacement invitation.");
-    } finally {
-      setPreparingReplacementMemberId("");
-    }
-  };
-
   const activeSlotGetIssue = useCallback(
     (memberId: string) => {
       if (!activeSlot || !activeSlotMeta) return "Not available";
@@ -4990,6 +4961,13 @@ const ScheduleTab = ({
   );
 
   const scheduleActionsMenuItems: MenuItemType[] = [
+    ...(isChurchAdmin ? createScheduleCsvMenuItems({
+      churchId,
+      onImport: () => setScheduleImportOpen(true),
+      onExportError: (error) => showApiErrorToast(showToast, error, "Could not download schedules CSV."),
+      exportBusy: scheduleCsvBusy,
+      setExportBusy: setScheduleCsvBusy,
+    }) : []),
     ...(canEdit
       ? [{
         element: (
@@ -5138,6 +5116,15 @@ const ScheduleTab = ({
 
   return (
     <div className={scheduleTabRootClassName}>
+      {isChurchAdmin ? (
+        <PortableDataImportDialog
+          open={scheduleImportOpen}
+          onOpenChange={setScheduleImportOpen}
+          churchId={churchId}
+          type="schedules"
+          onImported={onImported}
+        />
+      ) : null}
       {showForm ? (
         <div
           className={cn(
@@ -5158,14 +5145,14 @@ const ScheduleTab = ({
       ) : (
         <>
           <h2 className="sr-only">Schedules</h2>
-          {scheduleReturnTo ? (
-            <TeamsReturnBackButton
-              returnTo={scheduleReturnTo}
-              onClick={() => returnFromSchedule()}
-            />
-          ) : null}
           <header className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-            <div role="group" aria-label="Team schedule identity" className="min-w-0">
+            <div role="group" aria-label="Team schedule identity" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              {scheduleReturnTo ? (
+                <TeamsReturnBackButton
+                  returnTo={scheduleReturnTo}
+                  onClick={() => returnFromSchedule()}
+                />
+              ) : null}
               <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100">
                 <Icon svg={CalendarDays} size="md" className="shrink-0 text-cyan-200" />
                 <span className="truncate">Team schedule</span>
@@ -5983,8 +5970,6 @@ const ScheduleTab = ({
                     }
                     getWarning={activeSlotGetWarning}
                     onSelectMember={handleActiveSlotMemberSelect}
-                    onPrepareReplacementInvite={activeSlotMeta?.isVacantOrDeclined ? handlePrepareReplacementInvite : undefined}
-                    preparingReplacementMemberId={preparingReplacementMemberId}
                     onAssignmentAction={handleActiveSlotAssignmentAction}
                     swapRecommendations={activeSlotSwapRecommendations}
                     onApplySwapRecommendation={(recommendation) =>

@@ -18,6 +18,7 @@ const TeamsGroupsPage = () => {
         upsertData("teams", "teamId", team, replaceId)
       }
       onArchived={() => void refresh()}
+      onImported={() => void refresh()}
       onRemoved={(teamId) => removeData("teams", "teamId", teamId)}
     />
   );

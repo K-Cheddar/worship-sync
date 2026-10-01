@@ -20,6 +20,7 @@ import {
 } from "../teamsUtils";
 import { isMemberAvailableOnDate } from "../memberPreferences";
 import PositionIconBadge from "../../../components/icons/PositionIconBadge";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleShadowChip from "./ScheduleShadowChip";
 import { ScheduleAssignmentContext } from "./ScheduleAssignmentContext";
@@ -214,6 +215,13 @@ const ScheduleBoardCell = memo(({
               <ScheduleResponseIndicator
                 response={response}
                 memberName={assigneeLabel}
+              />
+            ) : null}
+            {assignedMember && !assignedMember.scheduleGuest ? (
+              <MemberAvatar
+                profileImageUrl={assignedMember.profileImageUrl}
+                memberName={`${assignedMember.firstName} ${assignedMember.lastName}`}
+                className="h-5 w-5 text-[8px]"
               />
             ) : null}
             <span className={scheduleAssignmentLabelClassName}>

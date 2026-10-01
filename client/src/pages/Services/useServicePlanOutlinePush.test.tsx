@@ -6,7 +6,7 @@ import type { ServicePlan } from "../../types/servicePlan";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { updateItemList } from "../../store/itemListSlice";
 import { useServicePlanOutlinePush } from "./useServicePlanOutlinePush";
-import { buildServicePlanOutlineItems } from "./servicePlanOutlineBridge";
+import { buildServicePlanOutlineItem, planServicePlanOutlineItems } from "./servicePlanOutlineBridge";
 
 const mockDispatch = jest.fn();
 const mockState = {
@@ -29,31 +29,38 @@ jest.mock("../../hooks", () => ({
     selector(mockState),
 }));
 
-jest.mock("./servicePlanOutlineBridge", () => ({
-  buildServicePlanOutlineItems: jest.fn(),
+jest.mock("react-redux", () => ({
+  ...jest.requireActual("react-redux"),
+  useStore: () => ({ getState: () => mockState }),
 }));
 
-const mockBuildOutline = jest.mocked(buildServicePlanOutlineItems);
+jest.mock("./servicePlanOutlineBridge", () => ({
+  buildServicePlanOutlineItem: jest.fn(),
+  planServicePlanOutlineItems: jest.fn(),
+}));
+
+const mockBuildItem = jest.mocked(buildServicePlanOutlineItem);
+const mockPlanOutline = jest.mocked(planServicePlanOutlineItems);
+
+const setPlannedItems = (items: ServiceItem[], skippedTitles: string[] = []) => {
+  mockPlanOutline.mockReturnValue({
+    steps: items.map((item) => ({
+      planned: { listId: item.listId, kind: "song", songId: item._id, songName: item.name },
+      element: { element: { id: item.listId, title: { blocks: [] }, type: "song" }, title: item.name, planned: [], hasUnresolvedAttachment: false },
+    }) as never),
+    skippedTitles,
+  });
+  mockBuildItem.mockImplementation(async ({ step }) => items.find((item) => item.listId === step.planned.listId)!);
+};
 
 describe("useServicePlanOutlinePush", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockState.undoable.present.itemList.list = [];
   });
 
-  it("registers newly created outline custom items in the Custom library", async () => {
-    const customItem: ServiceItem = {
-      _id: "Welcome Slides",
-      name: "Welcome Slides",
-      type: "free",
-      listId: "outline-entry-1",
-      background: "welcome-background",
-    };
-    mockBuildOutline.mockResolvedValue({
-      items: [customItem],
-      updatedSections: [],
-      insertedCount: 1,
-      skippedTitles: [],
-    });
+  it("does not send title-only Service Plan rows to allItems", async () => {
+    setPlannedItems([]);
     const db = {} as PouchDB.Database;
     const wrapper = ({ children }: { children: ReactNode }) => (
       <ControllerInfoContext.Provider value={{ db } as never}>
@@ -66,12 +73,14 @@ describe("useServicePlanOutlinePush", () => {
       await result.current.pushPlanToOutline({} as ServicePlan);
     });
 
-    expect(mockBuildOutline).toHaveBeenCalledWith(
+    expect(mockPlanOutline).toHaveBeenCalledWith(
       expect.objectContaining({ customDocuments: mockState.allDocs.allFreeFormDocs }),
     );
-    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([customItem]));
-    expect(mockDispatch).toHaveBeenCalledWith(
-      upsertItemInAllItemsList({ ...customItem, listId: "" }),
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: upsertItemInAllItemsList.type }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: updateItemList.type }),
     );
   });
 
@@ -82,12 +91,7 @@ describe("useServicePlanOutlinePush", () => {
       type: "bible",
       listId: "outline-scripture-1",
     };
-    mockBuildOutline.mockResolvedValue({
-      items: [bibleItem],
-      updatedSections: [],
-      insertedCount: 1,
-      skippedTitles: [],
-    });
+    setPlannedItems([bibleItem]);
     const db = {} as PouchDB.Database;
     const wrapper = ({ children }: { children: ReactNode }) => (
       <ControllerInfoContext.Provider value={{ db } as never}>
@@ -112,12 +116,7 @@ describe("useServicePlanOutlinePush", () => {
       type: "free",
       listId: "outline-entry-1",
     };
-    mockBuildOutline.mockResolvedValue({
-      items: [customDocumentReference],
-      updatedSections: [],
-      insertedCount: 1,
-      skippedTitles: [],
-    });
+    setPlannedItems([customDocumentReference]);
     const db = {} as PouchDB.Database;
     const wrapper = ({ children }: { children: ReactNode }) => (
       <ControllerInfoContext.Provider value={{ db } as never}>
@@ -143,12 +142,7 @@ describe("useServicePlanOutlinePush", () => {
       type: "free",
       listId: "outline-entry-1",
     };
-    mockBuildOutline.mockResolvedValue({
-      items: [customItem],
-      updatedSections: [],
-      insertedCount: 1,
-      skippedTitles: [],
-    });
+    setPlannedItems([customItem]);
     const wrapper = ({ children }: { children: ReactNode }) => (
       <ControllerInfoContext.Provider value={{ db: undefined } as never}>
         {children}
@@ -163,5 +157,48 @@ describe("useServicePlanOutlinePush", () => {
     expect(mockDispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: upsertItemInAllItemsList.type }),
     );
+  });
+
+  it("dispatches multiple actionable items one at a time in Service Plan order", async () => {
+    const song: ServiceItem = { _id: "song-1", name: "Song", type: "song", listId: "song-link" };
+    const scripture: ServiceItem = { _id: "bible-1", name: "Psalm 95 NIV", type: "bible", listId: "scripture-link" };
+    setPlannedItems([song, scripture]);
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    const followed: string[] = [];
+
+    await act(async () => {
+      await result.current.pushPlanToOutline(
+        {} as ServicePlan,
+        () => true,
+        (item) => { followed.push(item.name); },
+      );
+    });
+
+    const insertedLists = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .filter((action) => action.type === updateItemList.type);
+    expect(insertedLists).toHaveLength(2);
+    expect(insertedLists.map((action) => action.payload[0].name)).toEqual(["Song", "Psalm 95 NIV"]);
+    expect(followed).toEqual(["Song", "Psalm 95 NIV"]);
+  });
+
+  it("stops after the active outline item and does not build later Bible steps", async () => {
+    const song: ServiceItem = { _id: "song-1", name: "Song", type: "song", listId: "song-link" };
+    const scripture: ServiceItem = { _id: "bible-1", name: "Psalm 95 NIV", type: "bible", listId: "scripture-link" };
+    setPlannedItems([song, scripture]);
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    let shouldContinue = true;
+
+    await act(async () => {
+      await result.current.pushPlanToOutline(
+        {} as ServicePlan,
+        () => true,
+        () => { shouldContinue = false; },
+        () => shouldContinue,
+      );
+    });
+
+    expect(mockBuildItem).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([song]));
   });
 });

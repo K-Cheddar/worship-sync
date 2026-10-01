@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
-import PositionIconPicker, { RECOMMENDED_GROUPS } from "./PositionIconPicker";
+import PositionIconPicker, { RECOMMENDED_GROUPS, TEAM_RECOMMENDED_GROUPS } from "./PositionIconPicker";
 import {
   formatPositionIconLabel,
+  getLucideEntityIconCatalog,
   loadTablerPositionIconCatalog,
   resolveWorshipSyncIcon,
 } from "../../components/icons/iconRegistry";
@@ -84,6 +85,15 @@ describe("PositionIconPicker", () => {
     expect(refs.filter((ref) => ref.source === "tabler").every((ref) => "name" in ref && tablerNames.has(ref.name))).toBe(true);
   });
 
+  it("keeps every team recommendation resolvable in the shared icon registry", async () => {
+    const lucideNames = new Set(getLucideEntityIconCatalog().map(({ ref }) => "name" in ref ? ref.name : ""));
+    const tablerNames = new Set((await loadTablerPositionIconCatalog()).map(({ ref }) => "name" in ref ? ref.name : ""));
+    expect(TEAM_RECOMMENDED_GROUPS.flatMap(({ icons }) => icons).every((ref) =>
+      ref.source === "lucide" ? lucideNames.has("name" in ref ? ref.name : "")
+        : ref.source === "tabler" && tablerNames.has("name" in ref ? ref.name : ""),
+    )).toBe(true);
+  });
+
   it("browses Recommended immediately and keeps its search scoped to the curated set", async () => {
     const user = userEvent.setup();
     render(<PositionIconPicker value="" onChange={jest.fn()} />);
@@ -114,10 +124,10 @@ describe("PositionIconPicker", () => {
     const allResults = await screen.findByLabelText("All icon results");
     const allButtons = within(allResults).getAllByRole("button");
     expect(allButtons.length).toBeGreaterThan(0);
-    expect(within(allResults).getAllByTestId("position-icon-tile").every(
-      (tile) => tile.style.backgroundColor === "var(--position-icon-preview-fill)",
+    expect(within(allResults).getAllByTestId("entity-icon-tile").every(
+      (tile) => tile.style.backgroundColor === "var(--entity-icon-preview-fill)",
     )).toBe(true);
-    expect(screen.getByTestId("position-icon-preview-root").style.getPropertyValue("--position-icon-preview-fill")).toBe("#123456");
+    expect(screen.getByTestId("entity-icon-preview-root").style.getPropertyValue("--entity-icon-preview-fill")).toBe("#123456");
     expect(screen.getByPlaceholderText("Search icons…")).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText("Search icons…"), "camera");
@@ -274,13 +284,13 @@ describe("PositionIconPicker", () => {
     expect(selectedButton).toHaveClass("ring-1");
     expect(selectedButton).not.toHaveClass("bg-cyan-400/15");
     expect(selectedButton).toHaveAttribute("aria-pressed", "true");
-    expect(within(selectedButton).getByTestId("position-icon-tile")).toHaveStyle({
-      backgroundColor: "var(--position-icon-preview-fill)",
-      color: "var(--position-icon-preview-ink)",
+    expect(within(selectedButton).getByTestId("entity-icon-tile")).toHaveStyle({
+      backgroundColor: "var(--entity-icon-preview-fill)",
+      color: "var(--entity-icon-preview-ink)",
     });
-    const previewRoot = screen.getByTestId("position-icon-preview-root");
-    expect(previewRoot.style.getPropertyValue("--position-icon-preview-fill")).toBe("#22c55e");
-    expect(previewRoot.style.getPropertyValue("--position-icon-preview-ink")).toBe("#ffffff");
+    const previewRoot = screen.getByTestId("entity-icon-preview-root");
+    expect(previewRoot.style.getPropertyValue("--entity-icon-preview-fill")).toBe("#22c55e");
+    expect(previewRoot.style.getPropertyValue("--entity-icon-preview-ink")).toBe("#ffffff");
   });
 
   it("previews the chosen fill across catalog tiles before committing the parent value", async () => {
@@ -295,12 +305,12 @@ describe("PositionIconPicker", () => {
       target: { value: "#ffff00" },
     });
 
-    const root = screen.getByTestId("position-icon-preview-root");
-    expect(root.style.getPropertyValue("--position-icon-preview-fill")).toBe("#ffff00");
-    expect(root.style.getPropertyValue("--position-icon-preview-ink")).toBe("#000000");
-    const tiles = screen.getAllByTestId("position-icon-tile");
+    const root = screen.getByTestId("entity-icon-preview-root");
+    expect(root.style.getPropertyValue("--entity-icon-preview-fill")).toBe("#ffff00");
+    expect(root.style.getPropertyValue("--entity-icon-preview-ink")).toBe("#000000");
+    const tiles = screen.getAllByTestId("entity-icon-tile");
     expect(tiles.length).toBeGreaterThan(1);
-    expect(tiles.every((tile) => tile.style.backgroundColor === "var(--position-icon-preview-fill)")).toBe(true);
+    expect(tiles.every((tile) => tile.style.backgroundColor === "var(--entity-icon-preview-fill)")).toBe(true);
     expect(onChange).not.toHaveBeenCalled();
 
     act(() => jest.advanceTimersByTime(179));
@@ -309,13 +319,43 @@ describe("PositionIconPicker", () => {
     expect(onChange).toHaveBeenCalledWith({ source: "lucide", name: "MicVocal", color: "#ffff00" });
   });
 
-  it("keeps legacy Lucide values available in legacyOnly mode", async () => {
+  it("keeps legacy Lucide values selected in the shared picker without rewriting them", async () => {
     const user = userEvent.setup();
-    render(<PositionIconPicker legacyOnly value="MicVocal" onChange={jest.fn()} />);
+    const onChange = jest.fn();
+    render(<PositionIconPicker context="team" value="MicVocal" onChange={onChange} />);
 
     await user.click(screen.getByRole("button", { name: "Icon picker" }));
     expect(screen.getByRole("button", { name: "Mic Vocal" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Search icons…")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search recommended icons…")).toBeInTheDocument();
+    expect(screen.getByText("Music & Praise")).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("uses contextual Recommended groups and the same complete All icons catalog", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <PositionIconPicker label="Team icon" context="team" value="" onChange={jest.fn()} />
+        <PositionIconPicker label="Position icon" context="position" value="" onChange={jest.fn()} />
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "Team icon picker" }));
+    expect(screen.getByText("Hospitality")).toBeInTheDocument();
+    expect(screen.queryByText("Technical & Setup")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Team icon picker" }));
+    await user.click(screen.getByRole("button", { name: "Position icon picker" }));
+    expect(screen.getByText("Technical & Setup")).toBeInTheDocument();
+    expect(screen.queryByText("Hospitality")).not.toBeInTheDocument();
+    expect(TEAM_RECOMMENDED_GROUPS.flatMap(({ icons }) => icons)).not.toEqual(RECOMMENDED_GROUPS.flatMap(({ icons }) => icons));
+
+    await user.click(screen.getByRole("tab", { name: "All icons" }));
+    const positionResults = await screen.findByLabelText("All icon results");
+    const positionNames = within(positionResults).getAllByRole("button").map((button) => button.getAttribute("aria-label"));
+    await user.click(screen.getByRole("button", { name: "Position icon picker" }));
+    await user.click(screen.getByRole("button", { name: "Team icon picker" }));
+    await user.click(screen.getByRole("tab", { name: "All icons" }));
+    const teamResults = await screen.findByLabelText("All icon results");
+    await waitFor(() => expect(within(teamResults).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(positionNames));
   });
 
   it("formats internal icon names for user-facing labels", () => {

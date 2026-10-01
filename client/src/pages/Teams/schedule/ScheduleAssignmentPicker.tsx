@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ChevronLeft, ChevronRight, Plus, Search, TriangleAlert, X } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import Input from "../../../components/Input/Input";
 import { cn } from "@/utils/cnHelper";
 import {
@@ -175,8 +176,6 @@ type ScheduleAssignmentPickerProps = {
   getAssignmentActionIssues?: (memberId: string) => MemberAssignmentActionIssues;
   getWarning?: (memberId: string) => string;
   onSelectMember: (memberId: string) => void;
-  onPrepareReplacementInvite?: (memberId: string) => void;
-  preparingReplacementMemberId?: string;
   onAssignmentAction?: (memberId: string, action: MemberAssignmentAction) => void;
   swapRecommendations?: ScheduleAssignmentSwapRecommendation[];
   onApplySwapRecommendation?: (
@@ -224,8 +223,6 @@ const ScheduleAssignmentPicker = memo(({
   getAssignmentActionIssues,
   getWarning,
   onSelectMember,
-  onPrepareReplacementInvite,
-  preparingReplacementMemberId = "",
   onAssignmentAction,
   swapRecommendations = [],
   onApplySwapRecommendation,
@@ -651,7 +648,7 @@ const ScheduleAssignmentPicker = memo(({
             aria-selected={highlighted}
             type="button"
             className={cn(
-              "flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
+              "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
               highlighted && "bg-gray-800",
             )}
             onMouseDown={(event) => {
@@ -659,6 +656,11 @@ const ScheduleAssignmentPicker = memo(({
               openAssignmentActions(row.member.memberId);
             }}
           >
+            <MemberAvatar
+              profileImageUrl={row.member.profileImageUrl}
+              memberName={`${row.member.firstName} ${row.member.lastName}`}
+              className="h-7 w-7"
+            />
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{memberLabel}</span>
               {row.warning ? (
@@ -671,11 +673,6 @@ const ScheduleAssignmentPicker = memo(({
             {row.desiresPosition ? <WantsThisIcon /> : null}
             <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
           </button>
-          {row.eligible && onPrepareReplacementInvite ? (
-            <button type="button" disabled={Boolean(preparingReplacementMemberId)} className="shrink-0 rounded px-2 py-1 text-xs text-sky-200 hover:bg-gray-800 disabled:opacity-50" aria-label={`Prepare replacement invitation for ${memberLabel}`} onMouseDown={(event) => { event.preventDefault(); onPrepareReplacementInvite(row.member.memberId); }}>
-              {preparingReplacementMemberId === row.member.memberId ? "Preparing…" : "Invite"}
-            </button>
-          ) : null}
           </div>
         </div>
       );
@@ -692,7 +689,7 @@ const ScheduleAssignmentPicker = memo(({
           aria-selected={highlighted}
           type="button"
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
+            "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
             highlighted && "bg-gray-800",
           )}
           onMouseDown={(event) => {
@@ -700,6 +697,11 @@ const ScheduleAssignmentPicker = memo(({
             handleSelectRow(row.member.memberId, false);
           }}
         >
+          <MemberAvatar
+            profileImageUrl={row.member.profileImageUrl}
+            memberName={`${row.member.firstName} ${row.member.lastName}`}
+            className="h-7 w-7"
+          />
           <span className="min-w-0 flex-1">
             <span className="block truncate">{memberLabel}</span>
             {row.warning ? (
@@ -711,11 +713,6 @@ const ScheduleAssignmentPicker = memo(({
           {row.warning ? <WarningBadge label={row.warning} /> : null}
           {row.desiresPosition ? <WantsThisIcon /> : null}
         </button>
-        {row.eligible && onPrepareReplacementInvite ? (
-          <button type="button" disabled={Boolean(preparingReplacementMemberId)} className="shrink-0 rounded px-2 py-1 text-xs text-sky-200 hover:bg-gray-800 disabled:opacity-50" aria-label={`Prepare replacement invitation for ${memberLabel}`} onMouseDown={(event) => { event.preventDefault(); onPrepareReplacementInvite(row.member.memberId); }}>
-            {preparingReplacementMemberId === row.member.memberId ? "Preparing…" : "Invite"}
-          </button>
-        ) : null}
         </div>
       </div>
     );

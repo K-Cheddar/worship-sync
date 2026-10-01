@@ -1,12 +1,16 @@
 import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import * as LucideIcons from "lucide-react";
-import type { IconCatalogEntry, IconRef, PositionIcon } from "./iconTypes";
+import type { EntityIcon, IconCatalogEntry, IconRef } from "./iconTypes";
 import { worshipSyncProductionIcons } from "./production";
 
-export type PositionGlyphProps = SVGProps<SVGSVGElement> & { size?: number | string };
-export type PositionGlyph = ComponentType<PositionGlyphProps>;
+export type EntityGlyphProps = SVGProps<SVGSVGElement> & { size?: number | string };
+export type EntityGlyph = ComponentType<EntityGlyphProps>;
+/** @deprecated Use EntityGlyphProps. */
+export type PositionGlyphProps = EntityGlyphProps;
+/** @deprecated Use EntityGlyph. */
+export type PositionGlyph = EntityGlyph;
 
-export const formatPositionIconLabel = (name: string): string => {
+export const formatEntityIconLabel = (name: string): string => {
   const words = name
     .replace(/[-_]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -14,6 +18,8 @@ export const formatPositionIconLabel = (name: string): string => {
     .trim();
   return words ? `${words[0].toUpperCase()}${words.slice(1)}` : name;
 };
+/** @deprecated Use formatEntityIconLabel. */
+export const formatPositionIconLabel = formatEntityIconLabel;
 
 const lucideExports = LucideIcons as Record<string, unknown>;
 const excludedLucideExports = new Set([
@@ -23,8 +29,8 @@ const excludedLucideExports = new Set([
 const isIconComponent = (value: unknown): value is PositionGlyph =>
   typeof value === "function" || (typeof value === "object" && value !== null);
 
-export const normalizePositionIcon = (
-  value?: PositionIcon | null,
+export const normalizeEntityIcon = (
+  value?: EntityIcon | null,
 ): IconRef | null => {
   if (typeof value === "string") {
     return value ? { source: "lucide", name: value } : null;
@@ -46,6 +52,8 @@ export const normalizePositionIcon = (
   }
   return null;
 };
+/** @deprecated Use normalizeEntityIcon. */
+export const normalizePositionIcon = normalizeEntityIcon;
 
 const tablerExportName = (name: string) =>
   `Icon${name.split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join("")}`;
@@ -102,9 +110,9 @@ export const TablerGlyph = ({ name, ...props }: PositionGlyphProps & { name: str
 
 /** Resolve only icon sources available synchronously; Tabler uses TablerGlyph. */
 export const resolveWorshipSyncIcon = (
-  value?: PositionIcon | null,
-): PositionGlyph | null => {
-  const ref = normalizePositionIcon(value);
+  value?: EntityIcon | null,
+): EntityGlyph | null => {
+  const ref = normalizeEntityIcon(value);
   if (!ref || ref.source === "custom") return null;
   if (ref.source === "tabler") return null;
   if (ref.source === "worshipsync") return worshipSyncProductionIcons[ref.name] || null;
@@ -125,18 +133,20 @@ const lucideAliases: Record<string, string[]> = {
   Presentation: ["projector", "presentation"],
 };
 let lucideCatalog: IconCatalogEntry[] | null = null;
-export const getLucidePositionIconCatalog = (): IconCatalogEntry[] => {
+export const getLucideEntityIconCatalog = (): IconCatalogEntry[] => {
   lucideCatalog ??= Object.entries(lucideExports)
     .filter(([name, icon]) => /^[A-Z]/.test(name) && !name.startsWith("Lucide") && !excludedLucideExports.has(name) && isIconComponent(icon))
     .map(([name]) => ({
       ref: { source: "lucide", name },
-      label: formatPositionIconLabel(name),
+      label: formatEntityIconLabel(name),
       searchTerms: [name, ...(lucideAliases[name] || [])],
     }));
   return lucideCatalog;
 };
+/** @deprecated Use getLucideEntityIconCatalog. */
+export const getLucidePositionIconCatalog = getLucideEntityIconCatalog;
 
-const createTablerPositionIconCatalog = (
+const createTablerEntityIconCatalog = (
   tablerIcons: Record<string, unknown>,
 ): IconCatalogEntry[] => Object.keys(tablerIcons)
   .filter((name) => /^Icon[A-Z]/.test(name) && isIconComponent(tablerIcons[name]))
@@ -144,15 +154,15 @@ const createTablerPositionIconCatalog = (
     const name = exportName.slice(4).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
     return {
       ref: { source: "tabler", name } as const,
-      label: formatPositionIconLabel(name),
+      label: formatEntityIconLabel(name),
       searchTerms: [name],
     };
   });
 
 let tablerCatalogPromise: Promise<IconCatalogEntry[]> | null = null;
-export const loadTablerPositionIconCatalog = (): Promise<IconCatalogEntry[]> => {
+export const loadTablerEntityIconCatalog = (): Promise<IconCatalogEntry[]> => {
   if (!tablerCatalogPromise) {
-    const request = loadTablerIcons().then(createTablerPositionIconCatalog);
+    const request = loadTablerIcons().then(createTablerEntityIconCatalog);
     const retryableRequest = request.catch((error: unknown) => {
       if (tablerCatalogPromise === retryableRequest) tablerCatalogPromise = null;
       throw error;
@@ -161,12 +171,14 @@ export const loadTablerPositionIconCatalog = (): Promise<IconCatalogEntry[]> => 
   }
   return tablerCatalogPromise;
 };
+/** @deprecated Use loadTablerEntityIconCatalog. */
+export const loadTablerPositionIconCatalog = loadTablerEntityIconCatalog;
 
 let catalogPromise: Promise<IconCatalogEntry[]> | null = null;
-export const loadPositionIconCatalog = (): Promise<IconCatalogEntry[]> => {
+export const loadEntityIconCatalog = (): Promise<IconCatalogEntry[]> => {
   if (!catalogPromise) {
-    const request = loadTablerPositionIconCatalog().then((tablerEntries) => {
-      return [...getLucidePositionIconCatalog(), ...tablerEntries];
+    const request = loadTablerEntityIconCatalog().then((tablerEntries) => {
+      return [...getLucideEntityIconCatalog(), ...tablerEntries];
     });
     const retryableRequest = request.catch((error: unknown) => {
       if (catalogPromise === retryableRequest) catalogPromise = null;
@@ -176,8 +188,10 @@ export const loadPositionIconCatalog = (): Promise<IconCatalogEntry[]> => {
   }
   return catalogPromise;
 };
+/** @deprecated Use loadEntityIconCatalog. */
+export const loadPositionIconCatalog = loadEntityIconCatalog;
 
-export const searchPositionIconCatalog = (
+export const searchEntityIconCatalog = (
   catalog: IconCatalogEntry[],
   query: string,
   limit = 60,
@@ -197,3 +211,5 @@ export const searchPositionIconCatalog = (
     .slice(0, limit)
     .map(({ entry }) => entry);
 };
+/** @deprecated Use searchEntityIconCatalog. */
+export const searchPositionIconCatalog = searchEntityIconCatalog;

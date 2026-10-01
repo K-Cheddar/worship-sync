@@ -3,9 +3,7 @@ import {
   notifyAuthError,
   registerAuthErrorHandler,
   registerAuthRecoveryHandler,
-  registerUserAuthRecoveryHandler,
   requestAuthRecovery,
-  requestUserAuthRecovery,
   setAuthenticatedSessionExpected,
 } from "./authErrorBus";
 
@@ -81,34 +79,6 @@ describe("authErrorBus", () => {
 
     await expect(requestAuthRecovery()).resolves.toBe(false);
     expect(handler).toHaveBeenCalledTimes(1);
-
-    unsubscribe();
-  });
-
-  it("reports confirmed loss from the user recovery handler", async () => {
-    const onConfirmedUnauthenticated = jest.fn();
-    const handler = jest.fn(async (onUnauthenticated: () => void) => {
-      onUnauthenticated();
-      return "unauthenticated" as const;
-    });
-    const unsubscribe = registerUserAuthRecoveryHandler(handler);
-
-    await expect(
-      requestUserAuthRecovery(onConfirmedUnauthenticated),
-    ).resolves.toBe("unauthenticated");
-    expect(onConfirmedUnauthenticated).toHaveBeenCalledTimes(1);
-
-    unsubscribe();
-  });
-
-  it("keeps uncertain user recovery distinct from confirmed loss", async () => {
-    const onConfirmedUnauthenticated = jest.fn();
-    const unsubscribe = registerUserAuthRecoveryHandler(() => "unknown");
-
-    await expect(
-      requestUserAuthRecovery(onConfirmedUnauthenticated),
-    ).resolves.toBe("unknown");
-    expect(onConfirmedUnauthenticated).not.toHaveBeenCalled();
 
     unsubscribe();
   });

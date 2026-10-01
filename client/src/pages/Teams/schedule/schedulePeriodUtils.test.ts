@@ -33,17 +33,17 @@ const schedule = (changes: Partial<TeamScheduleSummary> = {}): TeamScheduleSumma
 });
 
 describe("rangeFromPreset", () => {
-  it("includes today through the end of next month for Upcoming", () => {
+  it("includes today through 30 days from today for Upcoming", () => {
     expect(rangeFromPreset("upcoming", new Date(2026, 8, 29, 12))).toEqual({
       start: "2026-09-29",
-      end: "2026-10-31",
+      end: "2026-10-29",
     });
   });
 
   it("handles the December to January boundary for Upcoming", () => {
     expect(rangeFromPreset("upcoming", new Date(2026, 11, 31, 12))).toEqual({
       start: "2026-12-31",
-      end: "2027-01-31",
+      end: "2027-01-30",
     });
   });
 
@@ -57,8 +57,8 @@ describe("rangeFromPreset", () => {
 
 describe("persistedScheduleRange", () => {
   it("keeps Upcoming identity on calendar bounds while its visible start advances", () => {
-    const dayOne = persistedScheduleRange("upcoming", { start: "2026-09-29", end: "2026-10-31" });
-    const dayTwo = persistedScheduleRange("upcoming", { start: "2026-09-30", end: "2026-10-31" });
+    const dayOne = persistedScheduleRange("upcoming", { start: "2026-09-29", end: "2026-10-29" });
+    const dayTwo = persistedScheduleRange("upcoming", { start: "2026-09-30", end: "2026-10-30" });
 
     expect(dayOne).toEqual({ start: "2026-09-01", end: "2026-10-31" });
     expect(dayTwo).toEqual(dayOne);

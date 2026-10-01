@@ -8,12 +8,14 @@ import servicePlanningImportReducer, {
   setServicePlanningFloatingWindowDismissed,
   setServicePlanningSyncActiveStep,
   setServicePlanningSyncPlanInfo,
+  recordServicePlanningSyncResult,
   setServicePlanningServiceOutline,
   startServicePlanningSync,
   completeServicePlanningSync,
   advanceServicePlanningSyncStep,
 } from "../../store/servicePlanningImportSlice";
 import allDocsReducer from "../../store/allDocsSlice";
+import { setActiveItemInList } from "../../store/itemListSlice";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
 import { getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
@@ -24,11 +26,12 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
   overlayPlanHasExecutableChange: (plan: Array<{ action: string }>) =>
     Array.isArray(plan) && plan.some((item) => item.action !== "skip"),
 }));
+const mockPushPlanToOutline = jest.fn();
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
 }));
 jest.mock("../Services/useServicePlanOutlinePush", () => ({
-  useServicePlanOutlinePush: () => ({ pushPlanToOutline: jest.fn() }),
+  useServicePlanOutlinePush: () => ({ pushPlanToOutline: mockPushPlanToOutline }),
 }));
 // Covered by useCurrentServicePlanSource.test.tsx. Stubbed here so these tests
 // stay about the window itself and don't need Teams state in the store.
@@ -104,6 +107,7 @@ const wrapImport = (preview: any) => ({
 
 describe("ServicePlanningSyncFloatingWindow", () => {
   beforeEach(() => {
+    mockPushPlanToOutline.mockReset();
     mockedUseServicePlanningImport.mockReturnValue({
       loadPreview: jest.fn(),
       loadPlanPreview: jest.fn(),
@@ -260,6 +264,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     mockPlanSource.selectedPlanDetails = {
       planKey: "service-1@2026-07-30",
       name: "Native service plan",
+      date: "2026-07-30",
       sections: [{
         id: "section-1",
         name: "Worship",
@@ -279,6 +284,255 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     expect(await screen.findByText("Welcome")).toBeInTheDocument();
+  });
+
+  it("keeps the scheduled LIVE row when the outline selection changes", () => {
+    const startsAt = new Date(Date.now() - 100_000).toISOString();
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      date: "2026-07-30",
+      startsAt,
+      timezone: "UTC",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          {
+            id: "welcome",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Welcome" }] }] },
+            durationSeconds: 90,
+            pushedOutlineListId: "outline-welcome",
+          },
+          {
+            id: "song",
+            type: "free",
+            title: { blocks: [{ type: "paragraph", spans: [{ text: "Song" }] }] },
+            durationSeconds: 120,
+            pushedOutlineListId: "outline-song",
+          },
+        ],
+      }],
+    };
+
+    type TestUndoableState = {
+      present: {
+        itemLists: { selectedList: { _id: string; name: string } };
+        itemList: { list: unknown[]; selectedItemListId: string };
+      };
+    };
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: (
+          state: TestUndoableState = {
+            present: {
+              itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+              itemList: { list: [], selectedItemListId: "" },
+            },
+          },
+          action: { type: string; payload?: unknown },
+        ): TestUndoableState => action.type === setActiveItemInList.type && typeof action.payload === "string"
+          ? {
+              ...state,
+              present: {
+                ...state.present,
+                itemList: {
+                  ...state.present.itemList,
+                  selectedItemListId: action.payload,
+                },
+              },
+            }
+          : state,
+      },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+
+    renderWindow(store);
+
+    const liveRow = screen.getByRole("listitem", { current: true });
+    expect(within(liveRow).getByRole("heading", { name: "Song" })).toBeInTheDocument();
+
+    act(() => store.dispatch(setActiveItemInList("outline-welcome")));
+
+    expect(store.getState().undoable.present.itemList.selectedItemListId).toBe("outline-welcome");
+    expect(within(screen.getByRole("listitem", { current: true })).getByRole("heading", { name: "Song" }))
+      .toBeInTheDocument();
+    expect(within(screen.getByRole("listitem", { current: true })).queryByRole("heading", { name: "Welcome" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("shows an expanded native-plan summary that collapses as one card", async () => {
+    const item = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
+    mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
+      await onItemAdded?.(item);
+      return { items: [item], insertedCount: 1, skippedTitles: ["Example Song"] };
+    });
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      date: "2026-07-30",
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [{
+          id: "element-1",
+          type: "song",
+          title: { blocks: [{ type: "paragraph", spans: [{ text: "What A Beautiful Name" }] }] },
+          songRef: { kind: "library", songId: "song-1", songName: "What A Beautiful Name" },
+        }],
+      }],
+    };
+
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: (state = { present: { itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } }, itemList: { list: [], selectedItemListId: "" } } }) => state,
+      },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Sync outline" }));
+    const summaryButton = await screen.findByRole("button", { name: /1 outline · 0 overlays · 1 skipped/i });
+    const summaryCard = screen.getByLabelText("Most recent sync");
+    const summary = within(summaryCard);
+    expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+    expect(summary.getByText("Outline added · 1")).toBeInTheDocument();
+    expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
+    expect(summary.getByText("Skipped · 1")).toBeInTheDocument();
+    expect(summary.getByText("Example Song")).toBeInTheDocument();
+    expect(summary.getByText(/Unresolved Service Plan attachment/)).toBeInTheDocument();
+    expect(summary.getByRole("heading", { name: "Outline added · 1" })).toHaveClass("text-cyan-300");
+    expect(summary.getByRole("heading", { name: "Skipped · 1" })).toHaveClass("text-amber-300");
+
+    await userEvent.setup().click(summaryButton);
+    expect(summaryButton).toHaveAttribute("aria-expanded", "false");
+    expect(summary.queryByText("What A Beautiful Name")).not.toBeInTheDocument();
+    expect(summary.queryByText("Example Song")).not.toBeInTheDocument();
+    expect(summaryButton).toHaveTextContent("1 outline · 0 overlays · 1 skipped");
+    expect(summary.queryByText(/Outline added ·/)).not.toBeInTheDocument();
+
+    await userEvent.setup().click(summaryButton);
+    expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+    expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
+    expect(summary.getByText("Example Song")).toBeInTheDocument();
+  });
+
+  it("summarizes updated and created overlays separately", async () => {
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    store.dispatch(startServicePlanningSync({ mode: "overlays" }));
+    store.dispatch(setServicePlanningSyncPlanInfo({
+      totalSteps: 2,
+      syncItems: [
+        { label: "Clarence Jones", sublabel: "Sabbath School Host", phase: "overlays", status: "pending" },
+        { label: "Media Team", sublabel: "Mission Story", phase: "overlays", status: "pending" },
+      ],
+    }));
+    store.dispatch(setServicePlanningSyncActiveStep({ phase: "overlays", activeLabel: "Clarence Jones", activeSublabel: "Sabbath School Host" }));
+    store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
+    store.dispatch(setServicePlanningSyncActiveStep({ phase: "overlays", activeLabel: "Media Team", activeSublabel: "Mission Story" }));
+    store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "created" }));
+    store.dispatch(recordServicePlanningSyncResult({ overlaysSkipped: 1, reasons: ["No overlay target was available."] }));
+    store.dispatch(completeServicePlanningSync());
+
+    renderWindow(store);
+    const summaryButton = await screen.findByRole("button", { name: /0 outline · 2 overlays · 1 skipped/i });
+    expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Overlays updated · 1")).toBeInTheDocument();
+    expect(screen.getByText("Overlays created · 1")).toBeInTheDocument();
+    expect(screen.queryByText("Outline added · 0")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Overlays updated · 1" })).toHaveClass("text-green-300");
+    expect(screen.getByRole("heading", { name: "Overlays created · 1" })).toHaveClass("text-sky-300");
+    expect(screen.getByText("Clarence Jones — Sabbath School Host")).toBeInTheDocument();
+    expect(screen.getByText("Media Team — Mission Story")).toBeInTheDocument();
+    expect(screen.getByText(/No overlay target was available/)).toBeInTheDocument();
+
+    act(() => {
+      store.dispatch(startServicePlanningSync({ mode: "overlays" }));
+      store.dispatch(setServicePlanningSyncPlanInfo({
+        totalSteps: 1,
+        syncItems: [{ label: "New Person", sublabel: "Host", phase: "overlays", status: "pending" }],
+      }));
+      store.dispatch(setServicePlanningSyncActiveStep({ phase: "overlays", activeLabel: "New Person", activeSublabel: "Host" }));
+      store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
+      store.dispatch(completeServicePlanningSync());
+    });
+
+    expect(await screen.findByRole("button", { name: /0 outline · 1 overlays · 0 skipped/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("New Person — Host")).toBeInTheDocument();
+    expect(screen.queryByText("Clarence Jones — Sabbath School Host")).not.toBeInTheDocument();
+  });
+
+  it("combines native outline additions and overlay changes after Sync All", async () => {
+    const song = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
+    mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
+      await onItemAdded?.(song);
+      return { items: [song], insertedCount: 1, skippedTitles: [] };
+    });
+    mockPlanSource.isPlanSourced = true;
+    mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
+    mockPlanSource.selectedPlanDetails = {
+      planKey: "service-1@2026-07-30",
+      name: "Native service plan",
+      date: "2026-07-30",
+      sections: [{ id: "section-1", name: "Worship", elements: [{
+        id: "element-1",
+        type: "song",
+        title: { blocks: [{ type: "paragraph", spans: [{ text: song.name }] }] },
+        songRef: { kind: "library", songId: song._id, songName: song.name },
+      }] }],
+    };
+    const existingOverlay = { id: "overlay-1", type: "participant", name: "Dobney Keen", event: "Sabbath School Host" };
+    const store = configureStore({
+      reducer: {
+        servicePlanningImport: servicePlanningImportReducer,
+        allDocs: allDocsReducer,
+        undoable: (state = { present: {
+          itemLists: { selectedList: { _id: "outline-1", name: "Sunday" } },
+          itemList: { list: [], selectedItemListId: "" },
+          overlays: { list: [existingOverlay] },
+        } }) => state,
+      },
+    });
+    store.dispatch(setServicePlanningServiceOutline(wrapImport({
+      overlayCandidates: [],
+      overlayPlan: [{ action: "update", elementType: "Sabbath School Host", targetOverlayId: existingOverlay.id, patch: { name: "Clarence Jones", event: "Sabbath School Host" } }],
+      outlineCandidates: [],
+      lineItems: [],
+      teamAssignments: [],
+    }) as any));
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Sync All" }));
+    await waitFor(() => expect(store.getState().servicePlanningImport.sync.status).toBe("running"));
+    act(() => {
+      store.dispatch(setServicePlanningSyncPlanInfo({
+        totalSteps: 1,
+        syncItems: [{ label: "Clarence Jones", sublabel: "Sabbath School Host", phase: "overlays", status: "pending" }],
+      }));
+      store.dispatch(setServicePlanningSyncActiveStep({ phase: "overlays", activeLabel: "Clarence Jones", activeSublabel: "Sabbath School Host" }));
+      store.dispatch(advanceServicePlanningSyncStep({ resolvedStatus: "updated" }));
+      store.dispatch(recordServicePlanningSyncResult({ overlaysUpdated: 1 }));
+      store.dispatch(completeServicePlanningSync());
+    });
+
+    const summaryButton = await screen.findByRole("button", { name: /1 outline · 1 overlays · 0 skipped/i });
+    expect(summaryButton).toHaveAttribute("aria-expanded", "true");
+    const summary = within(screen.getByLabelText("Most recent sync"));
+    expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
+    expect(summary.getByText("Clarence Jones — Sabbath School Host")).toBeInTheDocument();
   });
 
   // Regression: the menu was portaled, which escapes the floating window's

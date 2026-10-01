@@ -172,6 +172,10 @@ const QualificationManager = ({
   };
 
   const cancelEditing = () => {
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
     requestDiscardAction(() => finishEditing(reset));
   };
 
@@ -452,7 +456,7 @@ const QualificationManager = ({
         }
         formHeaderActions={
           editing || returnTo ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}

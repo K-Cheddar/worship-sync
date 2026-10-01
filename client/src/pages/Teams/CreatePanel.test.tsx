@@ -46,6 +46,12 @@ afterEach(() => {
 });
 
 describe("CreatePanel layout", () => {
+  it("renders generic list header actions beside the create action", () => {
+    renderCreatePanel({ listHeaderActions: <button type="button">Import CSV…</button> });
+    expect(screen.getByRole("button", { name: "Import CSV…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create member" })).toBeInTheDocument();
+  });
+
   it("coordinates desktop columns and keeps closed panels inert", () => {
     const { rerender } = renderCreatePanel();
 

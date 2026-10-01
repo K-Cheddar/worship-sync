@@ -22,6 +22,7 @@ import type {
   TeamSchedulePayload,
 } from "../../api/auth";
 import type { ServiceTime } from "../../types";
+import type { EntityIcon } from "../../components/icons/iconTypes";
 import { formatServiceTiming } from "./teamsUtils";
 
 export type MemberSaveChangeContext = {
@@ -87,8 +88,8 @@ const describeIdListChanges = (
 };
 
 const describeNamedEntityChanges = (
-  previous: { name: string; description?: string; icon?: import("../../components/icons/iconTypes").PositionIcon },
-  next: { name: string; description?: string; icon?: import("../../components/icons/iconTypes").PositionIcon },
+  previous: { name: string; description?: string; icon?: EntityIcon },
+  next: { name: string; description?: string; icon?: EntityIcon },
   options?: { includeIcon?: boolean },
 ): string[] => {
   const changes: string[] = [];

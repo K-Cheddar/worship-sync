@@ -12,6 +12,7 @@ import {
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Modal from "../../../components/Modal/Modal";
+import SelectAllButton from "../../../components/SelectAllButton";
 import Select from "../../../components/Select/Select";
 import Icon from "../../../components/Icon/Icon";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
@@ -703,6 +704,9 @@ const TeamsPlansPage = () => {
     [bulkServiceIds, groups],
   );
   const bulkTemplate = bulkTemplates.find((template) => template.templateId === bulkTemplateId);
+  const allBulkServicesSelected =
+    activeServices.length > 0 &&
+    activeServices.every((service) => bulkServiceIds.includes(service.serviceId));
   const bulkPreview = calculateBulkTemplatePreview({
     entries: bulkApplyEntries.map(({ occurrence }) => ({
       planKey: getServicePlanKey(occurrence),
@@ -1017,11 +1021,6 @@ const TeamsPlansPage = () => {
 
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
-        <div className="flex justify-end">
-          <Button type="button" variant="tertiary" svg={CalendarDays} onClick={openGeneratedSchedulePeriod}>
-            View schedule
-          </Button>
-        </div>
         <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <ServicePlanEditor
@@ -1053,7 +1052,6 @@ const TeamsPlansPage = () => {
                 },
               }}
               canEdit={canEditPlan}
-              initialEditing
               backLabel="Back to Services"
               onBack={() => {
                 setOpenServingTabOnSelection(false);
@@ -1062,14 +1060,26 @@ const TeamsPlansPage = () => {
               planNavigation={planNavigation}
               initialTab={openServingTabOnSelection ? "serving" : "plan"}
               mobileServingContent={
-                <WhosServingPanel
-                  assignmentTeams={assignmentTeams}
-                  onOpenSchedule={openSchedule}
-                  microphones={microphones}
-                  assignmentsStatus={assignmentsStatus}
-                  showHeading={false}
-                  canEdit={canEditPlan}
-                />
+                <div className="flex flex-col gap-3">
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={CalendarDays}
+                      onClick={openGeneratedSchedulePeriod}
+                    >
+                      View schedule
+                    </Button>
+                  </div>
+                  <WhosServingPanel
+                    assignmentTeams={assignmentTeams}
+                    onOpenSchedule={openSchedule}
+                    microphones={microphones}
+                    assignmentsStatus={assignmentsStatus}
+                    showHeading={false}
+                    canEdit={canEditPlan}
+                  />
+                </div>
               }
             />
           </div>
@@ -1536,7 +1546,20 @@ const TeamsPlansPage = () => {
             />
           ) : null}
           <fieldset className="space-y-1">
-            <legend className="mb-2 text-sm font-semibold text-gray-100">Services</legend>
+            <legend className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold text-gray-100">
+              <span>Services</span>
+              <SelectAllButton
+                allSelected={allBulkServicesSelected}
+                selectLabel="Select all"
+                clearLabel="Deselect all"
+                disabled={bulkApplying || activeServices.length === 0}
+                onClick={() => setBulkServiceIds(
+                  allBulkServicesSelected
+                    ? []
+                    : activeServices.map((service) => service.serviceId),
+                )}
+              />
+            </legend>
             {activeServices.map((service) => (
               <Checkbox
                 key={service.serviceId}

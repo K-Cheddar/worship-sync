@@ -642,8 +642,6 @@ export type OverlayInfo = {
   /** Last synchronized values, used to detect independent operator overrides. */
   servicePlanBaseline?: Partial<Record<"name" | "title" | "event", string>>;
   servicePlanOverrides?: Partial<Record<"name" | "title" | "event", boolean>>;
-  /** Legacy overlay association must be reviewed before replacing its fields. */
-  servicePlanReviewRequired?: boolean;
 };
 
 export type DBOverlay = OverlayInfo & {

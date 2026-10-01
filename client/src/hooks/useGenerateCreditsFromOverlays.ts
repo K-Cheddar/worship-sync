@@ -300,8 +300,7 @@ export function useGenerateCreditsFromOverlays() {
           const preserveManual = Boolean(
             existing?.generatedTextOverridden
             || (existing?.generatedBaselineText !== undefined
-              ? existing.text !== existing.generatedBaselineText
-              : Boolean(existing?.text.trim())),
+              && existing.text !== existing.generatedBaselineText),
           );
           return [
             {

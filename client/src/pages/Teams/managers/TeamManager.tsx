@@ -16,6 +16,7 @@ import {
 import type { TeamRecord, TeamPosition, TeamQualificationArea, TeamRole, TeamRosterMember } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
 import FormActionButtons from "../components/FormActionButtons";
@@ -28,7 +29,7 @@ import {
 } from "../components/EntityListFilters";
 import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
-import PositionIconPicker from "../PositionIconPicker";
+import EntityIconPicker from "../EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
 import {
@@ -57,6 +58,7 @@ type TeamManagerProps = {
   onSaved: (team: TeamRecord, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (teamId: string) => void;
+  onImported?: () => void;
 };
 
 const TeamManager = ({
@@ -70,6 +72,7 @@ const TeamManager = ({
   onSaved,
   onArchived,
   onRemoved,
+  onImported,
 }: TeamManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -297,6 +300,7 @@ const TeamManager = ({
         sectionTitle="Teams"
         description="Organize members into scheduling teams."
         createLabel="Create team"
+        listHeaderActions={<PortableDataActions type="teams" onImported={onImported} />}
         listToolbar={
           <div className="space-y-3">
             {returnTo && !showCreate ? (
@@ -382,7 +386,7 @@ const TeamManager = ({
         }
       >
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-        <PositionIconPicker legacyOnly value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon: typeof icon === "string" ? icon : "" }))} />
+        <EntityIconPicker context="team" value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-20" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
         <EntityMultiSelect
           label="Members"

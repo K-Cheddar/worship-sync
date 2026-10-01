@@ -44,7 +44,7 @@ export const resolveRangePreset = (
   switch (preset) {
     case "upcoming":
       start = new Date(year, month, now.getDate());
-      end = new Date(year, month + 2, 0);
+      end = new Date(year, month, now.getDate() + 30);
       break;
     case "thisMonth":
       start = new Date(year, month, 1);

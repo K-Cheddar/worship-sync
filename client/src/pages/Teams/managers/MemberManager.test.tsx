@@ -976,6 +976,39 @@ describe("MemberManager roster contact information", () => {
     expect(screen.getByRole("button", { name: /Phone Only/ })).toBeInTheDocument();
   });
 
+  it("shows roster photos and initials fallback in the member list", () => {
+    renderManager({
+      data: buildData({
+        members: [
+          {
+            memberId: "member-photo",
+            churchId: "church-1",
+            firstName: "Rae",
+            lastName: "Kim",
+            positionIds: [],
+            blockoutDates: [],
+            profileImageUrl: "https://example.com/rae.jpg",
+          },
+          {
+            memberId: "member-no-photo",
+            churchId: "church-1",
+            firstName: "Jo",
+            lastName: "Lee",
+            positionIds: [],
+            blockoutDates: [],
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByAltText("")).toHaveAttribute(
+      "src",
+      "https://example.com/rae.jpg",
+    );
+    expect(screen.getByText("JL")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Edit/ })).toHaveLength(2);
+  });
+
   it("offers contextual SMS opt-in link actions for a saved member", async () => {
     const user = userEvent.setup();
     const originalClipboard = navigator.clipboard;

@@ -31,6 +31,7 @@ import type { TeamRecord, TeamPosition } from "../../../api/authTypes";
 import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import {
   EntityListFilterPanel,
   EntityListFilterFooter,
@@ -44,7 +45,7 @@ import TeamsSectionReturnPrompt from "../components/TeamsSectionReturnPrompt";
 import SortablePositionRow from "../components/SortablePositionRow";
 import FormActionButtons from "../components/FormActionButtons";
 import EntityFormDangerActions from "../components/EntityFormDangerActions";
-import PositionIconPicker from "../PositionIconPicker";
+import EntityIconPicker from "../EntityIconPicker";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
 import { useSensors } from "../../../utils/dndUtils";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
@@ -101,6 +102,7 @@ type PositionManagerProps = {
   onArchived: () => void;
   onRemoved: (positionId: string) => void;
   onReordered: (teamId: string, orderedPositionIds: string[]) => void;
+  onImported?: () => void;
 };
 
 const PositionManager = ({
@@ -112,6 +114,7 @@ const PositionManager = ({
   onArchived,
   onRemoved,
   onReordered,
+  onImported,
 }: PositionManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -253,6 +256,10 @@ const PositionManager = ({
   }, [churchId]);
 
   const cancelEditing = () => {
+    requestDiscardAction(reset);
+  };
+
+  const returnToOrigin = () => {
     requestDiscardAction(() => finishEditing(reset));
   };
 
@@ -450,6 +457,7 @@ const PositionManager = ({
         sectionTitle="Positions"
         description="Define roles and position requirements."
         createLabel="Create position"
+        listHeaderActions={<PortableDataActions type="positions" onImported={onImported} />}
         scrollableList
         listToolbar={
           activeTeams.length === 0 ? (
@@ -528,7 +536,7 @@ const PositionManager = ({
         }
         formHeaderActions={
           editing || returnTo ? (
-            <TeamsReturnToolbar returnTo={returnTo} onBack={cancelEditing}>
+            <TeamsReturnToolbar returnTo={returnTo} onBack={returnToOrigin}>
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
@@ -582,7 +590,7 @@ const PositionManager = ({
           .
         </p>
         <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-        <PositionIconPicker value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
+        <EntityIconPicker context="position" value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
         <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-24" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
         {positionTeamUsesMicrophones ? (
           <div>

@@ -282,6 +282,29 @@ describe("TeamsPlansPage", () => {
     expect(within(dialog).getByRole("checkbox", { name: "Easter Sunday" })).not.toBeChecked();
   });
 
+  it("selects or deselects every service in the Apply template dialog", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("heading", { name: "All services" });
+    await user.click(screen.getByRole("button", { name: /^By service$/i }));
+    await screen.findByRole("heading", { name: "Sabbath Service" });
+    await user.click(screen.getAllByRole("button", { name: "Apply template" })[0]);
+
+    const dialog = await screen.findByRole("dialog", { name: "Apply plan templates" });
+    const selectAllButton = within(dialog).getByRole("button", { name: "Select all" });
+    expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Easter Sunday" })).not.toBeChecked();
+
+    await user.click(selectAllButton);
+    expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Easter Sunday" })).toBeChecked();
+
+    await user.click(within(dialog).getByRole("button", { name: "Deselect all" }));
+    expect(within(dialog).getByRole("checkbox", { name: "Sabbath Service" })).not.toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Easter Sunday" })).not.toBeChecked();
+  });
+
   it("scopes By date Apply template to selected service filters", async () => {
     const user = userEvent.setup();
     renderPage();
@@ -371,6 +394,41 @@ describe("TeamsPlansPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens a saved plan in read mode from the plan list", async () => {
+    const user = userEvent.setup();
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [
+        {
+          planKey: `easter@${oneTimePlainDate}`,
+          serviceId: "easter",
+          date: oneTimePlainDate,
+          name: "Easter Sunday",
+        },
+      ],
+    });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: `church-1::easter@${oneTimePlainDate}`,
+        churchId: "church-1",
+        planKey: `easter@${oneTimePlainDate}`,
+        serviceId: "easter",
+        date: oneTimePlainDate,
+        name: "Easter Sunday",
+        sections: [{ id: "section-1", name: "Worship", elements: [] }],
+      } as never,
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Open plan for /i }));
+
+    expect(await screen.findByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Done$/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+    expect(screen.getByRole("button", { name: /^Done$/i })).toBeInTheDocument();
+  });
+
   it("opens the plan editor for a clicked date and can navigate back to the list", async () => {
     const user = userEvent.setup();
     // Only the one-time service, so the single tile below is unambiguously its
@@ -420,6 +478,18 @@ describe("TeamsPlansPage", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-07-20T12:00:00"));
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    mockGetServicePlan.mockImplementation(async (_churchId, planKey) => ({
+      success: true,
+      servicePlan: {
+        planId: `church-1::${planKey}`,
+        churchId: "church-1",
+        planKey,
+        serviceId: "sabbath",
+        date: planKey.split("@")[1],
+        name: "Sabbath Service",
+        sections: [{ id: "section-1", name: "Worship", elements: [] }],
+      } as never,
+    }));
 
     renderPage();
     // Flush listServicePlans microtasks so plan-status setState stays inside act
@@ -448,18 +518,24 @@ describe("TeamsPlansPage", () => {
     const next = screen.getByRole("button", { name: /Next plan/i });
     expect(previous).toBeEnabled();
     expect(next).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Edit$/i }));
+    expect(screen.getByRole("button", { name: /^Done$/i })).toBeInTheDocument();
 
     const dateBeforeNext = screen.getByText(/2026/).textContent;
     await user.click(next);
     await waitFor(() => {
       expect(screen.getByText(/2026/).textContent).not.toBe(dateBeforeNext);
     });
+    expect(await screen.findByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
     const dateAfterNext = screen.getByText(/2026/).textContent;
 
     await user.click(screen.getByRole("button", { name: /Previous plan/i }));
     await waitFor(() => {
       expect(screen.getByText(/2026/).textContent).toBe(dateBeforeNext);
     });
+    expect(await screen.findByRole("button", { name: /^Edit$/i })).toBeInTheDocument();
     expect(dateAfterNext).not.toBe(dateBeforeNext);
 
     jest.useRealTimers();

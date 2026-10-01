@@ -1,7 +1,12 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Provider } from "react-redux";
+import store from "../../store/store";
+import { setActiveItemInList } from "../../store/itemListSlice";
+import { getServiceFlowProgress } from "../../services/serviceFlowProgress";
 import ControllerServicePlanView from "./ControllerServicePlanView";
 import { buildServicePlanFlowSnapshot } from "../buildServicePlanFlowSnapshot";
+import { getServicePlanLiveProgress } from "../Services/servicePlanLive";
 import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlan } from "../../types/servicePlan";
 
@@ -30,7 +35,11 @@ const plan: ServicePlan = {
         { id: "team-note", scope: "team", label: "Presentation", note: plainTextToRichText("Presentation team cue") },
       ],
       assignees: [{ id: "assignee-1", name: "Jordan Rivera", microphoneIds: [] }],
-      resources: [{ id: "resource-1", type: "url", title: "Run sheet", url: "https://example.test/run-sheet" }],
+      resources: [
+        { id: "resource-1", type: "url", title: "Run sheet", url: "https://example.test/run-sheet" },
+        { id: "resource-2", type: "song", title: "Opening Song" },
+        { id: "resource-3", type: "scripture", title: "Psalm 100:1–5" },
+      ],
     }],
   }],
 };
@@ -63,14 +72,26 @@ const snapshot = (() => {
   };
   return built;
 })();
+const brandColors = {
+  sectionLabelColor: "#a855f7",
+  sectionBorderColor: "#06b6d4",
+};
+
+const renderWithStore = (ui: React.ReactElement) => render(
+  <Provider store={store}>{ui}</Provider>,
+);
 
 describe("ControllerServicePlanView", () => {
   beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   it("keeps quiet roster roles selectable while rendering compact controller rows", async () => {
     const user = userEvent.setup();
-    render(
+    renderWithStore(
       <ControllerServicePlanView
+        {...brandColors}
         plan={plan}
         snapshot={snapshot}
         churchId="church-1"
@@ -78,7 +99,7 @@ describe("ControllerServicePlanView", () => {
       />,
     );
 
-    expect(screen.getByText("Welcome")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Welcome" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Worship" })).toBeInTheDocument();
     expect(screen.getByText("Shared safety note")).toBeInTheDocument();
     expect(screen.getByText("Presentation team cue")).toBeInTheDocument();
@@ -86,7 +107,21 @@ describe("ControllerServicePlanView", () => {
     expect(screen.getByText("IEM 1 · Avery Volunteer")).toBeInTheDocument();
     expect(screen.getByText("18:00")).toBeInTheDocument();
     expect(screen.getByText("1:30")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Filter roles/ })).toBeInTheDocument();
+    expect(screen.getByText("Led by:")).toHaveClass("text-zinc-400");
+    expect(screen.getByText("Jordan Rivera")).toHaveClass("text-white");
+    expect(screen.getByRole("heading", { name: "Welcome" })).toHaveClass("min-w-0", "flex-1", "break-words", "whitespace-normal", "text-xs", "font-semibold");
+    expect(screen.getByText("18:00")).toHaveClass("shrink-0");
+    expect(screen.getByText("1:30")).toHaveClass("shrink-0");
+    expect(screen.getByRole("button", { name: "View Web link: Run sheet" })).toHaveClass("border-neutral-700", "bg-neutral-900/80");
+    expect(screen.getByTitle("Song: Opening Song")).toBeInTheDocument();
+    expect(screen.getByTitle("Scripture: Psalm 100:1–5")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Worship" })).toHaveClass("px-2.5", "py-1.5");
+    expect(screen.getByRole("heading", { name: "Worship" })).toHaveStyle({ color: brandColors.sectionLabelColor });
+    expect(screen.getByRole("region", { name: "Service plan section: Worship" })).toHaveStyle({
+      borderLeftColor: brandColors.sectionBorderColor,
+    });
+    expect(screen.getAllByRole("listitem")[0]).toHaveClass("flex", "px-2.5", "py-2");
+    expect(screen.getByRole("button", { name: /Filter roles/ })).toHaveClass("!bg-zinc-900", "!border-zinc-700", "!h-7");
 
     await user.click(screen.getByRole("button", { name: /Filter roles/ }));
     expect(screen.getByRole("button", { name: "Presentation Operator" })).toBeInTheDocument();
@@ -94,8 +129,9 @@ describe("ControllerServicePlanView", () => {
 
   it("filters microphones and role notes by the selected controller role", async () => {
     const user = userEvent.setup();
-    render(
+    renderWithStore(
       <ControllerServicePlanView
+        {...brandColors}
         plan={plan}
         snapshot={snapshot}
         churchId="church-1"
@@ -108,6 +144,8 @@ describe("ControllerServicePlanView", () => {
     expect(screen.queryByText("Vocal mic")).not.toBeInTheDocument();
     expect(screen.queryByText("IEM 1 · Avery Volunteer")).not.toBeInTheDocument();
     expect(screen.getByText("Shared safety note")).toBeInTheDocument();
+    expect(screen.getByText("Presentation team cue")).toBeInTheDocument();
+    expect(screen.queryByText("Graphics team cue")).not.toBeInTheDocument();
     expect(screen.queryByText("Text team cue")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Text Master" }));
@@ -117,8 +155,9 @@ describe("ControllerServicePlanView", () => {
   it("persists profile-scoped filters and removes stale role ids", async () => {
     const key = "worship-sync:service-plan-operator:church-1:presentation";
     localStorage.setItem(key, JSON.stringify({ teamName: "Presentation", positionIds: ["text-master", "deleted-role"] }));
-    render(
+    renderWithStore(
       <ControllerServicePlanView
+        {...brandColors}
         plan={plan}
         snapshot={snapshot}
         churchId="church-1"
@@ -132,7 +171,7 @@ describe("ControllerServicePlanView", () => {
         positionIds: ["text-master"],
       });
     });
-    expect(screen.getByRole("combobox", { name: /Filter service plan by team/ })).toHaveValue("Presentation");
+    expect(screen.getByRole("combobox", { name: "Team:" })).toHaveTextContent("Presentation");
     expect(within(screen.getByRole("button", { name: /Filter roles/ })).getByText("Text Master")).toBeInTheDocument();
   });
 
@@ -151,8 +190,9 @@ describe("ControllerServicePlanView", () => {
       }],
     };
     const resourceSnapshot = buildServicePlanFlowSnapshot({ plan: resourcePlan, startsAt: resourcePlan.startsAt! });
-    render(
+    renderWithStore(
       <ControllerServicePlanView
+        {...brandColors}
         plan={resourcePlan}
         snapshot={resourceSnapshot}
         churchId="church-1"
@@ -168,47 +208,36 @@ describe("ControllerServicePlanView", () => {
 
     await user.click(screen.getByText(/View notes/));
     expect(screen.getByRole("group")).toHaveAttribute("open");
-    await user.click(screen.getByRole("button", { name: "View resource: Dropbox link" }));
+    await user.click(screen.getByRole("button", { name: "View Web link: Dropbox link" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("marks the live item clearly and supports an unpublished plan without a viewer snapshot", () => {
-    render(
+    const manualPlan = {
+      ...plan,
+      publicLive: { mode: "manual" as const, currentElementId: "welcome" },
+    };
+    renderWithStore(
       <ControllerServicePlanView
-        plan={plan}
+        {...brandColors}
+        plan={manualPlan}
         churchId="church-1"
         controllerProfileId="presentation"
-        activeItemId="welcome"
       />,
     );
 
     expect(screen.getByText("Live")).toBeInTheDocument();
-    expect(screen.getByRole("listitem")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("listitem", { current: true })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("listitem", { current: true })).toHaveClass("border-emerald-400", "bg-emerald-500/[0.07]");
     expect(screen.getByText("Welcome")).toBeInTheDocument();
   });
 
-  it("follows the current item from the shared service snapshot", () => {
-    const liveSnapshot = {
-      ...snapshot,
-      service: { ...snapshot.service, live: { mode: "manual" as const, currentItemId: "welcome" } },
-    };
-    render(
+  it("uses controller surfaces and ignores the standalone public-view theme preference", () => {
+    localStorage.setItem("worshipsyncServicePublicTheme", "light");
+    const getItem = jest.spyOn(Storage.prototype, "getItem");
+    renderWithStore(
       <ControllerServicePlanView
-        plan={plan}
-        snapshot={liveSnapshot}
-        churchId="church-1"
-        controllerProfileId="presentation"
-      />,
-    );
-
-    expect(screen.getByText("Live")).toBeInTheDocument();
-    expect(screen.getByRole("listitem")).toHaveAttribute("aria-current", "true");
-  });
-
-  it("filters the compact microphone cues by team while retaining shared notes", async () => {
-    const user = userEvent.setup();
-    render(
-      <ControllerServicePlanView
+        {...brandColors}
         plan={plan}
         snapshot={snapshot}
         churchId="church-1"
@@ -216,7 +245,139 @@ describe("ControllerServicePlanView", () => {
       />,
     );
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter service plan by team" }), "Presentation");
+    expect(getItem).not.toHaveBeenCalledWith("worshipsyncServicePublicTheme");
+    expect(screen.getByLabelText("Selected service plan running order")).not.toHaveClass("text-gray-100");
+    expect(screen.getByRole("heading", { name: "Worship" })).toHaveClass("bg-zinc-950/80");
+  });
+
+  it("uses the canonical manual plan override", () => {
+    const manualPlan = {
+      ...plan,
+      publicLive: { mode: "manual" as const, currentElementId: "welcome" },
+    };
+    const liveSnapshot = buildServicePlanFlowSnapshot({
+      plan: manualPlan,
+      startsAt: manualPlan.startsAt!,
+    });
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={manualPlan}
+        snapshot={liveSnapshot}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { current: true })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("highlights the scheduled item and stays unchanged when an outline item is selected", () => {
+    const startsAt = new Date(Date.now() - 100_000).toISOString();
+    const schedulePlan: ServicePlan = {
+      ...plan,
+      startsAt,
+      sections: [{
+        id: "section-1",
+        name: "Worship",
+        elements: [
+          { ...plan.sections[0].elements[0], startTime: undefined, durationSeconds: 90 },
+          {
+            id: "song",
+            type: "free",
+            title: plainTextToRichText("Song"),
+            durationSeconds: 120,
+          },
+        ],
+      }],
+    };
+    const ui = (
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={schedulePlan}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />
+    );
+    const { rerender } = renderWithStore(ui);
+
+    const liveRow = screen.getByRole("listitem", { current: true });
+    expect(within(liveRow).getByRole("heading", { name: "Song" })).toBeInTheDocument();
+    expect(getServicePlanLiveProgress(schedulePlan, Date.now())?.current?.item.id).toBe("song");
+
+    // Outline browsing updates Redux selection only. The plan's live row is
+    // still determined by the service-flow schedule.
+    store.dispatch(setActiveItemInList("outline-welcome"));
+    rerender(ui);
+
+    expect(screen.getAllByRole("listitem", { current: true })).toHaveLength(1);
+    expect(within(screen.getByRole("listitem", { current: true })).getByRole("heading", { name: "Song" }))
+      .toBeInTheDocument();
+    expect(within(screen.getByRole("listitem", { current: true })).queryByRole("heading", { name: "Welcome" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("uses the anchored live timeline and agrees with public service progress", () => {
+    const startedAt = new Date(Date.now() - 30_000).toISOString();
+    const anchoredPlan: ServicePlan = {
+      ...plan,
+      publicLive: {
+        mode: "anchored",
+        currentElementId: "song",
+        startedAt,
+      },
+      sections: [{
+        ...plan.sections[0],
+        elements: [
+          { ...plan.sections[0].elements[0], startTime: undefined, durationSeconds: 90 },
+          {
+            id: "song",
+            type: "free",
+            title: plainTextToRichText("Song"),
+            durationSeconds: 120,
+          },
+        ],
+      }],
+    };
+    const publicSnapshot = buildServicePlanFlowSnapshot({
+      plan: anchoredPlan,
+      startsAt: anchoredPlan.startsAt!,
+      serverNowMs: Date.now(),
+    });
+    const controllerProgress = getServicePlanLiveProgress(anchoredPlan, Date.now());
+    const publicProgress = getServiceFlowProgress(publicSnapshot.service, Date.now());
+
+    expect(controllerProgress?.current?.item.id).toBe("song");
+    expect(controllerProgress?.current?.item.id).toBe(publicProgress.current?.item.id);
+
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={anchoredPlan}
+        snapshot={publicSnapshot}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+    expect(within(screen.getByRole("listitem", { current: true })).getByRole("heading", { name: "Song" }))
+      .toBeInTheDocument();
+  });
+
+  it("filters the compact microphone cues by team while retaining shared notes", async () => {
+    const user = userEvent.setup();
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={plan}
+        snapshot={snapshot}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Team:" }));
+    await user.click(screen.getByRole("option", { name: "Presentation" }));
     expect(screen.queryByText("Vocal mic")).not.toBeInTheDocument();
     expect(screen.getByText("Shared safety note")).toBeInTheDocument();
   });

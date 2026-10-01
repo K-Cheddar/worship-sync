@@ -8,12 +8,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowUpRight, ChevronDown, ChevronUp, Presentation, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ArrowUpRight, ChevronDown, Presentation, X } from "lucide-react";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
-import { useDispatch } from "../hooks";
-import { setRequestOpenMediaPanel } from "../store/preferencesSlice";
 import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
 import { formatCanvaImportError } from "../utils/canvaImportError";
 
@@ -54,6 +52,9 @@ export type TransferItem = CanvaTransfer | UploadTransfer;
 
 type TransferContextValue = {
   transfers: TransferItem[];
+  isMinimized: boolean;
+  minimizeTransfers: () => void;
+  restoreTransfers: () => void;
   startCanvaTransfer: (input: Omit<CanvaTransfer, "kind" | "status" | "pageStatus" | "controller" | "customItemRetryPending" | "cleanupRetryPending" | "cleanupError">) => string;
   updateUploadTransfer: (item: UploadTransfer | null) => void;
 };
@@ -67,8 +68,8 @@ export const useTransfers = () => {
 export const useOptionalTransfers = () => useContext(TransferContext);
 
 const stageLabel = (status: CanvaTransferStatus) => ({
-  pending: "Starting Canva import…",
-  exporting: "Requesting Canva export",
+  pending: "Preparing Canva import…",
+  exporting: "Requesting Canva export…",
   processing: "Processing exported media",
   finalizing: "Saving presentation slides",
   completed: "Import complete",
@@ -77,14 +78,13 @@ const stageLabel = (status: CanvaTransferStatus) => ({
   cancelled: "Import cancelled",
 }[status]);
 
-const TransferPanel = ({ transfers, setTransfers }: {
+const TransferPanel = ({ transfers, setTransfers, isMinimized, onMinimize }: {
   transfers: TransferItem[];
   setTransfers: React.Dispatch<React.SetStateAction<TransferItem[]>>;
+  isMinimized: boolean;
+  onMinimize: () => void;
 }) => {
-  const [minimized, setMinimized] = useState(false);
   const [transferToCancel, setTransferToCancel] = useState<CanvaTransfer | null>(null);
-  const navigate = useNavigate();
-  const dispatch = useDispatch();
   const activeCount = transfers.filter((item) => item.kind === "upload"
     ? item.status === "uploading" || item.status === "processing"
     : !["completed", "partial", "failed", "cancelled"].includes(item.status)).length;
@@ -95,7 +95,7 @@ const TransferPanel = ({ transfers, setTransfers }: {
 
   const dismiss = (id: string) => setTransfers((current) => current.filter((item) => item.id !== id));
 
-  if (!transfers.length) return null;
+  if (!transfers.length || isMinimized) return null;
   return (
     <>
     <aside aria-label="Transfers" className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl">
@@ -105,10 +105,10 @@ const TransferPanel = ({ transfers, setTransfers }: {
           <span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs" aria-label={`${activeCount} active transfers`}>{activeCount} active</span>
         </div>
         <div className="flex gap-1">
-          <Button variant="tertiary" svg={minimized ? ChevronUp : ChevronDown} aria-label={minimized ? "Expand transfers" : "Minimize transfers"} onClick={() => setMinimized((value) => !value)} />
+          <Button variant="tertiary" svg={ChevronDown} aria-label="Minimize transfers" onClick={onMinimize} />
         </div>
       </div>
-      {!minimized ? <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
+      <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
         {transfers.map((item) => {
           if (item.kind === "upload") return <li key={item.id} className="rounded-md bg-gray-800 p-3">
             <div className="flex items-center justify-between gap-2"><p className="truncate text-sm font-medium">{item.title}</p><span className="text-xs text-gray-300">{item.status === "completed" ? "Complete" : item.status === "failed" ? "Failed" : `${Math.round(item.progress)}%`}</span></div>
@@ -122,6 +122,7 @@ const TransferPanel = ({ transfers, setTransfers }: {
           const currentExportPage = item.pages.find((page) => item.pageStatus[page] === "exporting");
           const currentWaitingPage = item.pages.find((page) => item.pageStatus[page] === "waiting");
           const currentProcessingPage = item.pages.find((page) => item.pageStatus[page] === "processing" || item.pageStatus[page] === "saving");
+          const isPageProcessing = item.status === "finalizing" || Object.values(item.pageStatus).some((status) => ["processing", "saving", "ready", "error"].includes(status));
           const isTerminal = ["completed", "partial", "failed", "cancelled"].includes(item.status);
           const progressLabel = isTerminal
             ? item.customItemError ? "Media imported; custom item needs attention" : stageLabel(item.status)
@@ -142,8 +143,10 @@ const TransferPanel = ({ transfers, setTransfers }: {
                 : <Button variant="tertiary" svg={X} aria-label={`Cancel ${item.title}`} onClick={() => cancel(item)} />}
             </div>
             <p className="mt-1 text-xs text-gray-300">{progressLabel}</p>
-            <p className="mt-1 text-xs text-gray-300">{completedPages} of {item.pages.length} pages processed · {pagePercent}% of pages</p>
-            {item.status !== "failed" && item.status !== "cancelled" ? <div className="mt-2 h-1.5 rounded bg-gray-700"><div className="h-1.5 rounded bg-cyan-500 transition-[width]" style={{ width: `${percent}%` }} /></div> : null}
+            {isPageProcessing && <p className="mt-1 text-xs text-gray-300">{completedPages} of {item.pages.length} pages processed · {pagePercent}%</p>}
+            {item.status !== "failed" && item.status !== "cancelled" ? <div role="progressbar" aria-label={`${item.title} progress`} aria-valuemin={0} aria-valuemax={100} {...(isPageProcessing ? { "aria-valuenow": percent } : {})} className="mt-2 h-1.5 overflow-hidden rounded bg-gray-700">{isPageProcessing
+              ? <div className="h-1.5 rounded bg-cyan-500 transition-[width]" style={{ width: `${percent}%` }} />
+              : <div className="h-full w-1/3 animate-pulse rounded bg-cyan-500" />}</div> : null}
             {item.error ? <p role="alert" className="mt-2 text-xs text-red-200">{item.error}</p> : null}
             {item.cleanupError ? <div role="alert" className="mt-2 text-xs text-amber-200">Some unused Canva files still need cleanup. {item.cleanupError}
               {item.cleanupRetry ? <button className="ml-1 text-cyan-200 underline disabled:opacity-50" disabled={item.cleanupRetryPending} onClick={async () => {
@@ -168,13 +171,10 @@ const TransferPanel = ({ transfers, setTransfers }: {
               }}>{item.customItemRetryPending ? "Creating…" : "Retry custom item"}</button> : null}
             </div> : null}
             {item.failedPages?.length ? <div role="alert" className="mt-2 text-xs text-amber-200">{item.failedPages.map(({ page, error }) => `Page ${page}: ${error}`).join(" ")} Reopen the Canva import to retry these pages.</div> : null}
-            {item.status === "completed" || item.status === "partial" || (item.status === "cancelled" && Boolean(item.importedCount || item.viewPath)) ? <div className="mt-2 flex items-center justify-between text-xs"><span>{item.importedCount} slides imported</span><button className="flex items-center gap-1 text-cyan-200 underline" onClick={() => {
-              if (item.viewPath) navigate(item.viewPath);
-              else { dispatch(setRequestOpenMediaPanel(true)); navigate("/controller"); }
-            }}><ArrowUpRight size={14} />View presentation</button></div> : null}
+            {item.status === "completed" || item.status === "partial" || (item.status === "cancelled" && Boolean(item.importedCount || item.viewPath)) ? <div className="mt-2 flex items-center justify-between text-xs"><span>{item.importedCount} slides imported</span>{item.viewPath ? <Link to={item.viewPath} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800"><ArrowUpRight size={14} />View presentation</Link> : null}</div> : null}
           </li>;
         })}
-      </ul> : <button className="w-full px-3 py-2 text-left text-xs text-gray-300" onClick={() => setMinimized(false)}>{activeCount ? `${activeCount} active transfer${activeCount === 1 ? "" : "s"}` : "Recent transfers"} · Expand</button>}
+      </ul>
     </aside>
     <Modal
       isOpen={Boolean(transferToCancel)}
@@ -197,6 +197,7 @@ const TransferPanel = ({ transfers, setTransfers }: {
 
 export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
+  const [isMinimized, setIsMinimized] = useState(false);
   const canvaQueue = useRef(Promise.resolve());
   const queuedCanvaJobs = useRef(new Map<string, string>());
   const startCanvaTransfer = useCallback<TransferContextValue["startCanvaTransfer"]>((input) => {
@@ -274,6 +275,8 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [transfers]);
-  const value = useMemo(() => ({ transfers, startCanvaTransfer, updateUploadTransfer }), [transfers, startCanvaTransfer, updateUploadTransfer]);
-  return <TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} setTransfers={setTransfers} /></TransferContext.Provider>;
+  const minimizeTransfers = useCallback(() => setIsMinimized(true), []);
+  const restoreTransfers = useCallback(() => setIsMinimized(false), []);
+  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateUploadTransfer }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateUploadTransfer]);
+  return <TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} setTransfers={setTransfers} isMinimized={isMinimized} onMinimize={minimizeTransfers} /></TransferContext.Provider>;
 };

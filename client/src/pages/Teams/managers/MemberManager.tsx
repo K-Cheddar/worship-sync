@@ -42,6 +42,7 @@ import type {
 import type { MenuItemType } from "../../../types";
 import generateRandomId from "../../../utils/generateRandomId";
 import CreatePanel from "../CreatePanel";
+import PortableDataActions from "../../../components/PortableDataTransfer/PortableDataActions";
 import {
   MemberFilterPanel,
   MemberListFilterToolbar,
@@ -51,6 +52,7 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
 import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
 import SelectAllButton from "../../../components/SelectAllButton";
@@ -167,6 +169,7 @@ type MemberManagerProps = {
   onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
   onRemoved: (memberId: string) => void;
+  onImported?: () => void;
 };
 
 const MemberManager = ({
@@ -178,6 +181,7 @@ const MemberManager = ({
   onTeamSaved,
   onArchived,
   onRemoved,
+  onImported,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast, removeToast } = useToast();
@@ -1032,6 +1036,7 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
+        listHeaderActions={<PortableDataActions type="members" onImported={onImported} />}
         keepCreateActionVisible
         scrollableList
         listToolbar={
@@ -1116,6 +1121,13 @@ const MemberManager = ({
                 key={member.memberId}
                 compact
                 title={memberName(member)}
+                leadingVisual={
+                  <MemberAvatar
+                    profileImageUrl={member.profileImageUrl}
+                    memberName={memberName(member)}
+                    className="h-8 w-8"
+                  />
+                }
                 // Surfaced in the list so an admin can see at a glance which
                 // roster records are missing contact information.
                 subtitle={

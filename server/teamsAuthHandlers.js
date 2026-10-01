@@ -59,7 +59,7 @@ import {
   PORTABLE_SCHEMAS,
   buildPortableDatasets,
   LIST_DELIMITER,
-  parsePortablePositionIcon,
+  parsePortableEntityIcon,
 } from "./dataTransfer/schemas.js";
 import {
   classifyPortablePreviewAction,
@@ -3872,28 +3872,32 @@ export const createTeamsAuthHandlers = ({
     });
   };
 
-  const validatePositionIcon = (value, existingIcon) => {
+  const validateEntityIcon = (value, existingIcon, entityLabel) => {
+    const label = `${entityLabel} icon`;
     if (value === undefined) return undefined;
     if (value === null || value === "") return "";
     if (typeof value === "string") {
       return normalizeShortText(value, { max: 40 });
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw httpError(400, "Position icon is invalid.");
+      throw httpError(400, `${label} is invalid.`);
     }
-    const source = normalizeShortText(value.source, { max: 20 });
+    const source = typeof value.source === "string"
+      ? normalizeShortText(value.source, { max: 20 })
+      : "";
     if (source === "custom") {
       if (isDeepStrictEqual(value, existingIcon)) return value;
-      throw httpError(400, "Custom position icons are not supported yet.");
+      throw httpError(400, `Custom ${entityLabel.toLowerCase()} icons are not supported yet.`);
     }
-    const color =
-      value.color === undefined
-        ? undefined
-        : normalizeShortText(value.color, { max: 7 });
+    const color = value.color === undefined
+      ? undefined
+      : typeof value.color === "string"
+        ? normalizeShortText(value.color, { max: 7 })
+        : "invalid";
     if (color && !/^#[0-9a-f]{6}$/i.test(color)) {
       throw httpError(
         400,
-        "Position icon color must be a six-digit hex color.",
+        `${label} color must be a six-digit hex color.`,
       );
     }
     const colorField = color ? { color: color.toLowerCase() } : {};
@@ -3902,10 +3906,12 @@ export const createTeamsAuthHandlers = ({
       source !== "tabler" &&
       source !== "worshipsync"
     ) {
-      throw httpError(400, "Position icon source is invalid.");
+      throw httpError(400, `${label} source is invalid.`);
     }
-    const name = normalizeShortText(value.name, { max: 120 });
-    if (!name) throw httpError(400, "Position icon name is required.");
+    const name = typeof value.name === "string"
+      ? normalizeShortText(value.name, { max: 120 })
+      : "";
+    if (!name) throw httpError(400, `${label} name is required.`);
     return { source, name, ...colorField };
   };
 
@@ -3984,7 +3990,7 @@ export const createTeamsAuthHandlers = ({
           "Default IEM is not in this church's equipment list.",
         );
     }
-    const icon = validatePositionIcon(body?.icon, existingPosition?.icon);
+    const icon = validateEntityIcon(body?.icon, existingPosition?.icon, "Position");
     return {
       name,
       description: normalizeLongText(body?.description),
@@ -3997,7 +4003,7 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamPayload = async (body, churchId) => {
+  const validateTeamPayload = async (body, churchId, existingTeam = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Team name is required.");
@@ -4013,7 +4019,7 @@ export const createTeamsAuthHandlers = ({
     return {
       name,
       description: normalizeLongText(body?.description),
-      icon: normalizeShortText(body?.icon, { max: 40 }),
+      icon: validateEntityIcon(body?.icon, existingTeam?.icon, "Team") || "",
       memberIds,
       usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
       usesIemAssignments: body?.usesIemAssignments === true,
@@ -8580,6 +8586,7 @@ export const createTeamsAuthHandlers = ({
       "usesIems",
       "archived",
       "teamId",
+      "icon",
     ],
     positions: [
       "name",
@@ -10815,8 +10822,12 @@ export const createTeamsAuthHandlers = ({
                       ? record.usesIems === true ||
                         String(record.usesIems).toLowerCase() === "true"
                       : existing?.usesIemAssignments,
+                  ...(record.icon !== undefined
+                    ? { icon: parsePortableEntityIcon(record.icon) }
+                    : {}),
                 },
                 churchId,
+                existing,
               );
               if (importKey) payload._portableCreateKey = importKey;
               const saved = await upsertTeamEntity({
@@ -10903,7 +10914,7 @@ export const createTeamsAuthHandlers = ({
                     ? { order: Number(record.order) }
                     : {}),
                   ...(record.icon !== undefined
-                    ? { icon: parsePortablePositionIcon(record.icon) }
+                    ? { icon: parsePortableEntityIcon(record.icon) }
                     : {}),
                 },
                 churchId,
@@ -13585,11 +13596,17 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existingTeam = await assertTeamEntityInChurch(
+          "team",
+          req.params.teamId,
+          req.params.churchId,
+          { label: "Team", active: false },
+        );
         const team = await upsertTeamEntity({
           kind: "team",
           churchId: req.params.churchId,
           id: req.params.teamId,
-          payload: await validateTeamPayload(req.body, req.params.churchId),
+          payload: await validateTeamPayload(req.body, req.params.churchId, existingTeam),
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({

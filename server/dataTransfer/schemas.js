@@ -4,7 +4,7 @@ export const LIST_DELIMITER = " | ";
 
 export const PORTABLE_SCHEMAS = {
   members: ["First Name", "Last Name", "Title", "Email", "Phone", "Teams", "Positions", "Notes", "Serving Frequency", "Archived", "WorshipSync Member ID", "WorshipSync Team IDs", "WorshipSync Position IDs"],
-  teams: ["Team", "Description", "Uses Microphones", "Uses IEMs", "Archived", "WorshipSync Team ID"],
+  teams: ["Team", "Description", "Uses Microphones", "Uses IEMs", "Archived", "WorshipSync Team ID", "Icon"],
   positions: ["Position", "Team", "Description", "Group", "Order", "Archived", "WorshipSync Position ID", "WorshipSync Team ID", "Icon"],
   services: ["Service", "Recurrence", "Time", "Date", "Days of Week", "Start Date", "End Date", "Week Ordinal", "Weekday", "Combined Group", "Position", "Required Slots", "Archived", "WorshipSync Service ID", "WorshipSync Position ID"],
   schedules: ["Schedule", "Start Date", "End Date", "Service", "Date", "Start Time", "Team", "Position", "Slot", "Person", "Email", "Assignment Type", "Guest", "WorshipSync Schedule ID", "WorshipSync Occurrence ID", "WorshipSync Service ID", "WorshipSync Team ID", "WorshipSync Position ID", "WorshipSync Member ID"],
@@ -58,8 +58,8 @@ export const buildPortableDatasets = ({ members = [], teams = [], positions = []
       member.servingFrequency, archived(member), member.memberId,
       memberTeamIds.join(LIST_DELIMITER), (member.positionIds || []).join(LIST_DELIMITER)];
   });
-  const teamRows = teams.map((team) => [team.name, team.description, Boolean(team.usesMicrophoneAssignments), Boolean(team.usesIemAssignments), archived(team), team.teamId]);
-  const positionRows = positions.map((position) => [position.name, teamsById.get(position.teamId)?.name, position.description, position.groupId, position.order, archived(position), position.positionId, position.teamId, serializePortablePositionIcon(position.icon)]);
+  const teamRows = teams.map((team) => [team.name, team.description, Boolean(team.usesMicrophoneAssignments), Boolean(team.usesIemAssignments), archived(team), team.teamId, serializePortableEntityIcon(team.icon)]);
+  const positionRows = positions.map((position) => [position.name, teamsById.get(position.teamId)?.name, position.description, position.groupId, position.order, archived(position), position.positionId, position.teamId, serializePortableEntityIcon(position.icon)]);
   const serviceRows = services.flatMap((service) => {
     const requirements = Array.isArray(service.positionRequirements) ? service.positionRequirements : [];
     const rows = requirements.length ? requirements : [null];
@@ -133,12 +133,12 @@ export const buildPortableDatasets = ({ members = [], teams = [], positions = []
   return { members: memberRows, teams: teamRows, positions: positionRows, services: serviceRows, schedules: scheduleRows };
 };
 
-export const serializePortablePositionIcon = (icon) => {
+export const serializePortableEntityIcon = (icon) => {
   if (!icon) return "";
   return typeof icon === "string" ? icon : JSON.stringify(icon);
 };
 
-export const parsePortablePositionIcon = (value) => {
+export const parsePortableEntityIcon = (value) => {
   const text = String(value ?? "").trim();
   if (!text) return "";
   if (!text.startsWith("{")) return text;
@@ -156,8 +156,13 @@ export const parsePortablePositionIcon = (value) => {
     }
     return parsed;
   } catch {
-    const error = new Error("Position icon data must be a Lucide name or a valid icon reference.");
+    const error = new Error("Entity icon data must be a Lucide name or a valid icon reference.");
     error.statusCode = 400;
     throw error;
   }
 };
+
+/** @deprecated Use the entity-neutral icon helpers. */
+export const serializePortablePositionIcon = serializePortableEntityIcon;
+/** @deprecated Use the entity-neutral icon helpers. */
+export const parsePortablePositionIcon = parsePortableEntityIcon;

@@ -8,7 +8,7 @@ import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 
 const TeamsServiceSettingsPage = () => {
-  const { pageData, canEditTeams } = useTeamsPage();
+  const { pageData, canEditTeams, refresh } = useTeamsPage();
   const { churchId, canEditServices } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
   const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([]);
@@ -44,6 +44,7 @@ const TeamsServiceSettingsPage = () => {
       teams={pageData.teams}
       planTemplates={planTemplates}
       canEdit={Boolean(canEditServices ?? canEditTeams)}
+      onImported={() => void refresh()}
     />
   );
 };

@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, FileText, Music, Plus, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { AlertTriangle, Book, BookOpen, Check, ChevronDown, Download, FileText, Music, Plus, RefreshCw, RotateCcw, Square, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -66,10 +66,13 @@ import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayou
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getServicePlanMicrophones } from "../../api/auth";
 import type { ServicePlanMicrophone } from "../../types/servicePlan";
+import { getServicePlanElementContentResources } from "../../types/servicePlan";
 import { useControllerBasePath } from "../../context/activeController";
 import { useActiveControllerProfile } from "../../context/activeController";
 import { formatServicePlanDuration } from "../Services/servicePlanDuration";
 import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResources";
+import { setActiveItemInList } from "../../store/itemListSlice";
+import { ensureElementInView } from "../../utils/generalUtils";
 import {
   formatControllerServicePlanLabel,
   isControllerServicePlanUpcoming,
@@ -81,6 +84,16 @@ import { useServicePlanOutlinePush } from "../Services/useServicePlanOutlinePush
 const MARGIN = 16;
 
 const EMPTY_OVERLAY_LIST: OverlayInfo[] = [];
+
+type SyncSummaryEntry = { label: string; reason?: string };
+type SyncSummary = {
+  title: string;
+  outline: SyncSummaryEntry[];
+  overlaysUpdated: SyncSummaryEntry[];
+  overlaysCreated: SyncSummaryEntry[];
+  skipped: SyncSummaryEntry[];
+  errors: SyncSummaryEntry[];
+};
 
 const formatPreviewStartTime = (value: string) => {
   const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -114,6 +127,35 @@ const StatusBadge = ({
     {label}
   </span>
 );
+
+const SyncSummaryCategory = ({
+  title,
+  entries,
+  colorClass,
+  headingColorClass,
+  Icon,
+}: {
+  title: string;
+  entries: SyncSummaryEntry[];
+  colorClass: string;
+  headingColorClass: string;
+  Icon: typeof Check;
+}) => entries.length ? (
+  <section className={`min-w-0 border-l-2 pl-2 ${colorClass}`}>
+    <h3 className={`mb-0.5 flex items-center gap-1.5 font-semibold ${headingColorClass}`}>
+      <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+      <span>{title} · {entries.length}</span>
+    </h3>
+    <ul className="space-y-0.5 pl-5 text-zinc-200">
+      {entries.map((entry, index) => (
+        <li key={`${entry.label}-${index}`} className="break-words [overflow-wrap:anywhere]">
+          <span>{entry.label}</span>
+          {entry.reason ? <span className="text-zinc-400"> — {entry.reason}</span> : null}
+        </li>
+      ))}
+    </ul>
+  </section>
+) : null;
 
 const getLineItemBaseBadges = (item: ServicePlanningLineItem) => {
   if (item.outlineItemType === "song") {
@@ -335,6 +377,11 @@ const ServicePlanningSyncFloatingWindow = ({
   const [importUrl, setImportUrl] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [isPushingSavedPlan, setIsPushingSavedPlan] = useState(false);
+  const [isStoppingSavedPlan, setIsStoppingSavedPlan] = useState(false);
+  const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
+  const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
+  const cancelSavedPlanPushRef = useRef(false);
+  const pendingSavedPlanSummaryRef = useRef<string[] | null>(null);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [microphoneRefreshVersion, setMicrophoneRefreshVersion] = useState(0);
@@ -376,23 +423,6 @@ const ServicePlanningSyncFloatingWindow = ({
   const selectedList = useSelector(
     (s: RootState) => s.undoable?.present?.itemLists?.selectedList,
   );
-  const activeItemListId = useSelector(
-    (s: RootState) => s.undoable?.present?.itemList?.selectedItemListId,
-  );
-  const activePlanElementId = useMemo(() => {
-    if (!isPlanSourced || !selectedPlanDetails || !activeItemListId) return undefined;
-    for (const section of selectedPlanDetails.sections) {
-      for (const element of section.elements) {
-        const pushedIds = element.pushedOutlineListIds?.length
-          ? element.pushedOutlineListIds
-          : element.pushedOutlineListId ? [element.pushedOutlineListId] : [];
-        if (pushedIds.includes(activeItemListId) || activeItemListId.startsWith(`${element.id}::attachment:`)) {
-          return element.id;
-        }
-      }
-    }
-    return undefined;
-  }, [activeItemListId, isPlanSourced, selectedPlanDetails]);
   const targetOutlineLoading = useSelector(
     (s: RootState) => s.undoable?.present?.itemList?.isLoading ?? false,
   );
@@ -406,6 +436,11 @@ const ServicePlanningSyncFloatingWindow = ({
     (s: RootState) => s.servicePlanningImport.floatingWindowRestoreId,
   );
   const prevRestoreIdRef = useRef(floatingWindowRestoreId);
+  useEffect(() => {
+    return () => {
+      cancelSavedPlanPushRef.current = true;
+    };
+  }, []);
   useEffect(() => {
     if (!churchId) {
       setMicrophones([]);
@@ -515,7 +550,11 @@ const ServicePlanningSyncFloatingWindow = ({
     hasSyncableOverlayItems(preview, overlays);
   const canSyncOutline =
     !isContextChanging && Boolean(selectedList) && (isPlanSourced && selectedPlanDetails
-      ? selectedPlanDetails.sections.length > 0
+      ? selectedPlanDetails.sections.some((section) => section.elements.some((element) =>
+          getServicePlanElementContentResources(element).some((resource) =>
+            resource.type === "song" || resource.type === "scripture" || resource.type === "custom-document",
+          ),
+        ))
       : hasSyncableOutlineItems(preview));
   const canSyncAny = allowOverlaySync
     ? canSyncOverlays || canSyncOutline
@@ -525,29 +564,47 @@ const ServicePlanningSyncFloatingWindow = ({
     if (mode !== "overlays" && isPlanSourced && selectedPlanDetails && canSyncOutline) {
       if (isPushingSavedPlan || isContextChanging || !selectedList) return;
       setIsPushingSavedPlan(true);
+      cancelSavedPlanPushRef.current = false;
       const sourcePlan = selectedPlanDetails;
+      const addedTitles: string[] = [];
       void pushPlanToOutline(
         sourcePlan,
         () => currentPlanRef.current === sourcePlan,
+        async (item) => {
+          addedTitles.push(item.name);
+          dispatch(setActiveItemInList(item.listId));
+          await ensureElementInView(`service-item-${item.listId}`, "service-items-list");
+        },
+        () => !cancelSavedPlanPushRef.current,
       )
         .then((result) => {
-          const added = result.items.filter((item) => item.type !== "heading").length;
-          if (result.skippedTitles.length) {
-            showToast(`${added} item${added === 1 ? "" : "s"} added; review unresolved attachments in the service plan.`, "info");
-          } else if (added) {
-            showToast(`${added} item${added === 1 ? "" : "s"} added to the live outline.`, "success");
-          } else {
-            showToast("All attached content is already in the live outline.", "success");
-          }
-          if (mode === "both" && allowOverlaySync && canSyncOverlays) {
+          setLastSyncSummary({
+            outline: addedTitles.map((label) => ({ label })),
+            overlaysUpdated: [],
+            overlaysCreated: [],
+            skipped: result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" })),
+            errors: [],
+            title: cancelSavedPlanPushRef.current ? "Sync stopped" : "Sync complete",
+          });
+          setIsSyncSummaryExpanded(true);
+          if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlays) {
+            pendingSavedPlanSummaryRef.current = addedTitles;
             dispatch(setServicePlanningFloatingWindowDismissed(false));
             dispatch(startServicePlanningSync({ mode: "overlays" }));
+          } else {
+            showToast(cancelSavedPlanPushRef.current ? "Sync stopped." : "Sync complete.", cancelSavedPlanPushRef.current ? "info" : "success");
           }
         })
         .catch((error: unknown) => {
-          showToast(error instanceof Error ? error.message : "Could not add plan content to the outline.", "error");
+          const message = error instanceof Error ? error.message : "Could not add plan content to the outline.";
+          setLastSyncSummary({ outline: addedTitles.map((label) => ({ label })), overlaysUpdated: [], overlaysCreated: [], skipped: [], errors: [{ label: message }], title: "Sync incomplete" });
+          setIsSyncSummaryExpanded(true);
+          showToast(message, "error");
         })
-        .finally(() => setIsPushingSavedPlan(false));
+        .finally(() => {
+          setIsPushingSavedPlan(false);
+          setIsStoppingSavedPlan(false);
+        });
       return;
     }
     const effectiveMode = allowOverlaySync ? mode : "outline";
@@ -566,8 +623,32 @@ const ServicePlanningSyncFloatingWindow = ({
   }, [allowOverlaySync, canSyncOutline, canSyncOverlays, dispatch, isContextChanging, isPlanSourced, isPushingSavedPlan, pushPlanToOutline, selectedList, selectedPlanDetails, showToast]);
 
   const handleStopSync = useCallback(() => {
+    if (isPushingSavedPlan) {
+      cancelSavedPlanPushRef.current = true;
+      setIsStoppingSavedPlan(true);
+      return;
+    }
     dispatch(cancelServicePlanningSync());
-  }, [dispatch]);
+  }, [dispatch, isPushingSavedPlan]);
+
+  useEffect(() => {
+    if (sync.status !== "completed" && sync.status !== "cancelled" && sync.status !== "failed") return;
+    const savedOutline = pendingSavedPlanSummaryRef.current;
+    const overlayLabel = (item: ServicePlanningSyncItem) => item.sublabel ? `${item.label} — ${item.sublabel}` : item.label;
+    const overlaysUpdated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "updated").map((item) => ({ label: overlayLabel(item) }));
+    const overlaysCreated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "created").map((item) => ({ label: overlayLabel(item) }));
+    if (!savedOutline && sync.mode === "outline") return;
+    setLastSyncSummary({
+      outline: (savedOutline || sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => item.label)).map((label) => ({ label })),
+      overlaysUpdated,
+      overlaysCreated,
+      skipped: sync.reasons.filter((reason) => !/already (?:up to date|exists)/i.test(reason)).map((label) => ({ label })),
+      errors: sync.error ? [{ label: sync.error }] : [],
+      title: sync.status === "cancelled" ? "Sync stopped" : sync.status === "failed" ? "Sync incomplete" : "Sync complete",
+    });
+    setIsSyncSummaryExpanded(true);
+    pendingSavedPlanSummaryRef.current = null;
+  }, [sync]);
 
   const handleCreateClick = (title: string) => {
     navigate(
@@ -641,18 +722,18 @@ const ServicePlanningSyncFloatingWindow = ({
   };
   const isSyncRunning = sync.status === "running";
   const isSyncStopping = sync.status === "cancelling";
-  const isSyncActive = isSyncRunning || isSyncStopping;
+  const isSyncActive = isSyncRunning || isSyncStopping || isPushingSavedPlan;
   const actionBarItemDefs = useMemo((): ActionBarItemDef[] => {
     const items = isSyncActive ? [
     {
       id: "stop-sync",
-      label: isSyncStopping ? "Stopping..." : "Stop syncing",
-      disabled: isSyncStopping,
+      label: isSyncStopping || isStoppingSavedPlan ? "Stopping..." : "Stop syncing",
+      disabled: isSyncStopping || isStoppingSavedPlan,
       renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={Square} color="#ef4444" className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncStopping} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure || isSyncStopping ? undefined : handleStopSync}>{isSyncStopping ? "Stopping..." : "Stop syncing"}</Button>
+        <Button variant="tertiary" svg={Square} color="#ef4444" className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncStopping || isStoppingSavedPlan} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure || isSyncStopping || isStoppingSavedPlan ? undefined : handleStopSync}>{isSyncStopping || isStoppingSavedPlan ? "Stopping..." : "Stop syncing"}</Button>
       ),
-      onOverflowSelect: isSyncStopping ? undefined : handleStopSync,
-      renderOverflowItem: () => <><Square className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} />{isSyncStopping ? "Stopping..." : "Stop syncing"}</>,
+      onOverflowSelect: isSyncStopping || isStoppingSavedPlan ? undefined : handleStopSync,
+      renderOverflowItem: () => <><Square className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-red-400")} />{isSyncStopping || isStoppingSavedPlan ? "Stopping..." : "Stop syncing"}</>,
     },
   ] : [
     {
@@ -698,10 +779,10 @@ const ServicePlanningSyncFloatingWindow = ({
     },
     {
       id: "sync-outline",
-      label: isPushingSavedPlan ? "Importing…" : "Sync outline",
+      label: isPushingSavedPlan ? "Syncing outline…" : "Sync outline",
       disabled: isSyncActive || isPushingSavedPlan || !canSyncOutline,
       renderButton: (isMeasure: boolean) => (
-        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || isPushingSavedPlan || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>{isPushingSavedPlan ? "Importing…" : "Sync outline"}</Button>
+        <Button variant="tertiary" svg={RefreshCw} className={cn("shrink-0", MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS)} disabled={isSyncActive || isPushingSavedPlan || !canSyncOutline} tabIndex={isMeasure ? -1 : undefined} onClick={isMeasure ? undefined : () => handleSync("outline")}>{isPushingSavedPlan ? "Syncing outline…" : "Sync outline"}</Button>
       ),
       onOverflowSelect: () => handleSync("outline"),
       renderOverflowItem: () => <><RefreshCw className={cn(MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE, "text-cyan-400")} />Sync outline</>,
@@ -730,7 +811,7 @@ const ServicePlanningSyncFloatingWindow = ({
     return allowOverlaySync
       ? items
       : items.filter((item) => item.id !== "sync-all" && item.id !== "sync-overlays");
-  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isPushingSavedPlan, isRefreshing, isSyncActive, isSyncStopping]);
+  }, [allowOverlaySync, canSyncAny, canSyncOutline, canSyncOverlays, handleRefresh, handleStopSync, handleSync, isPushingSavedPlan, isRefreshing, isStoppingSavedPlan, isSyncActive, isSyncStopping]);
 
 
 
@@ -1093,6 +1174,33 @@ const ServicePlanningSyncFloatingWindow = ({
             <PopoverAnchor asChild>
               <div className="w-full">
                 <ActionBar items={actionBarItemDefs} className="mt-2" />
+                {lastSyncSummary && (
+                  <section className="mt-2 overflow-hidden rounded border border-white/10 bg-zinc-900/70 text-xs" aria-label="Most recent sync">
+                    <button
+                      type="button"
+                      className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1.5 text-left font-medium text-zinc-100 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                      aria-expanded={isSyncSummaryExpanded}
+                      onClick={() => setIsSyncSummaryExpanded((expanded) => !expanded)}
+                    >
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${isSyncSummaryExpanded ? "rotate-180" : ""}`} />
+                        <span>{lastSyncSummary.title}</span>
+                      </span>
+                      <span className="ml-auto text-right text-zinc-400">
+                        {lastSyncSummary.outline.length} outline · {lastSyncSummary.overlaysUpdated.length + lastSyncSummary.overlaysCreated.length} overlays · {lastSyncSummary.skipped.length} skipped
+                        {lastSyncSummary.errors.length ? ` · ${lastSyncSummary.errors.length} errors` : ""}
+                      </span>
+                    </button>
+                    {isSyncSummaryExpanded && <div className="space-y-2 px-2 pb-2 text-zinc-300">
+                        <SyncSummaryCategory title="Outline added" entries={lastSyncSummary.outline} colorClass="border-cyan-400" headingColorClass="text-cyan-300" Icon={Music} />
+                        <SyncSummaryCategory title="Overlays updated" entries={lastSyncSummary.overlaysUpdated} colorClass="border-green-400" headingColorClass="text-green-300" Icon={Check} />
+                        <SyncSummaryCategory title="Overlays created" entries={lastSyncSummary.overlaysCreated} colorClass="border-sky-400" headingColorClass="text-sky-300" Icon={Users} />
+                        <SyncSummaryCategory title="Skipped" entries={lastSyncSummary.skipped} colorClass="border-amber-400" headingColorClass="text-amber-300" Icon={AlertTriangle} />
+                        <SyncSummaryCategory title="Errors" entries={lastSyncSummary.errors} colorClass="border-red-400" headingColorClass="text-red-300" Icon={AlertTriangle} />
+                        {!lastSyncSummary.outline.length && !lastSyncSummary.overlaysUpdated.length && !lastSyncSummary.overlaysCreated.length && !lastSyncSummary.skipped.length && !lastSyncSummary.errors.length && <p className="border-l-2 border-zinc-500 pl-2 text-zinc-400">No changes were needed.</p>}
+                    </div>}
+                  </section>
+                )}
               </div>
             </PopoverAnchor>
             <PopoverContent
@@ -1158,7 +1266,8 @@ const ServicePlanningSyncFloatingWindow = ({
                   snapshot={selectedPlanSnapshot}
                   churchId={churchId || ""}
                   controllerProfileId={controllerProfile.id}
-                  activeItemId={activePlanElementId}
+                  sectionLabelColor={sectionLabelColor}
+                  sectionBorderColor={sectionBorderColor}
                 />
               ) : (
               <div className="flex flex-col gap-2 pr-1">

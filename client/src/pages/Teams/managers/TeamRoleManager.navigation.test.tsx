@@ -29,6 +29,27 @@ beforeEach(() => {
   jest.mocked(updateTeamRole).mockReset();
 });
 
+it("closes an individual role editor without leaving the Roles page", async () => {
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.roles, state: { teamsReturnTo: returnTo } }]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[role]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+          <LocationProbe />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByText("Lead"));
+  await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+
+  expect(screen.getByRole("heading", { name: "Team roles" })).toBeInTheDocument();
+  expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.roles);
+  expect(screen.getAllByRole("button", { name: "Back to team" })).not.toHaveLength(0);
+});
+
 it("keeps an edited role open after Save and navigates with restore state only on Back", async () => {
   const user = userEvent.setup();
   jest.mocked(updateTeamRole).mockResolvedValue({ success: true, role: { ...role, name: "Worship Lead" } } as never);
@@ -50,10 +71,10 @@ it("keeps an edited role open after Save and navigates with restore state only o
 
   await waitFor(() => expect(updateTeamRole).toHaveBeenCalledTimes(1));
   expect(screen.getByRole("heading", { name: "Edit role" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Back to team" })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Back to team" })).not.toHaveLength(0);
   expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
   expect(screen.getByTestId("location")).toHaveTextContent(TEAMS_SECTION_PATHS.roles);
-  await user.click(screen.getByRole("button", { name: "Back to team" }));
+  await user.click(screen.getAllByRole("button", { name: "Back to team" }).at(-1)!);
 
   expect(screen.getByTestId("location")).toHaveTextContent(JSON.stringify({
     pathname: TEAMS_SECTION_PATHS.groups,

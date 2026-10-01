@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType, SVGProps } from "react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import TeamsAndServices from "./TeamsAndServices";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
@@ -313,8 +313,13 @@ const makeMockState = () => ({
   },
 });
 
+const TeamsLocationProbe = () => {
+  const location = useLocation();
+  return <div data-testid="teams-location">{JSON.stringify({ pathname: location.pathname, state: location.state })}</div>;
+};
+
 const renderTeams = (
-  initialEntry = "/teams-and-services",
+  initialEntry: string | { pathname: string; state?: unknown } = "/teams-and-services",
   contextOverrides: Record<string, unknown> = {},
 ) =>
   render(
@@ -330,6 +335,7 @@ const renderTeams = (
           <Routes>
             <Route path="/teams-and-services/*" element={<TeamsAndServices />} />
           </Routes>
+          <TeamsLocationProbe />
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -569,6 +575,30 @@ describe("Teams", () => {
       "href",
       "/teams-and-services/service-setup",
     );
+  });
+
+  it("keeps Back to plan in the schedule identity and returns to the originating plan", async () => {
+    const user = userEvent.setup();
+    const returnTo = {
+      label: "Back to plan",
+      pathname: "/teams-and-services/services",
+      restore: {
+        kind: "plans" as const,
+        serviceId: "service-worship",
+        occurrenceId: "service-worship@2026-10-04T10:00:00.000Z",
+        date: "2026-10-04",
+      },
+    };
+    renderTeams({
+      pathname: "/teams-and-services/schedules",
+      state: { teamsReturnTo: returnTo },
+    });
+
+    const identity = await screen.findByRole("group", { name: "Team schedule identity" });
+    expect(within(identity).getByRole("heading", { name: "Team schedule" })).toBeInTheDocument();
+    await user.click(within(identity).getByRole("button", { name: "Back to plan" }));
+
+    expect(screen.getByTestId("teams-location")).toHaveTextContent(returnTo.pathname);
   });
 
   it("opens the current service occurrence workspace without a render loop", async () => {

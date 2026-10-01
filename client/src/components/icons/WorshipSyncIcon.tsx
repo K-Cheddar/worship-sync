@@ -1,8 +1,8 @@
-import { normalizePositionIcon, resolveWorshipSyncIcon, TablerGlyph } from "./iconRegistry";
-import type { PositionIcon } from "./iconTypes";
+import { normalizeEntityIcon, resolveWorshipSyncIcon, TablerGlyph } from "./iconRegistry";
+import type { EntityIcon } from "./iconTypes";
 
 type WorshipSyncIconProps = {
-  icon?: PositionIcon | null;
+  icon?: EntityIcon | null;
   className?: string;
   /** Presentation-only ink override; does not alter the persisted icon ref. */
   color?: string;
@@ -12,9 +12,9 @@ type WorshipSyncIconProps = {
   "aria-hidden"?: boolean | "true" | "false";
 };
 
-/** Canonical renderer for position icons across Teams and Services. */
+/** Canonical renderer for team and position icons across WorshipSync. */
 const WorshipSyncIcon = ({ icon, className, color, inheritColor = false, ...props }: WorshipSyncIconProps) => {
-  const ref = normalizePositionIcon(icon);
+  const ref = normalizeEntityIcon(icon);
   const glyphColor = inheritColor ? undefined : color ?? ref?.color;
   const style = glyphColor ? { color: glyphColor } : undefined;
   if (ref?.source === "tabler") {
