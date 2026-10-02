@@ -28,6 +28,35 @@ describe("ControllerLoadingOverlay", () => {
     expect(screen.queryByText(/Worship/)).not.toBeInTheDocument();
   });
 
+  it("keeps live replication failure visible after initial loading completes", () => {
+    render(
+      <ControllerLoadingOverlay
+        dbProgress={100}
+        connectionStatus={{
+          status: "failed",
+          retryCount: 0,
+          failureReason: "push-too-large",
+          message: "Sync is blocked because one saved item is too large to upload.",
+        }}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Sync is blocked because one saved item is too large to upload.",
+    );
+  });
+
+  it("shows when live sync is reconnecting after startup", () => {
+    render(
+      <ControllerLoadingOverlay
+        dbProgress={100}
+        connectionStatus={{ status: "retrying", retryCount: 1 }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Sync is reconnecting. New changes may be delayed.",
+    );
+  });
+
   it("stays on normal welcome copy while progress keeps moving before 15s elapse", () => {
     const { rerender } = render(
       <ControllerLoadingOverlay

@@ -54,7 +54,6 @@ import {
   DBItem,
   DBItemListDetails,
   DBItemLists,
-  DBMedia,
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
@@ -102,6 +101,7 @@ import { mergeTimers } from "../utils/timerUtils";
 import { createSongLibraryIndexRepairMiddleware } from "./songLibraryIndexRepair";
 import { freeFormDocToServiceItem } from "../utils/freeFormLibrary";
 import { extractMediaUrlsFromBackgrounds } from "../utils/mediaCacheUtils";
+import { persistMediaStateChanges } from "../utils/mediaDocUtils";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { persistExistingOverlayDoc } from "../utils/persistOverlayDoc";
 import _ from "lodash";
@@ -1885,6 +1885,12 @@ listenerMiddleware.startListening({
 });
 
 // handle updating media
+type PendingMediaPersistenceState = Pick<RootState["media"], "list" | "folders">;
+let pendingMediaPersistence: {
+  db: PouchDB.Database;
+  state: PendingMediaPersistenceState;
+} | null = null;
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     const state = (currentState as RootState).media;
@@ -1896,6 +1902,9 @@ listenerMiddleware.startListening({
       mediaItemsSlice.actions.initiateMediaFromDoc,
       mediaItemsSlice.actions.syncMediaFromRemote,
       mediaItemsSlice.actions.updateMediaListFromRemote,
+      mediaItemsSlice.actions.upsertMediaItemFromRemote,
+      mediaItemsSlice.actions.removeMediaItemFromRemote,
+      mediaItemsSlice.actions.updateMediaFoldersFromRemote,
       mediaItemsSlice.actions.setIsInitialized,
       mediaItemsSlice.actions.setLoadStatus,
     );
@@ -1910,6 +1919,15 @@ listenerMiddleware.startListening({
   effect: async (action, listenerApi) => {
     const mediaAtStart = (listenerApi.getState() as RootState).media;
     const dbAtStart = db;
+    const beforeAction = (listenerApi.getOriginalState() as RootState).media;
+    if (!dbAtStart) return;
+    if (!pendingMediaPersistence || pendingMediaPersistence.db !== dbAtStart) {
+      pendingMediaPersistence = {
+        db: dbAtStart,
+        state: { list: beforeAction.list, folders: beforeAction.folders },
+      };
+    }
+    const baseline = pendingMediaPersistence;
 
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -1931,33 +1949,35 @@ listenerMiddleware.startListening({
           currentMedia === mediaAtStart,
         );
       };
-      if (!dbAtStart || !mediaSaveIsCurrent()) return;
+      if (!mediaSaveIsCurrent()) return;
 
-      const { list, folders } = mediaAtStart;
       try {
-        const db_media: DBMedia = await dbAtStart.get("media");
-        if (!mediaSaveIsCurrent()) return;
-        db_media.list = [...list];
-        db_media.folders = [...folders];
-        db_media.updatedAt = new Date().toISOString();
-        await dbAtStart.put(db_media);
+        const changedDocs = await persistMediaStateChanges(
+          dbAtStart,
+          baseline.state,
+          { list: mediaAtStart.list, folders: mediaAtStart.folders },
+          mediaSaveIsCurrent,
+        );
         // The put is already committed. This check only prevents stale
         // broadcast/cache side effects if state changed while it was in flight.
         if (!mediaSaveIsCurrent()) return;
+        if (pendingMediaPersistence === baseline) pendingMediaPersistence = null;
 
         // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
-        safePostMessage({
-          type: "update",
-          data: {
-            docs: db_media,
-            hostId: globalHostId,
-          },
-        });
+        if (changedDocs.length > 0) {
+          safePostMessage({
+            type: "update",
+            data: {
+              docs: changedDocs,
+              hostId: globalHostId,
+            },
+          });
+        }
 
         // Sync media cache to match the saved media list (Electron only)
         if (window.electronAPI) {
           try {
-            const urlArray = extractMediaUrlsFromBackgrounds(list);
+            const urlArray = extractMediaUrlsFromBackgrounds(mediaAtStart.list);
             const electronAPI = window.electronAPI as unknown as {
               syncMediaCache: (
                 urls: string[],
@@ -1994,11 +2014,30 @@ listenerMiddleware.startListening({
   },
 });
 
+// Remote replicas and session resets replace the local media baseline. A pending
+// debounced local save must never persist a pre-remote snapshot afterward.
+listenerMiddleware.startListening({
+  predicate: (action) =>
+    mediaItemsSlice.actions.initiateMediaList.match(action) ||
+    mediaItemsSlice.actions.initiateMediaFromDoc.match(action) ||
+    mediaItemsSlice.actions.syncMediaFromRemote.match(action) ||
+    mediaItemsSlice.actions.updateMediaListFromRemote.match(action) ||
+    mediaItemsSlice.actions.upsertMediaItemFromRemote.match(action) ||
+    mediaItemsSlice.actions.removeMediaItemFromRemote.match(action) ||
+    mediaItemsSlice.actions.updateMediaFoldersFromRemote.match(action) ||
+    isStoreResetAction(action),
+  effect: () => {
+    pendingMediaPersistence = null;
+  },
+});
+
 // Sync media cache when media list is updated from remote (media doc)
 listenerMiddleware.startListening({
   predicate: (action) =>
     mediaItemsSlice.actions.syncMediaFromRemote.match(action) ||
-    mediaItemsSlice.actions.updateMediaListFromRemote.match(action),
+    mediaItemsSlice.actions.updateMediaListFromRemote.match(action) ||
+    mediaItemsSlice.actions.upsertMediaItemFromRemote.match(action) ||
+    mediaItemsSlice.actions.removeMediaItemFromRemote.match(action),
   effect: async (action, listenerApi) => {
     if (!window.electronAPI) return;
 

@@ -1148,6 +1148,10 @@ export const cleanupOrphanedLocalImages = async ({
         if (id) referenced.add(id);
       });
     }
+    const mediaItem = row.doc as (MediaType & { docType?: string }) | undefined;
+    if (mediaItem?.docType === "mediaItem" && mediaItem.localImage?.id) {
+      referenced.add(mediaItem.localImage.id);
+    }
     if (!isPersistedItem(row.doc)) return;
     collectLocalImageAssetIds(row.doc).forEach((id) => referenced.add(id));
   });

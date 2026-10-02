@@ -37,7 +37,6 @@ import {
   getAllOverlayHistory,
   getOverlaysByIds,
   updateAllDocs,
-  migrateMediaLibraryFoldersFieldIfNeeded,
 } from "../../utils/dbUtils";
 import {
   loadOrCreateAllItemsDoc,
@@ -65,12 +64,16 @@ import {
 import {
   initiateMediaList,
   initiateMediaFromDoc,
+  syncMediaFromRemote,
+  removeMediaItemFromRemote,
+  updateMediaFoldersFromRemote,
+  upsertMediaItemFromRemote,
   isMediaLoadSettled,
   setLoadStatus as setMediaLoadStatus,
 } from "../../store/mediaSlice";
 import {
-  loadOrCreateMediaDoc,
-  normalizeMediaDoc,
+  loadMediaLibrary as readMediaLibrary,
+  parseMediaReplicationDoc,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
@@ -222,7 +225,29 @@ export const useControllerPageLifecycle = () => {
     [dispatch, cloud, selectedList, db, store],
   );
 
+  const updateMediaFromExternal = useCallback(
+    (event: CustomEventInit) => {
+      const updates = event.detail;
+      if (!Array.isArray(updates)) return;
+      for (const update of updates) {
+        const change = parseMediaReplicationDoc(update);
+        if (!change) continue;
+        if (change.kind === "legacy") {
+          dispatch(syncMediaFromRemote({ list: change.list, folders: change.folders }));
+        } else if (change.kind === "folders") {
+          dispatch(updateMediaFoldersFromRemote(change.folders));
+        } else if (change.kind === "item-delete") {
+          dispatch(removeMediaItemFromRemote(change.id));
+        } else {
+          dispatch(upsertMediaItemFromRemote(change.item));
+        }
+      }
+    },
+    [dispatch],
+  );
+
   useGlobalBroadcast(updateAllItemsAndListFromExternal);
+  useGlobalBroadcast(updateMediaFromExternal);
 
   const updatePreferencesFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -426,13 +451,11 @@ export const useControllerPageLifecycle = () => {
     let cancelled = false;
     dispatch(setMediaLoadStatus("loading"));
 
-    const loadMediaLibrary = async () => {
+    const initializeMediaLibrary = async () => {
       try {
-        await migrateMediaLibraryFoldersFieldIfNeeded(db);
-        const raw = await loadOrCreateMediaDoc(db);
+        const loaded = await readMediaLibrary(db);
         if (cancelled) return;
-        const { list, folders } = normalizeMediaDoc(raw);
-        dispatch(initiateMediaFromDoc({ list, folders }));
+        dispatch(initiateMediaFromDoc(loaded));
       } catch (error) {
         if (cancelled) return;
         dispatch(setMediaLoadStatus("error"));
@@ -444,7 +467,7 @@ export const useControllerPageLifecycle = () => {
       }
     };
 
-    void loadMediaLibrary();
+    void initializeMediaLibrary();
     return () => {
       cancelled = true;
     };
@@ -551,6 +574,12 @@ export const useControllerPageLifecycle = () => {
     return () =>
       updater.removeEventListener("update", updateAllItemsAndListFromExternal);
   }, [updater, updateAllItemsAndListFromExternal]);
+
+  useEffect(() => {
+    if (!updater) return;
+    updater.addEventListener("update", updateMediaFromExternal);
+    return () => updater.removeEventListener("update", updateMediaFromExternal);
+  }, [updater, updateMediaFromExternal]);
 
   useEffect(() => {
     if (!updater) return;

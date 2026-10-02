@@ -22,7 +22,19 @@ const ControllerLoadingOverlay = ({
   const isFailed = connectionStatus?.status === "failed";
   const isStuck = useStuckDbProgress(dbProgress, isFailed);
 
-  if (dbProgress === 100) return null;
+  if (dbProgress === 100) {
+    if (!isFailed && connectionStatus?.status !== "retrying") return null;
+    return (
+      <div
+        role={isFailed ? "alert" : "status"}
+        className={`fixed top-0 inset-x-0 z-[60] border-b px-4 py-2 text-center text-sm text-white shadow-lg ${isFailed ? "border-red-400/40 bg-red-950" : "border-yellow-400/40 bg-yellow-950"}`}
+      >
+        {connectionStatus?.message || (isFailed
+          ? "Sync stopped. Check your connection and reload to try again."
+          : "Sync is reconnecting. New changes may be delayed.")}
+      </div>
+    );
+  }
 
   const displayName = user?.trim() ?? "";
   const displayChurch = churchName?.trim() ?? "";
@@ -49,7 +61,14 @@ const ControllerLoadingOverlay = ({
   return (
     <div className="fixed top-0 left-0 z-50 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8">
       {isFailed ? (
-        <DbStartupConnectionFailedPanel />
+        <>
+          {connectionStatus?.message && (
+            <p role="alert" className="max-w-lg px-4 text-center text-base text-red-200">
+              {connectionStatus.message}
+            </p>
+          )}
+          <DbStartupConnectionFailedPanel />
+        </>
       ) : isStuck ? (
         <>
           <DbStartupStuckRecoveryPanel

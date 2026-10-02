@@ -5,6 +5,7 @@ import store from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
+import { initiateMediaFromDoc } from "../../store/mediaSlice";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 
@@ -34,6 +35,8 @@ jest.mock("../../utils/controllerBootstrapDocs", () => ({
 }));
 
 jest.mock("../../utils/mediaDocUtils", () => ({
+  loadMediaLibrary: jest.fn().mockResolvedValue({ list: [], folders: [] }),
+  parseMediaReplicationDoc: jest.requireActual("../../utils/mediaDocUtils").parseMediaReplicationDoc,
   loadOrCreateMediaDoc: jest.fn(),
   normalizeMediaDoc: jest.fn(),
 }));
@@ -83,6 +86,36 @@ const createDb = (
 describe("useControllerPageLifecycle selected outline loading", () => {
   beforeEach(() => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+  });
+
+  it("applies replicated media item changes to Redux outside the media route", () => {
+    const db = createDb({});
+    const updater = new EventTarget();
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    act(() => {
+      store.dispatch(initiateMediaFromDoc({
+        list: [{ id: "existing", name: "Existing" }] as any,
+        folders: [],
+      }));
+      updater.dispatchEvent(new CustomEvent("update", {
+        detail: [{ _id: "media-item:new", id: "new", docType: "mediaItem", name: "New item" }],
+      }));
+    });
+
+    expect(store.getState().media.list).toEqual([
+      { id: "existing", name: "Existing" },
+      expect.objectContaining({ id: "new", name: "New item" }),
+    ]);
   });
 
   it("keeps the newer outline when the stale request resolves afterward", async () => {

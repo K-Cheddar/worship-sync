@@ -11,9 +11,8 @@ import { Cable, ExternalLink, Folder, MonitorUp } from "lucide-react";
 import Button from "../../components/Button/Button";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { useDispatch, useSelector, useMediaSelection } from "../../hooks";
-import { DBMedia, MediaFolder, MediaRouteKey, MediaType } from "../../types";
+import { MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import {
-  syncMediaFromRemote,
   addItemToMediaList,
   removeItemFromMediaList,
   setMediaListAndFolders,
@@ -48,7 +47,6 @@ import {
   replaceMediaReferencesInPreferences,
 } from "../../store/preferencesSlice";
 import { getMediaRouteKey } from "../../utils/mediaRouteKey";
-import { normalizeMediaDoc } from "../../utils/mediaDocUtils";
 import { sweepMediaReferencesBeforeDelete } from "../../utils/mediaReferenceSweep";
 import {
   MEDIA_LIBRARY_ROOT_VIEW,
@@ -107,9 +105,9 @@ import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
+import { loadMediaLibrary } from "../../utils/mediaDocUtils";
 import { mediaLibraryFlushFailureMessage } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
-import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
 import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
@@ -199,7 +197,6 @@ export function useMediaLibraryController({
     db,
     cloud,
     isMobile,
-    updater,
     isGuestSession = false,
   } = useContext(ControllerInfoContext) || {};
   const { access, churchId = "" } = useContext(GlobalInfoContext) || {};
@@ -1082,8 +1079,8 @@ export function useMediaLibraryController({
           if (isReferenced(getCurrentMediaList())) return false;
           if (!db) return false;
           try {
-            const persisted = await db.get("media") as unknown as { list?: MediaType[] };
-            if (isReferenced(persisted.list || [])) return false;
+            const persisted = await loadMediaLibrary(db);
+            if (isReferenced(persisted.list)) return false;
           } catch {
             // Without an authoritative Media read, keep the asset for a later retry.
             return false;
@@ -1128,8 +1125,8 @@ export function useMediaLibraryController({
         getCanvaProviderIdentity(mediaItem) === identity,
       );
       try {
-        const persisted = await db.get("media") as unknown as { list?: MediaType[] };
-        if (isReferenced(persisted.list || [])) return true;
+        const persisted = await loadMediaLibrary(db);
+        if (isReferenced(persisted.list)) return true;
       } catch {
         return false;
       }
@@ -1189,11 +1186,8 @@ export function useMediaLibraryController({
         getCurrentList: getCurrentMediaList,
         getCurrentFolders: () => store.getState().media.folders,
         readPersistedMedia: async () => {
-          const persisted = await db.get("media");
-          return {
-            list: [...((persisted as unknown as { list?: MediaType[] }).list || [])],
-            folders: [...((persisted as unknown as { folders?: MediaFolder[] }).folders || [])],
-          };
+          const persisted = await loadMediaLibrary(db);
+          return { list: [...persisted.list], folders: [...persisted.folders] };
         },
       });
     },
@@ -1366,36 +1360,6 @@ export function useMediaLibraryController({
       }
     }, 500);
   }, []);
-
-  const updateMediaListFromExternal = useCallback(
-    async (event: CustomEventInit) => {
-      try {
-        const updates = event.detail;
-        for (const _update of updates) {
-          if (_update._id === "media") {
-            const update = _update as DBMedia;
-            const normalized = normalizeMediaDoc(update);
-            dispatch(syncMediaFromRemote(normalized));
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [dispatch],
-  );
-
-  useEffect(() => {
-    if (!updater) return;
-
-    updater.addEventListener("update", updateMediaListFromExternal);
-
-    return () => {
-      updater.removeEventListener("update", updateMediaListFromExternal);
-    };
-  }, [updater, updateMediaListFromExternal]);
-
-  useGlobalBroadcast(updateMediaListFromExternal);
 
   const dismissDeleteModal = useCallback(() => {
     setShowDeleteModal(false);
@@ -1801,15 +1765,12 @@ export function useMediaLibraryController({
     }));
     if (!result.ok) {
       try {
-        const persisted = await db.get("media") as unknown as {
-          list?: MediaType[];
-          folders?: MediaFolder[];
-        };
-        const persistedList = persisted.list || [];
+        const persisted = await loadMediaLibrary(db);
+        const persistedList = persisted.list;
         const persistedItem = persistedList.find((item) => item.id === mediaItem.id);
         dispatch(setMediaListAndFolders({
           list: [...persistedList],
-          folders: [...(persisted.folders || store.getState().media.folders)],
+          folders: [...persisted.folders],
         }));
         if (persistedItem) return persistedItem;
       } catch {

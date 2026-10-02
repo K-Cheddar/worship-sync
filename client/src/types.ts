@@ -174,6 +174,9 @@ export type DocType =
   | "board-post"
   | "services"
   | "media"
+  | "mediaItem"
+  | "mediaFolders"
+  | "mediaLibraryMeta"
   | "unknown";
 
 export type DBItem = ItemProperties & {
