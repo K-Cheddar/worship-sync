@@ -22,10 +22,6 @@ jobs:
     name: Build Electron (${{ matrix.platform }})
     runs-on: ${{ matrix.platform == 'windows' && 'windows-latest' || 'macos-latest' }}
     timeout-minutes: 20
-    env:
-      ELECTRON_CACHE: ${{ runner.temp }}/electron
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
-
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +56,8 @@ jobs:
 
       - name: Install client dependencies
         run: npm ci --prefix client
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
 
       - name: Build Electron app
         run: npm run build:electron --prefix client
@@ -72,6 +70,8 @@ jobs:
         run: npx electron-builder --win --publish never --config electron-builder.config.js
         working-directory: client
         env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Package macOS app (unsigned)
@@ -79,6 +79,8 @@ jobs:
         run: npx electron-builder --mac --publish never --config electron-builder.config.js
         working-directory: client
         env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
           CSC_IDENTITY_AUTO_DISCOVERY: false
           NODE_OPTIONS: --max-old-space-size=4096
 

@@ -13811,24 +13811,8 @@ export const createTeamsAuthHandlers = ({
                 ) {
                   return false;
                 }
-                const savedServiceIds = new Set([
-                  ...(schedule.serviceIds || []),
-                  ...(schedule.occurrences || []).flatMap((occurrence) => [
-                    occurrence.serviceId,
-                    ...(occurrence.serviceIds || []),
-                  ]),
-                ]);
-                if (
-                  payload.serviceIds.length > 0 &&
-                  savedServiceIds.size > 0 &&
-                  !payload.serviceIds.some((serviceId) =>
-                    savedServiceIds.has(serviceId),
-                  )
-                ) {
-                  return false;
-                }
-                // Retain saved occurrence details across setup changes when
-                // service identity still overlaps and the visible dates fit.
+                // Service Setup identities can change after a saved schedule
+                // is created. Resolve historical schedules by owner and date coverage.
                 return true;
               },
             );

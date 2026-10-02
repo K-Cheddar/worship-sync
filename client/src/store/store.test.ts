@@ -1089,7 +1089,7 @@ describe("store module", () => {
 
   it("persists a newer edit after an earlier media write finishes in flight", async () => {
     jest.useFakeTimers();
-    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
     let resolveFirstPut: ((value: unknown) => void) | undefined;
     const persisted = new Map<string, Record<string, unknown>>([
       ["media-item:media-1", {
@@ -1128,11 +1128,63 @@ describe("store module", () => {
     store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "Newer edit" } }));
     resolveFirstPut?.({ ok: true });
     await flushListenerEffects();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs).toEqual([
+      expect.objectContaining({ _id: "media-item:media-1", name: "First edit" }),
+    ]);
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
     expect(db.put).toHaveBeenCalledTimes(2);
     expect(persisted.get("media-item:media-1")?.name).toBe("Newer edit");
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(postMessage.mock.calls[1][0].data.docs).toEqual([
+      expect.objectContaining({ _id: "media-item:media-1", name: "Newer edit" }),
+    ]);
+  });
+
+  it("broadcasts a committed local row while retaining an unrelated remote row", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    let resolvePut: ((value: unknown) => void) | undefined;
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:local", { _id: "media-item:local", _rev: "1-a", docType: "mediaItem", id: "local", name: "Before" }],
+      ["media-item:remote", { _id: "media-item:remote", _rev: "1-b", docType: "mediaItem", id: "remote", name: "Before remote" }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation((doc: Record<string, unknown>) => new Promise((resolve) => {
+      resolvePut = (value) => {
+        persisted.set(String(doc._id), { ...doc, _rev: "2-local" });
+        resolve(value);
+      };
+    }) as any);
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "local", name: "Before" }, { id: "remote", name: "Before remote" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "local", patch: { name: "Saved local" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({ id: "remote", name: "Remote update" }));
+    resolvePut?.({ ok: true });
+    await flushListenerEffects();
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs).toEqual([
+      expect.objectContaining({ _id: "media-item:local", name: "Saved local" }),
+    ]);
+    expect(store.getState().media.list).toEqual([
+      { id: "local", name: "Saved local" },
+      { id: "remote", name: "Remote update" },
+    ]);
+    expect(persisted.get("media-item:remote")?.name).toBe("Before remote");
   });
 
   it("keeps unrelated media edits pending when a remote update wins a row conflict", async () => {
@@ -1174,29 +1226,49 @@ describe("store module", () => {
     expect(persisted.get("media-item:media-b")?.name).toBe("Local B");
   });
 
-  it("does not broadcast a save that became stale while put was in flight", async () => {
+  it("does not broadcast or cache a stale local row after a remote same-row win", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db, postMessage } =
       loadStoreWithMediaPersistence();
+    const previousElectronApiDescriptor = Object.getOwnPropertyDescriptor(window, "electronAPI");
+    const syncMediaCache = jest.fn().mockResolvedValue({ downloaded: 0, cleaned: 0 });
+    const getMediaCacheMap = jest.fn().mockResolvedValue({});
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { syncMediaCache, getMediaCacheMap },
+    });
     db.get.mockResolvedValue({
       _id: "media",
       _rev: "1-media",
-      list: [{ id: "media-1", name: "Original" }],
+      list: [
+        { id: "media-1", name: "Original", type: "image", background: "https://example.test/original.png" },
+        { id: "media-2", name: "Other original", type: "image", background: "https://example.test/other.png" },
+      ],
       folders: [],
     });
+    let putCount = 0;
     db.put.mockImplementation(async () => {
-      store.dispatch(
-        mediaSlice.actions.syncMediaFromRemote({
-          list: [{ id: "media-1", name: "Remote rename" }],
-          folders: [],
-        }),
-      );
+      if (putCount === 0) {
+        store.dispatch(mediaSlice.actions.updateMediaItemFields({
+          id: "media-2",
+          patch: { name: "Newer unrelated local edit" },
+        }));
+        store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({
+          id: "media-1",
+          name: "Remote rename",
+          background: "https://example.test/remote.png",
+        }));
+      }
+      putCount += 1;
       return { ok: true, id: "media", rev: "2-media" };
     });
 
     store.dispatch(
       mediaSlice.actions.initiateMediaFromDoc({
-        list: [{ id: "media-1", name: "Original" }],
+        list: [
+          { id: "media-1", name: "Original", type: "image", background: "https://example.test/original.png" },
+          { id: "media-2", name: "Other original", type: "image", background: "https://example.test/other.png" },
+        ],
         folders: [],
       }),
     );
@@ -1212,7 +1284,33 @@ describe("store module", () => {
 
     expect(db.put).toHaveBeenCalledTimes(1);
     expect(postMessage).not.toHaveBeenCalled();
-    expect(store.getState().media.list[0].name).toBe("Remote rename");
+    expect(store.getState().media.list).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "media-1", name: "Remote rename", background: "https://example.test/remote.png" }),
+      expect.objectContaining({ id: "media-2", name: "Newer unrelated local edit", background: "https://example.test/other.png" }),
+    ]));
+    expect(syncMediaCache).toHaveBeenCalledWith([
+      "https://example.test/remote.png",
+      "https://example.test/other.png",
+    ]);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs).toEqual([
+      expect.objectContaining({
+        _id: "media",
+        list: expect.arrayContaining([
+          expect.objectContaining({ id: "media-1", name: "Remote rename" }),
+          expect.objectContaining({ id: "media-2", name: "Newer unrelated local edit" }),
+        ]),
+      }),
+    ]);
+    expect(getMediaCacheMap).toHaveBeenCalledTimes(2);
+    if (previousElectronApiDescriptor) {
+      Object.defineProperty(window, "electronAPI", previousElectronApiDescriptor);
+    } else {
+      Reflect.deleteProperty(window, "electronAPI");
+    }
   });
 
   it("fallback initialization completes when credits slice becomes initialized", () => {

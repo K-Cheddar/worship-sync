@@ -63,6 +63,7 @@ import {
 } from "../../../api/auth";
 import {
   findReusablePeriodSchedule,
+  resolveDisplayedPeriodRange,
   filterOccurrencesToRange,
   formatSchedulePeriodName,
   type SchedulePeriodPreset,
@@ -519,7 +520,6 @@ const ScheduleTab = ({
     schedules,
     churchId,
     teamId: workspaceTeamId,
-    serviceIds: periodPreset === "upcoming" ? [] : periodServiceIds,
     occurrences: generatedPeriodOccurrences,
     visibleStartDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
       ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
@@ -565,11 +565,14 @@ const ScheduleTab = ({
   const selectedScheduleRecord = viewingSavedSchedule
     ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
     : matchedPeriodSchedule || virtualPeriodSchedule;
-  const displayedPeriodRange = useMemo(() =>
-    selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
+  const displayedPeriodRange = useMemo(() => resolveDisplayedPeriodRange({
+    preset: periodPreset,
+    selectedRange: periodRange,
+    scheduleRange: selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
       ? { start: selectedScheduleRecord.startDate, end: selectedScheduleRecord.endDate }
-      : periodRange,
-  [periodRange, selectedScheduleRecord?.endDate, selectedScheduleRecord?.startDate]);
+      : null,
+    viewingSavedSchedule,
+  }), [periodPreset, periodRange, selectedScheduleRecord?.endDate, selectedScheduleRecord?.startDate, viewingSavedSchedule]);
   useEffect(() => {
     if (viewingSavedSchedule) return;
     const nextId = matchedPeriodSchedule?.scheduleId || "";

@@ -7,6 +7,20 @@ export type SchedulePeriodPreset = RangePreset;
 export const SCHEDULE_PERIOD_OPTIONS = RANGE_PRESET_OPTIONS;
 export const rangeFromPreset = resolveRangePreset;
 
+export const resolveDisplayedPeriodRange = ({
+  preset,
+  selectedRange,
+  scheduleRange,
+  viewingSavedSchedule = false,
+}: {
+  preset: SchedulePeriodPreset;
+  selectedRange: { start: string; end: string };
+  scheduleRange?: { start: string; end: string } | null;
+  viewingSavedSchedule?: boolean;
+}) => viewingSavedSchedule || preset === "upcoming"
+  ? scheduleRange || selectedRange
+  : selectedRange;
+
 export const filterOccurrencesToRange = (
   occurrences: TeamScheduleOccurrence[],
   range: { start: string; end: string },
@@ -34,7 +48,6 @@ export const findReusablePeriodSchedule = ({
   schedules,
   churchId,
   teamId,
-  serviceIds,
   occurrences,
   visibleStartDate,
   visibleEndDate,
@@ -44,7 +57,6 @@ export const findReusablePeriodSchedule = ({
   teamId: string;
   startDate?: string;
   endDate?: string;
-  serviceIds?: string[];
   occurrences: TeamScheduleOccurrence[];
   visibleStartDate?: string;
   visibleEndDate?: string;
@@ -56,26 +68,14 @@ export const findReusablePeriodSchedule = ({
   const firstVisibleDate = visibleStartDate || visibleDates[0];
   const lastVisibleDate = visibleEndDate || visibleDates[visibleDates.length - 1];
   if (!firstVisibleDate || !lastVisibleDate) return { schedule: null, ambiguous: false };
-  const requestedServiceIds = new Set(serviceIds || []);
   const compatible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
       schedule.startDate > firstVisibleDate || schedule.endDate < lastVisibleDate
     ) return false;
-    const savedServiceIds = new Set([
-      ...(schedule.serviceIds || []),
-      ...(schedule.occurrences || []).flatMap((occurrence) => [
-        occurrence.serviceId,
-        ...(occurrence.serviceIds || []),
-      ]),
-    ]);
-    if (
-      requestedServiceIds.size > 0 && savedServiceIds.size > 0 &&
-      ![...requestedServiceIds].some((serviceId) => savedServiceIds.has(serviceId))
-    ) return false;
-    // Preserve saved occurrence details across setup edits when at least one
-    // service identity still overlaps and the period covers the visible dates.
+    // Service Setup identities can change after a saved schedule is created.
+    // Schedule identity comes from its owner and covered dates, not that mutable setup.
     return true;
   });
   const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);

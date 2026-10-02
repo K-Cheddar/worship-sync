@@ -333,21 +333,85 @@ describe("findInitialTeamSchedulePeriod", () => {
     );
   });
 
-  it("counts today's occurrence as upcoming", () => {
+  it("includes a generated occurrence today only while its actual start time is future", () => {
     const result = findInitialTeamSchedulePeriod({
-      services: [service({
-        serviceId: "today",
-        dateTimeISO: "2026-09-29T08:00:00.000Z",
-        positionRequirements: [{ positionId: "camera", count: 1 }],
-      })],
+      services: [
+        service({
+          serviceId: "already-started",
+          dateTimeISO: "2026-09-29T08:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({
+          serviceId: "later-today",
+          dateTimeISO: "2026-09-29T13:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+      ],
       positions,
       teamId: "media",
-      now,
+      now: new Date("2026-09-29T12:00:00.000Z"),
     });
 
     expect(result.preset).toBe("upcoming");
     expect(result.start).toBe("2026-09-01");
-    expect(result.nextOccurrence?.serviceId).toBe("today");
+    expect(result.nextOccurrence?.serviceId).toBe("later-today");
+  });
+
+  it("moves to the next month's relevant occurrence after the final service today", () => {
+    const services = [
+      service({
+        serviceId: "final-today",
+        dateTimeISO: "2026-10-31T11:00:00.000Z",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      }),
+      service({
+        serviceId: "next-month",
+        dateTimeISO: "2026-11-07T11:00:00.000Z",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      }),
+    ];
+    const before = findInitialTeamSchedulePeriod({
+      services,
+      positions,
+      teamId: "media",
+      now: new Date("2026-10-31T10:59:59.000Z"),
+    });
+    const after = findInitialTeamSchedulePeriod({
+      services,
+      positions,
+      teamId: "media",
+      now: new Date("2026-10-31T11:00:01.000Z"),
+    });
+
+    expect(before.nextOccurrence?.serviceId).toBe("final-today");
+    expect(before.start).toBe("2026-10-01");
+    expect(after.nextOccurrence?.serviceId).toBe("next-month");
+    expect(after.start).toBe("2026-11-01");
+  });
+
+  it("uses actual start timestamps for persisted team-slot occurrences too", () => {
+    const occurrenceId = "saved@2026-10-31T11:00:00.000Z";
+    const result = findInitialTeamSchedulePeriod({
+      services: [],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "saved-quarter",
+        churchId: "church-1",
+        teamId: "media",
+        name: "Saved schedule",
+        startDate: "2026-10-01",
+        endDate: "2026-12-31",
+        serviceIds: ["saved"],
+        occurrences: [{ occurrenceId, serviceId: "saved", name: "Saved", startsAt: "2026-10-31T11:00:00.000Z" }],
+        assignments: {},
+        additionalPositionSlots: { [occurrenceId]: ["camera::0"] },
+      }],
+      now: new Date("2026-10-31T11:00:01.000Z"),
+    });
+
+    expect(result.nextOccurrence).toBeNull();
+    expect(result.start).toBe("2026-10-01");
   });
 
   it("ignores occurrences that do not require a position on this team", () => {

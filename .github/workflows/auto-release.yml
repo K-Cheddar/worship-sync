@@ -69,10 +69,6 @@ jobs:
     if: needs.release.outputs.published == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
-    env:
-      ELECTRON_CACHE: ${{ runner.temp }}/electron
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
-
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +108,8 @@ jobs:
 
       - run: npm ci
         working-directory: client
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
 
       - name: Build Electron app
         run: npm run build:electron
@@ -124,17 +122,25 @@ jobs:
         if: matrix.platform == 'linux'
         run: npx electron-builder --linux --publish never --config electron-builder.config.js
         working-directory: client
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
 
       - name: Package Windows
         if: matrix.platform == 'win'
         run: npx electron-builder --win --publish never --config electron-builder.config.js
         working-directory: client
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
 
       - name: Package macOS (unsigned)
         if: matrix.platform == 'mac'
         run: npx electron-builder --mac --publish never --config electron-builder.config.js
         working-directory: client
         env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Persist Linux release assets

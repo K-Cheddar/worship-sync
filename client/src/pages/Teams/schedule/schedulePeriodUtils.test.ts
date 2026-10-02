@@ -3,6 +3,7 @@ import {
   filterOccurrencesToRange,
   findReusablePeriodSchedule,
   rangeFromPreset,
+  resolveDisplayedPeriodRange,
 } from "./schedulePeriodUtils";
 
 const occurrence: TeamScheduleOccurrence = {
@@ -16,7 +17,6 @@ const target = {
   teamId: "team-1",
   startDate: "2026-10-01",
   endDate: "2026-10-31",
-  serviceIds: ["service"],
   occurrences: [occurrence],
 };
 type TestSchedule = TeamScheduleSummary & Pick<Partial<TeamSchedule>, "assignments">;
@@ -27,7 +27,7 @@ const schedule = (changes: Partial<TestSchedule> = {}): TestSchedule => ({
   teamId: target.teamId,
   startDate: target.startDate,
   endDate: target.endDate,
-  serviceIds: target.serviceIds,
+  serviceIds: ["service"],
   occurrences: target.occurrences,
   ...changes,
 });
@@ -276,7 +276,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("does not reuse a populated schedule after all service identities are replaced", () => {
+  it("reuses a populated schedule after all service identities are replaced", () => {
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => ({
       ...occurrence,
       occurrenceId: `old-service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
@@ -296,14 +296,17 @@ describe("findReusablePeriodSchedule", () => {
       startsAt: `2026-10-${String(day).padStart(2, "0")}T11:00:00.000Z`,
     }));
 
-    expect(findReusablePeriodSchedule({
+    const result = findReusablePeriodSchedule({
       schedules: [custom],
       ...target,
-      serviceIds: ["new-service"],
       occurrences: currentOccurrences,
       visibleStartDate: "2026-10-01",
       visibleEndDate: "2026-10-31",
-    })).toEqual({ schedule: null, ambiguous: false });
+    });
+
+    expect(result).toEqual({ schedule: custom, ambiguous: false });
+    expect(result.schedule?.occurrences).toEqual(savedOccurrences);
+    expect((result.schedule as TeamSchedule).assignments).toEqual(custom.assignments);
   });
 
   it("reuses a saved period when current Setup has no occurrences", () => {
@@ -407,5 +410,64 @@ describe("findReusablePeriodSchedule", () => {
       schedule: null,
       ambiguous: true,
     });
+  });
+});
+
+describe("resolveDisplayedPeriodRange", () => {
+  const quarterlySchedule = schedule({
+    startDate: "2026-10-01",
+    endDate: "2026-12-31",
+    occurrences: [3, 10, 17].map((day) => ({
+      ...occurrence,
+      occurrenceId: `service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    })),
+  });
+
+  it("keeps a Custom selection narrow while reusing the quarterly schedule", () => {
+    const selectedRange = { start: "2026-10-05", end: "2026-10-12" };
+    const match = findReusablePeriodSchedule({
+      schedules: [quarterlySchedule],
+      ...target,
+      visibleStartDate: selectedRange.start,
+      visibleEndDate: selectedRange.end,
+    });
+    const displayedRange = resolveDisplayedPeriodRange({
+      preset: "custom",
+      selectedRange,
+      scheduleRange: { start: quarterlySchedule.startDate!, end: quarterlySchedule.endDate! },
+    });
+
+    expect(match.schedule).toBe(quarterlySchedule);
+    expect(displayedRange).toEqual(selectedRange);
+    expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, displayedRange).map((item) => item.startsAt)).toEqual([
+      "2026-10-10T10:00:00.000Z",
+    ]);
+  });
+
+  it("keeps This month on October while reusing the quarterly schedule", () => {
+    const selectedRange = { start: "2026-10-01", end: "2026-10-31" };
+    const match = findReusablePeriodSchedule({
+      schedules: [quarterlySchedule],
+      ...target,
+      visibleStartDate: selectedRange.start,
+      visibleEndDate: selectedRange.end,
+    });
+    const displayedRange = resolveDisplayedPeriodRange({
+      preset: "thisMonth",
+      selectedRange,
+      scheduleRange: { start: quarterlySchedule.startDate!, end: quarterlySchedule.endDate! },
+    });
+
+    expect(match.schedule).toBe(quarterlySchedule);
+    expect(displayedRange).toEqual(selectedRange);
+    expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, displayedRange)).toHaveLength(3);
+  });
+
+  it("uses full saved bounds for Upcoming and explicit history", () => {
+    const scheduleRange = { start: "2026-10-01", end: "2026-12-31" };
+    const selectedRange = { start: "2026-10-05", end: "2026-10-12" };
+    expect(resolveDisplayedPeriodRange({ preset: "upcoming", selectedRange, scheduleRange })).toEqual(scheduleRange);
+    expect(resolveDisplayedPeriodRange({ preset: "custom", selectedRange, scheduleRange, viewingSavedSchedule: true })).toEqual(scheduleRange);
   });
 });

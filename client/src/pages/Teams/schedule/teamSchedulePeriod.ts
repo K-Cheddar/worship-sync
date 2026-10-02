@@ -15,6 +15,7 @@ import {
 } from "./scheduleRequirements";
 import { isHydratedSchedule } from "../../../api/authTypes";
 import { calendarMonthRange } from "../rangeSelection";
+import { serverDate } from "@/utils/serverTime";
 
 export type TeamSchedulePeriod = {
   occurrences: TeamScheduleOccurrence[];
@@ -116,7 +117,7 @@ export const findInitialTeamSchedulePeriod = ({
   positions,
   teamId,
   schedules = [],
-  now = new Date(),
+  now = serverDate(),
 }: {
   services: TeamService[];
   positions: TeamPosition[];
@@ -131,7 +132,6 @@ export const findInitialTeamSchedulePeriod = ({
   nextOccurrence: TeamScheduleOccurrence | null;
 } => {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayPlainDate = formatPlainDate(today);
   const teamPositionIds = new Set(positions
     .filter((position) => position.teamId === teamId)
     .map((position) => position.positionId));
@@ -174,7 +174,6 @@ export const findInitialTeamSchedulePeriod = ({
         ? schedule.additionalPositionSlots
         : undefined;
       return (schedule.occurrences || []).filter((occurrence) => {
-        const date = getOccurrenceDate(occurrence);
         const hasTeamRequirement = sanitizePositionRequirements(occurrence.positionRequirements)
           .some((requirement) => teamPositionIds.has(requirement.positionId));
         const hasTeamSlot = (additionalSlots?.[occurrence.occurrenceId] || [])
@@ -182,11 +181,16 @@ export const findInitialTeamSchedulePeriod = ({
             const slot = parseSlotKey(slotKey);
             return Boolean(slot && teamPositionIds.has(slot.positionId));
           });
-        return date >= todayPlainDate && (hasTeamRequirement || hasTeamSlot);
+        const startsAt = Date.parse(occurrence.startsAt);
+        return Number.isFinite(startsAt) && startsAt >= now.getTime() &&
+          (hasTeamRequirement || hasTeamSlot);
       });
     });
   const nextOccurrence = [...generatedFuture, ...savedFuture]
-    .filter((occurrence) => getOccurrenceDate(occurrence) >= todayPlainDate)
+    .filter((occurrence) => {
+      const startsAt = Date.parse(occurrence.startsAt);
+      return Number.isFinite(startsAt) && startsAt >= now.getTime();
+    })
     .sort((left, right) => left.startsAt.localeCompare(right.startsAt))[0] || null;
   const nextDate = nextOccurrence ? parsePlainDate(getOccurrenceDate(nextOccurrence)) : null;
   const range = calendarMonthRange(nextDate || today);

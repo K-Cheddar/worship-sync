@@ -1889,6 +1889,10 @@ type PendingMediaPersistenceState = Pick<RootState["media"], "list" | "folders">
 let pendingMediaPersistence: {
   db: PouchDB.Database;
   state: PendingMediaPersistenceState;
+  inFlightRemoteChanges?: Set<{
+    itemIds: Set<string>;
+    folderIds: Set<string>;
+  }>;
 } | null = null;
 
 listenerMiddleware.startListening({
@@ -1947,61 +1951,95 @@ listenerMiddleware.startListening({
 
       try {
         const latestMedia = (listenerApi.getState() as RootState).media;
-        const changedDocs = await persistMediaStateChanges(
-          dbAtStart,
-          baseline.state,
-          { list: latestMedia.list, folders: latestMedia.folders },
-          mediaSaveIsCurrent,
-        );
-        // The put is already committed. This check only prevents stale
-        // broadcast/cache side effects if state changed while it was in flight.
-        if (!mediaSaveIsCurrent()) return;
-        const currentMedia = (listenerApi.getState() as RootState).media;
-        if (
-          currentMedia.list !== latestMedia.list ||
-          currentMedia.folders !== latestMedia.folders
-        ) {
-          // Keep the same pending baseline alive, rebased to the snapshot that
-          // just committed. A newer debounced listener can then persist edits
-          // made while that write was in flight.
-          baseline.state = { list: latestMedia.list, folders: latestMedia.folders };
-          return;
-        }
-        if (pendingMediaPersistence === baseline) pendingMediaPersistence = null;
+        const remoteChanges = { itemIds: new Set<string>(), folderIds: new Set<string>() };
+        baseline.inFlightRemoteChanges ??= new Set();
+        baseline.inFlightRemoteChanges.add(remoteChanges);
+        try {
+          const changedDocs = await persistMediaStateChanges(
+            dbAtStart,
+            baseline.state,
+            { list: latestMedia.list, folders: latestMedia.folders },
+            mediaSaveIsCurrent,
+          );
+          // Redux changes after Pouch commits do not invalidate the commit. They
+          // do affect which rows are still authoritative for broadcast/cache.
+          if (!mediaSaveIsCurrent()) return;
+          const currentMedia = (listenerApi.getState() as RootState).media;
+          const rebaseCommittedRows = <T extends { id: string }>(
+            committedRows: T[],
+            authoritativeRows: T[],
+            changedIds: Set<string>,
+          ) => {
+            const rows = new Map(committedRows.map((row) => [row.id, row]));
+            const authoritativeById = new Map(authoritativeRows.map((row) => [row.id, row]));
+            changedIds.forEach((id) => {
+              const row = authoritativeById.get(id);
+              if (row) rows.set(id, row);
+              else rows.delete(id);
+            });
+            return [...rows.values()];
+          };
+          // Advance through the committed snapshot, while retaining remote wins
+          // that arrived during the Pouch write. New local edits remain pending.
+          baseline.state = {
+            list: rebaseCommittedRows(latestMedia.list, currentMedia.list, remoteChanges.itemIds),
+            folders: rebaseCommittedRows(latestMedia.folders, currentMedia.folders, remoteChanges.folderIds),
+          };
+          if (
+            JSON.stringify(baseline.state.list) === JSON.stringify(currentMedia.list) &&
+            JSON.stringify(baseline.state.folders) === JSON.stringify(currentMedia.folders)
+          ) {
+            if (pendingMediaPersistence === baseline) pendingMediaPersistence = null;
+          }
 
-        // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
-        if (changedDocs.length > 0) {
-          safePostMessage({
-            type: "update",
-            data: {
-              docs: changedDocs,
-              hostId: globalHostId,
-            },
-          });
-        }
-
-        // Sync media cache to match the saved media list (Electron only)
-        if (window.electronAPI) {
-          try {
-            const urlArray = extractMediaUrlsFromBackgrounds(latestMedia.list);
-            const electronAPI = window.electronAPI as unknown as {
-              syncMediaCache: (
-                urls: string[],
-              ) => Promise<{ downloaded: number; cleaned: number }>;
-              getMediaCacheMap: () => Promise<Record<string, string>>;
-            };
-            if (urlArray.length > 0) {
-              await electronAPI.syncMediaCache(urlArray);
-            } else {
-              await electronAPI.syncMediaCache([]);
+          const broadcastDocs = changedDocs.filter((value) => {
+            if (!value || typeof value !== "object") return true;
+            const doc = value as { _id?: unknown };
+            if (doc._id === "media") {
+              return remoteChanges.itemIds.size === 0 && remoteChanges.folderIds.size === 0;
             }
-            const map = await electronAPI.getMediaCacheMap();
-            listenerApi.dispatch(setMediaCacheMap(map));
-          } catch (error) {
-            console.error(
-              "Error syncing media cache after media list save:",
-              error,
-            );
+            if (typeof doc._id !== "string") return true;
+            if (doc._id.startsWith("media-item:")) {
+              return !remoteChanges.itemIds.has(doc._id.slice("media-item:".length));
+            }
+            if (doc._id === "media-folders") return remoteChanges.folderIds.size === 0;
+            return true;
+          });
+
+          // Pouch has committed the docs. Publish each still-authoritative local
+          // commit even when a newer local snapshot is waiting for its own save.
+          if (broadcastDocs.length > 0) {
+            safePostMessage({
+              type: "update",
+              data: { docs: broadcastDocs, hostId: globalHostId },
+            });
+          }
+
+          // Cache the currently authoritative Redux list, including remote row
+          // wins and any newer local edit that is still pending persistence.
+          if (window.electronAPI) {
+            try {
+              const urlArray = extractMediaUrlsFromBackgrounds(currentMedia.list);
+              const electronAPI = window.electronAPI as unknown as {
+                syncMediaCache: (
+                  urls: string[],
+                ) => Promise<{ downloaded: number; cleaned: number }>;
+                getMediaCacheMap: () => Promise<Record<string, string>>;
+              };
+              await electronAPI.syncMediaCache(urlArray);
+              const map = await electronAPI.getMediaCacheMap();
+              listenerApi.dispatch(setMediaCacheMap(map));
+            } catch (error) {
+              console.error(
+                "Error syncing media cache after media list save:",
+                error,
+              );
+            }
+          }
+        } finally {
+          baseline.inFlightRemoteChanges?.delete(remoteChanges);
+          if (baseline.inFlightRemoteChanges?.size === 0) {
+            delete baseline.inFlightRemoteChanges;
           }
         }
       } catch (error) {
@@ -2057,6 +2095,9 @@ listenerMiddleware.startListening({
       );
     };
     const remoteChangedIds = changedIds(before.list, after.list);
+    baseline.inFlightRemoteChanges?.forEach((changes) => {
+      remoteChangedIds.forEach((id) => changes.itemIds.add(id));
+    });
     // Remote writes remain authoritative for the rows they change. Rebase only
     // those rows so other local edits stay pending and can still be persisted.
     const rebaseChangedRows = <T extends { id: string }>(
@@ -2084,6 +2125,9 @@ listenerMiddleware.startListening({
       before.folders,
       after.folders,
     );
+    baseline.inFlightRemoteChanges?.forEach((changes) => {
+      remoteChangedFolderIds.forEach((id) => changes.folderIds.add(id));
+    });
     if (remoteChangedFolderIds.size > 0) {
       baseline.state = {
         ...baseline.state,
@@ -2095,6 +2139,7 @@ listenerMiddleware.startListening({
       };
     }
     if (
+      !baseline.inFlightRemoteChanges?.size &&
       JSON.stringify(baseline.state.list) === JSON.stringify(after.list) &&
       JSON.stringify(baseline.state.folders) === JSON.stringify(after.folders)
     ) {

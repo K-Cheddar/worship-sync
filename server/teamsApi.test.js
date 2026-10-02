@@ -958,7 +958,7 @@ test("generated schedule ensure reuses an older rolling record by date coverage 
   );
 });
 
-test("generated schedule ensure does not reuse a populated schedule after all service identities change", async (t) => {
+test("generated schedule ensure reuses a populated schedule after all service identities change", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("custom_schedule_occurrence_drift");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -1025,10 +1025,12 @@ test("generated schedule ensure does not reuse a populated schedule after all se
     .digest("hex");
 
   assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.created, true);
-  assert.equal(result.payload.schedule.scheduleId, `generated_${generatedKey}`);
-  assert.equal(result.payload.schedule.occurrences.length, currentOccurrences.length);
-  assert.deepEqual(result.payload.schedule.serviceIds, currentOccurrences.map((occurrence) => occurrence.serviceId));
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, customScheduleId);
+  assert.equal(result.payload.schedule.occurrences.length, savedOccurrenceIds.length);
+  assert.deepEqual(result.payload.schedule.serviceIds, ["old-service"]);
+  assert.deepEqual(result.payload.schedule.assignments[savedOccurrenceIds[0]], existingAssignment);
+  assert.equal(await getDoc("teamSchedules", `generated_${generatedKey}`), null);
   assert.deepEqual(
     (await getDoc("teamSchedules", customScheduleId)).assignments[savedOccurrenceIds[0]],
     existingAssignment,
