@@ -524,12 +524,7 @@ const ScheduleTab = ({
     schedules,
     churchId,
     teamId: workspaceTeamId,
-    startDate: persistedPeriodRange.start,
-    endDate: persistedPeriodRange.end,
-    serviceIds: periodServiceIds,
     occurrences: generatedPeriodOccurrences,
-    visibleStartDate: periodRange.start,
-    visibleEndDate: periodRange.end,
   });
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && periodScheduleMatch.ambiguous;
