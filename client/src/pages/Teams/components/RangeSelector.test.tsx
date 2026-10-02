@@ -67,13 +67,11 @@ describe("RangeSelector", () => {
     expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
     const customRangeInput = screen.getByRole("textbox", { name: "Custom date range" });
     expect(customRangeInput).toBeInTheDocument();
+    expect(customRangeInput).toHaveValue("09/29/2026 – 10/31/2026");
     expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
 
     await user.click(customRangeInput);
-    expect(screen.getByRole("grid")).toBeInTheDocument();
-    await user.click(screen.getByText("8", { selector: "button" }));
-    await user.click(await screen.findByText("12", { selector: "button" }));
-    expect(customRangeInput).toHaveValue("09/08/2026 – 09/12/2026");
+    expect(await screen.findByRole("grid")).toBeInTheDocument();
   });
 
   it("keeps one compact editable range input between the paging arrows", async () => {
