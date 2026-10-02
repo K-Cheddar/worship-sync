@@ -6,22 +6,35 @@ import {
 import type { MediaType } from "../types";
 
 let mockGlobalDb: PouchDB.Database | undefined;
+let mockBroadcastRef: { postMessage: jest.Mock } | null;
+let mockDispatch: jest.Mock;
 
 jest.mock("../context/controllerInfo", () => ({
   get globalDb() {
     return mockGlobalDb;
   },
-  globalBroadcastRef: null,
+  get globalBroadcastRef() {
+    return mockBroadcastRef;
+  },
 }));
 
 jest.mock("../store/store", () => ({
   __esModule: true,
-  default: { dispatch: jest.fn() },
+  default: { dispatch: (...args: unknown[]) => mockDispatch(...args) },
 }));
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+};
 
 describe("flushMediaLibraryDocToPouch", () => {
   beforeEach(() => {
     mockGlobalDb = undefined;
+    mockBroadcastRef = null;
+    mockDispatch = jest.fn();
+    delete (window as unknown as { electronAPI?: unknown }).electronAPI;
   });
 
   it("returns ok: false with a clear error when db is unavailable", async () => {
@@ -119,5 +132,96 @@ describe("flushMediaLibraryDocToPouch", () => {
     });
     expect(staleDb.get).not.toHaveBeenCalled();
     expect(staleDb.put).not.toHaveBeenCalled();
+  });
+
+  it("stops the v1 aggregate flush after an async read becomes stale", async () => {
+    const mediaRead = deferred<{ _id: string; _rev: string; list: MediaType[]; folders: [] }>();
+    const mediaReadStarted = deferred<void>();
+    const postMessage = jest.fn();
+    const syncMediaCache = jest.fn().mockResolvedValue({ downloaded: 0, cleaned: 0 });
+    const getMediaCacheMap = jest.fn().mockResolvedValue({});
+    mockBroadcastRef = { postMessage };
+    const db = {
+      get: jest.fn((id: string) => {
+        if (id === "media-library-meta") {
+          return Promise.reject(Object.assign(new Error("missing"), { status: 404 }));
+        }
+        mediaReadStarted.resolve();
+        return mediaRead.promise;
+      }),
+      put: jest.fn(),
+      remove: jest.fn(),
+      allDocs: jest.fn(),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      syncMediaCache,
+      getMediaCacheMap,
+    };
+
+    const getLatestState = jest.fn(() => ({
+      list: [{ id: "from-church-b", name: "B" } as MediaType],
+      folders: [],
+    }));
+    const flush = flushMediaLibraryDocToPouch(
+      db,
+      [{ id: "from-church-a", name: "A" } as MediaType],
+      [],
+      getLatestState,
+    );
+    await mediaReadStarted.promise;
+    mockGlobalDb = {} as PouchDB.Database;
+    mediaRead.resolve({ _id: "media", _rev: "1-media", list: [], folders: [] });
+
+    await expect(flush).resolves.toEqual({ ok: true });
+    expect(db.put).not.toHaveBeenCalled();
+    expect(db.remove).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(getLatestState).not.toHaveBeenCalled();
+    expect(syncMediaCache).not.toHaveBeenCalled();
+    expect(getMediaCacheMap).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("stops the v2 item reconciliation after a deferred database read becomes stale", async () => {
+    const itemRead = deferred<{ rows: Array<{ id: string; doc: Record<string, unknown> }> }>();
+    const itemReadStarted = deferred<void>();
+    const postMessage = jest.fn();
+    const syncMediaCache = jest.fn().mockResolvedValue({ downloaded: 0, cleaned: 0 });
+    const getMediaCacheMap = jest.fn().mockResolvedValue({});
+    mockBroadcastRef = { postMessage };
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        if (id === "media-folders") return { _id: id, folders: [] };
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      allDocs: jest.fn(() => {
+        itemReadStarted.resolve();
+        return itemRead.promise;
+      }),
+      put: jest.fn(),
+      remove: jest.fn(),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      syncMediaCache,
+      getMediaCacheMap,
+    };
+
+    const flush = flushMediaLibraryDocToPouch(db, [{ id: "from-church-a", name: "A" } as MediaType], []);
+    await itemReadStarted.promise;
+    mockGlobalDb = {} as PouchDB.Database;
+    itemRead.resolve({
+      rows: [{ id: "media-item:from-church-a", doc: { _id: "media-item:from-church-a", id: "from-church-a", docType: "mediaItem" } }],
+    });
+
+    await expect(flush).resolves.toEqual({ ok: true });
+    expect(db.put).not.toHaveBeenCalled();
+    expect(db.remove).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(syncMediaCache).not.toHaveBeenCalled();
+    expect(getMediaCacheMap).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 });

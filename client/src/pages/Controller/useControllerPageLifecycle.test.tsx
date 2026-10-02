@@ -200,7 +200,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     });
     store.dispatch(initiateMediaFromDoc({
       list: [
-        { id: "update", name: "Before" },
+        { id: "update", name: "Before", folderId: "old-folder", thumbnail: "/old.jpg" },
         { id: "delete", name: "Remove" },
       ] as any,
       folders: [existingFolder] as any,
@@ -217,8 +217,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     })));
 
     expect(store.getState().media.list).toEqual([
-      expect.objectContaining({ id: "update", name: "After" }),
-      expect.objectContaining({ id: "add", name: "New" }),
+      { id: "update", name: "After" },
+      { id: "add", name: "New" },
     ]);
     expect(store.getState().media.folders).toEqual([
       { id: "new-folder", name: "New", parentId: null },

@@ -924,7 +924,10 @@ describe("store module", () => {
   it("discards a delayed media save when RESET occurs during the document read", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
-    db.get.mockImplementation(async () => {
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") {
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }
       store.dispatch({ type: "RESET" });
       return {
         _id: "media",
@@ -950,6 +953,7 @@ describe("store module", () => {
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
+    expect(db.get).toHaveBeenCalledWith("media-library-meta");
     expect(db.get).toHaveBeenCalledWith("media");
     expect(db.put).not.toHaveBeenCalled();
   });

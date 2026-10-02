@@ -148,18 +148,29 @@ describe("mediaSlice", () => {
   });
 
   describe("v2 replicated changes", () => {
-    it("upserts one item, applies folders, then removes a tombstoned item", () => {
+    it("replaces authoritative item documents, applies folders, and removes tombstones", () => {
       const store = createStore();
       store.dispatch(initiateMediaFromDoc({ list: [makeMedia("existing")], folders: [] }));
-      store.dispatch(upsertMediaItemFromRemote({ ...makeMedia("new"), folderId: "folder" }));
+      store.dispatch(upsertMediaItemFromRemote({
+        ...makeMedia("new"),
+        name: "New item",
+        folderId: "folder",
+        thumbnail: "/thumb.jpg",
+      }));
       expect(store.getState().media.list.map((item) => item.id)).toEqual(["existing", "new"]);
       expect(store.getState().media.list[1].folderId).toBe("folder");
       store.dispatch(updateMediaFoldersFromRemote([makeFolder("folder")]));
-      store.dispatch(upsertMediaItemFromRemote({ id: "new", name: "Renamed" }));
-      expect(store.getState().media.list[1]).toEqual({
-        ...makeMedia("new"),
+      store.dispatch(upsertMediaItemFromRemote({
+        id: "new",
         name: "Renamed",
-        folderId: "folder",
+        type: "image",
+        background: "/new-background.jpg",
+      }));
+      expect(store.getState().media.list[1]).toEqual({
+        id: "new",
+        name: "Renamed",
+        type: "image",
+        background: "/new-background.jpg",
       });
       store.dispatch(removeMediaItemFromRemote("new"));
       expect(store.getState().media.list.map((item) => item.id)).toEqual(["existing"]);

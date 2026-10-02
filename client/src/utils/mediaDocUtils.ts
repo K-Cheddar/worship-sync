@@ -119,8 +119,22 @@ export async function updateMediaItem(
   canCommit: () => boolean = () => true,
   allowCreate = false,
 ): Promise<PouchDB.Core.Response | undefined> {
-  if (!(await isMediaLibraryV2(db))) {
-    return updateLegacyMediaItem(db, id, patch, canCommit);
+  const result = await updateMediaItemWithDocument(db, id, patch, canCommit, allowCreate);
+  return result?.response;
+}
+
+async function updateMediaItemWithDocument(
+  db: PouchDB.Database,
+  id: string,
+  patch: Partial<MediaType>,
+  canCommit: () => boolean,
+  allowCreate: boolean,
+): Promise<{ response: PouchDB.Core.Response; doc?: MediaItemDoc } | undefined> {
+  const schemaV2 = await isMediaLibraryV2(db);
+  if (!canCommit()) return undefined;
+  if (!schemaV2) {
+    const response = await updateLegacyMediaItem(db, id, patch, canCommit);
+    return response ? { response } : undefined;
   }
   const _id = mediaItemDocId(id);
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -148,7 +162,8 @@ export async function updateMediaItem(
       if (JSON.stringify(currentItem) === JSON.stringify(nextItem)) return undefined;
     }
     try {
-      return await db.put(doc);
+      const response = await db.put(doc);
+      return { response, doc };
     } catch (error) {
       if (!isPouchConflict(error) || attempt === 2) throw error;
     }
@@ -161,10 +176,14 @@ export async function removeMediaItem(
   id: string,
   canCommit: () => boolean = () => true,
 ): Promise<PouchDB.Core.Response | undefined> {
-  if (!(await isMediaLibraryV2(db))) {
-    const doc = await loadOrCreateMediaDoc(db);
-    if (await isMediaLibraryV2(db)) return removeMediaItem(db, id, canCommit);
+  const schemaV2 = await isMediaLibraryV2(db);
+  if (!canCommit()) return undefined;
+  if (!schemaV2) {
+    const doc = await loadOrCreateMediaDoc(db, canCommit);
+    if (!doc) return undefined;
+    const schemaChanged = await isMediaLibraryV2(db);
     if (!canCommit()) return undefined;
+    if (schemaChanged) return removeMediaItem(db, id, canCommit);
     doc.list = doc.list.filter((item) => item.id !== id);
     doc.updatedAt = new Date().toISOString();
     return db.put(doc);
@@ -192,10 +211,14 @@ export async function saveMediaFolders(
   folders: MediaFolder[],
   canCommit: () => boolean = () => true,
 ) {
-  if (!(await isMediaLibraryV2(db))) {
-    const doc = await loadOrCreateMediaDoc(db);
-    if (await isMediaLibraryV2(db)) return saveMediaFolders(db, folders, canCommit);
+  const schemaV2 = await isMediaLibraryV2(db);
+  if (!canCommit()) return undefined;
+  if (!schemaV2) {
+    const doc = await loadOrCreateMediaDoc(db, canCommit);
+    if (!doc) return undefined;
+    const schemaChanged = await isMediaLibraryV2(db);
     if (!canCommit()) return undefined;
+    if (schemaChanged) return saveMediaFolders(db, folders, canCommit);
     doc.folders = [...folders];
     doc.updatedAt = new Date().toISOString();
     return db.put(doc);
@@ -219,12 +242,16 @@ export async function persistMediaStateChanges(
   canCommit: () => boolean = () => true,
 ) {
   if (!canCommit()) return [];
-  if (!(await isMediaLibraryV2(db))) {
-    const current = await loadOrCreateMediaDoc(db);
-    if (await isMediaLibraryV2(db)) {
+  const schemaV2 = await isMediaLibraryV2(db);
+  if (!canCommit()) return [];
+  if (!schemaV2) {
+    const current = await loadOrCreateMediaDoc(db, canCommit);
+    if (!current) return [];
+    const schemaChanged = await isMediaLibraryV2(db);
+    if (!canCommit()) return [];
+    if (schemaChanged) {
       return persistMediaStateChanges(db, before, after, canCommit);
     }
-    if (!canCommit()) return [];
     current.list = [...after.list];
     current.folders = [...after.folders];
     current.updatedAt = new Date().toISOString();
@@ -245,9 +272,22 @@ export async function persistMediaStateChanges(
           patch[key] = item[key];
         }
       }
-      const result = await updateMediaItem(db, id, patch as Partial<MediaType>, canCommit, !previous);
+      const result = await updateMediaItemWithDocument(
+        db,
+        id,
+        patch as Partial<MediaType>,
+        canCommit,
+        !previous,
+      );
       if (result) {
-        changedDocs.push({ ...patch, id, _id: mediaItemDocId(id), docType: "mediaItem" });
+        const savedDoc = result.doc;
+        if (savedDoc) {
+          const replicatedDoc = { ...savedDoc };
+          delete replicatedDoc._rev;
+          changedDocs.push(replicatedDoc);
+        } else {
+          changedDocs.push({ ...item, id, _id: mediaItemDocId(id), docType: "mediaItem" });
+        }
       }
     }
   }
@@ -275,11 +315,16 @@ export async function persistMediaLibrarySnapshot(
   canCommit: () => boolean = () => true,
 ) {
   if (!canCommit()) return [];
-  if (!(await isMediaLibraryV2(db))) {
-    const current = await loadOrCreateMediaDoc(db);
-    const latest = getLatestState?.() ?? { list, folders };
+  const schemaV2 = await isMediaLibraryV2(db);
+  if (!canCommit()) return [];
+  if (!schemaV2) {
+    const current = await loadOrCreateMediaDoc(db, canCommit);
+    if (!current) return [];
     if (!canCommit()) return [];
-    if (await isMediaLibraryV2(db)) {
+    const latest = getLatestState?.() ?? { list, folders };
+    const schemaChanged = await isMediaLibraryV2(db);
+    if (!canCommit()) return [];
+    if (schemaChanged) {
       return persistMediaLibrarySnapshot(db, latest.list, latest.folders, getLatestState, canCommit);
     }
     current.list = [...latest.list];
@@ -303,9 +348,11 @@ async function updateLegacyMediaItem(
   patch: Partial<MediaType>,
   canCommit: () => boolean,
 ): Promise<PouchDB.Core.Response | undefined> {
-  const doc = await loadOrCreateMediaDoc(db);
-  if (await isMediaLibraryV2(db)) return updateMediaItem(db, id, patch, canCommit);
+  const doc = await loadOrCreateMediaDoc(db, canCommit);
+  if (!doc) return undefined;
+  const schemaChanged = await isMediaLibraryV2(db);
   if (!canCommit()) return undefined;
+  if (schemaChanged) return updateMediaItem(db, id, patch, canCommit);
   const index = doc.list.findIndex((item) => item.id === id);
   if (index < 0) doc.list.push({ ...patch, id } as MediaType);
   else doc.list[index] = { ...doc.list[index], ...patch, id };
@@ -337,12 +384,15 @@ const isPouchConflict = (error: unknown) => {
 /** Load the media document, creating an authoritative empty document only on a confirmed 404. */
 export async function loadOrCreateMediaDoc(
   db: PouchDB.Database,
-): Promise<DBMedia> {
+  canCommit: () => boolean = () => true,
+): Promise<DBMedia | undefined> {
   try {
     return (await db.get("media")) as DBMedia;
   } catch (error) {
     if (!isPouchNotFound(error)) throw error;
   }
+
+  if (!canCommit()) return undefined;
 
   const now = new Date().toISOString();
   const emptyMediaDoc = {
