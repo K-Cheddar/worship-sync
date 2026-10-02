@@ -22,6 +22,13 @@ type PreparedMediaContextEnvelope = {
   data: PreparedMediaContext;
 };
 
+type PreparedMediaContextRequest = {
+  type: "prepared-media-context-request";
+  hostId?: string;
+  controllerProfileId: string;
+  outlineScope: string;
+};
+
 export const publishPreparedMediaContext = (
   context: PreparedMediaContext,
 ) => {
@@ -34,6 +41,51 @@ export const publishPreparedMediaContext = (
     new CustomEvent(PREPARED_MEDIA_CONTEXT_EVENT, { detail: context }),
   );
   globalBroadcastRef?.postMessage(envelope);
+};
+
+/** Ask the live controller renderer for its current selection on mount. */
+export const requestPreparedMediaContext = (
+  owner: Pick<PreparedMediaContext, "controllerProfileId" | "outlineScope">,
+) => {
+  const request: PreparedMediaContextRequest = {
+    type: "prepared-media-context-request",
+    hostId: globalHostId,
+    controllerProfileId: owner.controllerProfileId,
+    outlineScope: owner.outlineScope,
+  };
+  globalBroadcastRef?.postMessage(request);
+};
+
+/** Reply only to outputs asking for this exact controller source. */
+export const subscribePreparedMediaContextRequests = (
+  getContexts: () => PreparedMediaContext[],
+) => {
+  const channel = globalBroadcastRef;
+  if (!channel) return () => undefined;
+
+  const onRequest = (event: MessageEvent<PreparedMediaContextRequest>) => {
+    const request = event.data;
+    if (
+      request?.type !== "prepared-media-context-request" ||
+      request.hostId === globalHostId
+    ) {
+      return;
+    }
+    const context = getContexts().find(
+      (candidate) =>
+        candidate.controllerProfileId === request.controllerProfileId &&
+        candidate.outlineScope === request.outlineScope,
+    );
+    if (context) {
+      channel.postMessage({
+        type: "prepared-media-context",
+        hostId: globalHostId,
+        data: context,
+      } satisfies PreparedMediaContextEnvelope);
+    }
+  };
+  channel.addEventListener("message", onRequest as EventListener);
+  return () => channel.removeEventListener("message", onRequest as EventListener);
 };
 
 const sameContextOwner = (
@@ -49,10 +101,12 @@ const sameContextOwner = (
  */
 export const usePreparedMediaContext = (
   fallback: PreparedMediaContext,
+  subscriptionKey?: unknown,
 ): PreparedMediaContext => {
   const [runtimeContext, setRuntimeContext] = useState<PreparedMediaContext>();
 
   useEffect(() => {
+    const channel = globalBroadcastRef;
     const onWindowContext = (event: Event) => {
       const context = (event as CustomEvent<PreparedMediaContext>).detail;
       if (context && sameContextOwner(context, fallback)) {
@@ -70,12 +124,13 @@ export const usePreparedMediaContext = (
       }
     };
     window.addEventListener(PREPARED_MEDIA_CONTEXT_EVENT, onWindowContext);
-    globalBroadcastRef?.addEventListener("message", onBroadcast);
+    channel?.addEventListener("message", onBroadcast);
+    requestPreparedMediaContext(fallback);
     return () => {
       window.removeEventListener(PREPARED_MEDIA_CONTEXT_EVENT, onWindowContext);
-      globalBroadcastRef?.removeEventListener("message", onBroadcast);
+      channel?.removeEventListener("message", onBroadcast);
     };
-  }, [fallback]);
+  }, [fallback, subscriptionKey]);
 
   useEffect(() => {
     setRuntimeContext((current) =>

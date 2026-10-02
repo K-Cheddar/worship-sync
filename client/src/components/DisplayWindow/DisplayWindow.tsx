@@ -52,6 +52,7 @@ import {
 } from "../../utils/displaySettings";
 import { useScreenOverrides } from "../../hooks/useScreenOverrides";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { serverNow } from "../../utils/serverTime";
 import {
   getVideoBackgroundMediaKey,
@@ -574,6 +575,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const preparedMediaSelectedIds = useSelector(
       (state) => state.undoable?.present?.itemLists?.selectedIdByScope ?? {},
     );
+    const { db: preparedContextDb } = useContext(ControllerInfoContext) || {};
     const preparedMediaContextFallback = useMemo<
       Pick<
         ElectronMediaDiscovery,
@@ -624,6 +626,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     );
     const preparedMediaContext = usePreparedMediaContext(
       preparedMediaContextOverride ?? preparedMediaContextFallbackValue,
+      preparedContextDb,
     );
     const preparedMediaOutlineId = preparedMediaContext.outlineId;
     const pairedDeviceSettings =

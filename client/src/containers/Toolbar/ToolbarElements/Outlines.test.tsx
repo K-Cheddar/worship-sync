@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import Outlines from "./Outlines";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
+import * as preparedMediaContext from "../../../utils/preparedMediaContext";
 
 const mockDispatch = jest.fn();
 let mockMode: "present" | "edit" = "present";
@@ -84,6 +85,7 @@ describe("Outlines", () => {
   });
 
   it("allows outline selection in present mode without showing management actions", () => {
+    const publishContext = jest.spyOn(preparedMediaContext, "publishPreparedMediaContext");
     render(
       <PresentationControllerModeProvider>
         <GlobalInfoContext.Provider value={{ access: "full" } as never}>
@@ -95,6 +97,12 @@ describe("Outlines", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Sunday Service" })[1]);
 
     expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: expect.stringContaining("selectItemList") }));
+    expect(publishContext).toHaveBeenCalledWith(expect.objectContaining({
+      controllerProfileId: "presentation",
+      outlineScope: "presentation",
+      outlineId: "outline-1",
+      contextSource: "local runtime selection",
+    }));
     expect(screen.queryByRole("button", { name: "Edit outline" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add New Service" })).not.toBeInTheDocument();
   });
