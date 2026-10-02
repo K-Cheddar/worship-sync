@@ -1245,7 +1245,13 @@ export function useMediaLibraryController({
       }
       const next = deleteFolderKeepContents(folderId, folders, list);
       dispatch(setMediaListAndFolders(next));
-      void flushMediaLibraryDocToPouch(db, next.list, next.folders).then(
+      void flushMediaLibraryDocToPouch(
+        db,
+        next.list,
+        next.folders,
+        () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
+        { list, folders },
+      ).then(
         (r) => {
           if (!r.ok) {
             showToast(mediaLibraryFlushFailureMessage(r.error, "folder"), "error");
@@ -1253,7 +1259,7 @@ export function useMediaLibraryController({
         },
       );
     },
-    [db, dispatch, folders, list, mediaRouteFolders, showToast],
+    [db, dispatch, folders, list, mediaRouteFolders, showToast, store],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -1315,6 +1321,8 @@ export function useMediaLibraryController({
         db,
         next.list,
         next.folders,
+        () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
+        { list, folders },
       );
       if (!flushResult.ok) {
         showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
@@ -1336,6 +1344,7 @@ export function useMediaLibraryController({
       removeMediaRowsAfterSweep,
       clearSelection,
       showToast,
+      store,
     ],
   );
 

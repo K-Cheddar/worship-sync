@@ -179,8 +179,10 @@ const TransferPanel = ({ transfers, setTransfers, isMinimized, onMinimize }: {
             {item.status === "completed" || item.status === "failed" ? <button className="mt-2 text-xs text-cyan-200 underline" onClick={() => dismiss(item.id)}>Dismiss</button> : null}
           </li>;
           const { totalPages, requestedPages, processedPages } = getCanvaProgressCounts(item);
-          const progress = getTransferProgress(item);
-          const percent = item.status === "completed" ? 100 : progress ?? 0;
+          const progress = getCanvaTransferProgress(item);
+          const percent = item.status === "completed" || item.status === "partial"
+            ? 100
+            : Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : undefined;
           const currentExportPage = item.pages.find((page) => item.pageStatus[page]?.status === "exporting");
           const currentWaitingPage = item.pages.find((page) => item.pageStatus[page]?.status === "waiting");
           const isPageProcessing = item.status === "processing" || item.status === "finalizing" || Object.values(item.pageStatus).some((page) => ["processing", "saving"].includes(page.status) || (page.status === "ready" && !page.skipped));
@@ -205,9 +207,11 @@ const TransferPanel = ({ transfers, setTransfers, isMinimized, onMinimize }: {
                 : <Button variant="tertiary" svg={X} aria-label={`Cancel ${item.title}`} onClick={() => cancel(item)} />}
             </div>
             <p className="mt-1 text-xs text-gray-300">{progressLabel}</p>
-            {hasPageProgress && <p className="mt-1 text-xs text-gray-300">{processedPages} of {totalPages} pages processed{item.status === "completed" ? "" : ` · ${Math.round(percent)}%`}</p>}
-            {item.status !== "failed" && item.status !== "cancelled" ? <div role="progressbar" aria-label={`${item.title} progress`} aria-valuemin={0} aria-valuemax={100} {...(item.status !== "pending" ? { "aria-valuenow": percent } : {})} className="mt-2 h-1.5 overflow-hidden rounded bg-gray-700">{item.status !== "pending"
-              ? <div className="h-1.5 rounded bg-cyan-500 transition-[width]" style={{ width: `${percent}%` }} />
+            {hasPageProgress && <p className="mt-1 text-xs text-gray-300">{processedPages} of {totalPages} pages processed{item.status === "completed" || percent === undefined ? "" : ` · ${Math.round(percent)}%`}</p>}
+            {item.status !== "failed" && item.status !== "cancelled" ? <div role="progressbar" aria-label={`${item.title} progress`} aria-valuemin={0} aria-valuemax={100} {...(item.status !== "pending" && percent !== undefined ? { "aria-valuenow": percent } : {})} className="mt-2 h-1.5 overflow-hidden rounded bg-gray-700">{item.status !== "pending"
+              ? percent === undefined
+                ? <div className="h-full w-1/3 animate-pulse rounded bg-cyan-500" />
+                : <div className="h-1.5 rounded bg-cyan-500 transition-[width]" style={{ width: `${percent}%` }} />
               : <div className="h-full w-1/3 animate-pulse rounded bg-cyan-500" />}</div> : null}
             {item.error ? <p role="alert" className="mt-2 text-xs text-red-200">{item.error}</p> : null}
             {item.cleanupError ? <div role="alert" className="mt-2 text-xs text-amber-200">Some unused Canva files still need cleanup. {item.cleanupError}

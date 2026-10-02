@@ -1917,7 +1917,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
-    const mediaAtStart = (listenerApi.getState() as RootState).media;
     const dbAtStart = db;
     const beforeAction = (listenerApi.getOriginalState() as RootState).media;
     if (!dbAtStart) return;
@@ -1942,20 +1941,16 @@ listenerMiddleware.startListening({
       // delayed save stale. Never let it replace a newer document snapshot.
       const mediaSaveIsCurrent = () => {
         const currentMedia = (listenerApi.getState() as RootState).media;
-        return Boolean(
-          dbAtStart &&
-          db === dbAtStart &&
-          currentMedia.isInitialized &&
-          currentMedia === mediaAtStart,
-        );
+        return Boolean(dbAtStart && db === dbAtStart && pendingMediaPersistence === baseline && currentMedia.isInitialized);
       };
       if (!mediaSaveIsCurrent()) return;
 
       try {
+        const latestMedia = (listenerApi.getState() as RootState).media;
         const changedDocs = await persistMediaStateChanges(
           dbAtStart,
           baseline.state,
-          { list: mediaAtStart.list, folders: mediaAtStart.folders },
+          { list: latestMedia.list, folders: latestMedia.folders },
           mediaSaveIsCurrent,
         );
         // The put is already committed. This check only prevents stale
@@ -1977,7 +1972,7 @@ listenerMiddleware.startListening({
         // Sync media cache to match the saved media list (Electron only)
         if (window.electronAPI) {
           try {
-            const urlArray = extractMediaUrlsFromBackgrounds(mediaAtStart.list);
+            const urlArray = extractMediaUrlsFromBackgrounds(latestMedia.list);
             const electronAPI = window.electronAPI as unknown as {
               syncMediaCache: (
                 urls: string[],
@@ -2014,8 +2009,9 @@ listenerMiddleware.startListening({
   },
 });
 
-// Remote replicas and session resets replace the local media baseline. A pending
-// debounced local save must never persist a pre-remote snapshot afterward.
+// Initialization and session resets replace the local media baseline. Remote
+// media actions leave a pending local save alive; it reads the latest Redux
+// state when its debounce expires so unrelated replicated changes are retained.
 listenerMiddleware.startListening({
   predicate: (action) =>
     mediaItemsSlice.actions.initiateMediaList.match(action) ||
@@ -2026,8 +2022,49 @@ listenerMiddleware.startListening({
     mediaItemsSlice.actions.removeMediaItemFromRemote.match(action) ||
     mediaItemsSlice.actions.updateMediaFoldersFromRemote.match(action) ||
     isStoreResetAction(action),
-  effect: () => {
-    pendingMediaPersistence = null;
+  effect: (action, listenerApi) => {
+    const baseline = pendingMediaPersistence;
+    if (!baseline) return;
+    if (
+      mediaItemsSlice.actions.initiateMediaList.match(action) ||
+      mediaItemsSlice.actions.initiateMediaFromDoc.match(action) ||
+      isStoreResetAction(action)
+    ) {
+      pendingMediaPersistence = null;
+      return;
+    }
+
+    const before = (listenerApi.getOriginalState() as RootState).media;
+    const after = (listenerApi.getState() as RootState).media;
+    const changedIds = <T extends { id: string }>(left: T[], right: T[]) => {
+      const leftById = new Map(left.map((item) => [item.id, item]));
+      const rightById = new Map(right.map((item) => [item.id, item]));
+      return new Set(
+        [...new Set([...leftById.keys(), ...rightById.keys()])].filter(
+          (id) => JSON.stringify(leftById.get(id)) !== JSON.stringify(rightById.get(id)),
+        ),
+      );
+    };
+    const localDirtyIds = changedIds(baseline.state.list, before.list);
+    const remoteChangedIds = changedIds(before.list, after.list);
+    if ([...localDirtyIds].some((id) => remoteChangedIds.has(id))) {
+      // A remote write to a locally dirty row wins, matching the existing
+      // remote-authoritative behavior for same-item conflicts.
+      pendingMediaPersistence = null;
+      return;
+    }
+
+    const localDirtyFolderIds = changedIds(
+      baseline.state.folders,
+      before.folders,
+    );
+    const remoteChangedFolderIds = changedIds(
+      before.folders,
+      after.folders,
+    );
+    if ([...localDirtyFolderIds].some((id) => remoteChangedFolderIds.has(id))) {
+      pendingMediaPersistence = null;
+    }
   },
 });
 

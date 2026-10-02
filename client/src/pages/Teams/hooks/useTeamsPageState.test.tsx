@@ -171,6 +171,10 @@ describe("useTeamsPageState bootstrap recovery", () => {
 
     expect(onReconnect).toHaveBeenCalledTimes(1);
     expect(MockEventSource.instances).toHaveLength(1);
+    jest.setSystemTime(new Date(Date.now() + 6 * 60 * 1000));
+    emitFocus();
+    await flushMicrotasks();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
     unmount();
   });
 
