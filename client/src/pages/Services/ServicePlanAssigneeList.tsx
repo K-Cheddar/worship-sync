@@ -484,7 +484,7 @@ const ServicePlanAssigneeList = ({
                     && !(assignee.microphoneIds || []).includes(candidate.id),
                 );
                 const microphoneChip = (
-                  <ServicePlanMicrophoneChip microphone={microphone} className="!pr-0.5">
+                  <ServicePlanMicrophoneChip microphone={microphone} className="!pr-0.5 rounded-full">
                     {allowEdit ? (
                       <Button
                         type="button"
