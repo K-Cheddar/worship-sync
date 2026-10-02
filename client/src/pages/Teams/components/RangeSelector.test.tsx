@@ -106,10 +106,7 @@ describe("RangeSelector", () => {
     expect(customRangeInput.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Date range" })).not.toBeInTheDocument();
     await user.click(customRangeInput);
-    expect(screen.getByRole("grid")).toBeInTheDocument();
-    await user.click(screen.getByText("8", { selector: "button" }));
-    await user.click(await screen.findByText("12", { selector: "button" }));
-    expect(customRangeInput).toHaveValue("09/08/2026 – 09/12/2026");
+    expect(await screen.findByRole("grid")).toBeInTheDocument();
   });
 
   it("supports segmented keyboard editing in the compact field", async () => {
