@@ -244,6 +244,25 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
+  it("keeps a populated overlapping legacy period ambiguous beside generated data", () => {
+    const generated = schedule({
+      scheduleId: "generated_current-key",
+      source: "generated-period",
+      generatedPeriodKey: "current-key",
+      assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "generated-member" } } },
+    });
+    const widerLegacy = schedule({
+      scheduleId: "legacy-wider-period",
+      startDate: "2026-09-01",
+      endDate: "2026-11-30",
+      assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "legacy-member" } } },
+    });
+    expect(findReusablePeriodSchedule({ schedules: [generated, widerLegacy], ...target })).toEqual({
+      schedule: null,
+      ambiguous: true,
+    });
+  });
+
   it("prefers the canonical generated schedule over an empty custom match", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
@@ -295,6 +314,50 @@ describe("findReusablePeriodSchedule", () => {
       schedule: custom,
       ambiguous: false,
     });
+  });
+
+  it("reuses a populated custom schedule by covered dates after occurrence drift", () => {
+    const savedOccurrences = [3, 10, 17, 24, 31].map((day) => ({
+      ...occurrence,
+      occurrenceId: `old-service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    }));
+    const custom = schedule({
+      scheduleId: "custom-october-drifted",
+      source: "custom",
+      serviceIds: ["old-service"],
+      occurrences: savedOccurrences,
+      assignments: { [savedOccurrences[0].occurrenceId]: { "position::0": { primaryMemberId: "member" } } },
+    });
+    const currentOccurrences = [3, 7, 10, 14, 17, 24, 31].map((day) => ({
+      ...occurrence,
+      occurrenceId: `new-service@2026-10-${String(day).padStart(2, "0")}T11:00:00.000Z`,
+      serviceId: "new-service",
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T11:00:00.000Z`,
+    }));
+
+    expect(findReusablePeriodSchedule({
+      schedules: [custom],
+      ...target,
+      occurrences: currentOccurrences,
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+    })).toEqual({ schedule: custom, ambiguous: false });
+  });
+
+  it("reuses a saved period when current Setup has no occurrences", () => {
+    const custom = schedule({
+      source: "custom",
+      occurrences: [occurrence],
+      assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member" } } },
+    });
+    expect(findReusablePeriodSchedule({
+      schedules: [custom],
+      ...target,
+      occurrences: [],
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+    })).toEqual({ schedule: custom, ambiguous: false });
   });
 
   it("matches a stored range that covers occurrences without covering blank display days", () => {
@@ -359,13 +422,13 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses equivalent source-less legacy schedules by service and occurrence identity", () => {
+  it("reuses source-less legacy schedules by covered dates despite occurrence identity drift", () => {
     const legacy = schedule();
     expect(findReusablePeriodSchedule({ schedules: [legacy], ...target }).schedule).toBe(legacy);
     expect(findReusablePeriodSchedule({
       schedules: [schedule({ occurrences: [{ ...occurrence, occurrenceId: "other@date" }] })],
       ...target,
-    }).schedule).toBeNull();
+    }).schedule?.scheduleId).toBe("schedule-1");
   });
 
   it("does not choose among multiple equivalent legacy schedules", () => {
