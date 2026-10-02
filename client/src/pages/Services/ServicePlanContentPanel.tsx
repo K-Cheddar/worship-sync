@@ -224,7 +224,7 @@ const ServicePlanContentPanel = ({
     const query = churchResourceSearch.trim().toLowerCase();
     if (!query) return churchResources;
     return churchResources.filter((resource) =>
-      [resource.name, resource.storage.fileName]
+      [resource.name, resource.sourceType === "external" ? resource.external.fileName || resource.external.provider || "" : resource.storage.fileName]
         .some((value) => value.toLowerCase().includes(query)),
     );
   }, [churchResourceSearch, churchResources]);
@@ -424,13 +424,13 @@ const ServicePlanContentPanel = ({
     const audioId = getServicePlanResourceDataString(resource, "audioId");
     const song = allSongDocs.find((candidate) => candidate._id === songId);
     const audio = song?.songAudio?.id === audioId ? song.songAudio : undefined;
-    const resolveSource = churchId && resourceId
+    const resolveSource = churchId && resourceId && churchResource && churchResource.sourceType !== "external"
       ? async () => {
           const result = await getChurchResourceUrl({ churchId, resourceId });
           return {
             url: result.url,
-            mimeType: churchResource?.storage.contentType,
-            fileName: churchResource?.storage.fileName,
+            mimeType: churchResource.storage.contentType,
+            fileName: churchResource.storage.fileName,
           };
         }
       : churchId && songId && audio
@@ -461,7 +461,7 @@ const ServicePlanContentPanel = ({
     setPreviewResource(
       normalizeServicePlanResourceForPreview(reference, {
         churchResource: resource,
-        resolveSource: async () => {
+        ...(resource.sourceType === "external" ? {} : { resolveSource: async () => {
           const result = await getChurchResourceUrl({
             churchId: resource.churchId,
             resourceId: resource.id,
@@ -472,7 +472,7 @@ const ServicePlanContentPanel = ({
             mimeType: resource.storage.contentType,
             fileName: resource.storage.fileName,
           };
-        },
+        } }),
       }),
     );
   };
@@ -530,6 +530,9 @@ const ServicePlanContentPanel = ({
     if (isServicePlanChurchResourceReference(resource)) {
       const resourceId = getServicePlanChurchResourceId(resource);
       const churchResource = referencedChurchResources[resourceId];
+      if (churchResource?.sourceType === "external") {
+        return <Button type="button" variant="tertiary" svg={Eye} onClick={() => openResourcePreview(resource, churchResource)}>Preview {churchResource.name}</Button>;
+      }
       const openChurchResource = async (disposition: "inline" | "attachment") => {
         if (!churchId || !resourceId) return;
         setOpeningResourceId(resource.id);
@@ -856,7 +859,7 @@ const ServicePlanContentPanel = ({
               const ResourceIcon = resource.kind === "audio" ? AudioLines : FileText;
               return (
                 <div key={resource.id} className="flex min-w-0 items-center gap-1 rounded-md border border-gray-800 bg-gray-950/50 px-1">
-                  <Button type="button" variant="tertiary" className="min-w-0 flex-1 justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanChurchResourceReference({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><ResourceIcon className={`size-4 shrink-0 ${resource.kind === "audio" ? "text-amber-300" : "text-cyan-300"}`} aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto truncate text-xs text-gray-500">{resource.storage.fileName}</span></Button>
+                  <Button type="button" variant="tertiary" className="min-w-0 flex-1 justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanChurchResourceReference({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><ResourceIcon className={`size-4 shrink-0 ${resource.kind === "audio" ? "text-amber-300" : "text-cyan-300"}`} aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto truncate text-xs text-gray-500">{resource.sourceType === "external" ? resource.external.provider || "External link" : resource.storage.fileName}</span></Button>
                   <Button type="button" variant="tertiary" svg={Eye} iconSize="sm" padding="p-1" className="shrink-0" aria-label={`Preview file ${resource.name}`} onClick={() => openChurchResourcePreview(resource)} />
                 </div>
               );

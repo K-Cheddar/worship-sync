@@ -17,6 +17,8 @@ import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
 import Modal from "../components/Modal/Modal";
+import ContentPreviewDialog from "../components/ContentPreview/ContentPreviewDialog";
+import { ExternalResourceDialog } from "./ExternalResourceDialog";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import {
@@ -41,6 +43,8 @@ import {
   resourceEntryDeleteConfirmation,
   resourceEntryKind,
   resourceEntryName,
+  resourceEntrySize,
+  resourceEntrySource,
 } from "../utils/churchResourceCatalog";
 import {
   deleteSongAudioBeforeClearingMetadata,
@@ -61,6 +65,10 @@ const formatBytes = (sizeBytes: number) => {
   if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`;
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 };
+const formatEntrySize = (entry: ResourceLibraryEntry) => {
+  const size = entrySize(entry);
+  return size === null ? "External" : formatBytes(size);
+};
 
 const formatDate = (value: string) => {
   const date = new Date(value);
@@ -69,7 +77,7 @@ const formatDate = (value: string) => {
 
 const entryUpdatedAt = (entry: ResourceLibraryEntry) =>
   entry.source === "church-resource"
-    ? entry.resource.updatedAt || entry.resource.storage.uploadedAt
+    ? entry.resource.updatedAt || (entry.resource.sourceType === "external" ? "" : entry.resource.storage.uploadedAt)
     : entry.audio.uploadedAt;
 
 const typeLabel = (entry: ResourceLibraryEntry) => {
@@ -80,7 +88,25 @@ const typeLabel = (entry: ResourceLibraryEntry) => {
   if (contentType.includes("presentationml") || contentType === "application/vnd.ms-powerpoint") return "PPTX";
   if (contentType.includes("spreadsheetml") || contentType === "application/vnd.ms-excel") return "XLSX";
   if (contentType === "audio/mpeg") return "MP3";
-  return "FILE";
+  if (contentType.startsWith("text/")) return "TXT";
+  if (contentType.startsWith("image/")) return "Image";
+  if (contentType.startsWith("video/")) return "Video";
+  if (contentType.startsWith("audio/")) return contentType.split("/")[1].toUpperCase();
+  const fileName = entry.source === "song-audio"
+    ? entry.audio.fileName
+    : entry.resource.sourceType === "external"
+      ? entry.resource.external.fileName
+      : entry.resource.storage.fileName;
+  const extension = fileName?.split(".").pop()?.toLowerCase();
+  const extensionLabels: Record<string, string> = {
+    doc: "DOC", docx: "DOCX", md: "MD", mp3: "MP3", pdf: "PDF", ppt: "PPT",
+    pptx: "PPTX", txt: "TXT", wav: "WAV", xls: "XLS", xlsx: "XLSX",
+  };
+  if (extension && extension !== fileName?.toLowerCase()) return extensionLabels[extension] || extension.toUpperCase();
+  if (entry.source === "church-resource" && entry.resource.sourceType === "external") {
+    return entry.resource.external.provider === "web" ? "Web" : "Link";
+  }
+  return "File";
 };
 
 const entryKey = (entry: ResourceLibraryEntry) =>
@@ -89,10 +115,10 @@ const entryKey = (entry: ResourceLibraryEntry) =>
     : `song-audio:${entry.songId}:${entry.audio.id}`;
 
 const entrySize = (entry: ResourceLibraryEntry) =>
-  entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes;
+  resourceEntrySize(entry);
 
 const entrySource = (entry: ResourceLibraryEntry) =>
-  entry.source === "song-audio" ? `Song attachment ${entry.songName}` : "Reusable church resource";
+  resourceEntrySource(entry);
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
@@ -103,17 +129,16 @@ const ResourcePreview = ({
   onRename,
   onDelete,
   canEdit,
+  onClose,
 }: {
   churchId: string;
   entry: ResourceLibraryEntry;
   onRename: (resource: ChurchResource, name: string) => Promise<void>;
   onDelete: (entry: ResourceLibraryEntry) => Promise<void>;
   canEdit: boolean;
+  onClose: () => void;
 }) => {
   const resource = entry.source === "church-resource" ? entry.resource : undefined;
-  const [url, setUrl] = useState("");
-  const [text, setText] = useState("");
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(resourceEntryName(entry));
@@ -124,53 +149,9 @@ const ResourcePreview = ({
   useEffect(() => {
     setNameDraft(resourceEntryName(entry));
     setEditingName(false);
-    setUrl("");
-    setText("");
     setError("");
-    setLoading(true);
     setDownloading(false);
     setDeleting(false);
-    if (resource?.deletionStatus === "deleting") {
-      setLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    let active = true;
-    const load = async () => {
-      try {
-        const result =
-          entry.source === "church-resource"
-            ? await getChurchResourceUrl({
-                churchId,
-                resourceId: entry.resource.id,
-              })
-            : await getSongAudioUrl({
-                churchId,
-                songId: entry.songId,
-                audio: entry.audio,
-                disposition: "inline",
-              });
-        if (!active) return;
-        setUrl(result.url);
-        if (resource?.storage.contentType === "text/plain") {
-          const response = await fetch(result.url, { signal: controller.signal });
-          if (!response.ok) throw new Error("The text file could not be opened.");
-          const content = await response.text();
-          if (active) setText(content);
-        }
-      } catch (loadError) {
-        if (active && (loadError as Error)?.name !== "AbortError") {
-          setError(errorMessage(loadError, "This resource could not be opened."));
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    void load();
-    return () => {
-      active = false;
-      controller.abort();
-    };
   }, [churchId, entry, resource]);
 
   const saveName = async () => {
@@ -222,58 +203,53 @@ const ResourcePreview = ({
     }
   };
 
-  const contentType = resourceEntryContentType(entry);
   const deletionIncomplete = resource?.deletionStatus === "deleting";
   return (
-    <aside className="flex min-h-0 flex-col gap-3 border-t border-gray-700 bg-gray-950/50 p-4" aria-label="Resource details">
-      {editingName && resource ? (
-        <div className="flex items-center gap-2">
-          <Input
-            label="Resource name"
-            value={nameDraft}
-            onChange={(value) => setNameDraft(String(value))}
-            className="min-w-0 flex-1"
-            autoFocus
-          />
-          <Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button>
-          <Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} />
-        </div>
-      ) : (
-        <p className="text-xs text-gray-400">
-          {typeLabel(entry)} - {formatBytes(entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes)}
-          {` - Updated ${formatDate(entryUpdatedAt(entry))}`}
-          {entry.source === "song-audio" ? ` - Song attachment: ${entry.songName}` : " - Reusable church resource"}
-        </p>
-      )}
-      {resource?.description ? <p className="text-sm text-gray-300">{resource.description}</p> : null}
-      {deletionIncomplete ? <p className="text-sm text-amber-200" role="status">Deletion is still in progress. This resource is unavailable until deletion finishes.</p> : null}
-      {loading ? <p className="text-sm text-gray-400" role="status">Opening resource...</p> : null}
-      {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
-
-      {!loading && !error && contentType === "application/pdf" && url ? (
-        <iframe title={resourceEntryName(entry)} src={url} className="h-[min(60vh,42rem)] w-full rounded border border-gray-700 bg-white" />
-      ) : null}
-      {!loading && !error && contentType === "text/plain" ? (
-        <pre className="max-h-[min(60vh,42rem)] overflow-auto whitespace-pre-wrap rounded border border-gray-700 bg-gray-900 p-3 text-sm text-gray-200">{text}</pre>
-      ) : null}
-      {!loading && !error && contentType === "audio/mpeg" && url ? (
-        <audio controls className="w-full" src={url} aria-label={resourceEntryName(entry)} />
-      ) : null}
-      {!loading && !error && resource && !["application/pdf", "text/plain", "audio/mpeg"].includes(contentType) ? (
-        <dl className="grid gap-x-4 gap-y-1 rounded border border-gray-700 bg-gray-900 p-3 text-sm sm:grid-cols-[auto_1fr]">
-          <dt className="text-gray-400">File</dt><dd className="truncate text-gray-100">{resource.storage.fileName}</dd>
-          <dt className="text-gray-400">Type</dt><dd className="truncate text-gray-100">{resource.storage.contentType}</dd>
-          <dt className="text-gray-400">Uploaded</dt><dd className="text-gray-100">{formatDate(resource.storage.uploadedAt)}</dd>
-          <dt className="text-gray-400">Updated</dt><dd className="text-gray-100">{formatDate(resource.updatedAt)}</dd>
-        </dl>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={loading || deletionIncomplete || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button>
-        {resource && canEdit ? <Button type="button" variant="tertiary" svg={Pencil} disabled={deletionIncomplete || savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
-        {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{deletionIncomplete ? "Retry deletion" : resourceEntryDeleteActionLabel(entry)}</Button> : null}
-      </div>
-    </aside>
+    <>
+      <ContentPreviewDialog
+        resource={entry.source === "song-audio" ? {
+          id: entry.audio.id,
+          title: entry.audio.fileName,
+          mimeType: entry.audio.contentType,
+          fileName: entry.audio.fileName,
+          resolveSource: async () => {
+            const result = await getSongAudioUrl({ churchId, songId: entry.songId, audio: entry.audio, disposition: "inline" });
+            return { url: result.url, mimeType: entry.audio.contentType, fileName: entry.audio.fileName, provider: "worshipsync" };
+          },
+        } : resource ? {
+          id: resource.id,
+          title: resource.name,
+          ...(resource.sourceType === "external" ? {
+            url: resource.external.url,
+            provider: resource.external.provider,
+            mimeType: resource.external.mimeType,
+            fileName: resource.external.fileName,
+          } : {
+            mimeType: resource.storage.contentType,
+            fileName: resource.storage.fileName,
+            resolveSource: async () => {
+              const result = await getChurchResourceUrl({ churchId, resourceId: resource.id, disposition: "inline" });
+              return { url: result.url, mimeType: resource.storage.contentType, fileName: resource.storage.fileName, provider: "worshipsync" };
+            },
+          }),
+        } : null}
+        onClose={onClose}
+        dialogLabel={resourceEntryName(entry)}
+        details={<div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 px-4 py-3">
+          <div className="min-w-0 space-y-1 text-xs text-gray-400">
+            <p>{typeLabel(entry)} · {formatEntrySize(entry)} · Updated {formatDate(entryUpdatedAt(entry))}</p>
+            {resource?.description ? <p className="text-sm text-gray-300">{resource.description}</p> : null}
+            {error ? <p className="text-red-300" role="alert">{error}</p> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {editingName && resource ? <><Input label="Resource name" value={nameDraft} onChange={(value) => setNameDraft(String(value))} /><Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button><Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} /></> : null}
+            <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={deletionIncomplete || Boolean(error) || downloading || deleting || resource?.sourceType === "external"} onClick={() => void download()}>Download</Button>
+            {resource && canEdit && !editingName ? <Button type="button" variant="tertiary" svg={Pencil} disabled={deletionIncomplete || savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
+            {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{deletionIncomplete ? "Retry deletion" : resourceEntryDeleteActionLabel(entry)}</Button> : null}
+          </div>
+        </div>}
+      />
+    </>
   );
 };
 
@@ -360,7 +336,10 @@ const ResourcesPage = () => {
     () =>
       buildChurchResourceLibraryEntries({ resources, songs: allSongDocs }).filter((entry) => {
         const matchesKind = filter === "all" || resourceEntryKind(entry) === filter;
-        const text = `${resourceEntryName(entry)} ${entry.source === "song-audio" ? entry.songName : ""}`.toLowerCase();
+        const externalDetails = entry.source === "church-resource" && entry.resource.sourceType === "external"
+          ? `${entry.resource.external.url} ${entry.resource.external.fileName || ""}`
+          : "";
+        const text = `${resourceEntryName(entry)} ${entrySource(entry)} ${entry.source === "song-audio" ? entry.songName : ""} ${externalDetails}`.toLowerCase();
         return matchesKind && text.includes(query.trim().toLowerCase());
       }),
     [allSongDocs, filter, query, resources],
@@ -372,7 +351,7 @@ const ResourcesPage = () => {
       let comparison = 0;
       if (sortKey === "name") comparison = resourceEntryName(left).localeCompare(resourceEntryName(right), undefined, { numeric: true, sensitivity: "base" });
       if (sortKey === "type") comparison = typeLabel(left).localeCompare(typeLabel(right), undefined, { sensitivity: "base" });
-      if (sortKey === "size") comparison = entrySize(left) - entrySize(right);
+      if (sortKey === "size") comparison = (entrySize(left) ?? -1) - (entrySize(right) ?? -1);
       if (sortKey === "updated") comparison = new Date(entryUpdatedAt(left)).getTime() - new Date(entryUpdatedAt(right)).getTime();
       if (sortKey === "source") comparison = entrySource(left).localeCompare(entrySource(right), undefined, { sensitivity: "base" });
       return sortDirection === "asc" ? comparison : -comparison;
@@ -445,7 +424,7 @@ const ResourcesPage = () => {
       for (const entry of candidates) {
         if (entry.source === "church-resource") {
           await deleteChurchResource({ churchId, resourceId: entry.resource.id });
-          storageChanged = true;
+          if (entry.resource.sourceType !== "external") storageChanged = true;
           setResources((current) => current.filter((resource) => resource.id !== entry.resource.id));
         } else {
           if (!db) throw new Error("The song library is not available. Try again.");
@@ -472,11 +451,13 @@ const ResourcesPage = () => {
       setSelectedKey(null);
     } catch (deleteError) {
       const message = errorMessage(deleteError, "The resource could not be deleted.");
-      setResources((current) => current.map((resource) =>
-        candidates.some((entry) => entry.source === "church-resource" && entry.resource.id === resource.id)
-          ? { ...resource, deletionStatus: "deleting", deletionError: message }
-          : resource,
-      ));
+      if ((deleteError as { status?: number })?.status !== 409) {
+        setResources((current) => current.map((resource) =>
+          candidates.some((entry) => entry.source === "church-resource" && entry.resource.id === resource.id)
+            ? { ...resource, deletionStatus: "deleting", deletionError: message }
+            : resource,
+        ));
+      }
       setError(message);
     } finally {
       if (storageChanged) void storageQuota.refresh();
@@ -501,11 +482,20 @@ const ResourcesPage = () => {
             <div className="flex flex-wrap items-end gap-3 border-b border-gray-700 p-4">
               <div className="min-w-[14rem] flex-1"><Input label="Search resources" hideLabel value={query} onChange={(value) => setQuery(String(value))} placeholder="Search..." /></div>
               {selectedEntries.length ? <Button type="button" variant="destructive" svg={Trash2} onClick={requestDeleteSelected}>Delete selected ({selectedEntries.length})</Button> : null}
-              {canEdit && churchId ? <ResourceUploadDialog churchId={churchId} onResourcesUploaded={(uploadedResources) => {
-                setResources((current) => [...uploadedResources, ...current]);
-                setRecentlyUploadedKeys(new Set(uploadedResources.map((resource) => `resource:${resource.id}`)));
-                void storageQuota.refresh();
-              }} /> : null}
+              {canEdit && churchId ? <details className="relative">
+                <summary className="inline-flex min-h-10 cursor-pointer list-none items-center rounded bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-500">+ Add resource</summary>
+                <div className="absolute right-0 z-20 mt-2 flex min-w-52 flex-col gap-1 rounded border border-gray-700 bg-gray-900 p-2 shadow-xl">
+                  <ResourceUploadDialog triggerLabel="Upload file" churchId={churchId} onResourcesUploaded={(uploadedResources) => {
+                    setResources((current) => [...uploadedResources, ...current]);
+                    setRecentlyUploadedKeys(new Set(uploadedResources.map((resource) => `resource:${resource.id}`)));
+                    void storageQuota.refresh();
+                  }} />
+                  <ExternalResourceDialog churchId={churchId} onCreated={(resource) => {
+                    setResources((current) => [resource, ...current]);
+                    setRecentlyUploadedKeys(new Set([`resource:${resource.id}`]));
+                  }} />
+                </div>
+              </details> : null}
             </div>
             <div className="flex flex-wrap gap-2 border-b border-gray-700 px-4 py-2" role="tablist" aria-label="Resource types">
               {(["all", "document", "audio"] as const).map((value) => (
@@ -591,13 +581,13 @@ const ResourcesPage = () => {
                               <span className="flex w-full min-w-0 items-center gap-2 text-left text-gray-100">
                                 {resourceEntryKind(entry) === "audio" ? <AudioLines className="size-4 shrink-0 text-amber-300" aria-hidden /> : <FileText className="size-4 shrink-0 text-cyan-300" aria-hidden />}
                                 <span className="truncate font-semibold">{resourceEntryName(entry)}</span>
-                                {recentlyUploaded ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-medium text-green-200"><CheckCircle2 className="size-3" aria-hidden />Uploaded</span> : null}
+                                {recentlyUploaded ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-medium text-green-200"><CheckCircle2 className="size-3" aria-hidden />{entry.source === "church-resource" && entry.resource.sourceType === "external" ? "Added" : "Uploaded"}</span> : null}
                               </span>
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-gray-300">{typeLabel(entry)}</td>
-                            <td className="whitespace-nowrap px-4 py-3 text-gray-300">{formatBytes(entry.source === "church-resource" ? entry.resource.storage.sizeBytes : entry.audio.sizeBytes)}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-gray-300">{formatEntrySize(entry)}</td>
                             <td className="whitespace-nowrap px-4 py-3 text-gray-300">{formatDate(entryUpdatedAt(entry))}</td>
-                            <td className="max-w-0 px-4 py-3 text-gray-400"><span className="block truncate">{entry.source === "song-audio" ? `Song attachment - ${entry.songName}` : "Reusable church resource"}</span></td>
+                            <td className="max-w-0 px-4 py-3 text-gray-400"><span className="block truncate">{entrySource(entry)}</span></td>
                           </tr>
                         );
                       })}
@@ -607,9 +597,7 @@ const ResourcesPage = () => {
               </div>
             ) : null}
             {selectedEntry && churchId ? (
-              <Modal isOpen onClose={() => setSelectedKey(null)} title={resourceEntryName(selectedEntry)} size="xl" contentPadding="p-0" description={`Preview of ${resourceEntryName(selectedEntry)}`}>
-                <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} />
-              </Modal>
+              <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} onClose={() => setSelectedKey(null)} />
             ) : null}
             {deleteCandidates?.length ? (
               <Modal isOpen onClose={() => setDeleteCandidates(null)} title="Delete resource?" size="sm" zIndexLevel={2} description={`Confirm deletion of ${deleteCandidates.length} resource${deleteCandidates.length === 1 ? "" : "s"}`}>

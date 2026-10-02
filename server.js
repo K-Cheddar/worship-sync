@@ -408,6 +408,7 @@ const getChurchResourceHandlers = () => {
       setDoc,
       storageFactory: () => createChurchResourceStorage(),
       quota: churchStorageQuota,
+      externalResourceService,
     });
   }
   return churchResourceHandlers;
@@ -1350,6 +1351,12 @@ app.get(
   "/api/churches/:churchId/resources/:resourceId",
   requireChurchResourceReferenceReadAccess,
   (req, res) => getChurchResourceHandlers().get(req, res),
+);
+app.post(
+  "/api/churches/:churchId/resources/external",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().createExternal(req, res),
 );
 app.post(
   "/api/churches/:churchId/resources/upload",

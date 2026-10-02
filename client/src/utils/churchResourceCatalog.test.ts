@@ -3,6 +3,9 @@ import {
   resourceEntryDeleteActionLabel,
   resourceEntryDeleteConfirmation,
   resourceEntryName,
+  resourceEntryContentType,
+  resourceEntrySize,
+  resourceEntrySource,
 } from "./churchResourceCatalog";
 import type { DBItem } from "../types";
 
@@ -49,5 +52,30 @@ describe("church resource catalog", () => {
     expect(resourceEntryDeleteConfirmation(entries[1])).toContain("Trust and Obey");
     expect(resourceEntryDeleteConfirmation(entries[1])).toMatch(/removes the audio attachment/i);
     expect(resource).not.toHaveProperty("songAudio");
+  });
+
+  it("represents an external ChurchResource without inventing a byte size", () => {
+    const external = {
+      id: "external-1",
+      churchId: "church-1",
+      name: "Guide",
+      kind: "document" as const,
+      sourceType: "external" as const,
+      external: {
+        url: "https://docs.google.com/document/d/example/edit",
+        provider: "google-drive",
+        mimeType: "application/pdf",
+        fileName: "guide.pdf",
+        mediaType: "document",
+      },
+      createdAt: "2026-09-21T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const [entry] = buildChurchResourceLibraryEntries({ resources: [external], songs: [] });
+    expect(resourceEntryContentType(entry)).toBe("application/pdf");
+    expect(resourceEntrySize(entry)).toBeNull();
+    expect(resourceEntrySource(entry)).toBe("Google Drive");
   });
 });

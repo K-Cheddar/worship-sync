@@ -177,12 +177,12 @@ export const normalizeServicePlanResourceForPreview = (
 ): ContentPreviewResource => ({
   id: resource.id,
   title: options.churchResource?.name?.trim() || getExplicitServicePlanResourceTitle(resource) || undefined,
-  url: resource.url,
+  url: resource.url || options.churchResource?.external?.url,
   type: resource.type,
-  provider: resource.provider,
+  provider: resource.provider || options.churchResource?.external?.provider,
   mediaId: resource.mediaId,
-  mimeType: resource.metadata?.mimeType || options.churchResource?.storage.contentType,
-  fileName: options.churchResource?.storage.fileName,
+  mimeType: resource.metadata?.mimeType || options.churchResource?.external?.mimeType || options.churchResource?.storage?.contentType,
+  fileName: options.churchResource?.external?.fileName || options.churchResource?.storage?.fileName,
   textContent: richTextToFormattedPlainText(getServicePlanResourceText(resource)) || undefined,
   ...(resource.type === "text"
     ? { richTextContent: getServicePlanResourceText(resource) }

@@ -11,6 +11,7 @@ const MAX_NAME_LENGTH = 300;
 const MAX_DESCRIPTION_LENGTH = 2_000;
 const MAX_TAGS = 50;
 const MAX_TAG_LENGTH = 80;
+const MAX_EXTERNAL_URL_LENGTH = 4_000;
 
 const httpError = (statusCode, message) => {
   const error = new Error(message);
@@ -35,19 +36,55 @@ const normalizeTags = (value) => {
   return tags.length ? tags : undefined;
 };
 
+const normalizeExternalSource = (external) => {
+  if (!external || typeof external !== "object") return null;
+  const url = normalizeShortText(external.url, MAX_EXTERNAL_URL_LENGTH);
+  let parsed;
+  try { parsed = new URL(url); } catch { return null; }
+  if (!url || !["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+  const text = (key, maxLength = 300) => normalizeShortText(external[key], maxLength);
+  return {
+    url,
+    ...(text("provider", 80) ? { provider: text("provider", 80) } : {}),
+    ...(text("mimeType", 180) ? { mimeType: text("mimeType", 180) } : {}),
+    ...(text("fileName", 180) ? { fileName: text("fileName", 180) } : {}),
+    ...(text("mediaType", 40) ? { mediaType: text("mediaType", 40) } : {}),
+    ...(text("providerResourceId", 300) ? { providerResourceId: text("providerResourceId", 300) } : {}),
+    ...(text("lastResolvedAt", 60) ? { lastResolvedAt: text("lastResolvedAt", 60) } : {}),
+  };
+};
+
 const normalizeResourceRecord = (resource) => {
   if (!resource || typeof resource !== "object") return null;
   const id = normalizeShortText(resource.id, 160);
   const churchId = normalizeShortText(resource.churchId, 240);
   const storage = resource.storage;
-  if (!id || !churchId || !storage || typeof storage !== "object") return null;
   const name = normalizeShortText(resource.name, MAX_NAME_LENGTH);
-  const fileName = normalizeShortText(storage.fileName, 180);
-  const key = normalizeShortText(storage.key, 500);
-  const contentType = normalizeShortText(storage.contentType, 180);
-  const sizeBytes = Number(storage.sizeBytes);
-  if (!name || !fileName || !key || !contentType || !Number.isSafeInteger(sizeBytes)) {
-    return null;
+  const sourceType = resource.sourceType || (storage ? "upload" : "external");
+  if (!id || !churchId || !name || !["upload", "external"].includes(sourceType)) return null;
+  let normalizedSource;
+  if (sourceType === "upload") {
+    if (!storage || typeof storage !== "object" || resource.external) return null;
+    const fileName = normalizeShortText(storage.fileName, 180);
+    const key = normalizeShortText(storage.key, 500);
+    const contentType = normalizeShortText(storage.contentType, 180);
+    const sizeBytes = Number(storage.sizeBytes);
+    if (!fileName || !key || !contentType || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) return null;
+    normalizedSource = {
+      sourceType: "upload",
+      storage: {
+        key,
+        fileName,
+        contentType,
+        sizeBytes,
+        uploadedAt: normalizeShortText(storage.uploadedAt, 60),
+      },
+    };
+  } else {
+    if (storage || !resource.external) return null;
+    const external = normalizeExternalSource(resource.external);
+    if (!external) return null;
+    normalizedSource = { sourceType: "external", external };
   }
   return {
     id,
@@ -60,13 +97,7 @@ const normalizeResourceRecord = (resource) => {
       resource.kind === "audio" || resource.kind === "other"
         ? resource.kind
         : "document",
-    storage: {
-      key,
-      fileName,
-      contentType,
-      sizeBytes,
-      uploadedAt: normalizeShortText(storage.uploadedAt, 60),
-    },
+    ...normalizedSource,
     ...(Array.isArray(resource.tags) && normalizeTags(resource.tags)
       ? { tags: normalizeTags(resource.tags) }
       : {}),
@@ -80,6 +111,19 @@ const normalizeResourceRecord = (resource) => {
     updatedBy: normalizeShortText(resource.updatedBy, 240),
     ...(normalizeShortText(resource.contentVersion, 160)
       ? { contentVersion: normalizeShortText(resource.contentVersion, 160) }
+      : {}),
+    ...(resource.contentIndex && typeof resource.contentIndex === "object" &&
+      ["pending", "processing", "ready", "unsupported", "failed", "stale"].includes(resource.contentIndex.status)
+      ? { contentIndex: {
+          status: resource.contentIndex.status,
+          ...(normalizeShortText(resource.contentIndex.version, 160) ? { version: normalizeShortText(resource.contentIndex.version, 160) } : {}),
+          ...(normalizeShortText(resource.contentIndex.indexedAt, 60) ? { indexedAt: normalizeShortText(resource.contentIndex.indexedAt, 60) } : {}),
+          ...(normalizeShortText(resource.contentIndex.sourceModifiedAt, 60) ? { sourceModifiedAt: normalizeShortText(resource.contentIndex.sourceModifiedAt, 60) } : {}),
+          ...(Number.isSafeInteger(resource.contentIndex.textLength) && resource.contentIndex.textLength >= 0 ? { textLength: resource.contentIndex.textLength } : {}),
+          ...(Number.isSafeInteger(resource.contentIndex.chunkCount) && resource.contentIndex.chunkCount >= 0 ? { chunkCount: resource.contentIndex.chunkCount } : {}),
+          ...(normalizeShortText(resource.contentIndex.extractor, 80) ? { extractor: normalizeShortText(resource.contentIndex.extractor, 80) } : {}),
+          ...(normalizeShortText(resource.contentIndex.error, 300) ? { error: normalizeShortText(resource.contentIndex.error, 300) } : {}),
+        } }
       : {}),
     ...(resource.deletionStatus === "deleting"
       ? {
@@ -188,6 +232,7 @@ export const createChurchResourceHandlers = ({
       resourceId,
     }),
   quota,
+  externalResourceService,
 }) => {
   const getStorage = () => storage || storageFactory();
 
@@ -305,6 +350,53 @@ export const createChurchResourceHandlers = ({
       }
     },
 
+    async createExternal(req, res) {
+      try {
+        const churchId = requireChurchSession(req);
+        if (!externalResourceService?.resolveRateLimited) throw httpError(503, "External resource links are unavailable.");
+        const inputUrl = normalizeShortText(req.body?.url, MAX_EXTERNAL_URL_LENGTH);
+        if (!inputUrl) throw httpError(400, "A resource URL is required.");
+        const resolved = await externalResourceService.resolveRateLimited(
+          inputUrl,
+          req.appSession.actorId || req.ip || "unknown",
+        );
+        const external = normalizeExternalSource({
+          url: resolved.originalUrl || resolved.externalUrl || inputUrl,
+          provider: resolved.provider,
+          mimeType: resolved.mimeType,
+          fileName: resolved.filename,
+          mediaType: resolved.mediaType,
+          providerResourceId: resolved.mediaId,
+          lastResolvedAt: nowIso(),
+        });
+        if (!external) throw httpError(400, "That resource URL is not valid.");
+        const now = nowIso();
+        const name = normalizeShortText(req.body?.name, MAX_NAME_LENGTH) ||
+          normalizeShortText(resolved.title, MAX_NAME_LENGTH) ||
+          normalizeShortText(resolved.filename, MAX_NAME_LENGTH) ||
+          normalizeShortText(resolved.provider, MAX_NAME_LENGTH) || "External resource";
+        const mediaType = String(resolved.mediaType || "").toLowerCase();
+        const resource = normalizeResourceRecord({
+          id: `churchResource_${randomUUID()}`,
+          churchId,
+          name,
+          description: normalizeShortText(req.body?.description, MAX_DESCRIPTION_LENGTH),
+          kind: mediaType === "audio" ? "audio" : ["image", "video", "document"].includes(mediaType) ? "document" : "other",
+          sourceType: "external",
+          external,
+          createdAt: now,
+          createdBy: req.appSession.userId || req.appSession.actorId || "operator",
+          updatedAt: now,
+          updatedBy: req.appSession.userId || req.appSession.actorId || "operator",
+        });
+        if (!resource) throw httpError(400, "That resource could not be saved.");
+        await setDoc(COLLECTIONS.churchResources, resource.id, resource, { merge: false });
+        return res.json({ success: true, resource });
+      } catch (error) {
+        return errorResponse(res, error, "Could not add this external resource.");
+      }
+    },
+
     async createUpload(req, res) {
       try {
         const churchId = requireChurchSession(req);
@@ -335,7 +427,7 @@ export const createChurchResourceHandlers = ({
         if (existing) {
           const resource = normalizeResourceRecord(existing);
           if (resource) {
-            await quota?.commitR2({
+            if (resource.sourceType === "upload") await quota?.commitR2({
               churchId,
               reservationId: `resource:${resourceId}`,
               assetId: `resource:${resourceId}`,
@@ -443,6 +535,7 @@ export const createChurchResourceHandlers = ({
       try {
         const churchId = requireChurchSession(req);
         const resource = await findResource(churchId, requireResourceId(req));
+        if (resource.sourceType === "external") throw httpError(400, "External resources use their original link.");
         const result = await getStorage().createReadUrl({
           churchId,
           resource,
@@ -516,12 +609,12 @@ export const createChurchResourceHandlers = ({
             deletionStatus: "deleting",
             deletionRequestedAt: nowIso(),
             deletionError: null,
-            deletionStorageDeletedAt: null,
+            ...(resource.sourceType === "upload" ? { deletionStorageDeletedAt: null } : {}),
           });
         }
 
         try {
-          await getStorage().remove({ churchId, resource });
+          if (resource.sourceType === "upload") await getStorage().remove({ churchId, resource });
         } catch (error) {
           if (!isR2NotFoundError(error)) {
             try {
@@ -535,7 +628,7 @@ export const createChurchResourceHandlers = ({
           }
         }
 
-        await quota?.releaseR2({
+        if (resource.sourceType === "upload") await quota?.releaseR2({
           churchId,
           reservationId: `delete-resource:${resourceId}`,
           assetId: `resource:${resourceId}`,
@@ -543,7 +636,7 @@ export const createChurchResourceHandlers = ({
         });
 
         resource = await persistDeletionState(resource, {
-          deletionStorageDeletedAt: nowIso(),
+          ...(resource.sourceType === "upload" ? { deletionStorageDeletedAt: nowIso() } : {}),
           deletionError: null,
         });
         try {

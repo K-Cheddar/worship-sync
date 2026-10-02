@@ -33,8 +33,28 @@ export const resourceEntryContentType = (
   entry: ResourceLibraryEntry,
 ): string =>
   entry.source === "church-resource"
-    ? entry.resource.storage.contentType
+    ? entry.resource.sourceType === "external"
+      ? entry.resource.external.mimeType || ""
+      : entry.resource.storage.contentType
     : entry.audio.contentType;
+
+export const resourceEntrySize = (entry: ResourceLibraryEntry): number | null =>
+  entry.source === "song-audio"
+    ? entry.audio.sizeBytes
+    : entry.resource.sourceType === "external"
+      ? null
+      : entry.resource.storage.sizeBytes;
+
+export const resourceEntrySource = (entry: ResourceLibraryEntry): string => {
+  if (entry.source === "song-audio") return `Song attachment - ${entry.songName}`;
+  if (entry.resource.sourceType !== "external") return "WorshipSync";
+  const provider = entry.resource.external.provider;
+  const labels: Record<string, string> = {
+    "google-drive": "Google Drive", dropbox: "Dropbox", onedrive: "OneDrive",
+    sharepoint: "SharePoint", box: "Box", youtube: "YouTube",
+  };
+  return (provider && labels[provider]) || "External link";
+};
 
 export const resourceEntryKind = (
   entry: ResourceLibraryEntry,
