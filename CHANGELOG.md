@@ -1,3 +1,10 @@
+## [2.41.2](https://github.com/K-Cheddar/worship-sync/compare/v2.41.1...v2.41.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* Fix iems ([94a360f](https://github.com/K-Cheddar/worship-sync/commit/94a360fc686cb941dd5d7c0c2e5d9458c464165f))
+
 ## [2.41.1](https://github.com/K-Cheddar/worship-sync/compare/v2.41.0...v2.41.1) (2026-10-02)
 
 
