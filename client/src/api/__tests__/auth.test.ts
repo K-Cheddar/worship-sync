@@ -7,6 +7,7 @@ jest.mock("../../utils/environment", () => ({
 
 const csrfStore = { token: "" };
 const humanApiTokenStore = { value: "" };
+const workstationTokenStore = { value: "" };
 
 jest.mock("../../utils/authStorage", () => ({
   getCsrfToken: () => csrfStore.token,
@@ -19,13 +20,14 @@ jest.mock("../../utils/authStorage", () => ({
   getHumanApiToken: () => humanApiTokenStore.value,
   getOperatorName: () => "",
   getOrCreateDeviceId: () => "device-1",
-  getWorkstationToken: () => "",
+  getWorkstationToken: () => workstationTokenStore.value,
   setOperatorNameStorage: jest.fn(),
 }));
 
 // Imports follow jest.mock factories; module under test must load after mocks.
 // eslint-disable-next-line import/first -- see above
 import {
+  apiFetch,
   createHumanSession,
   getAuthBootstrap,
   logoutSession,
@@ -35,6 +37,8 @@ import {
   uploadSongAudio,
   updateChurchMemberAccess,
 } from "../auth";
+// eslint-disable-next-line import/first -- use the authenticated client setup above
+import { getCanvaStatus, importCanvaDesign } from "../canva";
 // eslint-disable-next-line import/first -- see mocked module setup above
 import {
   setAuthenticatedSessionExpected,
@@ -47,11 +51,13 @@ describe("api/auth", () => {
     csrfStore.token = "";
     packagedElectron.value = false;
     humanApiTokenStore.value = "";
+    workstationTokenStore.value = "";
     setAuthenticatedSessionExpected(false);
     global.fetch = jest.fn(() =>
       Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ authenticated: false }),
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ authenticated: false }),
       }),
     ) as jest.Mock;
   });
@@ -132,6 +138,111 @@ describe("api/auth", () => {
         }),
       }),
     );
+  });
+
+  it("sends caller headers and workstation authentication through apiFetch", async () => {
+    workstationTokenStore.value = "ws-full-access";
+    csrfStore.token = "csrf-test-token";
+    await apiFetch("api/test", {
+      method: "POST",
+      headers: {
+        Accept: "application/x-test",
+        "Content-Type": "application/vnd.test+json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/test",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({
+          Accept: "application/x-test",
+          "Content-Type": "application/vnd.test+json",
+          "x-workstation-token": "ws-full-access",
+          "x-csrf-token": "csrf-test-token",
+        }),
+      }),
+    );
+  });
+
+  it("loads Canva status for a paired full-access workstation", async () => {
+    workstationTokenStore.value = "ws-full-access";
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          oauthConfigured: true,
+          connected: true,
+          accountLabel: "Church Canva",
+        }),
+    });
+
+    await expect(getCanvaStatus("church-1")).resolves.toMatchObject({
+      oauthConfigured: true,
+      connected: true,
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/canva/status",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({
+          "x-workstation-token": "ws-full-access",
+        }),
+      }),
+    );
+  });
+
+  it("sends workstation authentication with the streamed Canva import", async () => {
+    workstationTokenStore.value = "ws-full-access";
+    csrfStore.token = "csrf-test-token";
+    const result = { assets: [], skippedCount: 0, revision: 1 };
+    const encoder = new TextEncoder();
+    const reader = {
+      read: jest
+        .fn()
+        .mockResolvedValueOnce({
+          value: encoder.encode(
+            `{"type":"complete","result":${JSON.stringify(result)}}\n`,
+          ),
+          done: true,
+        }),
+    };
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ "content-type": "application/x-ndjson" }),
+      body: { getReader: () => reader },
+    });
+    const progress: Array<{ type: string }> = [];
+
+    await expect(
+      importCanvaDesign(
+        "church-1",
+        {
+          designId: "design-1",
+          pages: [1],
+          format: "png",
+          existingImportKeys: [],
+        },
+        (event) => progress.push(event),
+      ),
+    ).resolves.toEqual(result);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/canva/imports",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({
+          "x-workstation-token": "ws-full-access",
+          "x-csrf-token": "csrf-test-token",
+          Accept: "application/x-ndjson, application/json",
+          "Content-Type": "application/json",
+        }),
+      }),
+    );
+    expect(progress.map(({ type }) => type)).toEqual(["complete"]);
   });
 
   it("posts member removal to the member endpoint", async () => {

@@ -1,8 +1,4 @@
-import {
-  getApiBasePath,
-  isPackagedElectronRenderer,
-} from "../utils/environment";
-import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
+import { authenticatedApiFetch } from "./auth";
 
 export type PlanningCenterStatus = {
   oauthConfigured: boolean;
@@ -38,20 +34,14 @@ const fetchJson = async <T>(path: string, init: JsonInit = {}): Promise<T> => {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body) headers.set("Content-Type", "application/json");
-  const csrf = getCsrfToken();
-  if (csrf) headers.set("x-csrf-token", csrf);
-  const humanToken = getHumanApiToken();
-  if (isPackagedElectronRenderer() && humanToken) {
-    headers.set("Authorization", `Bearer ${humanToken}`);
-  }
   try {
-    const response = await fetch(
-      `${getApiBasePath()}${path.replace(/^\//, "")}`,
+    const { timeoutMs: _timeoutMs, body, ...requestOptions } = init;
+    const response = await authenticatedApiFetch(
+      path.replace(/^\//, ""),
       {
-        ...init,
-        headers,
-        body: init.body ? JSON.stringify(init.body) : undefined,
-        credentials: "include",
+        ...requestOptions,
+        headers: Object.fromEntries(headers.entries()),
+        body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       },
     );

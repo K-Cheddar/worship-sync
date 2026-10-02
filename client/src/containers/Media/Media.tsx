@@ -154,8 +154,11 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       .then((status) => {
         if (active) setCanvaOauthConfigured(Boolean(status.oauthConfigured));
       })
-      .catch(() => {
-        if (active) setCanvaOauthConfigured(false);
+      .catch((error: unknown) => {
+        if (active) {
+          console.warn("Could not load Canva status.", error);
+          setCanvaOauthConfigured(false);
+        }
       });
     return () => {
       active = false;

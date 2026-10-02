@@ -164,31 +164,54 @@ const readJsonResponse = async <T>(response: Response) => {
   }
 };
 
+/** Adds the credentials shared by authenticated WorshipSync API requests. */
+export const authenticatedApiFetch = (
+  path: string,
+  options: RequestInit = {},
+  extraHeaders?: Record<string, string>,
+) => {
+  const workstationToken = getWorkstationToken();
+  const humanToken = getHumanApiToken();
+  const csrfToken = getCsrfToken();
+  const headers: Record<string, string> = {};
+  const setHeader = (name: string, value: string) => {
+    const existingName = Object.keys(headers).find(
+      (headerName) => headerName.toLowerCase() === name.toLowerCase(),
+    );
+    headers[existingName || name] = value;
+  };
+  const mergeHeaders = (source?: HeadersInit) => {
+    if (source && !Array.isArray(source) && !(source instanceof Headers)) {
+      Object.entries(source).forEach(([name, value]) => setHeader(name, value));
+      return;
+    }
+    new Headers(source).forEach((value, name) => setHeader(name, value));
+  };
+  setHeader("Content-Type", "application/json");
+  mergeHeaders(options.headers);
+  mergeHeaders(extraHeaders);
+  if (isPackagedElectronRenderer() && humanToken) {
+    setHeader("Authorization", `Bearer ${humanToken}`);
+  }
+  if (workstationToken) setHeader("x-workstation-token", workstationToken);
+  if ((options.method || "GET").toUpperCase() !== "GET" && csrfToken) {
+    setHeader("x-csrf-token", csrfToken);
+  }
+
+  return fetch(`${getApiBasePath()}${path}`, {
+    credentials: "include",
+    ...options,
+    headers,
+  });
+};
+
 const performApiRequest = async <T>(
   path: string,
   options: RequestInit = {},
   extraHeaders?: Record<string, string>,
 ) => {
   try {
-    const workstationToken = getWorkstationToken();
-    const response = await fetch(`${getApiBasePath()}${path}`, {
-      credentials: "include",
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-        ...(extraHeaders || {}),
-        ...(isPackagedElectronRenderer() && getHumanApiToken()
-          ? { Authorization: `Bearer ${getHumanApiToken()}` }
-          : {}),
-        ...(workstationToken
-          ? { "x-workstation-token": workstationToken }
-          : {}),
-        ...((options.method || "GET").toUpperCase() !== "GET" && getCsrfToken()
-          ? { "x-csrf-token": getCsrfToken() }
-          : {}),
-      },
-    });
+    const response = await authenticatedApiFetch(path, options, extraHeaders);
     return { response, data: await readJsonResponse<T>(response) };
   } catch (error) {
     if (error instanceof AuthApiError) throw error;
@@ -368,14 +391,9 @@ const uploadSongAudioFromPackagedElectron = async ({
   const uploadId = globalThis.crypto.randomUUID();
   const request = {
     method: "POST",
-    credentials: "include",
     headers: {
       "Content-Type": contentType,
       "x-song-audio-upload-id": uploadId,
-      ...(getHumanApiToken()
-        ? { Authorization: `Bearer ${getHumanApiToken()}` }
-        : {}),
-      ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
       ...(previousAudio
         ? {
             "x-song-audio-id": previousAudio.id,
@@ -385,11 +403,11 @@ const uploadSongAudioFromPackagedElectron = async ({
     },
     body: file,
   } satisfies RequestInit;
-  const url = `${getApiBasePath()}${songAudioPath(churchId, songId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`;
+  const path = `${songAudioPath(churchId, songId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`;
   let response: Response | undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      response = await fetch(url, request);
+      response = await authenticatedApiFetch(path, request);
       if (response.ok || response.status < 500 || attempt === 1) break;
     } catch {
       if (attempt === 1) {
@@ -585,17 +603,12 @@ const uploadChurchResourceFromPackagedElectron = async ({
 }): Promise<ChurchResource> => {
   let response: Response;
   try {
-    response = await fetch(
-      `${getApiBasePath()}${churchResourcesPath(churchId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`,
+    response = await authenticatedApiFetch(
+      `${churchResourcesPath(churchId)}/upload-from-app?${new URLSearchParams({ fileName: file.name }).toString()}`,
       {
         method: "POST",
-        credentials: "include",
         headers: {
           "Content-Type": file.type || "application/octet-stream",
-          ...(getHumanApiToken()
-            ? { Authorization: `Bearer ${getHumanApiToken()}` }
-            : {}),
-          ...(getCsrfToken() ? { "x-csrf-token": getCsrfToken() } : {}),
           ...(name?.trim() ? { "x-resource-name": name.trim() } : {}),
           ...(description?.trim()
             ? { "x-resource-description": description.trim() }
@@ -2828,16 +2841,9 @@ export const downloadPortableData = async (
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 ) => {
   const query = new URLSearchParams({ timeZone, ...(template ? { template: "true" } : {}) });
-  const url = `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}?${query.toString()}`;
-  const response = await fetch(url, {
-    credentials: "include",
-    headers: {
-      ...(isPackagedElectronRenderer() && getHumanApiToken()
-        ? { Authorization: `Bearer ${getHumanApiToken()}` }
-        : {}),
-      ...(getWorkstationToken() ? { "x-workstation-token": getWorkstationToken() } : {}),
-    },
-  });
+  const response = await authenticatedApiFetch(
+    `api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}?${query.toString()}`,
+  );
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { errorMessage?: string } | null;
     throw new Error(payload?.errorMessage || "Could not download this file. Check the connection and try again.");
