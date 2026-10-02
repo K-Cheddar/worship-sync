@@ -816,7 +816,7 @@ const ServicePlanSectionList = ({
     ? (songDetailsEditing ? "Edit song details" : "Song details")
     : contentPanelElement
       ? (isEditing ? "Edit content" : "Content details")
-      : (isEditing ? "Edit people and microphones" : "People and microphones");
+      : (isEditing ? "Edit people and equipment" : "People and equipment");
   const panelSubtitle = songDetails
     ? songDetails.name
     : activePanelTitle || "Untitled item";

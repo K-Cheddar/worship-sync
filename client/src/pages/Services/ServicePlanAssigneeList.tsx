@@ -405,7 +405,7 @@ const ServicePlanAssigneeList = ({
               key={assignee.id}
               className={cn(
                 "relative inline-flex min-w-0 w-full max-w-full items-center gap-1.5 rounded-md border py-1.5 pl-2 pr-10 md:w-auto md:gap-1 md:py-1 md:pl-1.5 md:pr-9",
-                allowEdit ? "flex-wrap" : "flex-nowrap",
+                "flex-wrap",
                 isUnassigned
                   ? "border-gray-700/50 bg-gray-900/40"
                   : "border-gray-700/60 bg-gray-950/50",
@@ -594,7 +594,7 @@ const ServicePlanAssigneeList = ({
                 <span key={iem.id} className="inline-flex items-center gap-0.5">
                   <ServiceEquipmentChip
                     equipment={iem}
-                    className="gap-1 rounded-full border-fuchsia-700/60 bg-fuchsia-950/50 px-2 py-1 text-fuchsia-100"
+                    className="gap-1 rounded-full px-2 py-1"
                   >
                     {allowEdit ? (
                       <Button

@@ -1801,6 +1801,36 @@ describe("assignees and their microphones", () => {
     expect(screen.getByRole("group", { name: "Assignees for Pastoral Greetings" })).toHaveTextContent("IEM 1");
   });
 
+  it("shows both microphone and IEM in a read-only assignee row", () => {
+    const headset: ServicePlanMicrophone = {
+      id: "mic-blue",
+      name: "Blue",
+      type: "Headset",
+      color: "#2563eb",
+    };
+    const iem: ServiceEquipment = {
+      id: "iem-red",
+      category: "iem",
+      name: "Red",
+      subtype: "wireless-beltpack",
+      color: "#ef4444",
+    };
+    renderRow({
+      canEdit: false,
+      isEditing: false,
+      microphones: [headset],
+      iemEquipment: [iem],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "a1", name: "Clover Palmer", microphoneIds: [headset.id], iemIds: [iem.id] }],
+      },
+    });
+
+    const assigneeList = screen.getByRole("group", { name: "Assignees for Pastoral Greetings" });
+    expect(within(assigneeList).getByLabelText("Blue · Headset")).toBeInTheDocument();
+    expect(within(assigneeList).getByLabelText("Red · Wireless beltpack")).toBeInTheDocument();
+  });
+
   it("keeps a person's IEM on an unassigned slot when they are removed", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();

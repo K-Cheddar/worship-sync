@@ -21,6 +21,9 @@ const detailedSnapshot: PublicServiceFlowSnapshot = {
           microphones: [
             { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
           ],
+          equipment: [
+            { id: "iem-red", name: "Red", category: "iem", subtype: "wireless-beltpack", color: "#ef4444" },
+          ],
         },
       ],
     },
@@ -58,7 +61,7 @@ const detailedSnapshot: PublicServiceFlowSnapshot = {
   },
 };
 
-describe("ServicePublicView microphone assignments", () => {
+describe("ServicePublicView equipment assignments", () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -112,11 +115,11 @@ describe("ServicePublicView microphone assignments", () => {
     expect(screen.getByText("Check the monitor mix.")).toBeInTheDocument();
   });
 
-  it("shows scheduled team microphone assignments beside the detailed plan", () => {
+  it("shows scheduled team equipment beside the detailed plan", () => {
     render(<ServicePublicView snapshot={detailedSnapshot} embedded />);
 
     const panel = screen.getByRole("complementary", {
-      name: "Microphone assignments",
+      name: "Equipment assignments",
     });
     expect(panel).toHaveClass(
       "lg:max-h-[calc(100dvh-2rem)]",
@@ -125,10 +128,11 @@ describe("ServicePublicView microphone assignments", () => {
     );
     expect(within(panel).getByRole("heading", { name: "Worship Team" }))
       .toHaveStyle({ color: "#f59e0b" });
-    expect(within(panel).getByText("Microphones in use for this service.")).toBeInTheDocument();
+    expect(within(panel).getByText("Equipment in use for this service.")).toBeInTheDocument();
     expect(within(panel).getByText("Avery Stone")).toBeInTheDocument();
     expect(within(panel).getByText("Lead vocal")).toBeInTheDocument();
     expect(within(panel).getByText("Blue")).toBeInTheDocument();
+    expect(within(panel).getByText("Red")).toBeInTheDocument();
   });
 
   it("shows songs and scripture beneath the item title", () => {
@@ -247,8 +251,42 @@ describe("ServicePublicView microphone assignments", () => {
     );
 
     expect(
-      screen.getByRole("complementary", { name: "Microphone assignments" }),
+      screen.getByRole("complementary", { name: "Equipment assignments" }),
     ).toBeInTheDocument();
+  });
+
+  it("renders an IEM-only scheduled member and item-level IEM assignment", () => {
+    const iemSnapshot: PublicServiceFlowSnapshot = {
+      ...detailedSnapshot,
+      servingTeams: [{
+        teamId: "worship",
+        teamName: "Worship Team",
+        members: [{
+          positionId: "lead",
+          positionName: "Lead vocal",
+          memberName: "Clover Palmer",
+          microphones: [],
+          equipment: [{ id: "iem-red", name: "Red", category: "iem", subtype: "wireless-beltpack", color: "#ef4444" }],
+        }],
+      }],
+      service: {
+        ...detailedSnapshot.service,
+        sections: [{
+          ...detailedSnapshot.service.sections[0],
+          items: [{
+            ...detailedSnapshot.service.sections[0].items[0],
+            equipmentAssignments: [{
+              equipment: { id: "iem-red", name: "Red", category: "iem", subtype: "wireless-beltpack", color: "#ef4444" },
+              holderName: "Clover Palmer",
+            }],
+          }],
+        }],
+      },
+    };
+    render(<ServicePublicView snapshot={iemSnapshot} embedded />);
+
+    expect(screen.getByLabelText("Red · Wireless beltpack · Clover Palmer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Red · Wireless beltpack")).toBeInTheDocument();
   });
 
   it("continues when the browser blocks theme storage", async () => {
@@ -278,7 +316,7 @@ describe("ServicePublicView microphone assignments", () => {
     );
 
     expect(
-      screen.queryByRole("complementary", { name: "Microphone assignments" }),
+      screen.queryByRole("complementary", { name: "Equipment assignments" }),
     ).not.toBeInTheDocument();
   });
 });

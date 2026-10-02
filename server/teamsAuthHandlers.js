@@ -2506,7 +2506,6 @@ export const createTeamsAuthHandlers = ({
     token,
     includeTeamDetails = true,
     allowUnpublished = false,
-    includeControllerEquipment = false,
   }) => {
     const isGeneralView = viewMode === "general";
     const [church, brandingChrome, positions, teams, schedules] =
@@ -2571,7 +2570,6 @@ export const createTeamsAuthHandlers = ({
       viewMode,
       shareId: token,
       allowUnpublished,
-      includeControllerEquipment,
       equipment: church?.serviceEquipment || [],
     });
   };
@@ -14541,7 +14539,6 @@ export const createTeamsAuthHandlers = ({
             `current-service-viewer:${servicePlan.planKey}`,
           includeTeamDetails: hasTeamDetails,
           allowUnpublished: true,
-          includeControllerEquipment: hasTeamDetails,
         });
         return res.json({ success: true, plan, snapshot });
       } catch (error) {
