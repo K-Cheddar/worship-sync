@@ -68,18 +68,16 @@ import {
   type TeamsPlansRestore,
 } from "../teamsReturnNavigation";
 import { isActive } from "../teamsUtils";
+import { getUpcomingServiceRange } from "../servicePeriodRange";
 import ScheduleOccurrenceRibbon from "../schedule/ScheduleOccurrenceRibbon";
 import {
   scheduleTodayBorderClassName,
   scheduleUpNextBorderClassName,
 } from "../schedule/scheduleUtils";
-import {
-  rangeFromPreset,
-} from "../schedule/schedulePeriodUtils";
 import RangeSelector from "../components/RangeSelector";
 import {
   formatResolvedDateRange,
-  rangeSelectionStorageKey,
+  resolveRangePreset,
   useRangeSelection,
 } from "../rangeSelection";
 import { cn } from "@/utils/cnHelper";
@@ -92,8 +90,6 @@ import { onlyHydratedSchedules } from "../../../api/authTypes";
 import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
 export { rangeFromPreset } from "../schedule/schedulePeriodUtils";
-
-const defaultRange = () => rangeFromPreset("upcoming");
 
 /**
  * Plain date `days` away from `date`. Noon keeps the shift clear of DST edges.
@@ -338,21 +334,19 @@ const TeamsPlansPage = () => {
   } = templateResource;
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const initialRange = useMemo(defaultRange, []);
-  const rangePersistence = useMemo(
-    () => ({
-      key: churchId ? rangeSelectionStorageKey("services", churchId) : null,
-      legacyKeys: churchId ? [`worshipSync:teamsPlansFilters:${churchId}`] : [],
-    }),
-    [churchId],
-  );
+  const resolveUpcomingRange = useCallback(() => {
+    return getUpcomingServiceRange(pageData.services.filter(isActive));
+  }, [pageData.services]);
   const {
     preset: rangePreset,
     range: selectedRange,
     selectPreset: selectRangePreset,
     selectCustomRange: setCustomRange,
     setSelection: setRangeSelection,
-  } = useRangeSelection({ initialRange, persistence: rangePersistence });
+  } = useRangeSelection({
+    resolveUpcomingRange,
+    resolvePresetRange: (preset) => resolveRangePreset(preset),
+  });
   const windowStart = selectedRange.start;
   const windowEnd = selectedRange.end;
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);

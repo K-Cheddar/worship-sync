@@ -65,7 +65,6 @@ import {
   findReusablePeriodSchedule,
   filterOccurrencesToRange,
   formatSchedulePeriodName,
-  persistedScheduleRange,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
 import {
@@ -76,7 +75,6 @@ import { mergeScheduleNotificationIntents } from "./scheduleNotificationHistory"
 import RangeSelector from "../components/RangeSelector";
 import {
   resolveRangePreset,
-  rangeSelectionStorageKey,
   shiftRange,
   useRangeSelection,
 } from "../rangeSelection";
@@ -464,9 +462,12 @@ const ScheduleTab = ({
     }),
     [activeServices, data.positions, data.schedules, workspaceTeamId],
   );
-  const initialPeriodRange = useMemo(() => resolveRangePreset("upcoming"), []);
+  const initialPeriodRange = useMemo(() => ({
+    start: initialTeamPeriodResult.start,
+    end: initialTeamPeriodResult.end,
+  }), [initialTeamPeriodResult.end, initialTeamPeriodResult.start]);
   const resolveSchedulePresetRange = useCallback(
-    (preset: Exclude<SchedulePeriodPreset, "custom">) =>
+    (preset: Exclude<SchedulePeriodPreset, "upcoming" | "custom">) =>
       resolveRangePreset(preset),
     [],
   );
@@ -476,16 +477,13 @@ const ScheduleTab = ({
     selectPreset: selectRangePreset,
     selectCustomRange,
     setSelection: setPeriodSelection,
-    restoredFromPersistence,
   } = useRangeSelection({
     initialPreset: initialTeamPeriodResult.preset,
     initialRange: initialPeriodRange,
-    persistence: {
-      key: churchId ? rangeSelectionStorageKey("schedules", churchId) : null,
-    },
     resolvePresetRange: resolveSchedulePresetRange,
+    resolveUpcomingRange: () => initialPeriodRange,
   });
-  const hasExplicitPeriodSelectionRef = useRef(restoredFromPersistence);
+  const hasExplicitPeriodSelectionRef = useRef(false);
   const periodTeamIdRef = useRef(workspaceTeamId);
   useEffect(() => {
     if (periodTeamIdRef.current !== workspaceTeamId) {
@@ -493,7 +491,7 @@ const ScheduleTab = ({
       hasExplicitPeriodSelectionRef.current = false;
     }
     if (hasExplicitPeriodSelectionRef.current) return;
-    setPeriodSelection(initialTeamPeriodResult.preset, initialPeriodRange, { persist: false });
+    setPeriodSelection(initialTeamPeriodResult.preset, initialPeriodRange);
   }, [initialPeriodRange, initialTeamPeriodResult.preset, setPeriodSelection, workspaceTeamId]);
   const canEdit = viewingSavedSchedule
     ? canEditSelectedSchedule
@@ -501,10 +499,7 @@ const ScheduleTab = ({
       (workspaceTeamId && editableTeamIds?.has(workspaceTeamId)) ||
       (!editableTeamIds && canEditSelectedSchedule),
     );
-  const persistedPeriodRange = useMemo(
-    () => persistedScheduleRange(periodPreset, periodRange),
-    [periodPreset, periodRange],
-  );
+  const persistedPeriodRange = periodRange;
   const teamPeriod = useMemo(
     () => buildTeamSchedulePeriod({
       services: activeServices,
@@ -524,9 +519,14 @@ const ScheduleTab = ({
     schedules,
     churchId,
     teamId: workspaceTeamId,
+    serviceIds: periodPreset === "upcoming" ? [] : periodServiceIds,
     occurrences: generatedPeriodOccurrences,
-    visibleStartDate: periodRange.start,
-    visibleEndDate: periodRange.end,
+    visibleStartDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
+      ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
+      : periodRange.start,
+    visibleEndDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
+      ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
+      : periodRange.end,
   });
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const hasAmbiguousPeriodSchedules = !viewingSavedSchedule && periodScheduleMatch.ambiguous;
@@ -565,6 +565,11 @@ const ScheduleTab = ({
   const selectedScheduleRecord = viewingSavedSchedule
     ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
     : matchedPeriodSchedule || virtualPeriodSchedule;
+  const displayedPeriodRange = useMemo(() =>
+    selectedScheduleRecord?.startDate && selectedScheduleRecord.endDate
+      ? { start: selectedScheduleRecord.startDate, end: selectedScheduleRecord.endDate }
+      : periodRange,
+  [periodRange, selectedScheduleRecord?.endDate, selectedScheduleRecord?.startDate]);
   useEffect(() => {
     if (viewingSavedSchedule) return;
     const nextId = matchedPeriodSchedule?.scheduleId || "";
@@ -693,7 +698,7 @@ const ScheduleTab = ({
   };
   const shiftPeriod = (direction: -1 | 1) => {
     hasExplicitPeriodSelectionRef.current = true;
-    setPeriodSelection(periodPreset, shiftRange(periodPreset, periodRange, direction));
+    setPeriodSelection("custom", shiftRange(periodPreset, displayedPeriodRange, direction));
     setViewingSavedSchedule(false);
   };
 
@@ -889,7 +894,7 @@ const ScheduleTab = ({
   }, [baseScheduleOccurrences, selectedSchedule?.source, serviceById, teamPositionIds, viewingSavedSchedule]);
   const scheduleOccurrences = useMemo(() => {
     if (viewingSavedSchedule) return baseScheduleOccurrences;
-    return filterOccurrencesToRange(baseScheduleOccurrences, periodRange).filter((occurrence) =>
+    return filterOccurrencesToRange(baseScheduleOccurrences, displayedPeriodRange).filter((occurrence) =>
       (allRequirementsByOccurrence.get(occurrence.occurrenceId)?.length || 0) > 0 ||
       (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
         .some((slotKey) => {
@@ -897,7 +902,7 @@ const ScheduleTab = ({
           return Boolean(slot && teamPositionIds.includes(slot.positionId));
         }),
     );
-  }, [allRequirementsByOccurrence, baseScheduleOccurrences, periodRange, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
+  }, [allRequirementsByOccurrence, baseScheduleOccurrences, displayedPeriodRange, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
   const requirementsByOccurrence = useMemo(
     () => new Map(scheduleOccurrences.map((occurrence) => [
       occurrence.occurrenceId,
@@ -1726,7 +1731,6 @@ const ScheduleTab = ({
           setPeriodSelection(
             "custom",
             { start: restoredSchedule.startDate, end: restoredSchedule.endDate },
-            { persist: false },
           );
         }
         setSelectedScheduleId(restore.scheduleId, true);
@@ -5213,7 +5217,7 @@ const ScheduleTab = ({
               />
               <RangeSelector
                 preset={periodPreset}
-                range={periodRange}
+                range={displayedPeriodRange}
                 onPresetChange={selectPeriodPreset}
                 onCustomRangeChange={(range) => {
                   hasExplicitPeriodSelectionRef.current = true;
@@ -6154,7 +6158,6 @@ const ScheduleTab = ({
                 start: selectedHistorySchedule.startDate,
                 end: selectedHistorySchedule.endDate,
               },
-              { persist: false },
             );
           }
           setSelectedScheduleId(scheduleId, true);

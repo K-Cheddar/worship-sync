@@ -63,23 +63,43 @@ describe("RangeSelector", () => {
     expect(screen.getByRole("textbox", { name: "Date range" })).toBeInTheDocument();
   });
 
-  it("exposes selected state and keeps configured period paging for Upcoming", () => {
+  it("marks shifted pages Custom and recalculates when Upcoming is selected again", async () => {
+    const user = userEvent.setup();
     setDesktop(true);
-    render(
-      <RangeSelector
-        preset="upcoming"
-        range={{ start: "2026-09-29", end: "2026-10-31" }}
-        onPresetChange={jest.fn()}
-        onCustomRangeChange={jest.fn()}
-        onNavigate={jest.fn()}
-      />,
-    );
+    const ControlledFilter = () => {
+      const [preset, setPreset] = useState<RangePreset>("upcoming");
+      const [range, setRange] = useState({ start: "2026-10-01", end: "2026-10-31" });
+      return (
+        <RangeSelector
+          preset={preset}
+          range={range}
+          onPresetChange={(nextPreset) => {
+            setPreset(nextPreset);
+            if (nextPreset === "upcoming") {
+              setRange({ start: "2026-12-01", end: "2026-12-31" });
+            }
+          }}
+          onCustomRangeChange={jest.fn()}
+          onNavigate={() => {
+            setPreset("custom");
+            setRange({ start: "2026-09-01", end: "2026-09-30" });
+          }}
+        />
+      );
+    };
+    render(<ControlledFilter />);
 
     expect(screen.getByRole("button", { name: "Upcoming" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Custom" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Previous period" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next period" })).toBeInTheDocument();
-    expect(screen.getByText("Sep 29, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Previous period" }));
+    expect(screen.getByRole("button", { name: "Upcoming" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Custom" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Sep 1, 2026 – Sep 30, 2026")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upcoming" }));
+    expect(screen.getByText("Dec 1, 2026 – Dec 31, 2026")).toBeInTheDocument();
   });
 
   it("keeps subtle paging available for fixed presets", () => {

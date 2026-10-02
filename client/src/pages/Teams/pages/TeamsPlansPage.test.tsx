@@ -1064,6 +1064,11 @@ describe("TeamsPlansPage", () => {
     jest.setSystemTime(new Date("2026-07-25T18:00:00"));
 
     renderPage();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    // Upcoming now targets the month of the next future service (August here).
+    // Select July to keep this test focused on the same-day marker contract.
+    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(screen.getByRole("button", { name: "This month" }));
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();

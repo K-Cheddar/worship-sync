@@ -42,7 +42,7 @@ import type {
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
-import { rangeSelectionStorageKey, resolveRangePreset, shiftRange } from "./rangeSelection";
+import { calendarMonthRange, shiftRange } from "./rangeSelection";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -710,7 +710,7 @@ describe("Teams", () => {
       };
       return { success: true, created: true, schedule: ensuredSchedule };
     });
-    const firstFuturePeriod = shiftRange("upcoming", resolveRangePreset("upcoming"), 1);
+    const firstFuturePeriod = shiftRange("upcoming", calendarMonthRange(new Date()), 1);
     const secondFuturePeriod = shiftRange("upcoming", firstFuturePeriod, 1);
     mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => ({
       success: true,
@@ -818,7 +818,7 @@ describe("Teams", () => {
       schedules: [],
     }));
 
-    const firstFuturePeriod = shiftRange("upcoming", resolveRangePreset("upcoming"), 1);
+    const firstFuturePeriod = shiftRange("upcoming", calendarMonthRange(new Date()), 1);
     const secondFuturePeriod = shiftRange("upcoming", firstFuturePeriod, 1);
     const makeEnsuredSchedule = (
       body: Parameters<typeof ensureTeamScheduleForPeriod>[1],
@@ -899,9 +899,10 @@ describe("Teams", () => {
     );
   });
 
-  it("defaults Schedules to Upcoming and restores its own saved Range", async () => {
+  it("defaults Schedules to Upcoming and ignores legacy saved range values", async () => {
     const user = userEvent.setup();
     window.matchMedia = makeMatchMedia(true);
+    localStorage.setItem("worshipSync:teamsRange:schedules:church-1", JSON.stringify({ preset: "thisQuarter" }));
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -915,13 +916,9 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: "This quarter" }));
     view.unmount();
 
-    expect(
-      localStorage.getItem(rangeSelectionStorageKey("schedules", "church-1")),
-    ).toContain("thisQuarter");
-
     renderTeams();
     await waitForTeamsBootstrap();
-    expect(screen.getByRole("button", { name: "This quarter" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Upcoming" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -1004,7 +1001,7 @@ describe("Teams", () => {
 
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).toMatchObject({
-      startDate: "2026-09-01",
+      startDate: "2026-10-01",
       endDate: "2026-10-31",
       visibleOccurrenceIds: expect.arrayContaining([expect.stringContaining("2026-10-03")]),
     });
@@ -1081,6 +1078,7 @@ describe("Teams", () => {
 
     expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(5);
+    expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
   });
 

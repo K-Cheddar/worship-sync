@@ -2,7 +2,6 @@ import type { TeamSchedule, TeamScheduleOccurrence, TeamScheduleSummary } from "
 import {
   filterOccurrencesToRange,
   findReusablePeriodSchedule,
-  persistedScheduleRange,
   rangeFromPreset,
 } from "./schedulePeriodUtils";
 
@@ -34,49 +33,10 @@ const schedule = (changes: Partial<TestSchedule> = {}): TestSchedule => ({
 });
 
 describe("rangeFromPreset", () => {
-  it("includes today through 30 days from today for Upcoming", () => {
-    expect(rangeFromPreset("upcoming", new Date(2026, 8, 29, 12))).toEqual({
-      start: "2026-09-29",
-      end: "2026-10-29",
-    });
-  });
-
-  it("handles the December to January boundary for Upcoming", () => {
-    expect(rangeFromPreset("upcoming", new Date(2026, 11, 31, 12))).toEqual({
-      start: "2026-12-31",
-      end: "2027-01-30",
-    });
-  });
-
   it("keeps This month as the full current calendar month", () => {
     expect(rangeFromPreset("thisMonth", new Date(2026, 8, 29, 12))).toEqual({
       start: "2026-09-01",
       end: "2026-09-30",
-    });
-  });
-});
-
-describe("persistedScheduleRange", () => {
-  it("keeps Upcoming identity on calendar bounds while its visible start advances", () => {
-    const dayOne = persistedScheduleRange("upcoming", { start: "2026-09-29", end: "2026-10-29" });
-    const dayTwo = persistedScheduleRange("upcoming", { start: "2026-09-30", end: "2026-10-30" });
-
-    expect(dayOne).toEqual({ start: "2026-09-01", end: "2026-10-31" });
-    expect(dayTwo).toEqual(dayOne);
-    expect(persistedScheduleRange("upcoming", { start: "2026-10-01", end: "2026-10-31" })).toEqual({
-      start: "2026-10-01",
-      end: "2026-10-31",
-    });
-  });
-
-  it("preserves explicit full-month and custom ranges", () => {
-    expect(persistedScheduleRange("thisMonth", { start: "2026-09-01", end: "2026-09-30" })).toEqual({
-      start: "2026-09-01",
-      end: "2026-09-30",
-    });
-    expect(persistedScheduleRange("custom", { start: "2026-09-29", end: "2026-10-03" })).toEqual({
-      start: "2026-09-29",
-      end: "2026-10-03",
     });
   });
 });
@@ -316,7 +276,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses a populated custom schedule by covered dates after occurrence drift", () => {
+  it("does not reuse a populated schedule after all service identities are replaced", () => {
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => ({
       ...occurrence,
       occurrenceId: `old-service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
@@ -339,10 +299,11 @@ describe("findReusablePeriodSchedule", () => {
     expect(findReusablePeriodSchedule({
       schedules: [custom],
       ...target,
+      serviceIds: ["new-service"],
       occurrences: currentOccurrences,
       visibleStartDate: "2026-10-01",
       visibleEndDate: "2026-10-31",
-    })).toEqual({ schedule: custom, ambiguous: false });
+    })).toEqual({ schedule: null, ambiguous: false });
   });
 
   it("reuses a saved period when current Setup has no occurrences", () => {
