@@ -13778,19 +13778,6 @@ export const createTeamsAuthHandlers = ({
             const rightIds = [...right].sort();
             return leftIds.every((id, index) => id === rightIds[index]);
           };
-          const equivalentLegacy = (schedule) =>
-            schedule.source == null &&
-            schedule.churchId === churchId &&
-            schedule.teamId === payload.teamId &&
-            schedule.startDate === payload.startDate &&
-            schedule.endDate === payload.endDate &&
-            sameIds(schedule.serviceIds, payload.serviceIds) &&
-            sameIds(
-              schedule.occurrences?.map(
-                (occurrence) => occurrence?.occurrenceId,
-              ),
-              payload.occurrences.map((occurrence) => occurrence.occurrenceId),
-            );
           const activeTeamSchedules = (
             await listTeamCollectionForChurch(
               COLLECTIONS.teamSchedules,
@@ -13807,6 +13794,49 @@ export const createTeamsAuthHandlers = ({
               schedule.startDate === payload.startDate &&
               schedule.endDate === payload.endDate,
           );
+          const visibleDates = payload.occurrences
+            .filter((occurrence) =>
+              visibleOccurrenceIds.includes(occurrence.occurrenceId),
+            )
+            .map((occurrence) =>
+              getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date,
+            )
+            .sort();
+          const visibleStartDate =
+            normalizeShortText(req.body?.visibleStartDate, { max: 10 }) ||
+            visibleDates[0] ||
+            payload.startDate;
+          const visibleEndDate =
+            normalizeShortText(req.body?.visibleEndDate, { max: 10 }) ||
+            visibleDates[visibleDates.length - 1] ||
+            payload.endDate;
+          if (
+            !isValidPortablePlainDate(visibleStartDate) ||
+            !isValidPortablePlainDate(visibleEndDate) ||
+            visibleStartDate < payload.startDate ||
+            visibleEndDate > payload.endDate ||
+            visibleStartDate > visibleEndDate
+          ) {
+            throw httpError(
+              400,
+              "The visible schedule dates must fall within this period.",
+            );
+          }
+          const coversVisibleDates = (schedule) =>
+            Boolean(
+              schedule.startDate && schedule.endDate &&
+              schedule.startDate <= visibleStartDate &&
+              schedule.endDate >= visibleEndDate,
+            );
+          const equivalentLegacy = (schedule) =>
+            schedule.source == null &&
+            schedule.startDate === payload.startDate &&
+            schedule.endDate === payload.endDate &&
+            sameIds(schedule.serviceIds, payload.serviceIds) &&
+            sameIds(
+              schedule.occurrences?.map((occurrence) => occurrence?.occurrenceId),
+              payload.occurrences.map((occurrence) => occurrence.occurrenceId),
+            );
           // Match by explicit priority: current church-aware identity, old
           // generated identity (which omitted churchId), then equivalent
           // source-less legacy. A lower-priority match never makes a unique
@@ -13831,9 +13861,9 @@ export const createTeamsAuthHandlers = ({
             : oldGenerated.length
               ? oldGenerated
               : equivalentLegacySchedules;
-          // Upcoming is a moving display window. If an older generated period
-          // already contains every visible occurrence, reuse its persisted
-          // identity instead of creating a second overlapping record.
+          // Upcoming is a moving display window. Reuse an older generated
+          // period that covers the visible dates even when Setup changed its
+          // service or occurrence shape since that record was saved.
           let containingGenerated = [];
           const hasScheduleData = (schedule) =>
             Boolean(
@@ -13844,53 +13874,84 @@ export const createTeamsAuthHandlers = ({
                 Object.keys(schedule.additionalPositionSlots || {}).length ||
                 Object.keys(schedule.responses || {}).length,
             );
-          if (visibleOccurrenceIds.length > 0) {
-            const visibleDates = payload.occurrences
-              .filter((occurrence) =>
-                visibleOccurrenceIds.includes(occurrence.occurrenceId),
-              )
-              .map((occurrence) =>
-                getOccurrenceCalendarParts(
-                  occurrence.startsAt,
-                  timeZone,
-                ).date,
-              )
-              .sort();
-            const firstVisibleDate = visibleDates[0];
-            const lastVisibleDate = visibleDates[visibleDates.length - 1];
-            const visibleIds = new Set(visibleOccurrenceIds);
-            containingGenerated = activeTeamSchedules.filter(
-              (schedule) => {
-                if (
-                  schedule.source !== "generated-period" ||
-                  !schedule.generatedPeriodKey ||
-                  schedule.scheduleId !==
-                    generatedPeriodScheduleId(schedule.generatedPeriodKey) ||
-                  !schedule.startDate ||
-                  !schedule.endDate ||
-                  schedule.startDate > firstVisibleDate ||
-                  schedule.endDate < lastVisibleDate
-                ) {
-                  return false;
-                }
-                const storedIds = new Set(
-                  (schedule.occurrences || []).map(
-                    (occurrence) => occurrence?.occurrenceId,
-                  ),
-                );
-                return [...visibleIds].every((id) => storedIds.has(id));
-              },
-            );
-          }
+          containingGenerated = activeTeamSchedules.filter(
+            (schedule) =>
+              schedule.source === "generated-period" &&
+              Boolean(schedule.generatedPeriodKey) &&
+              schedule.scheduleId ===
+                generatedPeriodScheduleId(schedule.generatedPeriodKey) &&
+              coversVisibleDates(schedule),
+          );
+          const customSchedules = activeTeamSchedules.filter(
+            (schedule) =>
+              schedule.source === "custom" &&
+              coversVisibleDates(schedule) &&
+              hasScheduleData(schedule),
+          );
           const candidates = [
             ...new Map(
-              [...reusable, ...containingGenerated].map((schedule) => [
+              [...reusable, ...containingGenerated, ...customSchedules].map((schedule) => [
                 schedule.scheduleId,
                 schedule,
               ]),
             ).values(),
           ];
           if (candidates.length > 0) {
+            const populatedGenerated = candidates.filter(
+              (schedule) => schedule.source === "generated-period" && hasScheduleData(schedule),
+            );
+            const populatedCustom = candidates.filter(
+              (schedule) => schedule.source === "custom" && hasScheduleData(schedule),
+            );
+            const populatedLegacy = candidates.filter(
+              (schedule) => schedule.source == null && hasScheduleData(schedule),
+            );
+            if (
+              populatedCustom.length &&
+              (populatedGenerated.length || populatedLegacy.length)
+            ) {
+              throw httpError(
+                409,
+                "Several schedules match this period. Choose one from Schedule history before editing it.",
+              );
+            }
+            if (populatedCustom.length === 1) {
+              return { schedule: populatedCustom[0], created: false };
+            }
+            if (populatedCustom.length > 1) {
+              throw httpError(
+                409,
+                "Several schedules match this period. Choose one from Schedule history before editing it.",
+              );
+            }
+            const generatedCandidates = candidates.filter(
+              (schedule) => schedule.source === "generated-period",
+            );
+            if (generatedCandidates.length) {
+              const populatedGenerated = generatedCandidates.filter(hasScheduleData);
+              if (populatedGenerated.length > 1) {
+                throw httpError(
+                  409,
+                  "Several schedules match this period. Choose one from Schedule history before editing it.",
+                );
+              }
+              if (populatedGenerated.length === 1) {
+                return { schedule: populatedGenerated[0], created: false };
+              }
+              const exactGenerated = generatedCandidates.filter(
+                (schedule) => schedule.startDate === payload.startDate && schedule.endDate === payload.endDate,
+              );
+              const preferredGenerated = exactGenerated.length
+                ? exactGenerated
+                : generatedCandidates;
+              if (preferredGenerated.length === 1) {
+                return { schedule: preferredGenerated[0], created: false };
+              }
+              throw httpError(
+                409,
+                "Several schedules match this period. Choose one from Schedule history before editing it.",
+              );
+            }
             const populated = candidates.filter(hasScheduleData);
             if (populated.length === 1) {
               return { schedule: populated[0], created: false };

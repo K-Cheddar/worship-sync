@@ -610,6 +610,8 @@ const ScheduleTab = ({
             endDate: persistedPeriodRange.end,
             serviceIds: periodServiceIds,
             occurrences: teamPeriod.occurrences,
+            visibleStartDate: periodRange.start,
+            visibleEndDate: periodRange.end,
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
           }));
@@ -633,6 +635,8 @@ const ScheduleTab = ({
   }, [
     churchId,
     generatedPeriodOccurrences,
+    periodRange.end,
+    periodRange.start,
     teamPeriod.occurrences,
     onScheduleSaved,
     persistedPeriodRange.end,

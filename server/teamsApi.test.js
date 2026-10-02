@@ -546,6 +546,80 @@ test("generated schedule ensure is idempotent and does not adopt an exact custom
   assert.equal(reused.payload.schedule.source, "generated-period");
 });
 
+test("generated schedule ensure yields to a populated custom period", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_populated_custom");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Praise Team",
+    positions: [{ name: "Vocal" }],
+  });
+  const vocalId = positionIds.Vocal;
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "worship-experience",
+      name: "Worship Experience",
+      reccurence: "weekly",
+      dayOfWeek: 6,
+      time: "11:00",
+      positionRequirements: [{ positionId: vocalId, count: 1 }],
+    }],
+  });
+  const occurrence = {
+    occurrenceId: "worship-experience@2026-10-03T11:00:00.000Z",
+    serviceId: "worship-experience",
+    name: "Worship Experience",
+    startsAt: "2026-10-03T11:00:00.000Z",
+    positionRequirements: [{ positionId: vocalId, count: 1 }],
+  };
+  const body = {
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: ["worship-experience"],
+    occurrences: [occurrence],
+  };
+  const generated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body,
+  });
+  assert.equal(generated.statusCode, 200);
+  assert.equal(generated.payload.created, true);
+  const customId = "custom-october-praise";
+  await setDoc("teamSchedules", customId, {
+    scheduleId: customId,
+    churchId: context.churchId,
+    teamId,
+    name: "Custom October",
+    startDate: body.startDate,
+    endDate: body.endDate,
+    serviceIds: body.serviceIds,
+    source: "custom",
+    occurrences: [occurrence],
+    assignments: {
+      [occurrence.occurrenceId]: {
+        [`${vocalId}::0`]: { primaryMemberId: "existing-vocal", shadows: [] },
+      },
+    },
+  });
+
+  const reused = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body,
+  });
+
+  assert.equal(reused.statusCode, 200);
+  assert.equal(reused.payload.created, false);
+  assert.equal(reused.payload.schedule.scheduleId, customId);
+  assert.equal(
+    reused.payload.schedule.assignments[occurrence.occurrenceId][`${vocalId}::0`]
+      .primaryMemberId,
+    "existing-vocal",
+  );
+});
+
 test("generated schedule ensure merges combined-service requirements from current services", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext(
@@ -617,7 +691,7 @@ test("generated schedule ensure merges combined-service requirements from curren
   );
 });
 
-test("generated schedule ensure reuses an older rolling record containing every visible occurrence", async (t) => {
+test("generated schedule ensure reuses an older rolling record by date coverage despite occurrence drift", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_rolling_reuse");
   const { teamId, positionIds } = await seedTeam(context, {
@@ -626,6 +700,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
   });
   const cameraId = positionIds.Camera;
   const occurrenceId = "service-sabbath@2026-10-03T10:00:00.000Z";
+  const savedOccurrenceId = "service-sabbath@2026-10-03T09:00:00.000Z";
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
@@ -655,7 +730,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
     generatedPeriodKey: oldKey,
     occurrences: [
       {
-        occurrenceId,
+        occurrenceId: savedOccurrenceId,
         serviceId: "service-sabbath",
         name: "Sabbath Service",
         startsAt: "2026-10-03T10:00:00.000Z",
@@ -663,7 +738,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
       },
     ],
     assignments: {
-      [occurrenceId]: {
+      [savedOccurrenceId]: {
         [`${cameraId}::0`]: { primaryMemberId: "existing-member", shadows: [] },
       },
     },
@@ -684,7 +759,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
     generatedPeriodKey: emptyOldKey,
     occurrences: [
       {
-        occurrenceId,
+        occurrenceId: savedOccurrenceId,
         serviceId: "service-sabbath",
         name: "Sabbath Service",
         startsAt: "2026-10-03T10:00:00.000Z",
@@ -703,7 +778,8 @@ test("generated schedule ensure reuses an older rolling record containing every 
       endDate: "2026-10-31",
       timeZone: "UTC",
       serviceIds: ["service-sabbath"],
-      visibleOccurrenceIds: [occurrenceId],
+      visibleStartDate: "2026-09-29",
+      visibleEndDate: "2026-10-29",
       occurrences: [
         {
           occurrenceId,
@@ -719,8 +795,9 @@ test("generated schedule ensure reuses an older rolling record containing every 
   assert.equal(result.statusCode, 200);
   assert.equal(result.payload.created, false);
   assert.equal(result.payload.schedule.scheduleId, oldScheduleId);
+  assert.equal(result.payload.schedule.occurrences[0].occurrenceId, savedOccurrenceId);
   assert.equal(
-    result.payload.schedule.assignments[occurrenceId][`${cameraId}::0`]
+    result.payload.schedule.assignments[savedOccurrenceId][`${cameraId}::0`]
       .primaryMemberId,
     "existing-member",
   );

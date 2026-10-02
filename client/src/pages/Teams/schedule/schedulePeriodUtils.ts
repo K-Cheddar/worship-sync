@@ -72,44 +72,31 @@ export const findReusablePeriodSchedule = ({
   visibleStartDate?: string;
   visibleEndDate?: string;
 }) => {
-  const visibleOccurrenceIds = occurrences.map((occurrence) => occurrence.occurrenceId);
-  if (visibleOccurrenceIds.length === 0) return { schedule: null, ambiguous: false };
   const sameSet = (left: string[] | undefined, right: string[]) => {
     if (!left || left.length !== right.length) return false;
     const sortedLeft = [...left].sort();
     const sortedRight = [...right].sort();
     return sortedLeft.every((value, index) => value === sortedRight[index]);
   };
-  const sameVisiblePeriod = schedules.filter((schedule) => {
+  const coveringVisiblePeriod = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
       schedule.startDate > visibleStartDate || schedule.endDate < visibleEndDate
     ) return false;
-    const storedOccurrenceIds = schedule.occurrences?.map((occurrence) => occurrence.occurrenceId) || [];
-    return visibleOccurrenceIds.every((id) => storedOccurrenceIds.includes(id));
+    return true;
   });
   // Generated records outrank legacy records. The client cannot synchronously
   // hash the current identity, so validate the stored key/ID pair and the
   // church/team/date identity; this also admits records written with the old
   // key that omitted churchId. Multiple generated matches are corrupt/ambiguous.
-  const generated = sameVisiblePeriod.filter((schedule) =>
+  const generated = coveringVisiblePeriod.filter((schedule) =>
     schedule.source === "generated-period" &&
     Boolean(schedule.generatedPeriodKey) &&
     schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`,
   );
-  if (generated.length > 0) {
-    const populated = generated.filter(hasScheduleData);
-    if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
-    if (populated.length > 1) return { schedule: null, ambiguous: true };
-    const exact = generated.filter((schedule) => schedule.startDate === startDate && schedule.endDate === endDate);
-    const preferred = exact.length ? exact : generated;
-    return preferred.length === 1
-      ? { schedule: preferred[0], ambiguous: false }
-      : { schedule: null, ambiguous: true };
-  }
-  const legacy = schedules.filter((schedule) =>
-    !schedule.archivedAt && schedule.churchId === churchId && schedule.teamId === teamId &&
+  const custom = coveringVisiblePeriod.filter((schedule) => schedule.source === "custom");
+  const legacy = coveringVisiblePeriod.filter((schedule) =>
     schedule.source == null &&
     schedule.startDate === startDate && schedule.endDate === endDate &&
     sameSet(schedule.serviceIds, serviceIds) &&
@@ -118,11 +105,48 @@ export const findReusablePeriodSchedule = ({
       occurrences.map((occurrence) => occurrence.occurrenceId),
     ),
   );
-  if (legacy.length === 1) return { schedule: legacy[0], ambiguous: false };
-  const populated = legacy.filter(hasScheduleData);
-  return populated.length === 1
-    ? { schedule: populated[0], ambiguous: false }
-    : { schedule: null, ambiguous: legacy.length > 0 };
+  const populatedGenerated = generated.filter(hasScheduleData);
+  const populatedCustom = custom.filter(hasScheduleData);
+  const populatedLegacy = legacy.filter(hasScheduleData);
+
+  // Populated schedules from different sources are competing operator-owned
+  // data. Empty generated copies may yield to a populated custom schedule.
+  if (populatedCustom.length && (populatedGenerated.length || populatedLegacy.length)) {
+    return { schedule: null, ambiguous: true };
+  }
+  if (populatedCustom.length) {
+    return populatedCustom.length === 1
+      ? { schedule: populatedCustom[0], ambiguous: false }
+      : { schedule: null, ambiguous: true };
+  }
+  if (populatedGenerated.length) {
+    return populatedGenerated.length === 1
+      ? { schedule: populatedGenerated[0], ambiguous: false }
+      : { schedule: null, ambiguous: true };
+  }
+  // A valid generated identity outranks source-less legacy copies, including
+  // old records whose stored occurrence shape no longer matches Service Setup.
+  if (generated.length) {
+    const exact = generated.filter((schedule) => schedule.startDate === startDate && schedule.endDate === endDate);
+    const preferred = exact.length ? exact : generated;
+    return preferred.length === 1
+      ? { schedule: preferred[0], ambiguous: false }
+      : { schedule: null, ambiguous: true };
+  }
+  if (populatedLegacy.length) {
+    return populatedLegacy.length === 1
+      ? { schedule: populatedLegacy[0], ambiguous: false }
+      : { schedule: null, ambiguous: true };
+  }
+  const populatedSchedules = [...custom, ...legacy].filter(hasScheduleData);
+  if (populatedSchedules.length > 1) return { schedule: null, ambiguous: true };
+  if (populatedSchedules.length === 1) return { schedule: populatedSchedules[0], ambiguous: false };
+  const exactLegacy = legacy.filter((schedule) =>
+    schedule.startDate === startDate && schedule.endDate === endDate,
+  );
+  const emptyCandidates = exactLegacy;
+  if (emptyCandidates.length === 1) return { schedule: emptyCandidates[0], ambiguous: false };
+  return { schedule: null, ambiguous: emptyCandidates.length > 1 };
 };
 
 const hasScheduleData = (schedule: TeamScheduleSummary) => {

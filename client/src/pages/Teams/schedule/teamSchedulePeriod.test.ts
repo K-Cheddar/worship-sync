@@ -43,7 +43,7 @@ describe("buildTeamSchedulePeriod", () => {
     expect(worship.occurrences).toHaveLength(1);
   });
 
-  it("keeps a grouped occurrence when any grouped service needs this team", () => {
+  it("does not pull another team's grouped service into this team's occurrence", () => {
     const grouped = buildTeamSchedulePeriod({
       services: [
         service({
@@ -64,10 +64,74 @@ describe("buildTeamSchedulePeriod", () => {
     });
 
     expect(grouped.occurrences).toHaveLength(1);
-    expect(grouped.serviceIds).toEqual(["media-part", "worship-part"]);
+    expect(grouped.serviceIds).toEqual(["media-part"]);
     expect(grouped.requirementsByOccurrence.get(grouped.occurrences[0].occurrenceId)).toEqual([
       { positionId: "camera", count: 1 },
     ]);
+  });
+
+  it("groups only services with requirements for this team", () => {
+    const generated = buildTeamSchedulePeriod({
+      services: [
+        service({
+          serviceId: "sabbath-school",
+          name: "Sabbath School",
+          serviceGroupId: "sabbath-morning",
+          reccurence: "weekly",
+          dayOfWeek: 6,
+          time: "10:00",
+        }),
+        service({
+          serviceId: "worship-experience",
+          name: "Worship Experience",
+          serviceGroupId: "sabbath-morning",
+          reccurence: "weekly",
+          dayOfWeek: 6,
+          time: "11:00",
+          positionRequirements: [{ positionId: "vocal", count: 1 }],
+        }),
+      ],
+      positions,
+      teamId: "worship",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+    });
+
+    expect(generated.serviceIds).toEqual(["worship-experience"]);
+    expect(generated.occurrences).toHaveLength(5);
+    expect(generated.occurrences.every((occurrence) => occurrence.name === "Worship Experience")).toBe(true);
+    expect(generated.occurrences.every((occurrence) => new Date(occurrence.startsAt).getHours() === 11)).toBe(true);
+  });
+
+  it("includes newly staffed services when generating a new Media period", () => {
+    const generated = buildTeamSchedulePeriod({
+      services: [
+        service({
+          serviceId: "sabbath-service",
+          reccurence: "weekly",
+          dayOfWeek: 6,
+          time: "10:00",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({
+          serviceId: "media-special-a",
+          dateTimeISO: "2026-10-04T10:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({
+          serviceId: "media-special-b",
+          dateTimeISO: "2026-10-18T10:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+      ],
+      positions,
+      teamId: "media",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+    });
+
+    expect(generated.occurrences).toHaveLength(7);
+    expect(generated.serviceIds).toEqual(["sabbath-service", "media-special-a", "media-special-b"]);
   });
 
   it("keeps an occurrence with an explicitly added team slot even without requirements", () => {

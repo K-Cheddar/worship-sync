@@ -205,12 +205,18 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("does not select a schedule when Upcoming has no visible team occurrences", () => {
+  it("reuses a saved schedule when current services generate no visible occurrences", () => {
+    const saved = schedule({
+      source: "generated-period",
+      generatedPeriodKey: "period-key",
+      scheduleId: "generated_period-key",
+      assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
+    });
     expect(findReusablePeriodSchedule({
-      schedules: [schedule({ source: "generated-period", generatedPeriodKey: "period-key", scheduleId: "generated_period-key" })],
+      schedules: [saved],
       ...target,
       occurrences: [],
-    })).toEqual({ schedule: null, ambiguous: false });
+    })).toEqual({ schedule: saved, ambiguous: false });
   });
 
   it("prefers a generated period over an equivalent legacy schedule", () => {
@@ -239,16 +245,53 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("ignores custom exact-range schedules when generated is also present", () => {
+  it("prefers a populated custom schedule over an empty generated copy", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
       source: "generated-period",
       generatedPeriodKey: "current-key",
     });
-    const custom = schedule({ scheduleId: "custom", source: "custom" });
+    const custom = schedule({
+      scheduleId: "custom",
+      source: "custom",
+      assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
+    });
     expect(findReusablePeriodSchedule({ schedules: [custom, generated], ...target })).toEqual({
-      schedule: generated,
+      schedule: custom,
       ambiguous: false,
+    });
+  });
+
+  it("keeps populated custom and generated schedules ambiguous", () => {
+    const generated = schedule({
+      scheduleId: "generated_current-key",
+      source: "generated-period",
+      generatedPeriodKey: "current-key",
+      assignmentCounts: { byMemberId: { generatedMember: 1 }, byPositionId: { camera: 1 } },
+    });
+    const custom = schedule({
+      scheduleId: "custom",
+      source: "custom",
+      assignmentCounts: { byMemberId: { customMember: 1 }, byPositionId: { camera: 1 } },
+    });
+    expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target })).toEqual({
+      schedule: null,
+      ambiguous: true,
+    });
+  });
+
+  it("keeps competing populated custom and legacy schedules ambiguous", () => {
+    const custom = schedule({
+      source: "custom",
+      assignmentCounts: { byMemberId: { customMember: 1 }, byPositionId: { camera: 1 } },
+    });
+    const legacy = schedule({
+      scheduleId: "legacy",
+      assignmentCounts: { byMemberId: { legacyMember: 1 }, byPositionId: { camera: 1 } },
+    });
+    expect(findReusablePeriodSchedule({ schedules: [custom, legacy], ...target })).toEqual({
+      schedule: null,
+      ambiguous: true,
     });
   });
 
@@ -280,14 +323,18 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("does not adopt a custom schedule for normal period navigation", () => {
+  it("adopts a populated custom schedule for normal period navigation", () => {
+    const custom = schedule({
+      source: "custom",
+      assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
+    });
     expect(findReusablePeriodSchedule({
-      schedules: [schedule({ source: "custom" })],
+      schedules: [custom],
       ...target,
-    })).toEqual({ schedule: null, ambiguous: false });
+    })).toEqual({ schedule: custom, ambiguous: false });
   });
 
-  it("reuses equivalent source-less legacy schedules by service and occurrence identity", () => {
+  it("reuses source-less legacy schedules only when their stored identity is equivalent", () => {
     const legacy = schedule();
     expect(findReusablePeriodSchedule({ schedules: [legacy], ...target }).schedule).toBe(legacy);
     expect(findReusablePeriodSchedule({
