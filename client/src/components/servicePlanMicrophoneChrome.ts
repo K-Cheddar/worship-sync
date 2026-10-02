@@ -5,11 +5,11 @@ const hexChannel = (hex: string, offset: number) =>
   Number.parseInt(hex.slice(offset, offset + 2), 16);
 
 /**
- * Soft border/fill tint from a microphone's catalog color. Label text stays
+ * Soft border/fill tint from an equipment catalog color. Label text stays
  * white for readability on dark surfaces. Undefined when the color is missing
- * or invalid so callers can keep a neutral violet fallback.
+ * or invalid so callers can keep their category fallback.
  */
-export const servicePlanMicrophoneChromeStyle = (
+export const servicePlanEquipmentChromeStyle = (
   color: string | undefined | null,
 ): CSSProperties | undefined => {
   const fill = normalizeHexColor(color);
@@ -23,3 +23,6 @@ export const servicePlanMicrophoneChromeStyle = (
     color: "#ffffff",
   };
 };
+
+/** Existing microphone chrome API; keep its visuals and callers stable. */
+export const servicePlanMicrophoneChromeStyle = servicePlanEquipmentChromeStyle;

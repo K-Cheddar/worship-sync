@@ -4,12 +4,13 @@ import Button from "../../../components/Button/Button";
 import Icon from "../../../components/Icon/Icon";
 import ProfileImagePreview from "../../../components/ProfileImagePreview/ProfileImagePreview";
 import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrophoneChip";
+import { ServiceEquipmentChip } from "../../../components/ServiceEquipmentChip";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/Popover";
-import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import ScheduleFillBadge from "../schedule/ScheduleFillBadge";
 import {
   summarizeNeededPositions,
@@ -28,6 +29,8 @@ export type WhosServingPanelProps = {
    * allocated to it. Allocation itself happens in the plan's Microphones tab.
    */
   microphones?: ServicePlanMicrophone[];
+  /** Church service-equipment catalog, used to resolve scheduled IEM ids. */
+  iemEquipment?: ServiceEquipment[];
   /**
    * Whether this date's assignments are actually on the client. Schedules
    * outside the bootstrap's hydration window arrive without their cells, and a
@@ -72,8 +75,16 @@ const rowMicrophones = (
       microphones.find((microphone) => microphone.id === microphoneId),
     )
     .filter((microphone): microphone is ServicePlanMicrophone =>
-      Boolean(microphone),
+    Boolean(microphone),
     );
+
+const rowIems = (
+  row: TeamsAssignmentSummaryRow,
+  iemEquipment: ServiceEquipment[],
+): ServiceEquipment[] =>
+  (row.iemIds || [])
+    .map((id) => iemEquipment.find((item) => item.id === id && item.category === "iem"))
+    .filter((item): item is ServiceEquipment => Boolean(item));
 
 /**
  * Dense sidebar names truncate; click opens a compact popover with the full
@@ -84,11 +95,13 @@ const ServingMemberName = ({
   slotLabel,
   canNotify,
   heldMicrophones,
+  heldIems,
 }: {
   memberName: string;
   slotLabel: string;
   canNotify: boolean | null;
   heldMicrophones: ServicePlanMicrophone[];
+  heldIems: ServiceEquipment[];
 }) => (
   <Popover>
     <PopoverTrigger asChild>
@@ -129,6 +142,13 @@ const ServingMemberName = ({
             ))}
           </span>
         ) : null}
+        {heldIems.length ? (
+          <span className="flex flex-wrap items-center gap-1">
+            {heldIems.map((equipment) => (
+              <ServiceEquipmentChip key={equipment.id} equipment={equipment} />
+            ))}
+          </span>
+        ) : null}
       </div>
     </PopoverContent>
   </Popover>
@@ -143,6 +163,7 @@ const WhosServingPanel = ({
   assignmentTeams,
   onOpenSchedule,
   microphones = [],
+  iemEquipment = [],
   assignmentsStatus = "ready",
   showHeading = true,
   canEdit = false,
@@ -287,14 +308,15 @@ const WhosServingPanel = ({
                           row,
                           microphones,
                         );
+                        const heldIems = rowIems(row, iemEquipment);
                         const memberName =
                           row.memberName?.trim() || "Unassigned";
-                        const hasMicrophones = heldMicrophones.length > 0;
+                        const hasEquipment = heldMicrophones.length > 0 || heldIems.length > 0;
                         return (
                           <li
                             key={`${scheduleId}-${row.columnKey}`}
                             className={
-                              hasMicrophones
+                              hasEquipment
                                 ? // Light chrome groups this person's role, name, and
                                   // mics so adjacent Praise Team rows do not blur together.
                                   "flex w-full flex-col gap-1 rounded-md border border-gray-700/70 bg-gray-950/40 px-1.5 py-1.5"
@@ -304,7 +326,7 @@ const WhosServingPanel = ({
                             {/* Position and name share the first line so both stay
                           readable; mic chips drop to a second line. */}
                             <div className="flex w-full items-center gap-2">
-                              {hasMicrophones && row.memberProfileImageUrl ? (
+                              {hasEquipment && row.memberProfileImageUrl ? (
                                 <ProfileImagePreview
                                   imageUrl={row.memberProfileImageUrl}
                                   memberName={memberName}
@@ -318,22 +340,26 @@ const WhosServingPanel = ({
                                 slotLabel={row.slotLabel}
                                 canNotify={row.canNotify}
                                 heldMicrophones={heldMicrophones}
+                                heldIems={heldIems}
                               />
                               <span className="text-[10px] capitalize text-gray-500">
                                 {row.response || "pending"}
                               </span>
                             </div>
-                            {hasMicrophones ? (
+                            {hasEquipment ? (
                               <span
                                 className="flex flex-wrap items-center gap-1 border-t border-gray-800/80 pt-1"
                                 role="group"
-                                aria-label={`Microphones for ${memberName}`}
+                                aria-label={`Equipment for ${memberName}`}
                               >
                                 {heldMicrophones.map((microphone) => (
                                   <ServicePlanMicrophoneChip
                                     key={microphone.id}
                                     microphone={microphone}
                                   />
+                                ))}
+                                {heldIems.map((equipment) => (
+                                  <ServiceEquipmentChip key={equipment.id} equipment={equipment} />
                                 ))}
                               </span>
                             ) : null}

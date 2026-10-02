@@ -22,6 +22,7 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
+  getServiceEquipment,
   applyServicePlanTemplateBulk,
   listServicePlans,
   updateTeamScheduleAssignmentMicrophones,
@@ -59,6 +60,7 @@ import {
   teamEquipmentSlotKey,
   type TeamsAssignmentSummaryRow,
 } from "./teamsAssignmentsSummary";
+import type { ServiceEquipment } from "../../../types/servicePlan";
 import WhosServingPanel from "./WhosServingPanel";
 import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
 import {
@@ -368,6 +370,7 @@ const TeamsPlansPage = () => {
   // resolves. Stays false on revision refreshes so badges do not flash.
   const [planStatusLoading, setPlanStatusLoading] = useState(Boolean(churchId));
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
+  const [iemEquipment, setIemEquipment] = useState<ServiceEquipment[]>([]);
   const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(null);
   const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
   const microphoneMutationSeqRef = useRef(0);
@@ -412,6 +415,7 @@ const TeamsPlansPage = () => {
   useEffect(() => {
     if (!churchId) {
       setMicrophones([]);
+      setIemEquipment([]);
       return;
     }
     let cancelled = false;
@@ -421,6 +425,13 @@ const TeamsPlansPage = () => {
       })
       .catch(() => {
         // Mic allocation remains optional; plans still work without the catalog.
+      });
+    getServiceEquipment(churchId)
+      .then((result) => {
+        if (!cancelled) setIemEquipment(result.equipment);
+      })
+      .catch(() => {
+        // The serving list remains useful while optional equipment is unavailable.
       });
     return () => {
       cancelled = true;
@@ -1092,6 +1103,7 @@ const TeamsPlansPage = () => {
                     assignmentTeams={assignmentTeams}
                     onOpenSchedule={openSchedule}
                     microphones={microphones}
+                    iemEquipment={iemEquipment}
                     assignmentsStatus={assignmentsStatus}
                     showHeading={false}
                     canEdit={canEditPlan}
@@ -1131,6 +1143,7 @@ const TeamsPlansPage = () => {
                     assignmentTeams={assignmentTeams}
                     onOpenSchedule={openSchedule}
                     microphones={microphones}
+                    iemEquipment={iemEquipment}
                     assignmentsStatus={assignmentsStatus}
                   />
                 </div>
