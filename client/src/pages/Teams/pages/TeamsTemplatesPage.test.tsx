@@ -185,6 +185,23 @@ describe("TeamsTemplatesPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a retry action after the template catalog fails to load", async () => {
+    const user = userEvent.setup();
+    mockTemplatesResource = {
+      ...mockTemplatesResource,
+      data: [],
+      loaded: false,
+      loading: false,
+      error: new Error("Network unavailable"),
+    };
+    renderPage();
+
+    expect(await screen.findByText("Could not load templates")).toBeInTheDocument();
+    expect(screen.queryByText("No templates yet")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(mockTemplatesResource.refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("lists each template with its scope and size", async () => {
     renderPage();
 

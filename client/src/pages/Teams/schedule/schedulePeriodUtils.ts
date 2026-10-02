@@ -1,33 +1,11 @@
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 import { calendarDateInTimeZone } from "@/utils/teamScheduleOccurrences";
-import {
-  RANGE_PRESET_OPTIONS,
-  resolveRangePreset,
-  type RangePreset,
-} from "../rangeSelection";
+import { RANGE_PRESET_OPTIONS, resolveRangePreset, type RangePreset } from "../rangeSelection";
 
 export type SchedulePeriodPreset = RangePreset;
 export const SCHEDULE_PERIOD_OPTIONS = RANGE_PRESET_OPTIONS;
 export const rangeFromPreset = resolveRangePreset;
-
-/**
- * Upcoming is a moving display window; generated schedules use calendar-aligned
- * bounds so changing the day does not change the period being persisted.
- */
-export const persistedScheduleRange = (
-  preset: SchedulePeriodPreset,
-  visibleRange: { start: string; end: string },
-) => {
-  if (preset !== "upcoming") return visibleRange;
-  const start = parsePlainDate(visibleRange.start);
-  const end = parsePlainDate(visibleRange.end);
-  if (!start || !end) return visibleRange;
-  return {
-    start: formatPlainDate(new Date(start.getFullYear(), start.getMonth(), 1)),
-    end: formatPlainDate(new Date(end.getFullYear(), end.getMonth() + 1, 0)),
-  };
-};
 
 export const filterOccurrencesToRange = (
   occurrences: TeamScheduleOccurrence[],
@@ -56,6 +34,7 @@ export const findReusablePeriodSchedule = ({
   schedules,
   churchId,
   teamId,
+  serviceIds,
   occurrences,
   visibleStartDate,
   visibleEndDate,
@@ -63,8 +42,6 @@ export const findReusablePeriodSchedule = ({
   schedules: TeamScheduleSummary[];
   churchId: string;
   teamId: string;
-  // Retained as accepted context for existing callers; occurrence identity and
-  // occurrence-date coverage determine compatibility.
   startDate?: string;
   endDate?: string;
   serviceIds?: string[];
@@ -79,15 +56,26 @@ export const findReusablePeriodSchedule = ({
   const firstVisibleDate = visibleStartDate || visibleDates[0];
   const lastVisibleDate = visibleEndDate || visibleDates[visibleDates.length - 1];
   if (!firstVisibleDate || !lastVisibleDate) return { schedule: null, ambiguous: false };
+  const requestedServiceIds = new Set(serviceIds || []);
   const compatible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
       schedule.startDate > firstVisibleDate || schedule.endDate < lastVisibleDate
     ) return false;
-    // Saved period schedules remain reusable when Service Setup changes
-    // occurrence IDs, grouping, names, times, or count. Their stored shape is
-    // preserved; current occurrences are used only for newly created periods.
+    const savedServiceIds = new Set([
+      ...(schedule.serviceIds || []),
+      ...(schedule.occurrences || []).flatMap((occurrence) => [
+        occurrence.serviceId,
+        ...(occurrence.serviceIds || []),
+      ]),
+    ]);
+    if (
+      requestedServiceIds.size > 0 && savedServiceIds.size > 0 &&
+      ![...requestedServiceIds].some((serviceId) => savedServiceIds.has(serviceId))
+    ) return false;
+    // Preserve saved occurrence details across setup edits when at least one
+    // service identity still overlaps and the period covers the visible dates.
     return true;
   });
   const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);

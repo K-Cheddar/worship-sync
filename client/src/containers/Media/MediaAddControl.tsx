@@ -26,7 +26,7 @@ export const MediaAddControl = ({
   }] : []);
   const overview = getTransferOverview(transfers);
   const percent = overview.progress === null ? null : Math.round(overview.progress);
-  const showProgress = overview.activeCount > 0 && percent !== null && percent < 100;
+  const showProgress = overview.activeCount > 0;
 
   return (
     <div className="flex items-center gap-1">

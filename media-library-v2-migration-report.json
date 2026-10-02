@@ -1,0 +1,22 @@
+{
+  "dryRun": false,
+  "complete": true,
+  "databases": [
+    {
+      "database": "worship-sync-eliathah",
+      "church": "eliathah",
+      "legacyCount": 1333,
+      "v2DocsAlreadyPresent": 0,
+      "docsCreated": 1333,
+      "docsUpdated": 0,
+      "migratedFolderCount": 6,
+      "docsDeleted": 0,
+      "blocked": false,
+      "blockedReason": null,
+      "verificationResult": "passed",
+      "schemaVersionResult": "set_v2",
+      "failures": []
+    }
+  ],
+  "skippedChurches": []
+}

@@ -1087,6 +1087,93 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:media-b", name: "After B" }));
   });
 
+  it("persists a newer edit after an earlier media write finishes in flight", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    let resolveFirstPut: ((value: unknown) => void) | undefined;
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-1", {
+        _id: "media-item:media-1", _rev: "1-a", docType: "mediaItem", id: "media-1", name: "Original",
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation((doc: Record<string, unknown>) => {
+      if (doc.name === "First edit") {
+        return new Promise((resolve) => {
+          resolveFirstPut = (value) => {
+            persisted.set(String(doc._id), { ...doc, _rev: "2-a" });
+            resolve(value);
+          };
+        }) as any;
+      }
+      persisted.set(String(doc._id), { ...doc, _rev: "3-a" });
+      return Promise.resolve({ ok: true }) as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "media-1", name: "Original" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "First edit" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "Newer edit" } }));
+    resolveFirstPut?.({ ok: true });
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(persisted.get("media-item:media-1")?.name).toBe("Newer edit");
+  });
+
+  it("keeps unrelated media edits pending when a remote update wins a row conflict", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-a", {
+        _id: "media-item:media-a", _rev: "1-a", docType: "mediaItem", id: "media-a", name: "Before A",
+      }],
+      ["media-item:media-b", {
+        _id: "media-item:media-b", _rev: "1-b", docType: "mediaItem", id: "media-b", name: "Before B",
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation(async (doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "2" });
+      return { ok: true } as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "media-a", name: "Before A" }, { id: "media-b", name: "Before B" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-a", patch: { name: "Local A" } }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-b", patch: { name: "Local B" } }));
+    store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({ id: "media-a", name: "Remote A" }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(store.getState().media.list.find((item: { id: string }) => item.id === "media-a")?.name).toBe("Remote A");
+    expect(persisted.get("media-item:media-a")?.name).toBe("Before A");
+    expect(persisted.get("media-item:media-b")?.name).toBe("Local B");
+  });
+
   it("does not broadcast a save that became stale while put was in flight", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db, postMessage } =

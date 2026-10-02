@@ -70,8 +70,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
-      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+      ELECTRON_CACHE: ${{ runner.temp }}/electron
+      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
 
     strategy:
       fail-fast: false
@@ -104,8 +104,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            .cache/electron
-            .cache/electron-builder
+            ${{ runner.temp }}/electron
+            ${{ runner.temp }}/electron-builder
           key: ${{ runner.os }}-${{ runner.arch }}-electron-${{ hashFiles('client/package-lock.json') }}
 
       - run: npm ci

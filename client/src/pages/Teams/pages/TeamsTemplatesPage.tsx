@@ -69,6 +69,7 @@ const TeamsTemplatesPage = () => {
     error: templatesError,
     loading: templatesLoading,
     loaded: templatesLoaded,
+    refresh: refreshTemplates,
     remove: removeTemplate,
     upsert: upsertTemplate,
   } = templateResource;
@@ -242,7 +243,24 @@ const TeamsTemplatesPage = () => {
 
           {loading ? <TeamsTemplatesListSkeleton /> : null}
 
-          {!loading && templates.length === 0 ? (
+          {!loading && templatesError ? (
+            <div className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-4 py-6 text-center">
+              <p className="text-sm font-medium text-gray-200">Could not load templates</p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-gray-400">
+                Check your connection and try again.
+              </p>
+              <Button
+                variant="secondary"
+                className="mt-3"
+                disabled={templatesLoading}
+                onClick={() => void refreshTemplates().catch(() => undefined)}
+              >
+                {templatesLoading ? "Loading templates…" : "Try again"}
+              </Button>
+            </div>
+          ) : null}
+
+          {!loading && !templatesError && templates.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-700 bg-black/20 px-4 py-8 text-center">
               <p className="text-sm font-medium text-gray-200">
                 No templates yet

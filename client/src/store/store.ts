@@ -1956,6 +1956,17 @@ listenerMiddleware.startListening({
         // The put is already committed. This check only prevents stale
         // broadcast/cache side effects if state changed while it was in flight.
         if (!mediaSaveIsCurrent()) return;
+        const currentMedia = (listenerApi.getState() as RootState).media;
+        if (
+          currentMedia.list !== latestMedia.list ||
+          currentMedia.folders !== latestMedia.folders
+        ) {
+          // Keep the same pending baseline alive, rebased to the snapshot that
+          // just committed. A newer debounced listener can then persist edits
+          // made while that write was in flight.
+          baseline.state = { list: latestMedia.list, folders: latestMedia.folders };
+          return;
+        }
         if (pendingMediaPersistence === baseline) pendingMediaPersistence = null;
 
         // Local machine updates — only after Pouch reports success so `_rev` matches other tabs.
@@ -2045,24 +2056,48 @@ listenerMiddleware.startListening({
         ),
       );
     };
-    const localDirtyIds = changedIds(baseline.state.list, before.list);
     const remoteChangedIds = changedIds(before.list, after.list);
-    if ([...localDirtyIds].some((id) => remoteChangedIds.has(id))) {
-      // A remote write to a locally dirty row wins, matching the existing
-      // remote-authoritative behavior for same-item conflicts.
-      pendingMediaPersistence = null;
-      return;
+    // Remote writes remain authoritative for the rows they change. Rebase only
+    // those rows so other local edits stay pending and can still be persisted.
+    const rebaseChangedRows = <T extends { id: string }>(
+      baselineRows: T[],
+      remoteRows: T[],
+      changedIdsSet: Set<string>,
+    ) => {
+      const rows = new Map(baselineRows.map((row) => [row.id, row]));
+      const remoteById = new Map(remoteRows.map((row) => [row.id, row]));
+      changedIdsSet.forEach((id) => {
+        const remoteRow = remoteById.get(id);
+        if (remoteRow) rows.set(id, remoteRow);
+        else rows.delete(id);
+      });
+      return [...rows.values()];
+    };
+    if (remoteChangedIds.size > 0) {
+      baseline.state = {
+        ...baseline.state,
+        list: rebaseChangedRows(baseline.state.list, after.list, remoteChangedIds),
+      };
     }
 
-    const localDirtyFolderIds = changedIds(
-      baseline.state.folders,
-      before.folders,
-    );
     const remoteChangedFolderIds = changedIds(
       before.folders,
       after.folders,
     );
-    if ([...localDirtyFolderIds].some((id) => remoteChangedFolderIds.has(id))) {
+    if (remoteChangedFolderIds.size > 0) {
+      baseline.state = {
+        ...baseline.state,
+        folders: rebaseChangedRows(
+          baseline.state.folders,
+          after.folders,
+          remoteChangedFolderIds,
+        ),
+      };
+    }
+    if (
+      JSON.stringify(baseline.state.list) === JSON.stringify(after.list) &&
+      JSON.stringify(baseline.state.folders) === JSON.stringify(after.folders)
+    ) {
       pendingMediaPersistence = null;
     }
   },

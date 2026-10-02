@@ -13811,9 +13811,24 @@ export const createTeamsAuthHandlers = ({
                 ) {
                   return false;
                 }
-                // Reuse by team and covered dates. Existing custom and legacy
-                // schedules keep their persisted occurrence shape when
-                // Service Setup changes IDs, grouping, times, or count.
+                const savedServiceIds = new Set([
+                  ...(schedule.serviceIds || []),
+                  ...(schedule.occurrences || []).flatMap((occurrence) => [
+                    occurrence.serviceId,
+                    ...(occurrence.serviceIds || []),
+                  ]),
+                ]);
+                if (
+                  payload.serviceIds.length > 0 &&
+                  savedServiceIds.size > 0 &&
+                  !payload.serviceIds.some((serviceId) =>
+                    savedServiceIds.has(serviceId),
+                  )
+                ) {
+                  return false;
+                }
+                // Retain saved occurrence details across setup changes when
+                // service identity still overlaps and the visible dates fit.
                 return true;
               },
             );
