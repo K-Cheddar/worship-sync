@@ -36,15 +36,12 @@ const fetchJson = async <T>(path: string, init: JsonInit = {}): Promise<T> => {
   if (init.body) headers.set("Content-Type", "application/json");
   try {
     const { timeoutMs: _timeoutMs, body, ...requestOptions } = init;
-    const response = await authenticatedApiFetch(
-      path.replace(/^\//, ""),
-      {
-        ...requestOptions,
-        headers: Object.fromEntries(headers.entries()),
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      },
-    );
+    const response = await authenticatedApiFetch(path.replace(/^\//, ""), {
+      ...requestOptions,
+      headers: Object.fromEntries(headers.entries()),
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
     const payload = (await response.json().catch(() => ({}))) as {
       error?: string;
     };

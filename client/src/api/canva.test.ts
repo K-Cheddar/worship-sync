@@ -1,7 +1,4 @@
-import {
-  importCanvaDesign,
-  type CanvaImportProgressEvent,
-} from "./canva";
+import { importCanvaDesign, type CanvaImportProgressEvent } from "./canva";
 import { CanvaImportError } from "../utils/canvaImportError";
 
 test("reads Canva import progress events from the NDJSON response", async () => {
@@ -21,7 +18,9 @@ test("reads Canva import progress events from the NDJSON response", async () => 
         done: false,
       })
       .mockResolvedValueOnce({
-        value: encoder.encode(`{"type":"complete","result":${JSON.stringify(result)}}\n`),
+        value: encoder.encode(
+          `{"type":"complete","result":${JSON.stringify(result)}}\n`,
+        ),
         done: true,
       }),
   };
@@ -131,15 +130,18 @@ test("preserves Canva import API errors and status details", async () => {
     status: 429,
     headers: new Headers({ "content-type": "application/json" }),
     json: () =>
-      Promise.resolve({ error: "Canva rate limited the export.", code: "CANVA_RATE_LIMITED" }),
+      Promise.resolve({
+        error: "Canva rate limited the export.",
+        code: "CANVA_RATE_LIMITED",
+      }),
   } as unknown as Response);
 
   const importPromise = importCanvaDesign("church-1", {
-      designId: "design-1",
-      pages: [1],
-      format: "png",
-      existingImportKeys: [],
-    });
+    designId: "design-1",
+    pages: [1],
+    format: "png",
+    existingImportKeys: [],
+  });
 
   await expect(importPromise).rejects.toBeInstanceOf(CanvaImportError);
   await expect(importPromise).rejects.toMatchObject<Partial<CanvaImportError>>({
