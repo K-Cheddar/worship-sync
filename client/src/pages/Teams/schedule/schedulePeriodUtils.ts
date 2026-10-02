@@ -86,7 +86,6 @@ export const findReusablePeriodSchedule = ({
   occurrences,
   visibleStartDate,
   visibleEndDate,
-  legacyOccurrenceDate,
   preferredScheduleId,
 }: {
   schedules: TeamScheduleSummary[];
@@ -97,7 +96,6 @@ export const findReusablePeriodSchedule = ({
   occurrences: TeamScheduleOccurrence[];
   visibleStartDate?: string;
   visibleEndDate?: string;
-  legacyOccurrenceDate?: string;
   preferredScheduleId?: string;
 }) => {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -123,13 +121,9 @@ export const findReusablePeriodSchedule = ({
     schedule.startDate === periodStartDate && schedule.endDate === periodEndDate);
   const covering = deduplicated.filter((schedule) =>
     schedule.startDate! <= periodStartDate && schedule.endDate! >= periodEndDate);
-  const legacyGenerated = deduplicated.filter((schedule) =>
-    isLegacyGeneratedSchedule(schedule) &&
-    Boolean(legacyOccurrenceDate) &&
-    schedule.startDate! <= legacyOccurrenceDate! && schedule.endDate! >= legacyOccurrenceDate!);
-  const preferred = [...exact, ...covering, ...legacyGenerated]
+  const tier = exact.length ? exact : covering;
+  const preferred = tier
     .find((schedule) => schedule.scheduleId === preferredScheduleId);
-  const tier = exact.length ? exact : covering.length ? covering : legacyGenerated;
   const ordered = [...tier].sort((left, right) =>
     Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
     Number(isCanonicalGeneratedSchedule(right)) - Number(isCanonicalGeneratedSchedule(left)) ||
@@ -153,12 +147,6 @@ const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>
   schedule.source === "generated-period" &&
   Boolean(schedule.generatedPeriodKey) &&
   schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`;
-
-const isLegacyGeneratedSchedule = (schedule: TeamScheduleSummary) =>
-  schedule.source === "generated-period" ||
-  (schedule.source == null && (
-    Boolean(schedule.generatedPeriodKey) || schedule.scheduleId.startsWith("generated_")
-  ));
 
 const hasScheduleData = (schedule: TeamScheduleSummary) => {
   if (schedule.hasScheduleData !== undefined) return schedule.hasScheduleData;

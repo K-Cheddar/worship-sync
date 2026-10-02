@@ -13809,34 +13809,7 @@ export const createTeamsAuthHandlers = ({
             (schedule) => schedule.startDate <= payload.startDate &&
               schedule.endDate >= payload.endDate,
           );
-          const explicitLegacyOccurrenceDate = normalizeOptionalPlainDate(
-            req.body?.legacyOccurrenceDate,
-            "Upcoming occurrence date",
-          );
-          const legacyVisibleStart = normalizeOptionalPlainDate(
-            req.body?.visibleStartDate,
-            "Visible start date",
-          );
-          const legacyVisibleEnd = normalizeOptionalPlainDate(
-            req.body?.visibleEndDate,
-            "Visible end date",
-          );
-          // Older clients sent the Upcoming occurrence as a one-day visible
-          // range. Keep that compatibility for genuine generated records.
-          const legacyOccurrenceDate = explicitLegacyOccurrenceDate ||
-            (legacyVisibleStart && legacyVisibleStart === legacyVisibleEnd
-              ? legacyVisibleStart
-              : null);
-          const legacyGenerated = resolutionCandidates.filter((schedule) =>
-            (schedule.source === "generated-period" ||
-              (schedule.source == null && (schedule.generatedPeriodKey ||
-                String(schedule.scheduleId || "").startsWith("generated_")))) &&
-            legacyOccurrenceDate &&
-            schedule.startDate <= legacyOccurrenceDate &&
-            schedule.endDate >= legacyOccurrenceDate,
-          );
-          const candidates = exact.length ? exact : covering.length ? covering : legacyGenerated;
-          const validCandidates = [...exact, ...covering, ...legacyGenerated];
+          const candidates = exact.length ? exact : covering;
           const preferredScheduleId = normalizeShortText(
             req.body?.preferredScheduleId,
             { max: 160 },
@@ -13853,7 +13826,7 @@ export const createTeamsAuthHandlers = ({
               generated.endDate === schedule.endDate,
             ),
           );
-          const selected = validCandidates.find((schedule) =>
+          const selected = tierCandidates.find((schedule) =>
             schedule.scheduleId === preferredScheduleId,
           ) || [...tierCandidates].sort((left, right) =>
             Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||

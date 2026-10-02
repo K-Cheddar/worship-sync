@@ -532,9 +532,6 @@ const ScheduleTab = ({
     occurrences: generatedPeriodOccurrences,
     visibleStartDate: periodRange.start,
     visibleEndDate: periodRange.end,
-    legacyOccurrenceDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
-      ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
-      : undefined,
     preferredScheduleId: periodScheduleSelection?.scope === periodSelectionScope
       ? periodScheduleSelection.scheduleId
       : selectedScheduleId,
@@ -582,11 +579,7 @@ const ScheduleTab = ({
   ]);
   const periodScheduleChoices = useMemo(() => {
     if (matchedPeriodSchedule || !virtualPeriodSchedule) return overlappingPeriodSchedules;
-    return [...overlappingPeriodSchedules, virtualPeriodSchedule].sort((left, right) =>
-      String(left.startDate).localeCompare(String(right.startDate)) ||
-      String(left.endDate).localeCompare(String(right.endDate)) ||
-      left.name.localeCompare(right.name),
-    );
+    return [virtualPeriodSchedule, ...overlappingPeriodSchedules];
   }, [matchedPeriodSchedule, overlappingPeriodSchedules, virtualPeriodSchedule]);
   // Normal navigation is occurrence-first. Saved schedule history is opened
   // only by an explicit history/deep-link action.
@@ -645,9 +638,6 @@ const ScheduleTab = ({
             occurrences: teamPeriod.occurrences,
             visibleStartDate: periodRange.start,
             visibleEndDate: periodRange.end,
-            legacyOccurrenceDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
-              ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
-              : undefined,
             preferredScheduleId: selectedScheduleId,
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -674,8 +664,6 @@ const ScheduleTab = ({
     generatedPeriodOccurrences,
     periodRange.end,
     periodRange.start,
-    periodPreset,
-    initialTeamPeriodResult.nextOccurrence,
     teamPeriod.occurrences,
     onScheduleSaved,
     persistedPeriodRange.end,

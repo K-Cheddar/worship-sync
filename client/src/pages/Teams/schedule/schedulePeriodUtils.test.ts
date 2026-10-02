@@ -107,7 +107,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses legacy rolling generated records without dropping their assignments", () => {
+  it("keeps a partial legacy generated record out of the full-period default and picker list", () => {
     const legacyRollingRecord = schedule({
       scheduleId: "generated_old-rolling-key",
       source: "generated-period",
@@ -116,15 +116,50 @@ describe("findReusablePeriodSchedule", () => {
       endDate: "2026-10-05",
       assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
     });
+    const octoberOccurrences = [3, 10, 17, 24, 31].map((day) => ({
+      ...occurrence,
+      occurrenceId: `service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    }));
 
     expect(findReusablePeriodSchedule({
       schedules: [legacyRollingRecord],
       ...target,
-      startDate: "2026-09-01",
+      occurrences: octoberOccurrences,
       visibleStartDate: "2026-10-01",
       visibleEndDate: "2026-10-31",
-      legacyOccurrenceDate: "2026-10-03",
-    })).toEqual({ schedule: legacyRollingRecord, ambiguous: false });
+      preferredScheduleId: legacyRollingRecord.scheduleId,
+    })).toEqual({ schedule: null, ambiguous: false });
+    expect(filterOccurrencesToRange(octoberOccurrences, {
+      start: "2026-10-01",
+      end: "2026-10-31",
+    })).toEqual(octoberOccurrences);
+    expect(findOverlappingPeriodSchedules({
+      schedules: [legacyRollingRecord],
+      churchId: target.churchId,
+      teamId: target.teamId,
+      range: { start: "2026-10-01", end: "2026-10-31" },
+    })).toEqual([legacyRollingRecord]);
+  });
+
+  it("does not promote a partial source-less generated record", () => {
+    const legacyGenerated = schedule({
+      scheduleId: "generated_legacy-rolling-key",
+      startDate: "2026-09-29",
+      endDate: "2026-10-05",
+    });
+    expect(findReusablePeriodSchedule({
+      schedules: [legacyGenerated],
+      ...target,
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+    })).toEqual({ schedule: null, ambiguous: false });
+    expect(findOverlappingPeriodSchedules({
+      schedules: [legacyGenerated],
+      churchId: target.churchId,
+      teamId: target.teamId,
+      range: { start: "2026-10-01", end: "2026-10-31" },
+    })).toEqual([legacyGenerated]);
   });
 
   it("prefers the sole populated overlapping generated schedule", () => {
@@ -242,7 +277,11 @@ describe("findReusablePeriodSchedule", () => {
       endDate: "2026-11-30",
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "legacy-member" } } },
     });
-    expect(findReusablePeriodSchedule({ schedules: [generated, widerLegacy], ...target })).toEqual({
+    expect(findReusablePeriodSchedule({
+      schedules: [generated, widerLegacy],
+      ...target,
+      preferredScheduleId: widerLegacy.scheduleId,
+    })).toEqual({
       schedule: generated,
       ambiguous: false,
     });

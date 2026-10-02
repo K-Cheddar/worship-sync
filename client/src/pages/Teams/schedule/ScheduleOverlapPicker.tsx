@@ -39,7 +39,7 @@ const ScheduleOverlapPicker = ({
           <Button
             type="button"
             variant="tertiary"
-            aria-label="Schedule"
+            aria-label={`Schedule: ${selected.name}`}
             aria-haspopup="dialog"
             className="min-w-0 max-w-44 justify-between gap-2 bg-gray-800/80 text-left text-xs"
           >

@@ -1231,11 +1231,9 @@ export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
   /** Current calendar period used to resolve the default period schedule. */
   visibleStartDate?: string;
   visibleEndDate?: string;
-  /** Upcoming date used only to recover a genuine old generated rolling period. */
-  legacyOccurrenceDate?: string;
   /** Optional current selection, when it is still a valid default-period candidate. */
   preferredScheduleId?: string;
-  /** Visible Upcoming occurrences used to recover older generated periods safely. */
+  /** Occurrences currently visible in the selected range. */
   visibleOccurrenceIds?: string[];
 };
 

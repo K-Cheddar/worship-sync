@@ -691,6 +691,7 @@ test("generated schedule ensure prefers an exact period over a broader custom sc
       serviceIds: ["service-sabbath"],
       visibleOccurrenceIds: [occurrence.occurrenceId],
       occurrences: [occurrence],
+      preferredScheduleId: "custom-october",
     },
   });
 
@@ -927,6 +928,76 @@ test("generated schedule ensure reuses an older rolling record by date coverage 
       .primaryMemberId,
     "existing-member",
   );
+});
+
+test("Upcoming ensure creates the full period instead of reusing a partial generated schedule", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("upcoming_october_partial_generated_bounds");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "service-sabbath",
+      name: "Sabbath Service",
+      reccurence: "weekly",
+      dayOfWeek: 6,
+      time: "10:00",
+    }],
+  });
+  const occurrence = {
+    occurrenceId: "service-sabbath@2026-10-03T10:00:00.000Z",
+    serviceId: "service-sabbath",
+    name: "Sabbath Service",
+    startsAt: "2026-10-03T10:00:00.000Z",
+    positionRequirements: [],
+  };
+  const oldScheduleId = "generated_old-rolling-key";
+  const assignments = {
+    [occurrence.occurrenceId]: {
+      "camera::0": { primaryMemberId: "existing-member", shadows: [] },
+    },
+  };
+  await setDoc("teamSchedules", oldScheduleId, {
+    scheduleId: oldScheduleId,
+    churchId: context.churchId,
+    teamId,
+    name: "Old generated schedule",
+    startDate: "2026-09-29",
+    endDate: "2026-10-05",
+    serviceIds: ["service-sabbath"],
+    source: "generated-period",
+    generatedPeriodKey: "old-rolling-key",
+    occurrences: [occurrence],
+    assignments,
+  });
+  const generatedKey = createHash("sha256")
+    .update(`${context.churchId}\u0000${teamId}\u00002026-10-01\u00002026-10-31`)
+    .digest("hex");
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October 2026",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+      legacyOccurrenceDate: "2026-10-03",
+      preferredScheduleId: oldScheduleId,
+      timeZone: "UTC",
+      serviceIds: ["service-sabbath"],
+      visibleOccurrenceIds: [occurrence.occurrenceId],
+      occurrences: [occurrence],
+    },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, true);
+  assert.equal(result.payload.schedule.scheduleId, `generated_${generatedKey}`);
+  assert.equal(result.payload.schedule.startDate, "2026-10-01");
+  assert.equal(result.payload.schedule.endDate, "2026-10-31");
+  assert.deepEqual((await getDoc("teamSchedules", oldScheduleId)).assignments, assignments);
 });
 
 test("Upcoming ensure creates the full December period beside a partial custom schedule", async (t) => {

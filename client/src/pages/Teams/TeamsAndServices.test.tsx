@@ -995,16 +995,16 @@ describe("Teams", () => {
     renderTeams();
     await waitForTeamsBootstrap();
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Schedule" })).toHaveTextContent("October 2026");
+    expect(screen.getByRole("button", { name: "Schedule: October 2026" })).toHaveTextContent("October 2026");
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(5);
 
-    await user.click(screen.getByRole("button", { name: "Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
     expect(screen.getByRole("button", { name: /Youth Sabbath/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Q4/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Q4/ }));
 
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Schedule" })).toHaveTextContent("Q4");
+    expect(screen.getByRole("button", { name: "Schedule: Q4" })).toHaveTextContent("Q4");
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
     expect(screen.getByRole("button", { name: /Saturday service on Oct 17/i })).toBeInTheDocument();
     jest.useRealTimers();
@@ -1072,17 +1072,17 @@ describe("Teams", () => {
 
     renderTeams();
     await waitForTeamsBootstrap();
-    expect(screen.getByRole("button", { name: "Schedule" })).toHaveTextContent("October 2026");
+    expect(screen.getByRole("button", { name: "Schedule: October 2026" })).toHaveTextContent("October 2026");
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(5);
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
     expect(screen.getByRole("button", { name: /Current period.*Oct 1, 2026.*Oct 31, 2026/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Fall Revival/ }));
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
     expect(screen.getByRole("button", { name: /Saturday service on Oct 24/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Schedule: Fall Revival" }));
     await user.click(screen.getByRole("button", { name: /Current period/ }));
     const octoberEmptySlots = await screen.findAllByRole("button", { name: /Saturday service Vocal, Empty/i });
     await user.click(octoberEmptySlots[0]);
@@ -1213,7 +1213,6 @@ describe("Teams", () => {
       endDate: "2026-10-31",
       visibleStartDate: "2026-10-01",
       visibleEndDate: "2026-10-31",
-      legacyOccurrenceDate: "2026-10-03",
       visibleOccurrenceIds: expect.arrayContaining([expect.stringContaining("2026-10-03")]),
     });
     unmount();
