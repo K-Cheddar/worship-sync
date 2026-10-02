@@ -240,6 +240,10 @@ export async function persistMediaStateChanges(
   before: { list: MediaType[]; folders: MediaFolder[] },
   after: { list: MediaType[]; folders: MediaFolder[] },
   canCommit: () => boolean = () => true,
+  rowCommitGuards: {
+    canCommitItem?: (id: string) => boolean;
+    canCommitFolders?: () => boolean;
+  } = {},
 ) {
   if (!canCommit()) return [];
   const schemaV2 = await isMediaLibraryV2(db);
@@ -265,6 +269,8 @@ export async function persistMediaStateChanges(
     const previous = beforeById.get(id);
     if (JSON.stringify(previous) !== JSON.stringify(item)) {
       if (!canCommit()) return changedDocs;
+      const canCommitItem = () => canCommit() && (rowCommitGuards.canCommitItem?.(id) ?? true);
+      if (!canCommitItem()) continue;
       const patch: Record<string, unknown> = {};
       const keys = new Set([...Object.keys(previous || {}), ...Object.keys(item)] as (keyof MediaType)[]);
       for (const key of keys) {
@@ -276,7 +282,7 @@ export async function persistMediaStateChanges(
         db,
         id,
         patch as Partial<MediaType>,
-        canCommit,
+        canCommitItem,
         !previous,
       );
       if (result) {
@@ -294,13 +300,18 @@ export async function persistMediaStateChanges(
   for (const id of beforeById.keys()) {
     if (!afterById.has(id)) {
       if (!canCommit()) return changedDocs;
-      const result = await removeMediaItem(db, id, canCommit);
+      const canCommitItem = () => canCommit() && (rowCommitGuards.canCommitItem?.(id) ?? true);
+      if (!canCommitItem()) continue;
+      const result = await removeMediaItem(db, id, canCommitItem);
       if (result) changedDocs.push({ _id: mediaItemDocId(id), id, _deleted: true });
     }
   }
   if (JSON.stringify(before.folders) !== JSON.stringify(after.folders)) {
     if (!canCommit()) return changedDocs;
-    const result = await saveMediaFolders(db, after.folders, canCommit);
+    const canCommitFolders = () => canCommit() && (rowCommitGuards.canCommitFolders?.() ?? true);
+    const result = canCommitFolders()
+      ? await saveMediaFolders(db, after.folders, canCommitFolders)
+      : undefined;
     if (result) changedDocs.push({ _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: after.folders });
   }
   return changedDocs;

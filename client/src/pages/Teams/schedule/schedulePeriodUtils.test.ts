@@ -1,6 +1,7 @@
 import type { TeamSchedule, TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 import {
   filterOccurrencesToRange,
+  findOverlappingPeriodSchedules,
   findReusablePeriodSchedule,
   rangeFromPreset,
   resolveDisplayedPeriodRange,
@@ -80,6 +81,26 @@ describe("findReusablePeriodSchedule", () => {
 
     expect(findReusablePeriodSchedule({ schedules: [septemberCreatedSchedule], ...dayTwoTarget })).toEqual({
       schedule: septemberCreatedSchedule,
+      ambiguous: false,
+    });
+  });
+
+  it("reuses a December schedule that covers Upcoming's Dec 5 identity date", () => {
+    const decemberSchedule = schedule({
+      scheduleId: "saved-december-5-to-28",
+      startDate: "2026-12-05",
+      endDate: "2026-12-28",
+    });
+    const upcomingTarget = {
+      ...target,
+      startDate: "2026-12-01",
+      endDate: "2026-12-31",
+      visibleStartDate: "2026-12-05",
+      visibleEndDate: "2026-12-05",
+    };
+
+    expect(findReusablePeriodSchedule({ schedules: [decemberSchedule], ...upcomingTarget })).toEqual({
+      schedule: decemberSchedule,
       ambiguous: false,
     });
   });
@@ -413,6 +434,40 @@ describe("findReusablePeriodSchedule", () => {
   });
 });
 
+describe("findOverlappingPeriodSchedules", () => {
+  const range = { start: "2026-10-01", end: "2026-10-31" };
+  const schedules = [
+    schedule({ scheduleId: "month", name: "October 2026" }),
+    schedule({ scheduleId: "single", name: "Youth Sabbath", startDate: "2026-10-10", endDate: "2026-10-10" }),
+    schedule({ scheduleId: "event", name: "Fall Revival", startDate: "2026-10-18", endDate: "2026-10-24" }),
+    schedule({ scheduleId: "quarter", name: "Quarter 4", startDate: "2026-10-01", endDate: "2026-12-31" }),
+    schedule({ scheduleId: "september", startDate: "2026-09-01", endDate: "2026-09-30" }),
+    schedule({ scheduleId: "archived", startDate: "2026-10-05", endDate: "2026-10-06", archivedAt: "2026-09-01" }),
+  ];
+
+  const getOverlaps = (items: TeamScheduleSummary[]) => findOverlappingPeriodSchedules({
+    schedules: items,
+    churchId: target.churchId,
+    teamId: target.teamId,
+    range,
+  });
+
+  it("shows no switcher choice when zero or one active saved schedule overlaps", () => {
+    expect(getOverlaps([schedules[4]])).toHaveLength(0);
+    expect(getOverlaps([schedules[0]])).toHaveLength(1);
+  });
+
+  it("includes every active saved schedule that overlaps, including single-day and wider ranges", () => {
+    expect(getOverlaps(schedules).map(({ scheduleId }) => scheduleId)).toEqual([
+      "month", "quarter", "single", "event",
+    ]);
+  });
+
+  it("does not count archived overlapping schedules", () => {
+    expect(getOverlaps([schedules[0], schedules[5]])).toEqual([schedules[0]]);
+  });
+});
+
 describe("resolveDisplayedPeriodRange", () => {
   const quarterlySchedule = schedule({
     startDate: "2026-10-01",
@@ -469,5 +524,17 @@ describe("resolveDisplayedPeriodRange", () => {
     const selectedRange = { start: "2026-10-05", end: "2026-10-12" };
     expect(resolveDisplayedPeriodRange({ preset: "upcoming", selectedRange, scheduleRange })).toEqual(scheduleRange);
     expect(resolveDisplayedPeriodRange({ preset: "custom", selectedRange, scheduleRange, viewingSavedSchedule: true })).toEqual(scheduleRange);
+  });
+
+  it("keeps Upcoming's selected range when a schedule is deliberately switched", () => {
+    const scheduleRange = { start: "2026-10-01", end: "2026-12-31" };
+    const selectedRange = { start: "2026-10-01", end: "2026-10-31" };
+    expect(resolveDisplayedPeriodRange({
+      preset: "upcoming",
+      selectedRange,
+      scheduleRange,
+      preserveSelectedRange: true,
+    })).toEqual(selectedRange);
+    expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, selectedRange)).toHaveLength(3);
   });
 });

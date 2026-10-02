@@ -12,14 +12,18 @@ export const resolveDisplayedPeriodRange = ({
   selectedRange,
   scheduleRange,
   viewingSavedSchedule = false,
+  preserveSelectedRange = false,
 }: {
   preset: SchedulePeriodPreset;
   selectedRange: { start: string; end: string };
   scheduleRange?: { start: string; end: string } | null;
   viewingSavedSchedule?: boolean;
-}) => viewingSavedSchedule || preset === "upcoming"
-  ? scheduleRange || selectedRange
-  : selectedRange;
+  preserveSelectedRange?: boolean;
+}) => {
+  if (viewingSavedSchedule) return scheduleRange || selectedRange;
+  if (preset === "upcoming" && !preserveSelectedRange) return scheduleRange || selectedRange;
+  return selectedRange;
+};
 
 export const filterOccurrencesToRange = (
   occurrences: TeamScheduleOccurrence[],
@@ -28,6 +32,38 @@ export const filterOccurrencesToRange = (
   const date = occurrence.startsAt.slice(0, 10);
   return date >= range.start && date <= range.end;
 });
+
+/** Active schedules for the selected team whose saved bounds touch the visible range. */
+export const findOverlappingPeriodSchedules = ({
+  schedules,
+  churchId,
+  teamId,
+  range,
+}: {
+  schedules: TeamScheduleSummary[];
+  churchId: string;
+  teamId: string;
+  range: { start: string; end: string };
+}) => {
+  const overlapping = schedules.filter((schedule) =>
+    !schedule.archivedAt &&
+    schedule.churchId === churchId &&
+    schedule.teamId === teamId &&
+    Boolean(schedule.startDate && schedule.endDate) &&
+    schedule.startDate! <= range.end &&
+    schedule.endDate! >= range.start,
+  );
+  const canonicalGenerated = overlapping.filter(isCanonicalGeneratedSchedule);
+  return overlapping.filter((schedule) =>
+    schedule.source != null ||
+    !canonicalGenerated.some((generated) =>
+      generated.startDate === schedule.startDate && generated.endDate === schedule.endDate),
+  ).sort((left, right) =>
+    String(left.startDate).localeCompare(String(right.startDate)) ||
+    String(left.endDate).localeCompare(String(right.endDate)) ||
+    left.name.localeCompare(right.name),
+  );
+};
 
 export const formatSchedulePeriodName = (startDate: string, endDate: string) => {
   const start = parsePlainDate(startDate);

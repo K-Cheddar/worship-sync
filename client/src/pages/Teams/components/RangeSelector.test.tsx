@@ -42,7 +42,7 @@ describe("RangeSelector", () => {
     expect(screen.queryByRole("button", { name: "Upcoming" })).not.toBeInTheDocument();
   });
 
-  it("shows segmented preset buttons on desktop and keeps Custom date entry", async () => {
+  it("shows the existing date range as the Custom picker trigger without a second input row", async () => {
     const user = userEvent.setup();
     setDesktop(true);
     const ControlledFilter = () => {
@@ -60,7 +60,15 @@ describe("RangeSelector", () => {
     render(<ControlledFilter />);
 
     await user.click(screen.getByRole("button", { name: "Custom" }));
-    expect(screen.getByRole("textbox", { name: "Date range" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Date range" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Date range" }));
+    expect(screen.getByRole("grid")).toBeInTheDocument();
+    await user.click(screen.getByText("8", { selector: "button" }));
+    await user.click(screen.getByText("12", { selector: "button" }));
+    expect(screen.getByRole("button", { name: "Date range" })).toHaveTextContent(
+      "Sep 8, 2026 – Sep 12, 2026",
+    );
   });
 
   it("marks shifted pages Custom and recalculates when Upcoming is selected again", async () => {

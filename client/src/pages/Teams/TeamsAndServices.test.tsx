@@ -43,6 +43,7 @@ import type {
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
 import { calendarMonthRange, shiftRange } from "./rangeSelection";
+import { setServerTimeOffset } from "../../utils/serverTime";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -457,6 +458,7 @@ describe("Teams", () => {
   afterEach(() => {
     // Fake-timer tests must not leak into later async waits under suite load.
     jest.useRealTimers();
+    setServerTimeOffset(0);
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
   });
@@ -1003,6 +1005,8 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).toMatchObject({
       startDate: "2026-10-01",
       endDate: "2026-10-31",
+      visibleStartDate: "2026-10-03",
+      visibleEndDate: "2026-10-03",
       visibleOccurrenceIds: expect.arrayContaining([expect.stringContaining("2026-10-03")]),
     });
     unmount();
@@ -1021,7 +1025,8 @@ describe("Teams", () => {
 
   it("opens Media's saved five-occurrence October schedule when Setup now generates seven", async () => {
     jest.useFakeTimers({ advanceTimers: true });
-    jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    setServerTimeOffset(36 * 60 * 60 * 1000);
     const serviceId = "sabbath-service";
     const cameraId = "position-camera";
     const memberId = "member-media";
@@ -1079,6 +1084,8 @@ describe("Teams", () => {
     expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(5);
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Up next")).toHaveLength(1);
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
   });
 

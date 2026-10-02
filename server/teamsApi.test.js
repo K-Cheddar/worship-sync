@@ -958,6 +958,76 @@ test("generated schedule ensure reuses an older rolling record by date coverage 
   );
 });
 
+test("Upcoming ensure reuses a Dec 5–28 schedule for the Dec 5 identity date", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("upcoming_december_partial_bounds");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Media",
+    positions: [{ name: "Camera" }],
+  });
+  const cameraId = positionIds.Camera;
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "service-sabbath",
+      name: "Sabbath Service",
+      reccurence: "weekly",
+      dayOfWeek: 6,
+      time: "10:00",
+      positionRequirements: [{ positionId: cameraId, count: 1 }],
+    }],
+  });
+  const occurrence = {
+    occurrenceId: "service-sabbath@2026-12-05T10:00:00.000Z",
+    serviceId: "service-sabbath",
+    name: "Sabbath Service",
+    startsAt: "2026-12-05T10:00:00.000Z",
+    positionRequirements: [{ positionId: cameraId, count: 1 }],
+  };
+  const savedScheduleId = "saved-december-5-to-28";
+  await setDoc("teamSchedules", savedScheduleId, {
+    scheduleId: savedScheduleId,
+    churchId: context.churchId,
+    name: "December staffing",
+    teamId,
+    startDate: "2026-12-05",
+    endDate: "2026-12-28",
+    serviceIds: ["service-sabbath"],
+    source: "custom",
+    occurrences: [occurrence],
+    assignments: {
+      [occurrence.occurrenceId]: {
+        [`${cameraId}::0`]: { primaryMemberId: "existing-member", shadows: [] },
+      },
+    },
+  });
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "December 2026",
+      teamId,
+      startDate: "2026-12-01",
+      endDate: "2026-12-31",
+      visibleStartDate: "2026-12-05",
+      visibleEndDate: "2026-12-05",
+      timeZone: "UTC",
+      serviceIds: ["service-sabbath"],
+      visibleOccurrenceIds: [occurrence.occurrenceId],
+      occurrences: [occurrence],
+    },
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, savedScheduleId);
+  assert.equal(
+    result.payload.schedule.assignments[occurrence.occurrenceId][`${cameraId}::0`]
+      .primaryMemberId,
+    "existing-member",
+  );
+});
+
 test("generated schedule ensure reuses a populated schedule after all service identities change", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("custom_schedule_occurrence_drift");

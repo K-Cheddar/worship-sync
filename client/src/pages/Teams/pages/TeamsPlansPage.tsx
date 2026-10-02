@@ -29,6 +29,7 @@ import {
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { formatPlainDate } from "../../../utils/plainDate";
+import { serverNow } from "../../../utils/serverTime";
 import {
   findNextUpcomingOccurrenceId,
   generateScheduleOccurrences,
@@ -831,6 +832,7 @@ const TeamsPlansPage = () => {
     () =>
       findNextUpcomingOccurrenceId(
         chronologicalEntries.map((entry) => entry.occurrence),
+        serverNow(),
       ),
     [chronologicalEntries],
   );

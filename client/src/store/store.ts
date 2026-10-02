@@ -1960,6 +1960,10 @@ listenerMiddleware.startListening({
             baseline.state,
             { list: latestMedia.list, folders: latestMedia.folders },
             mediaSaveIsCurrent,
+            {
+              canCommitItem: (id) => !remoteChanges.itemIds.has(id),
+              canCommitFolders: () => remoteChanges.folderIds.size === 0,
+            },
           );
           // Redux changes after Pouch commits do not invalidate the commit. They
           // do affect which rows are still authoritative for broadcast/cache.

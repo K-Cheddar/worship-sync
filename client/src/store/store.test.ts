@@ -1187,6 +1187,110 @@ describe("store module", () => {
     expect(persisted.get("media-item:remote")?.name).toBe("Before remote");
   });
 
+  it("does not write a remote-winning row after another v2 row finishes", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    let resolveAWrite: ((value: unknown) => void) | undefined;
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:a", { _id: "media-item:a", _rev: "1-a", docType: "mediaItem", id: "a", name: "Before A" }],
+      ["media-item:b", { _id: "media-item:b", _rev: "1-b", docType: "mediaItem", id: "b", name: "Before B" }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation((doc: Record<string, unknown>) => new Promise((resolve) => {
+      resolveAWrite = (value) => {
+        persisted.set(String(doc._id), { ...doc, _rev: "2-a" });
+        resolve(value);
+      };
+    }) as any);
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "a", name: "Before A" }, { id: "b", name: "Before B" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "a", patch: { name: "Local A" } }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "b", patch: { name: "Stale local B" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    persisted.set("media-item:b", {
+      _id: "media-item:b", _rev: "2-b", docType: "mediaItem", id: "b", name: "Remote B",
+    });
+    store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({ id: "b", name: "Remote B" }));
+    resolveAWrite?.({ ok: true });
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:a", name: "Local A" }));
+    expect(store.getState().media.list).toEqual([
+      { id: "a", name: "Local A" },
+      { id: "b", name: "Remote B" },
+    ]);
+    expect(persisted.get("media-item:b")?.name).toBe("Remote B");
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs).toEqual([
+      expect.objectContaining({ _id: "media-item:a", name: "Local A" }),
+    ]);
+  });
+
+  it("does not write remote-winning folders after a v2 row finishes", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    let resolveAWrite: ((value: unknown) => void) | undefined;
+    const remoteFolders = [{ id: "remote-folder", name: "Remote folder", parentId: null }];
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:a", { _id: "media-item:a", _rev: "1-a", docType: "mediaItem", id: "a", name: "Before A" }],
+      ["media-folders", { _id: "media-folders", _rev: "1-f", docType: "mediaFolders", folders: [] }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation((doc: Record<string, unknown>) => new Promise((resolve) => {
+      resolveAWrite = (value) => {
+        persisted.set(String(doc._id), { ...doc, _rev: "2-a" });
+        resolve(value);
+      };
+    }) as any);
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "a", name: "Before A" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "a", patch: { name: "Local A" } }));
+    store.dispatch(mediaSlice.actions.setMediaListAndFolders({
+      list: [{ id: "a", name: "Local A" }],
+      folders: [{ id: "local-folder", name: "Local folder", parentId: null }],
+    }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    persisted.set("media-folders", {
+      _id: "media-folders", _rev: "2-f", docType: "mediaFolders", folders: remoteFolders,
+    });
+    store.dispatch(mediaSlice.actions.updateMediaFoldersFromRemote(remoteFolders));
+    resolveAWrite?.({ ok: true });
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(persisted.get("media-folders")?.folders).toEqual(remoteFolders);
+    expect(store.getState().media.folders).toEqual(remoteFolders);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.calls[0][0].data.docs).toEqual([
+      expect.objectContaining({ _id: "media-item:a", name: "Local A" }),
+    ]);
+  });
+
   it("keeps unrelated media edits pending when a remote update wins a row conflict", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
