@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { configureStore } from "@reduxjs/toolkit";
 import { Provider } from "react-redux";
@@ -8,6 +8,7 @@ import allDocsReducer from "../../store/allDocsSlice";
 import type {
   ServicePlanElement,
   ServicePlanMicrophone,
+  ServiceEquipment,
   ServicePlanSection,
   ServicePlanSongReference,
 } from "../../types/servicePlan";
@@ -79,9 +80,15 @@ jest.mock("./ServicePlanAssigneeList", () => ({
   default: ({
     itemLabel,
     onEdit,
+    assignees = [],
+    microphones = [],
+    iemEquipment = [],
   }: {
     itemLabel: string;
     onEdit?: () => void;
+    assignees?: Array<{ name?: string; microphoneIds?: string[]; iemIds?: string[] }>;
+    microphones?: ServicePlanMicrophone[];
+    iemEquipment?: ServiceEquipment[];
   }) => (
     <div aria-label={`Assignments for ${itemLabel}`}>
       {onEdit ? (
@@ -90,6 +97,23 @@ jest.mock("./ServicePlanAssigneeList", () => ({
         </button>
       ) : null}
       <p>Assignments for {itemLabel}</p>
+      {assignees.map((assignee) => (
+        <div key={assignee.name}>
+          <span>{assignee.name}</span>
+          {(assignee.microphoneIds || []).map((id) => {
+            const item = microphones.find((candidate) => candidate.id === id);
+            if (!item) return null;
+            const { ServicePlanMicrophoneChip } = jest.requireActual("../../components/ServicePlanMicrophoneChip") as typeof import("../../components/ServicePlanMicrophoneChip");
+            return <ServicePlanMicrophoneChip key={id} microphone={item} />;
+          })}
+          {(assignee.iemIds || []).map((id) => {
+            const equipment = iemEquipment.find((candidate) => candidate.id === id);
+            if (!equipment) return null;
+            const { ServiceEquipmentChip } = jest.requireActual("../../components/ServiceEquipmentChip") as typeof import("../../components/ServiceEquipmentChip");
+            return <ServiceEquipmentChip key={id} equipment={equipment} />;
+          })}
+        </div>
+      ))}
     </div>
   ),
 }));
@@ -180,6 +204,8 @@ const renderList = ({
   reviewingElementId = null,
   isFollowingLive = false,
   scrollId,
+  microphones: microphoneCatalog = structureOnly ? [microphone] : [],
+  iemEquipment = [],
 }: {
   structureOnly?: boolean;
   desktop?: boolean;
@@ -187,6 +213,8 @@ const renderList = ({
   reviewingElementId?: string | null;
   isFollowingLive?: boolean;
   scrollId?: string;
+  microphones?: ServicePlanMicrophone[];
+  iemEquipment?: ServiceEquipment[];
 } = {}) => {
   desktopPanel = desktop;
 
@@ -207,7 +235,8 @@ const renderList = ({
           onSectionsChange={setSections}
           selection={selection}
           onSelectionChange={setSelection}
-          microphones={structureOnly ? [microphone] : []}
+          microphones={microphoneCatalog}
+          iemEquipment={iemEquipment}
           allSongDocs={[songDocument]}
           reviewingElementId={reviewingElementId}
           isFollowingLive={isFollowingLive}
@@ -258,6 +287,45 @@ const selectItemB = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 describe("ServicePlanSectionList item-specific panels", () => {
+  it("passes microphone and IEM catalogs to the inline row and assignment panel", async () => {
+    const user = userEvent.setup();
+    const microphones: ServicePlanMicrophone[] = [
+      { id: "mic-countryman", name: "Countryman", type: "Headset", color: "#14b8a6" },
+      { id: "mic-pastors", name: "Pastor's Mic", type: "Lapel", color: "#a855f7" },
+      { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
+    ];
+    const iem: ServiceEquipment = {
+      id: "iem-blue",
+      category: "iem",
+      name: "Blue",
+      subtype: "wireless-beltpack",
+    };
+    const item = {
+      ...createElement("item-a"),
+      assignees: [{
+        id: "abigail",
+        name: "Abigail",
+        microphoneIds: microphones.map(({ id }) => id),
+        iemIds: [iem.id],
+      }],
+    };
+    renderList({
+      initialSections: [{ id: "section-a", name: "Section A", elements: [item] }],
+      microphones,
+      iemEquipment: [iem],
+    });
+
+    const inlineAssignments = screen.getByLabelText("Assignments for Item A");
+    expect(within(inlineAssignments).getByLabelText("Countryman · Headset")).toBeInTheDocument();
+    expect(within(inlineAssignments).getByLabelText("Pastor's Mic · Lapel")).toBeInTheDocument();
+    expect(within(inlineAssignments).getByLabelText("Blue · Handheld")).toBeInTheDocument();
+    expect(within(inlineAssignments).getByLabelText("Blue · Wireless beltpack")).toBeInTheDocument();
+
+    await user.click(within(inlineAssignments).getByRole("button", { name: "Open assignments for Item A" }));
+    const assignmentPanel = panel("Assignment editor for Item A");
+    expect(within(assignmentPanel).getByLabelText("Blue · Wireless beltpack")).toBeInTheDocument();
+  });
+
   it("marks the transient review item without changing the editor selection", () => {
     renderList({ reviewingElementId: "item-b" });
 

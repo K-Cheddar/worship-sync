@@ -4,7 +4,7 @@ import WhosServingPanel, {
   getServingMasonryColumnCount,
 } from "./WhosServingPanel";
 import type { TeamsAssignmentSummaryTeamGroup } from "./teamsAssignmentsSummary";
-import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 
 const longName = "The Member With A Very Long Display Name";
 
@@ -35,6 +35,9 @@ const assignmentTeams: TeamsAssignmentSummaryTeamGroup[] = [
 
 const microphones: ServicePlanMicrophone[] = [
   { id: "mic-lead", name: "Lead", type: "Handheld", color: "#9ca3af" },
+];
+const iemEquipment: ServiceEquipment[] = [
+  { id: "iem-red", category: "iem", name: "Red", subtype: "wireless-beltpack", color: "#ef4444" },
 ];
 
 describe("WhosServingPanel", () => {
@@ -107,7 +110,7 @@ describe("WhosServingPanel", () => {
     );
 
     const micGroup = screen.getByRole("group", {
-      name: `Microphones for ${longName}`,
+      name: `Equipment for ${longName}`,
     });
     expect(within(micGroup).getByText("Lead")).toBeInTheDocument();
     expect(micGroup).toHaveClass("border-t");
@@ -115,6 +118,30 @@ describe("WhosServingPanel", () => {
     expect(
       screen.getByRole("button", { name: `Details for ${longName}` }),
     ).toBeInTheDocument();
+  });
+
+  it("shows microphone-only, IEM-only, and combined allocations", () => {
+    const servingTeam = {
+      ...assignmentTeams[0],
+      filled: [
+        { ...assignmentTeams[0].filled[0], columnKey: "pos-camera::0", memberName: "Mic Only", microphoneIds: ["mic-lead"], iemIds: [] },
+        { ...assignmentTeams[0].filled[0], columnKey: "pos-camera::1", memberName: "IEM Only", microphoneIds: [], iemIds: ["iem-red"], memberProfileImageUrl: "https://example.com/iem.jpg" },
+        { ...assignmentTeams[0].filled[0], columnKey: "pos-camera::2", memberName: "Both", microphoneIds: ["mic-lead"], iemIds: ["iem-red"] },
+      ],
+    };
+    render(
+      <WhosServingPanel
+        assignmentTeams={[servingTeam]}
+        onOpenSchedule={jest.fn()}
+        microphones={microphones}
+        iemEquipment={iemEquipment}
+      />,
+    );
+
+    expect(screen.getAllByLabelText("Lead · Handheld")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Red · Wireless beltpack")).toHaveLength(2);
+    expect(screen.getByRole("group", { name: "Equipment for IEM Only" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View profile image of IEM Only" })).toBeInTheDocument();
   });
 
   it("opens a profile image in a viewport-constrained modal", async () => {

@@ -225,6 +225,7 @@ test("detailed snapshots expose scheduled microphone holders by team", () => {
           microphones: [
             { id: "mic-blue", name: "Blue", type: "Handheld", color: "#2563eb" },
           ],
+          equipment: [],
         },
       ],
     },
@@ -857,8 +858,8 @@ test("authenticated snapshots keep detailed metadata before publish", () => {
   assert.equal(draftSnapshot.churchSecondaryColor, sharedSnapshot.churchSecondaryColor);
 });
 
-test("controller snapshots expose assigned IEM equipment without changing public snapshots", () => {
-  const controllerSnapshot = buildPublicServicePlanSnapshot({
+test("detailed snapshots expose assigned IEM equipment while general snapshots omit it", () => {
+  const detailedSnapshot = buildPublicServicePlanSnapshot({
     plan: {
       ...plan,
       sections: [{
@@ -870,10 +871,9 @@ test("controller snapshots expose assigned IEM equipment without changing public
       }],
     },
     equipment: [{ id: "iem-1", name: "Avery's IEM", category: "iem", subtype: "In-ear" }],
-    includeControllerEquipment: true,
   });
   assert.deepEqual(
-    controllerSnapshot.service.sections[0].items[0].equipmentAssignments,
+    detailedSnapshot.service.sections[0].items[0].equipmentAssignments,
     [{
       equipment: { id: "iem-1", name: "Avery's IEM", category: "iem", subtype: "In-ear" },
       holderName: "Avery Stone",
@@ -881,10 +881,83 @@ test("controller snapshots expose assigned IEM equipment without changing public
   );
 
   const publicSnapshot = buildPublicServicePlanSnapshot({
-    plan,
+    plan: {
+      ...plan,
+      publicGeneralLinkToken: "general-token",
+      sections: [{
+        ...plan.sections[0],
+        elements: [{
+          ...plan.sections[0].elements[0],
+          assignees: [{ id: "member-1", name: "Avery Stone", iemIds: ["iem-1"] }],
+        }],
+      }],
+    },
+    viewMode: "general",
+    shareId: "general-token",
     equipment: [{ id: "iem-1", name: "Avery's IEM", category: "iem" }],
   });
   assert.equal(publicSnapshot.service.sections[0].items[0].equipmentAssignments, undefined);
+});
+
+test("public serving projection includes an IEM-only scheduled member", () => {
+  const snapshot = buildPublicServicePlanSnapshot({
+    plan: { ...plan, serviceId: "sunday", date: "2026-07-27" },
+    microphones: [{ id: "mic-blue", name: "Blue", type: "Headset", color: "#2563eb" }],
+    equipment: [{ id: "iem-red", name: "Red", category: "iem", subtype: "wireless-beltpack", color: "#ef4444" }],
+    teams: [{ teamId: "worship", name: "Worship Team", usesIemAssignments: true, usesMicrophoneAssignments: true }],
+    positions: [{ positionId: "lead", name: "Lead vocal", teamId: "worship" }],
+    members: [
+      { memberId: "member-both", firstName: "Clover", lastName: "Palmer" },
+      { memberId: "member-iem", firstName: "Jordan", lastName: "Lee" },
+    ],
+    schedules: [{
+      scheduleId: "worship-schedule",
+      teamId: "worship",
+      occurrences: [{
+        occurrenceId: "sunday@2026-07-27T14:00:00.000Z",
+        serviceId: "sunday",
+        startsAt: "2026-07-27T14:00:00.000Z",
+      }],
+      assignments: { "sunday@2026-07-27T14:00:00.000Z": {
+        "lead::0": { primaryMemberId: "member-both" },
+        "lead::1": { primaryMemberId: "member-iem" },
+      } },
+      microphoneAssignments: { "sunday@2026-07-27T14:00:00.000Z": { "lead::0": ["mic-blue"] } },
+      iemAssignments: { "sunday@2026-07-27T14:00:00.000Z": {
+        "lead::0": ["iem-red"],
+        "lead::1": ["iem-red"],
+      } },
+    }],
+  });
+
+  assert.deepEqual(snapshot.servingTeams[0].members, [
+    {
+      positionId: "lead",
+      positionName: "Lead vocal",
+      memberName: "Clover Palmer",
+      microphones: [{ id: "mic-blue", name: "Blue", type: "Headset", color: "#2563eb" }],
+      equipment: [{ id: "iem-red", name: "Red", category: "iem", subtype: "wireless-beltpack", color: "#ef4444" }],
+    },
+    {
+      positionId: "lead",
+      positionName: "Lead vocal",
+      memberName: "Jordan Lee",
+      microphones: [],
+      equipment: [{ id: "iem-red", name: "Red", category: "iem", subtype: "wireless-beltpack", color: "#ef4444" }],
+    },
+  ]);
+  assert.deepEqual(
+    publicServingMemberIdsForPlan({
+      plan: { ...plan, serviceId: "sunday", date: "2026-07-27" },
+      schedules: [{
+        occurrences: [{ occurrenceId: "sunday@2026-07-27T14:00:00.000Z", serviceId: "sunday", startsAt: "2026-07-27T14:00:00.000Z" }],
+        assignments: { "sunday@2026-07-27T14:00:00.000Z": { "lead::0": { primaryMemberId: "member-iem" } } },
+        iemAssignments: { "sunday@2026-07-27T14:00:00.000Z": { "lead::0": ["iem-red"] } },
+      }],
+      timezone: "America/New_York",
+    }),
+    ["member-iem"],
+  );
 });
 
 test("public snapshot anchors the timeline at a pre-service first item", () => {
