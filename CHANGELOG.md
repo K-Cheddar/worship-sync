@@ -1,3 +1,19 @@
+# [2.41.0](https://github.com/K-Cheddar/worship-sync/compare/v2.40.1...v2.41.0) (2026-10-02)
+
+
+### Bug Fixes
+
+* **controller:** preserve plan dates and portal scrollbars ([6d7b8cd](https://github.com/K-Cheddar/worship-sync/commit/6d7b8cd9d767681b9569e1752080b7b0af2d7677))
+* **display:** publish prepared media context ([5326437](https://github.com/K-Cheddar/worship-sync/commit/5326437a47d4e88c985a396bb23e9b6d1a88a8f0))
+* preserve team schedule periods and scoped generation ([0a77d2f](https://github.com/K-Cheddar/worship-sync/commit/0a77d2f3cbf5e33ea3b26ab6a653ba5fb9067df6))
+* **schedule:** reuse saved schedules after occurrence drift ([c850fad](https://github.com/K-Cheddar/worship-sync/commit/c850fad80bea82ba78bad8d2e9479e3190a61691))
+
+
+### Features
+
+* **media:** improve transfer progress summary UX ([859f934](https://github.com/K-Cheddar/worship-sync/commit/859f934c61a21d7d9d9e0c306a3a97b6c5b82cbf))
+* **media:** normalize media library persistence ([6378caa](https://github.com/K-Cheddar/worship-sync/commit/6378caaf5f995cfd00332f9cb62d73dc0aaab90b))
+
 ## [2.40.1](https://github.com/K-Cheddar/worship-sync/compare/v2.40.0...v2.40.1) (2026-10-01)
 
 

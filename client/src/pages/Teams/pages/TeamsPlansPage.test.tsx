@@ -244,16 +244,28 @@ describe("TeamsPlansPage", () => {
     expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
   });
 
-  it("shows one date-range input for a custom range", async () => {
-    const user = userEvent.setup();
+  it("shows the compact custom date-range button and opens its calendar", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     renderPage();
 
-    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     await user.click(await screen.findByRole("button", { name: /^Custom$/i }));
 
-    expect(screen.getByRole("textbox", { name: "Date range" })).toBeInTheDocument();
+    const customRangeButton = screen.getByRole("button", { name: /^Custom date range: .+/ });
+    expect(customRangeButton).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Custom date range/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("To")).not.toBeInTheDocument();
+    await user.click(customRangeButton);
+    expect(screen.getByRole("grid")).toBeInTheDocument();
+    await user.click(screen.getByText("8", { selector: "button" }));
+    await user.click(screen.getByText("12", { selector: "button" }));
+    expect(screen.getByRole("button", {
+      name: "Custom date range: Oct 8, 2026 – Oct 12, 2026",
+    })).toBeInTheDocument();
+    jest.useRealTimers();
   });
 
   it("defaults to by-date order with an organize control when multiple services exist", async () => {
@@ -268,10 +280,10 @@ describe("TeamsPlansPage", () => {
       "true",
     );
     expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Range preset: Upcoming" })).toBeInTheDocument();
     expect(within(results).queryByRole("button", { name: "Service filter" })).not.toBeInTheDocument();
-    expect(within(results).queryByRole("button", { name: "Date range" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Date range" }));
+    expect(within(results).queryByRole("button", { name: "Range preset: Upcoming" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
@@ -362,7 +374,7 @@ describe("TeamsPlansPage", () => {
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Easter Sunday" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Service filter" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Range preset: Upcoming" })).toBeInTheDocument();
     expect(screen.queryByText("Add plan")).not.toBeInTheDocument();
     expect(
       (await screen.findAllByRole("button", { name: /Add plan for /i })).length,
@@ -1064,6 +1076,11 @@ describe("TeamsPlansPage", () => {
     jest.setSystemTime(new Date("2026-07-25T18:00:00"));
 
     renderPage();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    // Upcoming now targets the month of the next future service (August here).
+    // Select July to keep this test focused on the same-day marker contract.
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
+    await user.click(screen.getByRole("button", { name: "This month" }));
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();

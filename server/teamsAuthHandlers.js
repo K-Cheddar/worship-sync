@@ -13781,43 +13781,12 @@ export const createTeamsAuthHandlers = ({
                 Object.keys(schedule.optionalPositionSlots || {}).length ||
                 Object.keys(schedule.responses || {}).length,
             );
-          // Resolve against the visible date range so blank days at the edges
-          // remain part of coverage while Service Setup occurrence drift does
-          // not hide a saved schedule.
-          let compatible = [];
-          const visibleDates = payload.occurrences
-            .filter((occurrence) => visibleOccurrenceIds.includes(occurrence.occurrenceId))
-            .map((occurrence) => getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date)
-            .sort();
-          const requestedVisibleStartDate = normalizeOptionalPlainDate(
-            req.body?.visibleStartDate,
-            "Visible start date",
+          // Resolve the default schedule from the full requested period. A
+          // partial custom schedule remains an overlap-picker option.
+          const compatible = activeTeamSchedules.filter(
+            (schedule) => schedule.churchId === churchId &&
+              schedule.startDate && schedule.endDate,
           );
-          const requestedVisibleEndDate = normalizeOptionalPlainDate(
-            req.body?.visibleEndDate,
-            "Visible end date",
-          );
-          const firstVisibleDate = requestedVisibleStartDate || visibleDates[0];
-          const lastVisibleDate = requestedVisibleEndDate || visibleDates[visibleDates.length - 1];
-          if (firstVisibleDate && lastVisibleDate) {
-            compatible = activeTeamSchedules.filter(
-              (schedule) => {
-                if (
-                  schedule.churchId !== churchId ||
-                  !schedule.startDate ||
-                  !schedule.endDate ||
-                  schedule.startDate > firstVisibleDate ||
-                  schedule.endDate < lastVisibleDate
-                ) {
-                  return false;
-                }
-                // Reuse by team and covered dates. Existing custom and legacy
-                // schedules keep their persisted occurrence shape when
-                // Service Setup changes IDs, grouping, times, or count.
-                return true;
-              },
-            );
-          }
           const canonicalGenerated = compatible.filter(
             (schedule) =>
               schedule.source === "generated-period" &&
@@ -13825,40 +13794,48 @@ export const createTeamsAuthHandlers = ({
               schedule.scheduleId ===
                 generatedPeriodScheduleId(schedule.generatedPeriodKey),
           );
-          // Preserve generated identity precedence only over a source-less
-          // copy with the same stored period. Other overlapping schedules
-          // remain peers when populated.
-          const resolutionCandidates = canonicalGenerated.length
-            ? compatible.filter(
-                (schedule) => schedule.source != null ||
-                  canonicalGenerated.includes(schedule) ||
-                  !canonicalGenerated.some((generated) =>
-                    generated.startDate === schedule.startDate &&
-                    generated.endDate === schedule.endDate),
-              )
-            : compatible;
-          const populated = resolutionCandidates.filter(hasScheduleData);
-          if (populated.length === 1) {
-            return { schedule: populated[0], created: false };
-          }
-          if (populated.length > 1) {
-            throw httpError(
-              409,
-              "Several schedules match this period. Choose one from Schedule history before editing it.",
-            );
-          }
-          if (canonicalGenerated.length === 1) {
-            return { schedule: canonicalGenerated[0], created: false };
-          }
-          if (canonicalGenerated.length > 1 || resolutionCandidates.length > 1) {
-            throw httpError(
-              409,
-              "Several schedules match this period. Choose one from Schedule history before editing it.",
-            );
-          }
-          if (resolutionCandidates.length === 1) {
-            return { schedule: resolutionCandidates[0], created: false };
-          }
+          const resolutionCandidates = compatible.filter(
+            (schedule) => schedule.source != null ||
+              !canonicalGenerated.some((generated) =>
+                generated.startDate === schedule.startDate &&
+                generated.endDate === schedule.endDate,
+              ),
+          );
+          const exact = resolutionCandidates.filter(
+            (schedule) => schedule.startDate === payload.startDate &&
+              schedule.endDate === payload.endDate,
+          );
+          const covering = resolutionCandidates.filter(
+            (schedule) => schedule.startDate <= payload.startDate &&
+              schedule.endDate >= payload.endDate,
+          );
+          const candidates = exact.length ? exact : covering;
+          const preferredScheduleId = normalizeShortText(
+            req.body?.preferredScheduleId,
+            { max: 160 },
+          );
+          const canonicalForTier = candidates.filter((schedule) =>
+            schedule.source === "generated-period" &&
+            Boolean(schedule.generatedPeriodKey) &&
+            schedule.scheduleId === generatedPeriodScheduleId(schedule.generatedPeriodKey),
+          );
+          const tierCandidates = candidates.filter((schedule) =>
+            schedule.source != null ||
+            !canonicalForTier.some((generated) =>
+              generated.startDate === schedule.startDate &&
+              generated.endDate === schedule.endDate,
+            ),
+          );
+          const selected = tierCandidates.find((schedule) =>
+            schedule.scheduleId === preferredScheduleId,
+          ) || [...tierCandidates].sort((left, right) =>
+            Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
+            Number(canonicalForTier.includes(right)) - Number(canonicalForTier.includes(left)) ||
+            String(left.startDate).localeCompare(String(right.startDate)) ||
+            String(left.endDate).localeCompare(String(right.endDate)) ||
+            String(left.scheduleId).localeCompare(String(right.scheduleId), "en"),
+          )[0];
+          if (selected) return { schedule: selected, created: false };
 
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
           const db = requireFirestore();

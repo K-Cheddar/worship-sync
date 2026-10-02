@@ -95,7 +95,7 @@ const RangeSelector = ({
               <Button
                 type="button"
                 variant="tertiary"
-                aria-label="Date range"
+                aria-label={`Range preset: ${selectedLabel}`}
                 aria-haspopup="dialog"
                 className="w-full justify-between bg-gray-800/80 text-left text-xs max-md:min-h-0 max-md:px-2 max-md:py-1"
               >
@@ -119,10 +119,30 @@ const RangeSelector = ({
               className="shrink-0 max-md:min-h-0"
             />
           ) : null}
-          <p className="min-w-0 px-0.5 text-xs text-gray-400" aria-live="polite">
-            {formatResolvedDateRange(range)}
-            {summary ? ` · ${summary}` : null}
-          </p>
+          {preset === "custom" ? (
+            <DateRangePicker
+              label="Date range"
+              aria-label={`Custom date range: ${formatResolvedDateRange(range)}`}
+              hideLabel
+              className="min-w-0"
+              inputClassName="max-w-full"
+              value={{ startDate: range.start, endDate: range.end }}
+              onChange={onCustomRangeChange}
+              triggerContent={(
+                <span className="flex min-w-0 items-center gap-1 rounded-md border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-xs text-gray-200 hover:border-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
+                  <span className="truncate" aria-live="polite">
+                    {formatResolvedDateRange(range)}{summary ? ` · ${summary}` : ""}
+                  </span>
+                  <ChevronDown className="size-3.5 shrink-0 text-gray-400" aria-hidden />
+                </span>
+              )}
+            />
+          ) : (
+            <p className="min-w-0 px-0.5 text-xs text-gray-400" aria-live="polite">
+              {formatResolvedDateRange(range)}
+              {summary ? ` · ${summary}` : null}
+            </p>
+          )}
           {showNavigation ? (
             <Button
               type="button"
@@ -134,16 +154,6 @@ const RangeSelector = ({
             />
           ) : null}
         </div>
-        {preset === "custom" ? (
-          <DateRangePicker
-            label="Date range"
-            hideLabel
-            value={{ startDate: range.start, endDate: range.end }}
-            onChange={onCustomRangeChange}
-            className="w-full max-w-xs"
-            inputClassName="py-1 text-xs"
-          />
-        ) : null}
       </div>
     </div>
   );

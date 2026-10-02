@@ -1,32 +1,25 @@
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 import { calendarDateInTimeZone } from "@/utils/teamScheduleOccurrences";
-import {
-  RANGE_PRESET_OPTIONS,
-  resolveRangePreset,
-  type RangePreset,
-} from "../rangeSelection";
+import { RANGE_PRESET_OPTIONS, resolveRangePreset, type RangePreset } from "../rangeSelection";
 
 export type SchedulePeriodPreset = RangePreset;
 export const SCHEDULE_PERIOD_OPTIONS = RANGE_PRESET_OPTIONS;
 export const rangeFromPreset = resolveRangePreset;
 
-/**
- * Upcoming is a moving display window; generated schedules use calendar-aligned
- * bounds so changing the day does not change the period being persisted.
- */
-export const persistedScheduleRange = (
-  preset: SchedulePeriodPreset,
-  visibleRange: { start: string; end: string },
-) => {
-  if (preset !== "upcoming") return visibleRange;
-  const start = parsePlainDate(visibleRange.start);
-  const end = parsePlainDate(visibleRange.end);
-  if (!start || !end) return visibleRange;
-  return {
-    start: formatPlainDate(new Date(start.getFullYear(), start.getMonth(), 1)),
-    end: formatPlainDate(new Date(end.getFullYear(), end.getMonth() + 1, 0)),
-  };
+export const resolveDisplayedPeriodRange = ({
+  preset: _preset,
+  selectedRange,
+  scheduleRange,
+  viewingSavedSchedule = false,
+}: {
+  preset: SchedulePeriodPreset;
+  selectedRange: { start: string; end: string };
+  scheduleRange?: { start: string; end: string } | null;
+  viewingSavedSchedule?: boolean;
+}) => {
+  if (viewingSavedSchedule) return scheduleRange || selectedRange;
+  return selectedRange;
 };
 
 export const filterOccurrencesToRange = (
@@ -36,6 +29,38 @@ export const filterOccurrencesToRange = (
   const date = occurrence.startsAt.slice(0, 10);
   return date >= range.start && date <= range.end;
 });
+
+/** Active schedules for the selected team whose saved bounds touch the visible range. */
+export const findOverlappingPeriodSchedules = ({
+  schedules,
+  churchId,
+  teamId,
+  range,
+}: {
+  schedules: TeamScheduleSummary[];
+  churchId: string;
+  teamId: string;
+  range: { start: string; end: string };
+}) => {
+  const overlapping = schedules.filter((schedule) =>
+    !schedule.archivedAt &&
+    schedule.churchId === churchId &&
+    schedule.teamId === teamId &&
+    Boolean(schedule.startDate && schedule.endDate) &&
+    schedule.startDate! <= range.end &&
+    schedule.endDate! >= range.start,
+  );
+  const canonicalGenerated = overlapping.filter(isCanonicalGeneratedSchedule);
+  return overlapping.filter((schedule) =>
+    schedule.source != null ||
+    !canonicalGenerated.some((generated) =>
+      generated.startDate === schedule.startDate && generated.endDate === schedule.endDate),
+  ).sort((left, right) =>
+    String(left.startDate).localeCompare(String(right.startDate)) ||
+    String(left.endDate).localeCompare(String(right.endDate)) ||
+    left.name.localeCompare(right.name),
+  );
+};
 
 export const formatSchedulePeriodName = (startDate: string, endDate: string) => {
   const start = parsePlainDate(startDate);
@@ -56,21 +81,22 @@ export const findReusablePeriodSchedule = ({
   schedules,
   churchId,
   teamId,
+  startDate,
+  endDate,
   occurrences,
   visibleStartDate,
   visibleEndDate,
+  preferredScheduleId,
 }: {
   schedules: TeamScheduleSummary[];
   churchId: string;
   teamId: string;
-  // Retained as accepted context for existing callers; occurrence identity and
-  // occurrence-date coverage determine compatibility.
   startDate?: string;
   endDate?: string;
-  serviceIds?: string[];
   occurrences: TeamScheduleOccurrence[];
   visibleStartDate?: string;
   visibleEndDate?: string;
+  preferredScheduleId?: string;
 }) => {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const visibleDates = occurrences
@@ -79,36 +105,42 @@ export const findReusablePeriodSchedule = ({
   const firstVisibleDate = visibleStartDate || visibleDates[0];
   const lastVisibleDate = visibleEndDate || visibleDates[visibleDates.length - 1];
   if (!firstVisibleDate || !lastVisibleDate) return { schedule: null, ambiguous: false };
-  const compatible = schedules.filter((schedule) => {
+  const periodStartDate = visibleStartDate || startDate || firstVisibleDate;
+  const periodEndDate = visibleEndDate || endDate || lastVisibleDate;
+  const eligible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
-      schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
-      schedule.startDate > firstVisibleDate || schedule.endDate < lastVisibleDate
+      schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate
     ) return false;
-    // Saved period schedules remain reusable when Service Setup changes
-    // occurrence IDs, grouping, names, times, or count. Their stored shape is
-    // preserved; current occurrences are used only for newly created periods.
+    // Service Setup identities can change after a saved schedule is created.
+    // Schedule identity comes from its owner and covered dates, not that mutable setup.
     return true;
   });
-  const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);
-  // A valid generated identity outranks only its source-less copy for the
-  // same stored period. Other populated schedules remain peers so real
-  // staffing is not hidden by an overlapping generated identity.
-  const resolutionCandidates = canonicalGenerated.length > 0
-    ? compatible.filter((schedule) => schedule.source != null ||
-      isCanonicalGeneratedSchedule(schedule) ||
-      !canonicalGenerated.some((generated) =>
-        generated.startDate === schedule.startDate && generated.endDate === schedule.endDate))
-    : compatible;
-  const populated = resolutionCandidates.filter(hasScheduleData);
-  if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
-  if (populated.length > 1) return { schedule: null, ambiguous: true };
+  const deduplicated = deduplicateCanonicalGenerated(eligible);
+  const exact = deduplicated.filter((schedule) =>
+    schedule.startDate === periodStartDate && schedule.endDate === periodEndDate);
+  const covering = deduplicated.filter((schedule) =>
+    schedule.startDate! <= periodStartDate && schedule.endDate! >= periodEndDate);
+  const tier = exact.length ? exact : covering;
+  const preferred = tier
+    .find((schedule) => schedule.scheduleId === preferredScheduleId);
+  const ordered = [...tier].sort((left, right) =>
+    Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
+    Number(isCanonicalGeneratedSchedule(right)) - Number(isCanonicalGeneratedSchedule(left)) ||
+    String(left.startDate).localeCompare(String(right.startDate)) ||
+    String(left.endDate).localeCompare(String(right.endDate)) ||
+    left.scheduleId.localeCompare(right.scheduleId),
+  );
+  return { schedule: preferred || ordered[0] || null, ambiguous: false };
+};
 
-  if (canonicalGenerated.length === 1) return { schedule: canonicalGenerated[0], ambiguous: false };
-  if (canonicalGenerated.length > 1 || resolutionCandidates.length > 1) return { schedule: null, ambiguous: true };
-  return resolutionCandidates.length === 1
-    ? { schedule: resolutionCandidates[0], ambiguous: false }
-    : { schedule: null, ambiguous: false };
+const deduplicateCanonicalGenerated = <T extends TeamScheduleSummary>(schedules: T[]) => {
+  const canonicalGenerated = schedules.filter(isCanonicalGeneratedSchedule);
+  return schedules.filter((schedule) =>
+    schedule.source != null ||
+    !canonicalGenerated.some((generated) =>
+      generated.startDate === schedule.startDate && generated.endDate === schedule.endDate),
+  );
 };
 
 const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>

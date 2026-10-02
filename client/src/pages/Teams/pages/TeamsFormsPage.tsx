@@ -1,21 +1,25 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import RangeSelector from "../components/RangeSelector";
-import { rangeSelectionStorageKey, useRangeSelection } from "../rangeSelection";
+import { resolveRangePreset, useRangeSelection } from "../rangeSelection";
 import { filterFormsByDateRange } from "../formsPeriodFilters";
 import IntakeManager from "../managers/IntakeManager";
 import { useTeamsPage } from "../TeamsPageContext";
+import { isActive } from "../teamsUtils";
+import { getUpcomingServiceRange } from "../servicePeriodRange";
 
 const TeamsFormsPage = () => {
-  const { churchId, pageData, upsertData, canEditTeams } = useTeamsPage();
+  const { pageData, upsertData, canEditTeams } = useTeamsPage();
+  const resolveUpcomingRange = useCallback(() => {
+    return getUpcomingServiceRange(pageData.services.filter(isActive));
+  }, [pageData.services]);
   const {
     preset: periodPreset,
     range: periodRange,
     selectPreset: selectPeriodPreset,
     selectCustomRange,
   } = useRangeSelection({
-    persistence: {
-      key: churchId ? rangeSelectionStorageKey("forms", churchId) : null,
-    },
+    resolveUpcomingRange,
+    resolvePresetRange: (preset) => resolveRangePreset(preset),
   });
   const visibleForms = useMemo(
     () => filterFormsByDateRange(pageData.intakeForms, {

@@ -43,6 +43,8 @@ export type DateRangePickerProps = {
   /** Falls back to `label` when omitted. */
   "aria-label"?: string;
   id?: string;
+  /** Optional button content for compact inline range controls. */
+  triggerContent?: React.ReactNode;
 };
 
 /**
@@ -84,6 +86,7 @@ const DateRangePicker = ({
   inputClassName,
   "aria-label": ariaLabel,
   id,
+  triggerContent,
 }: DateRangePickerProps) => {
   const [open, setOpen] = React.useState(false);
   const generatedId = React.useId();
@@ -143,7 +146,22 @@ const DateRangePicker = ({
       ) : null}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
-          <div className="relative">
+          {triggerContent ? (
+            <button
+              type="button"
+              id={fieldId}
+              disabled={disabled}
+              aria-label={ariaLabel || label || "Date range"}
+              aria-haspopup="dialog"
+              aria-expanded={open}
+              aria-keyshortcuts={DATE_PICKER_POPOVER_KEYSHORTCUT}
+              className={cn("cursor-pointer", disabled && "cursor-not-allowed", inputClassName)}
+              onClick={openCalendar}
+              onKeyDown={(event) => openCalendarOnAltArrowDown(event, openCalendar, disabled)}
+            >
+              {triggerContent}
+            </button>
+          ) : <div className="relative">
             <Input
               id={fieldId}
               ref={inputRef}
@@ -173,7 +191,7 @@ const DateRangePicker = ({
               disabled={disabled}
               aria-label="Open date range calendar"
             />
-          </div>
+          </div>}
         </PopoverAnchor>
         <PopoverContent
           align="start"

@@ -2,22 +2,17 @@ import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import {
+  calendarMonthRange,
   formatResolvedDateRange,
-  rangeSelectionStorageKey,
-  readRangeSelectionPreference,
   resolveRangePreset,
-  resolveRangeSelection,
   shiftRange,
-  type RangePreset,
-  writeRangeSelectionPreference,
   useRangeSelection,
 } from "./rangeSelection";
 
-describe("resolveRangePreset", () => {
+describe("calendar range helpers", () => {
   const lateSeptember = new Date(2026, 8, 29, 12);
 
   it.each([
-    ["upcoming", { start: "2026-09-29", end: "2026-10-29" }],
     ["thisMonth", { start: "2026-09-01", end: "2026-09-30" }],
     ["nextMonth", { start: "2026-10-01", end: "2026-10-31" }],
     ["thisQuarter", { start: "2026-07-01", end: "2026-09-30" }],
@@ -26,133 +21,94 @@ describe("resolveRangePreset", () => {
     expect(resolveRangePreset(preset, lateSeptember)).toEqual(expected);
   });
 
-  it("handles the December and quarter-year boundaries", () => {
-    expect(resolveRangePreset("upcoming", new Date(2026, 11, 31, 12))).toEqual({
-      start: "2026-12-31",
-      end: "2027-01-30",
-    });
-    expect(resolveRangePreset("nextQuarter", new Date(2026, 10, 8, 12))).toEqual({
-      start: "2027-01-01",
-      end: "2027-03-31",
+  it("returns the calendar month containing an arbitrary target date", () => {
+    expect(calendarMonthRange(new Date(2026, 10, 29, 12))).toEqual({
+      start: "2026-11-01",
+      end: "2026-11-30",
     });
   });
 
-  it.each([
-    ["beginning of a month", new Date(2026, 9, 1, 12), { start: "2026-10-01", end: "2026-10-31" }],
-    ["middle of a month", new Date(2026, 9, 17, 12), { start: "2026-10-17", end: "2026-11-16" }],
-    ["month end in a non-leap year", new Date(2025, 0, 31, 12), { start: "2025-01-31", end: "2025-03-02" }],
-    ["February in a leap year", new Date(2024, 1, 29, 12), { start: "2024-02-29", end: "2024-03-30" }],
-  ])("resolves Upcoming across %s", (_label, now, expected) => {
-    expect(resolveRangePreset("upcoming", now)).toEqual(expected);
-  });
-});
-
-describe("shared range display helpers", () => {
-  it("formats the resolved range for supporting text", () => {
+  it("formats and shifts complete calendar periods", () => {
     expect(formatResolvedDateRange({ start: "2026-10-01", end: "2026-10-31" })).toBe(
       "Oct 1, 2026 – Oct 31, 2026",
     );
-  });
-
-  it("shifts custom and fixed ranges without changing their semantic length", () => {
-    expect(shiftRange("custom", { start: "2026-09-29", end: "2026-10-03" }, 1)).toEqual({
-      start: "2026-10-04",
-      end: "2026-10-08",
-    });
-    expect(shiftRange("thisMonth", { start: "2026-12-01", end: "2026-12-31" }, 1)).toEqual({
+    expect(shiftRange("upcoming", { start: "2026-12-01", end: "2026-12-31" }, 1)).toEqual({
       start: "2027-01-01",
       end: "2027-01-31",
+    });
+    expect(shiftRange("custom", { start: "2026-09-29", end: "2026-10-03" }, -1)).toEqual({
+      start: "2026-08-01",
+      end: "2026-08-31",
+    });
+    expect(shiftRange("custom", { start: "2026-07-01", end: "2026-09-30" }, 1)).toEqual({
+      start: "2026-10-01",
+      end: "2026-12-31",
     });
   });
 });
 
-describe("shared range persistence", () => {
+describe("transient range selection", () => {
   beforeEach(() => localStorage.clear());
 
-  it("keeps saved ranges page-specific", () => {
-    const servicesKey = rangeSelectionStorageKey("services", "church-a");
-    const schedulesKey = rangeSelectionStorageKey("schedules", "church-a");
-
-    writeRangeSelectionPreference(servicesKey, { preset: "thisQuarter" });
-    writeRangeSelectionPreference(schedulesKey, { preset: "upcoming" });
-
-    expect(readRangeSelectionPreference(servicesKey)?.preset).toBe("thisQuarter");
-    expect(readRangeSelectionPreference(schedulesKey)?.preset).toBe("upcoming");
-  });
-
-  it("resolves query state before saved state and defaults to Upcoming", () => {
-    const defaultRange = { start: "2026-09-29", end: "2026-10-31" };
-    const resolver = (preset: Exclude<RangePreset, "custom">) =>
-      preset === "thisMonth"
-        ? { start: "2026-09-01", end: "2026-09-30" }
-        : defaultRange;
-
-    expect(resolveRangeSelection({
-      savedSelection: { preset: "thisQuarter" },
-      defaultRange,
-      resolvePresetRange: resolver,
-    })).toMatchObject({ preset: "thisQuarter", source: "saved" });
-    expect(resolveRangeSelection({
-      querySelection: { preset: "thisMonth" },
-      savedSelection: { preset: "thisQuarter" },
-      defaultRange,
-      resolvePresetRange: resolver,
-    })).toEqual({
-      preset: "thisMonth",
-      range: { start: "2026-09-01", end: "2026-09-30" },
-      source: "query",
-    });
-    expect(resolveRangeSelection({ defaultRange, resolvePresetRange: resolver })).toEqual({
-      preset: "upcoming",
-      range: defaultRange,
-      source: "default",
-    });
-  });
-
-  it("reads the existing Services filter record as a migration fallback", () => {
-    const legacyKey = "worshipSync:teamsPlansFilters:church-a";
-    localStorage.setItem(legacyKey, JSON.stringify({
-      version: 1,
-      rangePreset: "custom",
-      customStartDate: "2026-08-01",
-      customEndDate: "2026-08-31",
-    }));
-
-    expect(readRangeSelectionPreference(legacyKey)).toEqual({
-      preset: "custom",
-      range: { start: "2026-08-01", end: "2026-08-31" },
-    });
-  });
-
-  it("restores an intentional selection without sharing it across page keys", async () => {
+  it("ignores old stored values and returns to Upcoming after unmount/remount", async () => {
     const user = userEvent.setup();
-    const Harness = ({ page }: { page: string }) => {
+    const legacyKey = "worshipSync:teamsRange:services:church-a";
+    localStorage.setItem(legacyKey, JSON.stringify({ preset: "thisQuarter" }));
+    const upcomingRange = { start: "2026-12-01", end: "2026-12-31" };
+    const Harness = () => {
+      const selection = useRangeSelection({ resolveUpcomingRange: () => upcomingRange });
+      return createElement(
+        "div",
+        null,
+        createElement("output", null, `${selection.preset}:${selection.range.start}`),
+        createElement("button", {
+          type: "button",
+          onClick: () => selection.selectPreset("thisQuarter"),
+        }, "This quarter"),
+      );
+    };
+
+    const view = render(createElement(Harness));
+    expect(screen.getByText("upcoming:2026-12-01")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "This quarter" }));
+    expect(screen.getByText(/thisQuarter:/)).toBeInTheDocument();
+    view.unmount();
+
+    render(createElement(Harness));
+    expect(screen.getByText("upcoming:2026-12-01")).toBeInTheDocument();
+    expect(localStorage.getItem(legacyKey)).toContain("thisQuarter");
+    cleanup();
+  });
+
+  it("recalculates Upcoming and marks an arrow-shifted range as Custom", async () => {
+    const user = userEvent.setup();
+    const Harness = () => {
       const selection = useRangeSelection({
-        persistence: { key: rangeSelectionStorageKey(page, "church-a") },
+        resolveUpcomingRange: () => ({ start: "2026-12-01", end: "2026-12-31" }),
       });
       return createElement(
         "div",
         null,
-        createElement("output", null, selection.preset),
-        createElement(
-          "button",
-          { type: "button", onClick: () => selection.selectPreset("thisQuarter") },
-          "This quarter",
-        ),
+        createElement("output", null, `${selection.preset}:${selection.range.start}`),
+        createElement("button", {
+          type: "button",
+          onClick: () => selection.setSelection("custom", shiftRange(
+            selection.preset,
+            selection.range,
+            -1,
+          )),
+        }, "Previous"),
+        createElement("button", {
+          type: "button",
+          onClick: () => selection.selectPreset("upcoming"),
+        }, "Upcoming"),
       );
     };
 
-    const view = render(createElement(Harness, { page: "schedules" }));
-    expect(screen.getByText("upcoming")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "This quarter" }));
-    expect(screen.getByText("thisQuarter")).toBeInTheDocument();
-    view.unmount();
-
-    render(createElement(Harness, { page: "schedules" }));
-    expect(screen.getByText("thisQuarter")).toBeInTheDocument();
-    cleanup();
-
-    render(createElement(Harness, { page: "forms" }));
-    expect(screen.getByText("upcoming")).toBeInTheDocument();
+    render(createElement(Harness));
+    await user.click(screen.getByRole("button", { name: "Previous" }));
+    expect(screen.getByText("custom:2026-11-01")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Upcoming" }));
+    expect(screen.getByText("upcoming:2026-12-01")).toBeInTheDocument();
   });
 });
