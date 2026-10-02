@@ -1,3 +1,10 @@
+## [2.41.1](https://github.com/K-Cheddar/worship-sync/compare/v2.41.0...v2.41.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **teams:** simplify date range behavior ([cf8f66c](https://github.com/K-Cheddar/worship-sync/commit/cf8f66cddad9da805e07828d6d4bdd10ebbec40a))
+
 # [2.41.0](https://github.com/K-Cheddar/worship-sync/compare/v2.40.1...v2.41.0) (2026-10-02)
 
 
