@@ -101,12 +101,12 @@ export const servicePlanToSummary = (plan: ServicePlan): ServicePlanSummary => (
   published: plan.published,
 });
 
-export const formatControllerServicePlanLabel = (
+export const formatControllerServicePlanDateTime = (
   plan: ServicePlanSummary,
 ): string => {
   const dateSource = plan.startsAt || `${plan.date}T12:00:00`;
   const parsed = Date.parse(dateSource);
-  const dateLabel = Number.isFinite(parsed)
+  return Number.isFinite(parsed)
     ? new Date(parsed).toLocaleString(undefined, {
         weekday: "short",
         month: "short",
@@ -116,5 +116,9 @@ export const formatControllerServicePlanLabel = (
           : {}),
       })
     : plan.date;
-  return `${plan.name?.trim() || "Service plan"} · ${dateLabel}`;
 };
+
+export const formatControllerServicePlanLabel = (
+  plan: ServicePlanSummary,
+): string =>
+  `${plan.name?.trim() || "Service plan"} · ${formatControllerServicePlanDateTime(plan)}`;

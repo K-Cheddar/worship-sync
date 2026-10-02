@@ -74,6 +74,7 @@ import { getServicePlanResourceTypeLabel } from "../Services/servicePlanResource
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { ensureElementInView } from "../../utils/generalUtils";
 import {
+  formatControllerServicePlanDateTime,
   formatControllerServicePlanLabel,
   isControllerServicePlanUpcoming,
   limitControllerServicePlans,
@@ -903,6 +904,11 @@ const ServicePlanningSyncFloatingWindow = ({
     dispatch(setServicePlanningFloatingWindowDismissed(true));
   };
 
+  const selectedPlanName = selectedPlan?.name?.trim() || "Service plan";
+  const selectedPlanDateTime = selectedPlan
+    ? formatControllerServicePlanDateTime(selectedPlan)
+    : null;
+
   let selectedPlanLabel = "Choose a service plan";
   if (selectedPlan) {
     selectedPlanLabel = formatControllerServicePlanLabel(selectedPlan);
@@ -947,9 +953,16 @@ const ServicePlanningSyncFloatingWindow = ({
               type="button"
               aria-label={`Select service plan: ${selectedPlanLabel}`}
               disabled={isSyncActive || isLoadingPlans}
-              className="flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-600 bg-zinc-900 px-2.5 text-left text-xs text-white outline-none transition-colors hover:border-zinc-400 focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex min-h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-600 bg-zinc-900 px-2.5 py-1.5 text-left text-xs text-white outline-none transition-colors hover:border-zinc-400 focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="truncate">{selectedPlanLabel}</span>
+              {selectedPlan && selectedPlanDateTime ? (
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="min-w-0 truncate font-medium">{selectedPlanName}</span>
+                  <span className="shrink-0 text-[11px] text-zinc-400 sm:text-xs">{selectedPlanDateTime}</span>
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1 truncate">{selectedPlanLabel}</span>
+              )}
               {isLoadingPlans ? (
                 <Spinner width="14px" borderWidth="2px" />
               ) : (
@@ -960,7 +973,7 @@ const ServicePlanningSyncFloatingWindow = ({
           <PopoverContent
             align="start"
             data-testid="service-plan-picker-content"
-            className="flex max-h-[min(var(--radix-popper-available-height),65vh,24rem)] w-(--radix-popover-trigger-width) flex-col overflow-hidden border-zinc-700 bg-gray-800 p-2 text-white"
+            className="scrollbar-portal flex max-h-[min(var(--radix-popper-available-height),65vh,24rem)] w-(--radix-popover-trigger-width) flex-col overflow-hidden border-zinc-700 bg-gray-800 p-2 text-white"
           >
             <input
               type="search"
@@ -1052,20 +1065,27 @@ const ServicePlanningSyncFloatingWindow = ({
                             ref={active ? activePlanOptionRef : undefined}
                             type="button"
                             role="option"
+                            aria-label={formatControllerServicePlanLabel(plan)}
                             aria-selected={selected}
                             tabIndex={-1}
                             disabled={isSyncActive}
                             onMouseMove={() => setActivePlanKey(plan.planKey)}
                             onClick={() => selectPickerPlan(plan.planKey)}
                             className={cn(
-                              "flex min-h-9 w-full items-center gap-2 rounded px-2 text-left text-xs hover:bg-zinc-700 disabled:opacity-60",
+                              "flex min-h-11 w-full flex-col items-stretch justify-center gap-0.5 rounded px-2 py-1.5 text-left text-xs hover:bg-zinc-700 disabled:opacity-60 sm:min-h-9 sm:flex-row sm:items-center sm:gap-2 sm:py-0",
                               active && "bg-zinc-700 outline-none",
                             )}
                           >
-                            <span className="min-w-0 flex-1 truncate">
-                              {formatControllerServicePlanLabel(plan)}
+                            <span className="flex min-w-0 items-center gap-2 sm:flex-1">
+                              <span className="min-w-0 flex-1 truncate font-medium">
+                                {plan.name?.trim() || "Service plan"}
+                              </span>
+                              {selected ? <Check size={14} className="shrink-0 text-cyan-300 sm:hidden" aria-hidden /> : null}
                             </span>
-                            {selected ? <Check size={14} className="shrink-0 text-cyan-300" aria-hidden /> : null}
+                            <span className="shrink-0 text-[11px] text-zinc-400 sm:text-xs">
+                              {formatControllerServicePlanDateTime(plan)}
+                            </span>
+                            {selected ? <Check size={14} className="hidden shrink-0 text-cyan-300 sm:block" aria-hidden /> : null}
                           </button>
                         );
                       })}

@@ -168,10 +168,20 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
     // Keep overlay DOM outside the window's overflow and transform contexts,
     // while retaining a React ownership boundary for Radix focus/dismissal.
     useLayoutEffect(() => {
-      const ownerDocument = containerRef.current?.ownerDocument;
-      if (!ownerDocument) return;
+      const windowElement = containerRef.current;
+      const ownerDocument = windowElement?.ownerDocument;
+      if (!windowElement || !ownerDocument) return;
 
       const host = ownerDocument.createElement("div");
+      let inheritedScrollbarWidth = "";
+      for (let ancestor: HTMLElement | null = windowElement; ancestor; ancestor = ancestor.parentElement) {
+        inheritedScrollbarWidth = ownerDocument.defaultView
+          ?.getComputedStyle(ancestor)
+          .getPropertyValue("--scrollbar-width")
+          .trim() || ancestor.style.getPropertyValue("--scrollbar-width").trim();
+        if (inheritedScrollbarWidth) break;
+      }
+      host.style.setProperty("--scrollbar-width", inheritedScrollbarWidth || "thin");
       host.dataset.testid = "floating-window-overlay-host";
       host.dataset.floatingWindowOverlayHost = windowId;
       host.style.position = "fixed";
