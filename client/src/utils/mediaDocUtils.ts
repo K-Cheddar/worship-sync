@@ -240,6 +240,10 @@ export async function persistMediaStateChanges(
   before: { list: MediaType[]; folders: MediaFolder[] },
   after: { list: MediaType[]; folders: MediaFolder[] },
   canCommit: () => boolean = () => true,
+  rowCommitGuards: {
+    canCommitItem?: (id: string) => boolean;
+    canCommitFolders?: () => boolean;
+  } = {},
 ) {
   if (!canCommit()) return [];
   const schemaV2 = await isMediaLibraryV2(db);
@@ -250,13 +254,53 @@ export async function persistMediaStateChanges(
     const schemaChanged = await isMediaLibraryV2(db);
     if (!canCommit()) return [];
     if (schemaChanged) {
-      return persistMediaStateChanges(db, before, after, canCommit);
+      return persistMediaStateChanges(db, before, after, canCommit, rowCommitGuards);
     }
-    current.list = [...after.list];
-    current.folders = [...after.folders];
-    current.updatedAt = new Date().toISOString();
-    await db.put(current);
-    return [current];
+    const beforeById = new Map(before.list.map((item) => [item.id, item]));
+    const afterById = new Map(after.list.map((item) => [item.id, item]));
+    const changedItemIds = new Set<string>();
+    for (const [id, item] of afterById) {
+      if (JSON.stringify(beforeById.get(id)) !== JSON.stringify(item)) changedItemIds.add(id);
+    }
+    for (const id of beforeById.keys()) {
+      if (!afterById.has(id)) changedItemIds.add(id);
+    }
+    const foldersChanged = JSON.stringify(before.folders) !== JSON.stringify(after.folders);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!canCommit()) return [];
+      const latest = await loadOrCreateMediaDoc(db, canCommit);
+      if (!latest || !canCommit()) return [];
+      const schemaChangedBeforeRetry = await isMediaLibraryV2(db);
+      if (!canCommit()) return [];
+      if (schemaChangedBeforeRetry) {
+        return persistMediaStateChanges(db, before, after, canCommit, rowCommitGuards);
+      }
+
+      const mergedById = new Map(latest.list.map((item) => [item.id, item]));
+      for (const id of changedItemIds) {
+        if (!canCommit() || !(rowCommitGuards.canCommitItem?.(id) ?? true)) continue;
+        const localItem = afterById.get(id);
+        if (localItem) mergedById.set(id, localItem);
+        else mergedById.delete(id);
+      }
+      const merged = {
+        ...latest,
+        list: [...mergedById.values()],
+        folders: foldersChanged && canCommit() && (rowCommitGuards.canCommitFolders?.() ?? true)
+          ? [...after.folders]
+          : [...(latest.folders ?? [])],
+        updatedAt: new Date().toISOString(),
+      };
+      if (!canCommit()) return [];
+      try {
+        await db.put(merged);
+        return [merged];
+      } catch (error) {
+        if (!isPouchConflict(error) || attempt === 2) throw error;
+      }
+    }
+    return [];
   }
   const beforeById = new Map(before.list.map((item) => [item.id, item]));
   const afterById = new Map(after.list.map((item) => [item.id, item]));
@@ -265,6 +309,8 @@ export async function persistMediaStateChanges(
     const previous = beforeById.get(id);
     if (JSON.stringify(previous) !== JSON.stringify(item)) {
       if (!canCommit()) return changedDocs;
+      const canCommitItem = () => canCommit() && (rowCommitGuards.canCommitItem?.(id) ?? true);
+      if (!canCommitItem()) continue;
       const patch: Record<string, unknown> = {};
       const keys = new Set([...Object.keys(previous || {}), ...Object.keys(item)] as (keyof MediaType)[]);
       for (const key of keys) {
@@ -276,7 +322,7 @@ export async function persistMediaStateChanges(
         db,
         id,
         patch as Partial<MediaType>,
-        canCommit,
+        canCommitItem,
         !previous,
       );
       if (result) {
@@ -294,13 +340,18 @@ export async function persistMediaStateChanges(
   for (const id of beforeById.keys()) {
     if (!afterById.has(id)) {
       if (!canCommit()) return changedDocs;
-      const result = await removeMediaItem(db, id, canCommit);
+      const canCommitItem = () => canCommit() && (rowCommitGuards.canCommitItem?.(id) ?? true);
+      if (!canCommitItem()) continue;
+      const result = await removeMediaItem(db, id, canCommitItem);
       if (result) changedDocs.push({ _id: mediaItemDocId(id), id, _deleted: true });
     }
   }
   if (JSON.stringify(before.folders) !== JSON.stringify(after.folders)) {
     if (!canCommit()) return changedDocs;
-    const result = await saveMediaFolders(db, after.folders, canCommit);
+    const canCommitFolders = () => canCommit() && (rowCommitGuards.canCommitFolders?.() ?? true);
+    const result = canCommitFolders()
+      ? await saveMediaFolders(db, after.folders, canCommitFolders)
+      : undefined;
     if (result) changedDocs.push({ _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: after.folders });
   }
   return changedDocs;

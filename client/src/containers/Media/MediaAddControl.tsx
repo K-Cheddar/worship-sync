@@ -26,7 +26,10 @@ export const MediaAddControl = ({
   }] : []);
   const overview = getTransferOverview(transfers);
   const percent = overview.progress === null ? null : Math.round(overview.progress);
-  const showProgress = overview.activeCount > 0 && percent !== null && percent < 100;
+  const progressLabel = percent === null ? "Working…" : `${percent}%`;
+  const headingProgressLabel = percent === null ? progressLabel : `${progressLabel} overall`;
+  const accessibleProgressLabel = percent === null ? "progress unknown" : `${percent}% overall`;
+  const showProgress = overview.activeCount > 0;
 
   return (
     <div className="flex items-center gap-1">
@@ -37,7 +40,7 @@ export const MediaAddControl = ({
             <Button
               variant="tertiary"
               title="Show transfer summary"
-              aria-label={`Show transfer summary: ${overview.activeCount} active transfers, ${percent}% overall`}
+              aria-label={`Show transfer summary: ${overview.activeCount} active transfers, ${accessibleProgressLabel}`}
               className="gap-1"
               padding="px-1.5 py-1"
             >
@@ -59,11 +62,11 @@ export const MediaAddControl = ({
                   />
                 </svg>
               </span>
-              <span>{percent}%</span>
+              <span>{progressLabel}</span>
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] space-y-3 p-3">
-            <h2 className="text-sm font-semibold">Transfers · {overview.activeCount} active · {percent}% overall</h2>
+            <h2 className="text-sm font-semibold">Transfers · {overview.activeCount} active · {headingProgressLabel}</h2>
             <ul className="max-h-64 space-y-3 overflow-y-auto">
               {overview.transfers.map((transfer) => (
                 <li key={transfer.id} className="min-w-0">

@@ -1,9 +1,10 @@
 import type { TeamSchedule, TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 import {
   filterOccurrencesToRange,
+  findOverlappingPeriodSchedules,
   findReusablePeriodSchedule,
-  persistedScheduleRange,
   rangeFromPreset,
+  resolveDisplayedPeriodRange,
 } from "./schedulePeriodUtils";
 
 const occurrence: TeamScheduleOccurrence = {
@@ -17,7 +18,6 @@ const target = {
   teamId: "team-1",
   startDate: "2026-10-01",
   endDate: "2026-10-31",
-  serviceIds: ["service"],
   occurrences: [occurrence],
 };
 type TestSchedule = TeamScheduleSummary & Pick<Partial<TeamSchedule>, "assignments">;
@@ -28,55 +28,16 @@ const schedule = (changes: Partial<TestSchedule> = {}): TestSchedule => ({
   teamId: target.teamId,
   startDate: target.startDate,
   endDate: target.endDate,
-  serviceIds: target.serviceIds,
+  serviceIds: ["service"],
   occurrences: target.occurrences,
   ...changes,
 });
 
 describe("rangeFromPreset", () => {
-  it("includes today through 30 days from today for Upcoming", () => {
-    expect(rangeFromPreset("upcoming", new Date(2026, 8, 29, 12))).toEqual({
-      start: "2026-09-29",
-      end: "2026-10-29",
-    });
-  });
-
-  it("handles the December to January boundary for Upcoming", () => {
-    expect(rangeFromPreset("upcoming", new Date(2026, 11, 31, 12))).toEqual({
-      start: "2026-12-31",
-      end: "2027-01-30",
-    });
-  });
-
   it("keeps This month as the full current calendar month", () => {
     expect(rangeFromPreset("thisMonth", new Date(2026, 8, 29, 12))).toEqual({
       start: "2026-09-01",
       end: "2026-09-30",
-    });
-  });
-});
-
-describe("persistedScheduleRange", () => {
-  it("keeps Upcoming identity on calendar bounds while its visible start advances", () => {
-    const dayOne = persistedScheduleRange("upcoming", { start: "2026-09-29", end: "2026-10-29" });
-    const dayTwo = persistedScheduleRange("upcoming", { start: "2026-09-30", end: "2026-10-30" });
-
-    expect(dayOne).toEqual({ start: "2026-09-01", end: "2026-10-31" });
-    expect(dayTwo).toEqual(dayOne);
-    expect(persistedScheduleRange("upcoming", { start: "2026-10-01", end: "2026-10-31" })).toEqual({
-      start: "2026-10-01",
-      end: "2026-10-31",
-    });
-  });
-
-  it("preserves explicit full-month and custom ranges", () => {
-    expect(persistedScheduleRange("thisMonth", { start: "2026-09-01", end: "2026-09-30" })).toEqual({
-      start: "2026-09-01",
-      end: "2026-09-30",
-    });
-    expect(persistedScheduleRange("custom", { start: "2026-09-29", end: "2026-10-03" })).toEqual({
-      start: "2026-09-29",
-      end: "2026-10-03",
     });
   });
 });
@@ -124,22 +85,81 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses legacy rolling generated records without dropping their assignments", () => {
+  it("does not use a partial custom December schedule as the full-period default", () => {
+    const decemberSchedule = schedule({
+      scheduleId: "saved-december-5-to-28",
+      startDate: "2026-12-05",
+      endDate: "2026-12-28",
+      source: "custom",
+    });
+    const upcomingTarget = {
+      ...target,
+      startDate: "2026-12-01",
+      endDate: "2026-12-31",
+      visibleStartDate: "2026-12-01",
+      visibleEndDate: "2026-12-31",
+      legacyOccurrenceDate: "2026-12-05",
+    };
+
+    expect(findReusablePeriodSchedule({ schedules: [decemberSchedule], ...upcomingTarget })).toEqual({
+      schedule: null,
+      ambiguous: false,
+    });
+  });
+
+  it("keeps a partial legacy generated record out of the full-period default and picker list", () => {
     const legacyRollingRecord = schedule({
       scheduleId: "generated_old-rolling-key",
       source: "generated-period",
       generatedPeriodKey: "old-rolling-key",
       startDate: "2026-09-29",
-      endDate: "2026-10-31",
+      endDate: "2026-10-05",
       assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
     });
+    const octoberOccurrences = [3, 10, 17, 24, 31].map((day) => ({
+      ...occurrence,
+      occurrenceId: `service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    }));
 
     expect(findReusablePeriodSchedule({
       schedules: [legacyRollingRecord],
       ...target,
-      startDate: "2026-09-01",
-      visibleStartDate: "2026-09-29",
-    })).toEqual({ schedule: legacyRollingRecord, ambiguous: false });
+      occurrences: octoberOccurrences,
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+      preferredScheduleId: legacyRollingRecord.scheduleId,
+    })).toEqual({ schedule: null, ambiguous: false });
+    expect(filterOccurrencesToRange(octoberOccurrences, {
+      start: "2026-10-01",
+      end: "2026-10-31",
+    })).toEqual(octoberOccurrences);
+    expect(findOverlappingPeriodSchedules({
+      schedules: [legacyRollingRecord],
+      churchId: target.churchId,
+      teamId: target.teamId,
+      range: { start: "2026-10-01", end: "2026-10-31" },
+    })).toEqual([legacyRollingRecord]);
+  });
+
+  it("does not promote a partial source-less generated record", () => {
+    const legacyGenerated = schedule({
+      scheduleId: "generated_legacy-rolling-key",
+      startDate: "2026-09-29",
+      endDate: "2026-10-05",
+    });
+    expect(findReusablePeriodSchedule({
+      schedules: [legacyGenerated],
+      ...target,
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+    })).toEqual({ schedule: null, ambiguous: false });
+    expect(findOverlappingPeriodSchedules({
+      schedules: [legacyGenerated],
+      churchId: target.churchId,
+      teamId: target.teamId,
+      range: { start: "2026-10-01", end: "2026-10-31" },
+    })).toEqual([legacyGenerated]);
   });
 
   it("prefers the sole populated overlapping generated schedule", () => {
@@ -167,7 +187,7 @@ describe("findReusablePeriodSchedule", () => {
     })).toEqual({ schedule: populated, ambiguous: false });
   });
 
-  it("surfaces multiple populated overlapping schedules as ambiguous", () => {
+  it("chooses a stable populated candidate when several legitimate schedules overlap", () => {
     const populatedA = schedule({
       scheduleId: "generated_populated-a",
       generatedPeriodKey: "populated-a",
@@ -190,7 +210,7 @@ describe("findReusablePeriodSchedule", () => {
       ...target,
       startDate: "2026-10-01",
       visibleStartDate: "2026-10-01",
-    })).toEqual({ schedule: null, ambiguous: true });
+    })).toEqual({ schedule: populatedA, ambiguous: false });
   });
 
   it("does not cross-wire schedules from another team", () => {
@@ -244,7 +264,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("keeps a populated overlapping legacy period ambiguous beside generated data", () => {
+  it("prefers the exact monthly period over a populated broader legacy period", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
       source: "generated-period",
@@ -257,9 +277,13 @@ describe("findReusablePeriodSchedule", () => {
       endDate: "2026-11-30",
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "legacy-member" } } },
     });
-    expect(findReusablePeriodSchedule({ schedules: [generated, widerLegacy], ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
+    expect(findReusablePeriodSchedule({
+      schedules: [generated, widerLegacy],
+      ...target,
+      preferredScheduleId: widerLegacy.scheduleId,
+    })).toEqual({
+      schedule: generated,
+      ambiguous: false,
     });
   });
 
@@ -283,10 +307,7 @@ describe("findReusablePeriodSchedule", () => {
       generatedPeriodKey: "period-key",
     });
     const legacy = schedule({ scheduleId: "legacy" });
-    expect(findReusablePeriodSchedule({ schedules: [invalidGenerated, legacy], ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [invalidGenerated, legacy], ...target }).schedule?.scheduleId).toBe("generated_another-key");
   });
 
   it("does not reuse a generated record whose stored period differs from the target", () => {
@@ -316,7 +337,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses a populated custom schedule by covered dates after occurrence drift", () => {
+  it("reuses a populated schedule after all service identities are replaced", () => {
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => ({
       ...occurrence,
       occurrenceId: `old-service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
@@ -336,13 +357,17 @@ describe("findReusablePeriodSchedule", () => {
       startsAt: `2026-10-${String(day).padStart(2, "0")}T11:00:00.000Z`,
     }));
 
-    expect(findReusablePeriodSchedule({
+    const result = findReusablePeriodSchedule({
       schedules: [custom],
       ...target,
       occurrences: currentOccurrences,
       visibleStartDate: "2026-10-01",
       visibleEndDate: "2026-10-31",
-    })).toEqual({ schedule: custom, ambiguous: false });
+    });
+
+    expect(result).toEqual({ schedule: custom, ambiguous: false });
+    expect(result.schedule?.occurrences).toEqual(savedOccurrences);
+    expect((result.schedule as TeamSchedule).assignments).toEqual(custom.assignments);
   });
 
   it("reuses a saved period when current Setup has no occurrences", () => {
@@ -360,7 +385,7 @@ describe("findReusablePeriodSchedule", () => {
     })).toEqual({ schedule: custom, ambiguous: false });
   });
 
-  it("matches a stored range that covers occurrences without covering blank display days", () => {
+  it("does not use a one-day schedule to fill a full-month period", () => {
     const occurrenceDateOnly = schedule({
       scheduleId: "different-range",
       source: "custom",
@@ -369,7 +394,7 @@ describe("findReusablePeriodSchedule", () => {
       assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
     });
     expect(findReusablePeriodSchedule({ schedules: [occurrenceDateOnly], ...target })).toEqual({
-      schedule: occurrenceDateOnly,
+      schedule: null,
       ambiguous: false,
     });
   });
@@ -391,7 +416,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("keeps multiple populated compatible schedules ambiguous across sources", () => {
+  it("prefers a canonical generated schedule among multiple populated exact candidates", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
       source: "generated-period",
@@ -404,8 +429,8 @@ describe("findReusablePeriodSchedule", () => {
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member-b" } } },
     });
     expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
+      schedule: generated,
+      ambiguous: false,
     });
   });
 
@@ -431,7 +456,7 @@ describe("findReusablePeriodSchedule", () => {
     }).schedule?.scheduleId).toBe("schedule-1");
   });
 
-  it("does not choose among multiple equivalent legacy schedules", () => {
+  it("chooses a stable populated source-less legacy candidate", () => {
     const schedules = [
       schedule({
         scheduleId: "a",
@@ -443,8 +468,112 @@ describe("findReusablePeriodSchedule", () => {
       }),
     ];
     expect(findReusablePeriodSchedule({ schedules, ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
+      schedule: schedules[0],
+      ambiguous: false,
     });
+  });
+});
+
+describe("findOverlappingPeriodSchedules", () => {
+  const range = { start: "2026-10-01", end: "2026-10-31" };
+  const schedules = [
+    schedule({ scheduleId: "month", name: "October 2026" }),
+    schedule({ scheduleId: "single", name: "Youth Sabbath", startDate: "2026-10-10", endDate: "2026-10-10" }),
+    schedule({ scheduleId: "event", name: "Fall Revival", startDate: "2026-10-18", endDate: "2026-10-24" }),
+    schedule({ scheduleId: "quarter", name: "Quarter 4", startDate: "2026-10-01", endDate: "2026-12-31" }),
+    schedule({ scheduleId: "september", startDate: "2026-09-01", endDate: "2026-09-30" }),
+    schedule({ scheduleId: "archived", startDate: "2026-10-05", endDate: "2026-10-06", archivedAt: "2026-09-01" }),
+  ];
+
+  const getOverlaps = (items: TeamScheduleSummary[]) => findOverlappingPeriodSchedules({
+    schedules: items,
+    churchId: target.churchId,
+    teamId: target.teamId,
+    range,
+  });
+
+  it("shows no switcher choice when zero or one active saved schedule overlaps", () => {
+    expect(getOverlaps([schedules[4]])).toHaveLength(0);
+    expect(getOverlaps([schedules[0]])).toHaveLength(1);
+  });
+
+  it("includes every active saved schedule that overlaps, including single-day and wider ranges", () => {
+    expect(getOverlaps(schedules).map(({ scheduleId }) => scheduleId)).toEqual([
+      "month", "quarter", "single", "event",
+    ]);
+  });
+
+  it("does not count archived overlapping schedules", () => {
+    expect(getOverlaps([schedules[0], schedules[5]])).toEqual([schedules[0]]);
+  });
+});
+
+describe("resolveDisplayedPeriodRange", () => {
+  const quarterlySchedule = schedule({
+    startDate: "2026-10-01",
+    endDate: "2026-12-31",
+    occurrences: [3, 10, 17].map((day) => ({
+      ...occurrence,
+      occurrenceId: `service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    })),
+  });
+
+  it("keeps a Custom selection narrow while reusing the quarterly schedule", () => {
+    const selectedRange = { start: "2026-10-05", end: "2026-10-12" };
+    const match = findReusablePeriodSchedule({
+      schedules: [quarterlySchedule],
+      ...target,
+      visibleStartDate: selectedRange.start,
+      visibleEndDate: selectedRange.end,
+    });
+    const displayedRange = resolveDisplayedPeriodRange({
+      preset: "custom",
+      selectedRange,
+      scheduleRange: { start: quarterlySchedule.startDate!, end: quarterlySchedule.endDate! },
+    });
+
+    expect(match.schedule).toBe(quarterlySchedule);
+    expect(displayedRange).toEqual(selectedRange);
+    expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, displayedRange).map((item) => item.startsAt)).toEqual([
+      "2026-10-10T10:00:00.000Z",
+    ]);
+  });
+
+  it("keeps This month on October while reusing the quarterly schedule", () => {
+    const selectedRange = { start: "2026-10-01", end: "2026-10-31" };
+    const match = findReusablePeriodSchedule({
+      schedules: [quarterlySchedule],
+      ...target,
+      visibleStartDate: selectedRange.start,
+      visibleEndDate: selectedRange.end,
+    });
+    const displayedRange = resolveDisplayedPeriodRange({
+      preset: "thisMonth",
+      selectedRange,
+      scheduleRange: { start: quarterlySchedule.startDate!, end: quarterlySchedule.endDate! },
+    });
+
+    expect(match.schedule).toBe(quarterlySchedule);
+    expect(displayedRange).toEqual(selectedRange);
+    expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, displayedRange)).toHaveLength(3);
+  });
+
+  it("keeps Upcoming on its selected range while explicit history uses full saved bounds", () => {
+    const scheduleRange = { start: "2026-10-01", end: "2026-12-31" };
+    const selectedRange = { start: "2026-10-05", end: "2026-10-12" };
+    expect(resolveDisplayedPeriodRange({ preset: "upcoming", selectedRange, scheduleRange })).toEqual(selectedRange);
+    expect(resolveDisplayedPeriodRange({ preset: "custom", selectedRange, scheduleRange, viewingSavedSchedule: true })).toEqual(scheduleRange);
+  });
+
+  it("keeps Upcoming's selected range when a schedule is deliberately switched", () => {
+    const scheduleRange = { start: "2026-10-01", end: "2026-12-31" };
+    const selectedRange = { start: "2026-10-01", end: "2026-10-31" };
+    expect(resolveDisplayedPeriodRange({
+      preset: "upcoming",
+      selectedRange,
+      scheduleRange,
+    })).toEqual(selectedRange);
+    expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, selectedRange)).toHaveLength(3);
   });
 });

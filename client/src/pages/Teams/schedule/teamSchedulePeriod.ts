@@ -6,7 +6,8 @@ import type {
   TeamScheduleSummary,
   TeamService,
 } from "../../../api/authTypes";
-import { formatPlainDate } from "@/utils/plainDate";
+import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { calendarDateInTimeZone } from "../../../utils/teamScheduleOccurrences";
 import { generateScheduleOccurrences, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
 import {
   parseSlotKey,
@@ -14,7 +15,8 @@ import {
   sanitizePositionRequirements,
 } from "./scheduleRequirements";
 import { isHydratedSchedule } from "../../../api/authTypes";
-import { rangeFromPreset } from "./schedulePeriodUtils";
+import { calendarMonthRange } from "../rangeSelection";
+import { serverDate } from "@/utils/serverTime";
 
 export type TeamSchedulePeriod = {
   occurrences: TeamScheduleOccurrence[];
@@ -45,34 +47,26 @@ export const buildTeamSchedulePeriod = ({
     .map((position) => position.positionId);
   const teamPositionIdSet = new Set(teamPositionIds);
   const activeServices = services.filter((service) => !service.archivedAt);
-  const explicitTeamOccurrenceIds = new Set(
-    Object.entries(additionalPositionSlots || {})
-      .filter(([, slotKeys]) => slotKeys.some((slotKey) => {
-        const slot = parseSlotKey(slotKey);
-        return Boolean(slot && teamPositionIdSet.has(slot.positionId));
-      }))
-      .map(([occurrenceId]) => occurrenceId),
-  );
-  const explicitGroupOccurrenceIds = new Set(
-    [...explicitTeamOccurrenceIds].filter((occurrenceId) => occurrenceId.startsWith("group:")),
-  );
+  const explicitTeamOccurrenceIds = Object.entries(additionalPositionSlots || {})
+    .filter(([, slotKeys]) => slotKeys.some((slotKey) => {
+      const slot = parseSlotKey(slotKey);
+      return Boolean(slot && teamPositionIdSet.has(slot.positionId));
+    }))
+    .map(([occurrenceId]) => occurrenceId);
   const explicitlyStaffedServiceIds = new Set<string>();
   for (const service of activeServices) {
-    const serviceOccurrences = generateScheduleOccurrences({
+    const ownOccurrences = generateScheduleOccurrences({
       services: [service],
       serviceIds: [service.serviceId],
       startDate,
       endDate,
     });
-    if (serviceOccurrences.some((occurrence) =>
-      explicitTeamOccurrenceIds.has(occurrence.occurrenceId) ||
-      Boolean(
-        service.serviceGroupId &&
-        explicitGroupOccurrenceIds.has(`group:${service.serviceGroupId}@${getOccurrenceDate(occurrence)}`),
-      ),
-    )) {
-      explicitlyStaffedServiceIds.add(service.serviceId);
-    }
+    if (ownOccurrences.some((occurrence) =>
+      explicitTeamOccurrenceIds.includes(occurrence.occurrenceId) ||
+      Boolean(service.serviceGroupId && explicitTeamOccurrenceIds.includes(
+        `group:${service.serviceGroupId}@${getOccurrenceDate(occurrence)}`,
+      )),
+    )) explicitlyStaffedServiceIds.add(service.serviceId);
   }
   const teamRelevantServices = activeServices.filter((service) =>
     sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
@@ -118,19 +112,21 @@ export const buildTeamSchedulePeriod = ({
   };
 };
 
-/** Pick an upcoming window that starts today and includes the next team occurrence. */
+/** Resolve Upcoming to the full month of the next occurrence that needs this team. */
 export const findInitialTeamSchedulePeriod = ({
   services,
   positions,
   teamId,
   schedules = [],
-  now = new Date(),
+  now = serverDate(),
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 }: {
   services: TeamService[];
   positions: TeamPosition[];
   teamId: string;
   schedules?: Array<TeamSchedule | TeamScheduleSummary>;
   now?: Date;
+  timeZone?: string;
 }): {
   start: string;
   end: string;
@@ -138,8 +134,11 @@ export const findInitialTeamSchedulePeriod = ({
   period: TeamSchedulePeriod;
   nextOccurrence: TeamScheduleOccurrence | null;
 } => {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayPlainDate = formatPlainDate(today);
+  const todayDate = parsePlainDate(calendarDateInTimeZone(now, timeZone));
+  const today = todayDate || new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const teamPositionIds = new Set(positions
+    .filter((position) => position.teamId === teamId)
+    .map((position) => position.positionId));
   const additionalPositionSlots = schedules
     .filter((schedule): schedule is TeamSchedule =>
       !schedule.archivedAt &&
@@ -152,7 +151,55 @@ export const findInitialTeamSchedulePeriod = ({
       });
       return slots;
     }, {});
-  const range = rangeFromPreset("upcoming", today);
+  const relevantServices = services.filter((service) => !service.archivedAt &&
+    sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
+      teamPositionIds.has(requirement.positionId),
+    ));
+  const searchDates = relevantServices.flatMap((service) => [
+    service.startDateISO,
+    ...(service.reccurence === "one_time" ? [service.dateTimeISO?.slice(0, 10)] : []),
+  ]).filter((value): value is string => Boolean(value)).sort();
+  const searchHorizon = new Date(today);
+  searchHorizon.setFullYear(searchHorizon.getFullYear() + 1);
+  const searchEnd = [formatPlainDate(searchHorizon), searchDates[searchDates.length - 1] || ""]
+    .sort()
+    .at(-1) || formatPlainDate(searchHorizon);
+  const scanStart = formatPlainDate(today);
+  const generatedFuture = generateScheduleOccurrences({
+    services: relevantServices,
+    serviceIds: relevantServices.map((service) => service.serviceId),
+    startDate: scanStart,
+    endDate: searchEnd,
+  });
+  const savedFuture = schedules
+    .filter((schedule) => !schedule.archivedAt && schedule.teamId === teamId)
+    .flatMap((schedule) => {
+      const additionalSlots = "additionalPositionSlots" in schedule
+        ? schedule.additionalPositionSlots
+        : undefined;
+      return (schedule.occurrences || []).filter((occurrence) => {
+        const hasTeamRequirement = sanitizePositionRequirements(occurrence.positionRequirements)
+          .some((requirement) => teamPositionIds.has(requirement.positionId));
+        const hasTeamSlot = (additionalSlots?.[occurrence.occurrenceId] || [])
+          .some((slotKey: string) => {
+            const slot = parseSlotKey(slotKey);
+            return Boolean(slot && teamPositionIds.has(slot.positionId));
+          });
+        const startsAt = Date.parse(occurrence.startsAt);
+        return Number.isFinite(startsAt) && startsAt >= now.getTime() &&
+          (hasTeamRequirement || hasTeamSlot);
+      });
+    });
+  const nextOccurrence = [...generatedFuture, ...savedFuture]
+    .filter((occurrence) => {
+      const startsAt = Date.parse(occurrence.startsAt);
+      return Number.isFinite(startsAt) && startsAt >= now.getTime();
+    })
+    .sort((left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt))[0] || null;
+  const nextDate = nextOccurrence
+    ? parsePlainDate(calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone))
+    : null;
+  const range = calendarMonthRange(nextDate || today);
   const period = buildTeamSchedulePeriod({
     services,
     positions,
@@ -161,13 +208,36 @@ export const findInitialTeamSchedulePeriod = ({
     endDate: range.end,
     additionalPositionSlots,
   });
+  if (
+    nextOccurrence &&
+    calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone) !== getOccurrenceDate(nextOccurrence) &&
+    !period.occurrences.some((occurrence) => occurrence.occurrenceId === nextOccurrence.occurrenceId)
+  ) {
+    const occurrenceDate = calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone);
+    if (occurrenceDate >= range.start && occurrenceDate <= range.end) {
+      const service = relevantServices.find((item) => item.serviceId === nextOccurrence.serviceId);
+      const requirements = resolveOccurrenceRequirements({
+        occurrence: nextOccurrence,
+        service,
+        teamPositionIds: [...teamPositionIds],
+        fallbackToAllTeamPositions: false,
+      });
+      if (requirements.length > 0) {
+        period.occurrences.push(nextOccurrence);
+        period.allOccurrences.push(nextOccurrence);
+        period.requirementsByOccurrence.set(nextOccurrence.occurrenceId, requirements);
+        const serviceIds = nextOccurrence.serviceIds || [nextOccurrence.serviceId];
+        serviceIds.forEach((serviceId) => {
+          if (!period.serviceIds.includes(serviceId)) period.serviceIds.push(serviceId);
+        });
+      }
+    }
+  }
   return {
     start: range.start,
     end: range.end,
     preset: "upcoming",
     period,
-    nextOccurrence: period.occurrences.find(
-      (occurrence) => getOccurrenceDate(occurrence) >= todayPlainDate,
-    ) || null,
+    nextOccurrence,
   };
 };

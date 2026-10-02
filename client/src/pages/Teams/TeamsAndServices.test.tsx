@@ -42,7 +42,8 @@ import type {
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
-import { rangeSelectionStorageKey, resolveRangePreset, shiftRange } from "./rangeSelection";
+import { calendarMonthRange, shiftRange } from "./rangeSelection";
+import { setServerTimeOffset } from "../../utils/serverTime";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -305,6 +306,35 @@ const mockSharedServices = [
   },
 ];
 
+const octoberSaturdayService = (serviceId: string, positionId: string): TeamService => ({
+  ...mockSharedServices[0],
+  id: serviceId,
+  serviceId,
+  churchId: "church-1",
+  name: "Saturday service",
+  timerType: "countdown",
+  reccurence: "weekly",
+  dayOfWeek: 6,
+  time: "10:00",
+  positionRequirements: [{ positionId, count: 1 }],
+});
+
+const octoberServiceOccurrences = (
+  serviceId: string,
+  name: string,
+  positionId: string,
+  days: number[],
+) => days.map((day) => {
+  const date = `2026-10-${String(day).padStart(2, "0")}`;
+  return {
+    occurrenceId: `${serviceId}@${date}T10:00:00.000Z`,
+    serviceId,
+    name,
+    startsAt: `${date}T10:00:00.000Z`,
+    positionRequirements: [{ positionId, count: 1 }],
+  };
+});
+
 const makeMockState = () => ({
   undoable: {
     present: {
@@ -457,6 +487,7 @@ describe("Teams", () => {
   afterEach(() => {
     // Fake-timer tests must not leak into later async waits under suite load.
     jest.useRealTimers();
+    setServerTimeOffset(0);
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
   });
@@ -710,7 +741,7 @@ describe("Teams", () => {
       };
       return { success: true, created: true, schedule: ensuredSchedule };
     });
-    const firstFuturePeriod = shiftRange("upcoming", resolveRangePreset("upcoming"), 1);
+    const firstFuturePeriod = shiftRange("upcoming", calendarMonthRange(new Date()), 1);
     const secondFuturePeriod = shiftRange("upcoming", firstFuturePeriod, 1);
     mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => ({
       success: true,
@@ -735,7 +766,7 @@ describe("Teams", () => {
 
     renderTeams();
     await waitForTeamsBootstrap();
-    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Upcoming" }));
     await user.click(screen.getByRole("button", { name: "Next period" }));
@@ -818,7 +849,7 @@ describe("Teams", () => {
       schedules: [],
     }));
 
-    const firstFuturePeriod = shiftRange("upcoming", resolveRangePreset("upcoming"), 1);
+    const firstFuturePeriod = shiftRange("upcoming", calendarMonthRange(new Date()), 1);
     const secondFuturePeriod = shiftRange("upcoming", firstFuturePeriod, 1);
     const makeEnsuredSchedule = (
       body: Parameters<typeof ensureTeamScheduleForPeriod>[1],
@@ -866,7 +897,7 @@ describe("Teams", () => {
 
     renderTeams();
     await waitForTeamsBootstrap();
-    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     await user.click(screen.getByRole("button", { name: "Upcoming" }));
     await user.click(screen.getByRole("button", { name: "Next period" }));
     const cell = (await screen.findAllByRole("button", { name: /Vocal, Empty/i }))[0];
@@ -899,9 +930,10 @@ describe("Teams", () => {
     );
   });
 
-  it("defaults Schedules to Upcoming and restores its own saved Range", async () => {
+  it("defaults Schedules to Upcoming and ignores legacy saved range values", async () => {
     const user = userEvent.setup();
     window.matchMedia = makeMatchMedia(true);
+    localStorage.setItem("worshipSync:teamsRange:schedules:church-1", JSON.stringify({ preset: "thisQuarter" }));
     mockGetTeamsBootstrap.mockResolvedValue(
       asTeamsBootstrapResponse(scheduleBootstrap),
     );
@@ -915,16 +947,191 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: "This quarter" }));
     view.unmount();
 
-    expect(
-      localStorage.getItem(rangeSelectionStorageKey("schedules", "church-1")),
-    ).toContain("thisQuarter");
-
     renderTeams();
     await waitForTeamsBootstrap();
-    expect(screen.getByRole("button", { name: "This quarter" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Upcoming" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+  });
+
+  it("uses the exact October schedule by default while keeping Youth Sabbath and Q4 selectable", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const serviceId = "service-october-sabbath";
+    const positionId = "position-vocal";
+    const occurrences = octoberServiceOccurrences(serviceId, "Saturday service", positionId, [3, 10, 17, 24, 31]);
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [octoberSaturdayService(serviceId, positionId)] } } },
+    };
+    const asSchedule = (
+      scheduleId: string,
+      name: string,
+      startDate: string,
+      endDate: string,
+      scheduleOccurrences: typeof occurrences,
+    ): TeamSchedule => ({
+      scheduleId,
+      churchId: "church-1",
+      name,
+      teamId: "team-main",
+      startDate,
+      endDate,
+      serviceIds: [serviceId],
+      occurrences: scheduleOccurrences,
+      assignments: {},
+    });
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal" }],
+      schedules: [
+        asSchedule("october", "October 2026", "2026-10-01", "2026-10-31", occurrences),
+        asSchedule("youth", "Youth Sabbath", "2026-10-10", "2026-10-10", [occurrences[1]]),
+        asSchedule("q4", "Q4", "2026-10-01", "2026-12-31", [occurrences[2]]),
+      ],
+    }));
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Schedule: October 2026" })).toHaveTextContent("October 2026");
+    expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(5);
+
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
+    expect(screen.getByRole("button", { name: /Youth Sabbath/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Q4/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Q4/ }));
+
+    expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Schedule: Q4" })).toHaveTextContent("Q4");
+    expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Saturday service on Oct 17/i })).toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("keeps the virtual month beside a partial event and edits the month after switching back", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const serviceId = "service-october-sabbath";
+    const positionId = "position-vocal";
+    const memberId = "member-morgan";
+    const allOccurrences = octoberServiceOccurrences(serviceId, "Saturday service", positionId, [3, 10, 17, 24, 31]);
+    const fallRevival: TeamSchedule = {
+      scheduleId: "fall-revival",
+      churchId: "church-1",
+      name: "Fall Revival",
+      teamId: "team-main",
+      startDate: "2026-10-18",
+      endDate: "2026-10-24",
+      serviceIds: [serviceId],
+      occurrences: [allOccurrences[3]],
+      assignments: {},
+    };
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [octoberSaturdayService(serviceId, positionId)] } } },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      teams: [{ teamId: "team-main", churchId: "church-1", name: "Main Team", memberIds: [memberId] }],
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal" }],
+      members: [{ memberId, churchId: "church-1", firstName: "Morgan", lastName: "Lee", positionIds: [positionId], blockoutDates: [], notes: "" }],
+      schedules: [fallRevival],
+    }));
+    let generatedSchedule: TeamSchedule | null = null;
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      generatedSchedule = {
+        scheduleId: "generated-october",
+        churchId: "church-1",
+        name: body.name,
+        teamId: body.teamId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        serviceIds: body.serviceIds,
+        occurrences: body.occurrences,
+        source: "generated-period",
+        generatedPeriodKey: "october",
+        assignments: {},
+      };
+      return { success: true, created: true, schedule: generatedSchedule };
+    });
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      generatedSchedule = {
+        ...generatedSchedule!,
+        scheduleId,
+        assignments: {
+          ...generatedSchedule!.assignments,
+          [body.serviceId]: {
+            [body.positionSlotKey]: { primaryMemberId: body.memberId || "" },
+          },
+        },
+      };
+      return { success: true, schedule: generatedSchedule };
+    });
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    expect(screen.getByRole("button", { name: "Schedule: October 2026" })).toHaveTextContent("October 2026");
+    expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(5);
+    expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
+    expect(screen.getByRole("button", { name: /Current period.*Oct 1, 2026.*Oct 31, 2026/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Fall Revival/ }));
+    expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /Saturday service on Oct 24/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Schedule: Fall Revival" }));
+    await user.click(screen.getByRole("button", { name: /Current period/ }));
+    const octoberEmptySlots = await screen.findAllByRole("button", { name: /Saturday service Vocal, Empty/i });
+    await user.click(octoberEmptySlots[0]);
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
+    expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).toMatchObject({
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+    });
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe("generated-october");
+    jest.useRealTimers();
+  });
+
+  it("shows a history schedule's full saved bounds", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const serviceId = "service-october-sabbath";
+    const positionId = "position-vocal";
+    const eventOccurrence = octoberServiceOccurrences(serviceId, "Saturday service", positionId, [24])[0];
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [octoberSaturdayService(serviceId, positionId)] } } },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Vocal" }],
+      schedules: [{
+        scheduleId: "fall-revival",
+        churchId: "church-1",
+        name: "Fall Revival",
+        teamId: "team-main",
+        startDate: "2026-10-18",
+        endDate: "2026-10-24",
+        serviceIds: [serviceId],
+        occurrences: [eventOccurrence],
+        assignments: {},
+      }],
+    }));
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    await user.click(screen.getByRole("button", { name: /More schedule options/i }));
+    await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
+    await user.click(await screen.findByRole("button", { name: /Fall Revival/ }));
+    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
+      "10/18/2026 – 10/24/2026",
+    );
+    expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
+    jest.useRealTimers();
   });
 
   it("keeps an October 3 assignment visible after reopening Upcoming on September 30", async () => {
@@ -1004,8 +1211,10 @@ describe("Teams", () => {
 
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
     expect(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]).toMatchObject({
-      startDate: "2026-09-01",
+      startDate: "2026-10-01",
       endDate: "2026-10-31",
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
       visibleOccurrenceIds: expect.arrayContaining([expect.stringContaining("2026-10-03")]),
     });
     unmount();
@@ -1024,7 +1233,8 @@ describe("Teams", () => {
 
   it("opens Media's saved five-occurrence October schedule when Setup now generates seven", async () => {
     jest.useFakeTimers({ advanceTimers: true });
-    jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    setServerTimeOffset(36 * 60 * 60 * 1000);
     const serviceId = "sabbath-service";
     const cameraId = "position-camera";
     const memberId = "member-media";
@@ -1081,6 +1291,9 @@ describe("Teams", () => {
 
     expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(5);
+    expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Up next")).toHaveLength(1);
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
   });
 
@@ -3274,11 +3487,10 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByText("Jul 1, 2026 – Jul 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
+      "07/01/2026 – 07/31/2026",
+    );
     expect(screen.getByRole("status")).toHaveTextContent(/1 service · .*positions filled/);
-    expect(
-      screen.queryByText(/Jul 1, 2026 – Jul 31, 2026 · .*positions filled/),
-    ).not.toBeInTheDocument();
   });
 
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {
