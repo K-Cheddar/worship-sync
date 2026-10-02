@@ -1053,9 +1053,8 @@ describe("Teams", () => {
       ] } } },
     };
     const savedSchedule: TeamSchedule = {
-      scheduleId: "generated_saved-media-october",
-      generatedPeriodKey: "saved-media-october",
-      source: "generated-period",
+      scheduleId: "custom-saved-media-october",
+      source: "custom",
       churchId: "church-1",
       name: "October 2026",
       teamId: "team-main",
@@ -1117,9 +1116,8 @@ describe("Teams", () => {
       ] } } },
     };
     const savedSchedule: TeamSchedule = {
-      scheduleId: "generated_saved-praise-october",
-      generatedPeriodKey: "saved-praise-october",
-      source: "generated-period",
+      scheduleId: "custom-saved-praise-october",
+      source: "custom",
       churchId: "church-1",
       name: "October 2026",
       teamId: "team-main",

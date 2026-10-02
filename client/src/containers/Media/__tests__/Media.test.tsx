@@ -80,7 +80,11 @@ jest.mock("../../../context/transferContext", () => ({
     updateUploadTransfer: jest.fn(),
   }),
   useOptionalTransfers: () => null,
-  getTransferOverview: () => ({ progress: null, activeCount: 0, transfers: [] }),
+  getTransferOverview: () => ({
+    progress: null,
+    activeCount: 0,
+    transfers: [],
+  }),
 }));
 
 jest.mock("react-redux", () => ({
@@ -499,7 +503,9 @@ describe("Media", () => {
   it("renders media from store and sets media items per row", async () => {
     await renderMedia({ isMobile: false });
 
-    expect(screen.getByRole("heading", { name: "Sources" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Sources" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Collapse Sources" }),
     ).toHaveAttribute("title", "Collapse Sources");
@@ -538,7 +544,9 @@ describe("Media", () => {
       screen.getByRole("option", { name: "Video inputs" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Canva" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Uploaded" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Uploaded" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("switch", { name: /Other devices/i }),
     ).not.toBeInTheDocument();
@@ -678,7 +686,9 @@ describe("Media", () => {
 
   it("logs a failed Canva status request while keeping import hidden", async () => {
     const error = new Error("Request failed");
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     mockGetCanvaStatus.mockRejectedValue(error);
 
     await renderMedia();
@@ -915,7 +925,9 @@ describe("Media", () => {
     await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "confirm-delete" }),
+    );
 
     await waitFor(() => {
       expect(mockUpdateToast).toHaveBeenCalledWith(

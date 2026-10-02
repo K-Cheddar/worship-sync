@@ -630,7 +630,9 @@ const uploadChurchResourceFromPackagedElectron = async ({
   };
   if (!response.ok || !data.resource) {
     throw new AuthApiError(
-      data.errorMessage || data.error || "The file upload was not accepted. Try again.",
+      data.errorMessage ||
+        data.error ||
+        "The file upload was not accepted. Try again.",
       { status: response.status },
     );
   }
@@ -647,10 +649,7 @@ export const getChurchStorageQuota = async (churchId: string) =>
     `api/churches/${encodeURIComponent(churchId)}/storage-quota`,
   );
 
-export const getChurchResource = async (
-  churchId: string,
-  resourceId: string,
-) =>
+export const getChurchResource = async (churchId: string, resourceId: string) =>
   apiFetch<{ success: boolean; resource: ChurchResource }>(
     `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}`,
   );
@@ -686,7 +685,8 @@ export const uploadChurchResource = async ({
     request.open("PUT", intent.uploadUrl);
     request.setRequestHeader("Content-Type", intent.resourceUpload.contentType);
     request.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable) onProgress?.((event.loaded / event.total) * 100);
+      if (event.lengthComputable)
+        onProgress?.((event.loaded / event.total) * 100);
     });
     request.addEventListener("load", () => {
       if (request.status >= 200 && request.status < 300) {
@@ -694,16 +694,29 @@ export const uploadChurchResource = async ({
         resolve();
         return;
       }
-      reject(new AuthApiError("The file upload was not accepted. Try again.", { status: request.status }));
+      reject(
+        new AuthApiError("The file upload was not accepted. Try again.", {
+          status: request.status,
+        }),
+      );
     });
-    request.addEventListener("error", () => reject(new AuthApiError(
-      "Could not upload this file. Check the connection and try again.",
-      { isReachabilityError: true },
-    )));
-    request.addEventListener("abort", () => reject(new AuthApiError("The file upload was cancelled.")));
+    request.addEventListener("error", () =>
+      reject(
+        new AuthApiError(
+          "Could not upload this file. Check the connection and try again.",
+          { isReachabilityError: true },
+        ),
+      ),
+    );
+    request.addEventListener("abort", () =>
+      reject(new AuthApiError("The file upload was cancelled.")),
+    );
     request.send(file);
   });
-  const completed = await apiFetch<{ success: boolean; resource: ChurchResource }>(
+  const completed = await apiFetch<{
+    success: boolean;
+    resource: ChurchResource;
+  }>(
     `${churchResourcesPath(churchId)}/${encodeURIComponent(intent.resourceUpload.id)}/complete`,
     {
       method: "POST",
@@ -914,12 +927,15 @@ export const submitSupportContact = async (body: {
     body: JSON.stringify(body),
   });
 
-export const submitSmsConsent = async (churchId: string, body: {
-  phoneNumber: string;
-  consent: boolean;
-  challengeId: string;
-  cancellationToken: string;
-}) =>
+export const submitSmsConsent = async (
+  churchId: string,
+  body: {
+    phoneNumber: string;
+    consent: boolean;
+    challengeId: string;
+    cancellationToken: string;
+  },
+) =>
   apiFetchWithoutAuthRecovery<{
     success: boolean;
     verificationRequired: boolean;
@@ -930,16 +946,19 @@ export const submitSmsConsent = async (churchId: string, body: {
     body: JSON.stringify(body),
   });
 
-export const verifySmsConsent = async (churchId: string, body: {
-  phoneNumber: string;
-  code: string;
-  challengeId: string;
-}) =>
+export const verifySmsConsent = async (
+  churchId: string,
+  body: {
+    phoneNumber: string;
+    code: string;
+    challengeId: string;
+  },
+) =>
   apiFetchWithoutAuthRecovery<{ success: boolean }>(
     `api/sms-consent/${encodeURIComponent(churchId)}/verify`,
     {
-    method: "POST",
-    body: JSON.stringify(body),
+      method: "POST",
+      body: JSON.stringify(body),
     },
   );
 
@@ -1079,10 +1098,12 @@ export const exchangeDevicePairingRequest = async (body: {
   requestSecret: string;
   platformType?: "electron" | "web";
 }) =>
-  apiFetchWithoutAuthRecovery<RedeemWorkstationPairingResponse | RedeemDisplayPairingResponse>(
-    "api/device-pairing-requests/exchange",
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  apiFetchWithoutAuthRecovery<
+    RedeemWorkstationPairingResponse | RedeemDisplayPairingResponse
+  >("api/device-pairing-requests/exchange", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const getDevicePairingRequest = async (requestId: string) =>
   apiFetch<{ success: boolean; request: DevicePairingRequestPreview }>(
@@ -1094,10 +1115,13 @@ export const approveDevicePairingRequest = async (
   requestId: string,
   body: JsonBody,
 ) =>
-  apiFetch<{ success: boolean; request: Pick<DevicePairingRequestPreview, "requestId" | "kind" | "status"> }>(
-    `api/churches/${churchId}/device-pairing-requests/${requestId}/approve`,
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  apiFetch<{
+    success: boolean;
+    request: Pick<DevicePairingRequestPreview, "requestId" | "kind" | "status">;
+  }>(`api/churches/${churchId}/device-pairing-requests/${requestId}/approve`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const updateCurrentServiceWorkspace = async (
   churchId: string,
@@ -1256,14 +1280,24 @@ export const getTeamsBootstrap = async (churchId: string) =>
 
 export const getNotificationIntents = async (
   churchId: string,
-  filter: { formId?: string; scheduleId?: string; limit?: number; cursor?: string } = {},
+  filter: {
+    formId?: string;
+    scheduleId?: string;
+    limit?: number;
+    cursor?: string;
+  } = {},
 ) => {
   const query = new URLSearchParams();
   if (filter.formId) query.set("formId", filter.formId);
   if (filter.scheduleId) query.set("scheduleId", filter.scheduleId);
   if (filter.limit) query.set("limit", String(filter.limit));
   if (filter.cursor) query.set("cursor", filter.cursor);
-  return apiFetch<{ success: boolean; intents: NotificationIntent[]; nextCursor: string; limit: number }>(
+  return apiFetch<{
+    success: boolean;
+    intents: NotificationIntent[];
+    nextCursor: string;
+    limit: number;
+  }>(
     `api/churches/${churchId}/notification-intents${query.size ? `?${query.toString()}` : ""}`,
   );
 };
@@ -1271,47 +1305,91 @@ export const getNotificationIntents = async (
 export const getNotificationIntentPreview = async (
   churchId: string,
   intentId: string,
-) => apiFetch<{
-  success: boolean;
-  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; approvalVersion: string; expiresAt: number; eligible: boolean; eligibilityStatus: SmsMemberEligibilityStatus; phoneNumberSnapshot: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
-}>(`api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/preview`, {
-  method: "POST",
-  body: JSON.stringify({}),
-});
+) =>
+  apiFetch<{
+    success: boolean;
+    preview: {
+      intentId: string;
+      intentType: NotificationIntentType;
+      memberId: string;
+      message: string;
+      approvalVersion: string;
+      expiresAt: number;
+      eligible: boolean;
+      eligibilityStatus: SmsMemberEligibilityStatus;
+      phoneNumberSnapshot: string;
+      characterCount: number;
+      segmentCount: number;
+      maskedPhoneNumber: string;
+    };
+  }>(
+    `api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/preview`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
 
 export const prepareTeamIntakeRecipientSms = async (
   churchId: string,
   formId: string,
   recipientId: string,
-) => apiFetch<{
-  success: boolean;
-  recipient: TeamIntakeRecipient;
-  preview: { intentId: string; intentType: NotificationIntentType; memberId: string; message: string; approvalVersion: string; expiresAt: number; eligible: boolean; eligibilityStatus: SmsMemberEligibilityStatus; phoneNumberSnapshot: string; characterCount: number; segmentCount: number; maskedPhoneNumber: string };
-}>(`api/churches/${churchId}/team-intake/forms/${encodeURIComponent(formId)}/recipients/${encodeURIComponent(recipientId)}/sms-preview`, {
-  method: "POST",
-  body: JSON.stringify({}),
-});
+) =>
+  apiFetch<{
+    success: boolean;
+    recipient: TeamIntakeRecipient;
+    preview: {
+      intentId: string;
+      intentType: NotificationIntentType;
+      memberId: string;
+      message: string;
+      approvalVersion: string;
+      expiresAt: number;
+      eligible: boolean;
+      eligibilityStatus: SmsMemberEligibilityStatus;
+      phoneNumberSnapshot: string;
+      characterCount: number;
+      segmentCount: number;
+      maskedPhoneNumber: string;
+    };
+  }>(
+    `api/churches/${churchId}/team-intake/forms/${encodeURIComponent(formId)}/recipients/${encodeURIComponent(recipientId)}/sms-preview`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
 
 export const prepareReplacementNotificationIntent = async (
   churchId: string,
-  body: { scheduleId: string; occurrenceId: string; cellKey: string; memberId: string },
-) => apiFetch<{ success: boolean; intent: NotificationIntent }>(
-  `api/churches/${churchId}/notification-intents/replacement-invitation`,
-  { method: "POST", body: JSON.stringify(body) },
-);
+  body: {
+    scheduleId: string;
+    occurrenceId: string;
+    cellKey: string;
+    memberId: string;
+  },
+) =>
+  apiFetch<{ success: boolean; intent: NotificationIntent }>(
+    `api/churches/${churchId}/notification-intents/replacement-invitation`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 
 export const resolveReplacementNotificationIntent = async (
   churchId: string,
   intentId: string,
-) => apiFetch<{ success: boolean; intent: NotificationIntent }>(
-  `api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/resolve-replacement`,
-  { method: "POST", body: JSON.stringify({}) },
-);
+) =>
+  apiFetch<{ success: boolean; intent: NotificationIntent }>(
+    `api/churches/${churchId}/notification-intents/${encodeURIComponent(intentId)}/resolve-replacement`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 
 export const prepareAvailabilityNotificationBatch = async (
   churchId: string,
   body: {
-    intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
+    intentType: Extract<
+      NotificationIntentType,
+      "availability_request" | "availability_reminder"
+    >;
     formId: string;
     memberIds: string[];
     requestKey: string;
@@ -1325,18 +1403,23 @@ export const prepareAvailabilityNotificationBatch = async (
 export const getAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
-) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
-  `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}`,
-);
+) =>
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+    `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}`,
+  );
 
 export const dispatchAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
   approvalVersion: string,
-) => apiFetch<{ success: boolean; batch: NotificationBatch }>(
-  `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
-  { method: "POST", body: JSON.stringify({ confirmed: true, approvalVersion }) },
-);
+) =>
+  apiFetch<{ success: boolean; batch: NotificationBatch }>(
+    `api/churches/${churchId}/notification-batches/${encodeURIComponent(batchId)}/dispatch`,
+    {
+      method: "POST",
+      body: JSON.stringify({ confirmed: true, approvalVersion }),
+    },
+  );
 
 export const sendNotificationIntent = async (
   churchId: string,
@@ -1361,9 +1444,7 @@ export const getTeamIntakeSmsAttempts = async (
   apiFetch<{
     success: boolean;
     attempts: SmsDeliveryAttempt[];
-  }>(
-    `api/churches/${churchId}/team-intake/forms/${formId}/sms-attempts`,
-  );
+  }>(`api/churches/${churchId}/team-intake/forms/${formId}/sms-attempts`);
 
 /**
  * Hydrates one schedule plus the other teams' schedules overlapping its dates —
@@ -1468,7 +1549,7 @@ export const sendTeamIntakeRecipientSms = async (
       unitCount: number;
       segmentCount: number;
     };
-}>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
+  }>(`api/churches/${churchId}/team-intake/recipients/${recipientId}/sms`, {
     method: "POST",
     body: JSON.stringify({ confirmed: true, approvalVersion }),
   });
@@ -2303,10 +2384,7 @@ export const getServicePlanPublicSnapshot = async (
     { method: "GET" },
   );
 
-export const getServicePlanViewer = async (
-  churchId: string,
-  planKey: string,
-) =>
+export const getServicePlanViewer = async (churchId: string, planKey: string) =>
   apiFetch<{
     success: boolean;
     plan: ServicePlan | null;
@@ -2356,16 +2434,17 @@ export const applyServicePlanTemplateBulk = async (
     targets: BulkServicePlanTarget[];
     existingPlanMode: "skip";
   },
-) => apiFetch<{
-  success: boolean;
-  created: string[];
-  skippedExisting: string[];
-  skippedNoTemplate: string[];
-  failed: { planKey: string; error: string }[];
-}>(`api/churches/${churchId}/service-plans/apply-template-bulk`, {
-  method: "POST",
-  body: JSON.stringify(body),
-});
+) =>
+  apiFetch<{
+    success: boolean;
+    created: string[];
+    skippedExisting: string[];
+    skippedNoTemplate: string[];
+    failed: { planKey: string; error: string }[];
+  }>(`api/churches/${churchId}/service-plans/apply-template-bulk`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const publishServicePlan = async (churchId: string, planKey: string) =>
   apiFetch<{
@@ -2510,7 +2589,8 @@ export const saveServicePlanMicrophones = async (
 /** New equipment catalog; existing microphones remain in their legacy API. */
 export const getServiceEquipment = async (churchId: string) =>
   apiFetch<{ success: boolean; equipment: ServiceEquipment[] }>(
-    `api/churches/${churchId}/service-equipment`, { method: "GET" },
+    `api/churches/${churchId}/service-equipment`,
+    { method: "GET" },
   );
 
 export const saveServiceEquipment = async (
@@ -2794,18 +2874,19 @@ export const inspectPortableImport = async (
   churchId: string,
   type: PortableDataType,
   csv: string,
-) => apiFetch<{
-  success: boolean;
-  headers: string[];
-  rowCount: number;
-  columnCount: number;
-  issues: Array<{ row: number; code: string; message: string }>;
-  mapping: Record<string, string>;
-  sampleRows: Array<Record<string, string>>;
-}>(`api/churches/${churchId}/data-transfer/inspect`, {
-  method: "POST",
-  body: JSON.stringify({ type, csv }),
-});
+) =>
+  apiFetch<{
+    success: boolean;
+    headers: string[];
+    rowCount: number;
+    columnCount: number;
+    issues: Array<{ row: number; code: string; message: string }>;
+    mapping: Record<string, string>;
+    sampleRows: Array<Record<string, string>>;
+  }>(`api/churches/${churchId}/data-transfer/inspect`, {
+    method: "POST",
+    body: JSON.stringify({ type, csv }),
+  });
 
 export const previewPortableImport = async (
   churchId: string,
@@ -2813,29 +2894,49 @@ export const previewPortableImport = async (
   csv: string,
   mapping: Record<string, string>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-) => apiFetch<{
-  success: boolean;
-  rows: PortableImportRow[];
-  issues: Array<{ row: number; code: string; message: string }>;
-  summary: { total: number; create: number; update: number; review: number; invalid: number };
-}>(`api/churches/${churchId}/data-transfer/preview`, {
-  method: "POST",
-  body: JSON.stringify({ type, csv, mapping, timeZone }),
-});
+) =>
+  apiFetch<{
+    success: boolean;
+    rows: PortableImportRow[];
+    issues: Array<{ row: number; code: string; message: string }>;
+    summary: {
+      total: number;
+      create: number;
+      update: number;
+      review: number;
+      invalid: number;
+    };
+  }>(`api/churches/${churchId}/data-transfer/preview`, {
+    method: "POST",
+    body: JSON.stringify({ type, csv, mapping, timeZone }),
+  });
 
 export const commitPortableImport = async (
   churchId: string,
   type: PortableDataType,
-  approvedRows: Array<{ row: number; action: "create" | "update"; recordId?: string; record: Record<string, string>; resolutions?: PortableImportResolution[] }>,
+  approvedRows: Array<{
+    row: number;
+    action: "create" | "update";
+    recordId?: string;
+    record: Record<string, string>;
+    resolutions?: PortableImportResolution[];
+  }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-) => apiFetch<{
-  success: boolean;
-  results: Array<{ row: number; status: "created" | "updated" | "failed"; id?: string; code?: string; message?: string }>;
-  summary: { created: number; updated: number; failed: number };
-}>(`api/churches/${churchId}/data-transfer/commit`, {
-  method: "POST",
-  body: JSON.stringify({ type, approvedRows, timeZone }),
-});
+) =>
+  apiFetch<{
+    success: boolean;
+    results: Array<{
+      row: number;
+      status: "created" | "updated" | "failed";
+      id?: string;
+      code?: string;
+      message?: string;
+    }>;
+    summary: { created: number; updated: number; failed: number };
+  }>(`api/churches/${churchId}/data-transfer/commit`, {
+    method: "POST",
+    body: JSON.stringify({ type, approvedRows, timeZone }),
+  });
 
 export const downloadPortableData = async (
   churchId: string,
@@ -2843,15 +2944,25 @@ export const downloadPortableData = async (
   template = false,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 ) => {
-  const query = new URLSearchParams({ timeZone, ...(template ? { template: "true" } : {}) });
+  const query = new URLSearchParams({
+    timeZone,
+    ...(template ? { template: "true" } : {}),
+  });
   const response = await authenticatedApiFetch(
     `api/churches/${encodeURIComponent(churchId)}/data-transfer/export/${type}?${query.toString()}`,
   );
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { errorMessage?: string } | null;
-    throw new Error(payload?.errorMessage || "Could not download this file. Check the connection and try again.");
+    const payload = (await response.json().catch(() => null)) as {
+      errorMessage?: string;
+    } | null;
+    throw new Error(
+      payload?.errorMessage ||
+        "Could not download this file. Check the connection and try again.",
+    );
   }
   const disposition = response.headers.get("content-disposition") || "";
-  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `${type}${type === "all" ? ".zip" : ".csv"}`;
+  const filename =
+    disposition.match(/filename="?([^";]+)"?/i)?.[1] ||
+    `${type}${type === "all" ? ".zip" : ".csv"}`;
   return { blob: await response.blob(), filename };
 };

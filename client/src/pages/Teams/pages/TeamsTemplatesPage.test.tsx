@@ -159,6 +159,18 @@ describe("nextTemplateCopyName", () => {
 });
 
 describe("TeamsTemplatesPage", () => {
+  it("requests the shared catalog through ensureLoaded once on route entry", async () => {
+    mockTemplatesResource = {
+      ...mockTemplatesResource,
+      data: [],
+      loaded: false,
+      loading: false,
+    };
+    renderPage();
+
+    await waitFor(() => expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1));
+  });
+
   it("shows a loading skeleton while the shared template resource is fetching", () => {
     mockTemplatesResource = {
       ...mockTemplatesResource,
@@ -179,6 +191,38 @@ describe("TeamsTemplatesPage", () => {
     expect(await screen.findByText("Standard Sabbath")).toBeInTheDocument();
     expect(screen.getByText("1 section · 1 item")).toBeInTheDocument();
     expect(screen.getByText("Preferred for Sabbath Service")).toBeInTheDocument();
+  });
+
+  it("keeps an operator's template draft when the shared catalog updates", async () => {
+    const user = userEvent.setup();
+    const view = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Standard Sabbath" }));
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(await screen.findByRole("button", { name: "Edit details" }));
+    const nameInput = await screen.findByRole("textbox", { name: "Template name:" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Operator draft");
+
+    mockTemplatesResource = {
+      ...mockTemplatesResource,
+      data: [template({ name: "SSE update", revision: 8 })],
+    };
+    view.rerender(
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({
+          churchId: "church-1",
+          canEditServices: true,
+          canEditTeams: true,
+        }) as ContextType<typeof GlobalInfoContext>}
+      >
+        <ToastProvider>
+          <TeamsTemplatesPage />
+        </ToastProvider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Template name:" })).toHaveValue("Operator draft");
   });
 
   it("labels a template with no service as available anywhere", async () => {

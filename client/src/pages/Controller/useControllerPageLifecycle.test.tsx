@@ -6,6 +6,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
 import { initiateMediaFromDoc } from "../../store/mediaSlice";
+import { isMediaLibraryV2, loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 
@@ -36,6 +37,9 @@ jest.mock("../../utils/controllerBootstrapDocs", () => ({
 
 jest.mock("../../utils/mediaDocUtils", () => ({
   loadMediaLibrary: jest.fn().mockResolvedValue({ list: [], folders: [] }),
+  isMediaLibraryV2: jest.fn().mockResolvedValue(false),
+  MEDIA_LIBRARY_META_ID: "media-library-meta",
+  MEDIA_LIBRARY_SCHEMA_VERSION: 2,
   parseMediaReplicationDoc: jest.requireActual("../../utils/mediaDocUtils").parseMediaReplicationDoc,
   loadOrCreateMediaDoc: jest.fn(),
   normalizeMediaDoc: jest.fn(),
@@ -86,6 +90,8 @@ const createDb = (
 describe("useControllerPageLifecycle selected outline loading", () => {
   beforeEach(() => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    jest.mocked(isMediaLibraryV2).mockResolvedValue(false);
+    jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
   });
 
   it("applies replicated media item changes to Redux outside the media route", () => {
@@ -115,6 +121,107 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().media.list).toEqual([
       { id: "existing", name: "Existing" },
       expect.objectContaining({ id: "new", name: "New item" }),
+    ]);
+  });
+
+  it("accepts legacy media replication while the initialized library is schema v1", async () => {
+    const db = createDb({});
+    const updater = new EventTarget();
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [{ _id: "media", list: [{ id: "legacy", name: "Legacy" }], folders: [] }],
+    })));
+
+    expect(store.getState().media.list).toEqual([
+      expect.objectContaining({ id: "legacy", name: "Legacy" }),
+    ]);
+  });
+
+  it("ignores stale legacy media replication after loading schema v2", async () => {
+    const currentV2List = [{ id: "current", name: "Current v2 item" }] as any;
+    const schemaRead = deferred<boolean>();
+    jest.mocked(isMediaLibraryV2).mockReturnValueOnce(schemaRead.promise);
+    jest.mocked(readMediaLibrary).mockResolvedValue({ list: currentV2List, folders: [] });
+    const db = createDb({});
+    const updater = new EventTarget();
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [{ _id: "media-library-meta", schemaVersion: 2 }],
+    })));
+    await act(async () => {
+      schemaRead.resolve(false);
+      await schemaRead.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [{ _id: "media", list: [{ id: "stale", name: "Stale v1 item" }], folders: [] }],
+    })));
+
+    expect(store.getState().media.list).toEqual(currentV2List);
+  });
+
+  it("applies v2 item add/update/delete and folder replication after the marker", () => {
+    const db = createDb({});
+    const updater = new EventTarget();
+    const existingFolder = { id: "old-folder", name: "Old", parentId: null };
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    store.dispatch(initiateMediaFromDoc({
+      list: [
+        { id: "update", name: "Before", folderId: "old-folder", thumbnail: "/old.jpg" },
+        { id: "delete", name: "Remove" },
+      ] as any,
+      folders: [existingFolder] as any,
+    }));
+
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [
+        { _id: "media-library-meta", schemaVersion: 2 },
+        { _id: "media-item:update", id: "update", docType: "mediaItem", name: "After" },
+        { _id: "media-item:add", id: "add", docType: "mediaItem", name: "New" },
+        { _id: "media-item:delete", _deleted: true },
+        { _id: "media-folders", folders: [{ id: "new-folder", name: "New", parentId: null }] },
+      ],
+    })));
+
+    expect(store.getState().media.list).toEqual([
+      { id: "update", name: "After" },
+      { id: "add", name: "New" },
+    ]);
+    expect(store.getState().media.folders).toEqual([
+      { id: "new-folder", name: "New", parentId: null },
     ]);
   });
 

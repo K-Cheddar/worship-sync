@@ -1,18 +1,22 @@
 import { render, waitFor } from "@testing-library/react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import ControllerMediaPreparationPublisher from "./ControllerMediaPreparationPublisher";
 import type { ControllerProfile } from "../../utils/controllerProfiles";
 
 const publishManifest = jest.fn();
 const discoverMedia = jest.fn();
-const mockPublishPreparedContext = jest.fn();
-const mockSubscribePreparedContextRequests = jest.fn(() => jest.fn());
+const mockPublishPreparedContext = jest.fn((context: PreparedMediaContext) => undefined);
+const mockSubscribePreparedContextRequests = jest.fn(
+  (getContexts: () => PreparedMediaContext[]) => jest.fn(),
+);
 
 jest.mock("../../utils/preparedMediaContext", () => ({
-  publishPreparedMediaContext: (...args: unknown[]) => mockPublishPreparedContext(...args),
-  subscribePreparedMediaContextRequests: (...args: unknown[]) =>
-    mockSubscribePreparedContextRequests(...args),
+  publishPreparedMediaContext: (context: PreparedMediaContext) =>
+    mockPublishPreparedContext(context),
+  subscribePreparedMediaContextRequests: (getContexts: () => PreparedMediaContext[]) =>
+    mockSubscribePreparedContextRequests(getContexts),
 }));
 
 const profile: ControllerProfile = {
@@ -166,7 +170,7 @@ describe("ControllerMediaPreparationPublisher", () => {
       contextSource: "local runtime selection",
     });
     expect(mockSubscribePreparedContextRequests).toHaveBeenCalledTimes(1);
-    const getCurrentContexts = mockSubscribePreparedContextRequests.mock.calls[0][0] as () => unknown[];
+    const getCurrentContexts = mockSubscribePreparedContextRequests.mock.calls[0][0];
     expect(getCurrentContexts()).toEqual([
       expect.objectContaining({ controllerProfileId: "presentation", outlineId: "outline-1" }),
     ]);
@@ -221,7 +225,7 @@ describe("ControllerMediaPreparationPublisher", () => {
     await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenLastCalledWith(
       expect.objectContaining({ outlineId: "outline-2", outlineName: "Next Service" }),
     ));
-    const getCurrentContexts = mockSubscribePreparedContextRequests.mock.calls.at(-1)?.[0] as (() => unknown[]) | undefined;
+    const getCurrentContexts = mockSubscribePreparedContextRequests.mock.calls.at(-1)?.[0];
     expect(getCurrentContexts?.()).toEqual([
       expect.objectContaining({ outlineId: "outline-2", outlineName: "Next Service" }),
     ]);

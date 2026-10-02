@@ -55,9 +55,9 @@ describe("api/auth", () => {
     setAuthenticatedSessionExpected(false);
     global.fetch = jest.fn(() =>
       Promise.resolve({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ authenticated: false }),
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ authenticated: false }),
       }),
     ) as jest.Mock;
   });
@@ -201,14 +201,12 @@ describe("api/auth", () => {
     const result = { assets: [], skippedCount: 0, revision: 1 };
     const encoder = new TextEncoder();
     const reader = {
-      read: jest
-        .fn()
-        .mockResolvedValueOnce({
-          value: encoder.encode(
-            `{"type":"complete","result":${JSON.stringify(result)}}\n`,
-          ),
-          done: true,
-        }),
+      read: jest.fn().mockResolvedValueOnce({
+        value: encoder.encode(
+          `{"type":"complete","result":${JSON.stringify(result)}}\n`,
+        ),
+        done: true,
+      }),
     };
     (global.fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,
@@ -462,12 +460,17 @@ describe("api/auth", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 401,
-        json: () => Promise.resolve({ errorMessage: "Authentication required" }),
+        json: () =>
+          Promise.resolve({ errorMessage: "Authentication required" }),
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({ success: true, bootstrap: { authenticated: true } }),
+        json: () =>
+          Promise.resolve({
+            success: true,
+            bootstrap: { authenticated: true },
+          }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -495,7 +498,10 @@ describe("api/auth", () => {
       2,
       "http://localhost:5000/api/auth/session",
       expect.objectContaining({
-        body: JSON.stringify({ idToken: "fresh-firebase-id-token", deviceId: "device-1" }),
+        body: JSON.stringify({
+          idToken: "fresh-firebase-id-token",
+          deviceId: "device-1",
+        }),
       }),
     );
     expect(authErrorHandler).not.toHaveBeenCalled();

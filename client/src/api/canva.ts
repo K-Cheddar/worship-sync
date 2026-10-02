@@ -74,16 +74,16 @@ type JsonInit = Omit<RequestInit, "body"> & {
   timeoutMs?: number;
 };
 
-const fetchCanvaJson = async <T>(path: string, init: JsonInit = {}): Promise<T> => {
+const fetchCanvaJson = async <T>(
+  path: string,
+  init: JsonInit = {},
+): Promise<T> => {
   const controller = new AbortController();
   let timedOut = false;
-  const timeout = window.setTimeout(
-    () => {
-      timedOut = true;
-      controller.abort();
-    },
-    init.timeoutMs ?? 20000,
-  );
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, init.timeoutMs ?? 20000);
   try {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
@@ -148,10 +148,13 @@ export const getCanvaDesign = (churchId: string, designId: string) =>
   );
 
 export const resolveCanvaDesignLink = (churchId: string, url: string) =>
-  fetchCanvaJson<{ designId: string }>(`${base(churchId)}/resolve-design-link`, {
-    method: "POST",
-    body: { url },
-  });
+  fetchCanvaJson<{ designId: string }>(
+    `${base(churchId)}/resolve-design-link`,
+    {
+      method: "POST",
+      body: { url },
+    },
+  );
 
 export const importCanvaDesign = async (
   churchId: string,
@@ -168,7 +171,10 @@ export const importCanvaDesign = async (
   const controller = new AbortController();
   const abortExternalRequest = () => controller.abort();
   if (options.signal?.aborted) controller.abort();
-  else options.signal?.addEventListener("abort", abortExternalRequest, { once: true });
+  else
+    options.signal?.addEventListener("abort", abortExternalRequest, {
+      once: true,
+    });
   const timeout = window.setTimeout(() => controller.abort(), 8 * 60 * 1000);
   try {
     const response = await authenticatedApiFetch(`${base(churchId)}/imports`, {
@@ -189,7 +195,9 @@ export const importCanvaDesign = async (
       throw new CanvaImportError(
         payload.error || "Canva could not complete that import. Try again.",
         {
-          code: payload.code || (response.status === 429 ? "CANVA_RATE_LIMITED" : undefined),
+          code:
+            payload.code ||
+            (response.status === 429 ? "CANVA_RATE_LIMITED" : undefined),
           status: response.status,
         },
       );

@@ -1,5 +1,9 @@
-import { MediaType } from "../types";
-import { loadMediaLibrary } from "./mediaDocUtils";
+import { DBMedia, MediaType } from "../types";
+import {
+  isMediaLibraryV2,
+  loadAllMediaItems,
+  normalizeMediaDoc,
+} from "./mediaDocUtils";
 
 type PouchMissingDocError = {
   status?: number;
@@ -52,7 +56,9 @@ export const getMediaUrlsFromMediaDoc = async (
 > => {
   const urls = new Set<string>();
   try {
-    const { list } = await loadMediaLibrary(db);
+    const list = (await isMediaLibraryV2(db))
+      ? await loadAllMediaItems(db)
+      : normalizeMediaDoc((await db.get("media")) as DBMedia).list;
     extractMediaUrlsFromBackgrounds(list).forEach((url) => urls.add(url));
     return { status: "loaded", urls };
   } catch (error) {

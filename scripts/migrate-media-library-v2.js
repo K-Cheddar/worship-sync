@@ -4,7 +4,10 @@ import path from "node:path";
 import axios from "axios";
 import { getFirebaseAdminRuntime } from "../server/firebaseAdminRuntime.js";
 import { toWorshipSyncContentDbName } from "../server/couchContentDatabase.js";
-import { migrateMediaLibraryV2 } from "../server/mediaLibraryV2Migration.js";
+import {
+  migrateMediaLibraryV2,
+  resolveMediaMigrationDatabases,
+} from "../server/mediaLibraryV2Migration.js";
 
 const args = process.argv.slice(2);
 const hasFlag = (flag) => args.includes(flag);
@@ -14,10 +17,10 @@ if (hasFlag("--help")) {
   console.log([
     "Migrate a CouchDB media library to per-item documents.",
     "Usage:",
-    "  node scripts/migrate-media-library-v2.js --database=<church-or-content-database> [--dry-run]",
+    "  node scripts/migrate-media-library-v2.js --database=<content-database-key-or-worship-sync-name> [--dry-run]",
     "  node scripts/migrate-media-library-v2.js --all [--dry-run]",
     "Options:",
-    "  --database=<key>  Migrate one church or worship-sync-* content database.",
+    "  --database=<key>  Migrate one content database key or full worship-sync-* name (not a Firestore church ID).",
     "  --all             Migrate all churches listed in Firebase Admin.",
     "  --dry-run         Report counts without writing or setting schemaVersion.",
     "  --report=<path>   JSON report path.",
@@ -49,6 +52,7 @@ const client = axios.create({
 });
 
 let databases;
+let skippedChurches = [];
 if (databaseArg) {
   databases = [toWorshipSyncContentDbName(databaseArg)];
 } else {
@@ -57,8 +61,10 @@ if (databaseArg) {
     console.error("Firebase Admin Firestore is not configured; use --database=<key>.");
     process.exit(1);
   }
-  const snapshot = await firestore.collection("churches").limit(100000).get();
-  databases = snapshot.docs.map((church) => toWorshipSyncContentDbName(church.id));
+  const snapshot = await firestore.collection("churches").get();
+  const targets = resolveMediaMigrationDatabases(snapshot.docs);
+  databases = targets.databases;
+  skippedChurches = targets.skippedChurches;
 }
 
 const reports = [];
@@ -68,15 +74,18 @@ for (const database of databases) {
 
 const report = {
   dryRun,
-  complete: reports.every((entry) => entry.schemaVersionResult === "set_v2" || entry.schemaVersionResult === "already_v2"),
+  complete: skippedChurches.length === 0 && reports.length > 0 && reports.every((entry) => entry.schemaVersionResult === "set_v2" || entry.schemaVersionResult === "already_v2"),
   databases: reports,
+  skippedChurches,
 };
 await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 console.log(`Media library v2 migration report: ${reportPath}`);
 console.log(JSON.stringify({
   dryRun,
   databases: reports.length,
+  skippedChurches: skippedChurches.length,
   migrated: reports.filter((entry) => entry.schemaVersionResult === "set_v2").length,
+  blocked: reports.filter((entry) => entry.blocked).length,
   failures: reports.reduce((count, entry) => count + entry.failures.length, 0),
 }, null, 2));
 if (!report.complete && !dryRun) process.exitCode = 2;

@@ -73,6 +73,9 @@ import {
 } from "../../store/mediaSlice";
 import {
   loadMediaLibrary as readMediaLibrary,
+  isMediaLibraryV2,
+  MEDIA_LIBRARY_META_ID,
+  MEDIA_LIBRARY_SCHEMA_VERSION,
   parseMediaReplicationDoc,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
@@ -136,6 +139,9 @@ export const useControllerPageLifecycle = () => {
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
+  const mediaSchemaV2Ref = useRef(false);
+  const mediaSchemaV2ObservedRef = useRef(false);
+  const mediaSchemaDbRef = useRef<PouchDB.Database | undefined>(undefined);
 
   // A profile change is a new editing session even when React keeps this hook
   // mounted. Re-arm readiness without reloading already hydrated slices; the
@@ -230,7 +236,15 @@ export const useControllerPageLifecycle = () => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
       for (const update of updates) {
-        const change = parseMediaReplicationDoc(update);
+        if (
+          update?._id === MEDIA_LIBRARY_META_ID &&
+          Number(update.schemaVersion) >= MEDIA_LIBRARY_SCHEMA_VERSION
+        ) {
+          mediaSchemaV2Ref.current = true;
+          mediaSchemaV2ObservedRef.current = true;
+          continue;
+        }
+        const change = parseMediaReplicationDoc(update, mediaSchemaV2Ref.current);
         if (!change) continue;
         if (change.kind === "legacy") {
           dispatch(syncMediaFromRemote({ list: change.list, folders: change.folders }));
@@ -450,11 +464,28 @@ export const useControllerPageLifecycle = () => {
     if (!db || access !== "full") return;
     let cancelled = false;
     dispatch(setMediaLoadStatus("loading"));
+    if (mediaSchemaDbRef.current !== db) {
+      mediaSchemaDbRef.current = db;
+      mediaSchemaV2Ref.current = false;
+      mediaSchemaV2ObservedRef.current = false;
+    }
 
     const initializeMediaLibrary = async () => {
       try {
-        const loaded = await readMediaLibrary(db);
+        const initializedAsV2 = await isMediaLibraryV2(db);
         if (cancelled) return;
+        if (!mediaSchemaV2ObservedRef.current) {
+          mediaSchemaV2Ref.current = initializedAsV2;
+          mediaSchemaV2ObservedRef.current = initializedAsV2;
+        }
+        let loaded = await readMediaLibrary(db);
+        if (cancelled) return;
+        // A v2 marker can replicate while the initial legacy read is pending.
+        // Re-read using the active schema before publishing that stale snapshot.
+        if (mediaSchemaV2Ref.current && !initializedAsV2) {
+          loaded = await readMediaLibrary(db);
+          if (cancelled) return;
+        }
         dispatch(initiateMediaFromDoc(loaded));
       } catch (error) {
         if (cancelled) return;

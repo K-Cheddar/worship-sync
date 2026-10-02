@@ -46,6 +46,7 @@ export async function flushMediaLibraryDocToPouch(
       list,
       folders,
       readLatestState,
+      databaseIsActive,
     );
     const { list: listToPersist } = stateToPersist;
     // The intended database was updated, but do not publish/cache its result
@@ -75,6 +76,7 @@ export async function flushMediaLibraryDocToPouch(
           await electronAPI.syncMediaCache([]);
         }
         const map = await electronAPI.getMediaCacheMap();
+        if (!databaseIsActive()) return { ok: true };
         store.dispatch(setMediaCacheMap(map));
       } catch (error) {
         console.error(

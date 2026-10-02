@@ -17,6 +17,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import Select from "@/components/Select/Select";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 const renderWindow = (children: React.ReactNode, title = "Overlay test") =>
   render(
@@ -45,12 +51,29 @@ describe("FloatingWindow overlay ownership", () => {
     await user.click(trigger);
 
     const host = screen.getByTestId("floating-window-overlay-host");
+    expect(host).toHaveStyle({ "--scrollbar-width": "thin" });
     expect(within(host).getByRole("button", { name: "Popover action" })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
 
     expect(screen.queryByRole("button", { name: "Popover action" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("carries the controller scrollbar preference into its body portal host", () => {
+    render(
+      <FloatingWindowZIndexProvider>
+        <div style={{ "--scrollbar-width": "8px" } as React.CSSProperties}>
+          <FloatingWindow title="Overlay test" onClose={jest.fn()}>
+            Window content
+          </FloatingWindow>
+        </div>
+      </FloatingWindowZIndexProvider>,
+    );
+
+    expect(screen.getByTestId("floating-window-overlay-host")).toHaveStyle({
+      "--scrollbar-width": "8px",
+    });
   });
 
   it("opens and selects a Select option without an inline portal override", async () => {
@@ -70,10 +93,27 @@ describe("FloatingWindow overlay ownership", () => {
 
     const host = screen.getByTestId("floating-window-overlay-host");
     const blue = within(host).getByRole("option", { name: "Blue" });
+    expect(within(host).getByRole("listbox")).toHaveClass("scrollbar-portal");
     await user.click(blue);
 
     expect(onChange).toHaveBeenCalledWith("blue");
     expect(trigger).toHaveFocus();
+  });
+
+  it("applies the portal scrollbar scope to context menu content", () => {
+    renderWindow(
+      <ContextMenu>
+        <ContextMenuTrigger>Right-click here</ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem>Context action</ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Right-click here"));
+    const host = screen.getByTestId("floating-window-overlay-host");
+    expect(within(host).getByRole("menu")).toHaveClass("scrollbar-portal");
+    expect(within(host).getByRole("menuitem", { name: "Context action" })).toBeInTheDocument();
   });
 
   it("supports menu selection and a nested submenu in the window host", async () => {
@@ -99,6 +139,7 @@ describe("FloatingWindow overlay ownership", () => {
     const trigger = screen.getByRole("button", { name: "Open menu" });
     await user.click(trigger);
     const host = screen.getByTestId("floating-window-overlay-host");
+    expect(within(host).getByRole("menu")).toHaveClass("scrollbar-portal");
     await user.click(within(host).getByRole("menuitem", { name: "Choose item" }));
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(trigger).toHaveFocus();

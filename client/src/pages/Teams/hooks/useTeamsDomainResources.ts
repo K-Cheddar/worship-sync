@@ -25,6 +25,8 @@ export const useTeamsDomainResources = () => {
   const [resourceState, setResourceState] = useState(() => emptyResource(churchId));
   const resourceRef = useRef(resourceState);
   const activeChurchIdRef = useRef(churchId);
+  const observedChurchIdRef = useRef(churchId);
+  const requestGenerationRef = useRef(0);
   const inFlightRef = useRef<{
     churchId: string;
     promise: Promise<void>;
@@ -33,6 +35,11 @@ export const useTeamsDomainResources = () => {
 
   // Keep async completions scoped even in the render before the reset effect.
   activeChurchIdRef.current = churchId;
+  if (observedChurchIdRef.current !== churchId) {
+    observedChurchIdRef.current = churchId;
+    requestGenerationRef.current += 1;
+    inFlightRef.current = null;
+  }
 
   const commitResource = useCallback((next: TemplateResourceState) => {
     resourceRef.current = next;
@@ -65,12 +72,17 @@ export const useTeamsDomainResources = () => {
 
     const request = {
       churchId,
+      generation: ++requestGenerationRef.current,
       promise: Promise.resolve(),
       changes: new Map<string, ServicePlanTemplate | null>(),
     };
+    const isCurrentRequest = () =>
+      activeChurchIdRef.current === churchId &&
+      requestGenerationRef.current === request.generation &&
+      inFlightRef.current === request;
     request.promise = listServicePlanTemplates(churchId)
       .then((response) => {
-        if (activeChurchIdRef.current !== churchId) return;
+        if (!isCurrentRequest()) return;
         let merged = new Map(
           (response.templates || []).map((template) => [template.templateId, template]),
         );
@@ -87,7 +99,7 @@ export const useTeamsDomainResources = () => {
         });
       })
       .catch((error: unknown) => {
-        if (activeChurchIdRef.current !== churchId) return;
+        if (!isCurrentRequest()) return;
         const latest = resourceRef.current;
         commitResource({
           churchId,

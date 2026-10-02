@@ -477,6 +477,7 @@ describe("TeamsPlansPage", () => {
       hydrateSchedules: mockHydrateSchedules,
       hydratingScheduleIds: [],
     });
+    mockTemplatesResource.loaded = false;
     renderPage();
 
     await screen.findByRole("heading", { name: "Easter Sunday" });
@@ -489,6 +490,8 @@ describe("TeamsPlansPage", () => {
     expect(
       await screen.findByRole("button", { name: /Back to Services/i }),
     ).toBeInTheDocument();
+    await waitFor(() => expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1));
+    expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     ).toBeInTheDocument();

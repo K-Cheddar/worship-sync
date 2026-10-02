@@ -49,7 +49,7 @@ describe("usePreparedMediaContext", () => {
   it("subscribes again when its local controller database becomes ready", () => {
     const { rerender } = renderHook(
       ({ db }: { db?: object }) => usePreparedMediaContext(fallback, db),
-      { initialProps: { db: undefined } },
+      { initialProps: { db: undefined as object | undefined } },
     );
     rerender({ db: {} });
 
