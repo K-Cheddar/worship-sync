@@ -418,6 +418,15 @@ describe("useServiceVideoCandidates", () => {
         ]),
       ),
     );
+    expect(ensureMediaCached).toHaveBeenCalledTimes(3);
+    expect(ensureMediaCached.mock.calls).toEqual(
+      Array.from({ length: 3 }, () => [
+        [
+          "https://stream.mux.com/playback-id.m3u8",
+          "https://stream.mux.com/second-id.m3u8",
+        ],
+      ]),
+    );
     expect(result.current.candidates).toHaveLength(0);
   });
 
