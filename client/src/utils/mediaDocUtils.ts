@@ -33,10 +33,14 @@ export type MediaReplicationChange =
 
 export const mediaItemDocId = (id: string) => `${MEDIA_ITEM_PREFIX}${id}`;
 
-export function parseMediaReplicationDoc(value: unknown): MediaReplicationChange | null {
+export function parseMediaReplicationDoc(
+  value: unknown,
+  schemaV2Active = false,
+): MediaReplicationChange | null {
   if (!value || typeof value !== "object") return null;
   const doc = value as Record<string, unknown>;
   if (doc._id === "media" && Array.isArray(doc.list)) {
+    if (schemaV2Active) return null;
     const normalized = normalizeMediaDoc(doc as unknown as DBMedia);
     return { kind: "legacy", ...normalized };
   }

@@ -240,6 +240,34 @@ describe("media replication document changes", () => {
     })).toEqual({ kind: "folders", folders: [{ id: "f1", name: "Folder", parentId: null }] });
     expect(parseMediaReplicationDoc({ _id: "unrelated", docType: "other" })).toBeNull();
   });
+
+  it("accepts legacy replication only while schema v1 is active", () => {
+    const legacy = { _id: "media", list: [{ id: "old", name: "Old" }], folders: [] };
+    expect(parseMediaReplicationDoc(legacy)).toEqual({
+      kind: "legacy",
+      list: [{ id: "old", name: "Old", folderId: null }],
+      folders: [],
+    });
+    expect(parseMediaReplicationDoc(legacy, true)).toBeNull();
+  });
+
+  it("continues to parse v2 item updates, deletes, and folders when schema v2 is active", () => {
+    expect(parseMediaReplicationDoc({
+      _id: "media-item:slide-1", id: "slide-1", docType: "mediaItem", name: "Updated",
+    }, true)).toEqual({
+      kind: "item-upsert",
+      item: { id: "slide-1", name: "Updated" },
+    });
+    expect(parseMediaReplicationDoc({
+      _id: "media-item:slide-1", _deleted: true,
+    }, true)).toEqual({ kind: "item-delete", id: "slide-1" });
+    expect(parseMediaReplicationDoc({
+      _id: "media-folders", folders: [{ id: "folder-1", name: "Folder" }],
+    }, true)).toEqual({
+      kind: "folders",
+      folders: [{ id: "folder-1", name: "Folder" }],
+    });
+  });
 });
 
 describe("siblingNameExists", () => {

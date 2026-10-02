@@ -4,14 +4,15 @@ Schema v2 stores one `media-item:<id>` document per media item, `media-folders` 
 
 ## Rollout order
 
-1. Deploy the v2-capable client while all databases are still unmarked. It continues to read and write schema v1 during this stage.
-2. Run a dry report for a church: `npm run migrate:media-library-v2:dry-run -- --database=<church-key>`.
-3. Enter a maintenance window. Close every active controller, auxiliary, and overlay controller, wait for pending local media saves and replication to drain, and block older clients from reconnecting. Keep media edits/imports paused until migration finishes; this prevents an in-flight legacy save from racing the final schema marker.
-4. Run the migration: `npm run migrate:media-library-v2 -- --database=<church-key>`. For every church in Firebase Admin, use `--all` instead of `--database`.
-5. Review the JSON report. Resume media work only when each target reports `verificationResult: "passed"`, `schemaVersionResult: "set_v2"` (or `already_v2` on a rerun), and no failures.
-6. Reopen refreshed v2-capable clients. Initial replication completes before controller library loading, so the schema marker and the v2 item/folder documents are present in local PouchDB before the UI selects a format.
+1. Deploy the v2-capable client while all databases are still unmarked. It continues to read and write schema v1 during this stage. Note the deployed release version.
+2. Set `MIN_SUPPORTED_WEB_VERSION` to that deployed release version. The existing `WebUpdateCoordinator` blocks older web clients and attempts the required update; verify the old browser build shows the update-required screen. This gate is web-only. Close old Electron/controller windows manually and do not continue until all active sessions are on the v2-capable release.
+3. Run a dry report for a content database key: `npm run migrate:media-library-v2:dry-run -- --database=<content-database-key>`. `--database` accepts a key or full `worship-sync-*` name; it does not accept a Firestore church document ID. `--all` reads each Firestore church's `contentDatabaseKey`, skips and reports records with missing or invalid keys, and deduplicates normalized CouchDB names.
+4. Enter a maintenance window. Close every active controller, auxiliary, and overlay controller, wait for pending media saves and replication to drain, and keep media edits/imports paused until migration finishes. For the phone with a stranded oversized v1 local media revision, reset its local WorshipSync app state/PouchDB before allowing it to reconnect; do not let that revision replicate after migration.
+5. Run the migration: `npm run migrate:media-library-v2 -- --database=<content-database-key>`. For every church in Firebase Admin, use `--all` instead of `--database`.
+6. Review the JSON report. Resume media work only when each target reports `verificationResult: "passed"`, `schemaVersionResult: "set_v2"` (or `already_v2` on a rerun), no failures, no blocked 413 state, and no skipped churches. If a single document still receives HTTP 413, the report marks that database blocked and leaves the schema marker unset.
+7. Reopen refreshed v2-capable clients. Initial replication completes before controller library loading, so the schema marker and the v2 item/folder documents are present in local PouchDB before the UI selects a format.
 
-The marker is written only after every bounded `_bulk_docs` batch succeeds, the exact item IDs and fields verify, folders verify, and the legacy document revision remains unchanged during the migration. A partial run leaves schema v1 active; rerunning safely updates deterministic IDs. Once the marker is v2, rerunning the migration does not copy the old aggregate back over newer item edits.
+The marker is written only after every bounded `_bulk_docs` batch succeeds (with 413 batches split down to one document), the exact item IDs and fields verify with no stale item documents, folders verify, and the legacy document revision remains unchanged during the migration. A partial run leaves schema v1 active; rerunning rebuilds each v2 item from the current legacy item, removes stale item documents, and preserves only current fields. Once the marker is v2, rerunning the migration does not copy the old aggregate back over newer item edits.
 
 ## Acceptance run
 

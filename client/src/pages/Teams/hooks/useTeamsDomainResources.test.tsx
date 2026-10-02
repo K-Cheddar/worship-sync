@@ -112,6 +112,66 @@ describe("useTeamsDomainResources", () => {
     expect(result.current.templates.data.map(({ templateId }) => templateId)).toEqual(["new"]);
   });
 
+  it("rejects an old A response after an A to B to A switch", async () => {
+    const resolvers: Array<(value: { success: boolean; templates: ServicePlanTemplate[] }) => void> = [];
+    mockListTemplates.mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    const { result, rerender } = renderResources();
+    let firstA!: Promise<void>;
+    act(() => { firstA = result.current.templates.ensureLoaded(); });
+
+    churchId = "church-2";
+    rerender();
+    let requestB!: Promise<void>;
+    act(() => { requestB = result.current.templates.ensureLoaded(); });
+
+    churchId = "church-1";
+    rerender();
+    let secondA!: Promise<void>;
+    act(() => { secondA = result.current.templates.ensureLoaded(); });
+    expect(mockListTemplates).toHaveBeenCalledTimes(3);
+
+    resolvers[2]({ success: true, templates: [template("new-a")] });
+    await act(async () => { await secondA; });
+    resolvers[0]({ success: true, templates: [template("stale-a")] });
+    await act(async () => { await firstA; });
+    resolvers[1]({ success: true, templates: [template("b", "church-2")] });
+    await act(async () => { await requestB; });
+
+    expect(result.current.templates.data.map(({ templateId }) => templateId)).toEqual(["new-a"]);
+  });
+
+  it("rejects an old A error after an A to B to A switch", async () => {
+    const completions: Array<{
+      resolve: (value: { success: boolean; templates: ServicePlanTemplate[] }) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    mockListTemplates.mockImplementation(() => new Promise((resolve, reject) => {
+      completions.push({ resolve, reject });
+    }));
+    const { result, rerender } = renderResources();
+    let firstA!: Promise<void>;
+    act(() => { firstA = result.current.templates.ensureLoaded(); });
+
+    churchId = "church-2";
+    rerender();
+    let requestB!: Promise<void>;
+    act(() => { requestB = result.current.templates.ensureLoaded(); });
+    churchId = "church-1";
+    rerender();
+    let secondA!: Promise<void>;
+    act(() => { secondA = result.current.templates.ensureLoaded(); });
+
+    completions[2].resolve({ success: true, templates: [template("new-a")] });
+    await act(async () => { await secondA; });
+    completions[0].reject(new Error("stale failure"));
+    await act(async () => { await firstA; });
+    completions[1].resolve({ success: true, templates: [template("b", "church-2")] });
+    await act(async () => { await requestB; });
+
+    expect(result.current.templates.data.map(({ templateId }) => templateId)).toEqual(["new-a"]);
+    expect(result.current.templates.error).toBeNull();
+  });
+
   it("keeps mutations made during a load when the response arrives", async () => {
     let resolveRequest: ((value: { success: boolean; templates: ServicePlanTemplate[] }) => void) | undefined;
     mockListTemplates.mockImplementation(() => new Promise((resolve) => { resolveRequest = resolve; }));

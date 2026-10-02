@@ -111,6 +111,7 @@ export const useTeamsPageState = (
   onTemplateEvent?: (
     event: ServicePlanTemplateUpdatedEvent | ServicePlanTemplateRemovedEvent,
   ) => void,
+  onRecovery?: () => void,
 ) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
@@ -644,6 +645,7 @@ export const useTeamsPageState = (
   // settling so it cannot clobber optimistic state.
   const backgroundRefresh = useCallback(async () => {
     if (!churchId) return;
+    onRecovery?.();
     // Don't pile onto a full (loading) refresh or another background request.
     // A background request uses its own gate so it never trips `refresh`'s dedupe
     // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a
@@ -692,7 +694,7 @@ export const useTeamsPageState = (
     } finally {
       backgroundRefreshInFlightRef.current = false;
     }
-  }, [churchId, isLocalEditCoolingDown, withRetainedHydration]);
+  }, [churchId, isLocalEditCoolingDown, onRecovery, withRetainedHydration]);
 
   // Merge server-hydrated schedules over their summaries in place, keeping list
   // order stable so the picker and grid don't reshuffle when hydration lands.
@@ -1007,6 +1009,7 @@ export const useTeamsPageState = (
     backgroundRefresh,
     churchId,
     isLocalEditCoolingDown,
+    onRecovery,
     reconnectVersion,
     scheduleDeferredBackgroundRefresh,
   ]);

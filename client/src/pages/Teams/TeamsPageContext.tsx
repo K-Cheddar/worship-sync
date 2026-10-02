@@ -12,6 +12,8 @@ const TeamsPageContext = createContext<TeamsPageState | null>(null);
 
 export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
   const domainResources = useTeamsDomainResources();
+  const templatesLoaded = domainResources.templates.loaded;
+  const refreshTemplates = domainResources.templates.refresh;
   const { remove: removeTemplate, upsert: upsertTemplate } = domainResources.templates;
   const onTemplateEvent = useCallback((
     event: ServicePlanTemplateUpdatedEvent | ServicePlanTemplateRemovedEvent,
@@ -22,7 +24,15 @@ export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
       removeTemplate(event.templateId);
     }
   }, [removeTemplate, upsertTemplate]);
-  const pageState = useTeamsPageState(onTemplateEvent);
+  const onTemplateRecovery = useCallback(() => {
+    if (!templatesLoaded) return;
+    void refreshTemplates().catch((error: unknown) => {
+      // Reconnect recovery stays silent; the resource keeps its last good data
+      // visible and a later reconnect/focus recovery can retry.
+      console.error("Could not reconcile service plan templates.", error);
+    });
+  }, [refreshTemplates, templatesLoaded]);
+  const pageState = useTeamsPageState(onTemplateEvent, onTemplateRecovery);
   const value = {
     ...pageState,
     ...domainResources,

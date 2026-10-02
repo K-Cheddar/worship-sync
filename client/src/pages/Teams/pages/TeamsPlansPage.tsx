@@ -1072,6 +1072,7 @@ const TeamsPlansPage = () => {
                 },
               }}
               canEdit={canEditPlan}
+              templateResource={templateResource}
               backLabel="Back to Services"
               onBack={() => {
                 setOpenServingTabOnSelection(false);

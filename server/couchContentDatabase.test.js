@@ -19,6 +19,11 @@ test("toWorshipSyncContentDbName leaves an already-prefixed name alone", () => {
   );
 });
 
+test("toWorshipSyncContentDbName matches the client's lowercase database identity", () => {
+  assert.equal(toWorshipSyncContentDbName("Eliathah"), "worship-sync-eliathah");
+  assert.equal(toWorshipSyncContentDbName("WORSHIP-SYNC-Eliathah"), "worship-sync-eliathah");
+});
+
 test("toWorshipSyncContentDbName rejects unsafe keys", () => {
   assert.throws(() => toWorshipSyncContentDbName("../evil"), /Invalid/);
   assert.throws(() => toWorshipSyncContentDbName(""), /Invalid/);

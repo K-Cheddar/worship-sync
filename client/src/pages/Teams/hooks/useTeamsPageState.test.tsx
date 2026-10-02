@@ -61,8 +61,11 @@ const flushMicrotasks = async () =>
 describe("useTeamsPageState bootstrap recovery", () => {
   let churchId: string;
 
-  const renderPageState = (onTemplateEvent?: Parameters<typeof useTeamsPageState>[0]) =>
-    renderHook(() => useTeamsPageState(onTemplateEvent), {
+  const renderPageState = (
+    onTemplateEvent?: Parameters<typeof useTeamsPageState>[0],
+    onReconnect?: Parameters<typeof useTeamsPageState>[1],
+  ) =>
+    renderHook(() => useTeamsPageState(onTemplateEvent, onReconnect), {
       wrapper: ({ children }: PropsWithChildren) => (
         <GlobalInfoContext.Provider
           value={
@@ -151,6 +154,23 @@ describe("useTeamsPageState bootstrap recovery", () => {
       type: "service-plan-template-removed",
       templateId: "template-1",
     });
+    unmount();
+  });
+
+  it("notifies template recovery only after the existing Teams stream reconnects", async () => {
+    const onReconnect = jest.fn();
+    const { unmount } = renderPageState(undefined, onReconnect);
+    await flushMicrotasks();
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    const source = MockEventSource.instances[0];
+    act(() => source.onopen?.());
+    act(() => source.onerror?.());
+    act(() => source.onopen?.());
+    await flushMicrotasks();
+
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    expect(MockEventSource.instances).toHaveLength(1);
     unmount();
   });
 
