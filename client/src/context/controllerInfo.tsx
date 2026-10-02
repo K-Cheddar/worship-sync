@@ -21,6 +21,19 @@ import { seedOfflineGuestDatabase } from "../utils/offlineGuestSeed";
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
   retryCount: number;
+  failureReason?: "push-too-large" | "replication";
+  message?: string;
+};
+
+export const nextSyncBatchSize = (current: number) => Math.max(1, Math.floor(current / 2));
+export const canRetrySync413 = (batchSize: number) => batchSize > 1;
+
+export const describeControllerSyncError = (error: unknown) => {
+  if (error && typeof error === "object") {
+    const value = error as { status?: number; reason?: string; message?: string; name?: string };
+    return value.reason || value.message || value.name || (value.status ? `HTTP ${value.status}` : "Unknown replication error");
+  }
+  return String(error);
 };
 
 type ControllerInfoContextType = {
@@ -119,6 +132,8 @@ const ControllerInfoProvider = ({ children }: any) => {
   const broadcastDatabaseKey = isGuestSession
     ? `${DEMO_DATABASE_KEY}-guest`
     : activeDatabaseKey;
+  const activeDatabaseKeyRef = useRef(activeDatabaseKey);
+  activeDatabaseKeyRef.current = activeDatabaseKey;
 
   // Update broadcast channel when database changes
   useEffect(() => {
@@ -144,6 +159,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
+  const syncGenerationRef = useRef(0);
   const syncBatchSizeRef = useRef(40);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
@@ -156,7 +172,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const initialSessionRetryRef = useRef(0);
   const prevLocalDbIdentityRef = useRef<string | null>(null);
 
-  const getCouchSession = useCallback(async () => {
+  const getCouchSession = useCallback(async (canCommit: () => boolean = () => true) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
@@ -179,7 +195,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       }
 
       const data = await response.json();
-      setHasCouchSession(data.success);
+      if (canCommit()) setHasCouchSession(data.success);
       return data.success;
     } catch (error: any) {
       clearTimeout(timeoutId);
@@ -194,51 +210,136 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, []);
 
   const syncDb = useCallback(
-    async (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
+    (localDb: PouchDB.Database, remoteDb: PouchDB.Database, churchKey: string) => {
       syncRef.current?.cancel();
+      syncRef.current = null;
+      const generation = ++syncGenerationRef.current;
+      let authRecovery: Promise<void> | null = null;
 
-      const batchSize = syncBatchSizeRef.current;
-      syncRef.current = localDb
-        .sync(remoteDb, {
+      const startLiveSync = () => {
+        if (
+          generation !== syncGenerationRef.current ||
+          activeDatabaseKeyRef.current !== churchKey
+        ) return;
+        const liveSync = localDb.sync(remoteDb, {
           retry: true,
           live: true,
-          batch_size: batchSize,
+          batch_size: syncBatchSizeRef.current,
           batches_limit: 5,
-        })
-        .on("change", (event) => {
-          if (event.direction === "pull") {
-            updater.current.dispatchEvent(
-              new CustomEvent("update", { detail: event.change.docs })
+        });
+        syncRef.current = liveSync;
+        liveSync
+          .on("change", (event) => {
+            if (event.direction === "pull") {
+              updater.current.dispatchEvent(
+                new CustomEvent("update", { detail: event.change.docs })
+              );
+            }
+          })
+          .on("active", () => {
+            if (syncRef.current === liveSync) {
+              setConnectionStatus({ status: "connected", retryCount: syncRetryRef.current });
+            }
+          })
+          .on("paused", (error?: unknown) => {
+            if (syncRef.current === liveSync) {
+              if (error) {
+                setConnectionStatus((current) => current.status === "failed"
+                  ? current
+                  : { status: "retrying", retryCount: Math.max(syncRetryRef.current, 1) });
+              } else {
+                syncRetryRef.current = 0;
+                setConnectionStatus({ status: "connected", retryCount: 0 });
+              }
+            }
+          })
+          .on("denied", (error: any) => {
+            void handleSyncError(error, liveSync);
+          })
+          .on("error", (error: any) => {
+            void handleSyncError(error, liveSync);
+          });
+      };
+
+      const handleSyncError = async (error: any, failedSync: any) => {
+        if (syncRef.current !== failedSync) return;
+        if (error?.status === 413) {
+          if (!canRetrySync413(syncBatchSizeRef.current)) {
+            syncRef.current = null;
+            failedSync.cancel();
+            const message = "Sync is blocked because one database document is too large to upload. Local changes remain on this device and may not reach other devices. Contact support before continuing.";
+            console.error(
+              "Controller replication blocked by HTTP 413 at batch_size 1; an individual document is likely too large.",
+              error,
             );
-          }
-        })
-        .on("error", async (error: any) => {
-          if (error.status === 413) {
-            syncBatchSizeRef.current = Math.max(10, syncBatchSizeRef.current - 5);
-            console.warn(
-              "Sync push 413 (Content Too Large), retrying with smaller batch_size:",
-              syncBatchSizeRef.current
-            );
-            syncDb(localDb, remoteDb);
+            setConnectionStatus({ status: "failed", retryCount: 0, failureReason: "push-too-large", message });
             return;
           }
-          if (error.status === 401 || error.status === 403) {
-            setConnectionStatus({ status: "retrying", retryCount: syncRetryRef.current + 1 });
-            setHasCouchSession(false);
-            const success = await getCouchSession();
+          syncBatchSizeRef.current = nextSyncBatchSize(syncBatchSizeRef.current);
+          syncRef.current = null;
+          failedSync.cancel();
+          console.warn(
+            "Controller replication received HTTP 413; retrying with smaller batch_size:",
+            syncBatchSizeRef.current,
+          );
+          setConnectionStatus({ status: "retrying", retryCount: 0 });
+          startLiveSync();
+          return;
+        }
+
+        if (error?.status === 401 || error?.status === 403) {
+          if (authRecovery) return authRecovery;
+          syncRef.current = null;
+          failedSync.cancel();
+          const retryCount = syncRetryRef.current + 1;
+          syncRetryRef.current = retryCount;
+          setHasCouchSession(false);
+          setConnectionStatus({ status: "retrying", retryCount });
+          authRecovery = (async () => {
+            const success = await getCouchSession(() =>
+              generation === syncGenerationRef.current &&
+              activeDatabaseKeyRef.current === churchKey,
+            );
+            if (
+              generation !== syncGenerationRef.current ||
+              activeDatabaseKeyRef.current !== churchKey
+            ) return;
+            if (syncRef.current !== null) return;
             if (!success) {
-              syncRetryRef.current++;
-              if (syncRetryRef.current > MAX_REPLICATION_AUTH_RETRIES) {
-                setConnectionStatus({ status: "failed", retryCount: syncRetryRef.current });
+              if (retryCount >= MAX_REPLICATION_AUTH_RETRIES) {
+                const message = "Sync could not renew the server session. Sign in again to resume syncing.";
+                setConnectionStatus({ status: "failed", retryCount, failureReason: "replication", message });
                 return;
               }
-              await backoff(syncRetryRef.current);
-            } else {
-              syncRetryRef.current = 0;
+              await backoff(retryCount);
+              if (
+                generation !== syncGenerationRef.current ||
+                activeDatabaseKeyRef.current !== churchKey
+              ) return;
+              if (syncRef.current === null) startLiveSync();
+              return;
             }
-            syncDb(localDb, remoteDb);
-          }
+            syncRetryRef.current = 0;
+            startLiveSync();
+          })().finally(() => {
+            authRecovery = null;
+          });
+          return authRecovery;
+        }
+
+        syncRef.current = null;
+        failedSync.cancel();
+        const detail = describeControllerSyncError(error);
+        console.error("Controller replication stopped:", detail);
+        setConnectionStatus({
+          status: "failed",
+          retryCount: syncRetryRef.current,
+          failureReason: "replication",
+          message: `Sync stopped: ${detail}. Check your connection and reload to try again.`,
         });
+      };
+
+      startLiveSync();
     },
     [getCouchSession]
   );
@@ -484,7 +585,7 @@ const ControllerInfoProvider = ({ children }: any) => {
               updateGlobalBroadcast(broadcastDatabaseKey);
             }
             if (isAuthenticatedSession) {
-              syncDb(localDb, remoteDb);
+              syncDb(localDb, remoteDb, activeDatabaseKey);
             }
           });
       } catch (error) {
@@ -614,6 +715,9 @@ const ControllerInfoProvider = ({ children }: any) => {
   ]);
 
   const tearDownLocalDatabases = useCallback(async () => {
+    // Invalidate auth-recovery continuations before cancelling handles or
+    // destroying the database owned by the previous church.
+    syncGenerationRef.current += 1;
     if (syncTimeout) {
       clearTimeout(syncTimeout);
       syncTimeout = null;
@@ -652,6 +756,10 @@ const ControllerInfoProvider = ({ children }: any) => {
     const prev = prevLocalDbIdentityRef.current;
     if (prev === localDbIdentity) {
       return;
+    }
+    if (prev !== null) {
+      syncBatchSizeRef.current = 40;
+      syncRetryRef.current = 0;
     }
 
     if (prev === null && localDbIdentity !== null) {
@@ -693,6 +801,9 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     return () => {
+      // Auth recovery may still be awaiting session renewal or backoff.
+      // Prevent its continuation from reconnecting after provider unmount.
+      syncGenerationRef.current += 1;
       if (syncTimeout) {
         clearTimeout(syncTimeout);
         syncTimeout = null;

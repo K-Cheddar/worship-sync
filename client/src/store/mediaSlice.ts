@@ -84,6 +84,29 @@ export const mediaItemsSlice = createSlice({
       state.isInitialized = true;
       state.loadStatus = "ready";
     },
+    upsertMediaItemFromRemote: (
+      state,
+      action: PayloadAction<Pick<MediaType, "id"> & Partial<MediaType>>,
+    ) => {
+      // Replicated item documents and local media broadcasts are full authoritative
+      // documents, so omission means the field was removed.
+      const item = action.payload;
+      const index = state.list.findIndex((row) => row.id === item.id);
+      if (index < 0) state.list.push(item as MediaType);
+      else state.list[index] = item as MediaType;
+      state.isInitialized = true;
+      state.loadStatus = "ready";
+    },
+    removeMediaItemFromRemote: (state, action: PayloadAction<string>) => {
+      state.list = state.list.filter((item) => item.id !== action.payload);
+      state.isInitialized = true;
+      state.loadStatus = "ready";
+    },
+    updateMediaFoldersFromRemote: (state, action: PayloadAction<MediaFolder[]>) => {
+      state.folders = action.payload;
+      state.isInitialized = true;
+      state.loadStatus = "ready";
+    },
     removeItemFromMediaList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item.id !== action.payload);
     },
@@ -114,6 +137,9 @@ export const {
   setLoadStatus,
   syncMediaFromRemote,
   updateMediaListFromRemote,
+  upsertMediaItemFromRemote,
+  removeMediaItemFromRemote,
+  updateMediaFoldersFromRemote,
 } = mediaItemsSlice.actions;
 
 export default mediaItemsSlice.reducer;

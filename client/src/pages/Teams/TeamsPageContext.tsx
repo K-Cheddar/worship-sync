@@ -1,12 +1,42 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import { useTeamsPageState } from "./hooks/useTeamsPageState";
+import { useTeamsDomainResources } from "./hooks/useTeamsDomainResources";
+import type {
+  ServicePlanTemplateRemovedEvent,
+  ServicePlanTemplateUpdatedEvent,
+} from "./hooks/useTeamsLiveSync";
 
-export type TeamsPageState = ReturnType<typeof useTeamsPageState>;
+export type TeamsPageState = ReturnType<typeof useTeamsPageState> & ReturnType<typeof useTeamsDomainResources>;
 
 const TeamsPageContext = createContext<TeamsPageState | null>(null);
 
 export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
-  const value = useTeamsPageState();
+  const domainResources = useTeamsDomainResources();
+  const templatesLoaded = domainResources.templates.loaded;
+  const refreshTemplates = domainResources.templates.refresh;
+  const { remove: removeTemplate, upsert: upsertTemplate } = domainResources.templates;
+  const onTemplateEvent = useCallback((
+    event: ServicePlanTemplateUpdatedEvent | ServicePlanTemplateRemovedEvent,
+  ) => {
+    if (event.type === "service-plan-template-updated") {
+      upsertTemplate(event.template);
+    } else {
+      removeTemplate(event.templateId);
+    }
+  }, [removeTemplate, upsertTemplate]);
+  const onTemplateRecovery = useCallback(() => {
+    if (!templatesLoaded) return;
+    void refreshTemplates().catch((error: unknown) => {
+      // Reconnect recovery stays silent; the resource keeps its last good data
+      // visible and a later reconnect/focus recovery can retry.
+      console.error("Could not reconcile service plan templates.", error);
+    });
+  }, [refreshTemplates, templatesLoaded]);
+  const pageState = useTeamsPageState(onTemplateEvent, onTemplateRecovery);
+  const value = useMemo(() => ({
+    ...pageState,
+    ...domainResources,
+  }), [pageState, domainResources]);
 
   return (
     <TeamsPageContext.Provider value={value}>

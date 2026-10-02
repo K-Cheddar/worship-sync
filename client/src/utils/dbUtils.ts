@@ -45,7 +45,7 @@ import {
   PreferencesType,
   QuickLinkType,
 } from "../types";
-import { normalizeMediaDoc } from "./mediaDocUtils";
+import { isMediaLibraryV2, normalizeMediaDoc } from "./mediaDocUtils";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
 
@@ -1314,6 +1314,9 @@ function inferDocType(
     return "credits";
   }
   if (id === "media") return "media";
+  if (typeof id === "string" && id.startsWith("media-item:")) return "mediaItem";
+  if (id === "media-folders") return "mediaFolders";
+  if (id === "media-library-meta") return "mediaLibraryMeta";
   if (id === QUICK_LINKS_POUCH_ID) return "quickLinks";
   if (id === MONITOR_SETTINGS_POUCH_ID) return "monitorSettings";
   if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID) return "mediaRouteFolders";
@@ -1401,6 +1404,7 @@ export const migrateMediaLibraryFoldersFieldIfNeeded = async (
 ): Promise<boolean> => {
   if (!db) return false;
   try {
+    if (await isMediaLibraryV2(db)) return false;
     const media = (await db.get("media")) as DBMedia;
     let changed = false;
     if (!Array.isArray(media.folders)) {

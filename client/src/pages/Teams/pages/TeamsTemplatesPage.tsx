@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { MoreVertical, Plus } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -8,7 +8,6 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
   deleteServicePlanTemplate,
-  listServicePlanTemplates,
   saveServicePlanTemplate,
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
@@ -18,11 +17,6 @@ import ServicePlanTemplateEditor, {
   createServicePlanTemplateDraft,
   type ServicePlanTemplateDraft,
 } from "../../Services/ServicePlanTemplateEditor";
-import {
-  isServicePlanTemplateRemovedEvent,
-  isServicePlanTemplateUpdatedEvent,
-  useTeamsLiveSync,
-} from "../hooks/useTeamsLiveSync";
 import { useTeamsPage } from "../TeamsPageContext";
 import { TeamsTemplatesListSkeleton } from "../teamsPageSkeletons";
 import {
@@ -68,19 +62,42 @@ export const nextTemplateCopyName = (
 const TeamsTemplatesPage = () => {
   const { churchId, canEditServices, canEditTeams: canEditTeamsFromContext } =
     useContext(GlobalInfoContext) || {};
-  const { pageData, canEditTeams } = useTeamsPage();
+  const { pageData, canEditTeams, templates: templateResource } = useTeamsPage();
+  const {
+    data: templateData,
+    ensureLoaded,
+    error: templatesError,
+    loading: templatesLoading,
+    loaded: templatesLoaded,
+    remove: removeTemplate,
+    upsert: upsertTemplate,
+  } = templateResource;
+  const templates = useMemo(() => sortTemplatesByName(templateData), [templateData]);
   const { showToast } = useToast();
   const canEdit = Boolean(
     canEditServices ?? canEditTeamsFromContext ?? canEditTeams,
   );
 
-  const [templates, setTemplates] = useState<ServicePlanTemplate[]>([]);
-  const [loading, setLoading] = useState(Boolean(churchId));
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<ServicePlanTemplateDraft | null>(null);
+  const [editingChurchId, setEditingChurchId] = useState(churchId || "");
   const [duplicatingId, setDuplicatingId] = useState("");
   const [deletingTemplate, setDeletingTemplate] = useState<ServicePlanTemplate | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const loading = !templatesLoaded && !templatesError && (templatesLoading || Boolean(churchId));
+  const activeEditing = editingChurchId === churchId ? editing : null;
+  const activeDeletingTemplate = deletingTemplate?.churchId === churchId
+    ? deletingTemplate
+    : null;
+
+  useEffect(() => {
+    setEditing(null);
+    setEditingChurchId(churchId || "");
+    setDeletingTemplate(null);
+    setDuplicatingId("");
+    setIsDeleting(false);
+    setSearch("");
+  }, [churchId]);
 
   const serviceNamesById = useMemo(
     () => new Map(pageData.services.map((service) => [service.serviceId, service.name])),
@@ -88,58 +105,10 @@ const TeamsTemplatesPage = () => {
   );
 
   useEffect(() => {
-    if (!churchId) {
-      setTemplates([]);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    listServicePlanTemplates(churchId)
-      .then((res) => {
-        if (!cancelled) setTemplates(sortTemplatesByName(res.templates));
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          showApiErrorToast(showToast, error, "Could not load templates.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId]);
-
-  const upsertTemplate = useCallback((template: ServicePlanTemplate) => {
-    setTemplates((current) =>
-      sortTemplatesByName([
-        ...current.filter((item) => item.templateId !== template.templateId),
-        template,
-      ]),
-    );
-  }, []);
-
-  const removeTemplate = useCallback((templateId: string) => {
-    setTemplates((current) =>
-      current.filter((item) => item.templateId !== templateId),
-    );
-  }, []);
-
-  // Keep the list current when another admin saves or deletes a template. The
-  // open editor is deliberately left alone — replacing a draft mid-edit would
-  // throw away the operator's own work.
-  useTeamsLiveSync(churchId, (event) => {
-    if (isServicePlanTemplateUpdatedEvent(event)) {
-      upsertTemplate(event.template);
-      return;
-    }
-    if (isServicePlanTemplateRemovedEvent(event)) {
-      removeTemplate(event.templateId);
-    }
-  });
+    void ensureLoaded().catch((error: unknown) => {
+      showApiErrorToast(showToast, error, "Could not load templates.");
+    });
+  }, [ensureLoaded, showToast]);
 
   const visibleTemplates = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -183,7 +152,7 @@ const TeamsTemplatesPage = () => {
   };
 
   const handleDelete = async () => {
-    if (!churchId || !deletingTemplate) return;
+    if (!churchId || !deletingTemplate || deletingTemplate.churchId !== churchId) return;
     setIsDeleting(true);
     try {
       await deleteServicePlanTemplate(churchId, deletingTemplate.templateId);
@@ -197,12 +166,12 @@ const TeamsTemplatesPage = () => {
     }
   };
 
-  if (editing && churchId) {
+  if (activeEditing && churchId) {
     return (
       <div className={teamsManagerPageRootClassName}>
         <ServicePlanTemplateEditor
           churchId={churchId}
-          template={editing}
+          template={activeEditing}
           // All of them, not just the active ones: the editor offers active
           // services as choices but still has to show a scope pointing at an
           // archived service rather than silently reading as "any service".
@@ -243,7 +212,10 @@ const TeamsTemplatesPage = () => {
                 svg={Plus}
                 iconSize="sm"
                 className="shrink-0 max-md:min-h-0 max-md:px-2 max-md:py-1"
-                onClick={() => setEditing(createServicePlanTemplateDraft())}
+                onClick={() => {
+                  setEditingChurchId(churchId || "");
+                  setEditing(createServicePlanTemplateDraft());
+                }}
               >
                 New template
               </Button>
@@ -295,7 +267,8 @@ const TeamsTemplatesPage = () => {
               ? serviceNamesById.get(template.serviceId)
               : undefined;
             const itemCount = countServicePlanTemplateItems(template.sections);
-            const openTemplate = () =>
+            const openTemplate = () => {
+              setEditingChurchId(churchId || "");
               setEditing({
                 templateId: template.templateId,
                 name: template.name,
@@ -303,6 +276,7 @@ const TeamsTemplatesPage = () => {
                 sections: template.sections,
                 revision: template.revision,
               });
+            };
             const menuItems: MenuItemType[] = [
               {
                 text: "Copy template",
@@ -381,10 +355,10 @@ const TeamsTemplatesPage = () => {
         </div>
       </section>
       <DeleteModal
-        isOpen={Boolean(deletingTemplate)}
+        isOpen={Boolean(activeDeletingTemplate)}
         onClose={() => setDeletingTemplate(null)}
         onConfirm={() => void handleDelete()}
-        itemName={deletingTemplate?.name}
+        itemName={activeDeletingTemplate?.name}
         isConfirming={isDeleting}
         message="Permanently delete the template"
         warningMessage="Plans already built from it keep their items. This cannot be undone."

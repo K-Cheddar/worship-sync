@@ -134,6 +134,7 @@ import {
 import ServicePlanTemplateModal, {
   type ServicePlanTemplateModalMode,
 } from "./ServicePlanTemplateModal";
+import type { ServicePlanTemplateResource } from "./servicePlanTemplateResource";
 import ServicePlanEmailModal, {
   type ServicePlanEmailDraft,
 } from "./ServicePlanEmailModal";
@@ -465,6 +466,8 @@ type ServicePlanEditorProps = {
   };
   /** Sends the already-loaded/drafted timing source to an embedded surface. */
   onPlanTimingChange?: (source: ServicePlanTimingSource | null) => void;
+  /** Optional shared catalog; omitted by standalone Services callers. */
+  templateResource?: ServicePlanTemplateResource;
 };
 
 type ServicePlanTimingMetadata = Pick<
@@ -504,6 +507,7 @@ const ServicePlanEditor = ({
   initialEditing = false,
   occurrenceSwitcher,
   onPlanTimingChange,
+  templateResource,
 }: ServicePlanEditorProps) => {
   const { churchId, userId, access, churchBranding, churchIntegrations } =
     useContext(GlobalInfoContext) || {};
@@ -604,8 +608,14 @@ const ServicePlanEditor = ({
   // Otherwise a fast click can create a local draft that the initial response
   // immediately replaces.
   const [loading, setLoading] = useState(Boolean(churchId && planKey));
-  const [planTemplates, setPlanTemplates] = useState<ServicePlanTemplate[]>([]);
-  const [planTemplatesLoading, setPlanTemplatesLoading] = useState(false);
+  const [standalonePlanTemplates, setStandalonePlanTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [standalonePlanTemplatesLoading, setStandalonePlanTemplatesLoading] = useState(false);
+  const planTemplates = templateResource?.data ?? standalonePlanTemplates;
+  const planTemplatesLoading = templateResource
+    ? !templateResource.loaded && templateResource.loading
+    : standalonePlanTemplatesLoading;
+  const templateResourceLoaded = templateResource?.loaded;
+  const ensureTemplateResourceLoaded = templateResource?.ensureLoaded;
   const [lastUsedTemplateIds, setLastUsedTemplateIds] = useState<Record<string, string>>(
     () => readServicePlanTemplateHistory(churchId),
   );
@@ -762,21 +772,32 @@ const ServicePlanEditor = ({
   // actually moving. See LIVE_CLOCK_* below.
 
   useEffect(() => {
+    if (templateResourceLoaded !== undefined) {
+      if (!churchId || !canEdit || templateResourceLoaded) return undefined;
+      void ensureTemplateResourceLoaded?.().catch((error: unknown) => {
+        showApiErrorToast(
+          showToast,
+          error,
+          "Could not load plan templates. Try again.",
+        );
+      });
+      return undefined;
+    }
     if (!churchId || !canEdit) {
-      setPlanTemplates([]);
-      setPlanTemplatesLoading(false);
+      setStandalonePlanTemplates([]);
+      setStandalonePlanTemplatesLoading(false);
       return undefined;
     }
 
     let cancelled = false;
-    setPlanTemplatesLoading(true);
+    setStandalonePlanTemplatesLoading(true);
     listServicePlanTemplates(churchId)
       .then((response) => {
-        if (!cancelled) setPlanTemplates(response.templates);
+        if (!cancelled) setStandalonePlanTemplates(response.templates);
       })
       .catch((error) => {
         if (cancelled) return;
-        setPlanTemplates([]);
+        setStandalonePlanTemplates([]);
         showApiErrorToast(
           showToast,
           error,
@@ -784,13 +805,19 @@ const ServicePlanEditor = ({
         );
       })
       .finally(() => {
-        if (!cancelled) setPlanTemplatesLoading(false);
+        if (!cancelled) setStandalonePlanTemplatesLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [canEdit, churchId, showToast]);
+  }, [
+    canEdit,
+    churchId,
+    ensureTemplateResourceLoaded,
+    showToast,
+    templateResourceLoaded,
+  ]);
 
   useEffect(() => {
     setLastUsedTemplateIds(readServicePlanTemplateHistory(churchId));
@@ -1530,11 +1557,13 @@ const ServicePlanEditor = ({
         : { planName: occurrence.name || service.name || "" }),
     });
     setIsEditing(true);
-    setPlanTemplates((current) =>
-      current.some((item) => item.templateId === template.templateId)
-        ? current
-        : [...current, template],
-    );
+    if (!templateResource) {
+      setStandalonePlanTemplates((current) =>
+        current.some((item) => item.templateId === template.templateId)
+          ? current
+          : [...current, template],
+      );
+    }
     const nextHistory = rememberServicePlanTemplate(
       churchId,
       service.serviceId,
@@ -3633,6 +3662,7 @@ const ServicePlanEditor = ({
           serviceId={service.serviceId}
           serviceName={service.name}
           sections={sections || []}
+          templateResource={templateResource}
           onClose={() => setTemplateModal(null)}
           onApply={applySavedTemplate}
         />

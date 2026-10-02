@@ -1,10 +1,21 @@
 import {
+  addMediaItem,
+  loadMediaLibrary,
   loadOrCreateMediaDoc,
+  mediaItemDocId,
   normalizeMediaDoc,
+  parseMediaReplicationDoc,
+  persistMediaLibraryChanges,
+  persistMediaStateChanges,
+  removeMediaItem,
+  saveMediaFolders,
   siblingNameExists,
+  updateMediaItem,
   wouldExceedMaxFolderDepth,
 } from "./mediaDocUtils";
 import type { DBMedia, MediaFolder, MediaType } from "../types";
+
+const pouchNotFound = () => Object.assign(new Error("missing"), { status: 404 });
 
 describe("loadOrCreateMediaDoc", () => {
   const existingDoc = {
@@ -48,6 +59,29 @@ describe("loadOrCreateMediaDoc", () => {
       docType: "media",
     });
     expect(db.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not initialize a legacy document after the active database changes during a missing-doc read", async () => {
+    let canCommit = true;
+    let rejectMediaRead: (error: unknown) => void = () => undefined;
+    let resolveReadStarted: () => void = () => undefined;
+    const readStarted = new Promise<void>((resolve) => { resolveReadStarted = resolve; });
+    const pendingRead = new Promise<never>((_resolve, reject) => { rejectMediaRead = reject; });
+    const db = {
+      get: jest.fn(() => {
+        resolveReadStarted();
+        return pendingRead;
+      }),
+      put: jest.fn(),
+    } as unknown as PouchDB.Database;
+
+    const load = loadOrCreateMediaDoc(db, () => canCommit);
+    await readStarted;
+    canCommit = false;
+    rejectMediaRead(pouchNotFound());
+
+    await expect(load).resolves.toBeUndefined();
+    expect(db.put).not.toHaveBeenCalled();
   });
 
   it("rereads the winner when another writer creates the document first", async () => {
@@ -112,6 +146,228 @@ describe("normalizeMediaDoc", () => {
     const n = normalizeMediaDoc(doc);
     expect(n.folders).toEqual(folders);
     expect(n.list[0].folderId).toBeNull();
+  });
+});
+
+describe("v2 media repository", () => {
+  const media = (id: string, name = id): MediaType => ({
+    id, name, type: "image", path: "", createdAt: "1", updatedAt: "1",
+    format: "png", height: 1, width: 1, publicId: id, background: `/${id}`, thumbnail: "",
+  });
+
+  it("loads every v2 item by prefix, filters unrelated docs, and never reads legacy after activation", async () => {
+    const rows = [
+      { id: "media-item:a", doc: { ...media("a"), _id: "media-item:a", docType: "mediaItem" } },
+      { id: "media-item:b", doc: { ...media("b"), _id: "media-item:b", docType: "mediaItem" } },
+      { id: "media-item-meta:other", doc: { _id: "media-item-meta:other", docType: "other" } },
+    ];
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        if (id === "media-folders") return { _id: id, folders: [{ id: "f", name: "Folder", parentId: null }] };
+        throw pouchNotFound();
+      }),
+      allDocs: jest.fn().mockResolvedValue({ rows }),
+    } as unknown as PouchDB.Database;
+
+    await expect(loadMediaLibrary(db)).resolves.toEqual({
+      list: [{ ...media("a"), folderId: null }, { ...media("b"), folderId: null }],
+      folders: [{ id: "f", name: "Folder", parentId: null }],
+    });
+    expect(db.allDocs).toHaveBeenCalledWith({
+      include_docs: true,
+      startkey: "media-item:",
+      endkey: "media-item:\uffff",
+    });
+    expect(db.get).not.toHaveBeenCalledWith("media");
+  });
+
+  it("keeps legacy reads active until schema v2 is explicitly marked", async () => {
+    const legacy = { _id: "media", _rev: "1-media", list: [media("old")], folders: [] } as DBMedia;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") throw pouchNotFound();
+        return legacy;
+      }),
+      allDocs: jest.fn(),
+    } as unknown as PouchDB.Database;
+    await expect(loadMediaLibrary(db)).resolves.toEqual({ list: [{ ...media("old"), folderId: null }], folders: [] });
+    expect(db.allDocs).not.toHaveBeenCalled();
+  });
+
+  it("writes only changed item docs and folder metadata for v2 changes", async () => {
+    const existing = { ...media("edit", "Before"), _id: mediaItemDocId("edit"), docType: "mediaItem", _rev: "1" };
+    const deleted = { ...media("delete"), _id: mediaItemDocId("delete"), docType: "mediaItem", _rev: "1" };
+    const docs = new Map<string, any>([[existing._id, existing], [deleted._id, deleted]]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        const doc = docs.get(id);
+        if (!doc) throw pouchNotFound();
+        return doc;
+      }),
+      put: jest.fn(async (doc: any) => { docs.set(doc._id, { ...doc, _rev: "2" }); return { ok: true }; }),
+      remove: jest.fn(async (doc: any) => { docs.delete(doc._id); return { ok: true }; }),
+    } as unknown as PouchDB.Database;
+    const folder = { id: "f", name: "Folder", parentId: null, createdAt: "1", updatedAt: "1" };
+    const before = { list: [media("edit", "Before"), media("delete")], folders: [] };
+    const after = { list: [media("edit", "After"), media("add")], folders: [folder] };
+
+    await persistMediaStateChanges(db, before, after);
+    expect(db.put).toHaveBeenCalledTimes(3);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("edit"), name: "After" }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("add"), id: "add" }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-folders", folders: [folder] }));
+    expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
+    expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("delete") }));
+  });
+
+  it("preserves media replicated after a folder operation captured its list", async () => {
+    const folder = { id: "folder", name: "Folder", parentId: null } as MediaFolder;
+    const beforeItem = { ...media("known"), folderId: "folder" };
+    const persisted = new Map<string, any>([
+      [mediaItemDocId("known"), { ...beforeItem, _id: mediaItemDocId("known"), docType: "mediaItem", _rev: "1" }],
+      [mediaItemDocId("remote"), { ...media("remote"), folderId: "folder", _id: mediaItemDocId("remote"), docType: "mediaItem", _rev: "1" }],
+    ]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        if (id === "media-folders") return { _id: id, folders: [folder] };
+        const doc = persisted.get(id);
+        if (doc) return doc;
+        throw pouchNotFound();
+      }),
+      allDocs: jest.fn(async () => ({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) })),
+      put: jest.fn(async (doc: any) => { persisted.set(doc._id, { ...doc, _rev: "2" }); return { ok: true }; }),
+      remove: jest.fn(async (doc: any) => { persisted.delete(doc._id); return { ok: true }; }),
+    } as unknown as PouchDB.Database;
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [beforeItem], folders: [folder] },
+      { list: [{ ...beforeItem, folderId: null }], folders: [] },
+    );
+
+    expect(persisted.get(mediaItemDocId("known"))?.folderId).toBeNull();
+    expect(persisted.get(mediaItemDocId("remote"))?.folderId).toBeNull();
+    expect(db.remove).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts the complete saved item when optional fields are removed", async () => {
+    const previous = {
+      ...media("edit", "Before"),
+      folderId: "folder-a",
+      thumbnail: "/old-thumbnail.jpg",
+    };
+    const next = media("edit", "After");
+    const existing = {
+      ...previous,
+      _id: mediaItemDocId("edit"),
+      docType: "mediaItem",
+      _rev: "1",
+    };
+    const docs = new Map<string, any>([[existing._id, existing]]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        const doc = docs.get(id);
+        if (!doc) throw pouchNotFound();
+        return doc;
+      }),
+      put: jest.fn(async (doc: any) => {
+        docs.set(doc._id, { ...doc, _rev: "2" });
+        return { ok: true };
+      }),
+      remove: jest.fn(),
+    } as unknown as PouchDB.Database;
+
+    const changedDocs = await persistMediaStateChanges(
+      db,
+      { list: [previous], folders: [] },
+      { list: [next], folders: [] },
+    );
+
+    expect(db.put).toHaveBeenCalledWith(expect.not.objectContaining({
+      folderId: expect.anything(),
+      thumbnail: expect.anything(),
+    }));
+    expect(changedDocs).toEqual([{
+      ...next,
+      id: "edit",
+      _id: mediaItemDocId("edit"),
+      docType: "mediaItem",
+    }]);
+  });
+
+  it("exposes direct add, edit, delete, and folder operations on item documents", async () => {
+    const docs = new Map<string, any>();
+    const put = jest.fn(async (doc: any) => { docs.set(doc._id, { ...doc, _rev: "1" }); return { ok: true }; });
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        const doc = docs.get(id);
+        if (!doc) throw pouchNotFound();
+        return doc;
+      }),
+      put,
+      remove: jest.fn(async (doc: any) => { docs.delete(doc._id); return { ok: true }; }),
+    } as unknown as PouchDB.Database;
+    await addMediaItem(db, media("one"));
+    await updateMediaItem(db, "one", { name: "Renamed" });
+    await saveMediaFolders(db, [{ id: "folder", name: "Folder", parentId: null, createdAt: "1", updatedAt: "1" }]);
+    await removeMediaItem(db, "one");
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([
+      "media-item:one", "media-item:one", "media-folders",
+    ]);
+    expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:one" }));
+  });
+});
+
+describe("media replication document changes", () => {
+  it("maps individual item updates, deletions, folders, and legacy docs without a full v2 list", () => {
+    const item = { id: "slide-1", name: "Page 1", type: "image", background: "/one" } as MediaType;
+    expect(parseMediaReplicationDoc({
+      ...item,
+      _id: "media-item:slide-1",
+      _rev: "2-rev",
+      docType: "mediaItem",
+    })).toEqual({ kind: "item-upsert", item });
+    expect(parseMediaReplicationDoc({ _id: "media-item:slide-1", _rev: "3-rev", _deleted: true }))
+      .toEqual({ kind: "item-delete", id: "slide-1" });
+    expect(parseMediaReplicationDoc({
+      _id: "media-folders",
+      docType: "mediaFolders",
+      folders: [{ id: "f1", name: "Folder", parentId: null }],
+    })).toEqual({ kind: "folders", folders: [{ id: "f1", name: "Folder", parentId: null }] });
+    expect(parseMediaReplicationDoc({ _id: "unrelated", docType: "other" })).toBeNull();
+  });
+
+  it("accepts legacy replication only while schema v1 is active", () => {
+    const legacy = { _id: "media", list: [{ id: "old", name: "Old" }], folders: [] };
+    expect(parseMediaReplicationDoc(legacy)).toEqual({
+      kind: "legacy",
+      list: [{ id: "old", name: "Old", folderId: null }],
+      folders: [],
+    });
+    expect(parseMediaReplicationDoc(legacy, true)).toBeNull();
+  });
+
+  it("continues to parse v2 item updates, deletes, and folders when schema v2 is active", () => {
+    expect(parseMediaReplicationDoc({
+      _id: "media-item:slide-1", id: "slide-1", docType: "mediaItem", name: "Updated",
+    }, true)).toEqual({
+      kind: "item-upsert",
+      item: { id: "slide-1", name: "Updated" },
+    });
+    expect(parseMediaReplicationDoc({
+      _id: "media-item:slide-1", _deleted: true,
+    }, true)).toEqual({ kind: "item-delete", id: "slide-1" });
+    expect(parseMediaReplicationDoc({
+      _id: "media-folders", folders: [{ id: "folder-1", name: "Folder" }],
+    }, true)).toEqual({
+      kind: "folders",
+      folders: [{ id: "folder-1", name: "Folder" }],
+    });
   });
 });
 

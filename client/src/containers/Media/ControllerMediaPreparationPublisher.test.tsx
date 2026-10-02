@@ -1,10 +1,23 @@
 import { render, waitFor } from "@testing-library/react";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import ControllerMediaPreparationPublisher from "./ControllerMediaPreparationPublisher";
 import type { ControllerProfile } from "../../utils/controllerProfiles";
 
 const publishManifest = jest.fn();
 const discoverMedia = jest.fn();
+const mockPublishPreparedContext = jest.fn((context: PreparedMediaContext) => undefined);
+const mockSubscribePreparedContextRequests = jest.fn(
+  (getContexts: () => PreparedMediaContext[]) => jest.fn(),
+);
+
+jest.mock("../../utils/preparedMediaContext", () => ({
+  publishPreparedMediaContext: (context: PreparedMediaContext) =>
+    mockPublishPreparedContext(context),
+  subscribePreparedMediaContextRequests: (getContexts: () => PreparedMediaContext[]) =>
+    mockSubscribePreparedContextRequests(getContexts),
+}));
 
 const profile: ControllerProfile = {
   id: "presentation",
@@ -94,10 +107,12 @@ jest.mock("../../hooks/useMediaPreparationManifest", () => ({
   },
 }));
 
-const renderPublisher = () =>
+const renderPublisher = (db?: object) =>
   render(
     <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
-      <ControllerMediaPreparationPublisher />
+      <ControllerInfoContext.Provider value={{ db } as never}>
+        <ControllerMediaPreparationPublisher />
+      </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
 
@@ -116,8 +131,15 @@ describe("ControllerMediaPreparationPublisher", () => {
         },
       },
     };
+    state.undoable.present.itemLists.currentLists = outlineLists;
+    state.undoable.present.itemLists.selectedIdByScope = {
+      presentation: "outline-1",
+      aux: "outline-aux",
+    };
     publishManifest.mockClear();
     discoverMedia.mockClear();
+    mockPublishPreparedContext.mockClear();
+    mockSubscribePreparedContextRequests.mockClear();
   });
 
   it("discovers once for projector, monitor, and stream while publishing three manifests", async () => {
@@ -138,6 +160,123 @@ describe("ControllerMediaPreparationPublisher", () => {
       "projector",
       "stream",
     ]);
+    expect(mockPublishPreparedContext).toHaveBeenCalledTimes(1);
+    expect(mockPublishPreparedContext).toHaveBeenCalledWith({
+      controllerProfileId: "presentation",
+      controllerProfileName: "Main",
+      outlineScope: "presentation",
+      outlineId: "outline-1",
+      outlineName: "Sunday",
+      contextSource: "local runtime selection",
+    });
+    expect(mockSubscribePreparedContextRequests).toHaveBeenCalledTimes(1);
+    const getCurrentContexts = mockSubscribePreparedContextRequests.mock.calls[0][0];
+    expect(getCurrentContexts()).toEqual([
+      expect.objectContaining({ controllerProfileId: "presentation", outlineId: "outline-1" }),
+    ]);
+  });
+
+  it("publishes selected outline changes and name updates without picker interaction", async () => {
+    const view = renderPublisher();
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenCalledTimes(1));
+
+    state = {
+      ...state,
+      undoable: {
+        present: {
+          itemLists: {
+            currentLists: [
+              { ...outlineLists[0], name: "Sabbath Service" },
+              outlineLists[1],
+            ],
+            selectedIdByScope: { presentation: "outline-1", aux: "outline-aux" },
+          },
+        },
+      },
+    };
+    view.rerender(
+      <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
+        <ControllerMediaPreparationPublisher />
+      </GlobalInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outlineId: "outline-1", outlineName: "Sabbath Service" }),
+    ));
+    state = {
+      ...state,
+      undoable: {
+        present: {
+          itemLists: {
+            currentLists: [
+              { ...outlineLists[0], name: "Sabbath Service" },
+              { ...outlineLists[0], _id: "outline-2", name: "Next Service" },
+            ],
+            selectedIdByScope: { presentation: "outline-2", aux: "outline-aux" },
+          },
+        },
+      },
+    };
+    view.rerender(
+      <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
+        <ControllerMediaPreparationPublisher />
+      </GlobalInfoContext.Provider>,
+    );
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outlineId: "outline-2", outlineName: "Next Service" }),
+    ));
+    const getCurrentContexts = mockSubscribePreparedContextRequests.mock.calls.at(-1)?.[0];
+    expect(getCurrentContexts?.()).toEqual([
+      expect.objectContaining({ outlineId: "outline-2", outlineName: "Next Service" }),
+    ]);
+  });
+
+  it("publishes only the Aux controller's scoped outline when mounted for Aux", async () => {
+    const view = renderPublisher();
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenCalledTimes(1));
+    activeProfile = auxProfile;
+    state.presentation.outputs.tvs.followingOutputId = "";
+    view.rerender(
+      <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
+        <ControllerMediaPreparationPublisher />
+      </GlobalInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        controllerProfileId: "aux",
+        outlineScope: "aux",
+        outlineId: "outline-aux",
+      }),
+    ));
+    expect(mockPublishPreparedContext).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not republish when controller state rerenders without an effective context change", async () => {
+    const view = renderPublisher();
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
+        <ControllerInfoContext.Provider value={{ db: undefined } as never}>
+          <ControllerMediaPreparationPublisher />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(mockPublishPreparedContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes again when the controller DB channel becomes ready", async () => {
+    const view = renderPublisher();
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
+        <ControllerInfoContext.Provider value={{ db: {} } as never}>
+          <ControllerMediaPreparationPublisher />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockPublishPreparedContext).toHaveBeenCalledTimes(2));
   });
 
   it("publishes a mirrored TVs manifest from the presentation source outline", async () => {

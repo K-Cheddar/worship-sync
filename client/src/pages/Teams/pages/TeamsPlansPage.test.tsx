@@ -19,6 +19,7 @@ import {
   updateTeamScheduleAssignmentIems,
 } from "../../../api/auth";
 import type { TeamService } from "../../../api/authTypes";
+import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { formatPlainDate } from "../../../utils/plainDate";
 
 jest.mock("../../../api/auth", () => ({
@@ -28,6 +29,7 @@ jest.mock("../../../api/auth", () => ({
     details?: unknown;
   },
   listServicePlans: jest.fn(),
+  // The nested ServicePlanEditor still uses this API outside the bulk flow.
   listServicePlanTemplates: jest.fn(),
   getServicePlan: jest.fn(),
   getServicePlanAssignmentHistory: jest.fn(),
@@ -91,11 +93,21 @@ const oneTimeStartsAt = easterOneTime.dateTimeISO as string;
 const oneTimeOccurrenceId = `easter@${oneTimeStartsAt}`;
 
 const mockUseTeamsPage = jest.fn();
+let mockTemplatesResource: {
+  data: ServicePlanTemplate[];
+  loaded: boolean;
+  loading: boolean;
+  error: unknown | null;
+  ensureLoaded: jest.Mock;
+  refresh: jest.Mock;
+  upsert: jest.Mock;
+  remove: jest.Mock;
+};
 const mockHydrateSchedules = jest.fn();
 const mockUpsertData = jest.fn();
 const mockTrackTeamsSave = jest.fn(<T,>(promise: Promise<T>) => promise);
 jest.mock("../TeamsPageContext", () => ({
-  useTeamsPage: () => mockUseTeamsPage(),
+  useTeamsPage: () => ({ ...mockUseTeamsPage(), templates: mockTemplatesResource }),
 }));
 
 const mockGetServicePlan = jest.mocked(getServicePlan);
@@ -162,6 +174,16 @@ describe("TeamsPlansPage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
+    mockTemplatesResource = {
+      data: [],
+      loaded: true,
+      loading: false,
+      error: null,
+      ensureLoaded: jest.fn().mockResolvedValue(undefined),
+      refresh: jest.fn().mockResolvedValue(undefined),
+      upsert: jest.fn(),
+      remove: jest.fn(),
+    };
     mockUseTeamsPage.mockReturnValue({
       pageData: {
         services: [sabbath, easterOneTime],
@@ -177,10 +199,7 @@ describe("TeamsPlansPage", () => {
       trackTeamsSave: mockTrackTeamsSave,
     });
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
-    mockListServicePlanTemplates.mockResolvedValue({
-      success: true,
-      templates: [],
-    });
+    mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
     mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
     mockSaveServicePlan.mockResolvedValue({
@@ -211,6 +230,18 @@ describe("TeamsPlansPage", () => {
       start: "2026-10-01",
       end: "2026-12-31",
     });
+  });
+
+  it("loads shared templates when opening bulk apply only if they are not loaded yet", async () => {
+    const user = userEvent.setup();
+    mockTemplatesResource.loaded = false;
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Apply template" }));
+
+    expect(await screen.findByRole("heading", { name: "Apply plan templates" })).toBeInTheDocument();
+    expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
   });
 
   it("shows one date-range input for a custom range", async () => {
@@ -446,6 +477,7 @@ describe("TeamsPlansPage", () => {
       hydrateSchedules: mockHydrateSchedules,
       hydratingScheduleIds: [],
     });
+    mockTemplatesResource.loaded = false;
     renderPage();
 
     await screen.findByRole("heading", { name: "Easter Sunday" });
@@ -458,6 +490,8 @@ describe("TeamsPlansPage", () => {
     expect(
       await screen.findByRole("button", { name: /Back to Services/i }),
     ).toBeInTheDocument();
+    await waitFor(() => expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1));
+    expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
     expect(
       await screen.findByRole("button", { name: /Start from scratch/i }),
     ).toBeInTheDocument();

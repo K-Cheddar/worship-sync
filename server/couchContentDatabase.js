@@ -10,7 +10,9 @@ import axios from "axios";
 const CONTENT_DATABASE_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,198}$/;
 
 export const toWorshipSyncContentDbName = (contentDatabaseKey) => {
-  const key = String(contentDatabaseKey || "").trim();
+  // The controller lowercases the active content database key before adding
+  // the same prefix. Keep every server-side caller on that canonical name.
+  const key = String(contentDatabaseKey || "").trim().toLowerCase();
   if (!CONTENT_DATABASE_KEY_PATTERN.test(key)) {
     const error = new Error("Invalid content database key.");
     error.statusCode = 400;

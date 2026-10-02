@@ -52,6 +52,7 @@ const mockPlanSource = {
     serviceId: string;
     name: string;
     date: string;
+    startsAt?: string;
   },
   selectedPlanDetails: null as any,
   selectedPlanKey: null as string | null,
@@ -668,6 +669,45 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       .not.toBeInTheDocument();
   });
 
+  it("shows plan names and dates separately while keeping full accessible labels", async () => {
+    const user = userEvent.setup();
+    const longName = "Sabbath School & Worship Experience with a Very Long Service Name";
+    const selectedPlan = {
+      planKey: "service-1@2026-09-26",
+      serviceId: "service-1",
+      name: longName,
+      date: "2026-09-26",
+      startsAt: "2026-09-26T10:00:00.000Z",
+    };
+    mockPlanSource.savedPlans = [selectedPlan];
+    mockPlanSource.selectedPlan = selectedPlan;
+    mockPlanSource.selectedPlanKey = selectedPlan.planKey;
+
+    const store = configureStore({
+      reducer: { servicePlanningImport: servicePlanningImportReducer, allDocs: allDocsReducer },
+    });
+    store.dispatch(setServicePlanningFloatingWindowDismissed(false));
+    renderWindow(store);
+
+    const trigger = screen.getByRole("button", {
+      name: `Select service plan: ${longName} · ${new Date(selectedPlan.startsAt).toLocaleString(undefined, {
+        weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+      })}`,
+    });
+    expect(trigger).toHaveClass("min-h-9");
+    expect(screen.getByText(longName)).toHaveClass("min-w-0", "truncate");
+
+    await user.click(trigger);
+    const picker = screen.getByTestId("service-plan-picker-content");
+    expect(picker).toHaveClass("scrollbar-portal");
+    const option = screen.getByRole("option", { name: new RegExp(`^${longName} ·`) });
+    expect(option).toHaveAttribute("aria-label");
+    expect(within(option).getByText(longName)).toHaveClass("truncate");
+    expect(within(option).getByText(new Date(selectedPlan.startsAt).toLocaleString(undefined, {
+      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    }))).toHaveClass("shrink-0");
+  });
+
   it.each([
     ["minimum supported viewport", 320, 240],
     ["iPad portrait viewport", 768, 1024],
@@ -716,6 +756,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
       });
       expect(picker).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
       expect(screen.getByTestId("service-plan-picker-content")).toHaveClass(
+        "scrollbar-portal",
         "max-h-[min(var(--radix-popper-available-height),65vh,24rem)]",
       );
       expect(screen.getByTestId("floating-window")).toHaveStyle({

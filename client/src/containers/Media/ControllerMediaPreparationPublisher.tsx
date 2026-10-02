@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo } from "react";
 import { useSelector } from "../../hooks";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useActiveControllerProfile } from "../../context/activeController";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
@@ -15,6 +16,11 @@ import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates
 import { usePublishMediaPreparationManifest } from "../../hooks/useMediaPreparationManifest";
 import type { DisplayOutput } from "../../utils/displayOutputs";
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
+import {
+  publishPreparedMediaContext,
+  subscribePreparedMediaContextRequests,
+  type PreparedMediaContext,
+} from "../../utils/preparedMediaContext";
 
 const prefetchPosterUrls = (posterUrls: string[]) => {
   if (window.electronAPI || posterUrls.length === 0) return undefined;
@@ -53,6 +59,25 @@ const SourceGroupPublisher = ({
   group: SourceGroup;
 }) => {
   const { controllerProfile, outlineId, outlineName, destinations } = group;
+  const { db } = useContext(ControllerInfoContext) || {};
+  useEffect(() => {
+    publishPreparedMediaContext({
+      controllerProfileId: controllerProfile.id,
+      controllerProfileName: controllerProfile.name,
+      outlineScope: controllerProfile.outlineScope,
+      outlineId,
+      outlineName,
+      contextSource: "local runtime selection",
+    });
+  }, [
+    controllerProfile.id,
+    controllerProfile.name,
+    controllerProfile.outlineScope,
+    db,
+    outlineId,
+    outlineName,
+  ]);
+
   const discoveryResult = useServiceVideoCandidates({
     enabled: true,
     cacheMedia: false,
@@ -115,6 +140,7 @@ const ControllerMediaPreparationPublisher = () => {
     (state) => state.undoable?.present?.itemLists?.selectedIdByScope ?? {},
   );
   const { sessionKind } = useContext(GlobalInfoContext) || {};
+  const { db } = useContext(ControllerInfoContext) || {};
 
   const groups = useMemo(() => {
     const outputs = getControllerOutputs(controllerProfile, displayOutputs);
@@ -171,6 +197,21 @@ const ControllerMediaPreparationPublisher = () => {
     outlines,
     selectedIdByScope,
   ]);
+
+  useEffect(() => {
+    const contexts: PreparedMediaContext[] =
+      sessionKind === "display"
+        ? []
+        : groups.map((group) => ({
+            controllerProfileId: group.controllerProfile.id,
+            controllerProfileName: group.controllerProfile.name,
+            outlineScope: group.controllerProfile.outlineScope,
+            outlineId: group.outlineId,
+            outlineName: group.outlineName,
+            contextSource: "local runtime selection",
+          }));
+    return subscribePreparedMediaContextRequests(() => contexts);
+  }, [db, groups, sessionKind]);
 
   if (sessionKind === "display" || groups.length === 0) return null;
 

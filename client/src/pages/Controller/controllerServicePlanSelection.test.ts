@@ -1,9 +1,38 @@
 import {
   chooseControllerServicePlanKey,
+  formatControllerServicePlanDateTime,
+  formatControllerServicePlanLabel,
   limitControllerServicePlans,
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import type { ServicePlanSummary } from "../../types/servicePlan";
+
+describe("controller service plan date formatting", () => {
+  it("keeps the combined label date identical to the date-only formatter", () => {
+    const savedPlan = plan("service@2026-09-26", "2026-09-26T10:00:00.000Z");
+    expect(formatControllerServicePlanLabel(savedPlan)).toBe(
+      `${savedPlan.name} · ${formatControllerServicePlanDateTime(savedPlan)}`,
+    );
+  });
+
+  it("formats plans without a start time using their date only", () => {
+    const savedPlan: ServicePlanSummary = {
+      planKey: "service@2026-09-26",
+      serviceId: "service",
+      date: "2026-09-26",
+      name: "Sabbath School",
+    };
+    const expectedDate = new Date("2026-09-26T12:00:00").toLocaleString(
+      undefined,
+      { weekday: "short", month: "short", day: "numeric" },
+    );
+
+    expect(formatControllerServicePlanDateTime(savedPlan)).toBe(expectedDate);
+    expect(formatControllerServicePlanLabel(savedPlan)).toBe(
+      `Sabbath School · ${expectedDate}`,
+    );
+  });
+});
 
 const plan = (
   planKey: string,

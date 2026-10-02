@@ -1,4 +1,5 @@
 import type { Box, DisplayType } from "../../types";
+import { getBoxPlainText } from "../../utils/presentationText";
 
 export type DisplayRenderProfile = {
   supportsBackground: boolean;
@@ -15,7 +16,7 @@ export const resolveDisplayRenderProfile = (
   boxes: Box[],
 ): DisplayRenderProfile => {
   const isSlide = displayType === "slide";
-  const hasWords = boxes.some((box) => Boolean(box.words?.trim()));
+  const hasWords = boxes.some((box) => Boolean(getBoxPlainText(box).trim()));
 
   return {
     supportsBackground:

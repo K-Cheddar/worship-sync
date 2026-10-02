@@ -37,6 +37,7 @@ import type {
   TeamService,
 } from "../../api/authTypes";
 import type { ServicePlan } from "../../types/servicePlan";
+import type { ServicePlanTemplateResource } from "./servicePlanTemplateResource";
 import type { TeamsAssignmentSummaryRow } from "../Teams/pages/teamsAssignmentsSummary";
 import type { ServicePlanTimingSource } from "./servicePlanTimingUtils";
 import {
@@ -217,6 +218,7 @@ type RenderEditorProps = {
   scheduledAssignmentRows?: TeamsAssignmentSummaryRow[];
   mobileServingContent?: ReactNode;
   onPlanTimingChange?: (source: ServicePlanTimingSource | null) => void;
+  templateResource?: ServicePlanTemplateResource;
 };
 
 const editorTree = ({
@@ -235,6 +237,7 @@ const editorTree = ({
   scheduledAssignmentRows,
   mobileServingContent,
   onPlanTimingChange,
+  templateResource,
 }: RenderEditorProps = {}) => (
   <GlobalInfoContext.Provider
     value={
@@ -259,6 +262,7 @@ const editorTree = ({
         scheduledAssignmentRows={scheduledAssignmentRows}
         mobileServingContent={mobileServingContent}
         onPlanTimingChange={onPlanTimingChange}
+        templateResource={templateResource}
       />
     </ToastProvider>
   </GlobalInfoContext.Provider>
@@ -1370,6 +1374,30 @@ describe("ServicePlanEditor", () => {
     // Re-keyed on apply so two plans from one template never share ids.
     expect(body.sections[0].id).not.toBe("tpl-section");
     expect(body.sections[0].elements[0].id).not.toBe("tpl-el");
+  });
+
+  it("uses an externally supplied template catalog without listing templates", async () => {
+    const ensureLoaded = jest.fn();
+    renderEditor({
+      templateResource: {
+        data: [{
+          templateId: "shared-template",
+          churchId: "church-1",
+          name: "Shared Sabbath",
+          sections: [],
+        }],
+        loaded: true,
+        loading: false,
+        error: null,
+        ensureLoaded,
+        upsert: jest.fn(),
+        remove: jest.fn(),
+      },
+    });
+
+    expect(await screen.findByRole("button", { name: /Apply Shared Sabbath/i })).toBeInTheDocument();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
   });
 
   it("applies the service default template with one click", async () => {

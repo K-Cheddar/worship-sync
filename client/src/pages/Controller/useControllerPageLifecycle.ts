@@ -37,7 +37,6 @@ import {
   getAllOverlayHistory,
   getOverlaysByIds,
   updateAllDocs,
-  migrateMediaLibraryFoldersFieldIfNeeded,
 } from "../../utils/dbUtils";
 import {
   loadOrCreateAllItemsDoc,
@@ -65,12 +64,19 @@ import {
 import {
   initiateMediaList,
   initiateMediaFromDoc,
+  syncMediaFromRemote,
+  removeMediaItemFromRemote,
+  updateMediaFoldersFromRemote,
+  upsertMediaItemFromRemote,
   isMediaLoadSettled,
   setLoadStatus as setMediaLoadStatus,
 } from "../../store/mediaSlice";
 import {
-  loadOrCreateMediaDoc,
-  normalizeMediaDoc,
+  loadMediaLibrary as readMediaLibrary,
+  isMediaLibraryV2,
+  MEDIA_LIBRARY_META_ID,
+  MEDIA_LIBRARY_SCHEMA_VERSION,
+  parseMediaReplicationDoc,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
@@ -133,6 +139,16 @@ export const useControllerPageLifecycle = () => {
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
+  const mediaSchemaV2Ref = useRef(false);
+  const mediaSchemaV2ObservedRef = useRef(false);
+  const mediaSchemaDbRef = useRef<PouchDB.Database | undefined>(undefined);
+  const mediaReplicationRevisionRef = useRef(0);
+  const mediaReplicationDbRef = useRef<PouchDB.Database | undefined>(db);
+  const mediaReplicationFingerprintsRef = useRef(new Map<string, string>());
+  if (mediaReplicationDbRef.current !== db) {
+    mediaReplicationDbRef.current = db;
+    mediaReplicationFingerprintsRef.current.clear();
+  }
 
   // A profile change is a new editing session even when React keeps this hook
   // mounted. Re-arm readiness without reloading already hydrated slices; the
@@ -222,7 +238,53 @@ export const useControllerPageLifecycle = () => {
     [dispatch, cloud, selectedList, db, store],
   );
 
+  const updateMediaFromExternal = useCallback(
+    (event: CustomEventInit) => {
+      const updates = event.detail;
+      if (!Array.isArray(updates)) return;
+      for (const update of updates) {
+        if (
+          update?._id === MEDIA_LIBRARY_META_ID &&
+          Number(update.schemaVersion) >= MEDIA_LIBRARY_SCHEMA_VERSION
+        ) {
+          mediaSchemaV2Ref.current = true;
+          mediaSchemaV2ObservedRef.current = true;
+          continue;
+        }
+        if (typeof update?._id === "string") {
+          const fingerprint = JSON.stringify(
+            Object.fromEntries(
+              Object.entries(update).filter(([key]) => key !== "_rev"),
+            ),
+          );
+          if (mediaReplicationFingerprintsRef.current.get(update._id) === fingerprint) {
+            continue;
+          }
+          mediaReplicationFingerprintsRef.current.set(update._id, fingerprint);
+          if (mediaReplicationFingerprintsRef.current.size > 500) {
+            const oldestId = mediaReplicationFingerprintsRef.current.keys().next().value;
+            if (oldestId) mediaReplicationFingerprintsRef.current.delete(oldestId);
+          }
+        }
+        const change = parseMediaReplicationDoc(update, mediaSchemaV2Ref.current);
+        if (!change) continue;
+        mediaReplicationRevisionRef.current += 1;
+        if (change.kind === "legacy") {
+          dispatch(syncMediaFromRemote({ list: change.list, folders: change.folders }));
+        } else if (change.kind === "folders") {
+          dispatch(updateMediaFoldersFromRemote(change.folders));
+        } else if (change.kind === "item-delete") {
+          dispatch(removeMediaItemFromRemote(change.id));
+        } else {
+          dispatch(upsertMediaItemFromRemote(change.item));
+        }
+      }
+    },
+    [dispatch],
+  );
+
   useGlobalBroadcast(updateAllItemsAndListFromExternal);
+  useGlobalBroadcast(updateMediaFromExternal);
 
   const updatePreferencesFromExternal = useCallback(
     async (event: CustomEventInit) => {
@@ -425,14 +487,40 @@ export const useControllerPageLifecycle = () => {
     if (!db || access !== "full") return;
     let cancelled = false;
     dispatch(setMediaLoadStatus("loading"));
+    if (mediaSchemaDbRef.current !== db) {
+      mediaSchemaDbRef.current = db;
+      mediaSchemaV2Ref.current = false;
+      mediaSchemaV2ObservedRef.current = false;
+    }
 
-    const loadMediaLibrary = async () => {
+    const initializeMediaLibrary = async () => {
       try {
-        await migrateMediaLibraryFoldersFieldIfNeeded(db);
-        const raw = await loadOrCreateMediaDoc(db);
+        const initializedAsV2 = await isMediaLibraryV2(db);
         if (cancelled) return;
-        const { list, folders } = normalizeMediaDoc(raw);
-        dispatch(initiateMediaFromDoc({ list, folders }));
+        if (!mediaSchemaV2ObservedRef.current) {
+          mediaSchemaV2Ref.current = initializedAsV2;
+          mediaSchemaV2ObservedRef.current = initializedAsV2;
+        }
+        const replicationRevisionAtStart = mediaReplicationRevisionRef.current;
+        let loaded = await readMediaLibrary(db);
+        if (cancelled) return;
+        // A v2 marker can replicate while the initial legacy read is pending.
+        // Re-read using the active schema before publishing that stale snapshot.
+        if (mediaSchemaV2Ref.current && !initializedAsV2) {
+          loaded = await readMediaLibrary(db);
+          if (cancelled) return;
+        }
+        // Item or folder documents can replicate during a same-schema read too.
+        // Re-read until no media change arrived while the read was in flight.
+        let readRevision = mediaReplicationRevisionRef.current;
+        while (readRevision !== replicationRevisionAtStart) {
+          const revisionBeforeRead = mediaReplicationRevisionRef.current;
+          loaded = await readMediaLibrary(db);
+          if (cancelled) return;
+          readRevision = mediaReplicationRevisionRef.current;
+          if (readRevision === revisionBeforeRead) break;
+        }
+        dispatch(initiateMediaFromDoc(loaded));
       } catch (error) {
         if (cancelled) return;
         dispatch(setMediaLoadStatus("error"));
@@ -444,7 +532,7 @@ export const useControllerPageLifecycle = () => {
       }
     };
 
-    void loadMediaLibrary();
+    void initializeMediaLibrary();
     return () => {
       cancelled = true;
     };
@@ -551,6 +639,12 @@ export const useControllerPageLifecycle = () => {
     return () =>
       updater.removeEventListener("update", updateAllItemsAndListFromExternal);
   }, [updater, updateAllItemsAndListFromExternal]);
+
+  useEffect(() => {
+    if (!updater) return;
+    updater.addEventListener("update", updateMediaFromExternal);
+    return () => updater.removeEventListener("update", updateMediaFromExternal);
+  }, [updater, updateMediaFromExternal]);
 
   useEffect(() => {
     if (!updater) return;

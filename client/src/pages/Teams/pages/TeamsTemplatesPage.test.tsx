@@ -6,7 +6,6 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastProvider } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
 import {
-  listServicePlanTemplates,
   saveServicePlanTemplate,
   deleteServicePlanTemplate,
 } from "../../../api/auth";
@@ -15,7 +14,6 @@ import type { TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 
 jest.mock("../../../api/auth", () => ({
-  listServicePlanTemplates: jest.fn(),
   saveServicePlanTemplate: jest.fn(),
   deleteServicePlanTemplate: jest.fn(),
   // The template editor loads the church's microphones so a template can carry
@@ -48,6 +46,16 @@ const services: TeamService[] = [
 ];
 
 let mockCanEditTeams = true;
+let mockTemplatesResource: {
+  data: ServicePlanTemplate[];
+  loaded: boolean;
+  loading: boolean;
+  error: unknown | null;
+  ensureLoaded: jest.Mock;
+  refresh: jest.Mock;
+  upsert: jest.Mock;
+  remove: jest.Mock;
+};
 jest.mock("../TeamsPageContext", () => ({
   useTeamsPage: () => ({
     pageData: {
@@ -58,10 +66,10 @@ jest.mock("../TeamsPageContext", () => ({
       schedules: [],
     },
     canEditTeams: mockCanEditTeams,
+    templates: mockTemplatesResource,
   }),
 }));
 
-const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockSaveServicePlanTemplate = jest.mocked(saveServicePlanTemplate);
 const mockDeleteServicePlanTemplate = jest.mocked(deleteServicePlanTemplate);
 
@@ -110,10 +118,16 @@ const renderPage = ({ canEdit = true }: { canEdit?: boolean } = {}) => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockCanEditTeams = true;
-  mockListServicePlanTemplates.mockResolvedValue({
-    success: true,
-    templates: [template()],
-  });
+  mockTemplatesResource = {
+    data: [template()],
+    loaded: true,
+    loading: false,
+    error: null,
+    ensureLoaded: jest.fn().mockResolvedValue(undefined),
+    refresh: jest.fn().mockResolvedValue(undefined),
+    upsert: jest.fn(),
+    remove: jest.fn(),
+  };
   mockSaveServicePlanTemplate.mockResolvedValue({
     success: true,
     template: template({ templateId: "template-2", name: "Copy of Standard Sabbath" }),
@@ -145,29 +159,30 @@ describe("nextTemplateCopyName", () => {
 });
 
 describe("TeamsTemplatesPage", () => {
-  it("shows a loading skeleton while templates are fetching", async () => {
-    let resolveList: ((value: {
-      success: true;
-      templates: ServicePlanTemplate[];
-    }) => void) | undefined;
-    mockListServicePlanTemplates.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveList = resolve;
-        }),
-    );
+  it("requests the shared catalog through ensureLoaded once on route entry", async () => {
+    mockTemplatesResource = {
+      ...mockTemplatesResource,
+      data: [],
+      loaded: false,
+      loading: false,
+    };
+    renderPage();
 
+    await waitFor(() => expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a loading skeleton while the shared template resource is fetching", () => {
+    mockTemplatesResource = {
+      ...mockTemplatesResource,
+      data: [],
+      loaded: false,
+      loading: true,
+    };
     renderPage();
 
     expect(
       screen.getByRole("status", { name: "Loading templates" }),
     ).toBeInTheDocument();
-
-    resolveList?.({ success: true, templates: [template()] });
-    expect(await screen.findByText("Standard Sabbath")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("status", { name: "Loading templates" }),
-    ).not.toBeInTheDocument();
   });
 
   it("lists each template with its scope and size", async () => {
@@ -178,21 +193,47 @@ describe("TeamsTemplatesPage", () => {
     expect(screen.getByText("Preferred for Sabbath Service")).toBeInTheDocument();
   });
 
+  it("keeps an operator's template draft when the shared catalog updates", async () => {
+    const user = userEvent.setup();
+    const view = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Standard Sabbath" }));
+    await user.click(await screen.findByRole("button", { name: /^Edit$/i }));
+    await user.click(await screen.findByRole("button", { name: "Edit details" }));
+    const nameInput = await screen.findByRole("textbox", { name: "Template name:" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Operator draft");
+
+    mockTemplatesResource = {
+      ...mockTemplatesResource,
+      data: [template({ name: "SSE update", revision: 8 })],
+    };
+    view.rerender(
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({
+          churchId: "church-1",
+          canEditServices: true,
+          canEditTeams: true,
+        }) as ContextType<typeof GlobalInfoContext>}
+      >
+        <ToastProvider>
+          <TeamsTemplatesPage />
+        </ToastProvider>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Template name:" })).toHaveValue("Operator draft");
+  });
+
   it("labels a template with no service as available anywhere", async () => {
-    mockListServicePlanTemplates.mockResolvedValue({
-      success: true,
-      templates: [template({ serviceId: undefined })],
-    });
+    mockTemplatesResource.data = [template({ serviceId: undefined })];
     renderPage();
 
     expect(await screen.findByText("Any service")).toBeInTheDocument();
   });
 
   it("explains the empty state and offers a first template", async () => {
-    mockListServicePlanTemplates.mockResolvedValue({
-      success: true,
-      templates: [],
-    });
+    mockTemplatesResource.data = [];
     renderPage();
 
     expect(await screen.findByText("No templates yet")).toBeInTheDocument();
@@ -231,6 +272,9 @@ describe("TeamsTemplatesPage", () => {
     await user.click(screen.getByRole("menuitem", { name: "Copy template" }));
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled());
+    expect(mockTemplatesResource.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ templateId: "template-2" }),
+    );
     const [, body] = mockSaveServicePlanTemplate.mock.calls[0];
     expect(body.name).toBe("Copy of Standard Sabbath");
     expect(body.serviceId).toBe("service-1");
@@ -259,7 +303,7 @@ describe("TeamsTemplatesPage", () => {
         "template-1",
       ),
     );
-    expect(screen.queryByText("Standard Sabbath")).not.toBeInTheDocument();
+    expect(mockTemplatesResource.remove).toHaveBeenCalledWith("template-1");
   });
 
   it("copies the current template from the open editor actions menu", async () => {
@@ -280,10 +324,7 @@ describe("TeamsTemplatesPage", () => {
 
   it("filters the list by name", async () => {
     const user = userEvent.setup();
-    mockListServicePlanTemplates.mockResolvedValue({
-      success: true,
-      templates: [template(), template({ templateId: "template-2", name: "Communion" })],
-    });
+    mockTemplatesResource.data = [template(), template({ templateId: "template-2", name: "Communion" })];
     renderPage();
 
     await screen.findByText("Communion");

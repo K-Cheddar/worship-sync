@@ -12,6 +12,9 @@ import mediaReducer, {
   removeItemFromMediaList,
   addItemToMediaList,
   updateMediaItemFields,
+  upsertMediaItemFromRemote,
+  removeMediaItemFromRemote,
+  updateMediaFoldersFromRemote,
 } from "./mediaSlice";
 import type { MediaType, MediaFolder } from "../types";
 
@@ -141,6 +144,36 @@ describe("mediaSlice", () => {
       const store = createStore();
       store.dispatch(updateMediaListFromRemote([makeMedia("m1")]));
       expect(store.getState().media.list).toHaveLength(1);
+    });
+  });
+
+  describe("v2 replicated changes", () => {
+    it("replaces authoritative item documents, applies folders, and removes tombstones", () => {
+      const store = createStore();
+      store.dispatch(initiateMediaFromDoc({ list: [makeMedia("existing")], folders: [] }));
+      store.dispatch(upsertMediaItemFromRemote({
+        ...makeMedia("new"),
+        name: "New item",
+        folderId: "folder",
+        thumbnail: "/thumb.jpg",
+      }));
+      expect(store.getState().media.list.map((item) => item.id)).toEqual(["existing", "new"]);
+      expect(store.getState().media.list[1].folderId).toBe("folder");
+      store.dispatch(updateMediaFoldersFromRemote([makeFolder("folder")]));
+      store.dispatch(upsertMediaItemFromRemote({
+        id: "new",
+        name: "Renamed",
+        type: "image",
+        background: "/new-background.jpg",
+      }));
+      expect(store.getState().media.list[1]).toEqual({
+        id: "new",
+        name: "Renamed",
+        type: "image",
+        background: "/new-background.jpg",
+      });
+      store.dispatch(removeMediaItemFromRemote("new"));
+      expect(store.getState().media.list.map((item) => item.id)).toEqual(["existing"]);
     });
   });
 

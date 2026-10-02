@@ -402,6 +402,28 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     await expect(getLocalImageThumbnail("orphaned")).resolves.toBeUndefined();
   });
 
+  it("does not treat the retained legacy media snapshot as a v2 local-image reference", async () => {
+    await saveLocalImage(storedImage("legacy-only-reference"));
+    const db = {
+      allDocs: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            doc: {
+              _id: "media",
+              list: [{ id: "old", localImage: { id: "legacy-only-reference" } }],
+            },
+          },
+          { doc: { _id: "media-library-meta", schemaVersion: 2 } },
+        ],
+      }),
+    } as unknown as PouchDB.Database;
+
+    await expect(
+      cleanupOrphanedLocalImages({ db, workspaceId: "church-1", minimumAgeMs: 0 }),
+    ).resolves.toBe(1);
+    await expect(getLocalImage("legacy-only-reference")).resolves.toBeUndefined();
+  });
+
   it("keeps shared bytes when deleting one referencing item", async () => {
     await saveLocalImage(storedImage("shared"));
     await saveLocalImage(storedImage("only-deleted"));

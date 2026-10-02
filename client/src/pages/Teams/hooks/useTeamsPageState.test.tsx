@@ -61,8 +61,11 @@ const flushMicrotasks = async () =>
 describe("useTeamsPageState bootstrap recovery", () => {
   let churchId: string;
 
-  const renderPageState = () =>
-    renderHook(() => useTeamsPageState(), {
+  const renderPageState = (
+    onTemplateEvent?: Parameters<typeof useTeamsPageState>[0],
+    onReconnect?: Parameters<typeof useTeamsPageState>[1],
+  ) =>
+    renderHook(() => useTeamsPageState(onTemplateEvent, onReconnect), {
       wrapper: ({ children }: PropsWithChildren) => (
         <GlobalInfoContext.Provider
           value={
@@ -121,6 +124,57 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
 
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("forwards template events from the existing Teams stream", async () => {
+    const onTemplateEvent = jest.fn();
+    const { unmount } = renderPageState(onTemplateEvent);
+    await flushMicrotasks();
+
+    const source = MockEventSource.instances[0];
+    act(() => source.onmessage?.({
+      data: JSON.stringify({
+        type: "service-plan-template-updated",
+        template: { templateId: "template-1" },
+      }),
+    }));
+    act(() => source.onmessage?.({
+      data: JSON.stringify({
+        type: "service-plan-template-removed",
+        templateId: "template-1",
+      }),
+    }));
+
+    expect(onTemplateEvent).toHaveBeenNthCalledWith(1, {
+      type: "service-plan-template-updated",
+      template: { templateId: "template-1" },
+    });
+    expect(onTemplateEvent).toHaveBeenNthCalledWith(2, {
+      type: "service-plan-template-removed",
+      templateId: "template-1",
+    });
+    unmount();
+  });
+
+  it("notifies template recovery only after the existing Teams stream reconnects", async () => {
+    const onReconnect = jest.fn();
+    const { unmount } = renderPageState(undefined, onReconnect);
+    await flushMicrotasks();
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    const source = MockEventSource.instances[0];
+    act(() => source.onopen?.());
+    act(() => source.onerror?.());
+    act(() => source.onopen?.());
+    await flushMicrotasks();
+
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+    expect(MockEventSource.instances).toHaveLength(1);
+    jest.setSystemTime(new Date(Date.now() + 6 * 60 * 1000));
+    emitFocus();
+    await flushMicrotasks();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
     unmount();
   });
 

@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  Trash2,
 } from "lucide-react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -18,6 +19,7 @@ type HeadingItemProps = {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   onItemClick: (listId: string, e: React.MouseEvent) => void;
+  onDelete?: () => void;
   /** When false, heading cannot be reordered, renamed, or deleted (view-only access). */
   canMutateOutline?: boolean;
   /** The listId of the item currently being dragged, if any. */
@@ -33,6 +35,7 @@ const HeadingItem = ({
   isCollapsed,
   onToggleCollapse,
   onItemClick,
+  onDelete,
   canMutateOutline = true,
   dragActiveId,
 }: HeadingItemProps) => {
@@ -69,7 +72,8 @@ const HeadingItem = ({
       style={style}
       onClick={(e) => onItemClick(item.listId, e)}
       className={cn(
-        "flex items-center gap-1 border-b-2 overflow-hidden pr-6",
+        "flex items-center gap-1 border-b-2 overflow-hidden",
+        canMutateOutline && onDelete ? "pr-0" : "pr-6",
         "bg-black/40 border-t border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
         isSelected && "ring-1 ring-inset ring-cyan-500/30",
         isSelected ? "border-l-cyan-500" : "border-transparent",
@@ -101,6 +105,20 @@ const HeadingItem = ({
           {item.name}
         </p>
       </div>
+      {canMutateOutline && onDelete && (
+        <Button
+          variant="tertiary"
+          color="#fff"
+          svg={Trash2}
+          aria-label={`Delete heading ${item.name}`}
+          title={`Delete heading ${item.name}`}
+          className="relative z-10 shrink-0 transition-colors duration-150 ease-out hover:bg-white/10 active:bg-white/15"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        />
+      )}
     </li>
   );
 };

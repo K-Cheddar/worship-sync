@@ -986,10 +986,17 @@ export const useServiceVideoCandidates = ({
     const availableSources = new Map(
       [...diagnosticsByKey.values()].map((diagnostic) => [diagnostic.mediaKey, diagnostic.originalSource]),
     );
-    cacheRetryTimersRef.current.forEach((timer, mediaKey) => {
-      if (!availableSources.has(mediaKey)) {
+    const clearCacheRetryTimer = (mediaKey: string) => {
+      const timer = cacheRetryTimersRef.current.get(mediaKey);
+      if (timer === undefined) return;
+      cacheRetryTimersRef.current.delete(mediaKey);
+      if (![...cacheRetryTimersRef.current.values()].includes(timer)) {
         window.clearTimeout(timer);
-        cacheRetryTimersRef.current.delete(mediaKey);
+      }
+    };
+    cacheRetryTimersRef.current.forEach((_, mediaKey) => {
+      if (!availableSources.has(mediaKey)) {
+        clearCacheRetryTimer(mediaKey);
         cacheRequestsRef.current.delete(mediaKey);
       }
     });
@@ -1000,9 +1007,7 @@ export const useServiceVideoCandidates = ({
         }
         const source = availableSources.get(mediaKey);
       if (source && request.source && request.source !== source) {
-        const timer = cacheRetryTimersRef.current.get(mediaKey);
-        if (timer !== undefined) window.clearTimeout(timer);
-        cacheRetryTimersRef.current.delete(mediaKey);
+        clearCacheRetryTimer(mediaKey);
         cacheRequestsRef.current.delete(mediaKey);
       }
     });
@@ -1067,17 +1072,37 @@ export const useServiceVideoCandidates = ({
           "retry-scheduled",
       );
       if (!retryRequests.length) return false;
+      const retryAt = Math.max(
+        ...retryRequests.map(
+          (request) =>
+            cacheRequestsRef.current.get(request.mediaKey)?.retryAt ?? Date.now(),
+        ),
+      );
+      const timer = window.setTimeout(() => {
+        const readyRequests = retryRequests.filter((request) => {
+          if (cacheRetryTimersRef.current.get(request.mediaKey) !== timer) return false;
+          const current = cacheRequestsRef.current.get(request.mediaKey);
+          if (current?.state !== "retry-scheduled") return false;
+          cacheRequestsRef.current.set(request.mediaKey, {
+            ...current,
+            state: "retry-ready",
+          });
+          return true;
+        });
+        retryRequests.forEach((request) => {
+          if (cacheRetryTimersRef.current.get(request.mediaKey) === timer) {
+            cacheRetryTimersRef.current.delete(request.mediaKey);
+          }
+        });
+        if (readyRequests.length > 0) {
+          void loadServiceMediaRef.current?.();
+        }
+      }, Math.max(0, retryAt - Date.now()));
       retryRequests.forEach((request) => {
         const previousTimer = cacheRetryTimersRef.current.get(request.mediaKey);
-        if (previousTimer !== undefined) window.clearTimeout(previousTimer);
-        const retryAt = cacheRequestsRef.current.get(request.mediaKey)?.retryAt ?? Date.now();
-        const timer = window.setTimeout(() => {
-          cacheRetryTimersRef.current.delete(request.mediaKey);
-          const current = cacheRequestsRef.current.get(request.mediaKey);
-          if (current?.state !== "retry-scheduled") return;
-          cacheRequestsRef.current.set(request.mediaKey, { ...current, state: "retry-ready" });
-          void loadServiceMediaRef.current?.();
-        }, Math.max(0, retryAt - Date.now()));
+        if (previousTimer !== undefined && previousTimer !== timer) {
+          clearCacheRetryTimer(request.mediaKey);
+        }
         cacheRetryTimersRef.current.set(request.mediaKey, timer);
       });
       return true;

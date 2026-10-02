@@ -679,6 +679,8 @@ test("generated schedule ensure leaves populated custom and generated schedules 
     ...sharedSchedule,
     scheduleId: "custom-october",
     source: "custom",
+    startDate: "2026-09-01",
+    endDate: "2026-11-30",
     assignments: staffing("custom-member"),
   });
 
@@ -697,6 +699,80 @@ test("generated schedule ensure leaves populated custom and generated schedules 
   });
 
   assert.equal(result.statusCode, 409);
+});
+
+test("generated schedule ensure yields to a populated custom period", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_populated_custom");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Praise Team",
+    positions: [{ name: "Vocal" }],
+  });
+  const vocalId = positionIds.Vocal;
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "worship-experience",
+      name: "Worship Experience",
+      reccurence: "weekly",
+      dayOfWeek: 6,
+      time: "11:00",
+      positionRequirements: [{ positionId: vocalId, count: 1 }],
+    }],
+  });
+  const occurrence = {
+    occurrenceId: "worship-experience@2026-10-03T11:00:00.000Z",
+    serviceId: "worship-experience",
+    name: "Worship Experience",
+    startsAt: "2026-10-03T11:00:00.000Z",
+    positionRequirements: [{ positionId: vocalId, count: 1 }],
+  };
+  const body = {
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: ["worship-experience"],
+    occurrences: [occurrence],
+  };
+  const generated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body,
+  });
+  assert.equal(generated.statusCode, 200);
+  assert.equal(generated.payload.created, true);
+  const customId = "custom-october-praise";
+  await setDoc("teamSchedules", customId, {
+    scheduleId: customId,
+    churchId: context.churchId,
+    teamId,
+    name: "Custom October",
+    startDate: body.startDate,
+    endDate: body.endDate,
+    serviceIds: body.serviceIds,
+    source: "custom",
+    occurrences: [occurrence],
+    assignments: {
+      [occurrence.occurrenceId]: {
+        [`${vocalId}::0`]: { primaryMemberId: "existing-vocal", shadows: [] },
+      },
+    },
+  });
+
+  const reused = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body,
+  });
+
+  assert.equal(reused.statusCode, 200);
+  assert.equal(reused.payload.created, false);
+  assert.equal(reused.payload.schedule.scheduleId, customId);
+  assert.equal(
+    reused.payload.schedule.assignments[occurrence.occurrenceId][`${vocalId}::0`]
+      .primaryMemberId,
+    "existing-vocal",
+  );
 });
 
 test("generated schedule ensure merges combined-service requirements from current services", async (t) => {
@@ -770,7 +846,7 @@ test("generated schedule ensure merges combined-service requirements from curren
   );
 });
 
-test("generated schedule ensure reuses an older rolling record containing every visible occurrence", async (t) => {
+test("generated schedule ensure reuses an older rolling record by date coverage despite occurrence drift", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_rolling_reuse");
   const { teamId, positionIds } = await seedTeam(context, {
@@ -779,6 +855,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
   });
   const cameraId = positionIds.Camera;
   const occurrenceId = "service-sabbath@2026-10-03T10:00:00.000Z";
+  const savedOccurrenceId = "service-sabbath@2026-10-03T09:00:00.000Z";
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
@@ -808,7 +885,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
     generatedPeriodKey: oldKey,
     occurrences: [
       {
-        occurrenceId,
+        occurrenceId: savedOccurrenceId,
         serviceId: "service-sabbath",
         name: "Sabbath Service",
         startsAt: "2026-10-03T10:00:00.000Z",
@@ -816,7 +893,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
       },
     ],
     assignments: {
-      [occurrenceId]: {
+      [savedOccurrenceId]: {
         [`${cameraId}::0`]: { primaryMemberId: "existing-member", shadows: [] },
       },
     },
@@ -837,7 +914,7 @@ test("generated schedule ensure reuses an older rolling record containing every 
     generatedPeriodKey: emptyOldKey,
     occurrences: [
       {
-        occurrenceId,
+        occurrenceId: savedOccurrenceId,
         serviceId: "service-sabbath",
         name: "Sabbath Service",
         startsAt: "2026-10-03T10:00:00.000Z",
@@ -856,7 +933,8 @@ test("generated schedule ensure reuses an older rolling record containing every 
       endDate: "2026-10-31",
       timeZone: "UTC",
       serviceIds: ["service-sabbath"],
-      visibleOccurrenceIds: [occurrenceId],
+      visibleStartDate: "2026-09-29",
+      visibleEndDate: "2026-10-29",
       occurrences: [
         {
           occurrenceId,
@@ -872,11 +950,90 @@ test("generated schedule ensure reuses an older rolling record containing every 
   assert.equal(result.statusCode, 200);
   assert.equal(result.payload.created, false);
   assert.equal(result.payload.schedule.scheduleId, oldScheduleId);
+  assert.equal(result.payload.schedule.occurrences[0].occurrenceId, savedOccurrenceId);
   assert.equal(
-    result.payload.schedule.assignments[occurrenceId][`${cameraId}::0`]
+    result.payload.schedule.assignments[savedOccurrenceId][`${cameraId}::0`]
       .primaryMemberId,
     "existing-member",
   );
+});
+
+test("generated schedule ensure reuses a populated custom schedule after current occurrence drift", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("custom_schedule_occurrence_drift");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const currentOccurrences = [3, 4, 10, 11, 17, 24, 31].map((day, index) => {
+    const date = `2026-10-${String(day).padStart(2, "0")}`;
+    const serviceId = `current-service-${index + 1}`;
+    return {
+      occurrenceId: `${serviceId}@${date}T11:00:00.000Z`,
+      serviceId,
+      name: `Current Service ${index + 1}`,
+      startsAt: `${date}T11:00:00.000Z`,
+      positionRequirements: [],
+    };
+  });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: currentOccurrences.map((occurrence) => ({
+      id: occurrence.serviceId,
+      name: occurrence.name,
+      reccurence: "one_time",
+      dateTimeISO: occurrence.startsAt,
+    })),
+  });
+  const savedOccurrenceIds = [3, 10, 17, 24, 31].map((day) =>
+    `old-service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+  );
+  const customScheduleId = "custom-october-media";
+  const existingAssignment = { "position::0": { primaryMemberId: "existing-member", shadows: [] } };
+  await setDoc("teamSchedules", customScheduleId, {
+    scheduleId: customScheduleId,
+    churchId: context.churchId,
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["old-service"],
+    source: "custom",
+    occurrences: savedOccurrenceIds.map((occurrenceId, index) => ({
+      occurrenceId,
+      serviceId: "old-service",
+      name: "Old Sabbath Service",
+      startsAt: `2026-10-${String([3, 10, 17, 24, 31][index]).padStart(2, "0")}T10:00:00.000Z`,
+      positionRequirements: [],
+    })),
+    assignments: { [savedOccurrenceIds[0]]: existingAssignment },
+  });
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October 2026",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+      serviceIds: currentOccurrences.map((occurrence) => occurrence.serviceId),
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+      occurrences: currentOccurrences,
+    },
+  });
+  const generatedKey = createHash("sha256")
+    .update(`${teamId}\u00002026-10-01\u00002026-10-31`)
+    .digest("hex");
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, customScheduleId);
+  assert.equal(result.payload.schedule.occurrences.length, 5);
+  assert.deepEqual(result.payload.schedule.serviceIds, ["old-service"]);
+  assert.deepEqual(
+    result.payload.schedule.assignments[savedOccurrenceIds[0]],
+    existingAssignment,
+  );
+  assert.equal(await getDoc("teamSchedules", `generated_${generatedKey}`), null);
 });
 
 test("generated schedule ensure reuses only an equivalent source-less legacy period", async (t) => {
@@ -1014,7 +1171,7 @@ test("generated schedule ensure prefers a populated old generated identity over 
   );
 });
 
-test("generated schedule ensure does not adopt a non-equivalent or ambiguous source-less period", async (t) => {
+test("generated schedule ensure reuses source-less periods by date coverage and rejects ambiguous copies", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext(
     "generated_schedule_non_equivalent_legacy",
@@ -1060,12 +1217,13 @@ test("generated schedule ensure does not adopt a non-equivalent or ambiguous sou
     ],
     assignments: {},
   });
-  const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+  const reused = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
     body,
   });
-  assert.equal(created.statusCode, 200);
-  assert.equal(created.payload.created, true);
+  assert.equal(reused.statusCode, 200);
+  assert.equal(reused.payload.created, false);
+  assert.equal(reused.payload.schedule.scheduleId, "source-less-custom-occurrence");
 
   const ambiguousContext = await createAdminContext(
     "generated_schedule_ambiguous_legacy",

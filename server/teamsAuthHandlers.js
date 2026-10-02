@@ -13781,25 +13781,25 @@ export const createTeamsAuthHandlers = ({
                 Object.keys(schedule.optionalPositionSlots || {}).length ||
                 Object.keys(schedule.responses || {}).length,
             );
-          // Resolve against the service dates actually shown in this workspace.
-          // Blank days at the edges of the selected display range are not part
-          // of schedule compatibility.
+          // Resolve against the visible date range so blank days at the edges
+          // remain part of coverage while Service Setup occurrence drift does
+          // not hide a saved schedule.
           let compatible = [];
-          if (visibleOccurrenceIds.length > 0) {
-            const visibleDates = payload.occurrences
-              .filter((occurrence) =>
-                visibleOccurrenceIds.includes(occurrence.occurrenceId),
-              )
-              .map((occurrence) =>
-                getOccurrenceCalendarParts(
-                  occurrence.startsAt,
-                  timeZone,
-                ).date,
-              )
-              .sort();
-            const firstVisibleDate = visibleDates[0];
-            const lastVisibleDate = visibleDates[visibleDates.length - 1];
-            const visibleIds = new Set(visibleOccurrenceIds);
+          const visibleDates = payload.occurrences
+            .filter((occurrence) => visibleOccurrenceIds.includes(occurrence.occurrenceId))
+            .map((occurrence) => getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date)
+            .sort();
+          const requestedVisibleStartDate = normalizeOptionalPlainDate(
+            req.body?.visibleStartDate,
+            "Visible start date",
+          );
+          const requestedVisibleEndDate = normalizeOptionalPlainDate(
+            req.body?.visibleEndDate,
+            "Visible end date",
+          );
+          const firstVisibleDate = requestedVisibleStartDate || visibleDates[0];
+          const lastVisibleDate = requestedVisibleEndDate || visibleDates[visibleDates.length - 1];
+          if (firstVisibleDate && lastVisibleDate) {
             compatible = activeTeamSchedules.filter(
               (schedule) => {
                 if (
@@ -13811,12 +13811,10 @@ export const createTeamsAuthHandlers = ({
                 ) {
                   return false;
                 }
-                const storedIds = new Set(
-                  (schedule.occurrences || []).map(
-                    (occurrence) => occurrence?.occurrenceId,
-                  ),
-                );
-                return [...visibleIds].every((id) => storedIds.has(id));
+                // Reuse by team and covered dates. Existing custom and legacy
+                // schedules keep their persisted occurrence shape when
+                // Service Setup changes IDs, grouping, times, or count.
+                return true;
               },
             );
           }
@@ -13827,13 +13825,16 @@ export const createTeamsAuthHandlers = ({
               schedule.scheduleId ===
                 generatedPeriodScheduleId(schedule.generatedPeriodKey),
           );
-          // Preserve generated identity precedence over source-less legacy
-          // copies, while treating custom schedules as peers when populated.
+          // Preserve generated identity precedence only over a source-less
+          // copy with the same stored period. Other overlapping schedules
+          // remain peers when populated.
           const resolutionCandidates = canonicalGenerated.length
             ? compatible.filter(
-                (schedule) =>
-                  schedule.source != null ||
-                  canonicalGenerated.includes(schedule),
+                (schedule) => schedule.source != null ||
+                  canonicalGenerated.includes(schedule) ||
+                  !canonicalGenerated.some((generated) =>
+                    generated.startDate === schedule.startDate &&
+                    generated.endDate === schedule.endDate),
               )
             : compatible;
           const populated = resolutionCandidates.filter(hasScheduleData);

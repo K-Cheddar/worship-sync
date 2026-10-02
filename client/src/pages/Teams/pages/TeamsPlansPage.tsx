@@ -23,7 +23,6 @@ import { useToast } from "../../../context/toastContext";
 import {
   getServicePlanMicrophones,
   applyServicePlanTemplateBulk,
-  listServicePlanTemplates,
   listServicePlans,
   updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentIems,
@@ -89,7 +88,6 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
-import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
@@ -331,7 +329,13 @@ const TeamsPlansPage = () => {
     hydrateSchedules,
     hydratingScheduleIds,
     trackTeamsSave,
+    templates: templateResource,
   } = useTeamsPage();
+  const {
+    data: templates,
+    ensureLoaded: ensureTemplatesLoaded,
+    loaded: templatesLoaded,
+  } = templateResource;
   const { showToast } = useToast();
   const navigate = useNavigate();
   const initialRange = useMemo(defaultRange, []);
@@ -358,9 +362,9 @@ const TeamsPlansPage = () => {
   const [filtersHydratedForChurchId, setFiltersHydratedForChurchId] = useState<string | null>(null);
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
   const [bulkApplyOpen, setBulkApplyOpen] = useState(false);
-  const [bulkTemplates, setBulkTemplates] = useState<ServicePlanTemplate[]>([]);
   const [bulkTemplatesLoaded, setBulkTemplatesLoaded] = useState(false);
   const [bulkTemplateId, setBulkTemplateId] = useState("");
+  const bulkTemplateChurchIdRef = useRef(churchId);
   const [bulkServiceIds, setBulkServiceIds] = useState<string[]>([]);
   const [bulkUseDefaults, setBulkUseDefaults] = useState(false);
   const [bulkApplying, setBulkApplying] = useState(false);
@@ -703,6 +707,7 @@ const TeamsPlansPage = () => {
     ),
     [bulkServiceIds, groups],
   );
+  const bulkTemplates = templates;
   const bulkTemplate = bulkTemplates.find((template) => template.templateId === bulkTemplateId);
   const allBulkServicesSelected =
     activeServices.length > 0 &&
@@ -726,26 +731,41 @@ const TeamsPlansPage = () => {
   })();
 
   useEffect(() => {
+    if (bulkTemplateChurchIdRef.current !== churchId) {
+      bulkTemplateChurchIdRef.current = churchId;
+      setBulkTemplateId("");
+      setBulkTemplatesLoaded(false);
+      setBulkApplyOpen(false);
+      setBulkServiceIds([]);
+      setBulkUseDefaults(false);
+    }
+  }, [churchId]);
+
+  useEffect(() => {
     if (!bulkApplyOpen || !churchId) return undefined;
     let cancelled = false;
+    if (templatesLoaded) {
+      setBulkTemplatesLoaded(true);
+      setBulkTemplateId((current) =>
+        templates.some((template) => template.templateId === current)
+          ? current
+          : templates[0]?.templateId || "",
+      );
+      return undefined;
+    }
     setBulkTemplatesLoaded(false);
-    listServicePlanTemplates(churchId)
-      .then((response) => {
-        if (!cancelled) {
-          setBulkTemplates(response.templates || []);
-          setBulkTemplatesLoaded(true);
-          setBulkTemplateId((current) => current || response.templates?.[0]?.templateId || "");
-        }
+    ensureTemplatesLoaded()
+      .then(() => {
+        if (!cancelled) setBulkTemplatesLoaded(true);
       })
       .catch((error) => {
         if (!cancelled) {
-          setBulkTemplates([]);
           setBulkTemplatesLoaded(true);
           showApiErrorToast(showToast, error, "Could not load service plan templates.");
         }
       });
     return () => { cancelled = true; };
-  }, [bulkApplyOpen, churchId, showToast]);
+  }, [bulkApplyOpen, churchId, ensureTemplatesLoaded, showToast, templates, templatesLoaded]);
 
   const openBulkApply = (serviceIds?: string[]) => {
     const requestedServiceIds = serviceIds ?? (
@@ -757,12 +777,12 @@ const TeamsPlansPage = () => {
       activeServices.some((service) => service.serviceId === id),
     ));
     setBulkUseDefaults(false);
-    setBulkTemplatesLoaded(false);
+    setBulkTemplatesLoaded(templatesLoaded);
     setBulkApplyOpen(true);
   };
 
   const applyBulkTemplate = async () => {
-    if (!churchId || !canEditServices || bulkApplying || planStatusLoading || bulkApplyEligibleCount === 0 || (bulkUseDefaults && !bulkTemplatesLoaded)) return;
+    if (!churchId || !canEditServices || bulkApplying || planStatusLoading || bulkApplyEligibleCount === 0 || (bulkUseDefaults && !bulkTemplatesLoaded) || (!bulkUseDefaults && !bulkTemplate)) return;
     setBulkApplying(true);
     try {
       const activeServiceIds = new Set(activeServices.map((service) => service.serviceId));
@@ -1052,6 +1072,7 @@ const TeamsPlansPage = () => {
                 },
               }}
               canEdit={canEditPlan}
+              templateResource={templateResource}
               backLabel="Back to Services"
               onBack={() => {
                 setOpenServingTabOnSelection(false);
@@ -1604,7 +1625,7 @@ const TeamsPlansPage = () => {
             <Button variant="tertiary" disabled={bulkApplying} onClick={() => setBulkApplyOpen(false)}>Cancel</Button>
             <Button
               variant="cta"
-              disabled={bulkApplying || planStatusLoading || !bulkServiceIds.length || (!bulkUseDefaults && !bulkTemplateId) || (bulkUseDefaults && !bulkTemplatesLoaded) || bulkApplyEligibleCount === 0}
+              disabled={bulkApplying || planStatusLoading || !bulkServiceIds.length || (!bulkUseDefaults && !bulkTemplate) || (bulkUseDefaults && !bulkTemplatesLoaded) || bulkApplyEligibleCount === 0}
               onClick={() => void applyBulkTemplate()}
             >
               {bulkApplyButtonLabel}

@@ -55,8 +55,29 @@ export type MenuItemType = {
   "aria-expanded"?: React.AriaAttributes["aria-expanded"];
 };
 
+/** Presentation text stays plain structured data so its formatting model can
+ * grow independently from Service Plan rich text. */
+export type SlideTextSpan = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+  fontSizePx?: number;
+};
+
+export type SlideTextBlock = {
+  spans: SlideTextSpan[];
+  align?: "left" | "center" | "right";
+};
+
+export type SlideTextDocument = {
+  blocks: SlideTextBlock[];
+};
+
 export type Box = {
   words?: string;
+  /** Optional structured equivalent; `words` remains the compatibility field. */
+  textDocument?: SlideTextDocument;
   id?: string;
   background?: string;
   mediaInfo?: MediaType;
@@ -153,6 +174,9 @@ export type DocType =
   | "board-post"
   | "services"
   | "media"
+  | "mediaItem"
+  | "mediaFolders"
+  | "mediaLibraryMeta"
   | "unknown";
 
 export type DBItem = ItemProperties & {
@@ -317,6 +341,7 @@ export type FormattedLyrics = {
   type: string;
   name: string;
   words: string;
+  textDocument?: SlideTextDocument;
   slideSpan: number;
   id: string;
 };
@@ -325,6 +350,7 @@ export type FormattedSection = {
   sectionNum: number;
   name?: string;
   words: string;
+  textDocument?: SlideTextDocument;
   slideSpan: number;
   id?: string;
 };

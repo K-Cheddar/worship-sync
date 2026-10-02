@@ -60,6 +60,26 @@ describe("HeadingItem", () => {
     expect(defaultProps.onToggleCollapse).toHaveBeenCalled();
   });
 
+  it("deletes the heading from its row without selecting it again", () => {
+    const onDelete = jest.fn();
+    renderWithDnd(
+      <HeadingItem {...defaultProps} onDelete={onDelete} canMutateOutline />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete heading Worship" }));
+
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onItemClick).not.toHaveBeenCalled();
+  });
+
+  it("hides the heading delete button when outline mutation is disabled", () => {
+    renderWithDnd(
+      <HeadingItem {...defaultProps} onDelete={jest.fn()} canMutateOutline={false} />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Delete heading Worship" })).not.toBeInTheDocument();
+  });
+
   it("exposes data-list-id for outline row targeting", () => {
     renderWithDnd(<HeadingItem {...defaultProps} />);
     expect(screen.getByRole("listitem")).toHaveAttribute(

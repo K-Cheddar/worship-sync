@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
-import { TransferProvider, useTransfers } from "./transferContext";
+import { getTransferOverview, TransferProvider, useTransfers } from "./transferContext";
 import { MediaAddControl } from "../containers/Media/MediaAddControl";
 import { CanvaMediaReconciliationRequiredError } from "../utils/canvaMediaReplacement";
 
@@ -22,8 +22,6 @@ const Harness = () => {
     <MediaAddControl
       uploadProgress={{ isUploading: false, progress: 0 }}
       uploadTitle="Add Media"
-      onUploadClick={() => undefined}
-      disabled={false}
     >
       <button>Add media</button>
     </MediaAddControl>
@@ -57,7 +55,7 @@ test("keeps Canva jobs alive across route changes and shares the panel with medi
   await user.click(screen.getByRole("button", { name: "Start upload" }));
   expect(await screen.findByText("Sabbath Announcements")).toBeInTheDocument();
   expect(screen.getByText("Video.mp4")).toBeInTheDocument();
-  expect(screen.getByText("42%", { exact: true })).toBeInTheDocument();
+  expect(screen.getAllByText("42%", { exact: true })).toHaveLength(2);
   await user.click(screen.getByRole("button", { name: "Navigate elsewhere" }));
   expect(screen.getByText("Route /elsewhere")).toBeInTheDocument();
   expect(await screen.findByText("3 slides imported")).toBeInTheDocument();
@@ -74,8 +72,6 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
     <MediaAddControl
       uploadProgress={{ isUploading: false, progress: 0 }}
       uploadTitle="Add Media"
-      onUploadClick={() => undefined}
-      disabled={false}
     ><button>Add media</button></MediaAddControl>
     <button onClick={() => startCanvaTransfer({
       id: "slow-canva", title: "Slow deck", format: "mp4", pages: [1, 2],
@@ -90,13 +86,15 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
   };
   render(<MemoryRouter><TransferProvider><SlowHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start slow import" }));
-  expect(await screen.findByText("0 of 2 pages processed · 0%")).toBeInTheDocument();
+  expect(await screen.findByText("Processing Canva pages · 0 of 2")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Minimize transfers" }));
   expect(screen.queryByRole("complementary", { name: "Transfers" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Show transfer progress: 0 of 2 pages processed · 0%/ })).toHaveTextContent("0%");
-  await user.click(screen.getByRole("button", { name: /Show transfer progress:/ }));
+  expect(screen.getByRole("button", { name: /Show transfer summary: 1 active transfers, 25% overall/ })).toHaveTextContent("25%");
+  await user.click(screen.getByRole("button", { name: /Show transfer summary:/ }));
+  expect(screen.getByRole("heading", { name: "Transfers · 1 active · 25% overall" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View all transfers" }));
   expect(screen.getByRole("complementary", { name: "Transfers" })).toBeInTheDocument();
-  expect(screen.getByText("0 of 2 pages processed · 0%")).toBeInTheDocument();
+  expect(screen.getByText("Processing Canva pages · 0 of 2")).toBeInTheDocument();
   await act(async () => gate.resolve(result));
   expect(await screen.findByText("2 slides imported")).toBeInTheDocument();
 });
@@ -120,9 +118,11 @@ test("only offers View presentation when finalization returns a destination", as
   expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
 });
 
-test("shows indeterminate preparation before switching to page progress and completion", async () => {
+test("shows export and processing phases in overall Canva progress", async () => {
+  const remainingRequests = deferred<void>();
   const processing = deferred<void>();
   const persisted = deferred<void>();
+  const finalizing = deferred<void>();
   const user = userEvent.setup();
   const ProgressHarness = () => {
     const { startCanvaTransfer } = useTransfers();
@@ -133,33 +133,119 @@ test("shows indeterminate preparation before switching to page progress and comp
       pages: Array.from({ length: 10 }, (_, index) => index + 1),
       run: async (_signal, progress) => {
         progress({ type: "started", total: 10, pages: Array.from({ length: 10 }, (_, index) => index + 1) });
-        progress({ type: "page-progress", page: 1, status: "exporting" });
+        [1, 2, 3].forEach((page) => progress({ type: "page-progress", page, status: "exporting" }));
+        await remainingRequests.promise;
+        [4, 5, 6, 7, 8, 9, 10].forEach((page) => progress({ type: "page-progress", page, status: "exporting" }));
         await processing.promise;
         progress({ type: "page-progress", page: 1, status: "processing" });
         return result;
       },
       finalize: async (_result, _signal, onPagesPersisted) => {
         await persisted.promise;
-        onPagesPersisted([1, 2, 3]);
-        return { importedCount: 3 };
+        onPagesPersisted([1, 2, 3, 4, 5]);
+        await finalizing.promise;
+        return { importedCount: 5 };
       },
     })}>Start phased import</button>;
   };
   render(<MemoryRouter><TransferProvider><ProgressHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start phased import" }));
-  expect(await screen.findByText("Requesting Canva export · page 1 of 10")).toBeInTheDocument();
+  expect(await screen.findByText("Requesting Canva export · page 3 of 10")).toBeInTheDocument();
   const progressbar = screen.getByRole("progressbar", { name: "Ten page deck progress" });
-  expect(progressbar).not.toHaveAttribute("aria-valuenow");
+  expect(progressbar).toHaveAttribute("aria-valuenow", "15");
   expect(screen.queryByText(/pages processed ·/)).not.toBeInTheDocument();
 
+  await act(async () => remainingRequests.resolve());
+  expect(await screen.findByText("Requesting Canva export · page 10 of 10")).toBeInTheDocument();
+  expect(progressbar).toHaveAttribute("aria-valuenow", "50");
+
   await act(async () => processing.resolve());
-  await screen.findByText(/0 of 10 pages processed · 0%/);
-  expect(progressbar).toHaveAttribute("aria-valuenow", "0");
+  await screen.findByText(/0 of 10 pages processed · 50%/);
+  expect(progressbar).toHaveAttribute("aria-valuenow", "50");
 
   await act(async () => persisted.resolve());
-  await screen.findByText(/3 of 10 pages processed · 30%/);
-  expect(await screen.findByText("3 slides imported")).toBeInTheDocument();
-  expect(screen.getByText(/3 of 10 pages processed · 30%/)).toBeInTheDocument();
+  await screen.findByText(/5 of 10 pages processed · 75%/);
+  await act(async () => finalizing.resolve());
+  expect(await screen.findByText("5 slides imported")).toBeInTheDocument();
+  expect(screen.getByText("5 of 10 pages processed")).toBeInTheDocument();
+  expect(progressbar).toHaveAttribute("aria-valuenow", "100");
+});
+
+test("keeps Add available and summarizes the shared aggregate across active transfers", async () => {
+  const gate = deferred<typeof result>();
+  const finalizing = deferred<void>();
+  const user = userEvent.setup();
+  const addAction = jest.fn();
+  const AggregateHarness = () => {
+    const { startCanvaTransfer, updateUploadTransfer } = useTransfers();
+    return <>
+      <MediaAddControl
+        uploadProgress={{ isUploading: false, progress: 0 }}
+        uploadTitle="Add Media"
+      ><button onClick={addAction}>Add media</button></MediaAddControl>
+      <button onClick={() => startCanvaTransfer({
+        id: "aggregate-canva",
+        title: "Aggregate deck",
+        format: "png",
+        pages: [1, 2],
+        run: (_signal, progress) => {
+          progress({ type: "started", total: 2, pages: [1, 2] });
+          progress({ type: "page-progress", page: 1, status: "exporting" });
+          return gate.promise;
+        },
+        finalize: async (_importResult, _signal, onPagesPersisted) => {
+          onPagesPersisted([1, 2]);
+          await finalizing.promise;
+          return { importedCount: 2 };
+        },
+      })}>Start aggregate import</button>
+      <button onClick={() => updateUploadTransfer({
+        id: "aggregate-upload",
+        kind: "upload",
+        title: "Video.mp4",
+        status: "uploading",
+        progress: 75,
+        message: "Uploading video…",
+      })}>Start aggregate upload</button>
+      <button onClick={() => updateUploadTransfer({
+        id: "aggregate-upload",
+        kind: "upload",
+        title: "Video.mp4",
+        status: "completed",
+        progress: 100,
+        message: "Upload complete",
+      })}>Finish aggregate upload</button>
+    </>;
+  };
+
+  render(<MemoryRouter><TransferProvider><AggregateHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start aggregate import" }));
+  await user.click(screen.getByRole("button", { name: "Start aggregate upload" }));
+  expect(await screen.findByRole("button", { name: "Add media" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Add media" }));
+  expect(addAction).toHaveBeenCalledTimes(1);
+  const progressControl = screen.getByRole("button", { name: "Show transfer summary: 2 active transfers, 50% overall" });
+  expect(progressControl).toHaveTextContent("50%");
+  await user.click(progressControl);
+  expect(screen.getByRole("heading", { name: "Transfers · 2 active · 50% overall" })).toBeInTheDocument();
+  expect(screen.getByText("Canva · Requesting page 1 of 2 · 25%")).toBeInTheDocument();
+  expect(screen.getByText("Uploading · 75%")).toBeInTheDocument();
+  expect(screen.getAllByRole("progressbar")).toHaveLength(3);
+  await user.click(screen.getByRole("button", { name: "View all transfers" }));
+  expect(screen.getByRole("complementary", { name: "Transfers" })).toBeInTheDocument();
+  await act(async () => gate.resolve(result));
+  await user.click(screen.getByRole("button", { name: "Finish aggregate upload" }));
+  expect(await screen.findByRole("button", { name: "Add media" })).toBeInTheDocument();
+  await act(async () => finalizing.resolve());
+});
+
+test("uses the arithmetic mean of normalized active transfer progress", () => {
+  const upload = (id: string, progress: number) => ({
+    id, kind: "upload" as const, title: id, status: "uploading" as const, progress, message: "Uploading",
+  });
+  expect(getTransferOverview([upload("one", 60)]).progress).toBe(60);
+  expect(getTransferOverview([upload("first", 80), upload("second", 20)]).progress).toBe(50);
+  expect(getTransferOverview([upload("first", 80), upload("new", 0)]).progress).toBe(40);
 });
 
 test("warns before a browser refresh while a Canva request is active", async () => {
@@ -377,7 +463,8 @@ test("keeps successful pages and reports failed pages as a partial import", asyn
   await user.click(screen.getByRole("button", { name: "Start partial import" }));
   expect(await screen.findByText("Import completed with some pages failed")).toBeInTheDocument();
   expect(screen.getByText(/Page 2: Could not export this page/)).toBeInTheDocument();
-  expect(screen.getByText("1 of 2 pages processed · 50%")).toBeInTheDocument();
+  expect(screen.getByText("1 of 2 pages processed · 100%")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: "Partial deck progress" })).toHaveAttribute("aria-valuenow", "100");
   expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
 });
 

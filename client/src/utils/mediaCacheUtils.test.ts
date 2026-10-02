@@ -196,10 +196,13 @@ describe("mediaCacheUtils", () => {
       const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
       const db = {
         get: jest.fn().mockRejectedValue({ status: 404 }),
+        put: jest.fn(),
       } as unknown as PouchDB.Database;
 
       const urls = await getMediaUrlsFromMediaDoc(db);
 
+      expect(db.get).toHaveBeenCalledWith("media");
+      expect(db.put).not.toHaveBeenCalled();
       expect(urls).toEqual({ status: "loaded", urls: new Set() });
       expect(warnSpy).not.toHaveBeenCalled();
     });

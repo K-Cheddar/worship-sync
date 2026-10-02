@@ -154,8 +154,11 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       .then((status) => {
         if (active) setCanvaOauthConfigured(Boolean(status.oauthConfigured));
       })
-      .catch(() => {
-        if (active) setCanvaOauthConfigured(false);
+      .catch((error: unknown) => {
+        if (active) {
+          console.warn("Could not load Canva status.", error);
+          setCanvaOauthConfigured(false);
+        }
       });
     return () => {
       active = false;
@@ -290,8 +293,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             <MediaAddControl
               uploadProgress={c.uploadProgress}
               uploadTitle={toolbarAddMediaTitle}
-              onUploadClick={() => void c.requestMediaUpload()}
-              disabled={c.isMediaReadOnly}
             >
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -305,10 +306,13 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <ShowTransfersMenuItem />
-                  <DropdownMenuItem onSelect={() => void c.requestMediaUpload()}>
+                  <DropdownMenuItem
+                    onSelect={() => void c.requestMediaUpload()}
+                  >
                     <HardDrive
                       className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
-                    /> Add files
+                    />{" "}
+                    Add files
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => openVideoInputPicker("device")}
@@ -317,7 +321,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                       className={
                         MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
                       }
-                    /> Add video input
+                    />{" "}
+                    Add video input
                   </DropdownMenuItem>
                   {supportsDesktopCapture() ? (
                     <DropdownMenuItem
@@ -327,7 +332,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                         className={
                           MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
                         }
-                      /> Add screen or window
+                      />{" "}
+                      Add screen or window
                     </DropdownMenuItem>
                   ) : null}
                   {canvaOauthConfigured ? (
@@ -336,8 +342,11 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                       onSelect={() => openCanva()}
                     >
                       <ImageUp
-                        className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon}
-                      /> Import from Canva
+                        className={
+                          MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon
+                        }
+                      />{" "}
+                      Import from Canva
                     </DropdownMenuItem>
                   ) : null}
                 </DropdownMenuContent>
@@ -439,19 +448,19 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                   folderRename={
                     c.selectedRealFolder
                       ? {
-                        open: c.folderRenameOpen,
-                        onOpenChange: c.setFolderRenameOpen,
-                        content: (
-                          <MediaLibraryRenameFolderForm
-                            folders={c.folders}
-                            list={c.list}
-                            folder={c.selectedRealFolder}
-                            onUpdateFoldersAndList={c.applyFoldersAndList}
-                            onClose={() => c.setFolderRenameOpen(false)}
-                          />
-                        ),
-                        contentClassName: MEDIA_LIBRARY_FORM_POPOVER_CLASS,
-                      }
+                          open: c.folderRenameOpen,
+                          onOpenChange: c.setFolderRenameOpen,
+                          content: (
+                            <MediaLibraryRenameFolderForm
+                              folders={c.folders}
+                              list={c.list}
+                              folder={c.selectedRealFolder}
+                              onUpdateFoldersAndList={c.applyFoldersAndList}
+                              onClose={() => c.setFolderRenameOpen(false)}
+                            />
+                          ),
+                          contentClassName: MEDIA_LIBRARY_FORM_POPOVER_CLASS,
+                        }
                       : null
                   }
                   onDeleteFolder={c.handleRequestFolderDelete}

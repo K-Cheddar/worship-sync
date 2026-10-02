@@ -131,7 +131,10 @@
     ]
   },
   "keywords": [],
-  "author": "",
+  "author": {
+    "name": "WorshipSync",
+    "email": "kevincheddar@gmail.com"
+  },
   "license": "ISC",
   "description": "Worship Sync - From planning to presentation - worship in sync",
   "repository": {

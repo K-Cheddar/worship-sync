@@ -1,5 +1,4 @@
-import { getApiBasePath, isPackagedElectronRenderer } from "../utils/environment";
-import { getCsrfToken, getHumanApiToken } from "../utils/authStorage";
+import { apiFetch, authenticatedApiFetch } from "./auth";
 import type { mediaInfoType } from "../containers/Media/cloudinaryTypes";
 import type { MuxUploadResult } from "../containers/Media/MediaUploadInput.types";
 import { CanvaImportError } from "../utils/canvaImportError";
@@ -75,38 +74,28 @@ type JsonInit = Omit<RequestInit, "body"> & {
   timeoutMs?: number;
 };
 
-const fetchJson = async <T>(path: string, init: JsonInit = {}): Promise<T> => {
+const fetchCanvaJson = async <T>(
+  path: string,
+  init: JsonInit = {},
+): Promise<T> => {
   const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    init.timeoutMs ?? 20000,
-  );
-  const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
-  if (init.body) headers.set("Content-Type", "application/json");
-  const csrf = getCsrfToken();
-  if (csrf) headers.set("x-csrf-token", csrf);
-  const humanToken = getHumanApiToken();
-  if (isPackagedElectronRenderer() && humanToken) {
-    headers.set("Authorization", `Bearer ${humanToken}`);
-  }
+  let timedOut = false;
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, init.timeoutMs ?? 20000);
   try {
-    const response = await fetch(`${getApiBasePath()}${path.replace(/^\//, "")}`, {
-      ...init,
-      headers,
-      body: init.body ? JSON.stringify(init.body) : undefined,
-      credentials: "include",
+    const headers = new Headers(init.headers);
+    headers.set("Accept", "application/json");
+    const { timeoutMs: _timeoutMs, body, ...requestOptions } = init;
+    return await apiFetch<T>(path.replace(/^\//, ""), {
+      ...requestOptions,
+      body: body ? JSON.stringify(body) : undefined,
+      headers: Object.fromEntries(headers.entries()),
       signal: controller.signal,
     });
-    const payload = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
-    if (!response.ok) {
-      throw new Error(payload.error || "Canva could not complete that request. Try again.");
-    }
-    return payload as T;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (timedOut) {
       throw new Error("Canva took too long to respond. Try again.");
     }
     throw error;
@@ -119,13 +108,13 @@ const base = (churchId: string) =>
   `api/churches/${encodeURIComponent(churchId)}/canva`;
 
 export const getCanvaStatus = (churchId: string) =>
-  fetchJson<CanvaStatus>(`${base(churchId)}/status`);
+  fetchCanvaJson<CanvaStatus>(`${base(churchId)}/status`);
 
 export const startCanvaConnect = (
   churchId: string,
   options: { returnTo?: string; desktop?: boolean } = {},
 ) =>
-  fetchJson<CanvaConnectResponse>(`${base(churchId)}/connect-url`, {
+  fetchCanvaJson<CanvaConnectResponse>(`${base(churchId)}/connect-url`, {
     method: "POST",
     body: options,
   });
@@ -134,13 +123,13 @@ export const getCanvaConnectStatus = (
   churchId: string,
   request: { connectRequestId: string; connectRequestSecret: string },
 ) =>
-  fetchJson<CanvaConnectStatus>(`${base(churchId)}/connect-status`, {
+  fetchCanvaJson<CanvaConnectStatus>(`${base(churchId)}/connect-status`, {
     method: "POST",
     body: request,
   });
 
 export const disconnectCanva = (churchId: string) =>
-  fetchJson<{ success: true }>(`${base(churchId)}/disconnect`, {
+  fetchCanvaJson<{ success: true }>(`${base(churchId)}/disconnect`, {
     method: "POST",
     body: {},
   });
@@ -148,21 +137,24 @@ export const disconnectCanva = (churchId: string) =>
 export const listCanvaDesigns = (churchId: string, query = "") => {
   const params = new URLSearchParams();
   if (query.trim()) params.set("query", query.trim());
-  return fetchJson<{ items: CanvaDesign[]; continuation: string }>(
+  return fetchCanvaJson<{ items: CanvaDesign[]; continuation: string }>(
     `${base(churchId)}/designs${params.size ? `?${params}` : ""}`,
   );
 };
 
 export const getCanvaDesign = (churchId: string, designId: string) =>
-  fetchJson<CanvaDesign>(
+  fetchCanvaJson<CanvaDesign>(
     `${base(churchId)}/designs/${encodeURIComponent(designId)}`,
   );
 
 export const resolveCanvaDesignLink = (churchId: string, url: string) =>
-  fetchJson<{ designId: string }>(`${base(churchId)}/resolve-design-link`, {
-    method: "POST",
-    body: { url },
-  });
+  fetchCanvaJson<{ designId: string }>(
+    `${base(churchId)}/resolve-design-link`,
+    {
+      method: "POST",
+      body: { url },
+    },
+  );
 
 export const importCanvaDesign = async (
   churchId: string,
@@ -179,23 +171,19 @@ export const importCanvaDesign = async (
   const controller = new AbortController();
   const abortExternalRequest = () => controller.abort();
   if (options.signal?.aborted) controller.abort();
-  else options.signal?.addEventListener("abort", abortExternalRequest, { once: true });
+  else
+    options.signal?.addEventListener("abort", abortExternalRequest, {
+      once: true,
+    });
   const timeout = window.setTimeout(() => controller.abort(), 8 * 60 * 1000);
-  const headers = new Headers();
-  headers.set("Accept", "application/x-ndjson, application/json");
-  headers.set("Content-Type", "application/json");
-  const csrf = getCsrfToken();
-  if (csrf) headers.set("x-csrf-token", csrf);
-  const humanToken = getHumanApiToken();
-  if (isPackagedElectronRenderer() && humanToken) {
-    headers.set("Authorization", `Bearer ${humanToken}`);
-  }
   try {
-    const response = await fetch(`${getApiBasePath()}${base(churchId)}/imports`, {
+    const response = await authenticatedApiFetch(`${base(churchId)}/imports`, {
       method: "POST",
-      headers,
+      headers: {
+        Accept: "application/x-ndjson, application/json",
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(request),
-      credentials: "include",
       signal: controller.signal,
     });
     const contentType = response.headers.get("content-type") || "";
@@ -207,7 +195,9 @@ export const importCanvaDesign = async (
       throw new CanvaImportError(
         payload.error || "Canva could not complete that import. Try again.",
         {
-          code: payload.code || (response.status === 429 ? "CANVA_RATE_LIMITED" : undefined),
+          code:
+            payload.code ||
+            (response.status === 429 ? "CANVA_RATE_LIMITED" : undefined),
           status: response.status,
         },
       );

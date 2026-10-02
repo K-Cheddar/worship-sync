@@ -6,11 +6,11 @@
     scrollbar-width: var(--scrollbar-width, thin);
   }
   /**
-   * Scroll areas rendered in a portal (e.g. Radix dropdown) are outside
-   * ControllerPageShell, so they do not inherit --scrollbar-width.
-   * Set --scrollbar-width inline (e.g. from preferences) when using this class.
+   * Portal surfaces are outside ControllerPageShell. Apply the treatment to
+   * the surface and nested scroll owners (e.g. a listbox inside a popover).
    */
-  .scrollbar-portal {
+  .scrollbar-portal,
+  .scrollbar-portal :where(*) {
     scrollbar-width: var(--scrollbar-width, thin);
     scrollbar-color: #71717a #27272a;
   }

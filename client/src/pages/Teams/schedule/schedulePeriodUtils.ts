@@ -57,6 +57,8 @@ export const findReusablePeriodSchedule = ({
   churchId,
   teamId,
   occurrences,
+  visibleStartDate,
+  visibleEndDate,
 }: {
   schedules: TeamScheduleSummary[];
   churchId: string;
@@ -70,29 +72,33 @@ export const findReusablePeriodSchedule = ({
   visibleStartDate?: string;
   visibleEndDate?: string;
 }) => {
-  const visibleOccurrenceIds = occurrences.map((occurrence) => occurrence.occurrenceId);
-  if (visibleOccurrenceIds.length === 0) return { schedule: null, ambiguous: false };
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const visibleDates = occurrences
     .map((occurrence) => calendarDateInTimeZone(new Date(occurrence.startsAt), timeZone))
     .sort();
-  const firstVisibleDate = visibleDates[0];
-  const lastVisibleDate = visibleDates[visibleDates.length - 1];
+  const firstVisibleDate = visibleStartDate || visibleDates[0];
+  const lastVisibleDate = visibleEndDate || visibleDates[visibleDates.length - 1];
+  if (!firstVisibleDate || !lastVisibleDate) return { schedule: null, ambiguous: false };
   const compatible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
       schedule.startDate > firstVisibleDate || schedule.endDate < lastVisibleDate
     ) return false;
-    const storedOccurrenceIds = schedule.occurrences?.map((occurrence) => occurrence.occurrenceId) || [];
-    return visibleOccurrenceIds.every((id) => storedOccurrenceIds.includes(id));
+    // Saved period schedules remain reusable when Service Setup changes
+    // occurrence IDs, grouping, names, times, or count. Their stored shape is
+    // preserved; current occurrences are used only for newly created periods.
+    return true;
   });
   const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);
-  // A valid generated identity has always outranked its source-less legacy
-  // copy. Custom schedules remain peers so real conflicting staffing is not
-  // hidden by generated identity alone.
+  // A valid generated identity outranks only its source-less copy for the
+  // same stored period. Other populated schedules remain peers so real
+  // staffing is not hidden by an overlapping generated identity.
   const resolutionCandidates = canonicalGenerated.length > 0
-    ? compatible.filter((schedule) => schedule.source != null || isCanonicalGeneratedSchedule(schedule))
+    ? compatible.filter((schedule) => schedule.source != null ||
+      isCanonicalGeneratedSchedule(schedule) ||
+      !canonicalGenerated.some((generated) =>
+        generated.startDate === schedule.startDate && generated.endDate === schedule.endDate))
     : compatible;
   const populated = resolutionCandidates.filter(hasScheduleData);
   if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
@@ -121,5 +127,6 @@ const hasScheduleData = (schedule: TeamScheduleSummary) => {
     ("microphoneAssignments" in schedule && Object.keys(schedule.microphoneAssignments || {}).length > 0) ||
     ("iemAssignments" in schedule && Object.keys(schedule.iemAssignments || {}).length > 0) ||
     ("additionalPositionSlots" in schedule && Object.keys(schedule.additionalPositionSlots || {}).length > 0) ||
+    ("optionalPositionSlots" in schedule && Object.keys(schedule.optionalPositionSlots || {}).length > 0) ||
     ("responses" in schedule && Object.keys(schedule.responses || {}).length > 0);
 };

@@ -1,4 +1,9 @@
-import { MediaType } from "../types";
+import { DBMedia, MediaType } from "../types";
+import {
+  isMediaLibraryV2,
+  loadAllMediaItems,
+  normalizeMediaDoc,
+} from "./mediaDocUtils";
 
 type PouchMissingDocError = {
   status?: number;
@@ -42,7 +47,7 @@ export const extractMediaUrlsFromBackgrounds = (backgrounds: MediaType[]): strin
   return urls;
 };
 
-/** Get all cacheable media URLs from the "media" doc in the database. */
+/** Get cacheable media URLs from the active media-library schema. */
 export const getMediaUrlsFromMediaDoc = async (
   db: PouchDB.Database
 ): Promise<
@@ -51,8 +56,9 @@ export const getMediaUrlsFromMediaDoc = async (
 > => {
   const urls = new Set<string>();
   try {
-    const doc = (await db.get("media")) as { list?: MediaType[] };
-    const list = doc?.list || [];
+    const list = (await isMediaLibraryV2(db))
+      ? await loadAllMediaItems(db)
+      : normalizeMediaDoc((await db.get("media")) as DBMedia).list;
     extractMediaUrlsFromBackgrounds(list).forEach((url) => urls.add(url));
     return { status: "loaded", urls };
   } catch (error) {

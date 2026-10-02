@@ -5,8 +5,9 @@ import {
 import { globalHostId } from "../context/globalInfo";
 import { setMediaCacheMap } from "../store/mediaCacheMapSlice";
 import store from "../store/store";
-import type { DBMedia, MediaFolder, MediaType } from "../types";
+import type { MediaFolder, MediaType } from "../types";
 import { extractMediaUrlsFromBackgrounds } from "./mediaCacheUtils";
+import { persistMediaLibraryChanges, persistMediaLibrarySnapshot } from "./mediaDocUtils";
 
 const safePostMessage = (message: unknown) => {
   if (globalBroadcastRef) {
@@ -20,12 +21,13 @@ export const FLUSH_MEDIA_NO_DB_MESSAGE =
 export const FLUSH_MEDIA_STALE_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: database is no longer active";
 
-/** Persist media list + folders immediately (broadcast + Electron cache when applicable). */
+/** Reconcile a list-shaped workflow to the active schema using item-level writes in v2. */
 export async function flushMediaLibraryDocToPouch(
   db: PouchDB.Database | undefined,
   list: MediaType[],
   folders: MediaFolder[],
   getLatestState?: () => { list: MediaType[]; folders: MediaFolder[] },
+  changeBase?: { list: MediaType[]; folders: MediaFolder[] },
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (!db) {
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
@@ -35,27 +37,33 @@ export async function flushMediaLibraryDocToPouch(
     return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
   }
   try {
-    const db_media: DBMedia = await db.get("media");
-    if (!databaseIsActive()) {
-      return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
-    }
-    const latestState = getLatestState?.();
-    const listToPersist = latestState?.list ?? list;
-    const foldersToPersist = latestState?.folders ?? folders;
-    db_media.list = [...listToPersist];
-    db_media.folders = [...foldersToPersist];
-    db_media.updatedAt = new Date().toISOString();
-    await db.put(db_media);
+    let stateToPersist = { list, folders };
+    const readLatestState = () => {
+      stateToPersist = getLatestState?.() ?? stateToPersist;
+      return stateToPersist;
+    };
+    const changedDocs = changeBase
+      ? await persistMediaLibraryChanges(db, changeBase, readLatestState(), databaseIsActive)
+      : await persistMediaLibrarySnapshot(
+          db,
+          list,
+          folders,
+          readLatestState,
+          databaseIsActive,
+        );
+    const { list: listToPersist } = stateToPersist;
     // The intended database was updated, but do not publish/cache its result
     // into a different church if the active database changed during the put.
     if (!databaseIsActive()) return { ok: true };
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_media,
-        hostId: globalHostId,
-      },
-    });
+    if (changedDocs.length > 0) {
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: changedDocs,
+          hostId: globalHostId,
+        },
+      });
+    }
     if (window.electronAPI) {
       try {
         const urlArray = extractMediaUrlsFromBackgrounds(listToPersist);
@@ -71,6 +79,7 @@ export async function flushMediaLibraryDocToPouch(
           await electronAPI.syncMediaCache([]);
         }
         const map = await electronAPI.getMediaCacheMap();
+        if (!databaseIsActive()) return { ok: true };
         store.dispatch(setMediaCacheMap(map));
       } catch (error) {
         console.error(

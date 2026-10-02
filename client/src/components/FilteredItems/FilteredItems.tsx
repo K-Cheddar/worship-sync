@@ -47,6 +47,7 @@ import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
 import { getChurchDataPath } from "../../utils/firebasePaths";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
+import { getBoxPlainText } from "../../utils/presentationText";
 import { cn } from "../../utils/cnHelper";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
@@ -426,15 +427,16 @@ const FilteredItems = ({
 
           for (const slide of slides) {
             for (const box of slide.boxes) {
+              const plainText = getBoxPlainText(box);
               const wordMatch = getMatchForString({
-                string: box.words || "",
+                string: plainText,
                 searchValue: cleanSearchValue,
               });
               if (wordMatch > 0) {
                 hasLyricMatch = true;
                 wordMatches.push({
                   match: wordMatch,
-                  matchedWords: box.words || "",
+                  matchedWords: plainText,
                 });
               }
             }

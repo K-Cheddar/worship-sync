@@ -17,6 +17,7 @@ import type {
   ServicePlanSection,
   ServicePlanTemplate,
 } from "../../types/servicePlan";
+import type { ServicePlanTemplateResource } from "./servicePlanTemplateResource";
 
 export type ServicePlanTemplateModalMode = "apply" | "save";
 
@@ -30,6 +31,8 @@ type ServicePlanTemplateModalProps = {
   sections: ServicePlanSection[];
   onClose: () => void;
   onApply: (template: ServicePlanTemplate) => void;
+  /** Optional shared catalog; omitted by standalone Services callers. */
+  templateResource?: ServicePlanTemplateResource;
 };
 
 /**
@@ -47,21 +50,36 @@ const ServicePlanTemplateModal = ({
   sections,
   onClose,
   onApply,
+  templateResource,
 }: ServicePlanTemplateModalProps) => {
   const { showToast } = useToast();
-  const [templates, setTemplates] = useState<ServicePlanTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [standaloneTemplates, setStandaloneTemplates] = useState<ServicePlanTemplate[]>([]);
+  const [standaloneLoading, setStandaloneLoading] = useState(true);
+  const templates = templateResource?.data ?? standaloneTemplates;
+  const loading = templateResource
+    ? !templateResource.loaded && templateResource.loading
+    : standaloneLoading;
+  const templateResourceLoaded = templateResource?.loaded;
+  const ensureTemplateResourceLoaded = templateResource?.ensureLoaded;
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [scopeToService, setScopeToService] = useState(true);
   const [overwriteId, setOverwriteId] = useState("");
 
   useEffect(() => {
+    if (templateResourceLoaded !== undefined) {
+      if (!templateResourceLoaded) {
+        void ensureTemplateResourceLoaded?.().catch((error: unknown) => {
+          showApiErrorToast(showToast, error, "Could not load templates.");
+        });
+      }
+      return undefined;
+    }
     let cancelled = false;
-    setLoading(true);
+    setStandaloneLoading(true);
     listServicePlanTemplates(churchId)
       .then((res) => {
-        if (!cancelled) setTemplates(res.templates);
+        if (!cancelled) setStandaloneTemplates(res.templates);
       })
       .catch((error) => {
         if (!cancelled) {
@@ -69,13 +87,17 @@ const ServicePlanTemplateModal = ({
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setStandaloneLoading(false);
       });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [churchId]);
+  }, [
+    churchId,
+    ensureTemplateResourceLoaded,
+    showToast,
+    templateResourceLoaded,
+  ]);
 
   // Templates tied to this service are the likely pick, so they lead.
   const forThisService = templates.filter((t) => t.serviceId === serviceId);
@@ -92,12 +114,13 @@ const ServicePlanTemplateModal = ({
     if (!trimmed) return;
     setSaving(true);
     try {
-      await saveServicePlanTemplate(churchId, {
+      const response = await saveServicePlanTemplate(churchId, {
         name: trimmed,
         ...(scopeToService ? { serviceId } : {}),
         sections: cloneSectionsForTemplate(sections),
         ...(overwriteId ? { templateId: overwriteId } : {}),
       });
+      templateResource?.upsert?.(response.template);
       showToast(
         overwriteId ? `Updated "${trimmed}".` : `Saved "${trimmed}" as a template.`,
         "success",
@@ -113,7 +136,8 @@ const ServicePlanTemplateModal = ({
   const handleDelete = async (template: ServicePlanTemplate) => {
     try {
       await deleteServicePlanTemplate(churchId, template.templateId);
-      setTemplates((current) =>
+      templateResource?.remove?.(template.templateId);
+      setStandaloneTemplates((current) =>
         current.filter((item) => item.templateId !== template.templateId),
       );
       if (overwriteId === template.templateId) setOverwriteId("");

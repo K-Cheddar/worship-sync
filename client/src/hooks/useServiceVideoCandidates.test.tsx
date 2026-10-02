@@ -418,6 +418,15 @@ describe("useServiceVideoCandidates", () => {
         ]),
       ),
     );
+    expect(ensureMediaCached).toHaveBeenCalledTimes(3);
+    expect(ensureMediaCached.mock.calls).toEqual(
+      Array.from({ length: 3 }, () => [
+        [
+          "https://stream.mux.com/playback-id.m3u8",
+          "https://stream.mux.com/second-id.m3u8",
+        ],
+      ]),
+    );
     expect(result.current.candidates).toHaveLength(0);
   });
 
@@ -464,6 +473,38 @@ describe("useServiceVideoCandidates", () => {
       "https://stream.mux.com/current-item.m3u8",
       "https://stream.mux.com/nearby.m3u8",
       "https://stream.mux.com/remaining.m3u8",
+    ]);
+  });
+
+  it("discovers service inventory alongside the immediate current-video fallback", async () => {
+    const serviceVideo = "https://cdn.example.com/service.mp4";
+    const currentVideo = "https://cdn.example.com/current.mp4";
+    const { result } = renderCandidates(
+      [
+        item("service-item", "Opening", [
+          slide("service-slide", [
+            { id: "service-video", mediaInfo: video("service-video", serviceVideo) },
+          ]),
+        ]),
+      ],
+      {
+        outlineId: "Item List 28",
+        outlineItems: { "Item List 28": ["service-item"] },
+        currentMedia: { mediaKey: "remote:current-video", source: currentVideo },
+      },
+    );
+
+    await waitFor(() => expect(result.current.discovery).toMatchObject({
+      targetOutlineId: "Item List 28",
+      loadedOutlineId: "Item List 28",
+      outlineLoadState: "loaded",
+      inventoryState: "complete",
+      itemCount: 1,
+      uniqueVideoInventoryCount: 1,
+    }));
+    expect(result.current.candidates.map((candidate) => candidate.mediaKey)).toEqual([
+      "remote:current-video",
+      "remote:service-video",
     ]);
   });
 

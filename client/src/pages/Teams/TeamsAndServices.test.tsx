@@ -1022,6 +1022,213 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
   });
 
+  it("opens Media's saved five-occurrence October schedule when Setup now generates seven", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    const serviceId = "sabbath-service";
+    const cameraId = "position-camera";
+    const memberId = "member-media";
+    const savedOccurrences = [3, 10, 17, 24, 31].map((day) => {
+      const date = `2026-10-${String(day).padStart(2, "0")}`;
+      return {
+        occurrenceId: `${serviceId}@${date}T10:00:00.000Z`,
+        serviceId,
+        name: "Sabbath Service",
+        startsAt: `${date}T10:00:00.000Z`,
+        positionRequirements: [{ positionId: cameraId, count: 1 }],
+      };
+    });
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [
+        {
+          ...mockSharedServices[0], id: serviceId, serviceId, name: "Sabbath Service",
+          reccurence: "weekly", dayOfWeek: 6, time: "10:00",
+          positionRequirements: [{ positionId: cameraId, count: 1 }],
+        },
+        ...["media-special-a", "media-special-b"].map((id, index) => ({
+          id, serviceId: id, name: `Media Special ${index + 1}`,
+          reccurence: "one_time", dateTimeISO: `2026-10-${index ? "18" : "04"}T10:00:00.000Z`,
+          positionRequirements: [{ positionId: cameraId, count: 1 }],
+        })),
+      ] } } },
+    };
+    const savedSchedule: TeamSchedule = {
+      scheduleId: "custom-saved-media-october",
+      source: "custom",
+      churchId: "church-1",
+      name: "October 2026",
+      teamId: "team-main",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: [serviceId],
+      occurrences: savedOccurrences,
+      assignments: {
+        [savedOccurrences[0].occurrenceId]: {
+          [`${cameraId}::0`]: { primaryMemberId: memberId, shadows: [] },
+        },
+      },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      teams: [{ teamId: "team-main", churchId: "church-1", name: "Media", memberIds: [memberId] }],
+      positions: [{ positionId: cameraId, churchId: "church-1", teamId: "team-main", name: "Camera" }],
+      members: [{ memberId, churchId: "church-1", firstName: "Morgan", lastName: "Lee", positionIds: [cameraId], blockoutDates: [], notes: "" }],
+      schedules: [savedSchedule],
+    }));
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+
+    expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(5);
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+  });
+
+  it("keeps the saved Praise Team 11 AM Worship Experience schedule across Setup drift", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    const worshipId = "worship-experience";
+    const vocalId = "position-vocal";
+    const memberId = "member-praise";
+    const savedOccurrences = [3, 10, 17, 24, 31].map((day) => {
+      const date = `2026-10-${String(day).padStart(2, "0")}`;
+      return {
+        occurrenceId: `${worshipId}@${date}T11:00:00.000Z`,
+        serviceId: worshipId,
+        name: "Worship Experience",
+        startsAt: `${date}T11:00:00.000Z`,
+        positionRequirements: [{ positionId: vocalId, count: 1 }],
+      };
+    });
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [
+        {
+          ...mockSharedServices[0], id: "sabbath-school", serviceId: "sabbath-school",
+          name: "Sabbath School", serviceGroupId: "sabbath-morning",
+          reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [],
+        },
+        {
+          ...mockSharedServices[0], id: worshipId, serviceId: worshipId,
+          name: "Worship Experience", serviceGroupId: "sabbath-morning",
+          reccurence: "weekly", dayOfWeek: 6, time: "11:00",
+          positionRequirements: [{ positionId: vocalId, count: 1 }],
+        },
+      ] } } },
+    };
+    const savedSchedule: TeamSchedule = {
+      scheduleId: "custom-saved-praise-october",
+      source: "custom",
+      churchId: "church-1",
+      name: "October 2026",
+      teamId: "team-main",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: [worshipId],
+      occurrences: savedOccurrences,
+      assignments: {
+        [savedOccurrences[0].occurrenceId]: {
+          [`${vocalId}::0`]: { primaryMemberId: memberId, shadows: [] },
+        },
+      },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      teams: [{ teamId: "team-main", churchId: "church-1", name: "Praise Team", memberIds: [memberId] }],
+      positions: [{ positionId: vocalId, churchId: "church-1", teamId: "team-main", name: "Vocal" }],
+      members: [{ memberId, churchId: "church-1", firstName: "Morgan", lastName: "Lee", positionIds: [vocalId], blockoutDates: [], notes: "" }],
+      schedules: [savedSchedule],
+    }));
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+
+    expect(await screen.findByRole("button", { name: /Worship Experience Vocal, Morgan/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Vocal, (?:Morgan|Empty)/i })).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: /Sabbath School & Worship Experience/i })).not.toBeInTheDocument();
+    expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+  });
+
+  it("creates a new period from only the team's relevant grouped services", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const worshipId = "worship-experience";
+    const vocalId = "position-vocal";
+    const memberId = "member-praise";
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [
+        {
+          ...mockSharedServices[0], id: "sabbath-school", serviceId: "sabbath-school",
+          name: "Sabbath School", serviceGroupId: "sabbath-morning",
+          reccurence: "weekly", dayOfWeek: 6, time: "10:00", positionRequirements: [],
+        },
+        {
+          ...mockSharedServices[0], id: worshipId, serviceId: worshipId,
+          name: "Worship Experience", serviceGroupId: "sabbath-morning",
+          reccurence: "weekly", dayOfWeek: 6, time: "11:00",
+          positionRequirements: [{ positionId: vocalId, count: 1 }],
+        },
+      ] } } },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      teams: [{ teamId: "team-main", churchId: "church-1", name: "Praise Team", memberIds: [memberId] }],
+      positions: [{ positionId: vocalId, churchId: "church-1", teamId: "team-main", name: "Vocal" }],
+      members: [{ memberId, churchId: "church-1", firstName: "Morgan", lastName: "Lee", positionIds: [vocalId], blockoutDates: [], notes: "" }],
+      schedules: [],
+    }));
+    let generatedSchedule: TeamSchedule | null = null;
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
+      generatedSchedule = {
+        scheduleId: "generated_new-praise-period",
+        generatedPeriodKey: "new-praise-period",
+        source: "generated-period",
+        churchId: "church-1",
+        name: body.name,
+        teamId: body.teamId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        serviceIds: body.serviceIds,
+        occurrences: body.occurrences,
+        assignments: {},
+      };
+      return { success: true, created: true, schedule: generatedSchedule };
+    });
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      generatedSchedule = {
+        ...generatedSchedule!,
+        scheduleId,
+        assignments: {
+          [body.serviceId]: {
+            [body.positionSlotKey]: { primaryMemberId: body.memberId || "", shadows: [] },
+          },
+        },
+      };
+      return { success: true, schedule: generatedSchedule };
+    });
+
+    renderTeams();
+    await waitForTeamsBootstrap();
+    const emptyCells = await screen.findAllByRole("button", { name: /Worship Experience Vocal, Empty/i });
+    expect(emptyCells).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: /Sabbath School & Worship Experience/i })).not.toBeInTheDocument();
+    await user.click(emptyCells[0]);
+    await screen.findByRole("combobox", { name: /Worship Experience Vocal/i });
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+    const ensureBody = mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1];
+    if (!ensureBody) throw new Error("The new schedule period was not requested.");
+    expect(ensureBody.serviceIds).toEqual([worshipId]);
+    const generatedOccurrences = ensureBody.occurrences;
+    if (!generatedOccurrences) throw new Error("The schedule period had no generated occurrences.");
+    expect(generatedOccurrences).toHaveLength(5);
+    expect(generatedOccurrences.every((occurrence) =>
+      occurrence.name === "Worship Experience" && new Date(occurrence.startsAt).getHours() === 11,
+    )).toBe(true);
+  });
+
   it("assigns a microphone from the selected team's schedule", async () => {
     const user = userEvent.setup();
     const microphoneSchedule: TeamSchedule = {
