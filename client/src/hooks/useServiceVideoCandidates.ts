@@ -1080,6 +1080,7 @@ export const useServiceVideoCandidates = ({
       );
       const timer = window.setTimeout(() => {
         const readyRequests = retryRequests.filter((request) => {
+          if (cacheRetryTimersRef.current.get(request.mediaKey) !== timer) return false;
           const current = cacheRequestsRef.current.get(request.mediaKey);
           if (current?.state !== "retry-scheduled") return false;
           cacheRequestsRef.current.set(request.mediaKey, {
@@ -1100,7 +1101,7 @@ export const useServiceVideoCandidates = ({
       retryRequests.forEach((request) => {
         const previousTimer = cacheRetryTimersRef.current.get(request.mediaKey);
         if (previousTimer !== undefined && previousTimer !== timer) {
-          window.clearTimeout(previousTimer);
+          clearCacheRetryTimer(request.mediaKey);
         }
         cacheRetryTimersRef.current.set(request.mediaKey, timer);
       });

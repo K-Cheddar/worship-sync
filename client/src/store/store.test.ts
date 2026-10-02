@@ -921,6 +921,52 @@ describe("store module", () => {
     expect(store.getState().media.list[0].name).toBe("Remote rename");
   });
 
+  it("keeps a pending local edit when an unrelated item replicates", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-1", {
+        _id: "media-item:media-1", _rev: "1-a", docType: "mediaItem", id: "media-1", name: "Original",
+      }],
+      ["media-item:remote", {
+        _id: "media-item:remote", _rev: "1-b", docType: "mediaItem", id: "remote", name: "Remote item",
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation(async (doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "2" });
+      return { ok: true } as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "media-1", name: "Original" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({
+      id: "media-1",
+      patch: { name: "Local edit" },
+    }));
+    store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({
+      id: "remote",
+      name: "Remote item",
+    }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(persisted.get("media-item:media-1")?.name).toBe("Local edit");
+    expect(store.getState().media.list).toEqual([
+      { id: "media-1", name: "Local edit" },
+      { id: "remote", name: "Remote item" },
+    ]);
+  });
+
   it("discards a delayed media save when RESET occurs during the document read", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db } = loadStoreWithMediaPersistence();

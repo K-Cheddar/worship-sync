@@ -463,7 +463,8 @@ test("keeps successful pages and reports failed pages as a partial import", asyn
   await user.click(screen.getByRole("button", { name: "Start partial import" }));
   expect(await screen.findByText("Import completed with some pages failed")).toBeInTheDocument();
   expect(screen.getByText(/Page 2: Could not export this page/)).toBeInTheDocument();
-  expect(screen.getByText("1 of 2 pages processed · 50%")).toBeInTheDocument();
+  expect(screen.getByText("1 of 2 pages processed · 100%")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: "Partial deck progress" })).toHaveAttribute("aria-valuenow", "100");
   expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
 });
 

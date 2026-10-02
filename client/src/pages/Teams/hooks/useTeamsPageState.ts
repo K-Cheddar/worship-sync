@@ -645,7 +645,6 @@ export const useTeamsPageState = (
   // settling so it cannot clobber optimistic state.
   const backgroundRefresh = useCallback(async () => {
     if (!churchId) return;
-    onRecovery?.();
     // Don't pile onto a full (loading) refresh or another background request.
     // A background request uses its own gate so it never trips `refresh`'s dedupe
     // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a
@@ -694,7 +693,7 @@ export const useTeamsPageState = (
     } finally {
       backgroundRefreshInFlightRef.current = false;
     }
-  }, [churchId, isLocalEditCoolingDown, onRecovery, withRetainedHydration]);
+  }, [churchId, isLocalEditCoolingDown, withRetainedHydration]);
 
   // Merge server-hydrated schedules over their summaries in place, keeping list
   // order stable so the picker and grid don't reshuffle when hydration lands.
@@ -1000,6 +999,7 @@ export const useTeamsPageState = (
     }
     if (reconnectVersion <= handledReconnectVersionRef.current) return;
     handledReconnectVersionRef.current = reconnectVersion;
+    onRecovery?.();
     if (isLocalEditCoolingDown()) {
       scheduleDeferredBackgroundRefresh();
     } else {
@@ -1092,7 +1092,7 @@ export const useTeamsPageState = (
     [pageData],
   );
 
-  return {
+  return useMemo(() => ({
     churchId,
     loading,
     canEditTeams,
@@ -1119,5 +1119,30 @@ export const useTeamsPageState = (
     clearScheduleDraft,
     toolbarLogos,
     churchName,
-  };
+  }), [
+    churchId,
+    loading,
+    canEditTeams,
+    canEditAnyTeam,
+    canEditTeam,
+    pageData,
+    normalizedPageData,
+    servicePlansRevision,
+    selectedScheduleId,
+    hydratingScheduleId,
+    hydrateSchedules,
+    hydratingScheduleIds,
+    scheduleDrafts,
+    upsertData,
+    removeData,
+    reorderPositions,
+    trackTeamsSave,
+    refresh,
+    updateSelectedScheduleId,
+    updateScheduleDraft,
+    flushScheduleDraft,
+    clearScheduleDraft,
+    toolbarLogos,
+    churchName,
+  ]);
 };

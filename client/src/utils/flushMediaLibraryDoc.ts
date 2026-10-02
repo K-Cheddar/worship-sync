@@ -7,7 +7,7 @@ import { setMediaCacheMap } from "../store/mediaCacheMapSlice";
 import store from "../store/store";
 import type { MediaFolder, MediaType } from "../types";
 import { extractMediaUrlsFromBackgrounds } from "./mediaCacheUtils";
-import { persistMediaLibrarySnapshot } from "./mediaDocUtils";
+import { persistMediaLibraryChanges, persistMediaLibrarySnapshot } from "./mediaDocUtils";
 
 const safePostMessage = (message: unknown) => {
   if (globalBroadcastRef) {
@@ -27,6 +27,7 @@ export async function flushMediaLibraryDocToPouch(
   list: MediaType[],
   folders: MediaFolder[],
   getLatestState?: () => { list: MediaType[]; folders: MediaFolder[] },
+  changeBase?: { list: MediaType[]; folders: MediaFolder[] },
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (!db) {
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
@@ -41,13 +42,15 @@ export async function flushMediaLibraryDocToPouch(
       stateToPersist = getLatestState?.() ?? stateToPersist;
       return stateToPersist;
     };
-    const changedDocs = await persistMediaLibrarySnapshot(
-      db,
-      list,
-      folders,
-      readLatestState,
-      databaseIsActive,
-    );
+    const changedDocs = changeBase
+      ? await persistMediaLibraryChanges(db, changeBase, readLatestState(), databaseIsActive)
+      : await persistMediaLibrarySnapshot(
+          db,
+          list,
+          folders,
+          readLatestState,
+          databaseIsActive,
+        );
     const { list: listToPersist } = stateToPersist;
     // The intended database was updated, but do not publish/cache its result
     // into a different church if the active database changed during the put.

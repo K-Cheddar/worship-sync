@@ -342,6 +342,76 @@ export async function persistMediaLibrarySnapshot(
   return persistMediaStateChanges(db, { list: existing, folders: existingFolders }, latest, canCommit);
 }
 
+/** Apply an explicit local delta to the latest database snapshot, preserving rows that arrived after the UI snapshot. */
+export async function persistMediaLibraryChanges(
+  db: PouchDB.Database,
+  before: { list: MediaType[]; folders: MediaFolder[] },
+  after: { list: MediaType[]; folders: MediaFolder[] },
+  canCommit: () => boolean = () => true,
+) {
+  if (!canCommit()) return [];
+  const latest = await loadMediaLibrary(db);
+  if (!canCommit()) return [];
+
+  const list = new Map(latest.list.map((item) => [item.id, item]));
+  const beforeItems = new Map(before.list.map((item) => [item.id, item]));
+  const afterItems = new Map(after.list.map((item) => [item.id, item]));
+  for (const [id, item] of afterItems) {
+    const previous = beforeItems.get(id);
+    if (!previous) {
+      list.set(id, item);
+      continue;
+    }
+    const current = list.get(id);
+    if (!current) continue;
+    const merged = { ...current } as Record<string, unknown>;
+    const keys = new Set([...Object.keys(previous), ...Object.keys(item)]);
+    for (const key of keys) {
+      if (JSON.stringify(previous[key as keyof MediaType]) !== JSON.stringify(item[key as keyof MediaType])) {
+        if (item[key as keyof MediaType] === undefined) delete merged[key];
+        else merged[key] = item[key as keyof MediaType];
+      }
+    }
+    list.set(id, merged as unknown as MediaType);
+  }
+  for (const id of beforeItems.keys()) {
+    if (!afterItems.has(id)) list.delete(id);
+  }
+
+  const folders = new Map(latest.folders.map((folder) => [folder.id, folder]));
+  const beforeFolders = new Map(before.folders.map((folder) => [folder.id, folder]));
+  const afterFolders = new Map(after.folders.map((folder) => [folder.id, folder]));
+  for (const [id, folder] of afterFolders) {
+    const previous = beforeFolders.get(id);
+    if (!previous) {
+      folders.set(id, folder);
+      continue;
+    }
+    const current = folders.get(id);
+    if (!current) continue;
+    const merged = { ...current } as Record<string, unknown>;
+    const keys = new Set([...Object.keys(previous), ...Object.keys(folder)]);
+    for (const key of keys) {
+      if (JSON.stringify(previous[key as keyof MediaFolder]) !== JSON.stringify(folder[key as keyof MediaFolder])) {
+        if (folder[key as keyof MediaFolder] === undefined) delete merged[key];
+        else merged[key] = folder[key as keyof MediaFolder];
+      }
+    }
+    folders.set(id, merged as unknown as MediaFolder);
+  }
+  for (const id of beforeFolders.keys()) {
+    if (!afterFolders.has(id)) folders.delete(id);
+  }
+
+  const merged = normalizeMediaDoc({
+    _id: "media",
+    _rev: "",
+    list: [...list.values()],
+    folders: [...folders.values()],
+  });
+  return persistMediaStateChanges(db, latest, merged, canCommit);
+}
+
 async function updateLegacyMediaItem(
   db: PouchDB.Database,
   id: string,

@@ -23,6 +23,7 @@ const liveSyncHandles: Array<{
   emit: (event: string, value?: any) => void;
 }> = [];
 const liveSyncBatchSizes: number[] = [];
+const liveSyncOwners: string[] = [];
 
 const createSyncHandle = (completeAfterSetup = false) => {
   const listeners = new Map<string, (value?: any) => void>();
@@ -46,6 +47,7 @@ jest.mock("pouchdb-browser", () => {
       destroy: jest.fn().mockResolvedValue(undefined),
       bulkDocs: jest.fn().mockResolvedValue([]),
       sync: jest.fn((_remote: unknown, options?: { batch_size?: number }) => {
+        liveSyncOwners.push(name);
         if (typeof options?.batch_size === "number") liveSyncBatchSizes.push(options.batch_size);
         const handle = createSyncHandle();
         liveSyncHandles.push(handle);
@@ -83,6 +85,7 @@ describe("ControllerInfoProvider", () => {
     mockPouchInstances.length = 0;
     liveSyncHandles.length = 0;
     liveSyncBatchSizes.length = 0;
+    liveSyncOwners.length = 0;
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -142,6 +145,7 @@ describe("controller replication 413 batch policy", () => {
     mockPouchInstances.length = 0;
     liveSyncHandles.length = 0;
     liveSyncBatchSizes.length = 0;
+    liveSyncOwners.length = 0;
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -215,5 +219,88 @@ describe("controller replication 413 batch policy", () => {
     expect(liveSyncHandles[1].cancel).not.toHaveBeenCalled();
     act(() => liveSyncHandles[1].emit("active"));
     expect(screen.getByTestId("status")).toHaveTextContent("connected");
+  });
+
+  it("does not resume an old church sync after renewal finishes", async () => {
+    let resolveOldRenewal!: (response: unknown) => void;
+    const oldRenewal = new Promise((resolve) => { resolveOldRenewal = resolve; });
+    let resolveNewChurchSession!: (response: unknown) => void;
+    const newChurchSession = new Promise((resolve) => { resolveNewChurchSession = resolve; });
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        headers: { get: () => "application/json" },
+        json: async () => ({ success: true }),
+      })
+      .mockReturnValueOnce(oldRenewal)
+      .mockReturnValueOnce(newChurchSession)
+      .mockResolvedValue({
+        headers: { get: () => "application/json" },
+        json: async () => ({ success: true }),
+      });
+    const renderForChurch = (church: string) => (
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext({ database: church }) as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>
+    );
+    const view = render(renderForChurch("church-a"));
+    await waitFor(() => expect(liveSyncHandles).toHaveLength(1));
+
+    act(() => liveSyncHandles[0].emit("denied", { status: 401, name: "unauthorized" }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    view.rerender(renderForChurch("church-b"));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+
+    resolveOldRenewal({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    await act(async () => { await oldRenewal; await Promise.resolve(); });
+    expect(liveSyncOwners.filter((owner) => owner === "worship-sync-church-a")).toHaveLength(1);
+
+    resolveNewChurchSession({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    await act(async () => { await newChurchSession; await Promise.resolve(); });
+    await waitFor(() => expect(liveSyncOwners).toContain("worship-sync-church-b"));
+
+    expect(liveSyncHandles).toHaveLength(2);
+    expect(liveSyncBatchSizes).toEqual([40, 40]);
+  });
+
+  it("does not restart sync when auth recovery finishes after provider unmount", async () => {
+    let resolveRenewal!: (response: unknown) => void;
+    const renewal = new Promise((resolve) => { resolveRenewal = resolve; });
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        headers: { get: () => "application/json" },
+        json: async () => ({ success: true }),
+      })
+      .mockReturnValueOnce(renewal);
+    const view = render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+    await waitFor(() => expect(liveSyncHandles).toHaveLength(1));
+    act(() => liveSyncHandles[0].emit("denied", { status: 401, name: "unauthorized" }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    view.unmount();
+
+    resolveRenewal({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    await act(async () => { await renewal; await Promise.resolve(); });
+
+    expect(liveSyncHandles).toHaveLength(1);
   });
 });

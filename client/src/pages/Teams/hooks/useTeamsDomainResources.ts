@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { listServicePlanTemplates } from "../../../api/auth";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
@@ -164,8 +164,8 @@ export const useTeamsDomainResources = () => {
     ? resourceState
     : emptyResource(churchId);
 
-  return {
-    templates: {
+  const templates = useMemo(
+    () => ({
       data: visibleState.data,
       loaded: visibleState.loaded,
       loading: visibleState.loading,
@@ -174,6 +174,9 @@ export const useTeamsDomainResources = () => {
       refresh,
       upsert,
       remove,
-    },
-  };
+    }),
+    [visibleState, ensureLoaded, refresh, upsert, remove],
+  );
+
+  return useMemo(() => ({ templates }), [templates]);
 };

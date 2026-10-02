@@ -142,6 +142,13 @@ export const useControllerPageLifecycle = () => {
   const mediaSchemaV2Ref = useRef(false);
   const mediaSchemaV2ObservedRef = useRef(false);
   const mediaSchemaDbRef = useRef<PouchDB.Database | undefined>(undefined);
+  const mediaReplicationRevisionRef = useRef(0);
+  const mediaReplicationDbRef = useRef<PouchDB.Database | undefined>(db);
+  const mediaReplicationFingerprintsRef = useRef(new Map<string, string>());
+  if (mediaReplicationDbRef.current !== db) {
+    mediaReplicationDbRef.current = db;
+    mediaReplicationFingerprintsRef.current.clear();
+  }
 
   // A profile change is a new editing session even when React keeps this hook
   // mounted. Re-arm readiness without reloading already hydrated slices; the
@@ -244,8 +251,24 @@ export const useControllerPageLifecycle = () => {
           mediaSchemaV2ObservedRef.current = true;
           continue;
         }
+        if (typeof update?._id === "string") {
+          const fingerprint = JSON.stringify(
+            Object.fromEntries(
+              Object.entries(update).filter(([key]) => key !== "_rev"),
+            ),
+          );
+          if (mediaReplicationFingerprintsRef.current.get(update._id) === fingerprint) {
+            continue;
+          }
+          mediaReplicationFingerprintsRef.current.set(update._id, fingerprint);
+          if (mediaReplicationFingerprintsRef.current.size > 500) {
+            const oldestId = mediaReplicationFingerprintsRef.current.keys().next().value;
+            if (oldestId) mediaReplicationFingerprintsRef.current.delete(oldestId);
+          }
+        }
         const change = parseMediaReplicationDoc(update, mediaSchemaV2Ref.current);
         if (!change) continue;
+        mediaReplicationRevisionRef.current += 1;
         if (change.kind === "legacy") {
           dispatch(syncMediaFromRemote({ list: change.list, folders: change.folders }));
         } else if (change.kind === "folders") {
@@ -478,6 +501,7 @@ export const useControllerPageLifecycle = () => {
           mediaSchemaV2Ref.current = initializedAsV2;
           mediaSchemaV2ObservedRef.current = initializedAsV2;
         }
+        const replicationRevisionAtStart = mediaReplicationRevisionRef.current;
         let loaded = await readMediaLibrary(db);
         if (cancelled) return;
         // A v2 marker can replicate while the initial legacy read is pending.
@@ -485,6 +509,16 @@ export const useControllerPageLifecycle = () => {
         if (mediaSchemaV2Ref.current && !initializedAsV2) {
           loaded = await readMediaLibrary(db);
           if (cancelled) return;
+        }
+        // Item or folder documents can replicate during a same-schema read too.
+        // Re-read until no media change arrived while the read was in flight.
+        let readRevision = mediaReplicationRevisionRef.current;
+        while (readRevision !== replicationRevisionAtStart) {
+          const revisionBeforeRead = mediaReplicationRevisionRef.current;
+          loaded = await readMediaLibrary(db);
+          if (cancelled) return;
+          readRevision = mediaReplicationRevisionRef.current;
+          if (readRevision === revisionBeforeRead) break;
         }
         dispatch(initiateMediaFromDoc(loaded));
       } catch (error) {

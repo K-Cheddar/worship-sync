@@ -118,6 +118,24 @@ describe("usePreparedMediaContext", () => {
     expect(mockChannel.postMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("resets to the new fallback when its subscription key changes", () => {
+    const { result, rerender } = renderHook(
+      ({ context, key }: { context: PreparedMediaContext; key: string }) =>
+        usePreparedMediaContext(context, key),
+      { initialProps: { context: fallback, key: "db-a" } },
+    );
+    const runtimeSelection = { ...fallback, outlineId: "runtime-a", contextSource: "local runtime selection" };
+    act(() => {
+      window.dispatchEvent(new CustomEvent("worshipsync-prepared-media-context", { detail: runtimeSelection }));
+    });
+    expect(result.current).toEqual(runtimeSelection);
+
+    const nextFallback = { ...fallback, outlineId: "persisted-b", outlineName: "Next fallback" };
+    rerender({ context: nextFallback, key: "db-b" });
+
+    expect(result.current).toEqual(nextFallback);
+  });
+
   it("rejects Presentation context when the renderer belongs to Aux", () => {
     const auxFallback: PreparedMediaContext = {
       controllerProfileId: "aux",

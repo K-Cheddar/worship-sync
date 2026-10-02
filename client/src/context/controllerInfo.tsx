@@ -132,6 +132,8 @@ const ControllerInfoProvider = ({ children }: any) => {
   const broadcastDatabaseKey = isGuestSession
     ? `${DEMO_DATABASE_KEY}-guest`
     : activeDatabaseKey;
+  const activeDatabaseKeyRef = useRef(activeDatabaseKey);
+  activeDatabaseKeyRef.current = activeDatabaseKey;
 
   // Update broadcast channel when database changes
   useEffect(() => {
@@ -157,6 +159,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
+  const syncGenerationRef = useRef(0);
   const syncBatchSizeRef = useRef(40);
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
@@ -169,7 +172,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   const initialSessionRetryRef = useRef(0);
   const prevLocalDbIdentityRef = useRef<string | null>(null);
 
-  const getCouchSession = useCallback(async () => {
+  const getCouchSession = useCallback(async (canCommit: () => boolean = () => true) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
@@ -192,7 +195,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       }
 
       const data = await response.json();
-      setHasCouchSession(data.success);
+      if (canCommit()) setHasCouchSession(data.success);
       return data.success;
     } catch (error: any) {
       clearTimeout(timeoutId);
@@ -207,12 +210,17 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, []);
 
   const syncDb = useCallback(
-    (localDb: PouchDB.Database, remoteDb: PouchDB.Database) => {
+    (localDb: PouchDB.Database, remoteDb: PouchDB.Database, churchKey: string) => {
       syncRef.current?.cancel();
       syncRef.current = null;
+      const generation = ++syncGenerationRef.current;
       let authRecovery: Promise<void> | null = null;
 
       const startLiveSync = () => {
+        if (
+          generation !== syncGenerationRef.current ||
+          activeDatabaseKeyRef.current !== churchKey
+        ) return;
         const liveSync = localDb.sync(remoteDb, {
           retry: true,
           live: true,
@@ -288,7 +296,14 @@ const ControllerInfoProvider = ({ children }: any) => {
           setHasCouchSession(false);
           setConnectionStatus({ status: "retrying", retryCount });
           authRecovery = (async () => {
-            const success = await getCouchSession();
+            const success = await getCouchSession(() =>
+              generation === syncGenerationRef.current &&
+              activeDatabaseKeyRef.current === churchKey,
+            );
+            if (
+              generation !== syncGenerationRef.current ||
+              activeDatabaseKeyRef.current !== churchKey
+            ) return;
             if (syncRef.current !== null) return;
             if (!success) {
               if (retryCount >= MAX_REPLICATION_AUTH_RETRIES) {
@@ -297,6 +312,10 @@ const ControllerInfoProvider = ({ children }: any) => {
                 return;
               }
               await backoff(retryCount);
+              if (
+                generation !== syncGenerationRef.current ||
+                activeDatabaseKeyRef.current !== churchKey
+              ) return;
               if (syncRef.current === null) startLiveSync();
               return;
             }
@@ -566,7 +585,7 @@ const ControllerInfoProvider = ({ children }: any) => {
               updateGlobalBroadcast(broadcastDatabaseKey);
             }
             if (isAuthenticatedSession) {
-              syncDb(localDb, remoteDb);
+              syncDb(localDb, remoteDb, activeDatabaseKey);
             }
           });
       } catch (error) {
@@ -696,6 +715,9 @@ const ControllerInfoProvider = ({ children }: any) => {
   ]);
 
   const tearDownLocalDatabases = useCallback(async () => {
+    // Invalidate auth-recovery continuations before cancelling handles or
+    // destroying the database owned by the previous church.
+    syncGenerationRef.current += 1;
     if (syncTimeout) {
       clearTimeout(syncTimeout);
       syncTimeout = null;
@@ -779,6 +801,9 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   useEffect(() => {
     return () => {
+      // Auth recovery may still be awaiting session renewal or backoff.
+      // Prevent its continuation from reconnecting after provider unmount.
+      syncGenerationRef.current += 1;
       if (syncTimeout) {
         clearTimeout(syncTimeout);
         syncTimeout = null;

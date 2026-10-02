@@ -5,6 +5,7 @@ import {
   mediaItemDocId,
   normalizeMediaDoc,
   parseMediaReplicationDoc,
+  persistMediaLibraryChanges,
   persistMediaStateChanges,
   removeMediaItem,
   saveMediaFolders,
@@ -219,6 +220,37 @@ describe("v2 media repository", () => {
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-folders", folders: [folder] }));
     expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
     expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("delete") }));
+  });
+
+  it("preserves media replicated after a folder operation captured its list", async () => {
+    const folder = { id: "folder", name: "Folder", parentId: null } as MediaFolder;
+    const beforeItem = { ...media("known"), folderId: "folder" };
+    const persisted = new Map<string, any>([
+      [mediaItemDocId("known"), { ...beforeItem, _id: mediaItemDocId("known"), docType: "mediaItem", _rev: "1" }],
+      [mediaItemDocId("remote"), { ...media("remote"), folderId: "folder", _id: mediaItemDocId("remote"), docType: "mediaItem", _rev: "1" }],
+    ]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        if (id === "media-folders") return { _id: id, folders: [folder] };
+        const doc = persisted.get(id);
+        if (doc) return doc;
+        throw pouchNotFound();
+      }),
+      allDocs: jest.fn(async () => ({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) })),
+      put: jest.fn(async (doc: any) => { persisted.set(doc._id, { ...doc, _rev: "2" }); return { ok: true }; }),
+      remove: jest.fn(async (doc: any) => { persisted.delete(doc._id); return { ok: true }; }),
+    } as unknown as PouchDB.Database;
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [beforeItem], folders: [folder] },
+      { list: [{ ...beforeItem, folderId: null }], folders: [] },
+    );
+
+    expect(persisted.get(mediaItemDocId("known"))?.folderId).toBeNull();
+    expect(persisted.get(mediaItemDocId("remote"))?.folderId).toBeNull();
+    expect(db.remove).not.toHaveBeenCalled();
   });
 
   it("broadcasts the complete saved item when optional fields are removed", async () => {

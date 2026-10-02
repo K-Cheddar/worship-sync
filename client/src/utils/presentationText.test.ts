@@ -73,6 +73,24 @@ describe("presentation text compatibility", () => {
     ).toBe("Structured value");
   });
 
+  it("falls back to legacy words when the structured document has no valid blocks array", () => {
+    expect(getBoxPlainText({
+      words: "Legacy words",
+      textDocument: { blocks: undefined } as never,
+      width: 100,
+      height: 50,
+    })).toBe("Legacy words");
+  });
+
+  it("keeps a valid empty structured document authoritative", () => {
+    expect(getBoxPlainText({
+      words: "Legacy words",
+      textDocument: { blocks: [] },
+      width: 100,
+      height: 50,
+    })).toBe("");
+  });
+
   it("changes text visual identity for formatting-only changes", () => {
     const base: Box = {
       words: "Same words",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { globalBroadcastRef } from "../context/controllerInfo";
 import { globalHostId } from "../context/globalInfo";
 
@@ -104,6 +104,7 @@ export const usePreparedMediaContext = (
   subscriptionKey?: unknown,
 ): PreparedMediaContext => {
   const [runtimeContext, setRuntimeContext] = useState<PreparedMediaContext>();
+  const previousSubscriptionKeyRef = useRef(subscriptionKey);
 
   useEffect(() => {
     const channel = globalBroadcastRef;
@@ -133,10 +134,16 @@ export const usePreparedMediaContext = (
   }, [fallback, subscriptionKey]);
 
   useEffect(() => {
+    const subscriptionChanged = previousSubscriptionKeyRef.current !== subscriptionKey;
+    previousSubscriptionKeyRef.current = subscriptionKey;
+    if (subscriptionChanged) {
+      setRuntimeContext(fallback);
+      return;
+    }
     setRuntimeContext((current) =>
       current && sameContextOwner(current, fallback) ? current : undefined,
     );
-  }, [fallback]);
+  }, [fallback, subscriptionKey]);
 
   return runtimeContext ?? fallback;
 };

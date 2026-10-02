@@ -87,10 +87,18 @@ export const slideTextDocumentToPlainText = (
     .map((block) => block.spans.map((span) => span.text).join(""))
     .join("\n");
 
-export const getBoxPlainText = (box: Box): string =>
-  box.textDocument != null
-    ? slideTextDocumentToPlainText(box.textDocument)
-    : box.words ?? "";
+export const getBoxPlainText = (box: Box): string => {
+  const document = box.textDocument as unknown;
+  if (
+    document &&
+    typeof document === "object" &&
+    !Array.isArray(document) &&
+    Array.isArray((document as { blocks?: unknown }).blocks)
+  ) {
+    return slideTextDocumentToPlainText(document as SlideTextDocument);
+  }
+  return box.words ?? "";
+};
 
 /**
  * Identity for text-driven display comparisons. Adjacent spans with matching

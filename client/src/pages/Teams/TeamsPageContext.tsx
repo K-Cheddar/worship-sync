@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import { useTeamsPageState } from "./hooks/useTeamsPageState";
 import { useTeamsDomainResources } from "./hooks/useTeamsDomainResources";
 import type {
@@ -33,10 +33,10 @@ export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
     });
   }, [refreshTemplates, templatesLoaded]);
   const pageState = useTeamsPageState(onTemplateEvent, onTemplateRecovery);
-  const value = {
+  const value = useMemo(() => ({
     ...pageState,
     ...domainResources,
-  };
+  }), [pageState, domainResources]);
 
   return (
     <TeamsPageContext.Provider value={value}>

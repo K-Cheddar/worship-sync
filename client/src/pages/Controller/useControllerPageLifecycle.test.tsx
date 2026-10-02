@@ -9,6 +9,8 @@ import { initiateMediaFromDoc } from "../../store/mediaSlice";
 import { isMediaLibraryV2, loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
+import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
+import { upsertMediaItemFromRemote } from "../../store/mediaSlice";
 
 jest.mock("../../hooks", () => ({
   useDispatch: () => store.dispatch,
@@ -90,6 +92,7 @@ const createDb = (
 describe("useControllerPageLifecycle selected outline loading", () => {
   beforeEach(() => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    jest.mocked(useGlobalBroadcast).mockClear();
     jest.mocked(isMediaLibraryV2).mockResolvedValue(false);
     jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
   });
@@ -124,6 +127,38 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     ]);
   });
 
+  it("routes the same replicated media document through Redux only once", () => {
+    const db = createDb({});
+    const updater = new EventTarget();
+    const dispatchSpy = jest.spyOn(store, "dispatch");
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ),
+    });
+    const mediaUpdate = {
+      _id: "media-item:duplicate",
+      _rev: "2-revision",
+      id: "duplicate",
+      docType: "mediaItem",
+      name: "Replicated once",
+    };
+    const globalHandler = jest.mocked(useGlobalBroadcast).mock.calls[1][0] as (
+      event: CustomEventInit,
+    ) => void;
+    act(() => {
+      updater.dispatchEvent(new CustomEvent("update", { detail: [mediaUpdate] }));
+      globalHandler({ detail: [mediaUpdate] });
+    });
+
+    expect(dispatchSpy.mock.calls.filter(([action]) => action.type === upsertMediaItemFromRemote.type)).toHaveLength(1);
+    dispatchSpy.mockRestore();
+  });
+
   it("accepts legacy media replication while the initialized library is schema v1", async () => {
     const db = createDb({});
     const updater = new EventTarget();
@@ -148,11 +183,51 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     ]);
   });
 
+  it("re-reads the media library when an item replicates during its initial read", async () => {
+    const initialRead = deferred<{ list: any[]; folders: any[] }>();
+    const readStarted = deferred<void>();
+    const latest = { list: [{ id: "replicated", name: "Replicated item" }], folders: [] };
+    jest.mocked(readMediaLibrary)
+      .mockImplementationOnce(() => {
+        readStarted.resolve();
+        return initialRead.promise;
+      })
+      .mockResolvedValueOnce(latest as any);
+    const db = createDb({});
+    const updater = new EventTarget();
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await readStarted.promise;
+    act(() => updater.dispatchEvent(new CustomEvent("update", {
+      detail: [{ _id: "media-item:replicated", id: "replicated", docType: "mediaItem", name: "Replicated item" }],
+    })));
+    await act(async () => {
+      initialRead.resolve({ list: [{ id: "stale", name: "Stale item" }], folders: [] });
+      await initialRead.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(readMediaLibrary).toHaveBeenCalledTimes(2);
+    expect(store.getState().media.list).toEqual(latest.list);
+  });
+
   it("ignores stale legacy media replication after loading schema v2", async () => {
     const currentV2List = [{ id: "current", name: "Current v2 item" }] as any;
     const schemaRead = deferred<boolean>();
     jest.mocked(isMediaLibraryV2).mockReturnValueOnce(schemaRead.promise);
-    jest.mocked(readMediaLibrary).mockResolvedValue({ list: currentV2List, folders: [] });
+    jest.mocked(readMediaLibrary).mockResolvedValue({ list: currentV2List, folders: [] } as any);
     const db = createDb({});
     const updater = new EventTarget();
 
