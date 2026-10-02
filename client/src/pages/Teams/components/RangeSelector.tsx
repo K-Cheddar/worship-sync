@@ -122,20 +122,12 @@ const RangeSelector = ({
           {preset === "custom" ? (
             <DateRangePicker
               label="Date range"
-              aria-label={`Custom date range: ${formatResolvedDateRange(range)}`}
+              aria-label="Custom date range"
               hideLabel
-              className="min-w-0"
-              inputClassName="max-w-full"
+              className="min-w-0 w-full lg:w-56 lg:shrink-0"
+              inputClassName="h-8 min-h-8 w-full max-w-full min-w-0 border-gray-700 bg-gray-800/70 px-2 pr-8 text-xs shadow-none"
               value={{ startDate: range.start, endDate: range.end }}
               onChange={onCustomRangeChange}
-              triggerContent={(
-                <span className="flex min-w-0 items-center gap-1 rounded-md border border-gray-700 bg-gray-800/70 px-2 py-1 text-left text-xs text-gray-200 hover:border-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500">
-                  <span className="truncate" aria-live="polite">
-                    {formatResolvedDateRange(range)}{summary ? ` · ${summary}` : ""}
-                  </span>
-                  <ChevronDown className="size-3.5 shrink-0 text-gray-400" aria-hidden />
-                </span>
-              )}
             />
           ) : (
             <p className="min-w-0 px-0.5 text-xs text-gray-400" aria-live="polite">

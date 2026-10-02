@@ -254,13 +254,53 @@ export async function persistMediaStateChanges(
     const schemaChanged = await isMediaLibraryV2(db);
     if (!canCommit()) return [];
     if (schemaChanged) {
-      return persistMediaStateChanges(db, before, after, canCommit);
+      return persistMediaStateChanges(db, before, after, canCommit, rowCommitGuards);
     }
-    current.list = [...after.list];
-    current.folders = [...after.folders];
-    current.updatedAt = new Date().toISOString();
-    await db.put(current);
-    return [current];
+    const beforeById = new Map(before.list.map((item) => [item.id, item]));
+    const afterById = new Map(after.list.map((item) => [item.id, item]));
+    const changedItemIds = new Set<string>();
+    for (const [id, item] of afterById) {
+      if (JSON.stringify(beforeById.get(id)) !== JSON.stringify(item)) changedItemIds.add(id);
+    }
+    for (const id of beforeById.keys()) {
+      if (!afterById.has(id)) changedItemIds.add(id);
+    }
+    const foldersChanged = JSON.stringify(before.folders) !== JSON.stringify(after.folders);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!canCommit()) return [];
+      const latest = await loadOrCreateMediaDoc(db, canCommit);
+      if (!latest || !canCommit()) return [];
+      const schemaChangedBeforeRetry = await isMediaLibraryV2(db);
+      if (!canCommit()) return [];
+      if (schemaChangedBeforeRetry) {
+        return persistMediaStateChanges(db, before, after, canCommit, rowCommitGuards);
+      }
+
+      const mergedById = new Map(latest.list.map((item) => [item.id, item]));
+      for (const id of changedItemIds) {
+        if (!canCommit() || !(rowCommitGuards.canCommitItem?.(id) ?? true)) continue;
+        const localItem = afterById.get(id);
+        if (localItem) mergedById.set(id, localItem);
+        else mergedById.delete(id);
+      }
+      const merged = {
+        ...latest,
+        list: [...mergedById.values()],
+        folders: foldersChanged && canCommit() && (rowCommitGuards.canCommitFolders?.() ?? true)
+          ? [...after.folders]
+          : [...(latest.folders ?? [])],
+        updatedAt: new Date().toISOString(),
+      };
+      if (!canCommit()) return [];
+      try {
+        await db.put(merged);
+        return [merged];
+      } catch (error) {
+        if (!isPouchConflict(error) || attempt === 2) throw error;
+      }
+    }
+    return [];
   }
   const beforeById = new Map(before.list.map((item) => [item.id, item]));
   const afterById = new Map(after.list.map((item) => [item.id, item]));

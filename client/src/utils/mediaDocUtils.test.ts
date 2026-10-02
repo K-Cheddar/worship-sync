@@ -195,6 +195,43 @@ describe("v2 media repository", () => {
     expect(db.allDocs).not.toHaveBeenCalled();
   });
 
+  it("preserves row guards when a legacy save retries after the schema flips to v2", async () => {
+    const legacy = { _id: "media", _rev: "1-media", list: [media("a", "Remote A")], folders: [] } as DBMedia;
+    let metaReads = 0;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") {
+          metaReads += 1;
+          if (metaReads === 1) throw pouchNotFound();
+          return { _id: id, schemaVersion: 2 };
+        }
+        if (id === "media") return legacy;
+        throw pouchNotFound();
+      }),
+      put: jest.fn(),
+      remove: jest.fn(),
+    } as unknown as PouchDB.Database;
+    const canCommitItem = jest.fn(() => false);
+    const canCommitFolders = jest.fn(() => false);
+
+    await persistMediaStateChanges(
+      db,
+      { list: [media("a", "Before A")], folders: [] },
+      {
+        list: [media("a", "Stale local A")],
+        folders: [{ id: "f", name: "Local folder", parentId: null, createdAt: "1", updatedAt: "1" }],
+      },
+      () => true,
+      { canCommitItem, canCommitFolders },
+    );
+
+    expect(metaReads).toBeGreaterThanOrEqual(3);
+    expect(canCommitItem).toHaveBeenCalledWith("a");
+    expect(canCommitFolders).toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(db.remove).not.toHaveBeenCalled();
+  });
+
   it("writes only changed item docs and folder metadata for v2 changes", async () => {
     const existing = { ...media("edit", "Before"), _id: mediaItemDocId("edit"), docType: "mediaItem", _rev: "1" };
     const deleted = { ...media("delete"), _id: mediaItemDocId("delete"), docType: "mediaItem", _rev: "1" };

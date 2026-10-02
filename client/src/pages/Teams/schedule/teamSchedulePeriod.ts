@@ -7,6 +7,7 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { calendarDateInTimeZone } from "../../../utils/teamScheduleOccurrences";
 import { generateScheduleOccurrences, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
 import {
   parseSlotKey,
@@ -118,12 +119,14 @@ export const findInitialTeamSchedulePeriod = ({
   teamId,
   schedules = [],
   now = serverDate(),
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 }: {
   services: TeamService[];
   positions: TeamPosition[];
   teamId: string;
   schedules?: Array<TeamSchedule | TeamScheduleSummary>;
   now?: Date;
+  timeZone?: string;
 }): {
   start: string;
   end: string;
@@ -131,7 +134,8 @@ export const findInitialTeamSchedulePeriod = ({
   period: TeamSchedulePeriod;
   nextOccurrence: TeamScheduleOccurrence | null;
 } => {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayDate = parsePlainDate(calendarDateInTimeZone(now, timeZone));
+  const today = todayDate || new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const teamPositionIds = new Set(positions
     .filter((position) => position.teamId === teamId)
     .map((position) => position.positionId));
@@ -191,8 +195,10 @@ export const findInitialTeamSchedulePeriod = ({
       const startsAt = Date.parse(occurrence.startsAt);
       return Number.isFinite(startsAt) && startsAt >= now.getTime();
     })
-    .sort((left, right) => left.startsAt.localeCompare(right.startsAt))[0] || null;
-  const nextDate = nextOccurrence ? parsePlainDate(getOccurrenceDate(nextOccurrence)) : null;
+    .sort((left, right) => Date.parse(left.startsAt) - Date.parse(right.startsAt))[0] || null;
+  const nextDate = nextOccurrence
+    ? parsePlainDate(calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone))
+    : null;
   const range = calendarMonthRange(nextDate || today);
   const period = buildTeamSchedulePeriod({
     services,
@@ -202,6 +208,31 @@ export const findInitialTeamSchedulePeriod = ({
     endDate: range.end,
     additionalPositionSlots,
   });
+  if (
+    nextOccurrence &&
+    calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone) !== getOccurrenceDate(nextOccurrence) &&
+    !period.occurrences.some((occurrence) => occurrence.occurrenceId === nextOccurrence.occurrenceId)
+  ) {
+    const occurrenceDate = calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone);
+    if (occurrenceDate >= range.start && occurrenceDate <= range.end) {
+      const service = relevantServices.find((item) => item.serviceId === nextOccurrence.serviceId);
+      const requirements = resolveOccurrenceRequirements({
+        occurrence: nextOccurrence,
+        service,
+        teamPositionIds: [...teamPositionIds],
+        fallbackToAllTeamPositions: false,
+      });
+      if (requirements.length > 0) {
+        period.occurrences.push(nextOccurrence);
+        period.allOccurrences.push(nextOccurrence);
+        period.requirementsByOccurrence.set(nextOccurrence.occurrenceId, requirements);
+        const serviceIds = nextOccurrence.serviceIds || [nextOccurrence.serviceId];
+        serviceIds.forEach((serviceId) => {
+          if (!period.serviceIds.includes(serviceId)) period.serviceIds.push(serviceId);
+        });
+      }
+    }
+  }
   return {
     start: range.start,
     end: range.end,

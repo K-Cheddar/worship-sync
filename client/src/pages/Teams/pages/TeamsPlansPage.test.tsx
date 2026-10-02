@@ -244,7 +244,7 @@ describe("TeamsPlansPage", () => {
     expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
   });
 
-  it("shows the compact custom date-range button and opens its calendar", async () => {
+  it("shows one compact editable custom range input and opens its calendar", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
@@ -253,18 +253,36 @@ describe("TeamsPlansPage", () => {
     await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     await user.click(await screen.findByRole("button", { name: /^Custom$/i }));
 
-    const customRangeButton = screen.getByRole("button", { name: /^Custom date range: .+/ });
-    expect(customRangeButton).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /Custom date range/i })).not.toBeInTheDocument();
+    const customRangeInput = screen.getByRole("textbox", { name: "Custom date range" });
+    expect(customRangeInput).toBeInTheDocument();
+    expect(screen.getAllByRole("textbox", { name: "Custom date range" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
     expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("To")).not.toBeInTheDocument();
-    await user.click(customRangeButton);
+    await user.click(customRangeInput);
     expect(screen.getByRole("grid")).toBeInTheDocument();
     await user.click(screen.getByText("8", { selector: "button" }));
-    await user.click(screen.getByText("12", { selector: "button" }));
-    expect(screen.getByRole("button", {
-      name: "Custom date range: Oct 8, 2026 – Oct 12, 2026",
-    })).toBeInTheDocument();
+    await user.click(await screen.findByText("12", { selector: "button" }));
+    expect(customRangeInput).toHaveValue("10/08/2026 – 10/12/2026");
+    jest.useRealTimers();
+  });
+
+  it("keeps segmented keyboard editing available for the Custom range", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
+    await user.click(await screen.findByRole("button", { name: /^Custom$/i }));
+    const input = screen.getByRole("textbox", { name: "Custom date range" }) as HTMLInputElement;
+    const initialValue = input.value;
+    await user.click(input);
+    await user.keyboard("{ArrowUp}");
+
+    expect(input.value).not.toBe(initialValue);
+    expect(input.value).toMatch(/^\d{2}\/\d{2}\/\d{4} – \d{2}\/\d{2}\/\d{4}$/);
+    expect(screen.queryByRole("textbox", { name: "Date range" })).not.toBeInTheDocument();
     jest.useRealTimers();
   });
 
