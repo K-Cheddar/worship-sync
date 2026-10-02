@@ -34,12 +34,45 @@ describe("RangeSelector", () => {
   it("shows compact preset choices on narrow screens", async () => {
     const user = userEvent.setup();
     renderFilter();
-    await user.click(screen.getByRole("button", { name: "Date range" }));
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
 
     expect(screen.getByRole("button", { name: "Upcoming" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "This month" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "This month" }));
     expect(screen.queryByRole("button", { name: "Upcoming" })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes the mobile preset button from the selected Custom range", async () => {
+    const user = userEvent.setup();
+    const ControlledFilter = () => {
+      const [preset, setPreset] = useState<RangePreset>("upcoming");
+      const [range, setRange] = useState({ start: "2026-09-29", end: "2026-10-31" });
+      return (
+        <RangeSelector
+          preset={preset}
+          range={range}
+          onPresetChange={setPreset}
+          onCustomRangeChange={({ startDate, endDate }) => setRange({ start: startDate, end: endDate })}
+        />
+      );
+    };
+    render(<ControlledFilter />);
+
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
+    await user.click(screen.getByRole("button", { name: "Custom" }));
+    expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
+    const customRangeButton = screen.getByRole("button", {
+      name: "Custom date range: Sep 29, 2026 – Oct 31, 2026",
+    });
+    expect(customRangeButton).toBeInTheDocument();
+
+    await user.click(customRangeButton);
+    expect(screen.getByRole("grid")).toBeInTheDocument();
+    await user.click(screen.getByText("8", { selector: "button" }));
+    await user.click(screen.getByText("12", { selector: "button" }));
+    expect(screen.getByRole("button", {
+      name: "Custom date range: Sep 8, 2026 – Sep 12, 2026",
+    })).toBeInTheDocument();
   });
 
   it("shows the existing date range as the Custom picker trigger without a second input row", async () => {
@@ -60,13 +93,13 @@ describe("RangeSelector", () => {
     render(<ControlledFilter />);
 
     await user.click(screen.getByRole("button", { name: "Custom" }));
-    expect(screen.getByRole("button", { name: "Date range" })).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Date range" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Date range" }));
+    expect(screen.getByRole("button", { name: "Custom date range: Sep 29, 2026 – Oct 31, 2026" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /Custom date range/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Custom date range: Sep 29, 2026 – Oct 31, 2026" }));
     expect(screen.getByRole("grid")).toBeInTheDocument();
     await user.click(screen.getByText("8", { selector: "button" }));
     await user.click(screen.getByText("12", { selector: "button" }));
-    expect(screen.getByRole("button", { name: "Date range" })).toHaveTextContent(
+    expect(screen.getByRole("button", { name: "Custom date range: Sep 8, 2026 – Sep 12, 2026" })).toHaveTextContent(
       "Sep 8, 2026 – Sep 12, 2026",
     );
   });

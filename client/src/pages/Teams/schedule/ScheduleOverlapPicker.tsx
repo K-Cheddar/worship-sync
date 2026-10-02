@@ -51,6 +51,12 @@ const ScheduleOverlapPicker = ({
           <div role="group" aria-label="Overlapping schedules" className="scrollbar-portal max-h-64 overflow-y-auto">
             {schedules.map((schedule) => {
               const isSelected = schedule.scheduleId === selectedScheduleId;
+              const rangeLabel = schedule.startDate && schedule.endDate
+                ? formatPersistedRange(schedule.startDate, schedule.endDate)
+                : "No dates set";
+              const description = schedule.scheduleId.startsWith("virtual:")
+                ? `Current period · ${rangeLabel}`
+                : rangeLabel;
               return (
                 <button
                   key={schedule.scheduleId}
@@ -66,11 +72,7 @@ const ScheduleOverlapPicker = ({
                   }}
                 >
                   <span className="w-full truncate text-sm text-gray-100">{schedule.name}</span>
-                  <span className="text-xs text-gray-400">
-                    {schedule.startDate && schedule.endDate
-                      ? formatPersistedRange(schedule.startDate, schedule.endDate)
-                      : "No dates set"}
-                  </span>
+                  <span className="text-xs text-gray-400">{description}</span>
                 </button>
               );
             })}

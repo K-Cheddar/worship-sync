@@ -95,7 +95,7 @@ const RangeSelector = ({
               <Button
                 type="button"
                 variant="tertiary"
-                aria-label="Date range"
+                aria-label={`Range preset: ${selectedLabel}`}
                 aria-haspopup="dialog"
                 className="w-full justify-between bg-gray-800/80 text-left text-xs max-md:min-h-0 max-md:px-2 max-md:py-1"
               >
@@ -122,6 +122,7 @@ const RangeSelector = ({
           {preset === "custom" ? (
             <DateRangePicker
               label="Date range"
+              aria-label={`Custom date range: ${formatResolvedDateRange(range)}`}
               hideLabel
               className="min-w-0"
               inputClassName="max-w-full"

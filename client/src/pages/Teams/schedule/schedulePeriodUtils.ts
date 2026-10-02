@@ -8,20 +8,17 @@ export const SCHEDULE_PERIOD_OPTIONS = RANGE_PRESET_OPTIONS;
 export const rangeFromPreset = resolveRangePreset;
 
 export const resolveDisplayedPeriodRange = ({
-  preset,
+  preset: _preset,
   selectedRange,
   scheduleRange,
   viewingSavedSchedule = false,
-  preserveSelectedRange = false,
 }: {
   preset: SchedulePeriodPreset;
   selectedRange: { start: string; end: string };
   scheduleRange?: { start: string; end: string } | null;
   viewingSavedSchedule?: boolean;
-  preserveSelectedRange?: boolean;
 }) => {
   if (viewingSavedSchedule) return scheduleRange || selectedRange;
-  if (preset === "upcoming" && !preserveSelectedRange) return scheduleRange || selectedRange;
   return selectedRange;
 };
 
@@ -84,9 +81,13 @@ export const findReusablePeriodSchedule = ({
   schedules,
   churchId,
   teamId,
+  startDate,
+  endDate,
   occurrences,
   visibleStartDate,
   visibleEndDate,
+  legacyOccurrenceDate,
+  preferredScheduleId,
 }: {
   schedules: TeamScheduleSummary[];
   churchId: string;
@@ -96,6 +97,8 @@ export const findReusablePeriodSchedule = ({
   occurrences: TeamScheduleOccurrence[];
   visibleStartDate?: string;
   visibleEndDate?: string;
+  legacyOccurrenceDate?: string;
+  preferredScheduleId?: string;
 }) => {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const visibleDates = occurrences
@@ -104,41 +107,58 @@ export const findReusablePeriodSchedule = ({
   const firstVisibleDate = visibleStartDate || visibleDates[0];
   const lastVisibleDate = visibleEndDate || visibleDates[visibleDates.length - 1];
   if (!firstVisibleDate || !lastVisibleDate) return { schedule: null, ambiguous: false };
-  const compatible = schedules.filter((schedule) => {
+  const periodStartDate = visibleStartDate || startDate || firstVisibleDate;
+  const periodEndDate = visibleEndDate || endDate || lastVisibleDate;
+  const eligible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
-      schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate ||
-      schedule.startDate > firstVisibleDate || schedule.endDate < lastVisibleDate
+      schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate
     ) return false;
     // Service Setup identities can change after a saved schedule is created.
     // Schedule identity comes from its owner and covered dates, not that mutable setup.
     return true;
   });
-  const canonicalGenerated = compatible.filter(isCanonicalGeneratedSchedule);
-  // A valid generated identity outranks only its source-less copy for the
-  // same stored period. Other populated schedules remain peers so real
-  // staffing is not hidden by an overlapping generated identity.
-  const resolutionCandidates = canonicalGenerated.length > 0
-    ? compatible.filter((schedule) => schedule.source != null ||
-      isCanonicalGeneratedSchedule(schedule) ||
-      !canonicalGenerated.some((generated) =>
-        generated.startDate === schedule.startDate && generated.endDate === schedule.endDate))
-    : compatible;
-  const populated = resolutionCandidates.filter(hasScheduleData);
-  if (populated.length === 1) return { schedule: populated[0], ambiguous: false };
-  if (populated.length > 1) return { schedule: null, ambiguous: true };
+  const deduplicated = deduplicateCanonicalGenerated(eligible);
+  const exact = deduplicated.filter((schedule) =>
+    schedule.startDate === periodStartDate && schedule.endDate === periodEndDate);
+  const covering = deduplicated.filter((schedule) =>
+    schedule.startDate! <= periodStartDate && schedule.endDate! >= periodEndDate);
+  const legacyGenerated = deduplicated.filter((schedule) =>
+    isLegacyGeneratedSchedule(schedule) &&
+    Boolean(legacyOccurrenceDate) &&
+    schedule.startDate! <= legacyOccurrenceDate! && schedule.endDate! >= legacyOccurrenceDate!);
+  const preferred = [...exact, ...covering, ...legacyGenerated]
+    .find((schedule) => schedule.scheduleId === preferredScheduleId);
+  const tier = exact.length ? exact : covering.length ? covering : legacyGenerated;
+  const ordered = [...tier].sort((left, right) =>
+    Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
+    Number(isCanonicalGeneratedSchedule(right)) - Number(isCanonicalGeneratedSchedule(left)) ||
+    String(left.startDate).localeCompare(String(right.startDate)) ||
+    String(left.endDate).localeCompare(String(right.endDate)) ||
+    left.scheduleId.localeCompare(right.scheduleId),
+  );
+  return { schedule: preferred || ordered[0] || null, ambiguous: false };
+};
 
-  if (canonicalGenerated.length === 1) return { schedule: canonicalGenerated[0], ambiguous: false };
-  if (canonicalGenerated.length > 1 || resolutionCandidates.length > 1) return { schedule: null, ambiguous: true };
-  return resolutionCandidates.length === 1
-    ? { schedule: resolutionCandidates[0], ambiguous: false }
-    : { schedule: null, ambiguous: false };
+const deduplicateCanonicalGenerated = <T extends TeamScheduleSummary>(schedules: T[]) => {
+  const canonicalGenerated = schedules.filter(isCanonicalGeneratedSchedule);
+  return schedules.filter((schedule) =>
+    schedule.source != null ||
+    !canonicalGenerated.some((generated) =>
+      generated.startDate === schedule.startDate && generated.endDate === schedule.endDate),
+  );
 };
 
 const isCanonicalGeneratedSchedule = (schedule: TeamScheduleSummary) =>
   schedule.source === "generated-period" &&
   Boolean(schedule.generatedPeriodKey) &&
   schedule.scheduleId === `generated_${schedule.generatedPeriodKey}`;
+
+const isLegacyGeneratedSchedule = (schedule: TeamScheduleSummary) =>
+  schedule.source === "generated-period" ||
+  (schedule.source == null && (
+    Boolean(schedule.generatedPeriodKey) || schedule.scheduleId.startsWith("generated_")
+  ));
 
 const hasScheduleData = (schedule: TeamScheduleSummary) => {
   if (schedule.hasScheduleData !== undefined) return schedule.hasScheduleData;

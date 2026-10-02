@@ -1228,10 +1228,14 @@ export type TeamSchedulePayload = {
 export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
   /** IANA zone used to validate each generated service occurrence. */
   timeZone: string;
-  /** Visible range used with date coverage when reusing an older generated period. */
+  /** Current calendar period used to resolve the default period schedule. */
   visibleStartDate?: string;
   visibleEndDate?: string;
-  /** Visible Upcoming occurrences used to reuse an older wider generated period safely. */
+  /** Upcoming date used only to recover a genuine old generated rolling period. */
+  legacyOccurrenceDate?: string;
+  /** Optional current selection, when it is still a valid default-period candidate. */
+  preferredScheduleId?: string;
+  /** Visible Upcoming occurrences used to recover older generated periods safely. */
   visibleOccurrenceIds?: string[];
 };
 

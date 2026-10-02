@@ -85,22 +85,24 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses a December schedule that covers Upcoming's Dec 5 identity date", () => {
+  it("does not use a partial custom December schedule as the full-period default", () => {
     const decemberSchedule = schedule({
       scheduleId: "saved-december-5-to-28",
       startDate: "2026-12-05",
       endDate: "2026-12-28",
+      source: "custom",
     });
     const upcomingTarget = {
       ...target,
       startDate: "2026-12-01",
       endDate: "2026-12-31",
-      visibleStartDate: "2026-12-05",
-      visibleEndDate: "2026-12-05",
+      visibleStartDate: "2026-12-01",
+      visibleEndDate: "2026-12-31",
+      legacyOccurrenceDate: "2026-12-05",
     };
 
     expect(findReusablePeriodSchedule({ schedules: [decemberSchedule], ...upcomingTarget })).toEqual({
-      schedule: decemberSchedule,
+      schedule: null,
       ambiguous: false,
     });
   });
@@ -111,7 +113,7 @@ describe("findReusablePeriodSchedule", () => {
       source: "generated-period",
       generatedPeriodKey: "old-rolling-key",
       startDate: "2026-09-29",
-      endDate: "2026-10-31",
+      endDate: "2026-10-05",
       assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
     });
 
@@ -119,7 +121,9 @@ describe("findReusablePeriodSchedule", () => {
       schedules: [legacyRollingRecord],
       ...target,
       startDate: "2026-09-01",
-      visibleStartDate: "2026-09-29",
+      visibleStartDate: "2026-10-01",
+      visibleEndDate: "2026-10-31",
+      legacyOccurrenceDate: "2026-10-03",
     })).toEqual({ schedule: legacyRollingRecord, ambiguous: false });
   });
 
@@ -148,7 +152,7 @@ describe("findReusablePeriodSchedule", () => {
     })).toEqual({ schedule: populated, ambiguous: false });
   });
 
-  it("surfaces multiple populated overlapping schedules as ambiguous", () => {
+  it("chooses a stable populated candidate when several legitimate schedules overlap", () => {
     const populatedA = schedule({
       scheduleId: "generated_populated-a",
       generatedPeriodKey: "populated-a",
@@ -171,7 +175,7 @@ describe("findReusablePeriodSchedule", () => {
       ...target,
       startDate: "2026-10-01",
       visibleStartDate: "2026-10-01",
-    })).toEqual({ schedule: null, ambiguous: true });
+    })).toEqual({ schedule: populatedA, ambiguous: false });
   });
 
   it("does not cross-wire schedules from another team", () => {
@@ -225,7 +229,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("keeps a populated overlapping legacy period ambiguous beside generated data", () => {
+  it("prefers the exact monthly period over a populated broader legacy period", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
       source: "generated-period",
@@ -239,8 +243,8 @@ describe("findReusablePeriodSchedule", () => {
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "legacy-member" } } },
     });
     expect(findReusablePeriodSchedule({ schedules: [generated, widerLegacy], ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
+      schedule: generated,
+      ambiguous: false,
     });
   });
 
@@ -264,10 +268,7 @@ describe("findReusablePeriodSchedule", () => {
       generatedPeriodKey: "period-key",
     });
     const legacy = schedule({ scheduleId: "legacy" });
-    expect(findReusablePeriodSchedule({ schedules: [invalidGenerated, legacy], ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [invalidGenerated, legacy], ...target }).schedule?.scheduleId).toBe("generated_another-key");
   });
 
   it("does not reuse a generated record whose stored period differs from the target", () => {
@@ -345,7 +346,7 @@ describe("findReusablePeriodSchedule", () => {
     })).toEqual({ schedule: custom, ambiguous: false });
   });
 
-  it("matches a stored range that covers occurrences without covering blank display days", () => {
+  it("does not use a one-day schedule to fill a full-month period", () => {
     const occurrenceDateOnly = schedule({
       scheduleId: "different-range",
       source: "custom",
@@ -354,7 +355,7 @@ describe("findReusablePeriodSchedule", () => {
       assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { camera: 1 } },
     });
     expect(findReusablePeriodSchedule({ schedules: [occurrenceDateOnly], ...target })).toEqual({
-      schedule: occurrenceDateOnly,
+      schedule: null,
       ambiguous: false,
     });
   });
@@ -376,7 +377,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("keeps multiple populated compatible schedules ambiguous across sources", () => {
+  it("prefers a canonical generated schedule among multiple populated exact candidates", () => {
     const generated = schedule({
       scheduleId: "generated_current-key",
       source: "generated-period",
@@ -389,8 +390,8 @@ describe("findReusablePeriodSchedule", () => {
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member-b" } } },
     });
     expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
+      schedule: generated,
+      ambiguous: false,
     });
   });
 
@@ -416,7 +417,7 @@ describe("findReusablePeriodSchedule", () => {
     }).schedule?.scheduleId).toBe("schedule-1");
   });
 
-  it("does not choose among multiple equivalent legacy schedules", () => {
+  it("chooses a stable populated source-less legacy candidate", () => {
     const schedules = [
       schedule({
         scheduleId: "a",
@@ -428,8 +429,8 @@ describe("findReusablePeriodSchedule", () => {
       }),
     ];
     expect(findReusablePeriodSchedule({ schedules, ...target })).toEqual({
-      schedule: null,
-      ambiguous: true,
+      schedule: schedules[0],
+      ambiguous: false,
     });
   });
 });
@@ -519,10 +520,10 @@ describe("resolveDisplayedPeriodRange", () => {
     expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, displayedRange)).toHaveLength(3);
   });
 
-  it("uses full saved bounds for Upcoming and explicit history", () => {
+  it("keeps Upcoming on its selected range while explicit history uses full saved bounds", () => {
     const scheduleRange = { start: "2026-10-01", end: "2026-12-31" };
     const selectedRange = { start: "2026-10-05", end: "2026-10-12" };
-    expect(resolveDisplayedPeriodRange({ preset: "upcoming", selectedRange, scheduleRange })).toEqual(scheduleRange);
+    expect(resolveDisplayedPeriodRange({ preset: "upcoming", selectedRange, scheduleRange })).toEqual(selectedRange);
     expect(resolveDisplayedPeriodRange({ preset: "custom", selectedRange, scheduleRange, viewingSavedSchedule: true })).toEqual(scheduleRange);
   });
 
@@ -533,7 +534,6 @@ describe("resolveDisplayedPeriodRange", () => {
       preset: "upcoming",
       selectedRange,
       scheduleRange,
-      preserveSelectedRange: true,
     })).toEqual(selectedRange);
     expect(filterOccurrencesToRange(quarterlySchedule.occurrences!, selectedRange)).toHaveLength(3);
   });

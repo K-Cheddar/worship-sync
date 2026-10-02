@@ -525,31 +525,33 @@ const ScheduleTab = ({
     () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange),
     [periodRange, teamPeriod.occurrences],
   );
-  const scheduleIdentityBounds = periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
-    ? {
-      start: getOccurrenceDate(initialTeamPeriodResult.nextOccurrence),
-      end: getOccurrenceDate(initialTeamPeriodResult.nextOccurrence),
-    }
-    : periodRange;
   const periodScheduleMatch = findReusablePeriodSchedule({
     schedules,
     churchId,
     teamId: workspaceTeamId,
     occurrences: generatedPeriodOccurrences,
-    visibleStartDate: scheduleIdentityBounds.start,
-    visibleEndDate: scheduleIdentityBounds.end,
+    visibleStartDate: periodRange.start,
+    visibleEndDate: periodRange.end,
+    legacyOccurrenceDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
+      ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
+      : undefined,
+    preferredScheduleId: periodScheduleSelection?.scope === periodSelectionScope
+      ? periodScheduleSelection.scheduleId
+      : selectedScheduleId,
   });
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
-  const overlappingPeriodSchedules = viewingSavedSchedule ? [] : findOverlappingPeriodSchedules({
-    schedules,
-    churchId,
-    teamId: workspaceTeamId,
-    range: periodRange,
-  });
+  const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
+    ? []
+    : findOverlappingPeriodSchedules({
+      schedules,
+      churchId,
+      teamId: workspaceTeamId,
+      range: periodRange,
+    }), [churchId, periodRange, schedules, viewingSavedSchedule, workspaceTeamId]);
   const explicitlySelectedPeriodSchedule = periodScheduleSelection?.scope === periodSelectionScope
     ? overlappingPeriodSchedules.find((schedule) => schedule.scheduleId === periodScheduleSelection.scheduleId) || null
     : null;
-  const preferredPeriodSchedule = matchedPeriodSchedule || overlappingPeriodSchedules[0] || null;
+  const preferredPeriodSchedule = matchedPeriodSchedule;
   const virtualPeriodSchedule = useMemo(() => {
     if (
       !workspaceTeamId ||
@@ -578,12 +580,19 @@ const ScheduleTab = ({
     periodServiceIds,
     workspaceTeamId,
   ]);
+  const periodScheduleChoices = useMemo(() => {
+    if (matchedPeriodSchedule || !virtualPeriodSchedule) return overlappingPeriodSchedules;
+    return [...overlappingPeriodSchedules, virtualPeriodSchedule].sort((left, right) =>
+      String(left.startDate).localeCompare(String(right.startDate)) ||
+      String(left.endDate).localeCompare(String(right.endDate)) ||
+      left.name.localeCompare(right.name),
+    );
+  }, [matchedPeriodSchedule, overlappingPeriodSchedules, virtualPeriodSchedule]);
   // Normal navigation is occurrence-first. Saved schedule history is opened
   // only by an explicit history/deep-link action.
   const selectedScheduleRecord = viewingSavedSchedule
     ? schedules.find((schedule) => schedule.scheduleId === selectedScheduleId) || null
     : explicitlySelectedPeriodSchedule || preferredPeriodSchedule || virtualPeriodSchedule;
-  const preserveScheduleRange = Boolean(explicitlySelectedPeriodSchedule);
   const displayedPeriodRange = useMemo(() => resolveDisplayedPeriodRange({
     preset: periodPreset,
     selectedRange: periodRange,
@@ -591,8 +600,7 @@ const ScheduleTab = ({
       ? { start: selectedScheduleRecord.startDate, end: selectedScheduleRecord.endDate }
       : null,
     viewingSavedSchedule,
-    preserveSelectedRange: preserveScheduleRange,
-  }), [periodPreset, periodRange, preserveScheduleRange, selectedScheduleRecord?.endDate, selectedScheduleRecord?.startDate, viewingSavedSchedule]);
+  }), [periodPreset, periodRange, selectedScheduleRecord?.endDate, selectedScheduleRecord?.startDate, viewingSavedSchedule]);
   useEffect(() => {
     if (viewingSavedSchedule) return;
     const nextId = (explicitlySelectedPeriodSchedule || preferredPeriodSchedule)?.scheduleId || "";
@@ -635,8 +643,12 @@ const ScheduleTab = ({
             endDate: persistedPeriodRange.end,
             serviceIds: periodServiceIds,
             occurrences: teamPeriod.occurrences,
-            visibleStartDate: scheduleIdentityBounds.start,
-            visibleEndDate: scheduleIdentityBounds.end,
+            visibleStartDate: periodRange.start,
+            visibleEndDate: periodRange.end,
+            legacyOccurrenceDate: periodPreset === "upcoming" && initialTeamPeriodResult.nextOccurrence
+              ? getOccurrenceDate(initialTeamPeriodResult.nextOccurrence)
+              : undefined,
+            preferredScheduleId: selectedScheduleId,
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
           }));
@@ -660,13 +672,16 @@ const ScheduleTab = ({
   }, [
     churchId,
     generatedPeriodOccurrences,
-    scheduleIdentityBounds.end,
-    scheduleIdentityBounds.start,
+    periodRange.end,
+    periodRange.start,
+    periodPreset,
+    initialTeamPeriodResult.nextOccurrence,
     teamPeriod.occurrences,
     onScheduleSaved,
     persistedPeriodRange.end,
     persistedPeriodRange.start,
     periodServiceIds,
+    selectedScheduleId,
     setSelectedScheduleId,
     trackTeamsSave,
     workspaceTeamId,
@@ -5225,15 +5240,15 @@ const ScheduleTab = ({
                 options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
                 disabled={!activeTeams.length}
               />
-              {overlappingPeriodSchedules.length > 1 && selectedScheduleRecord ? (
+              {periodScheduleChoices.length > 1 && selectedScheduleRecord ? (
                 <ScheduleOverlapPicker
-                  schedules={overlappingPeriodSchedules}
+                  schedules={periodScheduleChoices}
                   selectedScheduleId={selectedScheduleRecord.scheduleId}
                   onSelect={(scheduleId) => {
                     hasExplicitPeriodSelectionRef.current = true;
                     setPeriodScheduleSelection({ scope: periodSelectionScope, scheduleId });
                     setViewingSavedSchedule(false);
-                    setSelectedScheduleId(scheduleId, true);
+                    setSelectedScheduleId(scheduleId, !scheduleId.startsWith("virtual:"));
                   }}
                 />
               ) : null}
