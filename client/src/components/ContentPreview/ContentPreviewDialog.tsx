@@ -9,6 +9,7 @@ import {
   Video,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
 import YouTubePlaylistPlayer from "../YouTubePlaylistPlayer/YouTubePlaylistPlayer";
@@ -30,6 +31,8 @@ import {
 type ContentPreviewDialogProps = {
   resource: ContentPreviewResource | null;
   onClose: () => void;
+  dialogLabel?: string;
+  details?: ReactNode;
 };
 
 type RenderStatus = "loading" | "ready" | "error";
@@ -81,8 +84,9 @@ const PreviewKindIcon = ({ kind }: { kind: ContentPreviewKind }) => {
   return <Icon className="size-5 shrink-0 text-cyan-300" aria-hidden />;
 };
 
-const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) => {
+const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: ContentPreviewDialogProps) => {
   const [source, setSource] = useState<ContentPreviewResolvedSource | null>(null);
+  const [resolvedText, setResolvedText] = useState("");
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState("");
   const [renderStatus, setRenderStatus] = useState<RenderStatus>("loading");
@@ -114,9 +118,11 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
     if (!resource) return;
 
     let active = true;
+    const controller = new AbortController();
     const directUrl = getSafeHttpUrl(resource.url);
     setResolving(Boolean(directUrl && !resource.resolveSource));
     setSource(null);
+    setResolvedText("");
     setResolveError("");
     setActionError("");
     setCopyState("idle");
@@ -137,6 +143,14 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
               return;
             }
             setSource(resolved);
+            if ((resolved.mimeType || "").split(";", 1)[0].trim().toLowerCase() === "text/plain" && resolved.url) {
+              return fetch(resolved.url, { credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal })
+                .then((response) => {
+                  if (!response.ok) throw new Error("This text file could not be opened.");
+                  return response.text();
+                })
+                .then((content) => { if (active) setResolvedText(content); });
+            }
           })
           .catch((error) => {
             if (active) {
@@ -152,6 +166,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
       }
       return () => {
         active = false;
+        controller.abort();
         actionGenerationRef.current += 1;
       };
     }
@@ -166,6 +181,14 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
           return;
         }
         setSource({ ...resolved, url: safeUrl });
+        if ((resolved.mimeType || resource.mimeType || "").split(";", 1)[0].trim().toLowerCase() === "text/plain") {
+          return fetch(safeUrl, { credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal })
+            .then((response) => {
+              if (!response.ok) throw new Error("This text file could not be opened.");
+              return response.text();
+            })
+            .then((content) => { if (active) setResolvedText(content); });
+        }
       })
       .catch((error) => {
         if (active) setResolveError(errorMessage(error, "This resource could not be opened."));
@@ -176,6 +199,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
 
     return () => {
       active = false;
+      controller.abort();
       actionGenerationRef.current += 1;
     };
   }, [resource, resourceKey]);
@@ -287,7 +311,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
       }
       return (
         <div className="max-h-[min(65vh,42rem)] overflow-auto whitespace-pre-wrap p-4 text-left text-sm text-neutral-100">
-          {resource.textContent || ""}
+          {resource.textContent ?? resolvedText}
         </div>
       );
     }
@@ -364,6 +388,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
       titleClassName="min-w-0 flex-1"
       headerClassName="items-start gap-3"
       description={`Preview of ${title}`}
+      ariaLabel={dialogLabel}
       size={showFallback ? "md" : "xl"}
       zIndexLevel={2}
       contentPadding="p-0"
@@ -385,6 +410,7 @@ const ContentPreviewDialog = ({ resource, onClose }: ContentPreviewDialogProps) 
     >
       {actionError ? <p className="border-b border-amber-800/60 bg-amber-950/30 px-4 py-2 text-xs text-amber-200" role="alert">{actionError}</p> : null}
       {copyState === "error" ? <p className="border-b border-amber-800/60 bg-amber-950/30 px-4 py-2 text-xs text-amber-200" role="alert">The link could not be copied.</p> : null}
+      {details}
       {renderPreview()}
     </Modal>
   );

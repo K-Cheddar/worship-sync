@@ -654,6 +654,24 @@ export const getChurchResource = async (churchId: string, resourceId: string) =>
     `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}`,
   );
 
+export const createExternalChurchResource = async ({
+  churchId,
+  url,
+  name,
+  description,
+}: {
+  churchId: string;
+  url: string;
+  name?: string;
+  description?: string;
+}): Promise<ChurchResource> => {
+  const result = await apiFetch<{ success: boolean; resource: ChurchResource }>(
+    `${churchResourcesPath(churchId)}/external`,
+    { method: "POST", body: JSON.stringify({ url, name, description }) },
+  );
+  return result.resource;
+};
+
 export const uploadChurchResource = async ({
   churchId,
   file,

@@ -32,6 +32,7 @@ interface ModalProps {
   titleClassName?: string;
   /** Accessible description for screen readers; hidden visually by default. */
   description?: string;
+  ariaLabel?: string;
 }
 
 const sizeClasses = {
@@ -64,6 +65,7 @@ const Modal = ({
   headerClassName,
   titleClassName,
   description,
+  ariaLabel,
 }: ModalProps) => {
   const overlayPortalContainer = useOverlayPortalContainer();
   const ownerDocument = overlayPortalContainer?.ownerDocument ?? document;
@@ -86,6 +88,7 @@ const Modal = ({
       >
         <DialogOverlay className={cn(zIndexClass, backdropClassName)} />
         <DialogPrimitive.Content
+          aria-label={ariaLabel}
           style={{ pointerEvents: "auto" }}
           className={cn(
             "fixed left-1/2 top-1/2 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none",
@@ -122,6 +125,7 @@ const Modal = ({
                 )}
               >
                 <DialogTitle
+                  aria-label={ariaLabel}
                   className={cn(
                     !title && "sr-only",
                     title && cn("text-xl font-semibold text-white", titleClassName)

@@ -1,12 +1,13 @@
 # External resource previews
 
-External URLs enter the shared preview path through the Service Plan resource
-normalizer. `ContentPreviewDialog` consumes only a normalized descriptor; it
+External URLs enter the shared preview path from either a Service Plan resource
+normalizer or an external ChurchResource. The Resources page and Service Plans
+both render through `ContentPreviewDialog`, which consumes a normalized descriptor; it
 does not contain provider-specific URL rules. Public URLs are resolved by
 `server/externalResourceProviders.js` and `server/externalResourceService.js`:
 
 ```text
-ServicePlanContentResource
+ServicePlanContentResource or ChurchResource.external.url
   -> normalizeServicePlanResourceForPreview
   -> ContentPreviewDialog
   -> GET /api/resources/resolve?url=...
@@ -14,6 +15,11 @@ ServicePlanContentResource
   -> signed same-origin proxy for media/documents
   -> shared image/audio/video/document renderer
 ```
+
+Creating an external ChurchResource calls the same authenticated resolver and
+persists only the canonical original URL plus provider-neutral metadata. A
+ChurchResource reference in a Service Plan remains its stable ID; external URLs
+are not copied into plan records.
 
 The resolver registry handles YouTube, Dropbox, Google Drive/Docs,
 OneDrive, SharePoint, and Box before falling back to direct URL metadata

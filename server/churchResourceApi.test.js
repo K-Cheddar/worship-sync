@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createChurchResourceHandlers } from "./churchResourceApi.js";
+import { createChurchResourceHandlers, normalizeResourceRecord } from "./churchResourceApi.js";
 import { createChurchR2UsageLoader } from "./churchR2Usage.js";
 
 const makeResponse = () => ({
@@ -10,7 +10,7 @@ const makeResponse = () => ({
   json(value) { this.body = value; return value; },
 });
 
-const makeHarness = ({ quota } = {}) => {
+const makeHarness = ({ quota, externalResourceService, findResourceReferences } = {}) => {
   const docs = new Map();
   const commands = [];
   const storageState = { removeError: null, deleteMetadataError: null };
@@ -26,6 +26,8 @@ const makeHarness = ({ quota } = {}) => {
     },
     nowIso: () => "2026-09-21T00:00:00.000Z",
     quota,
+    externalResourceService,
+    findResourceReferences,
     storage: {
       createUpload: async () => ({ resourceUpload: { id: "churchResource_123e4567-e89b-42d3-a456-426614174000", key: "pending/key", fileName: "guide.pdf", contentType: "application/pdf", sizeBytes: 4, kind: "document" }, uploadUrl: "https://example.test/upload", expiresAt: "2026-09-21T00:15:00.000Z" }),
       completeUpload: async () => {
@@ -42,6 +44,121 @@ const makeHarness = ({ quota } = {}) => {
   });
   return { docs, commands, handlers, storageState, resourceId };
 };
+
+test("external ChurchResources use server metadata, skip quota and R2, and retain reference protection", async () => {
+  const quotaCalls = [];
+  const resolverCalls = [];
+  const { docs, commands, handlers, resourceId } = makeHarness({
+    quota: {
+      reserve: async (input) => quotaCalls.push(["reserve", input]),
+      commitR2: async (input) => quotaCalls.push(["commit", input]),
+      releaseR2: async (input) => quotaCalls.push(["release", input]),
+    },
+    externalResourceService: {
+      resolveRateLimited: async (url) => {
+        resolverCalls.push(url);
+        if (url.includes("127.0.0.1")) throw Object.assign(new Error("That URL is not available."), { statusCode: 400 });
+        return {
+          originalUrl: "https://docs.google.com/document/d/example/edit",
+          provider: "google-drive",
+          title: "Resolved title",
+          filename: "guide.pdf",
+          mimeType: "application/pdf",
+          mediaType: "document",
+          mediaId: "server-id",
+        };
+      },
+    },
+    findResourceReferences: async () => [{ id: "plan-1" }],
+  });
+  const create = makeResponse();
+  await handlers.createExternal(request("church-1", {
+    url: "https://docs.google.com/document/d/example/edit",
+    name: "",
+    provider: "attacker-controlled",
+    mimeType: "text/html",
+  }), create);
+  assert.equal(create.statusCode, 200);
+  const resource = create.body.resource;
+  assert.equal(resource.sourceType, "external");
+  assert.equal(resource.name, "Resolved title");
+  assert.equal(resource.external.provider, "google-drive");
+  assert.equal(resource.external.mimeType, "application/pdf");
+  assert.equal(resource.external.providerResourceId, "server-id");
+  assert.equal(resource.kind, "document");
+  assert.equal("storage" in resource, false);
+  assert.deepEqual(resolverCalls, ["https://docs.google.com/document/d/example/edit"]);
+  assert.deepEqual(quotaCalls, []);
+  assert.equal(normalizeResourceRecord({ ...resource, storage: { sizeBytes: 3 } }), null);
+  assert.equal(normalizeResourceRecord({ ...resource, sourceType: undefined, external: undefined, storage: { key: "k", fileName: "f", contentType: "application/pdf", sizeBytes: 1 } }).sourceType, "upload");
+
+  docs.set(resource.id, resource);
+  const listed = makeResponse();
+  await handlers.list(request("church-1"), listed);
+  assert.equal(listed.body.resources[0].external.url, resource.external.url);
+  const deletion = makeResponse();
+  await handlers.remove(request("church-1", {}, { params: { churchId: "church-1", resourceId: resource.id } }), deletion);
+  assert.equal(deletion.statusCode, 409);
+  assert.equal(commands.includes("remove"), false);
+});
+
+test("external resource kinds distinguish documents and audio from other media", async () => {
+  const cases = [
+    ["document", "document"],
+    ["audio", "audio"],
+    ["image", "other"],
+    ["video", "other"],
+    ["web", "other"],
+    ["unsupported", "other"],
+  ];
+
+  for (const [mediaType, expectedKind] of cases) {
+    const { handlers } = makeHarness({
+      externalResourceService: {
+        resolveRateLimited: async (url) => ({ originalUrl: url, provider: "direct", mediaType }),
+      },
+    });
+    const response = makeResponse();
+    await handlers.createExternal(request("church-1", { url: `https://example.test/${mediaType}` }), response);
+    assert.equal(response.statusCode, 200, `${mediaType} should be accepted`);
+    assert.equal(response.body.resource.kind, expectedKind, `${mediaType} should be ${expectedKind}`);
+  }
+});
+
+test("unsafe external resource URLs are rejected by the resolver before metadata is stored", async () => {
+  const { docs, handlers } = makeHarness({
+    externalResourceService: {
+      resolveRateLimited: async () => { throw Object.assign(new Error("That URL is not available."), { statusCode: 400 }); },
+    },
+  });
+  const response = makeResponse();
+  await handlers.createExternal(request("church-1", { url: "http://127.0.0.1/admin" }), response);
+  assert.equal(response.statusCode, 400);
+  assert.equal(docs.size, 0);
+});
+
+test("deleting an unreferenced external resource removes metadata without R2 or quota writes", async () => {
+  const quotaCalls = [];
+  const { docs, commands, handlers } = makeHarness({
+    externalResourceService: {
+      resolveRateLimited: async (url) => ({ originalUrl: url, provider: "direct", title: "Public guide", mediaType: "web" }),
+    },
+    findResourceReferences: async () => [],
+    quota: { releaseR2: async (input) => quotaCalls.push(input) },
+  });
+  const created = makeResponse();
+  await handlers.createExternal(request("church-1", { url: "https://example.com/guide" }), created);
+  const resource = created.body.resource;
+  const fetched = makeResponse();
+  await handlers.get(request("church-1", {}, { params: { churchId: "church-1", resourceId: resource.id } }), fetched);
+  assert.equal(fetched.body.resource.sourceType, "external");
+  const removed = makeResponse();
+  await handlers.remove(request("church-1", {}, { params: { churchId: "church-1", resourceId: resource.id } }), removed);
+  assert.deepEqual(removed.body, { success: true });
+  assert.equal(docs.has(resource.id), false);
+  assert.deepEqual(commands, []);
+  assert.deepEqual(quotaCalls, []);
+});
 
 test("resource upload admission returns structured quota errors and the church quota endpoint shape", async () => {
   const quotaCalls = [];

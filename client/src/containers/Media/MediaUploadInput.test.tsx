@@ -610,7 +610,7 @@ describe("MediaUploadInput", () => {
     expect(transferPanel.getByRole("progressbar", { name: "2 media files progress" })).toHaveAttribute("aria-valuenow", "70");
 
     fireEvent.click(retry);
-    await waitFor(() => expect(transferPanel.getByText("Complete")).toBeInTheDocument());
+    expect(await transferPanel.findByText("Complete")).toBeInTheDocument();
     expect(mockedEnqueueUpload).toHaveBeenCalledTimes(3);
     expect(onLocalMediaAdded).toHaveBeenCalledTimes(2);
   });

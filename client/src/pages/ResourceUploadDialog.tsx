@@ -25,6 +25,7 @@ type PendingResource = {
 type ResourceUploadDialogProps = {
   churchId: string;
   onResourcesUploaded: (resources: ChurchResource[]) => void;
+  triggerLabel?: string;
 };
 
 const controllerElement = () => document.getElementById("controller-main") || document.body;
@@ -35,7 +36,7 @@ const ResourceTransferProgress = ({ transferId, variant }: { transferId: string;
   return transfer ? <TransferProgress transfer={transfer} variant={variant} /> : null;
 };
 
-const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadDialogProps) => {
+const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "Upload" }: ResourceUploadDialogProps) => {
   const overlayPortalContainer = useOverlayPortalContainer();
   const transferContext = useOptionalTransferActions();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -189,7 +190,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadD
         overlayPortalContainer ?? controllerElement(),
       ) : null}
       <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
-        {isUploading ? "Uploading..." : "Upload"}
+        {isUploading ? "Uploading..." : triggerLabel}
       </Button>
       <Modal
         isOpen={isOpen && !isMinimized && !isMinimizedToButton}

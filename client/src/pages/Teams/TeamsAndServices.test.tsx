@@ -3635,6 +3635,7 @@ describe("Teams", () => {
                 assignments: {},
               }}
               selectedSchedule={scheduleBootstrap.schedules[0] as TeamSchedule}
+              positions={[]}
               defaultTeamId="team-main"
               defaultServiceIds={["service-sunday"]}
               defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}

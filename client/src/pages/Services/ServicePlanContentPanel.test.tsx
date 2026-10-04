@@ -54,7 +54,7 @@ jest.mock("../../components/YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => 
 jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
   __esModule: true,
   default: ({ resource }: { resource: { title?: string; url?: string } | null }) => resource ? (
-    <div role="dialog" aria-label="Content preview">{resource.title || resource.url}</div>
+    <div role="dialog" aria-label="Content preview" data-preview-url={resource.url}>{resource.title || resource.url}</div>
   ) : null,
 }));
 
@@ -439,6 +439,48 @@ describe("ServicePlanContentPanel resources", () => {
         data: { resourceId: "file-1" },
       })],
     });
+  });
+
+  it("previews an external ChurchResource through its original URL and stores only its ID", async () => {
+    const externalUrl = "https://docs.google.com/document/d/guide/edit";
+    mockListChurchResources.mockResolvedValue({
+      success: true,
+      resources: [{
+        id: "churchResource_external",
+        churchId: "church-1",
+        name: "External guide",
+        kind: "document",
+        sourceType: "external",
+        external: { url: externalUrl, provider: "google-drive", mediaType: "document" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "user-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "user-1",
+      }],
+    });
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+
+    render(
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />
+      </GlobalInfoContext.Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    await user.click(await screen.findByRole("button", { name: "Preview file External guide" }));
+    expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveAttribute("data-preview-url", externalUrl);
+    expect(onUpdate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /^External guide/ }));
+    expect(onUpdate).toHaveBeenCalledWith({
+      resources: [expect.objectContaining({
+        type: "document",
+        data: { resourceId: "churchResource_external" },
+      })],
+    });
+    expect(JSON.stringify(onUpdate.mock.calls.at(-1)?.[0])).not.toContain(externalUrl);
   });
 
   it("fetches only referenced ChurchResources and renders a referenced MP3 as audio", async () => {

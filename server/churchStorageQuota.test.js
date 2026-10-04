@@ -324,10 +324,11 @@ test("committed reservation records receive a bounded retention TTL", async () =
   assert.equal(committed.ttlExpireAt.getTime(), 1_000 + CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_MS);
 });
 
-test("R2 reconciliation sums persisted resource and song metadata", async () => {
+test("R2 reconciliation sums uploaded resource and song metadata, excluding external resources", async () => {
   const resources = [
     { storage: { sizeBytes: 5 } },
     { storage: { sizeBytes: 7 } },
+    { sourceType: "external", external: { url: "https://example.com/guide" } },
   ];
   const songs = [{ songAudio: { sizeBytes: 11 } }, { songAudio: { sizeBytes: 13 } }];
   assert.equal(sumR2ChurchMetadataUsage({ resources, songs }), 36);

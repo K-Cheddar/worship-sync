@@ -113,6 +113,38 @@ describe("service-plan content resources", () => {
     ).toBe("Audio");
   });
 
+  it("normalizes an external ChurchResource reference to the shared preview descriptor", () => {
+    const churchResource = {
+      id: "churchResource_external",
+      churchId: "church-1",
+      name: "Shared guide",
+      kind: "document" as const,
+      sourceType: "external" as const,
+      external: {
+        url: "https://docs.google.com/document/d/guide/edit",
+        provider: "google-drive",
+        mimeType: "application/pdf",
+        fileName: "guide.pdf",
+      },
+      createdAt: "2026-09-21T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const preview = normalizeServicePlanResourceForPreview(
+      createServicePlanChurchResourceReference({ resourceId: churchResource.id }),
+      { churchResource },
+    );
+    expect(preview).toMatchObject({
+      title: "Shared guide",
+      url: churchResource.external.url,
+      provider: "google-drive",
+      mimeType: "application/pdf",
+      fileName: "guide.pdf",
+    });
+    expect(preview).not.toHaveProperty("resolveSource");
+  });
+
   it("persists custom documents by stable id and resolves their current title", () => {
     const reference = createServicePlanCustomDocumentReference({
       documentId: "free-document-1",
