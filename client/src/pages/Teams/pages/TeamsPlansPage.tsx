@@ -1236,10 +1236,10 @@ const TeamsPlansPage = () => {
         aria-label="Service results"
         className="min-w-0 space-y-3"
       >
-        <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-gray-700/80 bg-gray-950/80 px-3.5 py-3 shadow-sm shadow-black/20">
-          <div className="flex min-w-0 flex-1 flex-wrap items-start gap-3">
+        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-gray-700/80 bg-gray-950/80 px-3.5 py-3 shadow-sm shadow-black/20 md:flex md:justify-between">
+          <div className="flex w-full min-w-0 flex-col items-stretch gap-3 md:flex-1 md:flex-row md:flex-wrap md:items-start">
             {showOrganizeToggle ? (
-              <div className="flex flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5">
+              <div className="order-2 flex w-fit flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5 md:order-1">
                 <span className="px-0.5 text-sm font-semibold">Organize</span>
                 <SegmentedControl
                   ariaLabel="Organize services"
@@ -1250,42 +1250,46 @@ const TeamsPlansPage = () => {
                 />
               </div>
             ) : null}
-            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
-              <Icon svg={CalendarDays} size="sm" className="text-orange-300" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="truncate text-base font-semibold text-gray-50">
-                {serviceFilterLabel}
-              </h3>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                  {chronologicalEntries.length === 1
-                    ? "1 date"
-                    : `${chronologicalEntries.length} dates`}
-                </span>
-                {planStatusLoading ? (
+            <div className="order-1 flex w-full min-w-0 items-start gap-3 md:order-2 md:w-auto md:flex-1">
+              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+                <Icon svg={CalendarDays} size="sm" className="text-orange-300" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate text-base font-semibold text-gray-50">
+                  {serviceFilterLabel}
+                </h3>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <span
-                    className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
-                    aria-hidden
-                  />
-                ) : (
-                  <span
-                    className={cn(
-                      "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                      chronologicalPlannedCount > 0
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                        : "border-gray-700 bg-gray-900/70 text-gray-400",
-                    )}
+                    className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300"
                   >
-                    {chronologicalPlannedCount === 0
-                      ? "None planned"
-                      : `${chronologicalPlannedCount} planned`}
+                    {chronologicalEntries.length === 1
+                      ? "1 date"
+                      : `${chronologicalEntries.length} dates`}
                   </span>
-                )}
+                  {planStatusLoading ? (
+                    <span
+                      className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                      aria-hidden
+                    />
+                  ) : (
+                    <span
+                      className={cn(
+                        "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                        chronologicalPlannedCount > 0
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                          : "border-gray-700 bg-gray-900/70 text-gray-400",
+                      )}
+                    >
+                      {chronologicalPlannedCount === 0
+                        ? "None planned"
+                        : `${chronologicalPlannedCount} planned`}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-          <div className="flex max-w-full flex-wrap items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-3 md:w-auto md:max-w-full md:flex-wrap">
             {canEditServices &&
             groups.length > 0 &&
             visibleGroups.length > 0 &&
@@ -1407,66 +1411,72 @@ const TeamsPlansPage = () => {
                   className="min-h-min rounded-xl border border-gray-700/80 bg-gray-950/80 shadow-sm shadow-black/20"
                 >
                   <header className="space-y-3 border-b border-gray-800 px-3.5 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
-                        <Icon
-                          svg={CalendarDays}
-                          size="sm"
-                          className="text-orange-300"
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="truncate text-base font-semibold text-gray-50">
-                          {name}
-                        </h3>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                            {occurrences.length === 1
-                              ? "1 date"
-                              : `${occurrences.length} dates`}
-                          </span>
-                          {planStatusLoading ? (
+                    <div className="flex flex-col items-stretch gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="flex w-full min-w-0 items-start gap-3 md:w-auto md:flex-1">
+                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
+                          <Icon
+                            svg={CalendarDays}
+                            size="sm"
+                            className="text-orange-300"
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-base font-semibold text-gray-50">
+                            {name}
+                          </h3>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <span
-                              className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
-                              aria-hidden
-                            />
-                          ) : (
-                            <span
-                              className={cn(
-                                "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                                plannedCount > 0
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-                                  : "border-gray-700 bg-gray-900/70 text-gray-400",
-                              )}
+                              className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300"
                             >
-                              {plannedCount === 0
-                                ? "None planned"
-                                : `${plannedCount} planned`}
+                              {occurrences.length === 1
+                                ? "1 date"
+                                : `${occurrences.length} dates`}
                             </span>
-                          )}
-                          {timingLabel ? (
-                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
-                              <Icon
-                                svg={Clock}
-                                size="xs"
-                                className="text-amber-300"
+                            {planStatusLoading ? (
+                              <span
+                                className="inline-block h-[1.375rem] w-[5.5rem] animate-pulse rounded-md bg-white/10"
+                                aria-hidden
                               />
-                              {timingLabel}
-                            </span>
-                          ) : null}
+                            ) : (
+                              <span
+                                className={cn(
+                                  "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                                  plannedCount > 0
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                                    : "border-gray-700 bg-gray-900/70 text-gray-400",
+                                )}
+                              >
+                                {plannedCount === 0
+                                  ? "None planned"
+                                  : `${plannedCount} planned`}
+                              </span>
+                            )}
+                            {timingLabel ? (
+                              <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-100/90">
+                                <Icon
+                                  svg={Clock}
+                                  size="xs"
+                                  className="text-amber-300"
+                                />
+                                {timingLabel}
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                       {canEditServices ? (
-                        <Button
-                          type="button"
-                          variant="primary"
-                          svg={FilePlus}
-                          iconSize="sm"
-                          className="shrink-0 max-md:min-h-0"
-                          onClick={() => openBulkApply(serviceIds)}
-                        >
-                          Apply template
-                        </Button>
+                        <div className="flex w-full justify-end md:w-auto md:shrink-0">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            svg={FilePlus}
+                            iconSize="sm"
+                            className="shrink-0"
+                            onClick={() => openBulkApply(serviceIds)}
+                          >
+                            Apply template
+                          </Button>
+                        </div>
                       ) : null}
                     </div>
                     <div

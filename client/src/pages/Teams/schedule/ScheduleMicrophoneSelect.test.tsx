@@ -75,5 +75,8 @@ describe("ScheduleMicrophoneSelect", () => {
     expect(
       screen.getByRole("combobox", { name: /Microphone for Lead/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: /Microphone for Lead/i }),
+    ).toHaveClass("max-md:min-h-[2rem]", "max-md:text-sm");
   });
 });
