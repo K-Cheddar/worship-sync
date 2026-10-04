@@ -35,6 +35,7 @@ const createProps = (
     selectedLibraryFilter: MEDIA_LIBRARY_ROOT_VIEW,
     pendingDeletionIds: new Set(),
     deviceId: "device-1",
+    controllerProfileId: "presentation",
     routeKey: "controller-default",
     mediaGridRef: { current: null },
     setSearchTerm: jest.fn(),

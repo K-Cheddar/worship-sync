@@ -15,8 +15,7 @@ import {
   summarizeServicePlanImport,
 } from "./servicePlanImportSummary";
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
-import { servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
-import { applyReviewedServicePlanParts } from "./servicePlanImportOwnership";
+import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
@@ -211,6 +210,145 @@ describe("ambiguity reassignment and assignee equipment", () => {
       { ...before.importAmbiguity!.parts[0], destination: "unassigned" },
     ]);
     expect(reviewed.element.assignees).toEqual([{ id: "source-person", iemIds: ["iem-1"] }]);
+  });
+
+  it.each([
+    ["microphone", { id: "mic-slot", microphoneIds: ["mic-orange"] }],
+    ["IEM", { id: "iem-slot", iemIds: ["iem-1"] }],
+    ["mixed equipment", { id: "mixed-slot", microphoneIds: ["mic-orange"], iemIds: ["iem-1"] }],
+  ])("claims an existing %s slot when review confirms an assignee", (_label, slot) => {
+    const before = element("row", "Reading", {
+      assignees: [slot],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading Jasmine", sourceLedBy: "",
+        parts: [{ kind: "person", value: "Jasmine", destination: "content", sourceField: "title" }],
+        reasons: [], status: "unresolved", sourceFingerprint: "review-slot",
+      },
+    });
+
+    const reviewed = applyReviewedServicePlanParts(before, [
+      { ...before.importAmbiguity!.parts[0], destination: "assignee" },
+    ]);
+
+    expect(reviewed.element.assignees).toEqual([{ ...slot, name: "Jasmine" }]);
+    expect(reviewed.parts[0].managed).toMatchObject({ kind: "assignee", id: slot.id });
+  });
+
+  it("hands multiple reviewed people equipment in stable order and appends excess people", () => {
+    const slots = [
+      { id: "mic-slot", microphoneIds: ["mic-orange"] },
+      { id: "iem-slot", iemIds: ["iem-1"] },
+    ];
+    const before = element("row", "Reading", {
+      assignees: slots,
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading", sourceLedBy: "", parts: [], reasons: [],
+        status: "unresolved", sourceFingerprint: "multiple-reviewed",
+      },
+    });
+    const parts = ["Jasmine", "Clarence", "Alex"].map((name) => ({
+      kind: "person" as const, value: name, destination: "assignee" as const, sourceField: "title" as const,
+    }));
+
+    const reviewed = applyReviewedServicePlanParts(before, parts);
+
+    expect(reviewed.element.assignees).toEqual([
+      { ...slots[0], name: "Jasmine" },
+      { ...slots[1], name: "Clarence" },
+      expect.objectContaining({ name: "Alex" }),
+    ]);
+    expect(reviewed.parts.map((part) => part.managed?.id)).toEqual([
+      "mic-slot", "iem-slot", reviewed.element.assignees?.[2].id,
+    ]);
+  });
+
+  it("reuses same-name manual assignees without claiming them", () => {
+    const manual = { id: "manual", name: "Jasmine", memberId: "member-1" };
+    const before = element("row", "Reading", {
+      assignees: [{ id: "slot", microphoneIds: ["mic-orange"] }, manual],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading Jasmine", sourceLedBy: "",
+        parts: [{ kind: "person", value: "Jasmine", destination: "content", sourceField: "title" }],
+        reasons: [], status: "unresolved", sourceFingerprint: "manual-same-name",
+      },
+    });
+
+    const reviewed = applyReviewedServicePlanParts(before, [
+      { ...before.importAmbiguity!.parts[0], destination: "assignee" },
+    ]);
+
+    expect(reviewed.element.assignees).toEqual([{ id: "slot", microphoneIds: ["mic-orange"] }, manual]);
+    expect(reviewed.parts[0].managed).toBeUndefined();
+  });
+
+  it("repairs an append-only reviewed assignee into its original equipment slot on refresh", () => {
+    const part = {
+      kind: "person" as const, value: "Jasmine", destination: "assignee" as const,
+      sourceField: "title" as const,
+      managed: { kind: "assignee" as const, id: "import-person", fingerprint: JSON.stringify({ name: "Jasmine" }) },
+    };
+    const current = element("row", "Reading", {
+      assignees: [{ id: "slot-1", microphoneIds: ["mic-orange"] }, { id: "import-person", name: "Jasmine" }],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading Jasmine", sourceLedBy: "", parts: [part], reasons: [],
+        status: "confirmed", sourceFingerprint: "old-append-only",
+      },
+    });
+    const incoming = element("row", "Reading", {
+      importAmbiguity: {
+        ...current.importAmbiguity!,
+        parts: [{ ...part, managed: undefined }],
+      },
+    });
+
+    const once = reconcileReviewedServicePlanParts(current, incoming, new Set(["title"]));
+    const saved = JSON.parse(JSON.stringify({
+      element: { ...once.element, importAmbiguity: once.ambiguity },
+      ambiguity: once.ambiguity,
+    })) as typeof once;
+    const twice = reconcileReviewedServicePlanParts(saved.element, incoming, new Set(["title"]));
+
+    expect(once.element.assignees).toEqual([{ id: "slot-1", name: "Jasmine", microphoneIds: ["mic-orange"] }]);
+    expect(once.ambiguity?.parts[0].managed).toMatchObject({ kind: "assignee", id: "slot-1" });
+    expect(twice).toEqual(saved);
+  });
+
+  it("repairs a verified reviewed assignee into an equipment slot during direct confirmation", () => {
+    const part = {
+      kind: "person" as const,
+      value: "Jasmine",
+      destination: "assignee" as const,
+      sourceField: "title" as const,
+      managed: { kind: "assignee" as const, id: "import-person", fingerprint: JSON.stringify({ name: "Jasmine" }) },
+    };
+    const before = element("row", "Reading", {
+      assignees: [
+        { id: "slot-1", microphoneIds: ["mic-orange"], iemIds: ["iem-1"] },
+        { id: "import-person", name: "Jasmine" },
+        { id: "manual-person", name: "Morgan" },
+      ],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading",
+        sourceTitle: "Reading Jasmine", sourceLedBy: "", parts: [part], reasons: [],
+        status: "confirmed", sourceFingerprint: "old-append-only",
+      },
+    });
+
+    const reviewed = applyReviewedServicePlanParts(before, [part]);
+
+    expect(reviewed.element.assignees).toEqual([
+      { id: "slot-1", name: "Jasmine", microphoneIds: ["mic-orange"], iemIds: ["iem-1"] },
+      { id: "manual-person", name: "Morgan" },
+    ]);
+    expect(reviewed.parts[0].managed).toMatchObject({
+      kind: "assignee",
+      id: "slot-1",
+      fingerprint: JSON.stringify({ name: "Jasmine" }),
+    });
   });
 });
 
@@ -2603,7 +2741,7 @@ describe("refreshing reviewed source-owned occurrences", () => {
     const current = [section("current", "Reading", [element("same", "Reading", {
       sourcePlanningManaged: true,
       sourceContentTitleRaw: title,
-      assignees: [],
+      assignees: [{ id: "title-slot", microphoneIds: ["mic-orange"] }],
       importAmbiguity: {
         source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: title,
         sourceLedBy: "", parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title" }],
@@ -2614,7 +2752,45 @@ describe("refreshing reviewed source-owned occurrences", () => {
       },
     })])];
     const refreshed = refreshServicePlanFromImport(current, [incoming], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
-    expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual(["Jasmine Williams"]);
+    expect(refreshed[0].elements[0].assignees).toEqual([
+      { id: "title-slot", name: "Jasmine Williams", microphoneIds: ["mic-orange"] },
+    ]);
+  });
+
+  it("repairs a source-managed title person left beside its equipment slot", () => {
+    const title = "Psalms 97 (NLT) Jasmine Williams";
+    const [incoming] = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday", sections: [{ sectionName: "Reading", rows: [{ elementType: "Reading", title, ledBy: "" }] }], teamAssignments: [],
+    }, [], { classifyExternalTitle: true, knownPeople: ["Jasmine Williams"] });
+    const current = [section("current", "Reading", [element("same", "Reading", {
+      sourcePlanningManaged: true,
+      sourceContentTitleRaw: title,
+      assignees: [
+        { id: "title-slot", microphoneIds: ["mic-orange"] },
+        { id: "import-person", name: "Jasmine Williams" },
+      ],
+      importAmbiguity: {
+        source: "servicePlanning", sourceKey: "Reading:0", sourceElementType: "Reading", sourceTitle: title,
+        sourceLedBy: "", parts: [{ kind: "person", value: "Jasmine Williams", destination: "assignee", sourceField: "title" }],
+        reasons: [], status: "confirmed", sourceFingerprint: "old-append-only-title",
+      },
+      servicePlanningImport: {
+        observed: source(title, ""), applied: source(title, ""), pendingFields: [],
+        managedAssignees: [{ id: "import-person", fields: ["title"], fingerprint: JSON.stringify({ name: "Jasmine Williams" }) }],
+      },
+    })])];
+
+    const once = refreshServicePlanFromImport(current, [incoming], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const saved = JSON.parse(JSON.stringify(once)) as ServicePlanSection[];
+    const twice = refreshServicePlanFromImport(saved, [incoming], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+
+    expect(once[0].elements[0].assignees).toEqual([
+      { id: "title-slot", name: "Jasmine Williams", microphoneIds: ["mic-orange"] },
+    ]);
+    expect(once[0].elements[0].servicePlanningImport?.managedAssignees).toEqual([
+      expect.objectContaining({ id: "title-slot", fields: ["title"] }),
+    ]);
+    expect(twice).toEqual(saved);
   });
 
   it("updates Led By without restoring a Title person moved out of assignees", () => {
@@ -2963,6 +3139,35 @@ describe("refreshing reviewed source-owned occurrences", () => {
 
     expect(refreshed[0].elements[0].assignees?.map(({ name }) => name)).toEqual(["Courtney Stephens"]);
     expect(refreshed[0].elements[0].importAmbiguity?.parts[0].destination).toBe("content");
+  });
+
+  it("keeps a title-only person moved to Content out of assignees after an unchanged refresh", () => {
+    const title = "Psalms 97 (NLT) Jasmine Williams";
+    const [incoming] = buildServicePlanSectionsFromImport({
+      planLabel: "Sunday",
+      sections: [{ sectionName: "Reading", rows: [{ elementType: "Reading", title, ledBy: "" }] }],
+      teamAssignments: [],
+    }, [], { classifyExternalTitle: true, knownPeople: ["Jasmine Williams"] });
+    const initiallyImported = incoming.elements[0];
+    expect(initiallyImported.sourceLedByRaw).toBeUndefined();
+    expect(initiallyImported.servicePlanningImport?.managedAssignees).toEqual([
+      expect.objectContaining({ id: initiallyImported.assignees?.[0].id, fields: ["title"] }),
+    ]);
+
+    const reviewed = applyReviewedServicePlanParts(initiallyImported, [
+      { ...initiallyImported.importAmbiguity!.parts.find((part) => part.kind === "person")!, destination: "content" },
+    ]);
+    const saved = JSON.parse(JSON.stringify({
+      ...reviewed.element,
+      importAmbiguity: { ...initiallyImported.importAmbiguity!, parts: reviewed.parts, status: "confirmed" },
+    })) as ServicePlanElement;
+    const reloaded = [section("current", "Reading", [saved])];
+    const refreshed = refreshServicePlanFromImport(reloaded, [incoming], DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    const result = refreshed[0].elements[0];
+
+    expect(result.assignees).toBeUndefined();
+    expect(result.sourceLedByRaw).toBeUndefined();
+    expect(result.servicePlanningImport?.managedAssignees?.flatMap(({ fields }) => fields) || []).not.toContain("ledBy");
   });
 });
 

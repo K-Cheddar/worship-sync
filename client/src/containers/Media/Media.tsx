@@ -6,12 +6,7 @@ import {
   ChevronUp,
   LayoutGrid,
   Maximize,
-  ImageUp,
-  HardDrive,
   MonitorSmartphone,
-  MonitorUp,
-  Plus,
-  Video,
   X,
 } from "lucide-react";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
@@ -41,12 +36,6 @@ import type { MediaFolder, MediaType } from "../../types";
 import FloatingWindow, {
   FloatingWindowHandle,
 } from "../../components/FloatingWindow/FloatingWindow";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/DropdownMenu";
 import CanvaImportSheet from "./CanvaImportSheet";
 import { getCanvaStatus } from "../../api/canva";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -62,8 +51,8 @@ import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import { useNativeFileDrop } from "./useNativeFileDrop";
-import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
-import { MediaAddControl, ShowTransfersMenuItem } from "./MediaAddControl";
+import { MediaAddControl } from "./MediaAddControl";
+import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -204,11 +193,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     [c],
   );
 
-  let toolbarAddMediaTitle = "Add Media";
-  if (c.uploadProgress.isUploading) {
-    toolbarAddMediaTitle = `Uploading... ${Math.round(c.uploadProgress.progress)}%`;
-  }
-
   const addLocalMedia = useCallback(
     (media: MediaType) => {
       const existing = c.list.find((item) => item.id === media.id);
@@ -290,67 +274,15 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             />
           </div>
           <div className="flex items-center gap-2">
-            <MediaAddControl
-              uploadProgress={c.uploadProgress}
-              uploadTitle={toolbarAddMediaTitle}
-            >
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="tertiary"
-                    svg={Plus}
-                    title={toolbarAddMediaTitle}
-                    aria-label="Add media"
-                    disabled={c.isMediaReadOnly}
-                  />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <ShowTransfersMenuItem />
-                  <DropdownMenuItem
-                    onSelect={() => void c.requestMediaUpload()}
-                  >
-                    <HardDrive
-                      className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
-                    />{" "}
-                    Add files
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => openVideoInputPicker("device")}
-                  >
-                    <Video
-                      className={
-                        MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
-                      }
-                    />{" "}
-                    Add video input
-                  </DropdownMenuItem>
-                  {supportsDesktopCapture() ? (
-                    <DropdownMenuItem
-                      onSelect={() => openVideoInputPicker("desktop")}
-                    >
-                      <MonitorUp
-                        className={
-                          MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
-                        }
-                      />{" "}
-                      Add screen or window
-                    </DropdownMenuItem>
-                  ) : null}
-                  {canvaOauthConfigured ? (
-                    <DropdownMenuItem
-                      disabled={c.isGuestSession || c.isMediaReadOnly}
-                      onSelect={() => openCanva()}
-                    >
-                      <ImageUp
-                        className={
-                          MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon
-                        }
-                      />{" "}
-                      Import from Canva
-                    </DropdownMenuItem>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
+            <MediaAddControl>
+              <MediaSourceAddMenu
+                onAddMedia={() => void c.requestMediaUpload()}
+                onAddVideoInput={() => openVideoInputPicker("device")}
+                onAddScreenShare={supportsDesktopCapture() ? () => openVideoInputPicker("desktop") : undefined}
+                onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
+                mediaUploadDisabled={c.isMediaReadOnly}
+                isGuestSession={c.isGuestSession}
+              />
             </MediaAddControl>
             <Button
               variant="tertiary"
@@ -369,7 +301,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           }
           showButton={false}
           uploadPreset="bpqu4ma5"
-          onUploadActiveChange={c.handleUploadActiveChange}
           onUploadComplete={notifyStorageUsageChanged}
           uploadDisabled={c.isMediaReadOnly}
         />
@@ -605,7 +536,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onDeleteMultipleClick={c.openMultiDeleteModal}
           onPreviewChange={c.setPreviewMedia}
           mediaUploadInputRef={c.mediaUploadInputRef}
-          uploadProgress={c.uploadProgress}
           onAddMediaClick={c.requestMediaUpload}
           onAddVideoInput={() => openVideoInputPicker("device")}
           onAddScreenShare={

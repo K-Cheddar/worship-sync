@@ -4,6 +4,7 @@ import { cn } from "@/utils/cnHelper";
 type MemberAvatarProps = {
   profileImageUrl?: string | null;
   memberName: string;
+  size?: "default" | "schedule";
   className?: string;
 };
 
@@ -17,16 +18,22 @@ const getInitials = (memberName: string) => {
 const MemberAvatar = ({
   profileImageUrl,
   memberName,
-  className = "h-8 w-8",
+  size = "default",
+  className,
 }: MemberAvatarProps) => {
   const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
   const showImage = Boolean(profileImageUrl && profileImageUrl !== failedImageUrl);
+  const sizeClassName =
+    size === "schedule"
+      ? "size-[1.5rem] max-md:size-[1.75rem] text-[8px] max-md:text-[10px]"
+      : "h-8 w-8";
 
   return (
     <span
       aria-hidden="true"
       className={cn(
         "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-700 text-[10px] font-semibold text-gray-100",
+        sizeClassName,
         className,
       )}
     >

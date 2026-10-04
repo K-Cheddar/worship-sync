@@ -2,33 +2,20 @@ import type { ReactNode } from "react";
 import { DropdownMenuItem } from "../../components/ui/DropdownMenu";
 import Button from "../../components/Button/Button";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../../components/ui/Popover";
-import { getTransferOverview, useOptionalTransfers } from "../../context/transferContext";
+import { formatTransferProgress, TransferProgress } from "../../components/TransferProgress/TransferProgress";
+import { useOptionalTransfers } from "../../context/transferContext";
+import { getTransferOverview } from "../../context/transferContext";
 
 type MediaAddControlProps = {
   children: ReactNode;
-  uploadProgress: { isUploading: boolean; progress: number };
-  uploadTitle: string;
 };
 
-export const MediaAddControl = ({
-  children,
-  uploadProgress,
-  uploadTitle,
-}: MediaAddControlProps) => {
+export const MediaAddControl = ({ children }: MediaAddControlProps) => {
   const transferContext = useOptionalTransfers();
-  const transfers = transferContext?.transfers ?? (uploadProgress.isUploading ? [{
-    id: "media-upload",
-    kind: "upload" as const,
-    title: uploadTitle,
-    status: "uploading" as const,
-    progress: uploadProgress.progress,
-    message: "Uploading media",
-  }] : []);
-  const overview = getTransferOverview(transfers);
-  const percent = overview.progress === null ? null : Math.round(overview.progress);
-  const progressLabel = percent === null ? "Working…" : `${percent}%`;
-  const headingProgressLabel = percent === null ? progressLabel : `${progressLabel} overall`;
-  const accessibleProgressLabel = percent === null ? "progress unknown" : `${percent}% overall`;
+  const overview = getTransferOverview(transferContext?.transfers ?? []);
+  const progressLabel = formatTransferProgress(overview.progress);
+  const headingProgressLabel = overview.progress === null ? progressLabel : `${progressLabel} overall`;
+  const accessibleProgressLabel = overview.progress === null ? "progress unknown" : `${progressLabel} overall`;
   const showProgress = overview.activeCount > 0;
 
   return (
@@ -48,6 +35,7 @@ export const MediaAddControl = ({
                 <svg viewBox="0 0 24 24" className="absolute inset-0 size-6">
                   <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.24" strokeWidth="2" />
                   <circle
+                    data-testid="aggregate-progress-ring"
                     cx="12"
                     cy="12"
                     r="9"
@@ -55,10 +43,10 @@ export const MediaAddControl = ({
                     stroke="currentColor"
                     strokeWidth="2"
                     strokeLinecap="round"
-                    strokeDasharray={2 * Math.PI * 9}
-                    strokeDashoffset={2 * Math.PI * 9 * (1 - (overview.progress ?? 0) / 100)}
+                    strokeDasharray={overview.progress === null ? "15 42" : 2 * Math.PI * 9}
+                    strokeDashoffset={overview.progress === null ? 0 : 2 * Math.PI * 9 * (1 - overview.progress / 100)}
                     transform="rotate(-90 12 12)"
-                    className="motion-safe:transition-[stroke-dashoffset] motion-safe:duration-300 motion-reduce:transition-none"
+                    className={overview.progress === null ? "motion-safe:animate-spin motion-reduce:animate-none" : "motion-safe:transition-[stroke-dashoffset] motion-safe:duration-300 motion-reduce:transition-none"}
                   />
                 </svg>
               </span>
@@ -68,24 +56,7 @@ export const MediaAddControl = ({
           <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] space-y-3 p-3">
             <h2 className="text-sm font-semibold">Transfers · {overview.activeCount} active · {headingProgressLabel}</h2>
             <ul className="max-h-64 space-y-3 overflow-y-auto">
-              {overview.transfers.map((transfer) => (
-                <li key={transfer.id} className="min-w-0">
-                  <p className="truncate text-sm font-medium">{transfer.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {transfer.type ? `${transfer.type} · ` : ""}{transfer.status} · {Math.round(transfer.progress)}%
-                  </p>
-                  <div
-                    role="progressbar"
-                    aria-label={`${transfer.name} progress`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(transfer.progress)}
-                    className="mt-1.5 h-1 overflow-hidden rounded bg-muted"
-                  >
-                    <div className="h-full rounded bg-primary transition-[width] motion-reduce:transition-none" style={{ width: `${transfer.progress}%` }} />
-                  </div>
-                </li>
-              ))}
+              {overview.transfers.map((transfer) => <li key={transfer.id} className="min-w-0"><TransferProgress transfer={transfer} variant="summary" /></li>)}
             </ul>
             <PopoverClose asChild>
               <Button variant="tertiary" className="w-full justify-center" onClick={transferContext?.restoreTransfers}>

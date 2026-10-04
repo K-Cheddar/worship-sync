@@ -526,22 +526,22 @@ export const publicServingMemberIdsForPlan = ({
     const occurrenceId = String(occurrence?.occurrenceId || "").trim();
     if (!occurrenceId) return;
     const assignments = schedule?.assignments?.[occurrenceId] || {};
-    Object.entries(schedule?.microphoneAssignments?.[occurrenceId] || {}).forEach(
-      ([slotKey, microphoneIds]) => {
-        if (!Array.isArray(microphoneIds) || !microphoneIds.length) return;
-        const assignment = assignments[slotKey];
-        const memberId = String(assignment?.primaryMemberId || "").trim();
-        if (memberId) memberIds.add(memberId);
-      },
-    );
+    const microphoneRows = schedule?.microphoneAssignments?.[occurrenceId] || {};
+    const iemRows = schedule?.iemAssignments?.[occurrenceId] || {};
+    const slotKeys = new Set([...Object.keys(microphoneRows), ...Object.keys(iemRows)]);
+    slotKeys.forEach((slotKey) => {
+      if (!(microphoneRows[slotKey]?.length || iemRows[slotKey]?.length)) return;
+      const memberId = String(assignments[slotKey]?.primaryMemberId || "").trim();
+      if (memberId) memberIds.add(memberId);
+    });
   });
   return [...memberIds];
 };
 
 /**
  * Minimal roster projection for the detailed/team share link. Only scheduled
- * people on teams that opted into microphone assignments are included, and a
- * row appears only when that person has an allocated church microphone.
+ * people on teams that opted into equipment assignments are included, and a
+ * row appears only when that person has an allocated microphone or IEM.
  */
 export const buildPublicServingTeams = ({
   plan,
@@ -550,6 +550,7 @@ export const buildPublicServingTeams = ({
   members = [],
   teams = [],
   microphonesById,
+  equipmentById,
   timezone,
 }) => {
   const teamsById = new Map(
@@ -591,28 +592,35 @@ export const buildPublicServingTeams = ({
     const occurrence = scheduleOccurrenceForPlan(schedule, plan, timezone);
     const occurrenceId = String(occurrence?.occurrenceId || "").trim();
     if (!occurrenceId) return;
-    const microphoneRows = schedule?.microphoneAssignments?.[occurrenceId];
+    const microphoneRows = schedule?.microphoneAssignments?.[occurrenceId] || {};
+    const iemRows = schedule?.iemAssignments?.[occurrenceId] || {};
     const assignmentRows = schedule?.assignments?.[occurrenceId];
-    if (!microphoneRows || !assignmentRows) return;
+    if (!assignmentRows) return;
     const guestsById = new Map(
       (Array.isArray(schedule?.guests) ? schedule.guests : [])
         .map((guest) => [String(guest?.guestId || "").trim(), String(guest?.name || "").trim()])
         .filter((entry) => entry[0] && entry[1]),
     );
 
-    Object.entries(microphoneRows).forEach(([slotKey, microphoneIds]) => {
+    const slotKeys = new Set([...Object.keys(microphoneRows), ...Object.keys(iemRows)]);
+    slotKeys.forEach((slotKey) => {
       const positionId = String(slotKey).split("::")[0];
       const position = positionsById.get(positionId);
       const teamId = String(position?.teamId || schedule?.teamId || "").trim();
       const team = teamsById.get(teamId);
-      if (!team?.usesMicrophoneAssignments) return;
+      const microphoneIds = team?.usesMicrophoneAssignments ? microphoneRows[slotKey] : [];
+      const iemIds = team?.usesIemAssignments ? iemRows[slotKey] : [];
+      if (!team?.usesMicrophoneAssignments && !team?.usesIemAssignments) return;
       const memberId = String(assignmentRows?.[slotKey]?.primaryMemberId || "").trim();
       const member = membersById.get(memberId);
       const memberName = member?.memberName || guestsById.get(memberId) || "";
       const microphoneList = (Array.isArray(microphoneIds) ? microphoneIds : [])
         .map((microphoneId) => microphonesById?.get(String(microphoneId || "").trim()))
         .filter(Boolean);
-      if (!memberName || !microphoneList.length) return;
+      const equipmentList = (Array.isArray(iemIds) ? iemIds : [])
+        .map((equipmentId) => equipmentById?.get(String(equipmentId || "").trim()))
+        .filter(Boolean);
+      if (!memberName || (!microphoneList.length && !equipmentList.length)) return;
 
       const existing = groupedTeams.get(teamId) || {
         teamId,
@@ -627,6 +635,7 @@ export const buildPublicServingTeams = ({
           ? { profileImageUrl: member.profileImageUrl }
           : {}),
         microphones: microphoneList,
+        equipment: equipmentList,
       });
       groupedTeams.set(teamId, existing);
     });
@@ -778,7 +787,6 @@ export const buildPublicServicePlanSnapshot = ({
   shareId,
   /** Authenticated viewers reuse this sanitizer before a plan is shared. */
   allowUnpublished = false,
-  includeControllerEquipment = false,
   equipment = [],
 }) => {
   if (
@@ -868,6 +876,7 @@ export const buildPublicServicePlanSnapshot = ({
         members,
         teams,
         microphonesById,
+        equipmentById,
         timezone,
       });
 
@@ -927,7 +936,7 @@ export const buildPublicServicePlanSnapshot = ({
                   configuredAudiences,
                   hasConfiguredAudiences,
                 ),
-            ...(includeControllerEquipment && !isGeneralView
+            ...(!isGeneralView
               ? {
                   equipmentAssignments: serializePublicEquipmentAssignments(
                     element,

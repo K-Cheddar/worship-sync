@@ -1,8 +1,11 @@
 import {
   FLUSH_MEDIA_NO_DB_MESSAGE,
   FLUSH_MEDIA_STALE_DB_MESSAGE,
+  deleteMediaItemsFromPouch,
   flushMediaLibraryDocToPouch,
 } from "./flushMediaLibraryDoc";
+import { loadMediaLibrary } from "./mediaDocUtils";
+import { deleteFolderAndSubtree } from "./mediaFolderMutations";
 import type { MediaType } from "../types";
 
 let mockGlobalDb: PouchDB.Database | undefined;
@@ -47,19 +50,20 @@ describe("flushMediaLibraryDocToPouch", () => {
     });
   });
 
-  it("writes only through the database instance supplied by the caller", async () => {
+  it("writes only v2 documents through the database instance supplied by the caller", async () => {
     const db = {
-      get: jest.fn().mockResolvedValue({
-        _id: "media",
-        _rev: "1-media",
-        list: [],
-        folders: [],
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        if (id === "media-folders") throw Object.assign(new Error("missing"), { status: 404 });
+        throw Object.assign(new Error("missing"), { status: 404 });
       }),
+      allDocs: jest.fn().mockResolvedValue({ rows: [] }),
       put: jest.fn().mockResolvedValue({
         ok: true,
-        id: "media",
-        rev: "2-media",
+        id: "media-item:media-1",
+        rev: "1-item",
       }),
+      remove: jest.fn(),
     } as unknown as PouchDB.Database;
     const list = [
       {
@@ -82,37 +86,123 @@ describe("flushMediaLibraryDocToPouch", () => {
     const result = await flushMediaLibraryDocToPouch(db, list, []);
 
     expect(result).toEqual({ ok: true });
-    expect(db.get).toHaveBeenCalledWith("media");
-    expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: "media",
-        _rev: "1-media",
-        list,
-        folders: [],
-        updatedAt: expect.any(String),
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "media-item:media-1",
+      id: "media-1",
+      docType: "mediaItem",
+    }));
+    expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
+  });
+
+  it("tombstones known media item documents and broadcasts item deletes", async () => {
+    const row = {
+      _id: "media-item:delete-me",
+      _rev: "2-latest",
+      docType: "mediaItem",
+      id: "delete-me",
+    };
+    const docs = new Map([[row._id, row]]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        const doc = docs.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+        return doc;
       }),
+      remove: jest.fn(async (doc: typeof row) => {
+        docs.delete(doc._id);
+        return { ok: true, id: doc._id };
+      }),
+      allDocs: jest.fn(async () => ({ rows: [...docs.values()].map((doc) => ({ id: doc._id, doc })) })),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+    mockBroadcastRef = { postMessage: jest.fn() };
+
+    const result = await deleteMediaItemsFromPouch(db, ["delete-me"]);
+
+    expect(result).toEqual({ deletedIds: ["delete-me"], failed: [] });
+    expect(db.remove).toHaveBeenCalledWith(row);
+    expect(docs.has(row._id)).toBe(false);
+    await expect(loadMediaLibrary(db)).resolves.toEqual({ list: [], folders: [] });
+    expect(mockBroadcastRef.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "update",
+      data: expect.objectContaining({
+        docs: [{ _id: row._id, id: "delete-me", _deleted: true }],
+      }),
+    }));
+  });
+
+  it("uses item tombstones for every media row in a deleted folder subtree", async () => {
+    const folders = [
+      { id: "parent", name: "Parent", parentId: null },
+      { id: "child", name: "Child", parentId: "parent" },
+    ] as any;
+    const list = [
+      { id: "parent-row", folderId: "parent" },
+      { id: "child-row", folderId: "child" },
+      { id: "keep-row", folderId: null },
+    ] as any;
+    const subtreeDelete = deleteFolderAndSubtree("parent", folders, list);
+    const rows = new Map<string, { _id: string; _rev: string; docType: string; id: string }>(
+      list.map((item: { id: string }) => [`media-item:${item.id}`, {
+        _id: `media-item:${item.id}`,
+        _rev: "1-current",
+        docType: "mediaItem",
+        id: item.id,
+      }]),
     );
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        const doc = rows.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+        return doc;
+      }),
+      remove: jest.fn(async (doc: { _id: string }) => {
+        rows.delete(doc._id);
+        return { ok: true, id: doc._id };
+      }),
+      allDocs: jest.fn(async () => ({ rows: [...rows.values()].map((doc) => ({ id: doc._id, doc })) })),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+
+    const result = await deleteMediaItemsFromPouch(db, subtreeDelete.removedMediaIds);
+
+    expect(result.deletedIds).toEqual(["parent-row", "child-row"]);
+    expect(db.remove).toHaveBeenCalledTimes(2);
+    expect(rows.has("media-item:parent-row")).toBe(false);
+    expect(rows.has("media-item:child-row")).toBe(false);
+    expect(rows.has("media-item:keep-row")).toBe(true);
   });
 
   it("uses the latest state when a Canva save reaches the Pouch write", async () => {
     const startingMedia = [{ id: "canva-page", name: "Old page" }] as MediaType[];
     let latestMedia = startingMedia;
     const db = {
-      get: jest.fn().mockImplementation(async () => {
-        latestMedia = [
-          { id: "canva-page", name: "Newer page revision" } as MediaType,
-          { id: "ordinary-upload", name: "Concurrent upload" } as MediaType,
-        ];
-        return { _id: "media", _rev: "1-media", list: [], folders: [] };
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        if (id === "media-folders") throw Object.assign(new Error("missing"), { status: 404 });
+        throw Object.assign(new Error("missing"), { status: 404 });
       }),
-      put: jest.fn().mockResolvedValue({ ok: true, id: "media", rev: "2-media" }),
+      allDocs: jest.fn().mockResolvedValue({ rows: [] }),
+      put: jest.fn().mockResolvedValue({ ok: true, id: "media-item:canva-page", rev: "2-item" }),
+      remove: jest.fn(),
     } as unknown as PouchDB.Database;
     mockGlobalDb = db;
 
-    const result = await flushMediaLibraryDocToPouch(db, startingMedia, [], () => ({ list: latestMedia, folders: [] }));
+    const getLatestState = jest.fn(() => {
+      latestMedia = [
+        { id: "canva-page", name: "Newer page revision" } as MediaType,
+        { id: "ordinary-upload", name: "Concurrent upload" } as MediaType,
+      ];
+      return { list: latestMedia, folders: [] };
+    });
+    const result = await flushMediaLibraryDocToPouch(db, startingMedia, [], getLatestState);
 
     expect(result).toEqual({ ok: true });
-    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ list: latestMedia }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:canva-page", name: "Newer page revision" }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:ordinary-upload" }));
+    expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
   });
 
   it("does not write when the supplied database is no longer active", async () => {
@@ -134,9 +224,7 @@ describe("flushMediaLibraryDocToPouch", () => {
     expect(staleDb.put).not.toHaveBeenCalled();
   });
 
-  it("stops the v1 aggregate flush after an async read becomes stale", async () => {
-    const mediaRead = deferred<{ _id: string; _rev: string; list: MediaType[]; folders: [] }>();
-    const mediaReadStarted = deferred<void>();
+  it("fails closed without schema v2 and never creates the legacy aggregate", async () => {
     const postMessage = jest.fn();
     const syncMediaCache = jest.fn().mockResolvedValue({ downloaded: 0, cleaned: 0 });
     const getMediaCacheMap = jest.fn().mockResolvedValue({});
@@ -146,8 +234,7 @@ describe("flushMediaLibraryDocToPouch", () => {
         if (id === "media-library-meta") {
           return Promise.reject(Object.assign(new Error("missing"), { status: 404 }));
         }
-        mediaReadStarted.resolve();
-        return mediaRead.promise;
+        return Promise.reject(Object.assign(new Error("missing"), { status: 404 }));
       }),
       put: jest.fn(),
       remove: jest.fn(),
@@ -169,11 +256,7 @@ describe("flushMediaLibraryDocToPouch", () => {
       [],
       getLatestState,
     );
-    await mediaReadStarted.promise;
-    mockGlobalDb = {} as PouchDB.Database;
-    mediaRead.resolve({ _id: "media", _rev: "1-media", list: [], folders: [] });
-
-    await expect(flush).resolves.toEqual({ ok: true });
+    await expect(flush).resolves.toEqual({ ok: false, error: expect.any(Error) });
     expect(db.put).not.toHaveBeenCalled();
     expect(db.remove).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();

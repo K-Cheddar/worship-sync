@@ -20,6 +20,12 @@ const StatefulCheckbox = ({
 };
 
 describe("Checkbox", () => {
+  it("keeps the labeled mobile tap row at a fixed-rem minimum", () => {
+    render(<StatefulCheckbox />);
+
+    expect(screen.getByText("Team")).toHaveClass("max-md:min-h-[2rem]");
+  });
+
   it("toggles once when the control is clicked", async () => {
     const user = userEvent.setup();
     const onCheckedChange = jest.fn();

@@ -1,4 +1,5 @@
 import type { TeamIntakeForm, TeamService } from "../../api/authTypes";
+import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
 import { getUpcomingAvailabilitySuggestion } from "./intakeAvailabilitySuggestion";
 
 const service: TeamService = {
@@ -27,6 +28,111 @@ const makeForm = (overrides: Partial<TeamIntakeForm> = {}): TeamIntakeForm => ({
 });
 
 describe("getUpcomingAvailabilitySuggestion", () => {
+  it("suggests the full current month when today is mid-month", () => {
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [service],
+      forms: [],
+      now: new Date(2026, 9, 4, 12),
+    });
+
+    expect(result).toMatchObject({
+      name: "October Availability",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+    });
+    expect(result?.draft.availabilityOccurrences).toHaveLength(4);
+  });
+
+  it("advances a fully covered current month to the next complete month", () => {
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [service],
+      forms: [makeForm({
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        responseDeadline: "2026-10-31",
+      })],
+      now: new Date(2026, 9, 4, 12),
+    });
+
+    expect(result).toMatchObject({
+      name: "November Availability",
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+      occurrenceCount: 5,
+    });
+  });
+
+  it("keeps a partially covered month and includes only uncovered occurrences", () => {
+    const octoberOccurrences = generateScheduleOccurrences({
+      services: [service],
+      serviceIds: [service.serviceId],
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+    });
+    const coveredOccurrence = octoberOccurrences[0];
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [service],
+      forms: [makeForm({
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        responseDeadline: "2026-10-31",
+        availabilityOccurrences: [{
+          occurrenceId: coveredOccurrence.occurrenceId,
+          serviceId: coveredOccurrence.serviceId,
+          name: coveredOccurrence.name,
+          startsAt: coveredOccurrence.startsAt,
+        }],
+      })],
+      now: new Date(2026, 9, 4, 12),
+    });
+
+    expect(result).toMatchObject({
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      occurrenceCount: 3,
+    });
+    expect(result?.draft.availabilityOccurrences?.map(({ occurrenceId }) => occurrenceId))
+      .not.toContain(coveredOccurrence.occurrenceId);
+  });
+
+  it("advances past a candidate month with no occurrences to the next useful month", () => {
+    const serviceStartingNextMonth: TeamService = {
+      ...service,
+      startDateISO: "2026-11-01",
+      overrideDateTimeISO: "2026-10-15T10:00:00.000Z",
+    };
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [serviceStartingNextMonth],
+      forms: [],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      name: "November Availability",
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+      occurrenceCount: 5,
+    });
+  });
+
+  it("starts with the month of the next service across a month boundary", () => {
+    const novemberService: TeamService = {
+      ...service,
+      startDateISO: "2026-11-01",
+    };
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [novemberService],
+      forms: [],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      name: "November Availability",
+      startDate: "2026-11-01",
+      endDate: "2026-11-30",
+    });
+  });
+
   it("suggests the next month with uncovered occurrences and creates only an editable draft", () => {
     const result = getUpcomingAvailabilitySuggestion({
       services: [service],

@@ -184,12 +184,6 @@ describe("controllerBootstrapDocs", () => {
         monitorSettings: preferencesClusterLoadFallback.monitorSettings,
         docType: "monitorSettings",
       };
-      const seededFold = {
-        _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-        _rev: "1-f",
-        mediaRouteFolders: {},
-        docType: "mediaRouteFolders",
-      };
 
       let preferencesExists = false;
       const docs = new Map<string, unknown>();
@@ -216,7 +210,7 @@ describe("controllerBootstrapDocs", () => {
               ? seededQl
               : doc._id === MONITOR_SETTINGS_POUCH_ID
                 ? seededMon
-                : seededFold),
+                : {}),
             ...doc,
             _rev: "1-x",
           });
@@ -235,6 +229,9 @@ describe("controllerBootstrapDocs", () => {
       );
       expect(put).toHaveBeenCalledWith(
         expect.objectContaining({ _id: QUICK_LINKS_POUCH_ID }),
+      );
+      expect(put).not.toHaveBeenCalledWith(
+        expect.objectContaining({ _id: MEDIA_ROUTE_FOLDERS_POUCH_ID }),
       );
     });
 

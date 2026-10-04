@@ -137,7 +137,7 @@ type SortableSectionCardProps = ServicePlanLiveRowState & {
   scheduledPositionOptions: ServicePlanRoleNoteOption[];
   teamNoteOptions: ServicePlanTeamNoteOption[];
   microphones: ServicePlanMicrophone[];
-  iemEquipment?: ServiceEquipment[];
+  iemEquipment: ServiceEquipment[];
   microphoneAudiences?: ServicePlanMicrophoneAudience[];
   scheduledEquipmentHolders?: ReadonlyMap<string, string[]>;
   scheduledEquipmentStatus?: "ready" | "loading" | "unavailable";
@@ -195,7 +195,7 @@ const SortableSectionCard = ({
   scheduledPositionOptions,
   teamNoteOptions,
   microphones,
-  iemEquipment = [],
+  iemEquipment,
   microphoneAudiences,
   scheduledEquipmentHolders,
   scheduledEquipmentStatus,
@@ -816,7 +816,7 @@ const ServicePlanSectionList = ({
     ? (songDetailsEditing ? "Edit song details" : "Song details")
     : contentPanelElement
       ? (isEditing ? "Edit content" : "Content details")
-      : (isEditing ? "Edit people and microphones" : "People and microphones");
+      : (isEditing ? "Edit people and equipment" : "People and equipment");
   const panelSubtitle = songDetails
     ? songDetails.name
     : activePanelTitle || "Untitled item";
@@ -997,6 +997,7 @@ const ServicePlanSectionList = ({
                 scheduledPositionOptions={scheduledPositionOptions}
                 teamNoteOptions={teamNoteOptions}
                 microphones={microphones}
+                iemEquipment={iemEquipment}
                 microphoneAudiences={microphoneAudiences}
                 scheduledEquipmentHolders={scheduledEquipmentHolders}
                 scheduledEquipmentStatus={scheduledEquipmentStatus}

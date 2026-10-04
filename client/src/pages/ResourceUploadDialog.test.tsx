@@ -1,5 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { TransferProvider } from "../context/transferContext";
 import ResourceUploadDialog from "./ResourceUploadDialog";
 import { uploadChurchResource } from "../api/auth";
 
@@ -65,5 +67,33 @@ describe("ResourceUploadDialog", () => {
     expect(screen.queryByRole("dialog", { name: "Upload resources" })).not.toBeInTheDocument();
     expect(mockUploadChurchResource).toHaveBeenNthCalledWith(1, expect.objectContaining({ name: "Service guide" }));
     expect(mockUploadChurchResource).toHaveBeenNthCalledWith(2, expect.objectContaining({ name: "two.txt" }));
+  });
+
+  it("retries only failed resource rows through the shared transfer action", async () => {
+    const user = userEvent.setup();
+    const onResourcesUploaded = jest.fn();
+    let secondAttempts = 0;
+    mockUploadChurchResource.mockImplementation(async ({ file, name }) => {
+      if (file.name === "two.txt" && secondAttempts++ === 0) throw new Error("Temporary upload failure.");
+      return {
+        id: `${file.name}-resource`, churchId: "church-1", name: name || file.name,
+        kind: "document", storage: { key: file.name, fileName: file.name, contentType: file.type, sizeBytes: file.size, uploadedAt: "2026-09-22T00:00:00.000Z" },
+        createdAt: "2026-09-22T00:00:00.000Z", createdBy: "user-1", updatedAt: "2026-09-22T00:00:00.000Z", updatedBy: "user-1",
+      };
+    });
+
+    render(<MemoryRouter><TransferProvider><ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} /></TransferProvider></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+    await user.upload(screen.getByLabelText("Select resource files"), [
+      new File(["one"], "one.pdf", { type: "application/pdf" }),
+      new File(["two"], "two.txt", { type: "text/plain" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Upload (2 files)" }));
+
+    await user.click(await screen.findByRole("button", { name: "Retry failed files" }));
+    await screen.findByText("Complete");
+    expect(mockUploadChurchResource).toHaveBeenCalledTimes(3);
+    expect(mockUploadChurchResource.mock.calls.map(([input]) => input.file.name)).toEqual(["one.pdf", "two.txt", "two.txt"]);
+    expect(onResourcesUploaded).toHaveBeenCalledTimes(2);
   });
 });

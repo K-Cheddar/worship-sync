@@ -53,6 +53,10 @@ describe("RangeSelector", () => {
           range={range}
           onPresetChange={setPreset}
           onCustomRangeChange={({ startDate, endDate }) => setRange({ start: startDate, end: endDate })}
+          onNavigate={() => {
+            setPreset("custom");
+            setRange({ start: "2026-09-01", end: "2026-09-30" });
+          }}
         />
       );
     };
@@ -61,21 +65,16 @@ describe("RangeSelector", () => {
     await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
     await user.click(screen.getByRole("button", { name: "Custom" }));
     expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
-    const customRangeButton = screen.getByRole("button", {
-      name: "Custom date range: Sep 29, 2026 – Oct 31, 2026",
-    });
-    expect(customRangeButton).toBeInTheDocument();
+    const customRangeInput = screen.getByRole("textbox", { name: "Custom date range" });
+    expect(customRangeInput).toBeInTheDocument();
+    expect(customRangeInput).toHaveValue("09/29/2026 – 10/31/2026");
+    expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
 
-    await user.click(customRangeButton);
-    expect(screen.getByRole("grid")).toBeInTheDocument();
-    await user.click(screen.getByText("8", { selector: "button" }));
-    await user.click(screen.getByText("12", { selector: "button" }));
-    expect(screen.getByRole("button", {
-      name: "Custom date range: Sep 8, 2026 – Sep 12, 2026",
-    })).toBeInTheDocument();
+    await user.click(customRangeInput);
+    expect(await screen.findByRole("grid")).toBeInTheDocument();
   });
 
-  it("shows the existing date range as the Custom picker trigger without a second input row", async () => {
+  it("keeps one compact editable range input between the paging arrows", async () => {
     const user = userEvent.setup();
     setDesktop(true);
     const ControlledFilter = () => {
@@ -87,21 +86,48 @@ describe("RangeSelector", () => {
           range={range}
           onPresetChange={setPreset}
           onCustomRangeChange={({ startDate, endDate }) => setRange({ start: startDate, end: endDate })}
+          onNavigate={() => {
+            setPreset("custom");
+            setRange({ start: "2026-09-01", end: "2026-09-30" });
+          }}
         />
       );
     };
     render(<ControlledFilter />);
 
     await user.click(screen.getByRole("button", { name: "Custom" }));
-    expect(screen.getByRole("button", { name: "Custom date range: Sep 29, 2026 – Oct 31, 2026" })).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /Custom date range/i })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Custom date range: Sep 29, 2026 – Oct 31, 2026" }));
-    expect(screen.getByRole("grid")).toBeInTheDocument();
-    await user.click(screen.getByText("8", { selector: "button" }));
-    await user.click(screen.getByText("12", { selector: "button" }));
-    expect(screen.getByRole("button", { name: "Custom date range: Sep 8, 2026 – Sep 12, 2026" })).toHaveTextContent(
-      "Sep 8, 2026 – Sep 12, 2026",
+    const customRangeInput = screen.getByRole("textbox", { name: "Custom date range" });
+    const previous = screen.getByRole("button", { name: "Previous period" });
+    const next = screen.getByRole("button", { name: "Next period" });
+    expect(screen.getAllByRole("textbox", { name: "Custom date range" })).toHaveLength(1);
+    expect(previous.compareDocumentPosition(customRangeInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(customRangeInput.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Date range" })).not.toBeInTheDocument();
+    await user.click(customRangeInput);
+    expect(await screen.findByRole("grid")).toBeInTheDocument();
+  });
+
+  it("supports segmented keyboard editing in the compact field", async () => {
+    const user = userEvent.setup();
+    setDesktop(true);
+    const onCustomRangeChange = jest.fn();
+    render(
+      <RangeSelector
+        preset="custom"
+        range={{ start: "2026-09-29", end: "2026-10-31" }}
+        onPresetChange={jest.fn()}
+        onCustomRangeChange={onCustomRangeChange}
+        onNavigate={jest.fn()}
+      />,
     );
+
+    const input = screen.getByRole("textbox", { name: "Custom date range" });
+    await user.click(input);
+    await user.keyboard("{ArrowUp}");
+    expect(onCustomRangeChange).toHaveBeenLastCalledWith({
+      startDate: "2026-10-29",
+      endDate: "2026-10-31",
+    });
   });
 
   it("marks shifted pages Custom and recalculates when Upcoming is selected again", async () => {
@@ -137,7 +163,7 @@ describe("RangeSelector", () => {
     await user.click(screen.getByRole("button", { name: "Previous period" }));
     expect(screen.getByRole("button", { name: "Upcoming" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Custom" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("Sep 1, 2026 – Sep 30, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue("09/01/2026 – 09/30/2026");
 
     await user.click(screen.getByRole("button", { name: "Upcoming" }));
     expect(screen.getByText("Dec 1, 2026 – Dec 31, 2026")).toBeInTheDocument();

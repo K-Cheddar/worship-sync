@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import MediaUploadInput from "./MediaUploadInput";
@@ -6,8 +7,11 @@ import type { MediaUploadInputRef } from "./MediaUploadInput.types";
 import { createLocalMediaFromFile } from "./localMediaImport";
 import { enqueueLocalImageUpload } from "../../utils/localImageUploadQueue";
 import type { MediaType } from "../../types";
-import { convertMuxVideoToLocalMp4 } from "./utils/muxUpload";
+import { convertMuxVideoToLocalMp4, uploadVideoToMux } from "./utils/muxUpload";
+import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
+import { TransferProvider } from "../../context/transferContext";
+import { MediaAddControl } from "./MediaAddControl";
 
 const mockValidateFiles = jest.fn((files: File[]): { valid: File[]; invalid: File[] } => ({
   valid: files,
@@ -61,29 +65,30 @@ jest.mock("./utils/cloudinaryUpload", () => ({
 const mockedCreateLocalMedia = jest.mocked(createLocalMediaFromFile);
 const mockedEnqueueUpload = jest.mocked(enqueueLocalImageUpload);
 const mockedConvertMuxVideo = jest.mocked(convertMuxVideoToLocalMp4);
+const mockedUploadVideo = jest.mocked(uploadVideoToMux);
 const mockedConvertCloudinaryImage = jest.mocked(
   convertCloudinaryImageToLocalWebp,
 );
 
-const localImage = (): MediaType => ({
+const localImage = (id = "local_image_1", name = "photo.png"): MediaType => ({
   path: "",
   createdAt: "",
   updatedAt: "",
   format: "png",
   height: 1080,
   width: 1920,
-  name: "photo.png",
-  publicId: "local_image_1",
+  name,
+  publicId: id,
   type: "image",
-  id: "local_image_1",
-  background: "local-image://local_image_1",
+  id,
+  background: `local-image://${id}`,
   thumbnail: "",
   source: "local",
   localImage: {
-    id: "local_image_1",
+    id,
     ownerDeviceId: "this-device",
     ownerLabel: "Booth",
-    fileName: "photo.png",
+    fileName: name,
     contentType: "image/png",
     storagePolicy: "local-only",
   },
@@ -95,18 +100,20 @@ const renderUploadInput = (
   onUploadComplete?: () => void,
 ) =>
   render(
-    <ControllerInfoContext.Provider
-      value={{ isGuestSession: extra?.isGuestSession ?? false } as never}
-    >
-      <GlobalInfoContext.Provider
-        value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}
+    <TransferProvider>
+      <ControllerInfoContext.Provider
+        value={{ isGuestSession: extra?.isGuestSession ?? false } as never}
       >
-        <MediaUploadInput
-          onLocalMediaAdded={onLocalMediaAdded}
-          onUploadComplete={onUploadComplete}
-        />
-      </GlobalInfoContext.Provider>
-    </ControllerInfoContext.Provider>,
+        <GlobalInfoContext.Provider
+          value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}
+        >
+          <MediaUploadInput
+            onLocalMediaAdded={onLocalMediaAdded}
+            onUploadComplete={onUploadComplete}
+          />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    </TransferProvider>,
   );
 
 describe("MediaUploadInput", () => {
@@ -164,6 +171,39 @@ describe("MediaUploadInput", () => {
     await waitFor(() => expect(onUploadComplete).toHaveBeenCalledTimes(1));
   });
 
+  it("normalizes native video upload progress for the shared transfer panel", async () => {
+    let finishUpload!: (result: MuxUploadResult) => void;
+    mockedUploadVideo.mockImplementation(async (_file, _options, callbacks) => {
+      callbacks?.onProgress?.(63);
+      return new Promise<MuxUploadResult>((resolve) => { finishUpload = resolve; });
+    });
+    mockDetectFileType.mockReturnValue("video");
+
+    render(
+      <MemoryRouter>
+        <TransferProvider>
+          <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+            <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+              <MediaUploadInput onLocalMediaAdded={jest.fn()} />
+            </GlobalInfoContext.Provider>
+          </ControllerInfoContext.Provider>
+        </TransferProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole("complementary", { name: "Transfers" })).getByRole("progressbar", { name: "clip.mp4 progress" })).toHaveAttribute("aria-valuenow", "78");
+    });
+
+    await act(async () => finishUpload({} as MuxUploadResult));
+  });
+
   it("remembers the upload preference per device when the toggle changes", () => {
     localStorage.setItem("worshipsync_device_id", "device-a");
     renderUploadInput();
@@ -200,9 +240,7 @@ describe("MediaUploadInput", () => {
         expect.objectContaining({ id: "local_image_1" }),
       );
     });
-    expect(
-      screen.getByRole("heading", { name: /Add Progress/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "photo.png progress" })).toBeInTheDocument();
     expect(mockedEnqueueUpload).not.toHaveBeenCalled();
   });
 
@@ -499,63 +537,82 @@ describe("MediaUploadInput", () => {
     jest.useRealTimers();
   });
 
-  it("reopens the upload modal after it is minimized to the Add button", async () => {
-    let resolveImport: ((value: MediaType) => void) | undefined;
-    mockedCreateLocalMedia.mockImplementation(
-      () =>
-        new Promise<MediaType>((resolve) => {
-          resolveImport = resolve;
-        }),
-    );
-    const ref = { current: null as null | MediaUploadInputRef };
+  it("starts a second independent batch while the first is active and aggregates both", async () => {
+    mockDetectFileType.mockReturnValue("video");
+    const finishes: Array<(result: MuxUploadResult) => void> = [];
+    let uploadIndex = 0;
+    mockedUploadVideo.mockImplementation(async (_file, _options, callbacks) => {
+      callbacks?.onProgress?.(++uploadIndex === 1 ? 20 : 80);
+      return new Promise<MuxUploadResult>((resolve) => finishes.push(resolve));
+    });
+    const addSource = jest.fn();
     render(
-      <ControllerInfoContext.Provider
-        value={{ isGuestSession: false } as never}
-      >
-        <GlobalInfoContext.Provider
-          value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}
-        >
-          <MediaUploadInput
-            ref={(instance) => {
-              ref.current = instance;
-            }}
-            onLocalMediaAdded={jest.fn()}
-          />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            <MediaAddControl><button onClick={addSource}>Add media source</button></MediaAddControl>
+            <MediaUploadInput onLocalMediaAdded={jest.fn()} />
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    fireEvent.change(screen.getByLabelText(/Media Files/i), {
-      target: {
-        files: [new File(["image"], "photo.png", { type: "image/png" })],
-      },
-    });
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [new File(["a"], "clip-a.mp4", { type: "video/mp4" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(finishes).toHaveLength(1));
+
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show transfer summary: 1 active transfers, 52% overall" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add media source" }));
+    expect(addSource).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.getByRole("dialog", { name: "Upload Media" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [new File(["b"], "clip-b.mp4", { type: "video/mp4" })] } });
     fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: /Upload Progress/i }),
-      ).toBeInTheDocument();
-    });
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Show transfer summary: 2 active transfers, 70% overall" })).toBeInTheDocument();
+    const transfers = within(screen.getByRole("complementary", { name: "Transfers" }));
+    expect(transfers.getByText("clip-a.mp4")).toBeInTheDocument();
+    expect(transfers.getByText("clip-b.mp4")).toBeInTheDocument();
+    expect(transfers.getAllByRole("progressbar")).toHaveLength(2);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Minimize to Add button" }),
-    );
-    expect(
-      screen.queryByRole("heading", { name: /Upload Progress/i }),
-    ).not.toBeInTheDocument();
+    await act(async () => finishes.forEach((finish) => finish({} as MuxUploadResult)));
+    await waitFor(() => expect(transfers.getAllByText("Complete")).toHaveLength(2));
+  });
 
-    act(() => {
-      ref.current?.openModal();
+  it.each(["first", "second"] as const)("reports partial success and retries only the failed %s file", async (failedPosition) => {
+    const first = localImage("media-first", "first.png");
+    const second = localImage("media-second", "second.png");
+    mockedCreateLocalMedia.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    const failedAsset = failedPosition === "first" ? first.id : second.id;
+    let failedOnce = false;
+    mockedEnqueueUpload.mockImplementation(async ({ assetId }) => {
+      if (assetId === failedAsset && !failedOnce) {
+        failedOnce = true;
+        throw new Error("Cloud share failed.");
+      }
+      return {} as never;
     });
-    expect(
-      screen.getByRole("dialog", { name: "Upload Media" }),
-    ).toBeInTheDocument();
+    const onLocalMediaAdded = jest.fn();
+    renderUploadInput(onLocalMediaAdded);
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["a"], "first.png", { type: "image/png" }), new File(["b"], "second.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (2 files)" }));
 
-    await act(async () => {
-      resolveImport?.(localImage());
-    });
+    const retry = await screen.findByRole("button", { name: "Retry failed files" });
+    const transferPanel = within(screen.getByRole("complementary", { name: "Transfers" }));
+    expect(transferPanel.getByText("Completed with errors · 70%")).toBeInTheDocument();
+    expect(transferPanel.getByRole("alert")).toHaveTextContent(`${failedPosition}.png: Cloud share failed.`);
+    expect(transferPanel.getByRole("progressbar", { name: "2 media files progress" })).toHaveAttribute("aria-valuenow", "70");
+
+    fireEvent.click(retry);
+    expect(await transferPanel.findByText("Complete")).toBeInTheDocument();
+    expect(mockedEnqueueUpload).toHaveBeenCalledTimes(3);
+    expect(onLocalMediaAdded).toHaveBeenCalledTimes(2);
   });
 
   it("opens and populates the upload modal from a native file drop", () => {

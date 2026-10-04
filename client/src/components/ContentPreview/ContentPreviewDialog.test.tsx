@@ -88,7 +88,10 @@ describe("ContentPreviewDialog", () => {
   });
 
   it("renders Dropbox MP4 shares through the same-origin proxy and opens the original share link externally", async () => {
+    const user = userEvent.setup();
     const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     renderPreview({ id: "dropbox-video", url: dropboxMp4Url });
 
     const video = await screen.findByLabelText("Pathfinder-Day-Ingles-1.mp4");
@@ -97,6 +100,8 @@ describe("ContentPreviewDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith(dropboxMp4Url, "_blank", "noopener,noreferrer"));
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(writeText).toHaveBeenCalledWith(dropboxMp4Url);
   });
 
   it("uses the existing YouTube player", async () => {

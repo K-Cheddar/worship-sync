@@ -15,6 +15,12 @@ import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
 
 const mockDispatch = jest.fn();
+const mockDeleteMediaItemsFromPouch = jest.fn();
+const mockDeleteMediaItemAtRevisionFromPouch = jest.fn();
+const mockReadMediaItemForDeletion = jest.fn();
+const mockSweepMediaReferencesBeforeDelete = jest.fn();
+const mockDeleteCloudinaryMediaAsset = jest.fn();
+const mockDeleteMuxAsset = jest.fn();
 const mockCreateNewFreeForm = jest.fn();
 const mockUseLocation = jest.fn();
 const mockOpenModal = jest.fn();
@@ -74,10 +80,13 @@ let mockSelectedMedia: typeof emptySelectedMedia = emptySelectedMedia;
 let mockSelectedMediaIds = new Set<string>();
 
 jest.mock("../../../context/transferContext", () => ({
+  useTransferActions: () => ({ startCanvaTransfer: jest.fn() }),
   useTransfers: () => ({
     transfers: [],
     startCanvaTransfer: jest.fn(),
-    updateUploadTransfer: jest.fn(),
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    runTransferAction: jest.fn(),
   }),
   useOptionalTransfers: () => null,
   getTransferOverview: () => ({
@@ -145,6 +154,10 @@ jest.mock("../../../store/mediaSlice", () => ({
   })),
   setMediaListAndFolders: jest.fn((payload: any) => ({
     type: "media/setMediaListAndFolders",
+    payload,
+  })),
+  removeMediaItemFromRemote: jest.fn((payload: string) => ({
+    type: "media/removeMediaItemFromRemote",
     payload,
   })),
   updateMediaList: jest.fn((payload: any) => ({
@@ -237,14 +250,29 @@ jest.mock("../MediaModal", () => ({
 }));
 
 jest.mock("../../../utils/mediaReferenceSweep", () => ({
-  sweepMediaReferencesBeforeDelete: jest
-    .fn()
-    .mockResolvedValue({ ok: true, failedDocIds: [] }),
+  sweepMediaReferencesBeforeDelete: (...args: unknown[]) =>
+    mockSweepMediaReferencesBeforeDelete(...args),
 }));
 
 jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
+  deleteMediaItemAtRevisionFromPouch: (...args: unknown[]) =>
+    mockDeleteMediaItemAtRevisionFromPouch(...args),
+  deleteMediaItemsFromPouch: (...args: unknown[]) =>
+    mockDeleteMediaItemsFromPouch(...args),
   flushMediaLibraryDocToPouch: (...args: unknown[]) =>
     mockFlushMediaLibraryDocToPouch(...args),
+}));
+
+jest.mock("../../../utils/mediaDocUtils", () => ({
+  ...jest.requireActual("../../../utils/mediaDocUtils"),
+  readMediaItemForDeletion: (...args: unknown[]) =>
+    mockReadMediaItemForDeletion(...args),
+}));
+
+jest.mock("../../../api/providerStorage", () => ({
+  deleteCloudinaryMediaAsset: (...args: unknown[]) =>
+    mockDeleteCloudinaryMediaAsset(...args),
+  deleteChurchMuxAsset: (...args: unknown[]) => mockDeleteMuxAsset(...args),
 }));
 
 jest.mock("../../../utils/itemUtil", () => ({
@@ -275,23 +303,14 @@ jest.mock("../MediaUploadInput", () => {
     __esModule: true,
     default: ReactLib.forwardRef(
       (
-        {
-          onUploadActiveChange,
-        }: { onUploadActiveChange?: (active: boolean) => void },
-        ref: React.Ref<{
-          openModal: () => void;
-          getUploadStatus: () => { isUploading: boolean; progress: number };
-        }>,
+        _props: Record<string, never>,
+        ref: React.Ref<{ openModal: () => void; openModalWithFiles: (files: File[]) => void }>,
       ) => {
         ReactLib.useImperativeHandle(ref, () => ({
           openModal: mockOpenModal,
-          getUploadStatus: () => ({ isUploading: false, progress: 0 }),
+          openModalWithFiles: mockOpenModal,
         }));
-        return (
-          <button type="button" onClick={() => onUploadActiveChange?.(true)}>
-            trigger-upload-active
-          </button>
-        );
+        return null;
       },
     ),
   };
@@ -462,6 +481,25 @@ describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFlushMediaLibraryDocToPouch.mockResolvedValue({ ok: true });
+    mockDeleteMediaItemsFromPouch.mockImplementation(async (_db, ids: string[]) => ({
+      deletedIds: ids,
+      failed: [],
+    }));
+    mockDeleteMediaItemAtRevisionFromPouch.mockResolvedValue("deleted");
+    mockSweepMediaReferencesBeforeDelete.mockResolvedValue({
+      ok: true,
+      failedDocIds: [],
+      rollback: jest.fn().mockResolvedValue("complete"),
+    });
+    mockReadMediaItemForDeletion.mockImplementation(async (_db, id: string) => {
+      const item = mockState.media.list.find((row: { id: string }) => row.id === id);
+      return item ? {
+        item,
+        doc: { ...item, _id: `media-item:${id}`, _rev: "1-current", docType: "mediaItem" },
+      } : null;
+    });
+    mockDeleteCloudinaryMediaAsset.mockResolvedValue(undefined);
+    mockDeleteMuxAsset.mockResolvedValue(undefined);
     mockShowToast.mockReturnValue("delete-toast");
     mockSelectedMediaIds = new Set();
     mockNavigate.mockClear();
@@ -910,18 +948,14 @@ describe("Media", () => {
     );
   });
 
-  it("does not report success or clear history when the library flush fails", async () => {
+  it("persists an item tombstone before provider cleanup and keeps library deletion on provider failure", async () => {
     mockState = makeBaseState();
     mockSelectedMediaIds = new Set(["media-1"]);
     mockSelectedMedia = {
       ...mockState.media.list[0],
       source: "cloudinary" as const,
     };
-    mockFlushMediaLibraryDocToPouch.mockResolvedValue({
-      ok: false,
-      error: new Error("disk unavailable"),
-    });
-    jest.spyOn(window, "alert").mockImplementation(() => undefined);
+    mockDeleteCloudinaryMediaAsset.mockRejectedValue(new Error("provider unavailable"));
     await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -929,22 +963,246 @@ describe("Media", () => {
       screen.getByRole("button", { name: "confirm-delete" }),
     );
 
-    await waitFor(() => {
-      expect(mockUpdateToast).toHaveBeenCalledWith(
-        "delete-toast",
-        expect.objectContaining({
-          variant: "error",
-          persist: true,
-          message: expect.stringContaining("was not saved"),
-        }),
-      );
-    });
-    expect(mockDispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "CLEAR_HISTORY" }),
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalled());
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ _id: "media-item:media-1", _rev: "1-current" }),
     );
-    expect(mockUpdateToast).not.toHaveBeenCalledWith(
+    expect(mockDeleteMediaItemAtRevisionFromPouch.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteCloudinaryMediaAsset.mock.invocationCallOrder[0],
+    );
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "media/removeMediaItemFromRemote",
+      payload: "media-1",
+    });
+    expect(await screen.findByText(/backing file could not be removed/i)).toBeInTheDocument();
+    expect(mockUpdateToast).toHaveBeenCalledWith(
       "delete-toast",
-      expect.objectContaining({ variant: "success" }),
+      expect.objectContaining({
+        variant: "warning",
+        message: expect.stringContaining("provider asset needs cleanup"),
+      }),
+    );
+  });
+
+  it("uses the authoritative persisted row when the delete modal target is stale", async () => {
+    mockState = makeBaseState();
+    const staleRow = { ...mockState.media.list[0], publicId: "old-provider-id" };
+    const persistedRow = { ...staleRow, name: "Latest", publicId: "latest-provider-id" };
+    mockState.media.list = [staleRow];
+    mockSelectedMediaIds = new Set([staleRow.id]);
+    mockSelectedMedia = { ...staleRow, source: "cloudinary" as const };
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    mockReadMediaItemForDeletion.mockResolvedValueOnce({
+      item: persistedRow,
+      doc: {
+        ...persistedRow,
+        _id: `media-item:${persistedRow.id}`,
+        _rev: "2-latest",
+        docType: "mediaItem",
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith(
+      expect.anything(),
+      "latest-provider-id",
+    ));
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "old-provider-id",
+    );
+    expect(mockSweepMediaReferencesBeforeDelete).toHaveBeenCalledWith(
+      expect.anything(),
+      new Set([persistedRow.id]),
+      [persistedRow],
+    );
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ _rev: "2-latest", publicId: "latest-provider-id" }),
+    );
+  });
+
+  it("rolls back a successful sweep before retrying a revision conflict", async () => {
+    mockState = makeBaseState();
+    const revisionA = { ...mockState.media.list[0], background: "https://cdn/a.png", publicId: "provider-a" };
+    const revisionB = { ...revisionA, background: "https://cdn/b.png", publicId: "provider-b" };
+    mockState.media.list = [revisionA];
+    mockSelectedMediaIds = new Set([revisionA.id]);
+    mockSelectedMedia = { ...revisionA, source: "cloudinary" as const };
+    const rollback = jest.fn().mockResolvedValue("complete");
+    mockReadMediaItemForDeletion
+      .mockResolvedValueOnce({ item: revisionA, doc: { ...revisionA, _id: `media-item:${revisionA.id}`, _rev: "4-a", docType: "mediaItem" } })
+      .mockResolvedValueOnce({ item: revisionB, doc: { ...revisionB, _id: `media-item:${revisionB.id}`, _rev: "5-b", docType: "mediaItem" } });
+    mockSweepMediaReferencesBeforeDelete
+      .mockResolvedValueOnce({ ok: true, failedDocIds: [], rollback })
+      .mockResolvedValueOnce({ ok: true, failedDocIds: [], rollback: jest.fn().mockResolvedValue("complete") });
+    mockDeleteMediaItemAtRevisionFromPouch
+      .mockRejectedValueOnce(Object.assign(new Error("conflict"), { status: 409 }))
+      .mockResolvedValueOnce("deleted");
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith(
+      expect.anything(),
+      "provider-b",
+    ));
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(mockSweepMediaReferencesBeforeDelete.mock.calls.map(([, , rows]) => rows[0].publicId))
+      .toEqual(["provider-a", "provider-b"]);
+    expect(mockDeleteMediaItemAtRevisionFromPouch.mock.calls.map(([, doc]) => doc._rev))
+      .toEqual(["4-a", "5-b"]);
+    expect(rollback.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReadMediaItemForDeletion.mock.invocationCallOrder[1],
+    );
+  });
+
+  it("does not remove provider assets or Redux rows when an item tombstone fails", async () => {
+    mockState = makeBaseState();
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
+    mockDeleteMediaItemAtRevisionFromPouch.mockRejectedValue(new Error("disk unavailable"));
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockUpdateToast).toHaveBeenCalledWith(
+      "delete-toast",
+      expect.objectContaining({
+        variant: "error",
+        message: "Could not remove media from the library. The media was kept.",
+      }),
+    ));
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith({
+      type: "media/removeMediaItemFromRemote",
+      payload: "media-1",
+    });
+  });
+
+  it("does not tombstone or clean up a provider when reference cleanup fails", async () => {
+    mockState = makeBaseState();
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
+    mockSweepMediaReferencesBeforeDelete.mockResolvedValue({
+      ok: false,
+      failedDocIds: ["quick-links"],
+      rollbackStatus: "complete",
+    });
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockUpdateToast).toHaveBeenCalledWith(
+      "delete-toast",
+      expect.objectContaining({
+        variant: "error",
+        message: "Could not clean up media references. The media was kept.",
+      }),
+    ));
+    expect(mockDeleteMediaItemAtRevisionFromPouch).not.toHaveBeenCalled();
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith({
+      type: "media/removeMediaItemFromRemote",
+      payload: "media-1",
+    });
+  });
+
+  it("deletes each selected row by its known item id", async () => {
+    const original = makeBaseState().media.list[0];
+    const rows = ["media-a", "media-b", "media-c"].map((id) => ({
+      ...original,
+      id,
+      name: id,
+      source: "uploaded",
+    }));
+    mockState = makeBaseState({ media: { list: rows, folders: [] } });
+    mockSelectedMediaIds = new Set(rows.map((row) => row.id));
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete 3 items" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(3));
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+  });
+
+  it("keeps a later multi-delete row intact when its exact tombstone keeps conflicting", async () => {
+    const rows = [
+      { ...makeBaseState().media.list[0], id: "row-a", source: "cloudinary", publicId: "asset-a" },
+      { ...makeBaseState().media.list[0], id: "row-b", source: "cloudinary", publicId: "asset-b" },
+    ];
+    mockState = makeBaseState({ media: { list: rows, folders: [] } });
+    mockSelectedMediaIds = new Set(rows.map((row) => row.id));
+    mockReadMediaItemForDeletion.mockImplementation(async (_db, id: string) => {
+      const item = rows.find((row) => row.id === id)!;
+      return { item, doc: { ...item, _id: `media-item:${id}`, _rev: `1-${id}`, docType: "mediaItem" } };
+    });
+    const rollbacks = [jest.fn().mockResolvedValue("complete"),
+      jest.fn().mockResolvedValue("complete"), jest.fn().mockResolvedValue("complete")];
+    mockSweepMediaReferencesBeforeDelete
+      .mockResolvedValueOnce({ ok: true, failedDocIds: [], rollback: jest.fn().mockResolvedValue("complete") })
+      .mockResolvedValueOnce({ ok: true, failedDocIds: [], rollback: rollbacks[0] })
+      .mockResolvedValueOnce({ ok: true, failedDocIds: [], rollback: rollbacks[1] })
+      .mockResolvedValueOnce({ ok: true, failedDocIds: [], rollback: rollbacks[2] });
+    mockDeleteMediaItemAtRevisionFromPouch
+      .mockResolvedValueOnce("deleted")
+      .mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 }));
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete 2 items" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith(
+      "church-1",
+      "asset-a",
+    ));
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalledWith("church-1", "asset-b");
+    expect(mockDispatch).toHaveBeenCalledWith({
+      type: "media/removeMediaItemFromRemote",
+      payload: "row-a",
+    });
+    expect(mockDispatch).not.toHaveBeenCalledWith({
+      type: "media/removeMediaItemFromRemote",
+      payload: "row-b",
+    });
+    expect(rollbacks.every((rollback) => rollback.mock.calls.length === 1)).toBe(true);
+    expect(mockSweepMediaReferencesBeforeDelete.mock.calls.map(([, ids]) => [...ids]))
+      .toEqual([["row-a"], ["row-b"], ["row-b"], ["row-b"]]);
+  });
+
+  it("tombstones Mux video media before attempting Mux cleanup", async () => {
+    const video = {
+      ...makeBaseState().media.list[0],
+      id: "mux-video",
+      type: "video",
+      source: "mux",
+      muxAssetId: "mux-asset-1",
+    };
+    mockState = makeBaseState({ media: { list: [video], folders: [] } });
+    mockSelectedMedia = video as typeof emptySelectedMedia;
+    mockSelectedMediaIds = new Set([video.id]);
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() => expect(mockDeleteMuxAsset).toHaveBeenCalledWith(
+      "church-1",
+      "mux-asset-1",
+    ));
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ _id: "media-item:mux-video", _rev: "1-current" }),
+    );
+    expect(mockDeleteMediaItemAtRevisionFromPouch.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteMuxAsset.mock.invocationCallOrder[0],
     );
   });
 });

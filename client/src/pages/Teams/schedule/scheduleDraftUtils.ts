@@ -1,6 +1,7 @@
 import type { TeamSchedulePayload } from "../../../api/auth";
 import type {
   TeamRecord,
+  TeamPosition,
   TeamSchedule,
   TeamScheduleAssignments,
   TeamScheduleOccurrence,
@@ -428,6 +429,7 @@ export type ScheduleEditFormProps = {
   defaultServiceIds: string[];
   defaultRange: { startDate: string; endDate: string };
   services: TeamService[];
+  positions: TeamPosition[];
   activeTeams: TeamRecord[];
   /** Hydrated schedules used for assignment conflict checks on save. */
   schedules: TeamSchedule[];

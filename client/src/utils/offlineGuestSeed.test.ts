@@ -19,7 +19,9 @@ describe("offlineGuestSeed", () => {
     expect(byId.has(QUICK_LINKS_POUCH_ID)).toBe(true);
     expect(byId.has(MONITOR_SETTINGS_POUCH_ID)).toBe(true);
     expect(byId.has(MEDIA_ROUTE_FOLDERS_POUCH_ID)).toBe(true);
-    expect(byId.has("media")).toBe(true);
+    expect(byId.has("media-library-meta")).toBe(true);
+    expect(byId.has("media-folders")).toBe(true);
+    expect(byId.has("media")).toBe(false);
     expect(byId.has("overlay-templates")).toBe(true);
     expect(byId.has(getCreditsDocId("offline-demo-outline"))).toBe(true);
   });
@@ -57,11 +59,13 @@ describe("offlineGuestSeed", () => {
 
   it("seeds sample media without provider source (guest-safe deletes)", () => {
     const docs = createOfflineGuestSeedDocs("2026-01-01T00:00:00.000Z");
-    const media = docs.find((d) => d._id === "media") as unknown as {
-      list: { source?: string }[];
-    };
-    expect(media?.list?.length).toBeGreaterThanOrEqual(8);
-    expect(media.list.every((m) => m.source === undefined)).toBe(true);
+    const mediaItems = docs.filter((d) => d.docType === "mediaItem") as Array<{
+      source?: string;
+      _id: string;
+    }>;
+    expect(mediaItems.length).toBeGreaterThanOrEqual(8);
+    expect(mediaItems.every((item) => item.source === undefined)).toBe(true);
+    expect(mediaItems.every((item) => item._id.startsWith("media-item:"))).toBe(true);
   });
 
   it("seeds item and slide backdrops for guest items (delivery URLs)", () => {

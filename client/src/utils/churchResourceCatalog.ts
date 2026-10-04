@@ -58,10 +58,9 @@ export const resourceEntrySource = (entry: ResourceLibraryEntry): string => {
 
 export const resourceEntryKind = (
   entry: ResourceLibraryEntry,
-): "document" | "audio" => {
+): ChurchResource["kind"] => {
   if (entry.source === "song-audio") return "audio";
-  if (entry.resource.kind === "audio") return "audio";
-  return "document";
+  return entry.resource.kind;
 };
 
 export const resourceEntryDeleteActionLabel = (

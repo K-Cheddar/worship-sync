@@ -243,7 +243,7 @@ const ResourcePreview = ({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {editingName && resource ? <><Input label="Resource name" value={nameDraft} onChange={(value) => setNameDraft(String(value))} /><Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button><Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} /></> : null}
-            <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={deletionIncomplete || Boolean(error) || downloading || deleting || resource?.sourceType === "external"} onClick={() => void download()}>Download</Button>
+            {entry.source === "song-audio" || resource?.sourceType !== "external" ? <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={deletionIncomplete || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button> : null}
             {resource && canEdit && !editingName ? <Button type="button" variant="tertiary" svg={Pencil} disabled={deletionIncomplete || savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
             {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{deletionIncomplete ? "Retry deletion" : resourceEntryDeleteActionLabel(entry)}</Button> : null}
           </div>

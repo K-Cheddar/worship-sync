@@ -291,6 +291,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
         title,
         artist: metadataLabel,
         videoId: youtubeVideoId,
+        playbackRanges: [{}],
       }]
     : [];
 

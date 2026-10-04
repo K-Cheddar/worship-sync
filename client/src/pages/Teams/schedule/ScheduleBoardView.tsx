@@ -216,9 +216,9 @@ const ScheduleBoardView = ({
               aria-label={`${expanded ? "Collapse" : "Expand"} ${group.serviceName} on ${occurrenceTiming}`}
               onClick={() => onToggleExpanded(occurrence.occurrenceId)}
               className={cn(
-                // Match the date button: drop Button's mobile min-height so the
-                // header row stays compact. Rotate the icon for expand/collapse.
-                "shrink-0 text-gray-300 max-md:min-h-0 [&_svg]:transition-transform motion-reduce:[&_svg]:transition-none",
+                // Keep the chevron modest while the shared button provides its
+                // mobile tap target. Rotate it for expand/collapse.
+                "shrink-0 text-gray-300 [&_svg]:transition-transform motion-reduce:[&_svg]:transition-none",
                 expanded && "[&_svg]:rotate-180",
               )}
             />

@@ -6,7 +6,9 @@ import Modal from "../components/Modal/Modal";
 import { useOverlayPortalContainer } from "../components/FloatingWindow/FloatingWindowPortalContext";
 import { uploadChurchResource } from "../api/auth";
 import { useNativeFileDrop } from "../containers/Media/useNativeFileDrop";
-import { ProgressPopup } from "../containers/Media/components/ProgressPopup";
+import { TransferProgress } from "../components/TransferProgress/TransferProgress";
+import { useOptionalTransferActions, useOptionalTransfers } from "../context/transferContext";
+import type { Transfer } from "../context/transferModel";
 import type { ChurchResource } from "../types/churchResource";
 
 type ResourceUploadStatus = "queued" | "uploading" | "complete" | "error";
@@ -28,17 +30,24 @@ type ResourceUploadDialogProps = {
 
 const controllerElement = () => document.getElementById("controller-main") || document.body;
 
+const ResourceTransferProgress = ({ transferId, variant }: { transferId: string; variant: "card" | "compact" }) => {
+  const transferContext = useOptionalTransfers();
+  const transfer = transferContext?.transfers.find((item) => item.id === transferId);
+  return transfer ? <TransferProgress transfer={transfer} variant={variant} /> : null;
+};
+
 const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "Upload" }: ResourceUploadDialogProps) => {
   const overlayPortalContainer = useOverlayPortalContainer();
+  const transferContext = useOptionalTransferActions();
   const inputRef = useRef<HTMLInputElement>(null);
+  const transferIdRef = useRef<string | null>(null);
+  const unregisterTransferActionsRef = useRef<Array<() => void>>([]);
+  const handleUploadRef = useRef<() => void>(() => undefined);
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMinimizedToButton, setIsMinimizedToButton] = useState(false);
   const [files, setFiles] = useState<PendingResource[]>([]);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
-  const [overallProgress, setOverallProgress] = useState(0);
-  const [currentFileIndex, setCurrentFileIndex] = useState(0);
-  const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
 
   const isUploading = uploadStatus === "uploading";
@@ -66,31 +75,56 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
     if (isUploading) return;
     setFiles([]);
     setError("");
-    setStatusMessage("");
-    setOverallProgress(0);
     setUploadStatus("idle");
-    setCurrentFileIndex(0);
     setIsMinimized(false);
     setIsMinimizedToButton(false);
     setIsOpen(false);
+    const transfer = transferContext?.getTransfer(transferIdRef.current || "");
+    if (transfer) transferContext?.updateTransfer({ ...transfer, actions: [{ key: "dismiss", label: "Dismiss" }] });
+    unregisterTransferActionsRef.current.forEach((unregister) => unregister());
+    unregisterTransferActionsRef.current = [];
+    transferIdRef.current = null;
     if (inputRef.current) inputRef.current.value = "";
   };
 
   const handleUpload = async () => {
     if (isUploading || files.length === 0) return;
+    if (uploadStatus !== "error") {
+      unregisterTransferActionsRef.current.forEach((unregister) => unregister());
+      unregisterTransferActionsRef.current = [];
+      transferIdRef.current = null;
+    }
+    const transferId = transferIdRef.current || `resource-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    transferIdRef.current = transferId;
+    if (!unregisterTransferActionsRef.current.length && transferContext?.registerTransferAction) {
+      const registeredHandlers: Array<() => void> = [];
+      registeredHandlers.push(transferContext.registerTransferAction(transferId, "retry-failed", () => handleUploadRef.current()));
+      registeredHandlers.push(transferContext.registerTransferAction(transferId, "dismiss", () => {
+        registeredHandlers.forEach((unregister) => unregister());
+        if (transferIdRef.current === transferId) {
+          unregisterTransferActionsRef.current = [];
+          transferIdRef.current = null;
+        }
+        transferContext.removeTransfer(transferId);
+      }));
+      unregisterTransferActionsRef.current = registeredHandlers;
+    }
+    const publishTransfer = (transfer: Transfer) => transferContext?.updateTransfer(transfer);
     setUploadStatus("uploading");
     setError("");
     setIsMinimized(true);
     const uploaded: ChurchResource[] = [];
     let failed = 0;
-    let completedFiles = files.filter((file) => file.status === "complete").length;
+    const batchFiles = files.map((file) => ({ ...file }));
+    let completedFiles = batchFiles.filter((file) => file.status === "complete").length;
+    const transferName = files.length === 1 ? files[0].name : `${files.length} resources`;
+    publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: "active", progress: 0, phase: { key: "uploading", label: "Uploading resources", current: 0, total: files.length } });
 
-    for (let index = 0; index < files.length; index += 1) {
-      const pending = files[index];
+    for (let index = 0; index < batchFiles.length; index += 1) {
+      const pending = batchFiles[index];
       if (pending.status === "complete") continue;
-      setCurrentFileIndex(index);
+      batchFiles[index] = { ...pending, status: "uploading", progress: 0, error: undefined };
       updateFile(index, { status: "uploading", progress: 0, error: undefined });
-      setStatusMessage(`Uploading ${index + 1}/${files.length}: ${pending.name}`);
       const progressBase = completedFiles;
       try {
         const resource = await uploadChurchResource({
@@ -98,17 +132,21 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
           file: pending.file,
           name: pending.name,
           onProgress: (progress) => {
+            batchFiles[index] = { ...batchFiles[index], progress };
             updateFile(index, { progress });
-            setOverallProgress(((progressBase + progress / 100) / files.length) * 100);
+            const overall = ((progressBase + progress / 100) / files.length) * 100;
+            publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: "active", progress: overall, phase: { key: "uploading", label: `Uploading ${index + 1} of ${files.length}`, current: index + 1, total: files.length }, detail: pending.name });
           },
         });
         uploaded.push(resource);
+        batchFiles[index] = { ...batchFiles[index], status: "complete", progress: 100 };
         updateFile(index, { status: "complete", progress: 100 });
         completedFiles += 1;
-        setOverallProgress((completedFiles / files.length) * 100);
       } catch (uploadError) {
         failed += 1;
-        updateFile(index, { status: "error", error: uploadError instanceof Error ? uploadError.message : "Upload failed" });
+        const message = uploadError instanceof Error ? uploadError.message : "Upload failed";
+        batchFiles[index] = { ...batchFiles[index], status: "error", error: message };
+        updateFile(index, { status: "error", error: message });
       }
     }
 
@@ -116,20 +154,22 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
     if (failed) {
       setUploadStatus("error");
       setError(`${failed} ${failed === 1 ? "file" : "files"} failed to upload. Retry to try again.`);
-      setStatusMessage(`Upload complete. ${files.length - failed} succeeded, ${failed} failed.`);
+      const terminalStatus: Transfer["status"] = uploaded.length > 0 || completedFiles > 0 ? "partial" : "failed";
+      const failedDetails = batchFiles.filter((file) => file.status === "error").map((file) => `${file.name}: ${file.error || "Upload failed."}`).join("\n");
+      publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: terminalStatus, progress: (completedFiles / files.length) * 100, phase: { key: terminalStatus, label: terminalStatus === "partial" ? "Upload completed with errors" : "Upload failed" }, detail: `${completedFiles} of ${files.length} files uploaded`, error: { message: failedDetails || `${failed} ${failed === 1 ? "file" : "files"} failed to upload.` }, actions: [{ key: "retry-failed", label: "Retry failed files" }, { key: "dismiss", label: "Dismiss" }] });
     } else {
+      unregisterTransferActionsRef.current[0]?.();
+      unregisterTransferActionsRef.current = unregisterTransferActionsRef.current.slice(1);
+      publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: "complete", progress: 100, phase: { key: "complete", label: "Upload complete" }, detail: `${files.length} ${files.length === 1 ? "file" : "files"} uploaded`, actions: [{ key: "dismiss", label: "Dismiss" }] });
       setUploadStatus("ready");
-      setOverallProgress(100);
-      setStatusMessage(`All ${files.length} ${files.length === 1 ? "file" : "files"} uploaded.`);
       setFiles([]);
-      setStatusMessage("");
-      setOverallProgress(0);
       setUploadStatus("idle");
       setIsMinimized(false);
       setIsMinimizedToButton(false);
       setIsOpen(false);
     }
   };
+  handleUploadRef.current = () => { void handleUpload(); };
 
   const updateName = (index: number, name: string) => updateFile(index, { name });
   const removeFile = (index: number) => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index));
@@ -138,15 +178,15 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
   return (
     <>
       {isMinimized && !isMinimizedToButton ? createPortal(
-        <ProgressPopup
-          uploadStatus={uploadStatus}
-          overallProgress={overallProgress}
-          statusMessage={statusMessage}
-          currentFileIndex={currentFileIndex}
-          totalFiles={files.length}
-          onRestore={() => setIsMinimized(false)}
-          onMinimize={() => setIsMinimizedToButton(true)}
-        />,
+        <div className="pointer-events-auto fixed bottom-1 right-4 z-10 min-w-[320px] max-w-[400px] rounded-lg border border-gray-600 bg-gray-800 p-4 shadow-2xl">
+          <div className="flex items-center justify-between gap-2">
+            <ResourceTransferProgress transferId={transferIdRef.current || "resource-upload"} variant="compact" />
+            <div className="flex shrink-0 gap-1">
+              <Button variant="tertiary" onClick={() => setIsMinimized(false)} aria-label="Restore resource upload">Restore</Button>
+              <Button variant="tertiary" onClick={() => setIsMinimizedToButton(true)} aria-label="Minimize resource upload to button">Minimize</Button>
+            </div>
+          </div>
+        </div>,
         overlayPortalContainer ?? controllerElement(),
       ) : null}
       <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
@@ -179,14 +219,12 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
                   </div>
                   {!isUploading ? <div className="flex shrink-0 gap-1"><Button type="button" variant="tertiary" svg={Trash2} aria-label={`Remove ${pending.file.name}`} onClick={() => removeFile(index)} /></div> : null}
                 </div>
-                {pending.status === "uploading" ? <div className="mt-2 h-1.5 rounded bg-gray-700"><div className="h-1.5 rounded bg-cyan-500" style={{ width: `${pending.progress}%` }} /></div> : null}
-                {pending.status === "complete" ? <p className="mt-1 text-xs text-green-300">Complete</p> : null}
-                {pending.status === "error" ? <p className="mt-1 text-xs text-red-300">{pending.error || "Upload failed"}</p> : null}
+                <TransferProgress transfer={{ id: `resource-file-${index}`, type: "Resource", name: pending.name, status: pending.status === "queued" ? "queued" : pending.status === "uploading" ? "active" : pending.status === "complete" ? "complete" : "failed", progress: pending.status === "queued" ? null : pending.progress, phase: { key: pending.status, label: pending.status === "uploading" ? "Uploading" : pending.status === "error" ? "Upload failed" : pending.status === "complete" ? "Complete" : "Queued" }, ...(pending.error ? { error: { message: pending.error } } : {}) }} variant="summary" />
               </div>
             ))}
           </div>
           {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
-          {uploadStatus !== "idle" ? <p className="text-sm text-gray-300" role="status">{statusMessage} ({Math.round(overallProgress)}%)</p> : null}
+          {uploadStatus !== "idle" ? <ResourceTransferProgress transferId={transferIdRef.current || "resource-upload"} variant="card" /> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" onClick={reset} disabled={isUploading}>{uploadStatus === "ready" || uploadStatus === "error" ? "Done" : "Cancel"}</Button>
             <Button type="button" variant="cta" svg={Upload} onClick={() => void handleUpload()} disabled={confirmDisabled}>{hasFailedFiles ? "Retry failed" : `Upload${files.length > 1 ? ` (${files.length} files)` : ""}`}</Button>

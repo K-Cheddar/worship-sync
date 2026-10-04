@@ -1127,7 +1127,9 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     await user.click(screen.getByRole("menuitem", { name: "Schedule history" }));
     await user.click(await screen.findByRole("button", { name: /Fall Revival/ }));
-    expect(screen.getByText("Oct 18, 2026 – Oct 24, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
+      "10/18/2026 – 10/24/2026",
+    );
     expect(screen.getAllByRole("button", { name: /Saturday service Vocal/i })).toHaveLength(1);
     jest.useRealTimers();
   });
@@ -3485,11 +3487,10 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByText("Jul 1, 2026 – Jul 31, 2026")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom date range" })).toHaveValue(
+      "07/01/2026 – 07/31/2026",
+    );
     expect(screen.getByRole("status")).toHaveTextContent(/1 service · .*positions filled/);
-    expect(
-      screen.queryByText(/Jul 1, 2026 – Jul 31, 2026 · .*positions filled/),
-    ).not.toBeInTheDocument();
   });
 
   it("keeps New schedule and Send schedule actions available with send confirmation", async () => {
@@ -3634,6 +3635,7 @@ describe("Teams", () => {
                 assignments: {},
               }}
               selectedSchedule={scheduleBootstrap.schedules[0] as TeamSchedule}
+              positions={[]}
               defaultTeamId="team-main"
               defaultServiceIds={["service-sunday"]}
               defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}

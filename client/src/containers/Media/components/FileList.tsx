@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Image, Pencil, Video, X } from "lucide-react";
 import { FileUploadProgress } from "../MediaUploadInput.types";
+import { TransferProgress } from "../../../components/TransferProgress/TransferProgress";
 
 type FileListProps = {
   files: FileUploadProgress[];
@@ -59,25 +60,23 @@ export const FileList = ({
                   Source: {fileProgress.file.name}
                 </div>
               )}
-              <div className="text-xs text-gray-500">
-                {(fileProgress.file.size / 1024 / 1024).toFixed(2)} MB
-                {fileProgress.status === "uploading" && (
-                  <span className="ml-2">
-                    - {Math.round(fileProgress.progress)}%
-                  </span>
-                )}
-                {fileProgress.status === "processing" && (
-                  <span className="ml-2">- Processing...</span>
-                )}
-                {fileProgress.status === "ready" && (
-                  <span className="ml-2 text-green-500">- Complete</span>
-                )}
-                {fileProgress.status === "error" && (
-                  <span className="ml-2 text-red-500">
-                    - {fileProgress.error || "Failed"}
-                  </span>
-                )}
-              </div>
+              {isUploading ? (
+                <TransferProgress
+                  transfer={{
+                    id: `media-file-${index}`,
+                    type: fileProgress.fileType === "video" ? "Video upload" : "Image upload",
+                    name: fileProgress.displayName,
+                    status: fileProgress.status === "error" ? "failed" : fileProgress.status === "ready" ? "complete" : "active",
+                    progress: fileProgress.status === "uploading" || fileProgress.status === "processing" ? fileProgress.progress : null,
+                    phase: { key: fileProgress.status, label: fileProgress.status === "processing" ? "Processing" : fileProgress.status === "error" ? "Upload failed" : fileProgress.status === "ready" ? "Complete" : "Uploading" },
+                    detail: `${(fileProgress.file.size / 1024 / 1024).toFixed(2)} MB`,
+                    ...(fileProgress.error ? { error: { message: fileProgress.error } } : {}),
+                  }}
+                  variant="summary"
+                />
+              ) : (
+                <div className="text-xs text-gray-500">{(fileProgress.file.size / 1024 / 1024).toFixed(2)} MB</div>
+              )}
             </div>
           </div>
           {!isUploading && (

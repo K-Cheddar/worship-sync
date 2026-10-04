@@ -238,16 +238,16 @@ const PublicServingTeamsPanel = ({
       "rounded-xl border p-3 shadow-lg lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:overscroll-contain",
       theme === "light" ? "border-slate-200 bg-white" : "border-neutral-700/80 bg-neutral-900/95",
     )}
-    aria-label="Microphone assignments"
+    aria-label="Equipment assignments"
   >
     <div className="flex items-center gap-2">
       <Mic2 className={cn("size-4", theme === "light" ? "text-cyan-800" : "text-cyan-300")} aria-hidden />
       <h2 className={cn("text-sm font-semibold", theme === "light" ? "text-slate-900" : "text-neutral-100")}>
-        Microphone assignments
+        Equipment assignments
       </h2>
     </div>
     <p className={cn("mt-1 text-xs leading-5", theme === "light" ? "text-slate-700" : "text-neutral-400")}>
-      Microphones in use for this service.
+      Equipment in use for this service.
     </p>
     <div className="mt-3 space-y-4">
       {teams.map((team) => (
@@ -284,12 +284,19 @@ const PublicServingTeamsPanel = ({
                 </div>
                 <div
                   className="mt-1 flex flex-wrap gap-1"
-                  aria-label={`Microphones for ${member.memberName}`}
+                  aria-label={`Equipment for ${member.memberName}`}
                 >
                   {member.microphones.map((microphone) => (
                     <ServicePlanMicrophoneChip
                       key={microphone.id}
                       microphone={microphone}
+                      theme={theme}
+                    />
+                  ))}
+                  {(member.equipment || []).map((equipment) => (
+                    <ServiceEquipmentChip
+                      key={equipment.id}
+                      equipment={equipment}
                       theme={theme}
                     />
                   ))}
@@ -875,6 +882,7 @@ const ServicePublicView = ({
                                             equipment={assignment.equipment}
                                             details={assignment.holderName ? [assignment.holderName] : []}
                                             className="gap-1.5 rounded-full px-2 py-1 text-xs font-medium"
+                                            theme={theme}
                                           />
                                         ))}
                                       </div>

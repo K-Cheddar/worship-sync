@@ -224,6 +224,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         const liveSync = localDb.sync(remoteDb, {
           retry: true,
           live: true,
+          selector: { _id: { $ne: "media" } },
           batch_size: syncBatchSizeRef.current,
           batches_limit: 5,
         });
@@ -348,7 +349,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     const remote = remoteDbRef.current;
     if (!db || !remote || !isAuthenticatedSession) return;
     remote
-      .replicate.to(db, { retry: false })
+      .replicate.to(db, { retry: false, selector: { _id: { $ne: "media" } } })
       .on("change", (info: any) => {
         if (info.docs?.length) {
           updater.current.dispatchEvent(
@@ -536,7 +537,12 @@ const ControllerInfoProvider = ({ children }: any) => {
         pendingMax = 0;
 
         replicateRef.current = remoteDb.replicate
-          .to(localDb, { retry: true, batch_size: 150, batches_limit: 15 })
+          .to(localDb, {
+            retry: true,
+            batch_size: 150,
+            batches_limit: 15,
+            selector: { _id: { $ne: "media" } },
+          })
           .on("change", (info) => {
             const pending: number = (info as any).pending; // this property exists when printing info
             pendingMax = pendingMax < pending ? pending : pendingMax;

@@ -56,6 +56,7 @@ interface FloatingWindowProps {
   label?: string;
   children: React.ReactNode;
   onClose: () => void;
+  onCloseRequested?: () => void;
   defaultPosition?: { x: number; y: number };
   defaultWidth?: number;
   defaultHeight?: number;
@@ -94,6 +95,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       label,
       children,
       onClose,
+      onCloseRequested,
       defaultPosition,
       defaultWidth = 400,
       defaultHeight = 300,
@@ -273,9 +275,10 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     const handleClose = useCallback(() => {
       clearAnimTimer();
+      onCloseRequested?.();
       setPhase("closing");
       animTimerRef.current = setTimeout(() => onClose(), ANIM_MS);
-    }, [onClose]);
+    }, [onClose, onCloseRequested]);
 
     useEffect(() => () => clearAnimTimer(), []);
 

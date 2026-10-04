@@ -2,6 +2,13 @@ import type { ServiceTime } from "../../types";
 import { getUpcomingServiceRange } from "./servicePeriodRange";
 import { filterFormsByDateRange } from "./formsPeriodFilters";
 import type { TeamIntakeForm } from "../../api/authTypes";
+import { resolveRangePreset } from "./rangeSelection";
+import { setServerTimeOffset } from "../../utils/serverTime";
+
+afterEach(() => {
+  jest.useRealTimers();
+  setServerTimeOffset(0);
+});
 
 const service = (dateTimeISO: string): ServiceTime => ({
   id: "december-service",
@@ -24,6 +31,21 @@ describe("getUpcomingServiceRange", () => {
       [service("2026-11-28T10:00:00.000Z")],
       new Date("2026-11-29T12:00:00.000Z"),
     )).toEqual({ start: "2026-11-01", end: "2026-11-30" });
+  });
+
+  it("aligns Upcoming, Forms, Plans, and This month to the server instant", () => {
+    jest.useFakeTimers().setSystemTime(new Date(2026, 9, 31, 23, 30));
+    setServerTimeOffset(2 * 60 * 60 * 1000);
+    const range = getUpcomingServiceRange([
+      service("2026-11-02T10:00:00.000Z"),
+    ]);
+
+    expect(range).toEqual({ start: "2026-11-01", end: "2026-11-30" });
+    expect(resolveRangePreset("thisMonth")).toEqual(range);
+    expect(filterFormsByDateRange([], {
+      startDate: range.start,
+      endDate: range.end,
+    })).toEqual([]);
   });
 
   it("lets Forms apply the same December target with inclusive overlap", () => {

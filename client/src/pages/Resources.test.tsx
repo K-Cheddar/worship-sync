@@ -119,6 +119,25 @@ const resource = {
   updatedBy: "user-1",
 } satisfies ChurchResource;
 
+const externalResource = (
+  id: string,
+  name: string,
+  kind: ChurchResource["kind"],
+  url: string,
+  mediaType: string,
+): ChurchResource => ({
+  id,
+  churchId: "church-1",
+  name,
+  kind,
+  sourceType: "external",
+  external: { url, provider: "direct", mediaType },
+  createdAt: "2026-09-21T00:00:00.000Z",
+  createdBy: "user-1",
+  updatedAt: "2026-09-21T00:00:00.000Z",
+  updatedBy: "user-1",
+});
+
 const renderPage = (access: "full" | "music" | "view" | "member" = "full") =>
   render(
     <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access } as never}>
@@ -249,6 +268,9 @@ describe("Resources page", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Preview Team guide" }));
     expect(await screen.findByRole("dialog", { name: "Team guide" })).toBeInTheDocument();
     expect(mockGetExternalResourceResolution).toHaveBeenCalledWith(externalResource.external.url);
+    expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
   });
 
   it("keeps an external resource visible when the server blocks deletion due to plan references", async () => {
@@ -314,6 +336,39 @@ describe("Resources page", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Documents" }));
     expect(screen.queryByText("rehearsal.mp3")).not.toBeInTheDocument();
     expect(screen.getByText("Guidelines.pdf")).toBeInTheDocument();
+  });
+
+  it("filters only documents and audio while keeping other external resources under All", async () => {
+    const externalDocument = externalResource("external-doc", "Volunteer guide", "document", "https://docs.example.test/guide", "document");
+    const externalAudio = externalResource("external-audio", "Rehearsal MP3", "audio", "https://files.example.test/rehearsal.mp3", "audio");
+    const externalImage = externalResource("external-image", "Service image", "other", "https://files.example.test/slide.png", "image");
+    const externalVideo = externalResource("external-video", "Service video", "other", "https://files.example.test/clip.mp4", "video");
+    const externalWeb = externalResource("external-web", "Reference site", "other", "https://example.test/page", "web");
+    mockResources = [resource, externalDocument, externalAudio, externalImage, externalVideo, externalWeb];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText("Service image")).toBeInTheDocument();
+    expect(screen.getByText("Service video")).toBeInTheDocument();
+    expect(screen.getByText("Reference site")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Documents" }));
+    expect(screen.getByText("Guidelines.pdf")).toBeInTheDocument();
+    expect(screen.getByText("Volunteer guide")).toBeInTheDocument();
+    expect(screen.queryByText("Service image")).not.toBeInTheDocument();
+    expect(screen.queryByText("Service video")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reference site")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Audio" }));
+    expect(screen.getByText("Rehearsal MP3")).toBeInTheDocument();
+    expect(screen.getByText("rehearsal.mp3")).toBeInTheDocument();
+    expect(screen.queryByText("Volunteer guide")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("Service image")).toBeInTheDocument();
+    expect(screen.getByText("Service video")).toBeInTheDocument();
+    expect(screen.getByText("Reference site")).toBeInTheDocument();
   });
 
   it("sorts resources by the selected column and toggles direction", async () => {
@@ -406,6 +461,7 @@ describe("Resources page", () => {
 
     await userEvent.setup().click(await screen.findByRole("button", { name: /guidelines\.pdf/i }));
 
+    expect(await screen.findByRole("button", { name: "Download" })).toBeInTheDocument();
     expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute(
       "src",
       "https://abc.r2.cloudflarestorage.com/worshipsync-resources/guide.pdf",

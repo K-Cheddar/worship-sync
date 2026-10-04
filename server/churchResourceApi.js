@@ -381,7 +381,7 @@ export const createChurchResourceHandlers = ({
           churchId,
           name,
           description: normalizeShortText(req.body?.description, MAX_DESCRIPTION_LENGTH),
-          kind: mediaType === "audio" ? "audio" : ["image", "video", "document"].includes(mediaType) ? "document" : "other",
+          kind: ["document", "audio"].includes(mediaType) ? mediaType : "other",
           sourceType: "external",
           external,
           createdAt: now,

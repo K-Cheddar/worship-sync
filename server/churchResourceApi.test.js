@@ -85,6 +85,7 @@ test("external ChurchResources use server metadata, skip quota and R2, and retai
   assert.equal(resource.external.provider, "google-drive");
   assert.equal(resource.external.mimeType, "application/pdf");
   assert.equal(resource.external.providerResourceId, "server-id");
+  assert.equal(resource.kind, "document");
   assert.equal("storage" in resource, false);
   assert.deepEqual(resolverCalls, ["https://docs.google.com/document/d/example/edit"]);
   assert.deepEqual(quotaCalls, []);
@@ -99,6 +100,29 @@ test("external ChurchResources use server metadata, skip quota and R2, and retai
   await handlers.remove(request("church-1", {}, { params: { churchId: "church-1", resourceId: resource.id } }), deletion);
   assert.equal(deletion.statusCode, 409);
   assert.equal(commands.includes("remove"), false);
+});
+
+test("external resource kinds distinguish documents and audio from other media", async () => {
+  const cases = [
+    ["document", "document"],
+    ["audio", "audio"],
+    ["image", "other"],
+    ["video", "other"],
+    ["web", "other"],
+    ["unsupported", "other"],
+  ];
+
+  for (const [mediaType, expectedKind] of cases) {
+    const { handlers } = makeHarness({
+      externalResourceService: {
+        resolveRateLimited: async (url) => ({ originalUrl: url, provider: "direct", mediaType }),
+      },
+    });
+    const response = makeResponse();
+    await handlers.createExternal(request("church-1", { url: `https://example.test/${mediaType}` }), response);
+    assert.equal(response.statusCode, 200, `${mediaType} should be accepted`);
+    assert.equal(response.body.resource.kind, expectedKind, `${mediaType} should be ${expectedKind}`);
+  }
 });
 
 test("unsafe external resource URLs are rejected by the resolver before metadata is stored", async () => {
