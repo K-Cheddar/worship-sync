@@ -163,6 +163,18 @@ export const applyReviewedServicePlanParts = (
         ? assignees.find((person) => person.id === part.managed!.id && JSON.stringify({ name: person.name }) === part.managed!.fingerprint)
         : undefined;
       if (managed) {
+        if (!hasServicePlanAssigneeEquipment(managed)) {
+          const repaired = claimServicePlanAssigneeSlot(
+            assignees,
+            { id: generateRandomId(), name: part.value },
+            { replaceAssigneeId: managed.id, reuseSameName: false },
+          );
+          if (repaired.claimedSlot) {
+            assignees = repaired.assignees;
+            part.managed = { kind: "assignee", id: repaired.assignee.id, fingerprint: JSON.stringify({ name: repaired.assignee.name }) };
+            return;
+          }
+        }
         const updated = { ...managed, name: part.value };
         assignees = assignees.map((person) => person.id === managed.id ? updated : person);
         part.managed = { kind: "assignee", id: updated.id, fingerprint: JSON.stringify({ name: updated.name }) };
