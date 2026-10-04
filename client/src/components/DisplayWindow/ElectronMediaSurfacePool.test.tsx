@@ -1458,6 +1458,66 @@ describe("ElectronMediaSurfacePool", () => {
     );
   });
 
+  it("keeps a playing prepared surface and playhead when its cue is removed", async () => {
+    let currentTime = 0;
+    const setCurrentTime = jest.fn((value: number) => {
+      currentTime = value;
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: setCurrentTime,
+    });
+    const playback: NonNullable<ElectronMediaSurfaceView["playback"]> = {
+      mediaKey: candidate.mediaKey,
+      positionSeconds: 2,
+      paused: false,
+      atServerMs: Date.now(),
+      generation: 1,
+      applySeek: false,
+    };
+    const makePlayingView = (cue?: ElectronMediaSurfaceView["playback"]) =>
+      makeView(candidate.mediaKey, candidate.source, true, cue);
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makePlayingView(playback)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    const surface = screen.getByTestId("electron-media-surface-remote:clip");
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+    currentTime = 15;
+    setCurrentTime.mockClear();
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makePlayingView(undefined)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toBe(surface);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+    expect(surface).toHaveAttribute("data-prepared-state", "playing");
+    expect(currentTime).toBe(15);
+    expect(setCurrentTime).not.toHaveBeenCalled();
+  });
+
   it("bounds recovery attempts when seeked never arrives", async () => {
     jest.useFakeTimers();
     let currentTime = 0;
