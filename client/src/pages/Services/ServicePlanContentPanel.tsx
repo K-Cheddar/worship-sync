@@ -51,6 +51,7 @@ import {
   type ServicePlanSongReference,
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
+import { getServicePlanSongReferencesUpdate } from "./servicePlanSongAttachmentUtils";
 import {
   EMPTY_RICH_TEXT,
   isRichTextEmpty,
@@ -240,10 +241,10 @@ const ServicePlanContentPanel = ({
     updateContent({ contentOrder: ordered.map((resource) => resource.id) });
   };
   const updateSongs = (next: ServicePlanSongReference[]) =>
-    updateContent({
-      songRef: undefined,
-      songRefs: next.map((songRef) => songRef.id ? songRef : { ...songRef, id: generateRandomId() }),
-    });
+    updateContent(getServicePlanSongReferencesUpdate(
+      element,
+      next.map((songRef) => songRef.id ? songRef : { ...songRef, id: generateRandomId() }),
+    ));
   const updateScriptures = (next: ServicePlanScriptureReference[]) =>
     updateContent({
       scriptureRef: undefined,

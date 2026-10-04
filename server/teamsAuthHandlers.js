@@ -256,6 +256,7 @@ export const createTeamsAuthHandlers = ({
         statusCode < 500 && error?.message
           ? error.message
           : withTeamsErrorNextStep(fallbackMessage),
+      ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       ...(Array.isArray(error?.occurrenceConflicts)
         ? {
             occurrenceConflicts: error.occurrenceConflicts,
@@ -1843,6 +1844,17 @@ export const createTeamsAuthHandlers = ({
     const servicePlanningImport = normalizeServicePlanningSourceState(
       raw?.servicePlanningImport,
     );
+    const sourceOccurrenceId = normalizeShortText(raw?.sourceOccurrenceId, {
+      max: 160,
+    });
+    const sourceSongReferenceDismissedFingerprint = normalizeShortText(
+      raw?.sourceSongReferenceDismissedFingerprint,
+      { max: 80 },
+    );
+    const sourceSongReferenceDismissedOccurrenceId = normalizeShortText(
+      raw?.sourceSongReferenceDismissedOccurrenceId,
+      { max: 160 },
+    );
     return {
       id:
         normalizeShortText(raw?.id, { max: 160 }) ||
@@ -1850,6 +1862,7 @@ export const createTeamsAuthHandlers = ({
       ...(raw?.sourcePlanningManaged === true
         ? { sourcePlanningManaged: true }
         : {}),
+      ...(sourceOccurrenceId ? { sourceOccurrenceId } : {}),
       type: SERVICE_PLAN_ELEMENT_TYPES.has(raw?.type) ? raw.type : "free",
       title: normalizeRichTextDocument(raw?.title),
       ...(isRichTextDocEmpty(notes) ? {} : { notes }),
@@ -1916,6 +1929,12 @@ export const createTeamsAuthHandlers = ({
       ...(servicePlanningImport ? { servicePlanningImport } : {}),
       ...(raw?.sourceSongReferenceDismissed === true
         ? { sourceSongReferenceDismissed: true }
+        : {}),
+      ...(sourceSongReferenceDismissedFingerprint
+        ? { sourceSongReferenceDismissedFingerprint }
+        : {}),
+      ...(sourceSongReferenceDismissedOccurrenceId
+        ? { sourceSongReferenceDismissedOccurrenceId }
         : {}),
       pushedOutlineListId:
         normalizeShortText(raw?.pushedOutlineListId, { max: 160 }) || undefined,

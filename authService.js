@@ -314,9 +314,10 @@ const normalizeDesktopAuthProvider = (value) => {
   return DESKTOP_AUTH_PROVIDER_VALUES.has(normalized) ? normalized : "";
 };
 
-const httpError = (statusCode, message) => {
+const httpError = (statusCode, message, code) => {
   const error = new Error(message);
   error.statusCode = statusCode;
+  if (code) error.code = code;
   return error;
 };
 
@@ -1219,7 +1220,11 @@ const assertCsrf = async (req) => {
         sessionKind: SESSION_KIND_HUMAN,
         source: "cookie",
       });
-      throw httpError(403, "Could not verify this request.");
+      throw httpError(
+        403,
+        "Could not verify this request.",
+        "AUTH_CSRF_MISMATCH",
+      );
     }
     return;
   }
@@ -1232,7 +1237,11 @@ const assertCsrf = async (req) => {
         sessionKind: SESSION_KIND_HUMAN,
         source: "bearer",
       });
-      throw httpError(403, "Could not verify this request.");
+      throw httpError(
+        403,
+        "Could not verify this request.",
+        "AUTH_CSRF_MISMATCH",
+      );
     }
     return;
   }
@@ -1244,7 +1253,11 @@ const assertCsrf = async (req) => {
       sessionKind: req.session.auth.sessionKind || "unknown",
       source: "session",
     });
-    throw httpError(403, "Could not verify this request.");
+    throw httpError(
+      403,
+      "Could not verify this request.",
+      "AUTH_CSRF_MISMATCH",
+    );
   }
   if (req.session.auth.sessionKind === SESSION_KIND_WORKSTATION) {
     logAuthEvent("log", "auth.csrf.workstation_session.accepted", {
@@ -7879,6 +7892,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -7923,6 +7937,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -7981,6 +7996,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8013,6 +8029,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8052,6 +8069,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8078,6 +8096,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8113,6 +8132,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8156,6 +8176,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8335,6 +8356,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
         ...(error.existingInvite
           ? { existingInvite: error.existingInvite }
           : {}),
@@ -8614,6 +8636,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8667,6 +8690,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8717,6 +8741,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8765,6 +8790,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8836,6 +8862,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8881,6 +8908,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -8964,6 +8992,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9071,6 +9100,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
         ...(error.existingInvite
           ? { existingInvite: error.existingInvite }
           : {}),
@@ -9410,6 +9440,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9479,6 +9510,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9501,6 +9533,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9537,6 +9570,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9583,6 +9617,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9628,6 +9663,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9666,6 +9702,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9726,6 +9763,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9765,6 +9803,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9787,6 +9826,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9826,6 +9866,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },
@@ -9862,6 +9903,7 @@ export const authHandlers = {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message,
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   },

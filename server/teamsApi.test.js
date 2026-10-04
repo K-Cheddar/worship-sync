@@ -360,6 +360,26 @@ test("getTeamsBootstrap requires an authenticated Teams session", async () => {
   assert.equal(res.payload?.success, false);
 });
 
+test("team mutation responses preserve the stable CSRF mismatch code", async () => {
+  const res = createRes();
+  await authHandlers.createTeam(
+    createReq({
+      params: { churchId: "church_test" },
+      session: {
+        ...createSession(),
+        auth: { sessionKind: "workstation" },
+        csrfToken: "expected-csrf",
+      },
+      body: { name: "Blocked Team", memberIds: [] },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.payload?.errorMessage, "Could not verify this request.");
+  assert.equal(res.payload?.code, "AUTH_CSRF_MISMATCH");
+});
+
 test("teams bootstrap allows view permission but mutations require edit", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("permissions");
@@ -7004,6 +7024,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
             {
               id: "el-1",
               sourcePlanningManaged: true,
+              sourceOccurrenceId: "source-occurrence-1",
+              sourceSongReferenceDismissed: true,
+              sourceSongReferenceDismissedFingerprint: "v1-fingerprint-a-b",
+              sourceSongReferenceDismissedOccurrenceId: "source-occurrence-1",
               type: "song",
               title: richText("Great Are You Lord"),
               sourceElementTypeRaw: "Special Music",
@@ -7155,6 +7179,18 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(
     created.payload.servicePlan.sections[0].elements[0].sourcePlanningManaged,
     true,
+  );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceOccurrenceId,
+    "source-occurrence-1",
+  );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceSongReferenceDismissedFingerprint,
+    "v1-fingerprint-a-b",
+  );
+  assert.equal(
+    created.payload.servicePlan.sections[0].elements[0].sourceSongReferenceDismissedOccurrenceId,
+    "source-occurrence-1",
   );
 
   await flushAsyncWork();

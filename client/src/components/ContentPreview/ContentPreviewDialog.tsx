@@ -277,7 +277,9 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
     !resolving && Boolean(resolution && !resolution.canPreview)
   ) || (!resolving && renderStatus === "error");
   const fallbackMessage = resolveError || (
-    kind === "web"
+    resolution && !resolution.canPreview && resolution.reason
+      ? resolution.reason
+      : kind === "web"
       ? "This site doesn’t allow an embedded preview."
       : kind === "document"
         ? "This document can’t be previewed here."

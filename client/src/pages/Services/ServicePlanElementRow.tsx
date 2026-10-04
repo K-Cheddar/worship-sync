@@ -133,6 +133,7 @@ import {
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { servicePlanImportAmbiguityNeedsReview } from "./servicePlanningTitleClassifier";
+import { getServicePlanSongReferencesUpdate } from "./servicePlanSongAttachmentUtils";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
 
@@ -1681,22 +1682,16 @@ const ServicePlanElementRow = ({
     songIndex: number,
     nextSongRef: ServicePlanSongReference,
   ) => {
-    onUpdate({
-      songRef: undefined,
-      songRefs: songRefs.map((current, index) =>
-        index === songIndex ? nextSongRef : current,
-      ),
-    });
+    onUpdate(getServicePlanSongReferencesUpdate(element, songRefs.map((current, index) =>
+      index === songIndex ? nextSongRef : current,
+    )));
   };
 
   const removeSongAt = (songIndex: number) => {
-    onUpdate({
-      songRef: undefined,
-      songRefs: songRefs.filter((_, currentIndex) => currentIndex !== songIndex),
-      ...(element.sourceElementTypeRaw && songRefs.length === 1
-        ? { sourceSongReferenceDismissed: true }
-        : {}),
-    });
+    onUpdate(getServicePlanSongReferencesUpdate(
+      element,
+      songRefs.filter((_, currentIndex) => currentIndex !== songIndex),
+    ));
   };
 
   const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
@@ -2946,10 +2941,7 @@ const ServicePlanElementRow = ({
               replaceSongAt(songPickerTargetIndex, songRef);
               return;
             }
-            onUpdate({
-              songRef: undefined,
-              songRefs: [...songRefs, songRef],
-            });
+            onUpdate(getServicePlanSongReferencesUpdate(element, [...songRefs, songRef]));
           }}
         />
       ) : null}

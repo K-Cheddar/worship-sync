@@ -1,5 +1,6 @@
 import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText";
 import {
+  getServicePlanElementType,
   getServicePlanElementAssignees,
   getServicePlanElementSongRefs,
   isUnassignedServicePlanAssignee,
@@ -18,6 +19,7 @@ import { claimServicePlanAssigneeSlot, copyServicePlanAssigneeEquipment, hasServ
 import {
   servicePlanImportAmbiguityShouldQueue,
 } from "./servicePlanningTitleClassifier";
+import { getServicePlanSongReferenceFingerprint } from "./servicePlanSongAttachmentUtils";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -136,6 +138,27 @@ const sameSongContent = (
       normalized(left.key || "") === normalized(right.key || "");
   }
   return false;
+};
+
+const dismissedSourceSongStillMatches = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+): boolean => {
+  if (!current.sourceSongReferenceDismissed) return false;
+  const dismissedOccurrenceId = current.sourceSongReferenceDismissedOccurrenceId || current.sourceOccurrenceId;
+  if (dismissedOccurrenceId && dismissedOccurrenceId !== imported.sourceOccurrenceId) return false;
+  const importedRefs = getServicePlanElementSongRefs(imported);
+  if (current.sourceSongReferenceDismissedFingerprint) {
+    return importedRefs.some((songRef) =>
+      getServicePlanSongReferenceFingerprint(songRef) === current.sourceSongReferenceDismissedFingerprint,
+    );
+  }
+  // Older dismissals did not retain a song fingerprint. Keep them only while
+  // both the durable row identity (when present) and raw source title match.
+  return sameSourceValue(
+    current.sourceContentTitleRaw || richTextToPlainText(current.title),
+    imported.sourceContentTitleRaw || richTextToPlainText(imported.title),
+  ) && normalized(current.sourceElementTypeRaw || "") === normalized(imported.sourceElementTypeRaw || "");
 };
 
 /** Reuse occurrence IDs through increasingly weaker, deterministic evidence. */
@@ -910,6 +933,16 @@ const mergeElement = (
       next.songRefs = mergedSongRefs;
       delete next.songRef;
     }
+    if (current.sourceSongReferenceDismissed) {
+      if (dismissedSourceSongStillMatches(current, imported)) {
+        next.songRefs = [];
+        delete next.songRef;
+      } else {
+        delete next.sourceSongReferenceDismissed;
+        delete next.sourceSongReferenceDismissedFingerprint;
+        delete next.sourceSongReferenceDismissedOccurrenceId;
+      }
+    }
     if (reconciledSongs.songMappings?.length) {
       const ambiguity = next.importAmbiguity || imported.importAmbiguity || {
         source: "servicePlanning" as const,
@@ -1163,7 +1196,9 @@ const mergeElement = (
       status: "unresolved",
     };
   }
-  return upgradeLegacyImportedDescriptionTitles(next, imported);
+  const upgraded = upgradeLegacyImportedDescriptionTitles(next, imported);
+  upgraded.type = getServicePlanElementType(upgraded);
+  return upgraded;
 };
 
 /**

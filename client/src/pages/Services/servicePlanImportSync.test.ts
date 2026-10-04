@@ -17,6 +17,7 @@ import {
 import { buildServicePlanSectionsFromImport } from "./servicePlanFromImport";
 import { applyReviewedServicePlanParts, reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, servicePlanResourceFingerprint } from "./servicePlanImportOwnership";
 import { createServicePlanLinkResource, createServicePlanTextResource } from "./servicePlanResources";
+import { getServicePlanSongReferenceFingerprint } from "./servicePlanSongAttachmentUtils";
 import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
 
 const element = (
@@ -1796,6 +1797,97 @@ describe("refreshServicePlanFromImport", () => {
 
     expect(refreshed[0].elements[0].songRef).toBeUndefined();
     expect(refreshed[0].elements[0].type).toBe("free");
+  });
+
+  it("preserves a source-song dismissal when the source occurrence and song are unchanged", () => {
+    const current = [section("section-1", "Praise", [element("element-1", "Unmatched Song", {
+      type: "free",
+      sourcePlanningManaged: true,
+      sourceOccurrenceId: "source-song-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Unmatched Song",
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedFingerprint: getServicePlanSongReferenceFingerprint({
+        kind: "pending", title: "Unmatched Song", lyricsText: "",
+      }),
+      sourceSongReferenceDismissedOccurrenceId: "source-song-1",
+      songRefs: [],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Unmatched Song", {
+      type: "song",
+      sourceOccurrenceId: "source-song-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Unmatched Song",
+      songRef: { kind: "pending", title: "Unmatched Song", lyricsText: "" },
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0]).toMatchObject({
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedFingerprint: getServicePlanSongReferenceFingerprint({
+        kind: "pending", title: "Unmatched Song", lyricsText: "",
+      }),
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Unmatched Song",
+      songRefs: [],
+      type: "free",
+    });
+    expect(refreshed.elements[0].songRef).toBeUndefined();
+  });
+
+  it("surfaces a changed source song after a prior dismissal", () => {
+    const current = [section("section-1", "Praise", [element("element-1", "Old Song", {
+      type: "free",
+      sourcePlanningManaged: true,
+      sourceOccurrenceId: "source-song-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Old Song",
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedFingerprint: getServicePlanSongReferenceFingerprint({
+        kind: "pending", title: "Old Song", lyricsText: "",
+      }),
+      sourceSongReferenceDismissedOccurrenceId: "source-song-1",
+      songRefs: [],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "New Song", {
+      type: "song",
+      sourceOccurrenceId: "source-song-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "New Song",
+      songRef: { kind: "pending", title: "New Song", lyricsText: "" },
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].sourceSongReferenceDismissed).toBeUndefined();
+    expect(refreshed.elements[0].songRefs).toEqual([{ kind: "pending", title: "New Song", lyricsText: "" }]);
+    expect(refreshed.elements[0].type).toBe("song");
+  });
+
+  it("surfaces a new source occurrence even when its song meaning matches a dismissed occurrence", () => {
+    const current = [section("section-1", "Praise", [element("element-1", "Same Song", {
+      type: "free",
+      sourcePlanningManaged: true,
+      sourceOccurrenceId: "source-song-old",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Same Song",
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedFingerprint: getServicePlanSongReferenceFingerprint({
+        kind: "pending", title: "Same Song", lyricsText: "",
+      }),
+      sourceSongReferenceDismissedOccurrenceId: "source-song-old",
+      songRefs: [],
+    })])];
+    const imported = [section("source", "Praise", [element("incoming", "Same Song", {
+      type: "song",
+      sourceOccurrenceId: "source-song-new",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Same Song",
+      songRef: { kind: "pending", title: "Same Song", lyricsText: "" },
+    })])];
+
+    const [refreshed] = refreshServicePlanFromImport(current, imported, DEFAULT_SERVICE_PLANNING_REFRESH_OPTIONS);
+    expect(refreshed.elements[0].sourceSongReferenceDismissed).toBeUndefined();
+    expect(refreshed.elements[0].songRefs).toEqual([{ kind: "pending", title: "Same Song", lyricsText: "" }]);
   });
 
   it("does not let a source row consume a local item with the same title", () => {

@@ -83,6 +83,103 @@ test("detects provider media types from metadata for images, audio, and document
   });
 });
 
+test("uses conclusive SharePoint HEAD metadata without a GET probe", async () => {
+  const originalUrl = "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token";
+  const client = createMockClient((config) => response(200, {
+    "content-type": "application/pdf",
+    "content-disposition": 'attachment; filename="guide.pdf"',
+  }));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+
+  const descriptor = await service.resolve(originalUrl);
+  assert.equal(client.calls.length, 1);
+  assert.equal(client.calls[0].method, "HEAD");
+  assert.equal(new URL(client.calls[0].url).searchParams.get("e"), "share-token");
+  assert.equal(new URL(client.calls[0].url).searchParams.get("download"), "1");
+  assert.equal(descriptor.provider, "sharepoint");
+  assert.equal(descriptor.originalUrl, originalUrl);
+  assert.equal(descriptor.mediaType, "document");
+  assert.equal(descriptor.previewType, "document");
+  assert.equal(descriptor.canPreview, true);
+  assert.equal(descriptor.requiresProxy, true);
+  assert.equal(descriptor.filename, "guide.pdf");
+  assert.match(descriptor.previewUrl, /^\/api\/resources\/proxy\?token=/);
+});
+
+test("retries inconclusive SharePoint HTML HEAD with a ranged GET and follows public file redirects", async () => {
+  const originalUrl = "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token";
+  const finalUrl = "https://church.sharepoint.com/sites/public/guide.pdf?download-token=abc";
+  const client = createMockClient((config) => {
+    if (config.method === "HEAD") return response(200, { "content-type": "text/html" });
+    if (config.url === new URL(originalUrl).toString().replace("?e=share-token", "?e=share-token&download=1")) {
+      return response(302, { location: finalUrl });
+    }
+    return response(206, {
+      "content-type": "application/pdf",
+      "content-disposition": 'attachment; filename="guide.pdf"',
+      "content-range": "bytes 0-0/200",
+    }, Readable.from([Buffer.from("%")]));
+  });
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+
+  const descriptor = await service.resolve(originalUrl);
+  assert.deepEqual(client.calls.map(({ method }) => method), ["HEAD", "GET", "GET"]);
+  assert.equal(client.calls[1].headers.Range, "bytes=0-0");
+  assert.equal(client.calls[1].headers.Cookie, undefined);
+  assert.equal(client.calls[1].headers.Authorization, undefined);
+  assert.equal(descriptor.originalUrl, originalUrl);
+  assert.equal(descriptor.provider, "sharepoint");
+  assert.equal(descriptor.mediaType, "document");
+  assert.equal(descriptor.previewType, "document");
+  assert.equal(descriptor.canPreview, true);
+  assert.equal(descriptor.requiresProxy, true);
+  const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+  assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
+});
+
+test("returns a sign-in reason when a SharePoint share redirects to Microsoft authentication", async () => {
+  const client = createMockClient((config) => {
+    if (config.method === "HEAD") return response(200, { "content-type": "text/html" });
+    if (config.url.includes("church.sharepoint.com")) {
+      return response(302, { location: "https://login.microsoftonline.com/common/oauth2/authorize" });
+    }
+    return response(200, { "content-type": "text/html" }, Readable.from([Buffer.from("login") ]));
+  });
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve("https://church.sharepoint.com/:b:/s/team/Eprivate?e=private-token");
+
+  assert.equal(descriptor.provider, "sharepoint");
+  assert.equal(descriptor.canPreview, false);
+  assert.equal(descriptor.previewType, "unsupported");
+  assert.equal(descriptor.previewUrl, null);
+  assert.equal(descriptor.reason, "This SharePoint link requires sign-in.");
+});
+
+test("returns useful reasons for SharePoint access denied, expired links, and unresolved HTML", async () => {
+  const accessDeniedClient = createMockClient(() => response(403, { "content-type": "text/html" }));
+  const accessDeniedService = createExternalResourceService({ httpClient: accessDeniedClient, lookup: publicLookup, tokenSecret: "secret" });
+  const accessDenied = await accessDeniedService.resolve("https://church.sharepoint.com/:b:/s/team/Edenied?e=token");
+  assert.equal(accessDenied.canPreview, false);
+  assert.equal(accessDenied.reason, "You don’t have access to this SharePoint file.");
+
+  const expiredClient = createMockClient((config) => response(
+    200,
+    { "content-type": "text/html" },
+    config.method === "GET" ? Readable.from([Buffer.from("This sharing link has expired")]) : null,
+  ));
+  const expiredService = createExternalResourceService({ httpClient: expiredClient, lookup: publicLookup, tokenSecret: "secret" });
+  const expired = await expiredService.resolve("https://church.sharepoint.com/:b:/s/team/Eexpired?e=token");
+  assert.equal(expired.canPreview, false);
+  assert.equal(expired.reason, "This SharePoint sharing link may be expired or invalid.");
+
+  const htmlClient = createMockClient(() => response(200, { "content-type": "text/html" }));
+  const htmlService = createExternalResourceService({ httpClient: htmlClient, lookup: publicLookup, tokenSecret: "secret" });
+  const html = await htmlService.resolve("https://church.sharepoint.com/:f:/s/team/Efolder?e=token");
+  assert.equal(html.canPreview, false);
+  assert.equal(html.previewType, "unsupported");
+  assert.equal(html.reason, "The SharePoint link did not resolve to a downloadable file.");
+});
+
 test("returns an external-only descriptor for private or inaccessible provider links", async () => {
   const client = createMockClient(() => response(403, { "content-type": "text/html" }));
   const service = createExternalResourceService({

@@ -1,0 +1,7 @@
+{
+  "id": "sharepoint-public-resource-previews-2026-10-04",
+  "date": "2026-10-04",
+  "type": "fixed",
+  "title": "Public SharePoint previews",
+  "description": "Anonymous SharePoint links that point to public files can now preview in WorshipSync. Private links still open in your browser."
+}

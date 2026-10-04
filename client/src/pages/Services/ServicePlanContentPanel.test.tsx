@@ -563,6 +563,39 @@ describe("ServicePlanContentPanel resources", () => {
     expect(onUpdate).toHaveBeenCalledWith({ scriptureRef: undefined, scriptureRefs: [] });
   });
 
+  it("dismisses the final imported pending song and stays empty after rerender", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const importedElement = element({
+      type: "song",
+      sourceOccurrenceId: "source-occurrence-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Unmatched Song",
+      songRef: { kind: "pending", title: "Unmatched Song", lyricsText: "" },
+    });
+    const { rerender } = render(
+      <ServicePlanContentPanel element={importedElement} allowEdit onUpdate={onUpdate} />,
+    );
+
+    expect(screen.getByText("Not in library")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove song Unmatched Song" }));
+
+    const update = onUpdate.mock.calls[0][0];
+    expect(update).toMatchObject({
+      songRef: undefined,
+      songRefs: [],
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedOccurrenceId: "source-occurrence-1",
+    });
+    expect(update.sourceSongReferenceDismissedFingerprint).toBeTruthy();
+    rerender(
+      <ServicePlanContentPanel element={{ ...importedElement, ...update }} allowEdit onUpdate={onUpdate} />,
+    );
+
+    expect(screen.queryByText("Not in library")).not.toBeInTheDocument();
+    expect(screen.getByText("No song attached.")).toBeInTheDocument();
+  });
+
   it("attaches multiple custom documents by ordered id references and removes one", async () => {
     mockAllFreeFormDocs = [
       { _id: "doc-1", name: "Welcome Slides", type: "free", slides: [{ text: "not copied" }] },

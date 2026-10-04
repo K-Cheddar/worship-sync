@@ -114,6 +114,7 @@ import {
   createChatImageUploadGuard,
 } from "./server/chatImageUploadGuard.js";
 import { resolveMinimumSupportedWebVersion } from "./server/webUpdatePolicy.js";
+import { readReleaseNotes } from "./server/releaseNotes.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -3715,6 +3716,16 @@ app.get("/api/changelog", async (req, res) => {
   } catch (error) {
     console.error("Error reading changelog:", error);
     res.status(500).json({ error: "Failed to load changelog" });
+  }
+});
+
+app.get("/api/release-notes", async (req, res) => {
+  try {
+    const notes = await readReleaseNotes(path.join(dirname, "release-notes"));
+    res.json({ notes });
+  } catch (error) {
+    console.error("Error reading release notes:", error);
+    res.status(500).json({ error: "Failed to load release notes" });
   }
 });
 

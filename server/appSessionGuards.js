@@ -65,6 +65,7 @@ export const createAppSessionGuards = ({
     } catch (error) {
       return res.status(error?.statusCode || 403).json({
         error: error?.message || "Could not verify this request.",
+        ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       });
     }
   };
