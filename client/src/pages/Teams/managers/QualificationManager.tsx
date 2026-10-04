@@ -3,6 +3,7 @@ import { Check, Plus, Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
+import EntityIconPicker from "../EntityIconPicker";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -80,6 +81,7 @@ const QualificationManager = ({
     teamId: "",
     name: "",
     description: "",
+    icon: "",
   });
   const [levelDrafts, setLevelDrafts] = useState<
     Record<string, TeamQualificationLevelPayload>
@@ -164,7 +166,7 @@ const QualificationManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ teamId: teamId, name: "", description: "" });
+    setDraft({ teamId: teamId, name: "", description: "", icon: "" });
     setLevelDrafts({});
     setNewLevelName("");
     setNewLevelRank("1");
@@ -188,6 +190,7 @@ const QualificationManager = ({
       teamId: area.teamId,
       name: area.name,
       description: area.description || "",
+      icon: area.icon || "",
     });
     resetLevelDrafts(area);
   };
@@ -236,6 +239,7 @@ const QualificationManager = ({
       teamId: areaTeamId,
       name: draft.name.trim(),
       description: draft.description || "",
+      icon: draft.icon || "",
     };
     const optimisticArea: TeamQualificationArea = {
       churchId,
@@ -243,6 +247,7 @@ const QualificationManager = ({
       teamId: areaTeamId,
       name: payload.name,
       description: payload.description,
+      icon: payload.icon,
       archivedAt: wasEditing?.archivedAt || null,
     };
     onAreaSaved(wasEditing ? { ...wasEditing, ...optimisticArea } : optimisticArea);
@@ -286,9 +291,10 @@ const QualificationManager = ({
       teamId: editing.teamId,
       name: editing.name,
       description: editing.description || "",
+      icon: editing.icon || "",
     })
     : JSON.stringify(draft) !==
-    JSON.stringify({ teamId, name: "", description: "" });
+    JSON.stringify({ teamId, name: "", description: "", icon: "" });
   const savedLevelDrafts = editing
     ? Object.fromEntries(
       levels
@@ -439,6 +445,7 @@ const QualificationManager = ({
                     <EntityRow
                       key={area.areaId}
                       title={area.name}
+                      icon={area.icon || "Award"}
                       subtitle={
                         area.description ||
                         `${levelCount} level${levelCount === 1 ? "" : "s"}`
@@ -518,6 +525,7 @@ const QualificationManager = ({
           value={draft.name}
           onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
         />
+        <EntityIconPicker context="team" value={draft.icon || ""} fallbackIcon="Award" onChange={(icon) => setDraft((current) => ({ ...current, icon }))} />
         <TextArea
           label="Description"
           value={draft.description || ""}

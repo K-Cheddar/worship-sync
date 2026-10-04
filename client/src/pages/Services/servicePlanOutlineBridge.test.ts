@@ -1,4 +1,7 @@
-import { buildServicePlanOutlineItems } from "./servicePlanOutlineBridge";
+import {
+  buildServicePlanOutlineItems,
+  planServicePlanOutlineItems,
+} from "./servicePlanOutlineBridge";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import { plainTextToRichText } from "../../types/richText";
 import type { ServicePlan } from "../../types/servicePlan";
@@ -49,6 +52,13 @@ const librarySongs: ServiceItem[] = [
   { _id: "song-2", name: "Build My Life", type: "song", listId: "library-song-2" },
 ];
 
+const worshipHeading: ServiceItem = {
+  _id: "heading-worship",
+  name: "Worship",
+  type: "heading",
+  listId: "heading-worship-list",
+};
+
 describe("buildServicePlanOutlineItems", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -63,7 +73,7 @@ describe("buildServicePlanOutlineItems", () => {
   it("inserts the library-matched song without creating a section heading", async () => {
     const result = await buildServicePlanOutlineItems({
       plan: basePlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -98,7 +108,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const first = await buildServicePlanOutlineItems({
       plan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: [librarySong],
     });
@@ -111,7 +121,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const second = await buildServicePlanOutlineItems({
       plan,
-      currentList: first.items,
+      currentList: [worshipHeading, ...first.items],
       db: undefined,
       songs: [librarySong],
     });
@@ -132,7 +142,7 @@ describe("buildServicePlanOutlineItems", () => {
     };
     const result = await buildServicePlanOutlineItems({
       plan: basePlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: [librarySong],
     });
@@ -162,7 +172,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const result = await buildServicePlanOutlineItems({
       plan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -196,7 +206,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const first = await buildServicePlanOutlineItems({
       plan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
       customDocuments,
@@ -218,7 +228,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const second = await buildServicePlanOutlineItems({
       plan,
-      currentList: first.items,
+      currentList: [worshipHeading, ...first.items],
       db: undefined,
       songs: librarySongs,
       customDocuments,
@@ -231,7 +241,7 @@ describe("buildServicePlanOutlineItems", () => {
   it("stops before creating live items when the selected outline has changed", async () => {
     await expect(buildServicePlanOutlineItems({
       plan: basePlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
       isContextCurrent: () => false,
@@ -268,7 +278,7 @@ describe("buildServicePlanOutlineItems", () => {
     ];
     const first = await buildServicePlanOutlineItems({
       plan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
       customDocuments,
@@ -283,7 +293,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const second = await buildServicePlanOutlineItems({
       plan,
-      currentList: first.items,
+      currentList: [worshipHeading, ...first.items],
       db: undefined,
       songs: librarySongs,
       customDocuments,
@@ -312,7 +322,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const result = await buildServicePlanOutlineItems({
       plan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
       customDocuments: [],
@@ -325,7 +335,7 @@ describe("buildServicePlanOutlineItems", () => {
   it("skips a pending (not-yet-created) song and reports its title", async () => {
     const result = await buildServicePlanOutlineItems({
       plan: basePlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -341,7 +351,7 @@ describe("buildServicePlanOutlineItems", () => {
           elements: [basePlan.sections[0].elements[1]],
         }],
       },
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: [
         {
@@ -373,7 +383,7 @@ describe("buildServicePlanOutlineItems", () => {
     };
     const result = await buildServicePlanOutlineItems({
       plan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -383,7 +393,7 @@ describe("buildServicePlanOutlineItems", () => {
   it("does not stamp Service Plan sections or elements as outline headings", async () => {
     const result = await buildServicePlanOutlineItems({
       plan: basePlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -393,7 +403,7 @@ describe("buildServicePlanOutlineItems", () => {
   it("counts only content elements, not headings, in insertedCount", async () => {
     const result = await buildServicePlanOutlineItems({
       plan: basePlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -452,7 +462,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const result = await buildServicePlanOutlineItems({
       plan: mixedPlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -488,7 +498,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const first = await buildServicePlanOutlineItems({
       plan: twoSongPlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
@@ -497,7 +507,7 @@ describe("buildServicePlanOutlineItems", () => {
 
     const second = await buildServicePlanOutlineItems({
       plan: twoSongPlan,
-      currentList: listAfterDelete,
+      currentList: [worshipHeading, ...listAfterDelete],
       db: undefined,
       songs: librarySongs,
     });
@@ -514,13 +524,13 @@ describe("buildServicePlanOutlineItems", () => {
 
     const first = await buildServicePlanOutlineItems({
       plan: songPlan,
-      currentList: [],
+      currentList: [worshipHeading],
       db: undefined,
       songs: librarySongs,
     });
     const second = await buildServicePlanOutlineItems({
       plan: songPlan,
-      currentList: first.items,
+      currentList: [worshipHeading, ...first.items],
       db: undefined,
       songs: librarySongs,
     });
@@ -529,7 +539,7 @@ describe("buildServicePlanOutlineItems", () => {
     expect(second.insertedCount).toBe(0);
   });
 
-  it("ignores section names when inserting actionable content", async () => {
+  it("does not create Service Plan sections as outline headings", async () => {
     const noNewWorkPlan: ServicePlan = {
       ...basePlan,
       sections: [
@@ -555,5 +565,124 @@ describe("buildServicePlanOutlineItems", () => {
     });
 
     expect(result.items.every((item) => item.type !== "heading")).toBe(true);
+  });
+
+  it("maps native sections through configured rules to existing headings", () => {
+    const plan = {
+      ...basePlan,
+      sections: [{ ...basePlan.sections[0], name: "Worship" }],
+    };
+    const mappedHeading: ServiceItem = {
+      ...worshipHeading,
+      _id: "heading-praise",
+      name: "Praise & Worship",
+      listId: "heading-praise-id",
+    };
+    const result = planServicePlanOutlineItems({
+      plan,
+      currentList: [mappedHeading],
+      songs: librarySongs,
+      sectionRules: [{
+        id: "rule-worship",
+        matchSectionName: "Worship",
+        matchMode: "exact",
+        headingName: "Praise & Worship",
+      }],
+    });
+
+    expect(result.steps.map((step) => step.targetHeading)).toEqual([
+      { listId: "heading-praise-id", name: "Praise & Worship" },
+    ]);
+    expect(result.steps.every((step) => step.planned.listId === "el-song::attachment:legacy-song-0-library")).toBe(true);
+  });
+
+  it("uses normalized direct heading identity only when no rule matches", () => {
+    const plan = { ...basePlan, sections: [{ ...basePlan.sections[0], name: "  wOrShIP  " }] };
+    const result = planServicePlanOutlineItems({
+      plan,
+      currentList: [worshipHeading],
+      songs: librarySongs,
+    });
+    expect(result.steps[0].targetHeading.listId).toBe(worshipHeading.listId);
+    expect(result.placementIssues).toEqual([]);
+  });
+
+  it("does not fall back to a section name when a mapped heading is missing", () => {
+    const result = planServicePlanOutlineItems({
+      plan: basePlan,
+      currentList: [worshipHeading],
+      songs: librarySongs,
+      sectionRules: [{
+        id: "rule-worship",
+        matchSectionName: "Worship",
+        matchMode: "exact",
+        headingName: "Praise & Worship",
+      }],
+    });
+    expect(result.steps).toEqual([]);
+    expect(result.placementIssues).toEqual([{
+      sectionName: "Worship",
+      headingName: "Praise & Worship",
+      reason: "mapped-heading-missing",
+    }]);
+  });
+
+  it("reports an unmapped section without appending its items", () => {
+    const similarlyNamedHeading: ServiceItem = {
+      _id: "heading-announcements",
+      name: "Announcements & Notices",
+      type: "heading",
+      listId: "heading-announcements-id",
+    };
+    const result = planServicePlanOutlineItems({
+      plan: { ...basePlan, sections: [{ ...basePlan.sections[0], name: "Announcements" }] },
+      currentList: [similarlyNamedHeading],
+      songs: librarySongs,
+    });
+    expect(result.steps).toEqual([]);
+    expect(result.placementIssues).toEqual([{
+      sectionName: "Announcements",
+      reason: "no-matching-heading",
+    }]);
+  });
+
+  it("keeps plan order when sections resolve to different or shared heading occurrences", () => {
+    const secondSection = {
+      id: "section-message",
+      name: "Message",
+      elements: [{ ...basePlan.sections[0].elements[0], id: "el-message" }],
+    };
+    const secondSong = { ...librarySongs[0], _id: "song-1", name: "Great Are You Lord" };
+    const messageHeading: ServiceItem = {
+      _id: "heading-message",
+      name: "Message",
+      type: "heading",
+      listId: "heading-message-id",
+    };
+    const plan = { ...basePlan, sections: [basePlan.sections[0], secondSection] };
+    const result = planServicePlanOutlineItems({
+      plan,
+      currentList: [worshipHeading, messageHeading],
+      songs: [secondSong],
+    });
+    expect(result.steps.map((step) => step.targetHeading.listId)).toEqual([
+      worshipHeading.listId,
+      messageHeading.listId,
+    ]);
+
+    const sharedHeadingRules = [
+      { id: "rule-worship", matchSectionName: "Worship", matchMode: "exact" as const, headingName: "Worship" },
+      { id: "rule-message", matchSectionName: "Message", matchMode: "exact" as const, headingName: "Worship" },
+    ];
+    const sharedResult = planServicePlanOutlineItems({
+      plan,
+      currentList: [worshipHeading],
+      songs: [secondSong],
+      sectionRules: sharedHeadingRules,
+    });
+    expect(sharedResult.steps.map((step) => step.targetHeading.listId)).toEqual([
+      worshipHeading.listId,
+      worshipHeading.listId,
+    ]);
   });
 });

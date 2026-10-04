@@ -1657,6 +1657,14 @@ app.post(
   authHandlers.updateTeamScheduleAssignment,
 );
 app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/guests/update",
+  authHandlers.updateTeamScheduleGuest,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/guests/remove",
+  authHandlers.removeTeamScheduleGuest,
+);
+app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/assignments/batch",
   authHandlers.updateTeamScheduleAssignmentsBatch,
 );

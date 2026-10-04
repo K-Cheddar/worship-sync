@@ -10,6 +10,7 @@ import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import type {
   TeamIntakeForm,
   TeamIntakeRecipient,
+  TeamIntakeSubmission,
   TeamRosterMember,
   TeamService,
 } from "../../../api/authTypes";
@@ -81,10 +82,14 @@ const renderManager = ({
   eligibilityStatus = "consent_needed",
   forms = [form],
   services = [],
+  submissions = [],
+  intakeRecipients = [recipient],
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
   services?: TeamService[];
+  submissions?: TeamIntakeSubmission[];
+  intakeRecipients?: TeamIntakeRecipient[];
 } = {}) => {
   const onSmsDeliveryAttemptSaved = jest.fn();
   render(
@@ -98,8 +103,8 @@ const renderManager = ({
           <TeamsNavigationGuardProvider>
             <IntakeManager
               forms={forms}
-              submissions={[]}
-              intakeRecipients={[recipient]}
+              submissions={submissions}
+              intakeRecipients={intakeRecipients}
               services={services}
               members={[member]}
               positions={[]}
@@ -240,6 +245,103 @@ test("a newly created form offers Send form without sending anything during save
   expect(jest.mocked(createTeamIntakeForm).mock.calls[0][1].availabilityOccurrences.length).toBeGreaterThan(0);
   expect(mockPrepareSms).not.toHaveBeenCalled();
   expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+const submittedAvailability: TeamIntakeSubmission = {
+  submissionId: "submission-1",
+  formId: "form-1",
+  churchId: "church-1",
+  firstName: "Rae",
+  lastName: "Kim",
+  normalizedName: "rae kim",
+  positionIds: [],
+  occurrenceAvailability: {},
+  blockoutRanges: [],
+  status: "new",
+  submittedAt: "2026-10-03T12:00:00.000Z",
+};
+
+test.each([
+  {
+    issuedBy: "recipient",
+    intakeRecipients: [recipient],
+    submissions: [] as TeamIntakeSubmission[],
+    submissionCount: 0,
+  },
+  {
+    issuedBy: "submission",
+    intakeRecipients: [] as TeamIntakeRecipient[],
+    submissions: [submittedAvailability],
+    submissionCount: 1,
+  },
+])("reviewing an availability gap opens and updates the existing form with a $issuedBy", async ({
+  intakeRecipients,
+  submissions,
+  submissionCount,
+}) => {
+  jest.useFakeTimers().setSystemTime(new Date("2026-10-04T16:00:00.000Z"));
+  const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+  const existingOccurrence = {
+    occurrenceId: "saved-october-occurrence",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-11T14:00:00.000Z",
+  };
+  const existingForm = {
+    ...form,
+    name: "October Availability",
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [existingOccurrence],
+    enabledFields: ["firstName", "availability"],
+    availabilityMessage: "Mark the dates you can serve.",
+    submissionCount,
+  } as TeamIntakeForm;
+  const powerUpService: TeamService = {
+    id: "power-up",
+    serviceId: "power-up",
+    churchId: "church-1",
+    name: "Power Up",
+    timerType: "countdown",
+    reccurence: "one_time",
+    dateTimeISO: "2026-10-14T14:00:00.000Z",
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: existingForm });
+  renderManager({ forms: [existingForm], services: [powerUpService], intakeRecipients, submissions });
+
+  expect(screen.getByRole("heading", { name: "October Availability needs updating" })).toBeInTheDocument();
+  expect(screen.getByText("1 upcoming service isn’t included.")).toBeInTheDocument();
+  expect(screen.getByText("Power Up · Oct 14")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review form" }));
+  expect(screen.getByRole("button", { name: "Save form" })).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Name/i)).toHaveValue("October Availability");
+  expect(screen.getByText(/newly suggested dates will be added when you save/)).toBeInTheDocument();
+  expect(screen.getByText(/Availability services: Saved service, Power Up/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    existingForm.formId,
+    expect.objectContaining({
+      name: existingForm.name,
+      teamIds: existingForm.teamIds,
+      enabledFields: existingForm.enabledFields,
+      availabilityMessage: existingForm.availabilityMessage,
+      availabilityServices: [
+        { serviceId: "saved-service", name: "Saved service" },
+        { serviceId: "power-up", name: "Power Up" },
+      ],
+      availabilityOccurrences: [
+        existingOccurrence,
+        expect.objectContaining({
+          occurrenceId: "power-up@2026-10-14T14:00:00.000Z",
+          serviceId: "power-up",
+          startsAt: "2026-10-14T14:00:00.000Z",
+        }),
+      ],
+    }),
+  ));
+  expect(createTeamIntakeForm).not.toHaveBeenCalled();
+  jest.useRealTimers();
 });
 
 test("an existing form view exposes Send form", async () => {

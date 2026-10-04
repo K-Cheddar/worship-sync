@@ -24,6 +24,7 @@ import { parseBibleReference, type ParsedBibleRef } from "./parseBibleReference"
 import { findParticipantTemplateForSync } from "./servicePlanningOverlayClone";
 import { type ServicePlanOverlaySource } from "./servicePlanningOverlayClone";
 import { isOutlineCandidatePresentInList } from "../../utils/servicePlanningOutlineImport";
+import { matchesServicePlanningSectionName } from "./servicePlanningSectionResolution";
 import type { OverlayInfo, ServiceItem } from "../../types";
 import type { ServicePlanningConfig } from "../../types/integrations";
 import type {
@@ -59,23 +60,6 @@ export const getChangedOverlayPatch = (
   }
 
   return changed;
-};
-
-const matchesSectionName = (
-  sectionName: string,
-  matchSectionName: string,
-  matchMode: "contains" | "exact" | "normalize",
-): boolean => {
-  const a = sectionName.toLowerCase().replace(/\s+/g, " ").trim();
-  const b = matchSectionName.toLowerCase().replace(/\s+/g, " ").trim();
-  if (!b || !a) return false;
-  if (matchMode === "exact") return a === b;
-  if (matchMode === "normalize") {
-    const na = a.replace(/[^a-z0-9 ]/g, "");
-    const nb = b.replace(/[^a-z0-9 ]/g, "");
-    return na.includes(nb) || nb.includes(na);
-  }
-  return a.includes(b) || b.includes(a);
 };
 
 export const dedupeOutlineCandidatesForPreview = (
@@ -394,7 +378,7 @@ export const buildServicePlanningPreview = ({
 
   for (const section of sections) {
     const sectionRule = sp.sectionRules.find((r) =>
-      matchesSectionName(section.sectionName, r.matchSectionName, r.matchMode),
+      matchesServicePlanningSectionName(section.sectionName, r),
     );
     const headingName = sectionRule?.headingName ?? null;
 

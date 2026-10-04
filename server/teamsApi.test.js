@@ -33,12 +33,15 @@ const {
   seedChurchServiceTimesForServerTests,
   seedSmsConsentForServerTests,
   queryDocs,
+  resolveRequestBootstrap,
+  assertServerCsrf,
   recoverPendingIntakeSubmissionDigests,
   setIntakeDigestSchedulingFailureForServerTests,
   setIntakeNotifyRecipientsForServerTests,
   setSendEmailForServerTests,
   setDoc,
 } = await import("../authService.js");
+import { createAppSessionGuards } from "./appSessionGuards.js";
 import {
   createFakeSmsProvider,
   setSmsProviderForServerTests,
@@ -162,6 +165,129 @@ const createHumanContext = async (
 };
 
 const createAdminContext = async (suffix) => createHumanContext(suffix);
+
+test("restored paired workstation can reach the Canva imports mutation guard", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const humanContext = await createAdminContext("workstation_csrf_restore");
+  const pairing = await callHandler(authHandlers.createWorkstationPairing, {
+    context: humanContext,
+    body: {
+      label: "Canva import workstation",
+      platformType: "web",
+      appAccess: "full",
+    },
+  });
+  assert.equal(pairing.statusCode, 200);
+  const pairedSession = createSession();
+  const redeemed = createRes();
+  await authHandlers.redeemWorkstationPairing(
+    createReq({
+      session: pairedSession,
+      body: { token: pairing.payload.pairing.token, platformType: "web" },
+    }),
+    redeemed,
+  );
+  assert.equal(redeemed.statusCode, 200);
+  const workstationToken = redeemed.payload.credential;
+
+  const guards = createAppSessionGuards({
+    resolveRequestBootstrap,
+    assertRequestCsrf: assertServerCsrf,
+  });
+  const restoredSession = {
+    auth: { sessionKind: "workstation", deviceId: "stale-device" },
+    csrfToken: "stale-csrf-token",
+    regenerate(callback) {
+      delete this.auth;
+      delete this.csrfToken;
+      callback();
+    },
+  };
+  const restoredReq = createReq({
+    params: { churchId: humanContext.churchId },
+    headers: {
+      "x-workstation-token": workstationToken,
+      "x-csrf-token": "stale-csrf-token",
+    },
+    session: restoredSession,
+  });
+  restoredReq.originalUrl = `/api/churches/${humanContext.churchId}/canva/imports`;
+
+  let canvaImportRouteReached = false;
+  const res = createRes();
+  const invoke = async (middleware, req = restoredReq, response = res) => {
+    let nextCalled = false;
+    await middleware(req, response, (error) => {
+      assert.equal(error, undefined);
+      nextCalled = true;
+    });
+    return nextCalled;
+  };
+
+  assert.equal(await invoke(guards.requireAppSession), true);
+  assert.equal(restoredReq.appSession.sessionKind, "workstation");
+  assert.equal(restoredReq.appSession.workstationTokenProvided, true);
+  assert.equal(restoredSession.csrfToken === "stale-csrf-token", false);
+  assert.equal(await invoke(guards.requireFullAppAccess), true);
+  canvaImportRouteReached = await invoke(guards.requireMutationCsrf);
+  assert.equal(canvaImportRouteReached, true);
+
+  // A paired workstation's cookie remains CSRF protected when the explicit
+  // workstation credential is absent.
+  const cookieOnlyReq = createReq({
+    headers: {},
+    session: { ...restoredSession, csrfToken: "current-csrf" },
+  });
+  cookieOnlyReq.session.auth = {
+    sessionKind: "workstation",
+    churchId: humanContext.churchId,
+    deviceId: restoredSession.auth.deviceId,
+    issuedAt: Date.now(),
+  };
+  const cookieOnlyRes = createRes();
+  const cookieOnlyAuthenticated = await invoke(
+    guards.requireAppSession,
+    cookieOnlyReq,
+    cookieOnlyRes,
+  );
+  const cookieOnlyNextCalled = await invoke(
+    guards.requireMutationCsrf,
+    cookieOnlyReq,
+    cookieOnlyRes,
+  );
+  assert.equal(cookieOnlyAuthenticated, true);
+  assert.equal(cookieOnlyNextCalled, false);
+  assert.equal(cookieOnlyRes.statusCode, 403);
+
+  // Human bearer credentials retain precedence when both credentials are sent.
+  const mixedHeaders = {
+    ...humanContext.headers,
+    "x-workstation-token": workstationToken,
+  };
+  const mixedReq = createReq({
+    params: { churchId: humanContext.churchId },
+    headers: mixedHeaders,
+    session: humanContext.session,
+  });
+  const mixedRes = createRes();
+  assert.equal(await invoke(guards.requireAppSession, mixedReq, mixedRes), true);
+  assert.equal(mixedReq.appSession.sessionKind, "human");
+  assert.equal(
+    await invoke(guards.requireMutationCsrf, mixedReq, mixedRes),
+    true,
+  );
+
+  delete mixedReq.headers["x-csrf-token"];
+  const mixedMissingCsrfRes = createRes();
+  const mixedMissingCsrfNextCalled = await invoke(
+    guards.requireMutationCsrf,
+    mixedReq,
+    mixedMissingCsrfRes,
+  );
+  assert.equal(mixedMissingCsrfNextCalled, false);
+  assert.equal(mixedMissingCsrfRes.statusCode, 403);
+});
 
 const callHandler = async (
   handler,
@@ -2560,6 +2686,64 @@ test("team member guidance metadata supports roles and qualifications", async (t
   assert.equal(updatedMember.qualifications[0].levelId, undefined);
 });
 
+test("team role and qualification area icons persist, remain optional, and can be removed", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("team-entity-icons");
+  const team = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Production", memberIds: [] },
+  });
+  const teamId = team.payload.team.teamId;
+  const roleIcon = { source: "tabler", name: "microphone", color: "#22c55e" };
+  const areaIcon = { source: "worshipsync", name: "bible", color: "#fbbf24" };
+
+  const role = await callHandler(authHandlers.createTeamRole, {
+    context,
+    body: { teamId, name: "Audio Lead", icon: roleIcon },
+  });
+  assert.equal(role.statusCode, 200);
+  assert.deepEqual(role.payload.role.icon, roleIcon);
+
+  const legacyRole = await callHandler(authHandlers.createTeamRole, {
+    context,
+    body: { teamId, name: "Legacy Role" },
+  });
+  assert.equal(legacyRole.statusCode, 200);
+  assert.equal(Object.hasOwn(legacyRole.payload.role, "icon"), false);
+
+  const updatedRole = await callHandler(authHandlers.updateTeamRole, {
+    context,
+    params: { roleId: role.payload.role.roleId },
+    body: { teamId, name: "Audio Team Lead" },
+  });
+  assert.deepEqual(updatedRole.payload.role.icon, roleIcon);
+  const clearedRole = await callHandler(authHandlers.updateTeamRole, {
+    context,
+    params: { roleId: role.payload.role.roleId },
+    body: { teamId, name: "Audio Team Lead", icon: "" },
+  });
+  assert.equal(clearedRole.payload.role.icon, "");
+
+  const area = await callHandler(authHandlers.createTeamQualificationArea, {
+    context,
+    body: { teamId, name: "Audio", icon: areaIcon },
+  });
+  assert.equal(area.statusCode, 200);
+  assert.deepEqual(area.payload.area.icon, areaIcon);
+  const legacyArea = await callHandler(authHandlers.createTeamQualificationArea, {
+    context,
+    body: { teamId, name: "Legacy qualification" },
+  });
+  assert.equal(legacyArea.statusCode, 200);
+  assert.equal(Object.hasOwn(legacyArea.payload.area, "icon"), false);
+  const updatedArea = await callHandler(authHandlers.updateTeamQualificationArea, {
+    context,
+    params: { areaId: area.payload.area.areaId },
+    body: { teamId, name: "Audio Production", icon: "" },
+  });
+  assert.equal(updatedArea.payload.area.icon, "");
+});
+
 test("deleting a position scrubs it from teams, members, and assignments", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("cascade");
@@ -3118,9 +3302,13 @@ test("schedule assignments fall back to one slot when occurrence requirements ar
 test("schedule assignments support schedule-only guests without exposing contact details", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("guest_assignments");
-  const { teamId, positionIds } = await seedTeam(context, {
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
     teamName: "Production",
     positions: [{ name: "Camera" }, { name: "Slides" }],
+    members: [
+      { firstName: "Taylor", lastName: "Morgan", positions: ["Camera", "Slides"] },
+      { firstName: "Jordan", lastName: "Reed", positions: ["Camera", "Slides"] },
+    ],
   });
   const occurrenceId = "service-main@2026-08-16T14:00:00.000Z";
   const scheduleRes = await callHandler(authHandlers.createTeamSchedule, {
@@ -3258,6 +3446,295 @@ test("schedule assignments support schedule-only guests without exposing contact
   assert.equal(
     JSON.stringify(publicSchedule.payload).includes("555-0100"),
     false,
+  );
+
+  const occupiesSource = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Slides}::0`,
+      memberId: memberIds.Taylor,
+      serviceDate: "2026-08-16",
+    },
+  });
+  assert.equal(occupiesSource.statusCode, 200);
+
+  const staleMove = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context,
+      params: { scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionIds.Camera}::0`,
+        memberId: guest.guestId,
+        serviceDate: "2026-08-16",
+        sourceServiceId: occurrenceId,
+        sourcePositionSlotKey: `${positionIds.Slides}::0`,
+      },
+    },
+  );
+  assert.equal(staleMove.statusCode, 409);
+  assert.match(staleMove.payload.errorMessage, /assignment changed/i);
+
+  await setDoc("teamSchedules", scheduleId, {
+    ...occupiesSource.payload.schedule,
+    assignments: {
+      ...occupiesSource.payload.schedule.assignments,
+      [occurrenceId]: {
+        ...occupiesSource.payload.schedule.assignments[occurrenceId],
+        [`${positionIds.Camera}::0`]: {
+          primaryMemberId: guest.guestId,
+          shadows: [{ memberId: memberIds.Jordan, kind: "shadow" }],
+        },
+      },
+    },
+  });
+
+  const moved = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Slides}::0`,
+      memberId: guest.guestId,
+      serviceDate: "2026-08-16",
+      sourceServiceId: occurrenceId,
+      sourcePositionSlotKey: `${positionIds.Camera}::0`,
+    },
+  });
+  assert.equal(moved.statusCode, 200);
+  assert.deepEqual(
+    moved.payload.schedule.assignments[occurrenceId][`${positionIds.Camera}::0`],
+    { shadows: [{ memberId: memberIds.Jordan, kind: "shadow" }] },
+  );
+  assert.equal(
+    getMemberId(moved.payload.schedule.assignments[occurrenceId][`${positionIds.Slides}::0`]),
+    guest.guestId,
+  );
+
+  const clearedGuest = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Slides}::0`,
+      memberId: null,
+      serviceDate: "2026-08-16",
+    },
+  });
+  assert.equal(clearedGuest.statusCode, 200);
+  assert.equal(clearedGuest.payload.schedule.guests[0].guestId, guest.guestId);
+  assert.equal(clearedGuest.payload.schedule.assignments[occurrenceId]?.[`${positionIds.Slides}::0`], undefined);
+
+  const memberSource = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Camera}::0`,
+      memberId: memberIds.Taylor,
+      serviceDate: "2026-08-16",
+    },
+  });
+  assert.equal(memberSource.statusCode, 200);
+  await setDoc("teamSchedules", scheduleId, {
+    ...memberSource.payload.schedule,
+    assignments: {
+      ...memberSource.payload.schedule.assignments,
+      [occurrenceId]: {
+        ...memberSource.payload.schedule.assignments[occurrenceId],
+        [`${positionIds.Camera}::0`]: memberIds.Taylor,
+      },
+    },
+  });
+  const movedMember = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Slides}::0`,
+      memberId: memberIds.Taylor,
+      serviceDate: "2026-08-16",
+      sourceServiceId: occurrenceId,
+      sourcePositionSlotKey: `${positionIds.Camera}::0`,
+    },
+  });
+  assert.equal(movedMember.statusCode, 200);
+  assert.equal(movedMember.payload.schedule.assignments[occurrenceId][`${positionIds.Camera}::0`], undefined);
+  assert.equal(
+    getMemberId(movedMember.payload.schedule.assignments[occurrenceId][`${positionIds.Slides}::0`]),
+    memberIds.Taylor,
+  );
+});
+
+test("targeted guest edits and removals preserve schedule state and clear only guest assignments", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("guest_targeted_mutations");
+  const { teamId, positionIds, memberIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }, { name: "Slides" }],
+    members: [
+      { firstName: "Rae", lastName: "One", positions: ["Camera", "Slides"] },
+      { firstName: "Kai", lastName: "Two", positions: ["Camera", "Slides"] },
+    ],
+  });
+  const occurrenceId = "service-main@2026-08-23T14:00:00.000Z";
+  const guestId = "scheduleGuest_targeted";
+  const unusedGuestId = "scheduleGuest_unused";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August Production",
+      teamId,
+      startDate: "2026-08-01",
+      endDate: "2026-08-31",
+      serviceIds: ["service-main"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "service-main",
+        name: "Sunday",
+        startsAt: "2026-08-23T14:00:00.000Z",
+        positionRequirements: [
+          { positionId: positionIds.Camera, count: 2 },
+          { positionId: positionIds.Slides, count: 1 },
+        ],
+      }],
+    },
+  });
+  const scheduleId = created.payload.schedule.scheduleId;
+  const cameraCell = `${positionIds.Camera}::0`;
+  const slidesCell = `${positionIds.Slides}::0`;
+  const initialAssignments = {
+    [occurrenceId]: {
+      [cameraCell]: {
+        primaryMemberId: guestId,
+        shadows: [{ memberId: memberIds.Rae, kind: "shadow" }],
+      },
+      [slidesCell]: {
+        primaryMemberId: memberIds.Rae,
+        shadows: [
+          { memberId: guestId, kind: "reverse_shadow" },
+          { memberId: memberIds.Kai, kind: "shadow" },
+        ],
+      },
+    },
+  };
+  await setDoc("teamSchedules", scheduleId, {
+    ...created.payload.schedule,
+    guests: [
+      { guestId, name: "Alex Rivera", email: "alex@example.com" },
+      { guestId: unusedGuestId, name: "Unused Guest" },
+    ],
+    assignments: initialAssignments,
+    microphoneAssignments: { [occurrenceId]: { [cameraCell]: ["mic-a"] } },
+    iemAssignments: { [occurrenceId]: { [slidesCell]: ["iem-a"] } },
+    responses: {
+      [occurrenceId]: {
+        [cameraCell]: { memberId: guestId, response: "accepted", respondedAt: "2026-08-20T10:00:00.000Z" },
+        [slidesCell]: { memberId: memberIds.Rae, response: "accepted", respondedAt: "2026-08-20T10:00:00.000Z" },
+      },
+    },
+  });
+
+  const edited = await callHandler(authHandlers.updateTeamScheduleGuest, {
+    context,
+    params: { churchId: context.churchId, scheduleId },
+    body: { guest: { guestId, name: "Alex R.", email: "ALEX@example.com", phone: "555-0123", note: "Updated" } },
+  });
+  assert.equal(edited.statusCode, 200);
+  assert.deepEqual(edited.payload.schedule.guests[0], {
+    guestId, name: "Alex R.", email: "alex@example.com", phone: "555-0123", note: "Updated",
+  });
+  assert.deepEqual(edited.payload.schedule.assignments, initialAssignments);
+  assert.deepEqual(edited.payload.schedule.microphoneAssignments, {
+    [occurrenceId]: { [cameraCell]: ["mic-a"] },
+  });
+  assert.deepEqual(edited.payload.schedule.iemAssignments, {
+    [occurrenceId]: { [slidesCell]: ["iem-a"] },
+  });
+
+  const unusedRemoved = await callHandler(authHandlers.removeTeamScheduleGuest, {
+    context,
+    params: { churchId: context.churchId, scheduleId },
+    body: { guestId: unusedGuestId },
+  });
+  assert.equal(unusedRemoved.statusCode, 200);
+  assert.deepEqual(unusedRemoved.payload.schedule.guests.map((item) => item.guestId), [guestId]);
+  assert.deepEqual(unusedRemoved.payload.schedule.assignments, initialAssignments);
+
+  const removed = await callHandler(authHandlers.removeTeamScheduleGuest, {
+    context,
+    params: { churchId: context.churchId, scheduleId },
+    body: { guestId },
+  });
+  assert.equal(removed.statusCode, 200);
+  assert.deepEqual(removed.payload.schedule.guests, []);
+  assert.deepEqual(removed.payload.schedule.assignments[occurrenceId][cameraCell], {
+    shadows: [{ memberId: memberIds.Rae, kind: "shadow" }],
+  });
+  assert.deepEqual(removed.payload.schedule.assignments[occurrenceId][slidesCell], {
+    primaryMemberId: memberIds.Rae,
+    shadows: [{ memberId: memberIds.Kai, kind: "shadow" }],
+  });
+  assert.deepEqual(removed.payload.schedule.microphoneAssignments, edited.payload.schedule.microphoneAssignments);
+  assert.deepEqual(removed.payload.schedule.iemAssignments, edited.payload.schedule.iemAssignments);
+  assert.equal(removed.payload.schedule.responses[occurrenceId][cameraCell], undefined);
+  assert.deepEqual(removed.payload.schedule.responses[occurrenceId][slidesCell], {
+    memberId: memberIds.Rae,
+    response: "accepted",
+    respondedAt: "2026-08-20T10:00:00.000Z",
+  });
+});
+
+test("overlapping targeted schedule guest and assignment mutations preserve both updates", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("guest_targeted_overlap");
+  const { teamId, positionIds } = await seedTeam(context, {
+    teamName: "Production",
+    positions: [{ name: "Camera" }],
+  });
+  const occurrenceId = "service-main@2026-08-30T14:00:00.000Z";
+  const guestId = "scheduleGuest_overlap";
+  const schedule = await callHandler(authHandlers.createTeamSchedule, {
+    context,
+    body: {
+      name: "August Production", teamId, startDate: "2026-08-01", endDate: "2026-08-31",
+      serviceIds: ["service-main"], guests: [{ guestId, name: "Original" }],
+      occurrences: [{
+        occurrenceId, serviceId: "service-main", name: "Sunday", startsAt: "2026-08-30T14:00:00.000Z",
+        positionRequirements: [{ positionId: positionIds.Camera, count: 2 }],
+      }],
+    },
+  });
+  const scheduleId = schedule.payload.schedule.scheduleId;
+  const [edited, assigned] = await Promise.all([
+    callHandler(authHandlers.updateTeamScheduleGuest, {
+      context,
+      params: { churchId: context.churchId, scheduleId },
+      body: { guest: { guestId, name: "Updated" } },
+    }),
+    callHandler(authHandlers.updateTeamScheduleAssignment, {
+      context,
+      params: { churchId: context.churchId, scheduleId },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: `${positionIds.Camera}::1`,
+        memberId: null,
+        guest: { guestId: "scheduleGuest_recent", name: "Recent Guest" },
+        serviceDate: "2026-08-30",
+      },
+    }),
+  ]);
+  assert.equal(edited.statusCode, 200);
+  assert.equal(assigned.statusCode, 200);
+  const current = await getDoc("teamSchedules", scheduleId);
+  assert.equal(current.guests.find((item) => item.guestId === guestId).name, "Updated");
+  assert.equal(current.guests.find((item) => item.guestId === "scheduleGuest_recent").name, "Recent Guest");
+  assert.equal(
+    getMemberId(current.assignments[occurrenceId][`${positionIds.Camera}::1`]),
+    "scheduleGuest_recent",
   );
 });
 

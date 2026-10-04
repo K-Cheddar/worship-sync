@@ -80,6 +80,7 @@ const WarningBadge = ({ label }: { label: string }) => (
 /** Stable empty default so an omitted currentShadows prop doesn't churn renders. */
 const emptyShadows: { memberId: string; kind: TeamScheduleShadowKind; label: string }[] =
   [];
+const emptyGuestIds = new Set<string>();
 
 const assignmentActionLabel: Record<MemberAssignmentAction, string> = {
   replace: "Find a sub",
@@ -183,10 +184,13 @@ type ScheduleAssignmentPickerProps = {
   ) => void;
   onCreateMember?: (member: { firstName: string; lastName: string }) => Promise<void> | void;
   recentGuests?: TeamScheduleGuest[];
+  editableGuestIds?: Set<string>;
+  getGuestWarning?: (guestId: string) => string;
   onAssignGuest?: (
     guest: Omit<TeamScheduleGuest, "guestId"> & { guestId?: string },
   ) => Promise<void> | void;
   onEditGuest?: (guest: TeamScheduleGuest) => Promise<void> | void;
+  onRemoveGuest?: (guestId: string) => Promise<boolean | void> | boolean | void;
   onClearAssignment?: () => void;
   onClose?: () => void;
   /** Shadows currently on the active cell, offered for one-tap removal. */
@@ -228,8 +232,11 @@ const ScheduleAssignmentPicker = memo(({
   onApplySwapRecommendation,
   onCreateMember,
   recentGuests = [],
+  editableGuestIds = emptyGuestIds,
+  getGuestWarning,
   onAssignGuest,
   onEditGuest,
+  onRemoveGuest,
   onClearAssignment,
   onClose,
   currentShadows = emptyShadows,
@@ -513,6 +520,21 @@ const ScheduleAssignmentPicker = memo(({
     });
   };
 
+  const removeGuest = async () => {
+    if (!onRemoveGuest || !guestDraft.guestId || assigningGuest) return;
+    setAssigningGuest(true);
+    try {
+      const removed = await onRemoveGuest(guestDraft.guestId);
+      if (removed === false) return;
+      resetMenuView();
+      setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
+    } catch {
+      // Keep the editor open so the removal can be retried.
+    } finally {
+      setAssigningGuest(false);
+    }
+  };
+
   const getSelectedActionIssue = (memberId: string) => {
     if (!memberPickerAction || !getAssignmentActionIssues) return "";
     const issues = getAssignmentActionIssues(memberId);
@@ -568,6 +590,29 @@ const ScheduleAssignmentPicker = memo(({
   const currentGuest = recentGuests.find(
     (guest) => guest.guestId === currentPrimaryMemberId,
   );
+  const matchingGuests = trimmedQuery
+    ? recentGuests.filter((guest) =>
+      guest.guestId !== currentPrimaryMemberId &&
+      [guest.name, guest.email, guest.phone, guest.note].some((value) =>
+        String(value || "").toLocaleLowerCase().includes(trimmedQuery.toLocaleLowerCase()),
+      ),
+    )
+    : [];
+  const selectGuest = (guest: TeamScheduleGuest) => {
+    if (currentAssigneePresent) {
+      setGuestDraft({
+        guestId: guest.guestId,
+        name: guest.name,
+        email: guest.email || "",
+        phone: guest.phone || "",
+        note: guest.note || "",
+      });
+      setEditingGuest(false);
+      setMenuView("createGuest");
+      return;
+    }
+    void assignGuest(guest);
+  };
   const showRecentGuestsEntry =
     menuView === "members" &&
     !trimmedQuery &&
@@ -600,6 +645,7 @@ const ScheduleAssignmentPicker = memo(({
     menuView === "swapConfirmation" ||
     Boolean(pendingSubmenu) ||
     selectableRows.length > 0 ||
+    matchingGuests.length > 0 ||
     showSwapRecommendations ||
     showCreateOption ||
     showClearAssignmentOption ||
@@ -722,7 +768,7 @@ const ScheduleAssignmentPicker = memo(({
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setHighlightedIndex((current) =>
-        Math.min(current + 1, Math.max(selectableRows.length - 1, 0)),
+        Math.min(current + 1, Math.max(selectableRows.length + matchingGuests.length - 1, 0)),
       );
       return;
     }
@@ -742,10 +788,19 @@ const ScheduleAssignmentPicker = memo(({
       onClearAssignment();
       return;
     }
-    if (event.key === "Enter" && menuView === "members" && selectableRows.length > 0) {
+    if (
+      event.key === "Enter" &&
+      menuView === "members" &&
+      (selectableRows.length > 0 || matchingGuests.length > 0)
+    ) {
       event.preventDefault();
-      const row = selectableRows[highlightedIndex];
-      if (row) handleSelectRow(row.member.memberId, row.usesSubmenu);
+      if (highlightedIndex < selectableRows.length) {
+        const row = selectableRows[highlightedIndex];
+        if (row) handleSelectRow(row.member.memberId, row.usesSubmenu);
+      } else {
+        const guest = matchingGuests[highlightedIndex - selectableRows.length];
+        if (guest) selectGuest(guest);
+      }
     }
   };
 
@@ -979,7 +1034,21 @@ const ScheduleAssignmentPicker = memo(({
               {positionName ? (
                 <p className="px-1 text-xs text-gray-500">Position: {positionName}</p>
               ) : null}
-              <div className="flex items-center justify-end gap-2 pt-1">
+              <div className="flex items-center justify-between gap-2 pt-1">
+                {editingGuest && onRemoveGuest ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    padding="px-2 py-1"
+                    className="text-xs"
+                    disabled={assigningGuest}
+                    onClick={() => {
+                      void removeGuest();
+                    }}
+                  >
+                    Remove from schedule
+                  </Button>
+                ) : <span />}
                 <Button
                   type="button"
                   variant="tertiary"
@@ -1052,7 +1121,7 @@ const ScheduleAssignmentPicker = memo(({
                       Guest
                     </span>
                   </button>
-                  {onEditGuest ? (
+                  {editableGuestIds.has(guest.guestId) && onEditGuest ? (
                     <Button
                       type="button"
                       variant="tertiary"
@@ -1153,7 +1222,7 @@ const ScheduleAssignmentPicker = memo(({
                             <span className="rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">
                               Guest
                             </span>
-                            {currentGuest && onEditGuest ? (
+                            {currentGuest && editableGuestIds.has(currentGuest.guestId) && onEditGuest ? (
                               <Button
                                 type="button"
                                 variant="tertiary"
@@ -1223,6 +1292,40 @@ const ScheduleAssignmentPicker = memo(({
                           "recommended-",
                         ),
                       )}
+                    </div>
+                  ) : null}
+                  {matchingGuests.length > 0 ? (
+                    <div role="group" aria-label="Guests" className="mt-1 border-t border-gray-800 pt-1">
+                      <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-violet-200">
+                        Guests
+                      </p>
+                      {matchingGuests.map((guest, index) => {
+                        const warning = getGuestWarning?.(guest.guestId) || "";
+                        return (
+                          <div key={`guest-${guest.guestId}`} className="flex min-w-0 items-center gap-1">
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={selectableRows.length + index === highlightedIndex}
+                              disabled={assigningGuest}
+                              className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                selectGuest(guest);
+                              }}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium">{guest.name}</span>
+                                {warning ? <span className="mt-0.5 block truncate text-xs text-amber-200">{warning}</span> : null}
+                              </span>
+                              <span className="shrink-0 rounded-full border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-200">Guest</span>
+                            </button>
+                            {editableGuestIds.has(guest.guestId) && onEditGuest ? (
+                              <Button type="button" variant="tertiary" padding="px-2 py-1" className="shrink-0 text-xs text-violet-200" aria-label={`Edit ${guest.name}`} onMouseDown={(event) => { event.preventDefault(); openEditGuest(guest); }}>Edit</Button>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
                   {visibleSelectableRows.length > 0 ? (

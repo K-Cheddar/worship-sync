@@ -1194,12 +1194,14 @@ export type TeamRolePayload = {
   teamId: string;
   name: string;
   description?: string;
+  icon?: import("../components/icons/iconTypes").EntityIcon;
 };
 
 export type TeamQualificationAreaPayload = {
   teamId: string;
   name: string;
   description?: string;
+  icon?: import("../components/icons/iconTypes").EntityIcon;
 };
 
 export type TeamQualificationLevelPayload = {
@@ -2257,6 +2259,26 @@ export const updateTeamScheduleAssignment = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const updateTeamScheduleGuest = async (
+  churchId: string,
+  scheduleId: string,
+  guest: TeamScheduleGuest,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/guests/update`,
+    { method: "POST", body: JSON.stringify({ guest }) },
+  );
+
+export const removeTeamScheduleGuest = async (
+  churchId: string,
+  scheduleId: string,
+  guestId: string,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/guests/remove`,
+    { method: "POST", body: JSON.stringify({ guestId }) },
   );
 
 export const updateTeamScheduleAssignmentsBatch = async (

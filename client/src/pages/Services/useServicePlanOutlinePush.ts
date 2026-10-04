@@ -8,11 +8,13 @@
 import { useCallback, useContext, useRef } from "react";
 import { useStore } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateItemList } from "../../store/itemListSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import {
   buildServicePlanOutlineItem,
+  insertServicePlanOutlineItem,
   planServicePlanOutlineItems,
   type ServicePlanOutlinePushResult,
 } from "./servicePlanOutlineBridge";
@@ -26,6 +28,8 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 export const useServicePlanOutlinePush = () => {
   const { db, bibleDb } = useContext(ControllerInfoContext) || {};
+  const globalInfo = useContext(GlobalInfoContext);
+  const sectionRules = globalInfo?.churchIntegrations?.servicePlanning?.sectionRules;
   const dispatch = useDispatch();
   const store = useStore<RootState>();
   const { songs } = useServicePlanSongLibrary();
@@ -50,6 +54,9 @@ export const useServicePlanOutlinePush = () => {
         throw new Error("Open or create an item list in the Controller first.");
       }
       const startingContext = contextRef.current;
+      // One run uses one mapping configuration even if integrations refresh
+      // while the operator is watching the visible per-item progress.
+      const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
       const isContextCurrent = () =>
         isSourcePlanCurrent()
         &&
@@ -63,11 +70,22 @@ export const useServicePlanOutlinePush = () => {
         currentList,
         songs,
         customDocuments,
+        sectionRules: sectionRulesSnapshot,
       });
       if (!isContextCurrent()) {
         throw new Error("The selected outline changed before the service plan could be imported.");
       }
       const items: ServiceItem[] = [];
+      const placementIssues = [...planResult.placementIssues];
+      const recordPlacementIssue = (issue: (typeof placementIssues)[number]) => {
+        if (!placementIssues.some((existing) =>
+          existing.sectionName === issue.sectionName &&
+          existing.headingName === issue.headingName &&
+          existing.reason === issue.reason,
+        )) {
+          placementIssues.push(issue);
+        }
+      };
       for (const step of planResult.steps) {
         if (!shouldContinue()) break;
         if (!isContextCurrent()) {
@@ -75,6 +93,14 @@ export const useServicePlanOutlinePush = () => {
         }
         let latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
+        if (!latestList.some((existing) => existing.type === "heading" && existing.listId === step.targetHeading.listId)) {
+          recordPlacementIssue({
+            sectionName: step.sectionName,
+            headingName: step.targetHeading.name,
+            reason: "heading-removed",
+          });
+          continue;
+        }
         // Build only the item that is about to be shown. In particular, a stop
         // request must not pre-create Bible documents for later steps.
         // eslint-disable-next-line no-await-in-loop -- order and visible progress are intentional
@@ -84,7 +110,16 @@ export const useServicePlanOutlinePush = () => {
         }
         latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === item.listId)) continue;
-        dispatch(updateItemList([...latestList, item]));
+        const placedList = insertServicePlanOutlineItem(latestList, item, step.targetHeading);
+        if (!placedList) {
+          recordPlacementIssue({
+            sectionName: step.sectionName,
+            headingName: step.targetHeading.name,
+            reason: "heading-removed",
+          });
+          continue;
+        }
+        dispatch(updateItemList(placedList));
         if (db && item.type === "bible") {
           dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
         }
@@ -96,9 +131,10 @@ export const useServicePlanOutlinePush = () => {
         items,
         insertedCount: items.length,
         skippedTitles: planResult.skippedTitles,
+        placementIssues,
       };
     },
-    [currentList, db, bibleDb, customDocuments, dispatch, selectedList, songs, store],
+    [currentList, db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
   );
 
   return { pushPlanToOutline, selectedListName: selectedList?.name };

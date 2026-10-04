@@ -28,6 +28,9 @@ export const createAppSessionGuards = ({
           access: bootstrap.appAccess || "view",
           churchId: bootstrap.churchId || "",
           role: bootstrap.role || "member",
+          workstationTokenProvided:
+            bootstrap.sessionKind === "workstation" &&
+            String(req.headers?.["x-workstation-token"] || "").trim() !== "",
         };
         return next();
       }

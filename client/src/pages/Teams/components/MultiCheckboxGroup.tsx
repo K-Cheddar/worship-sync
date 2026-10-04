@@ -2,10 +2,13 @@ import { useState, type ReactNode } from "react";
 import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
 import { cn } from "@/utils/cnHelper";
 import Checkbox from "../../../components/Checkbox/Checkbox";
+import EntityIconBadge from "../../../components/icons/EntityIconBadge";
+import type { EntityIcon } from "../../../components/icons/iconTypes";
 
 export type MultiCheckboxOption = {
   id: string;
   label: string;
+  icon?: EntityIcon;
   archived?: boolean;
   unavailable?: boolean;
   unavailableLabel?: string;
@@ -51,7 +54,8 @@ const renderCheckboxOptions = (
         key={option.id}
         className={cn("rounded px-2 py-1", unavailable && "text-gray-400")}
         label={
-          <span className="whitespace-normal break-words">
+          <span className="inline-flex items-center gap-1.5 whitespace-normal break-words">
+            {option.icon ? <EntityIconBadge icon={option.icon} className="size-5 shrink-0" iconClassName="size-3" /> : null}
             {option.label}
             {statusLabel}
           </span>

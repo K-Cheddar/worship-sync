@@ -1200,11 +1200,25 @@ const ensureSessionCsrfToken = (req) => {
  * If there is no session auth yet, we skip (caller must enforce auth first).
  */
 const assertCsrf = async (req) => {
+  if (
+    req.appSession?.sessionKind === SESSION_KIND_WORKSTATION &&
+    req.appSession.workstationTokenProvided === true
+  ) {
+    logAuthEvent("log", "auth.csrf.workstation_token.accepted", {
+      sessionKind: SESSION_KIND_WORKSTATION,
+    });
+    return;
+  }
+
   const cookieHuman = await getHumanBootstrap(req);
   if (cookieHuman) {
     const expected = cookieHuman.csrfToken;
     const provided = String(req.headers["x-csrf-token"] || "").trim();
     if (!expected || !provided || provided !== expected) {
+      logAuthEvent("warn", "auth.csrf.rejected", {
+        sessionKind: SESSION_KIND_HUMAN,
+        source: "cookie",
+      });
       throw httpError(403, "Could not verify this request.");
     }
     return;
@@ -1214,6 +1228,10 @@ const assertCsrf = async (req) => {
     const expected = bearerHuman.csrfToken;
     const provided = String(req.headers["x-csrf-token"] || "").trim();
     if (!expected || !provided || provided !== expected) {
+      logAuthEvent("warn", "auth.csrf.rejected", {
+        sessionKind: SESSION_KIND_HUMAN,
+        source: "bearer",
+      });
       throw httpError(403, "Could not verify this request.");
     }
     return;
@@ -1222,7 +1240,16 @@ const assertCsrf = async (req) => {
   const expected = ensureSessionCsrfToken(req);
   const provided = String(req.headers["x-csrf-token"] || "").trim();
   if (!provided || provided !== expected) {
+    logAuthEvent("warn", "auth.csrf.rejected", {
+      sessionKind: req.session.auth.sessionKind || "unknown",
+      source: "session",
+    });
     throw httpError(403, "Could not verify this request.");
+  }
+  if (req.session.auth.sessionKind === SESSION_KIND_WORKSTATION) {
+    logAuthEvent("log", "auth.csrf.workstation_session.accepted", {
+      sessionKind: SESSION_KIND_WORKSTATION,
+    });
   }
 };
 

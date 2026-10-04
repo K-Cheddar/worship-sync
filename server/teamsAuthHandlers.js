@@ -4016,7 +4016,7 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamRolePayload = async (body, churchId) => {
+  const validateTeamRolePayload = async (body, churchId, existingRole = null) => {
     const name = normalizeShortText(body?.name, { max: 120 });
     if (!name) {
       throw httpError(400, "Role name is required.");
@@ -4029,14 +4029,16 @@ export const createTeamsAuthHandlers = ({
         label: "Team",
       },
     );
+    const icon = validateEntityIcon(body?.icon, existingRole?.icon, "Role");
     return {
       teamId: team.teamId,
       name,
       description: normalizeLongText(body?.description),
+      ...(icon !== undefined ? { icon } : {}),
     };
   };
 
-  const validateQualificationAreaPayload = async (body, churchId) => {
+  const validateQualificationAreaPayload = async (body, churchId, existingArea = null) => {
     const name = normalizeShortText(body?.name, { max: 120 });
     if (!name) {
       throw httpError(400, "Qualification area name is required.");
@@ -4049,10 +4051,12 @@ export const createTeamsAuthHandlers = ({
         label: "Team",
       },
     );
+    const icon = validateEntityIcon(body?.icon, existingArea?.icon, "Qualification area");
     return {
       teamId: team.teamId,
       name,
       description: normalizeLongText(body?.description),
+      ...(icon !== undefined ? { icon } : {}),
     };
   };
 
@@ -6719,20 +6723,25 @@ export const createTeamsAuthHandlers = ({
     }
 
     const assignments = JSON.parse(JSON.stringify(schedule.assignments || {}));
+    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
     const normalizedSourceServiceId = String(sourceServiceId || "").trim();
     const sourceSlot = parseScheduleSlotKey(sourcePositionSlotKey);
     const normalizedSourcePositionSlotKey =
       String(sourcePositionSlotKey || "").trim() && sourceSlot
         ? makeScheduleSlotKey(sourceSlot.positionId, sourceSlot.slot)
         : "";
-    if (
-      normalizedSourceServiceId &&
-      normalizedSourcePositionSlotKey &&
-      assignments[normalizedSourceServiceId]
-    ) {
-      const sourceCell = normalizeScheduleAssignmentCell(
-        assignments[normalizedSourceServiceId][normalizedSourcePositionSlotKey],
-      );
+    if (normalizedSourceServiceId || normalizedSourcePositionSlotKey) {
+      if (!normalizedSourceServiceId || !normalizedSourcePositionSlotKey) {
+        throw httpError(409, "This assignment changed before the move could be saved. Reload the schedule and try again.");
+      }
+      const rawSourceCell =
+        assignments[normalizedSourceServiceId]?.[normalizedSourcePositionSlotKey];
+      const sourceCell = typeof rawSourceCell === "string"
+        ? { primaryMemberId: normalizeShortText(rawSourceCell, { max: 160 }), shadows: [] }
+        : normalizeScheduleAssignmentCell(rawSourceCell);
+      if (!normalizedMemberId || sourceCell.primaryMemberId !== normalizedMemberId) {
+        throw httpError(409, "This assignment changed before the move could be saved. Reload the schedule and try again.");
+      }
       const nextSourceCell = serializeScheduleAssignmentCell({
         primaryMemberId: "",
         shadows: sourceCell.shadows,
@@ -6751,7 +6760,6 @@ export const createTeamsAuthHandlers = ({
       }
     }
 
-    const normalizedMemberId = String(memberId || "").trim();
     const normalizedShadowAction = String(shadowAction || "").trim();
     const normalizedShadowKind = String(shadowKind || "").trim();
     const isShadowUpdate =
@@ -6914,7 +6922,7 @@ export const createTeamsAuthHandlers = ({
       },
     );
     if (assignedElsewhere) {
-      throw httpError(400, "Members can only serve one position per service.");
+      throw httpError(400, "This person can only serve one position per service.");
     }
 
     const targetCell = normalizeScheduleAssignmentCell(
@@ -7052,7 +7060,7 @@ export const createTeamsAuthHandlers = ({
         if (seen.has(memberId)) {
           throw httpError(
             400,
-            "Members can only serve one position per service.",
+            "This person can only serve one position per service.",
           );
         }
         seen.add(memberId);
@@ -7181,8 +7189,9 @@ export const createTeamsAuthHandlers = ({
     allowBlockout,
     allowRecurringAvailability,
     allowCrossTeamConflict,
+    currentSchedule,
   }) => {
-    const schedule = await assertTeamEntityInChurch(
+    const schedule = currentSchedule || await assertTeamEntityInChurch(
       "schedule",
       scheduleId,
       churchId,
@@ -7379,39 +7388,46 @@ export const createTeamsAuthHandlers = ({
   }) => {
     const db = requireFirestore();
     if (!db) {
-      const { assignments, guests } = await validateScheduleAssignment({
-        churchId,
-        scheduleId,
-        serviceId,
-        positionSlotKey,
-        memberId,
-        guest,
-        serviceDate,
-        sourceServiceId,
-        sourcePositionSlotKey,
-        shadowAction,
-        shadowKind,
-        allowBlockout,
-        allowRecurringAvailability,
-        allowCrossTeamConflict,
-      });
-      const current = await getTeamEntity("schedule", scheduleId);
-      await setDoc(
-        COLLECTIONS.teamSchedules,
-        scheduleId,
-        {
+      return enqueueInMemoryScheduleSave(scheduleId, async () => {
+        const current = await assertTeamEntityInChurch(
+          "schedule",
+          scheduleId,
+          churchId,
+          { label: "Schedule" },
+        );
+        const { assignments, guests } = await validateScheduleAssignment({
+          churchId,
+          scheduleId,
+          serviceId,
+          positionSlotKey,
+          memberId,
+          guest,
+          serviceDate,
+          sourceServiceId,
+          sourcePositionSlotKey,
+          shadowAction,
+          shadowKind,
+          allowBlockout,
+          allowRecurringAvailability,
+          allowCrossTeamConflict,
+          currentSchedule: current,
+        });
+        const nextSchedule = {
+          ...current,
           assignments,
           guests,
           responses: prunedResponsesForAssignments(
-            current?.responses,
+            current.responses,
             assignments,
           ),
           updatedAt: nowIso(),
           updatedByUid: adminUserId,
-        },
-        { merge: true },
-      );
-      return getTeamEntity("schedule", scheduleId);
+        };
+        await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, {
+          merge: false,
+        });
+        return nextSchedule;
+      });
     }
 
     return db.runTransaction(async (transaction) => {
@@ -7533,6 +7549,101 @@ export const createTeamsAuthHandlers = ({
       // Use update (not set with merge) so the assignments map is replaced
       // wholesale. A merged set deep-merges nested maps, which would keep
       // cleared/moved cell keys we deleted and resurrect old assignments.
+      transaction.update(scheduleRef, update);
+      return { ...schedule, ...update };
+    });
+  };
+
+  const updateTeamScheduleGuestInStore = async ({
+    churchId,
+    scheduleId,
+    expectedTeamId,
+    guest,
+    remove,
+    adminUserId,
+  }) => {
+    const normalizedGuest = normalizeTeamScheduleGuest(guest);
+    if (!normalizedGuest) throw httpError(400, "Guest details are invalid.");
+
+    const buildUpdate = (schedule) => {
+      const guests = Array.isArray(schedule.guests) ? [...schedule.guests] : [];
+      const guestIndex = guests.findIndex(
+        (item) => normalizeShortText(item?.guestId, { max: 160 }) === normalizedGuest.guestId,
+      );
+      if (guestIndex < 0) throw httpError(404, "Guest not found on this schedule.");
+      if (!remove) guests[guestIndex] = normalizedGuest;
+      else guests.splice(guestIndex, 1);
+
+      let assignments = schedule.assignments || {};
+      if (remove) {
+        assignments = JSON.parse(JSON.stringify(assignments));
+        Object.entries(assignments).forEach(([occurrenceId, row]) => {
+          Object.entries(row || {}).forEach(([cellKey, rawCell]) => {
+            if (typeof rawCell === "string") {
+              if (normalizeShortText(rawCell, { max: 160 }) === normalizedGuest.guestId) {
+                delete assignments[occurrenceId][cellKey];
+              }
+              return;
+            }
+            const cell = normalizeScheduleAssignmentCell(rawCell);
+            if (
+              cell.primaryMemberId !== normalizedGuest.guestId &&
+              !cell.shadows.some((shadow) => shadow.memberId === normalizedGuest.guestId)
+            ) return;
+            const nextCell = serializeScheduleAssignmentCell({
+              primaryMemberId:
+                cell.primaryMemberId === normalizedGuest.guestId
+                  ? ""
+                  : cell.primaryMemberId,
+              shadows: cell.shadows.filter(
+                (shadow) => shadow.memberId !== normalizedGuest.guestId,
+              ),
+            });
+            if (nextCell) assignments[occurrenceId][cellKey] = nextCell;
+            else delete assignments[occurrenceId][cellKey];
+          });
+          if (Object.keys(assignments[occurrenceId] || {}).length === 0) {
+            delete assignments[occurrenceId];
+          }
+        });
+      }
+
+      return {
+        guests,
+        ...(remove ? {
+          assignments,
+          responses: prunedResponsesForAssignments(schedule.responses, assignments),
+        } : {}),
+        updatedAt: nowIso(),
+        updatedByUid: adminUserId,
+      };
+    };
+
+    const db = requireFirestore();
+    if (!db) {
+      return enqueueInMemoryScheduleSave(scheduleId, async () => {
+        const schedule = await assertTeamEntityInChurch(
+          "schedule", scheduleId, churchId, { label: "Schedule", active: false },
+        );
+        if (schedule.teamId !== expectedTeamId) {
+          throw httpError(409, "This schedule changed. Reload and try again.");
+        }
+        const update = buildUpdate(schedule);
+        const nextSchedule = { ...schedule, ...update };
+        await setDoc(COLLECTIONS.teamSchedules, scheduleId, nextSchedule, { merge: false });
+        return nextSchedule;
+      });
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+      const snapshot = await transaction.get(scheduleRef);
+      const schedule = readTransactionTeamEntity(snapshot, "scheduleId", "Schedule", { active: false });
+      if (schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+      if (schedule.teamId !== expectedTeamId) {
+        throw httpError(409, "This schedule changed. Reload and try again.");
+      }
+      const update = buildUpdate(schedule);
       transaction.update(scheduleRef, update);
       return { ...schedule, ...update };
     });
@@ -13275,11 +13386,17 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existingRole = await assertTeamEntityInChurch(
+          "role",
+          req.params.roleId,
+          req.params.churchId,
+          { active: false, label: "Role" },
+        );
         const role = await upsertTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
           id: req.params.roleId,
-          payload: await validateTeamRolePayload(req.body, req.params.churchId),
+          payload: await validateTeamRolePayload(req.body, req.params.churchId, existingRole),
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13371,6 +13488,12 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existingArea = await assertTeamEntityInChurch(
+          "qualificationArea",
+          req.params.areaId,
+          req.params.churchId,
+          { active: false, label: "Qualification area" },
+        );
         const area = await upsertTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
@@ -13378,6 +13501,7 @@ export const createTeamsAuthHandlers = ({
           payload: await validateQualificationAreaPayload(
             req.body,
             req.params.churchId,
+            existingArea,
           ),
           adminUserId: admin.user.uid,
         });
@@ -15867,6 +15991,63 @@ export const createTeamsAuthHandlers = ({
           error,
           "Could not update this assignment.",
         );
+      }
+    },
+
+    async updateTeamScheduleGuest(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const existing = await assertTeamEntityInChurch(
+          "schedule", req.params.scheduleId, churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(req, churchId, existing.teamId);
+        const schedule = await updateTeamScheduleGuestInStore({
+          churchId,
+          scheduleId: req.params.scheduleId,
+          expectedTeamId: existing.teamId,
+          guest: req.body?.guest,
+          adminUserId: admin.user.uid,
+        });
+        emitTeamsEvent(churchId, "schedule-updated", { schedule });
+        await emitPublicPlansForScheduleOccurrences({
+          churchId,
+          occurrences: schedule.occurrences || [],
+          revision: schedule.updatedAt || nowIso(),
+        });
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not update this guest.");
+      }
+    },
+
+    async removeTeamScheduleGuest(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        const existing = await assertTeamEntityInChurch(
+          "schedule", req.params.scheduleId, churchId,
+          { label: "Schedule", active: false },
+        );
+        const admin = await requireTeamsEditForTeam(req, churchId, existing.teamId);
+        const schedule = await updateTeamScheduleGuestInStore({
+          churchId,
+          scheduleId: req.params.scheduleId,
+          expectedTeamId: existing.teamId,
+          guest: { guestId: req.body?.guestId, name: "Guest" },
+          remove: true,
+          adminUserId: admin.user.uid,
+        });
+        emitTeamsEvent(churchId, "schedule-updated", { schedule });
+        await emitPublicPlansForScheduleOccurrences({
+          churchId,
+          occurrences: schedule.occurrences || [],
+          revision: schedule.updatedAt || nowIso(),
+        });
+        return res.json({ success: true, schedule });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not remove this guest.");
       }
     },
 
