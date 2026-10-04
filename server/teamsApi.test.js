@@ -7070,6 +7070,148 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     appAccess: "view",
     permissions: { teams: "view" },
   });
+  const viewerPairing = await callHandler(
+    authHandlers.createWorkstationPairing,
+    {
+      context,
+      body: { label: "Plan-only viewer", platformType: "web" },
+    },
+  );
+  assert.equal(viewerPairing.statusCode, 200);
+  const workstationSession = createSession();
+  const workstationRedeemed = createRes();
+  await authHandlers.redeemWorkstationPairing(
+    createReq({
+      session: workstationSession,
+      body: {
+        token: viewerPairing.payload.pairing.token,
+        platformType: "web",
+      },
+    }),
+    workstationRedeemed,
+  );
+  assert.equal(workstationRedeemed.statusCode, 200);
+  const planOnlyViewerContext = {
+    churchId: context.churchId,
+    headers: {},
+    session: workstationSession,
+  };
+  const viewerPlanKey = "svc-viewer@2026-07-27";
+  const detailedViewerPlan = await callHandler(authHandlers.saveServicePlan, {
+    context,
+    params: { planKey: viewerPlanKey },
+    body: {
+      serviceId: "svc-viewer",
+      date: "2026-07-27",
+      name: "Detailed Viewer Service",
+      startsAt: upcomingStartsAt,
+      timezone: "America/New_York",
+      sections: [{
+        id: "viewer-section",
+        name: "Worship",
+        elements: [{
+          id: "viewer-item",
+          type: "song",
+          title: richText("Opening song"),
+          notes: richText("Plan note"),
+          teamNotes: [
+            { id: "team-note", label: "Worship Team", note: richText("Team cue") },
+            {
+              id: "role-note",
+              label: "Worship Team · Lead vocal",
+              scope: "role",
+              positionId: "viewer-lead",
+              teamId: "viewer-worship",
+              teamName: "Worship Team",
+              note: richText("Lead vocal cue"),
+            },
+          ],
+          assignees: [{
+            id: "lead-slot",
+            memberId: "viewer-member",
+            name: "Avery Stone",
+            microphoneIds: ["viewer-mic"],
+            iemIds: ["viewer-iem"],
+          }],
+          resources: [{
+            id: "viewer-resource",
+            type: "url",
+            title: "Service notes",
+            url: "https://example.com/service-notes",
+          }],
+        }],
+      }],
+    },
+  });
+  assert.equal(detailedViewerPlan.statusCode, 200);
+  const occurrenceId = "viewer-service-occurrence";
+  await setDoc(COLLECTIONS.teams, "viewer-worship", {
+    teamId: "viewer-worship",
+    churchId: context.churchId,
+    name: "Worship Team",
+    usesMicrophoneAssignments: true,
+    usesIemAssignments: true,
+  });
+  await setDoc(COLLECTIONS.teamPositions, "viewer-lead", {
+    positionId: "viewer-lead",
+    churchId: context.churchId,
+    teamId: "viewer-worship",
+    name: "Lead vocal",
+  });
+  await setDoc(COLLECTIONS.teamRosterMembers, "viewer-member", {
+    memberId: "viewer-member",
+    churchId: context.churchId,
+    firstName: "Avery",
+    lastName: "Stone",
+    profileImageUrl: "https://example.com/avery.jpg",
+    email: "private@example.com",
+    phone: "+15555550123",
+    privateNotes: "private roster data",
+  });
+  await setDoc(COLLECTIONS.teamSchedules, "viewer-schedule", {
+    scheduleId: "viewer-schedule",
+    churchId: context.churchId,
+    teamId: "viewer-worship",
+    occurrences: [{
+      occurrenceId,
+      serviceId: "svc-viewer",
+      startsAt: upcomingStartsAt,
+    }],
+    assignments: {
+      [occurrenceId]: {
+        "viewer-lead::0": { primaryMemberId: "viewer-member" },
+      },
+    },
+    microphoneAssignments: {
+      [occurrenceId]: { "viewer-lead::0": ["viewer-mic"] },
+    },
+    iemAssignments: {
+      [occurrenceId]: { "viewer-lead::0": ["viewer-iem"] },
+    },
+    shareToken: "raw-schedule-token",
+  });
+  const churchBeforeViewerCatalogs = await getDoc(
+    COLLECTIONS.churches,
+    context.churchId,
+  );
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    ...churchBeforeViewerCatalogs,
+    servicePlanMicrophones: [{
+      id: "viewer-mic",
+      name: "Blue",
+      type: "Headset",
+      color: "#2563eb",
+    }],
+    serviceEquipment: [{
+      id: "viewer-iem",
+      name: "Red IEM",
+      category: "iem",
+      subtype: "wireless-beltpack",
+    }],
+    logoUrl: "https://example.com/church.png",
+    primaryColor: "#123456",
+    secondaryColor: "#abcdef",
+  });
   const viewerRead = await callHandler(authHandlers.getServicePlan, {
     context: viewerContext,
     params: { planKey },
@@ -7087,17 +7229,115 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(viewerRead.payload.publicUrls, undefined);
 
   const viewerPayload = await callHandler(authHandlers.getServicePlanViewer, {
-    context: viewerContext,
-    params: { planKey },
+    context: planOnlyViewerContext,
+    params: { planKey: viewerPlanKey },
   });
   assert.equal(viewerPayload.statusCode, 200);
-  assert.equal(viewerPayload.payload.plan.name, "Sunday Service");
-  assert.equal(viewerPayload.payload.snapshot.service.title, "Sunday Service");
+  assert.equal(viewerPayload.payload.plan.name, "Detailed Viewer Service");
+  assert.equal(
+    viewerPayload.payload.plan.sections[0].elements[0].assignees,
+    undefined,
+  );
+  assert.equal(viewerPayload.payload.snapshot.service.title, "Detailed Viewer Service");
   assert.equal(
     viewerPayload.payload.snapshot.service.sections.length > 0,
     true,
   );
   assert.equal(viewerPayload.payload.plan.publicLinkToken, undefined);
+  assert.equal(
+    viewerPayload.payload.snapshot.service.shareId,
+    `current-service-viewer:${viewerPlanKey}`,
+  );
+  assert.deepEqual(viewerPayload.payload.snapshot.roles, [{
+    positionId: "viewer-lead",
+    label: "Lead vocal",
+    teamId: "viewer-worship",
+    teamName: "Worship Team",
+  }]);
+  assert.deepEqual(viewerPayload.payload.snapshot.servingTeams[0].members[0], {
+    positionId: "viewer-lead",
+    positionName: "Lead vocal",
+    memberName: "Avery Stone",
+    profileImageUrl: "https://example.com/avery.jpg",
+    microphones: [{
+      id: "viewer-mic",
+      name: "Blue",
+      type: "Headset",
+      color: "#2563eb",
+    }],
+    equipment: [{
+      id: "viewer-iem",
+      name: "Red IEM",
+      category: "iem",
+      subtype: "wireless-beltpack",
+    }],
+  });
+  const viewerItem = viewerPayload.payload.snapshot.service.sections[0].items[0];
+  assert.deepEqual(viewerItem.teamNotes, [
+    { label: "Worship Team", notes: richText("Team cue") },
+    {
+      label: "Worship Team · Lead vocal",
+      notes: richText("Lead vocal cue"),
+      scope: "role",
+      positionIds: ["viewer-lead"],
+      teamIds: ["viewer-worship"],
+      teamNames: ["Worship Team"],
+    },
+  ], JSON.stringify({
+    plan: viewerPayload.payload.plan.sections[0].elements[0],
+    item: viewerItem,
+  }));
+  assert.equal(viewerItem.creditName, "Avery Stone");
+  assert.equal(viewerItem.microphoneAssignments[0].microphone.name, "Blue");
+  assert.equal(viewerItem.equipmentAssignments[0].equipment.name, "Red IEM");
+  assert.deepEqual(viewerItem.resources, [{
+    type: "url",
+    title: "Service notes",
+    url: "https://example.com/service-notes",
+  }]);
+  assert.equal(typeof viewerPayload.payload.snapshot.churchName, "string");
+  assert.equal(viewerPayload.payload.snapshot.service.live.mode, "schedule");
+  const serializedViewer = JSON.stringify(viewerPayload.payload.snapshot);
+  for (const privateValue of [
+    "private@example.com",
+    "+15555550123",
+    "private roster data",
+    "viewer-member",
+    "raw-schedule-token",
+    publicToken,
+  ]) {
+    assert.equal(serializedViewer.includes(privateValue), false);
+  }
+  const publishedViewerPlan = await callHandler(authHandlers.publishServicePlan, {
+    context,
+    params: { planKey: viewerPlanKey },
+  });
+  assert.equal(publishedViewerPlan.statusCode, 200);
+  const viewerPublicToken = publishedViewerPlan.payload.publicUrl
+    .split("/")
+    .at(-1);
+  const viewerPublicSnapshot = createRes();
+  await authHandlers.getPublicServicePlan(
+    { ...createReq(), query: { token: viewerPublicToken } },
+    viewerPublicSnapshot,
+  );
+  assert.equal(viewerPublicSnapshot.statusCode, 200);
+  assert.deepEqual(
+    viewerPayload.payload.snapshot.roles,
+    viewerPublicSnapshot.payload.roles,
+  );
+  assert.deepEqual(
+    viewerPayload.payload.snapshot.servingTeams,
+    viewerPublicSnapshot.payload.servingTeams,
+  );
+  assert.deepEqual(
+    viewerPayload.payload.snapshot.service.sections[0].items[0],
+    viewerPublicSnapshot.payload.service.sections[0].items[0],
+  );
+  assert.equal(
+    viewerPublicSnapshot.payload.service.shareId,
+    viewerPublicToken,
+  );
 
   // An editor still gets the links back so "copy share link" keeps working.
   const editorRead = await callHandler(authHandlers.getServicePlan, {
@@ -7108,11 +7348,11 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(editorRead.payload.publicUrls.team.includes(publicToken), true);
 
   const viewerWrite = await callHandler(authHandlers.saveServicePlan, {
-    context: viewerContext,
-    params: { planKey },
+    context: planOnlyViewerContext,
+    params: { planKey: viewerPlanKey },
     body: {
       serviceId: "svc1",
-      date: "2026-07-26",
+      date: "2026-07-27",
       name: "Blocked",
       sections: [],
     },

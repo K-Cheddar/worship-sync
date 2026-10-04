@@ -14527,17 +14527,15 @@ export const createTeamsAuthHandlers = ({
           return res.json({ success: true, plan: null, snapshot: null });
         }
 
-        const hasTeamDetails = hasTeamsPlanAccess(reader);
         const plan = withoutServicePlanAssignments(servicePlan, reader);
         const snapshot = await buildPublicServicePlan({
-          // Use the same display-only sanitizer as published team links. A
-          // plan-only reader keeps assignment and roster data stripped.
-          plan: hasTeamDetails ? servicePlan : plan,
+          // The display projection is intentionally richer than the ordinary
+          // permission-aware plan response. buildPublicServicePlan applies the
+          // same allowlisted sanitizer used by public detailed team links.
+          plan: servicePlan,
           viewMode: "team",
-          token:
-            servicePlan.publicLinkToken ||
-            `current-service-viewer:${servicePlan.planKey}`,
-          includeTeamDetails: hasTeamDetails,
+          token: `current-service-viewer:${servicePlan.planKey}`,
+          includeTeamDetails: true,
           allowUnpublished: true,
         });
         return res.json({ success: true, plan, snapshot });

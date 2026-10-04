@@ -35,12 +35,11 @@ import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentP
 import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {
-  addServicePlanAssignee,
   addIemSlot,
   addMicrophoneSlot,
   DebouncedAssigneeNameField,
 } from "./ServicePlanAssigneeList";
-import { hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
+import { claimServicePlanAssigneeSlot, hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -521,7 +520,7 @@ const RoleNoteAudienceSubmenu = ({
         placeholder="Search roles"
         aria-label="Search roles"
         className="w-full"
-        inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
+        inputClassName="h-8 min-h-0 max-md:min-h-0 bg-gray-950 text-sm"
         onKeyDown={(event) => event.stopPropagation()}
       />
       <div>
@@ -782,7 +781,7 @@ const RoleNoteAudiencePicker = ({
           placeholder="Search roles"
           aria-label="Search roles"
           className="w-full"
-          inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
+          inputClassName="h-8 min-h-0 max-md:min-h-0 bg-gray-950 text-sm"
         />
         <div className="mt-2 max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1">
           {groupRoleOptionsByTeam(filteredOptions).map((group) => (
@@ -1482,7 +1481,8 @@ const ServicePlanElementRow = ({
       {allowEdit ? (
         <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
           {/* HistorySuggestField's inner anchor can shrink; give the editable
-              field twice the space and hide the summary on tablet widths. */}
+              field twice the space and reserve the summary for the wider 2xl
+              assignment column. */}
           <div className="min-w-0 flex-[2_1_0%]">
             <DebouncedAssigneeNameField
               value={leadInputAssignee?.name || ""}
@@ -1495,7 +1495,12 @@ const ServicePlanElementRow = ({
                     ),
                   });
                 } else if (name.trim()) {
-                  onUpdate({ assignees: addServicePlanAssignee(assignees, { name }) });
+                  onUpdate({
+                    assignees: claimServicePlanAssigneeSlot(
+                      assignees,
+                      { id: generateRandomId(), name: name.trim() },
+                    ).assignees,
+                  });
                 }
               }}
               historyValues={assignedToHistoryValues}
@@ -1508,7 +1513,7 @@ const ServicePlanElementRow = ({
           </div>
           {additionalParticipantNamesLabel ? (
             <span
-              className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400 lg:block"
+              className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400 2xl:block"
               title={additionalParticipantNamesLabel}
             >
               {additionalParticipantNamesLabel}
@@ -2063,14 +2068,17 @@ const ServicePlanElementRow = ({
                 )}
               />
             ) : (
-              <>
+              <span className={cn(
+                "flex h-[2rem] min-w-0 items-center gap-0.5",
+                placement === "summary" && "self-stretch px-1.5",
+              )}>
                 <Icon
                   svg={BookOpen}
                   size="xs"
                   className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                 />
                 <span className="min-w-0 flex-1 truncate leading-5">{scriptureLabel}</span>
-              </>
+              </span>
             )}
             {allowEdit ? (
               <Button
@@ -2129,10 +2137,10 @@ const ServicePlanElementRow = ({
                   )}
                 />
               ) : (
-                <>
+                <span className="flex h-[2rem] min-w-0 items-center gap-0.5">
                   <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
                   <span className="min-w-0 flex-1 truncate leading-5">{additionalScripture.label}</span>
-                </>
+                </span>
               )}
               {allowEdit ? (
                 <Button

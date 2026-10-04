@@ -6,6 +6,7 @@ import ServicePlanElementRow, {
   elementDndId,
   getServicePlanElementSurfaceClassName,
   richTextOneLinePreview,
+  SERVICE_PLAN_COL,
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
@@ -117,6 +118,15 @@ describe("richTextOneLinePreview", () => {
         ],
       }),
     ).toBe("First line Second");
+  });
+});
+
+describe("service plan row responsive columns", () => {
+  it("reserves the additional participant preview for the 2xl assignment width", () => {
+    expect(SERVICE_PLAN_COL.row).toContain("lg:grid-cols-[1.5rem_4.5rem_max-content_minmax(11rem,1.6fr)_minmax(9rem,1.2fr)_minmax(8rem,1fr)");
+    expect(SERVICE_PLAN_COL.row).toContain("2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)");
+    expect(SERVICE_PLAN_COL.mediumViewWithActions).toContain("lg:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.4fr)_minmax(10rem,1.4fr)_minmax(11rem,1.1fr)");
+    expect(SERVICE_PLAN_COL.mediumViewWithActions).toContain("2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.4fr)_minmax(14rem,1.4fr)_minmax(12rem,1.1fr)");
   });
 });
 
@@ -904,6 +914,7 @@ describe("ServicePlanElementRow", () => {
     expect(screen.getByPlaceholderText("Led by")).toHaveValue("Pastor John");
     const additionalNames = screen.getByTitle("pastor john, Pastor John, Sarah Lee");
     expect(additionalNames).toHaveTextContent("pastor john, Pastor John, Sarah Lee");
+    expect(additionalNames).toHaveClass("hidden", "2xl:block");
     const trigger = screen.getByRole("button", {
       name: "Show all 4 participants for Pastoral Greetings",
     });
@@ -943,15 +954,23 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    expect(screen.getByText("Pastor John, pastor john, Pastor John, Sarah Lee")).toHaveAttribute(
+    const participantNames = screen.getByText("Pastor John, pastor john, Pastor John, Sarah Lee");
+    expect(participantNames).toHaveAttribute(
       "title",
       "Pastor John, pastor john, Pastor John, Sarah Lee",
     );
-    expect(
-      screen.getByRole("button", {
-        name: "Show all 4 participants for Pastoral Greetings",
-      }),
-    ).toHaveTextContent("4");
+    expect(participantNames).toHaveClass(
+      "min-w-0",
+      "flex-1",
+      "overflow-hidden",
+      "text-ellipsis",
+      "whitespace-nowrap",
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Show all 4 participants for Pastoral Greetings",
+    });
+    expect(trigger).toHaveTextContent("4");
+    expect(trigger).toHaveClass("min-w-10", "shrink-0");
   });
 
   it("keeps the edit assignment trigger without a count for zero participants", async () => {
@@ -1932,6 +1951,50 @@ describe("microphone slots from a template", () => {
     { id: "choir-r", name: "Choir R", type: "Choir", color: "#a78bfa" },
     { id: "choir-c", name: "Choir C", type: "Choir", color: "#a78bfa" },
   ];
+
+  it("claims a blank equipment slot when a name is entered in compact Led by", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "slot-1", microphoneIds: [orange.id] }],
+      },
+    });
+
+    const lead = screen.getByPlaceholderText("Led by");
+    await user.type(lead, "Jasmine");
+    await user.tab();
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assignees: [{ id: "slot-1", name: "Jasmine", microphoneIds: [orange.id] }],
+    });
+  });
+
+  it("keeps explicit Add person separate from a blank equipment slot", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "slot-1", microphoneIds: [orange.id] }],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }));
+    await user.click(await screen.findByRole("button", { name: /Add person/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assignees: [
+        { id: "slot-1", microphoneIds: [orange.id] },
+        expect.objectContaining({ id: expect.any(String) }),
+      ],
+    }, undefined);
+  });
 
   it("offers another person while a microphone slot is unclaimed", async () => {
     const user = userEvent.setup();
