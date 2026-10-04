@@ -535,6 +535,45 @@ describe("ServicePlanContentPanel resources", () => {
     });
   });
 
+  it("uses resolved external video metadata for the service-plan resource card and shared preview", async () => {
+    const externalUrl = "https://video.example.test/clip";
+    mockGetChurchResource.mockResolvedValue({
+      success: true,
+      resource: {
+        id: "churchResource_video",
+        churchId: "church-1",
+        name: "Service clip",
+        kind: "other",
+        sourceType: "external",
+        external: { url: externalUrl, provider: "direct", mediaType: "video" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "user-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "user-1",
+      },
+    });
+    render(
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ServicePlanContentPanel
+          element={element({
+            resources: [{
+              id: "resource-ref-video",
+              type: "document",
+              title: "Church resource",
+              data: { resourceId: "churchResource_video" },
+            }],
+          })}
+          allowEdit={false}
+          onUpdate={jest.fn()}
+        />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(await screen.findByText("Video")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getAllByRole("button", { name: "Preview Service clip" })[0]);
+    expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveAttribute("data-preview-url", externalUrl);
+  });
+
   it("keeps legacy song and scripture attachments visible and detachable", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();

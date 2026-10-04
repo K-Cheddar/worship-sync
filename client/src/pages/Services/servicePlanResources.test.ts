@@ -108,9 +108,23 @@ describe("service-plan content resources", () => {
     expect(getServicePlanChurchResourceId(reference)).toBe("churchResource_1");
     expect(isServicePlanChurchResourceReference(reference)).toBe(true);
     expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("File");
-    expect(
-      getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label,
-    ).toBe("Audio");
+    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "document" } as never).label).toBe("File");
+    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label).toBe("Audio");
+    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "other" } as never).label).toBe("Other");
+  });
+
+  it.each([
+    [{ kind: "document", sourceType: "external", external: { url: "https://docs.example.test/file", mediaType: "document" } }, "File"],
+    [{ kind: "audio", sourceType: "external", external: { url: "https://media.example.test/file.mp3", mediaType: "audio" } }, "Audio"],
+    [{ kind: "other", sourceType: "external", external: { url: "https://example.test/", mediaType: "web" } }, "Web link"],
+    [{ kind: "other", sourceType: "external", external: { url: "https://media.example.test/file.mp4", mediaType: "video" } }, "Video"],
+    [{ kind: "other", sourceType: "external", external: { url: "https://youtube.com/watch?v=abc", provider: "youtube", mediaType: "video" } }, "YouTube"],
+    [{ kind: "other", sourceType: "external", external: { url: "https://media.example.test/image.png", mediaType: "image" } }, "Other"],
+    [{ kind: "other", sourceType: "external", external: { url: "https://example.test/unknown", provider: "unsupported" } }, "Other"],
+  ] as const)("maps referenced ChurchResource metadata to %s", (churchResource, label) => {
+    const reference = createServicePlanChurchResourceReference({ resourceId: "churchResource_1" });
+    expect(getEffectiveServicePlanResourceDefinition(reference, churchResource as never).label).toBe(label);
+    expect(reference.data).toEqual({ resourceId: "churchResource_1" });
   });
 
   it("normalizes an external ChurchResource reference to the shared preview descriptor", () => {

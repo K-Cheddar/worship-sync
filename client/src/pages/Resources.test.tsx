@@ -125,13 +125,14 @@ const externalResource = (
   kind: ChurchResource["kind"],
   url: string,
   mediaType: string,
+  metadata: { mimeType?: string; fileName?: string; provider?: string } = {},
 ): ChurchResource => ({
   id,
   churchId: "church-1",
   name,
   kind,
   sourceType: "external",
-  external: { url, provider: "direct", mediaType },
+  external: { url, provider: metadata.provider || "direct", mediaType, mimeType: metadata.mimeType, fileName: metadata.fileName },
   createdAt: "2026-09-21T00:00:00.000Z",
   createdBy: "user-1",
   updatedAt: "2026-09-21T00:00:00.000Z",
@@ -369,6 +370,23 @@ describe("Resources page", () => {
     expect(screen.getByText("Service image")).toBeInTheDocument();
     expect(screen.getByText("Service video")).toBeInTheDocument();
     expect(screen.getByText("Reference site")).toBeInTheDocument();
+  });
+
+  it.each([
+    [externalResource("external-web-label", "Reference site", "other", "https://example.test/page", "web"), "Web"],
+    [externalResource("external-video-label", "Service video", "other", "https://example.test/clip", "video"), "Video"],
+    [externalResource("external-image-label", "Service image", "other", "https://example.test/slide", "image"), "Image"],
+    [externalResource("external-unknown-label", "Unsupported link", "other", "https://example.test/unknown", "unknown"), "Link"],
+    [externalResource("external-pdf-label", "Guide PDF", "document", "https://example.test/guide.pdf", "document", { mimeType: "application/pdf", fileName: "guide.pdf" }), "PDF"],
+    [externalResource("external-docx-label", "Guide DOCX", "document", "https://example.test/guide.docx", "document", { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName: "guide.docx" }), "DOCX"],
+  ] as const)("labels %s as %s", async (external, expectedLabel) => {
+    mockResources = [external];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: new RegExp(`Preview ${external.name}`) }));
+    expect(await screen.findByText(new RegExp(`^${expectedLabel} · External · Updated`))).toBeInTheDocument();
   });
 
   it("sorts resources by the selected column and toggles direction", async () => {

@@ -82,6 +82,12 @@ const entryUpdatedAt = (entry: ResourceLibraryEntry) =>
 
 const typeLabel = (entry: ResourceLibraryEntry) => {
   const contentType = resourceEntryContentType(entry);
+  const external = entry.source === "church-resource" && entry.resource.sourceType === "external"
+    ? entry.resource.external
+    : undefined;
+  if (external?.mediaType === "web") return "Web";
+  if (external?.mediaType === "image") return "Image";
+  if (external?.mediaType === "video") return "Video";
   if (contentType === "application/pdf") return "PDF";
   if (contentType === "text/plain") return "TXT";
   if (contentType.includes("wordprocessingml") || contentType === "application/msword") return "DOCX";
@@ -103,8 +109,10 @@ const typeLabel = (entry: ResourceLibraryEntry) => {
     pptx: "PPTX", txt: "TXT", wav: "WAV", xls: "XLS", xlsx: "XLSX",
   };
   if (extension && extension !== fileName?.toLowerCase()) return extensionLabels[extension] || extension.toUpperCase();
-  if (entry.source === "church-resource" && entry.resource.sourceType === "external") {
-    return entry.resource.external.provider === "web" ? "Web" : "Link";
+  if (external) {
+    if (external.mediaType === "audio") return "Audio";
+    if (external.mediaType === "document") return "Document";
+    return "Link";
   }
   return "File";
 };
