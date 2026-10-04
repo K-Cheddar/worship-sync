@@ -13,7 +13,7 @@ import type {
   Presentation,
   QuickLinkType,
 } from "../types";
-import { normalizeItemSlides } from "./activeItemSlides";
+import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import {
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
   isControllerMediaRouteFoldersDocId,
@@ -612,7 +612,10 @@ export async function sweepMediaReferencesBeforeDelete(
   };
   try {
     for (const { previous, next } of pending.values()) {
-      const result = (await db.put(next)) as { rev?: string };
+      const persistedNext = next.type === "song"
+        ? normalizeSongForPersistence(next as unknown as DBItem)
+        : next;
+      const result = (await db.put(persistedNext)) as { rev?: string };
       applied.push({ previous, savedRevision: result.rev });
     }
   } catch (error) {
@@ -794,10 +797,15 @@ export async function replaceMediaReferencesForReplacement(
   }> = [];
   try {
     for (const { previous, next } of pending.values()) {
-      const result = (await db.put({
+      const nextDocument: Record<string, unknown> = {
         ...next,
         updatedAt: new Date().toISOString(),
-      })) as { rev?: string };
+      };
+      const persistedDocument =
+        nextDocument.type === "song"
+          ? normalizeSongForPersistence(nextDocument as unknown as DBItem)
+          : nextDocument;
+      const result = (await db.put(persistedDocument)) as { rev?: string };
       applied.push({ previous, savedRevision: result.rev });
     }
   } catch (error) {
@@ -806,10 +814,15 @@ export async function replaceMediaReferencesForReplacement(
     for (let index = applied.length - 1; index >= 0; index -= 1) {
       const saved = applied[index];
       try {
-        await db.put({
+        const previousDocument: Record<string, unknown> = {
           ...saved.previous,
           ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
-        });
+        };
+        const rollbackDocument =
+          previousDocument.type === "song"
+            ? normalizeSongForPersistence(previousDocument as unknown as DBItem)
+            : previousDocument;
+        await db.put(rollbackDocument);
       } catch (rollbackError) {
         rollbackStatus = "uncertain";
         console.error("Failed to roll back Canva media reference replacement:", {

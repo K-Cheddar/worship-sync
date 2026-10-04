@@ -241,8 +241,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     (state) =>
       state.undoable.present.preferences?.scrollbarWidth ?? "thin"
   );
+  const slides = getActiveItemSlides(item);
   const {
-    slides,
     selectedSlide,
     selectedBox,
     selectedArrangement,

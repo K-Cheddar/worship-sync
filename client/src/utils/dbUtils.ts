@@ -1,4 +1,7 @@
-import { normalizeItemSlides } from "./activeItemSlides";
+import {
+  normalizeItemSlides,
+  normalizeSongForPersistence,
+} from "./activeItemSlides";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { globalDb } from "../context/controllerInfo";
 import {
@@ -855,11 +858,11 @@ export const formatAllDocs = async (
           updatedAt: new Date().toISOString(),
         };
         if (item.doc) {
-          if (formattedItem.type === "song") {
-            delete (updatedItem as Partial<DBItem>).slides;
-            delete (updatedItem as Partial<DBItem>).monitorLayout;
-          }
-          await db.put(updatedItem);
+          await db.put(
+            formattedItem.type === "song"
+              ? normalizeSongForPersistence(updatedItem as DBItem)
+              : updatedItem,
+          );
         }
       } catch (error) {
         console.error("Failed to format item", error);
@@ -897,9 +900,7 @@ export const formatAllSongs = async (
         bibleInfo: formattedSong.bibleInfo,
         updatedAt: new Date().toISOString(),
       };
-      delete (updatedItem as Partial<DBItem>).slides;
-      delete updatedItem.monitorLayout;
-      await db.put(updatedItem);
+      await db.put(normalizeSongForPersistence(updatedItem));
     }
   } catch (error) {
     console.error("Failed to format all songs", error);
@@ -1058,11 +1059,9 @@ export const migrateFontSizesToPixels = async (
           })),
           updatedAt: new Date().toISOString(),
         };
-        const updated = normalizeItemSlides(migrated);
-        if (updated.type === "song") {
-          delete (updated as Partial<DBItem>).slides;
-          delete updated.monitorLayout;
-        }
+        const updated = migrated.type === "song"
+          ? normalizeSongForPersistence(migrated)
+          : normalizeItemSlides(migrated);
         await db.put(updated);
         migratedCount++;
       } catch (e) {
@@ -1175,11 +1174,9 @@ export const migrateFontSizesToDefaults = async (
           })),
           updatedAt: new Date().toISOString(),
         };
-        const updated = normalizeItemSlides(migrated);
-        if (updated.type === "song") {
-          delete (updated as Partial<DBItem>).slides;
-          delete updated.monitorLayout;
-        }
+        const updated = migrated.type === "song"
+          ? normalizeSongForPersistence(migrated)
+          : normalizeItemSlides(migrated);
         await db.put(updated);
         migratedCount++;
         console.log(

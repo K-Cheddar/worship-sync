@@ -115,6 +115,44 @@ describe("formatter", () => {
   });
 
   describe("updateFormattedTextDisplayInfo", () => {
+    it("updates a song's selected arrangement without root song slides", () => {
+      const song: ItemState = {
+        ...itemWithSlides,
+        type: "song",
+        slides: [],
+        selectedArrangement: 0,
+        arrangements: [
+          {
+            id: "arr-1",
+            name: "Master",
+            formattedLyrics: [],
+            songOrder: [],
+            slides: [{ ...itemWithSlides.slides[0] }],
+          },
+        ],
+      };
+      const info = {
+        backgroundColor: "#111",
+        textColor: "#fff",
+        fontSize: 2,
+        paddingX: 1,
+        paddingY: 1,
+        align: "center" as const,
+        isBold: true,
+        isItalic: false,
+        text: "Song text",
+      };
+
+      const result = updateFormattedTextDisplayInfo({
+        formattedTextDisplayInfo: info,
+        item: song,
+        shouldApplyToAll: false,
+      });
+
+      expect(result.slides).toEqual([]);
+      expect(result.arrangements[0].slides[0].formattedTextDisplayInfo).toEqual(info);
+    });
+
     it("updates only selected slide when shouldApplyToAll is false", () => {
       const item: ItemState = {
         ...itemWithSlides,

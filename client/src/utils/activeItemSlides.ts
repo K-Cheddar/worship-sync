@@ -23,6 +23,7 @@ export const normalizeLegacySongSlides = <T extends {
   const rootSlides = item.slides ?? [];
   let selectedArrangement = Math.max(0, item.selectedArrangement ?? 0);
   if (!arrangements.length && rootSlides.length) {
+    selectedArrangement = 0;
     arrangements.push({
       id: `legacy-${item._id ?? "song"}`,
       name: item.name ?? "Arrangement",
@@ -32,10 +33,8 @@ export const normalizeLegacySongSlides = <T extends {
     });
   } else if (arrangements.length) {
     selectedArrangement = Math.min(selectedArrangement, arrangements.length - 1);
-    const hasUsableArrangementSlides = arrangements.some(
-      (arrangement) => (arrangement.slides?.length ?? 0) > 0,
-    );
-    if (!hasUsableArrangementSlides && rootSlides.length) {
+    const selectedSlides = arrangements[selectedArrangement]?.slides ?? [];
+    if (!selectedSlides.length && rootSlides.length) {
       arrangements[selectedArrangement] = {
         ...arrangements[selectedArrangement],
         slides: rootSlides,
@@ -110,6 +109,34 @@ export const normalizeItemSlides = <T extends {
     ...(monitorLayout ? { monitorLayout } : {}),
     slides: rootSlides.map(withoutLegacyMonitorBoxes),
   };
+};
+
+/** Cleans song library state without measuring monitor layout for every document. */
+export const normalizeSongForLibrary = <T extends {
+  _id?: string;
+  name?: string;
+  type?: string;
+  selectedArrangement?: number;
+  arrangements?: Arrangment[];
+  slides?: ItemSlideType[];
+  monitorLayout?: MonitorLayout;
+}>(item: T): T => {
+  if (item.type !== "song") return item;
+  const normalized = normalizeLegacySongSlides(item);
+  const arrangements = (normalized.arrangements ?? []).map((arrangement) => {
+    const slides = arrangement.slides ?? [];
+    const monitorLayout =
+      arrangement.monitorLayout ?? getMonitorLayoutFromLegacySlides(slides);
+    return {
+      ...arrangement,
+      ...(monitorLayout ? { monitorLayout } : {}),
+      slides: slides.map(withoutLegacyMonitorBoxes),
+    };
+  });
+  const libraryDoc = { ...normalized, arrangements };
+  delete (libraryDoc as { slides?: ItemSlideType[] }).slides;
+  delete (libraryDoc as { monitorLayout?: MonitorLayout }).monitorLayout;
+  return libraryDoc;
 };
 
 /** Prepares a song document for persistence while preserving legacy slide recovery. */
