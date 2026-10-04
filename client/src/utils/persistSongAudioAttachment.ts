@@ -2,6 +2,7 @@ import PouchDB from "pouchdb-browser";
 
 import { DBItem, SongAudio } from "../types";
 import { applyPouchAudit } from "./pouchAudit";
+import { normalizeSongForPersistence } from "./activeItemSlides";
 
 /**
  * Deletes the private object before removing its only durable pointer. If the
@@ -37,7 +38,7 @@ export const persistSongAudioAttachment = async ({
     delete next.songAudio;
   }
 
-  const audited = applyPouchAudit(existing, next, { isNew: false });
+  const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
   const result = await db.put(audited);
   return { ...audited, _rev: result.rev };
 };

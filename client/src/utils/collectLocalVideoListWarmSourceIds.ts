@@ -41,10 +41,13 @@ const collectFromOpenItemSlides = (
   sourceIds: Set<string>,
   openItem: ItemWithSlides,
 ) => {
+  if (openItem.type === "song") {
+    const arrangementSlides =
+      openItem.arrangements?.[openItem.selectedArrangement ?? 0]?.slides;
+    collectFromSlides(sourceIds, arrangementSlides);
+    return;
+  }
   collectFromSlides(sourceIds, openItem.slides);
-  const arrangementSlides =
-    openItem.arrangements?.[openItem.selectedArrangement ?? 0]?.slides;
-  collectFromSlides(sourceIds, arrangementSlides);
 };
 
 /**

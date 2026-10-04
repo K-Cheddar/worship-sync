@@ -665,15 +665,6 @@ describe("dbUtils", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         _id: "song-1",
-        slides: [
-          expect.objectContaining({
-            boxes: [expect.objectContaining({ fontSize: 45 })],
-            monitorCurrentBandBoxes: [
-              expect.objectContaining({ fontSize: 36 }),
-            ],
-            monitorNextBandBoxes: [expect.objectContaining({ fontSize: 27 })],
-          }),
-        ],
         arrangements: [
           expect.objectContaining({
             slides: [
@@ -685,6 +676,10 @@ describe("dbUtils", () => {
         ],
       }),
     );
+    const savedSong = db.put.mock.calls[0][0];
+    expect(savedSong).not.toHaveProperty("slides");
+    expect(savedSong.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(savedSong.arrangements[0].slides[0]).not.toHaveProperty("monitorNextBandBoxes");
   });
 
   it("migrates font sizes to defaults by item type", async () => {
@@ -729,8 +724,7 @@ describe("dbUtils", () => {
     expect(result).toEqual({ migratedCount: 2, errorCount: 0 });
 
     const songPut = db.put.mock.calls[0][0];
-    expect(songPut.slides[0].boxes[0].fontSize).toBe(180);
-    expect(songPut.slides[1].boxes[0].fontSize).toBe(108);
+    expect(songPut).not.toHaveProperty("slides");
     expect(songPut.arrangements[0].slides[0].boxes[0].fontSize).toBe(180);
     expect(songPut.arrangements[0].slides[1].boxes[0].fontSize).toBe(108);
 

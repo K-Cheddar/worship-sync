@@ -1,3 +1,4 @@
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 import {
   useCallback,
   useContext,
@@ -391,10 +392,12 @@ const MediaModal = ({
 
   const itemSlideContext = useMemo(() => {
     if (!location.pathname.includes("item")) return undefined;
-    const arrangement = item.arrangements[item.selectedArrangement];
-    const slides = arrangement?.slides?.length
-      ? arrangement.slides
-      : item.slides;
+    const slides = getActiveItemSlides({
+      type: item.type,
+      arrangements: item.arrangements,
+      selectedArrangement: item.selectedArrangement,
+      slides: item.slides,
+    });
     return {
       itemType: item.type,
       slides,

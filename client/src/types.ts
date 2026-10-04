@@ -123,6 +123,11 @@ export type SlideType =
 
 export type OverflowMode = "fit" | "separate";
 
+export type MonitorLayout = {
+  currentFontSizePx: number;
+  nextFontSizePx: number;
+};
+
 export type ItemSlideType = {
   type: SlideType;
   name: string;
@@ -130,9 +135,8 @@ export type ItemSlideType = {
   boxes: Box[];
   mediaSource?: SlideMediaSource;
   videoBackgroundSendMode?: VideoBackgroundSendMode;
-  /** Pre-calculated boxes for monitor "current" band (50% height). Set when slide is formatted. */
+  /** Legacy persisted monitor boxes. Hydration converts these to compact layout values. */
   monitorCurrentBandBoxes?: Box[];
-  /** Pre-calculated boxes for monitor "next" band (30% height). Set when slide is formatted. */
   monitorNextBandBoxes?: Box[];
   overflow?: OverflowMode;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
@@ -287,7 +291,10 @@ export type ItemProperties = {
   selectedArrangement: number;
   background?: string;
   arrangements: Arrangment[];
+  /** Used by non-song items. Songs use arrangement slides. */
   slides: ItemSlideType[];
+  /** Compact monitor sizing for non-song items. Songs store this per arrangement. */
+  monitorLayout?: MonitorLayout;
   bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   shouldSendTo: ShouldSendTo;
@@ -333,6 +340,7 @@ export type Arrangment = {
   name: string;
   formattedLyrics: FormattedLyrics[];
   songOrder: SongOrder[];
+  monitorLayout?: MonitorLayout;
   slides: ItemSlideType[];
   id: string;
 };

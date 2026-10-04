@@ -12,8 +12,9 @@ import {
 } from "../types";
 import { getLetterFromIndex } from "./generalUtils";
 import {
-  addMonitorFormattedToSlide,
   addMonitorFormattedToSlides,
+  getMonitorLayoutForSlides,
+  stripMonitorBoxClones,
 } from "./monitorSlideFormatter";
 import { DEFAULT_FONT_PX, DEFAULT_TITLE_FONT_PX } from "../constants";
 import { getMaxLines, getNumLines } from "./textMeasurement";
@@ -150,7 +151,7 @@ export const formatSection = ({
     );
   }
 
-  return formattedSlides.map(addMonitorFormattedToSlide);
+  return stripMonitorBoxClones(formattedSlides);
 };
 
 /**
@@ -251,13 +252,14 @@ export const getFormattedSections = (
 
 export const ensureSlidesHaveMonitorBandFormatting = (
   slides: ItemSlideType[],
+  layout?: ItemState["monitorLayout"],
 ): ItemSlideType[] => {
-  if (slides.length === 0) return slides;
+  if (slides.length === 0 || !layout) return slides;
 
   const slidesWithBandBox = slides.filter((slide) => Boolean(slide.boxes?.[1]));
   if (slidesWithBandBox.length === 0) return slides;
 
-  return addMonitorFormattedToSlides(slides);
+  return addMonitorFormattedToSlides(slides, layout);
 };
 
 export const formatFree = (item: ItemState) => {
@@ -293,7 +295,8 @@ export const formatFree = (item: ItemState) => {
     );
     return {
       ...item,
-      slides: ensureSlidesHaveMonitorBandFormatting(item.slides),
+      slides: stripMonitorBoxClones(item.slides),
+      monitorLayout: getMonitorLayoutForSlides(item.slides),
     };
   }
 
@@ -453,7 +456,8 @@ export const formatFree = (item: ItemState) => {
 
   return {
     ...item,
-    slides: ensureSlidesHaveMonitorBandFormatting(updatedSlides),
+    slides: stripMonitorBoxClones(updatedSlides),
+    monitorLayout: getMonitorLayoutForSlides(updatedSlides),
     formattedSections: updatedFormattedSections,
   };
 };
@@ -504,7 +508,7 @@ export const formatLyrics = (item: ItemState) => {
   }
 
   newSlides.push(createNewSlide({ type: "Blank", boxes: lastBoxes }));
-  return addMonitorFormattedToSlides(newSlides);
+  return stripMonitorBoxClones(newSlides);
 };
 
 export const formatSong = (_item: ItemState) => {
@@ -512,10 +516,15 @@ export const formatSong = (_item: ItemState) => {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
-          if (i === _item.selectedArrangement) {
-            return { ...el, slides: formatLyrics(_item) };
-          }
-          return el;
+          const slides =
+            i === _item.selectedArrangement
+              ? formatLyrics(_item)
+              : stripMonitorBoxClones(el.slides ?? []);
+          const monitorLayout =
+            i === _item.selectedArrangement || !el.monitorLayout
+              ? getMonitorLayoutForSlides(slides)
+              : el.monitorLayout;
+          return { ...el, slides, monitorLayout };
         })
       : [],
   };
@@ -572,7 +581,9 @@ export const formatSong = (_item: ItemState) => {
     slides: updatedSlides,
   };
 
-  return { ...item, slides: updatedSlides };
+  return { ...item, slides: [], arrangements: item.arrangements.map((arrangement, index) =>
+    index === selectedArrangement ? { ...arrangement, slides: updatedSlides } : arrangement,
+  ) };
 };
 
 type formatBibleType = {
@@ -680,7 +691,8 @@ export const formatBible = ({
       }),
     );
 
-  _item.slides = addMonitorFormattedToSlides(newSlides);
+  _item.slides = stripMonitorBoxClones(newSlides);
+  _item.monitorLayout = getMonitorLayoutForSlides(newSlides);
 
   return {
     ..._item,

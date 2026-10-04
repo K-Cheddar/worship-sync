@@ -1,3 +1,4 @@
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -109,7 +110,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       item: item,
       shouldApplyToAll: shouldApplyToAll,
     });
-    dispatch(updateSlides({ slides: updatedItem.slides }));
+    dispatch(updateSlides({ slides: getActiveItemSlides(updatedItem) }));
   };
 
   const handleChange = (field: fieldType, value: string) => {

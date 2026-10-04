@@ -2094,26 +2094,6 @@ describe("SlideEditor", () => {
     });
 
     it("does not dispatch for song when arrangement has no slides", () => {
-      const slides = [
-        {
-          id: "title",
-          type: "Media",
-          name: "Title",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "T", x: 0, y: 0 },
-          ],
-        },
-        {
-          id: "v1",
-          type: "Media",
-          name: "Verse 1",
-          boxes: [
-            { width: 100, height: 100, words: "BG", x: 0, y: 0 },
-            { width: 100, height: 100, words: "V", x: 0, y: 0 },
-          ],
-        },
-      ];
       mockState = makeBaseState({
         undoable: {
           present: {
@@ -2129,20 +2109,14 @@ describe("SlideEditor", () => {
                   songOrder: [],
                 },
               ],
-              slides,
+              slides: [],
             },
           },
         },
       });
 
       render(<SlideEditor access="full" />);
-      invokeDisplayOnChange(
-        makeOnChangePayload({
-          index: 1,
-          value: "x",
-          box: { width: 100, height: 100, words: "x", x: 0, y: 0 },
-        })
-      );
+      expect(displayWindowCapture.onChange).toBeNull();
 
       expect(mockUpdateBoxes).not.toHaveBeenCalled();
       expect(mockUpdateArrangements).not.toHaveBeenCalled();

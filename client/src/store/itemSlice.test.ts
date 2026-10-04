@@ -69,7 +69,9 @@ describe("itemSlice", () => {
     store.dispatch(itemSlice.actions.setActiveItem(item));
 
     const state = store.getState().item;
-    expect(state.baseItem?.slides[0].boxes[0].textDocument).toEqual(textDocument);
+    expect(state.slides).toEqual([]);
+    expect(state.baseItem?.slides).toEqual([]);
+    expect(state.baseItem?.arrangements[0].slides[0].boxes[0].textDocument).toEqual(textDocument);
     expect(state.baseItem?.formattedSections?.[0].textDocument).toEqual(
       textDocument,
     );
@@ -329,6 +331,34 @@ describe("itemSlice", () => {
       expect(store.getState().item.songLinks).toHaveLength(1);
       expect(store.getState().item.songAudio?.id).toBe("audio-1");
       expect(store.getState().item.hasPendingUpdate).toBe(true);
+    });
+
+    it("songs read and edit only the selected arrangement slides", async () => {
+      const store = createStore();
+      const firstSlide = {
+        type: "Verse" as const, name: "Master Verse", id: "master-1", boxes: [{ words: "Master", width: 100, height: 100 }],
+      };
+      const secondSlide = {
+        type: "Verse" as const, name: "Acoustic Verse", id: "acoustic-1", boxes: [{ words: "Acoustic", width: 100, height: 100 }],
+      };
+      store.dispatch(itemSlice.actions.setActiveItem({
+        _id: "song-active", name: "Song", type: "song", selectedArrangement: 0,
+        slides: [{ ...firstSlide, name: "legacy duplicate" }],
+        arrangements: [
+          { id: "master", name: "Master", songOrder: [], formattedLyrics: [], slides: [firstSlide] },
+          { id: "acoustic", name: "Acoustic", songOrder: [], formattedLyrics: [], slides: [secondSlide] },
+        ],
+      } as any));
+
+      expect(store.getState().item.slides).toEqual([]);
+      expect(store.getState().item.arrangements[0].slides[0].name).toBe("Master Verse");
+      store.dispatch(itemSlice.actions._setSelectedArrangement(1));
+      store.dispatch(itemSlice.actions._updateSlides([{ ...secondSlide, name: "Edited Acoustic" }]));
+
+      const state = store.getState().item;
+      expect(state.slides).toEqual([]);
+      expect(state.arrangements[0].slides).toEqual([firstSlide]);
+      expect(state.arrangements[1].slides[0].name).toBe("Edited Acoustic");
     });
 
     it("_updateSlides replaces slides", () => {

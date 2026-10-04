@@ -38,11 +38,30 @@ import {
 } from "../utils/localImageAssets";
 import { replaceMediaReferencesInItem } from "../utils/mediaReferenceReplacement";
 import type { AppDispatch, RootState } from "./store";
+import { getActiveItemSlides, normalizeItemSlides } from "../utils/activeItemSlides";
+import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 
 const defaultShouldSendTo: ShouldSendTo = {
   projector: true,
   monitor: true,
   stream: true,
+};
+
+const hasMonitorSizingInputsChanged = (
+  previousSlides: ItemSlideType[],
+  nextSlides: ItemSlideType[],
+) => {
+  if (previousSlides.length !== nextSlides.length) return true;
+  return previousSlides.some((slide, index) => {
+    const previousBox = slide.boxes?.[1];
+    const nextBox = nextSlides[index]?.boxes?.[1];
+    return (
+      previousBox?.words !== nextBox?.words ||
+      previousBox?.width !== nextBox?.width ||
+      previousBox?.isBold !== nextBox?.isBold ||
+      previousBox?.isItalic !== nextBox?.isItalic
+    );
+  });
 };
 
 const initialState: ItemState = {
@@ -78,6 +97,7 @@ const initialState: ItemState = {
   songMetadata: undefined,
   songLinks: [],
   songAudio: undefined,
+  monitorLayout: undefined,
   backgroundTargetSlideIds: [],
   backgroundTargetRangeAnchorId: null,
   mobileBackgroundTargetSelectMode: false,
@@ -109,6 +129,7 @@ const createItemSnapshot = (
 ): DBItem | null => {
   if (!item?._id || !item.type) return null;
 
+  const normalized = normalizeItemSlides(item);
   return {
     _id: item._id,
     name: item.name || "",
@@ -116,8 +137,9 @@ const createItemSnapshot = (
     shouldSkipTitle: item.shouldSkipTitle,
     selectedArrangement: item.selectedArrangement ?? 0,
     background: item.background,
-    arrangements: item.arrangements || [],
-    slides: item.slides || [],
+    arrangements: normalized.arrangements || [],
+    slides: normalized.slides || [],
+    monitorLayout: normalized.monitorLayout,
     bibleInfo: item.bibleInfo,
     timerInfo: item.timerInfo,
     shouldSendTo: item.shouldSendTo || defaultShouldSendTo,
@@ -200,6 +222,8 @@ const applyItemDataToState = (
   payload: Partial<ItemState> | DBItem,
   options?: { preserveSelection?: boolean },
 ) => {
+  const normalized = normalizeItemSlides(payload);
+  payload = normalized;
   const preserveSelection = options?.preserveSelection ?? false;
   const nextListId = "listId" in payload ? payload.listId : undefined;
   const nextSelectedSlide =
@@ -230,7 +254,8 @@ const applyItemDataToState = (
     : (nextSelectedBox ?? 1);
   state.shouldSkipTitle = payload.shouldSkipTitle || false;
   state.arrangements = payload.arrangements || [];
-  state.slides = payload.slides || [];
+  state.slides = payload.type === "song" ? [] : (payload.slides || []);
+  state.monitorLayout = payload.monitorLayout;
   state.formattedSections =
     payload.formattedSections || state.formattedSections;
   state.bibleInfo = payload.bibleInfo || {
@@ -356,7 +381,15 @@ export const itemSlice = createSlice({
       state.hasPendingUpdate = true;
     },
     _updateSlides: (state, action: PayloadAction<ItemSlideType[]>) => {
-      state.slides = [...action.payload];
+      if (state.type === "song") {
+        state.arrangements = state.arrangements.map((arrangement, index) =>
+          index === state.selectedArrangement
+            ? { ...arrangement, slides: [...action.payload] }
+            : arrangement,
+        );
+      } else {
+        state.slides = [...action.payload];
+      }
       state.hasPendingUpdate = true;
     },
     _updateBibleInfo: (state, action: PayloadAction<BibleInfo>) => {
@@ -369,6 +402,18 @@ export const itemSlice = createSlice({
     },
     syncLiveTimerInfo: (state, action: PayloadAction<TimerInfo>) => {
       state.timerInfo = action.payload;
+    },
+    _updateMonitorLayout: (state, action: PayloadAction<ItemState["monitorLayout"]>) => {
+      if (state.type === "song") {
+        state.arrangements = state.arrangements.map((arrangement, index) =>
+          index === state.selectedArrangement
+            ? { ...arrangement, monitorLayout: action.payload }
+            : arrangement,
+        );
+      } else {
+        state.monitorLayout = action.payload;
+      }
+      state.hasPendingUpdate = true;
     },
     _updateFormattedSections: (
       state,
@@ -610,29 +655,12 @@ export const updateBoxes = createAsyncThunk(
   "item/updateBoxes",
   async (args: { boxes: Box[] }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
-    let arrangements = [...item.arrangements];
-    if (item.arrangements[item.selectedArrangement]?.slides?.length > 0) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: [
-            ...arrangement.slides.map((slide, slideIndex) => {
-              if (slideIndex !== item.selectedSlide) return slide;
-              return { ...slide, boxes: [...args.boxes] };
-            }),
-          ],
-        };
-      });
-      dispatch(_updateArrangements(arrangements));
-    }
-
-    const slides = item.slides.map((slide, index) => {
-      if (index !== item.selectedSlide) return slide;
-      return { ...slide, boxes: [...args.boxes] };
-    });
-
-    dispatch(_updateSlides(slides));
+    const slides = getActiveItemSlides(item).map((slide, slideIndex) =>
+      slideIndex === item.selectedSlide
+        ? { ...slide, boxes: [...args.boxes] }
+        : slide,
+    );
+    dispatch(updateSlides({ slides }));
   },
 );
 
@@ -648,19 +676,14 @@ export const updateArrangements = createAsyncThunk(
     const item = getState().undoable.present.item;
     const { selectedArrangement: currentArrangement } = item;
     const { selectedArrangement, arrangements } = args;
-    const newSlides =
-      arrangements[selectedArrangement ?? currentArrangement]?.slides ?? [];
+    const nextArrangement = selectedArrangement ?? currentArrangement;
+    const newSlides = arrangements[nextArrangement]?.slides ?? [];
     const oldSlides = item.arrangements[currentArrangement]?.slides ?? [];
 
     dispatch(_updateArrangements(arrangements));
     if (selectedArrangement !== undefined) {
       dispatch(_setSelectedArrangement(selectedArrangement));
     }
-    dispatch(
-      _updateSlides(
-        arrangements[selectedArrangement ?? currentArrangement].slides,
-      ),
-    );
 
     if (item.type === "song" && oldSlides.length !== newSlides.length) {
       const hint = getSelectionHint(oldSlides, item.selectedSlide);
@@ -695,8 +718,7 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
           ? { mediaSource: args.mediaInfo.localVideoInput }
           : { mediaSource: null };
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
+    const arrangementSlides = getActiveItemSlides(item);
     const mapSlides = (slides: ItemSlideType[]) => {
       return slides.map((slide) => {
         const nextBoxes = [
@@ -722,21 +744,9 @@ export const updateAllSlideBackgrounds = createAsyncThunk(
         };
       });
     };
-    let arrangements = [...item.arrangements];
-    if (arrangementSlides) {
-      const updatedSlides = mapSlides(arrangementSlides);
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: [...updatedSlides],
-        };
-      });
-    }
-    const slides = mapSlides(item.slides);
+    const slides = mapSlides(arrangementSlides);
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
     dispatch(setBackground(args.background));
 
     _syncListItemBackground({
@@ -788,33 +798,13 @@ export const updateSlideBackground = createAsyncThunk(
       };
     };
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
+    const arrangementSlides = getActiveItemSlides(item);
 
-    let arrangements = [...item.arrangements];
-
-    if (arrangementSlides) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: [
-            ...arrangement.slides.map((slide, slideIndex) => {
-              if (slideIndex !== item.selectedSlide) return slide;
-              return applySlide(slide);
-            }),
-          ],
-        };
-      });
-    }
-
-    const slides = item.slides.map((slide, index) => {
-      if (index !== item.selectedSlide) return slide;
-      return applySlide(slide);
-    });
+    const slides = arrangementSlides.map((slide, index) =>
+      index === item.selectedSlide ? applySlide(slide) : slide,
+    );
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
 
     if (item.selectedSlide === 0) {
       dispatch(setBackground(args.background));
@@ -850,21 +840,8 @@ export const updateSlideVideoBackgroundSendMode = createAsyncThunk(
         index === item.selectedSlide ? applyMode(slide) : slide,
       );
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
-    if (arrangementSlides) {
-      dispatch(
-        _updateArrangements(
-          item.arrangements.map((arrangement, index) =>
-            index === item.selectedArrangement
-              ? { ...arrangement, slides: mapSelected(arrangement.slides) }
-              : arrangement,
-          ),
-        ),
-      );
-    }
-
-    dispatch(_updateSlides(mapSelected(item.slides)));
+    const arrangementSlides = getActiveItemSlides(item);
+    dispatch(_updateSlides(mapSelected(arrangementSlides)));
   },
 );
 
@@ -886,9 +863,7 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
       return;
     }
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
-    let arrangements = [...item.arrangements];
+    const arrangementSlides = getActiveItemSlides(item);
     const mediaSource =
       args.mediaSource !== undefined
         ? args.mediaSource
@@ -901,21 +876,11 @@ export const updateSlideBackgroundsOnSubset = createAsyncThunk(
       mediaSource,
     };
 
-    if (arrangementSlides?.length) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: mapSlidesUpdateBox0ById(arrangement.slides, idSet, patch),
-        };
-      });
-    }
-    const slides = mapSlidesUpdateBox0ById(item.slides, idSet, patch);
+    const slides = mapSlidesUpdateBox0ById(arrangementSlides, idSet, patch);
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
 
-    const firstSlideId = item.slides[0]?.id;
+    const firstSlideId = arrangementSlides[0]?.id;
     const targetsIncludeIndex0 =
       firstSlideId !== undefined && idSet.has(firstSlideId);
     if (targetsIncludeIndex0) {
@@ -945,24 +910,12 @@ export const clearSlideBackgroundsOnSubset = createAsyncThunk(
       mediaSource: null,
     };
 
-    const arrangementSlides =
-      item.arrangements[item.selectedArrangement]?.slides;
-    let arrangements = [...item.arrangements];
-    if (arrangementSlides?.length) {
-      arrangements = arrangements.map((arrangement, index) => {
-        if (index !== item.selectedArrangement) return arrangement;
-        return {
-          ...arrangement,
-          slides: mapSlidesUpdateBox0ById(arrangement.slides, idSet, patch),
-        };
-      });
-    }
-    const slides = mapSlidesUpdateBox0ById(item.slides, idSet, patch);
+    const arrangementSlides = getActiveItemSlides(item);
+    const slides = mapSlidesUpdateBox0ById(arrangementSlides, idSet, patch);
 
     dispatch(_updateSlides(slides));
-    dispatch(_updateArrangements(arrangements));
 
-    const firstSlideId = item.slides[0]?.id;
+    const firstSlideId = arrangementSlides[0]?.id;
     const targetsIncludeIndex0 =
       firstSlideId !== undefined && idSet.has(firstSlideId);
     if (targetsIncludeIndex0) {
@@ -981,7 +934,7 @@ export const addSlide = createAsyncThunk(
   "item/addSlide",
   async (args: { slide: ItemSlideType }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
-    const newSlides = [...item.slides, args.slide];
+    const newSlides = [...getActiveItemSlides(item), args.slide];
     dispatch(updateSlides({ slides: newSlides }));
   },
 );
@@ -990,7 +943,7 @@ export const removeSlide = createAsyncThunk(
   "item/removeSlide",
   async (args: { index: number }, { dispatch, getState }) => {
     const item = getState().undoable.present.item;
-    const newSlides = item.slides.filter((_, index) => index !== args.index);
+    const newSlides = getActiveItemSlides(item).filter((_, index) => index !== args.index);
     dispatch(updateSlides({ slides: newSlides }));
   },
 );
@@ -1002,8 +955,9 @@ export const removeSlidesByIds = createAsyncThunk(
     const item = getState().undoable.present.item;
     const idSet = new Set(args.slideIds);
     if (idSet.size === 0) return;
-    const newSlides = item.slides.filter((s) => !idSet.has(s.id));
-    if (newSlides.length === item.slides.length) return;
+    const activeSlides = getActiveItemSlides(item);
+    const newSlides = activeSlides.filter((s) => !idSet.has(s.id));
+    if (newSlides.length === activeSlides.length) return;
     if (newSlides.length === 0) return;
     await dispatch(updateSlides({ slides: newSlides })).unwrap();
     dispatch(itemSlice.actions.clearBackgroundTargetSelection());
@@ -1017,10 +971,17 @@ export const updateSlides = createAsyncThunk(
     { dispatch, getState },
   ) => {
     const item = getState().undoable.present.item;
-    const oldSlides = item.slides;
+    const oldSlides = getActiveItemSlides(item);
     const newSlides = args.slides;
 
     dispatch(_updateSlides(args.slides));
+    if (hasMonitorSizingInputsChanged(oldSlides, newSlides)) {
+      dispatch(
+        itemSlice.actions._updateMonitorLayout(
+          getMonitorLayoutForSlides(newSlides),
+        ),
+      );
+    }
     if (args.formattedSections) {
       dispatch(_updateFormattedSections(args.formattedSections));
     }
@@ -1066,6 +1027,7 @@ export const {
   _updateTimerInfo,
   syncLiveTimerInfo,
   _updateFormattedSections,
+  _updateMonitorLayout,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,

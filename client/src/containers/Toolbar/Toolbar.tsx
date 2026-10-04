@@ -45,6 +45,7 @@ import {
   updateSlides,
 } from "../../store/itemSlice";
 import { ItemState } from "../../types";
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 import { scrollToolbarTabIntoViewIfNeeded } from "../../utils/scrollToolbarTabIntoView";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
@@ -145,15 +146,14 @@ const Toolbar = ({
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
-      dispatch(
-        updateSlides({
-          slides: updatedItem.slides,
-          formattedSections: updatedItem.formattedSections,
-        })
-      );
-      if (updatedItem.arrangements.length > 0) {
+      if (updatedItem.type === "song") {
+        dispatch(updateArrangements({ arrangements: updatedItem.arrangements }));
+      } else {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements })
+          updateSlides({
+            slides: getActiveItemSlides(updatedItem),
+            formattedSections: updatedItem.formattedSections,
+          })
         );
       }
       if (updatedItem.bibleInfo) {

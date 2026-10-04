@@ -1521,6 +1521,69 @@ describe("store module", () => {
     );
   });
 
+  it("omits legacy root slides from song saves and retains non-song slide persistence", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const arrangementSlide = { id: "arr-slide", name: "Verse", type: "Verse", boxes: [] };
+    db.get.mockResolvedValue(createSongDoc({
+      _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
+    }));
+    db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
+      _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
+    })));
+    store.dispatch(itemSlice.actions._setName("Saved Song"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const savedSong = db.put.mock.calls[0][0];
+    expect(savedSong).not.toHaveProperty("slides");
+    expect(savedSong.arrangements[0].slides).toEqual([arrangementSlide]);
+
+    const nonSong = createTimerItem({ _rev: "1-timer" });
+    store.dispatch(itemSlice.actions.setActiveItem(nonSong));
+    db.get.mockResolvedValue(nonSong);
+    db.put.mockClear();
+    store.dispatch(itemSlice.actions._setName("Saved Timer"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls[0][0].slides).toEqual(nonSong.slides);
+  });
+
+  it("updates the selected arrangement's compact monitor layout when source sizing inputs change", async () => {
+    const { store, itemSlice, updateSlides } = loadStoreWithItemPersistence();
+    const initialSlide = {
+      id: "verse-1",
+      name: "Verse 1",
+      type: "Verse",
+      boxes: [{ words: "" }, { words: "short", width: 100, isBold: false, isItalic: false }],
+    };
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
+      monitorLayout: undefined,
+      arrangements: [{
+        id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [],
+        monitorLayout: { currentFontSizePx: 1, nextFontSizePx: 2 },
+        slides: [initialSlide],
+      }],
+    })));
+
+    const updatedSlide = {
+      ...initialSlide,
+      boxes: [initialSlide.boxes[0], { ...initialSlide.boxes[1], words: "a much longer lyric line that should need more space" }],
+    };
+    await store.dispatch(updateSlides({ slides: [updatedSlide] })).unwrap();
+
+    const state = store.getState().undoable.present.item;
+    expect(state.slides).toEqual([]);
+    expect(state.arrangements[0].slides).toEqual([updatedSlide]);
+    expect(state.arrangements[0].monitorLayout).not.toEqual({
+      currentFontSizePx: 1,
+      nextFontSizePx: 2,
+    });
+  });
+
   it("does not restore removed song audio during an ordinary item autosave", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, db } = loadStoreWithItemPersistence();

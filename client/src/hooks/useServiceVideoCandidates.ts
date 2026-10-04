@@ -44,6 +44,7 @@ import {
 } from "../utils/electronMediaSurfaceDiagnostics";
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
+import { getActiveItemSlides } from "../utils/activeItemSlides";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -90,7 +91,10 @@ type PouchAllDocsResult = {
   }>;
 };
 
-type SlideBearingDocument = Pick<DBItem, "_id" | "name" | "slides">;
+type SlideBearingDocument = Pick<
+  DBItem,
+  "_id" | "name" | "type" | "slides" | "arrangements" | "selectedArrangement"
+>;
 
 const isSlideBearingDocument = (
   doc: unknown,
@@ -101,13 +105,16 @@ const isSlideBearingDocument = (
     name?: unknown;
     type?: unknown;
     slides?: unknown;
+    arrangements?: unknown;
   };
   return (
     typeof candidate._id === "string" &&
     candidate._id.length > 0 &&
     typeof candidate.name === "string" &&
     candidate.type !== "heading" &&
-    Array.isArray(candidate.slides)
+    (candidate.type === "song"
+      ? Array.isArray(candidate.arrangements)
+      : Array.isArray(candidate.slides))
   );
 };
 
@@ -426,9 +433,10 @@ const getItemMedia = async (
   cacheRequests?: Map<string, CacheRequestState>,
 ): Promise<ServiceItemMedia | undefined> => {
   if (!isSlideBearingDocument(doc)) return undefined;
+  const slides = getActiveItemSlides(doc);
 
   const discoveries = await Promise.all(
-    doc.slides.flatMap((slide) => {
+    slides.flatMap((slide) => {
       if (!slide || !Array.isArray(slide.boxes)) return [];
       return [
         ...slide.boxes.map((box) =>
@@ -461,7 +469,7 @@ const getItemMedia = async (
     );
   const posterUrls = Array.from(
     new Set(
-      doc.slides.flatMap((slide) =>
+      slides.flatMap((slide) =>
         Array.isArray(slide?.boxes)
           ? slide.boxes.flatMap((box) => {
               const media = box.mediaInfo;

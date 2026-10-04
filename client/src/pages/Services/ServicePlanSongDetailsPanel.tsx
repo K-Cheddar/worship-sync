@@ -16,6 +16,7 @@ import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
+import { normalizeSongForPersistence } from "../../utils/activeItemSlides";
 import type { Arrangment, DBItem, SongAudio, SongMetadata } from "../../types";
 
 type ServicePlanSongDetailsPanelProps = {
@@ -50,7 +51,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       if (patch.songAudioPatch === null) delete next.songAudio;
       else next.songAudio = patch.songAudioPatch;
     }
-    const audited = applyPouchAudit(existing, next, { isNew: false });
+    const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
     const result = await db.put(audited);
     const saved = { ...audited, _rev: result.rev };
     dispatch(upsertItemInAllDocs(saved));
@@ -116,7 +117,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     const next: DBItem = { ...existing, arrangements, selectedArrangement };
     if (songMetadata === undefined) delete next.songMetadata;
     else next.songMetadata = songMetadata;
-    const audited = applyPouchAudit(existing, next, { isNew: false });
+    const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
     const result = await db.put(audited);
     const saved = { ...audited, _rev: result.rev };
     dispatch(upsertItemInAllDocs(saved));

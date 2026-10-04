@@ -13,6 +13,7 @@ import type {
   Presentation,
   QuickLinkType,
 } from "../types";
+import { normalizeItemSlides } from "./activeItemSlides";
 import {
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
   MONITOR_SETTINGS_POUCH_ID,
@@ -120,16 +121,8 @@ function sweepSlide(
   const mediaSourceMatches =
     slide.mediaSource?.kind === "local-video-input" &&
     deletedVideoSourceIds.has(slide.mediaSource.sourceId);
-  const next: ItemSlideType = {
-    ...slide,
-    boxes,
-    monitorCurrentBandBoxes: slide.monitorCurrentBandBoxes
-      ? mapBoxes(slide.monitorCurrentBandBoxes)
-      : slide.monitorCurrentBandBoxes,
-    monitorNextBandBoxes: slide.monitorNextBandBoxes
-      ? mapBoxes(slide.monitorNextBandBoxes)
-      : slide.monitorNextBandBoxes,
-  };
+  const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
+  const next: ItemSlideType = { ...clean, boxes };
   if (mediaSourceMatches) {
     const { mediaSource: _removed, ...rest } = next;
     return rest;
@@ -506,7 +499,7 @@ export async function sweepMediaReferencesBeforeDelete(
       const item = doc as unknown as DBItem;
       const pb = preferenceDefaultForItemType(item.type);
       let dirty = false;
-      let nextItem = { ...item };
+      let nextItem = normalizeItemSlides({ ...item });
 
       if (
         item.background &&
@@ -551,10 +544,15 @@ export async function sweepMediaReferencesBeforeDelete(
 
       if (dirty) {
         try {
-          await db.put({
+          const saveItem = {
             ...nextItem,
             updatedAt: new Date().toISOString(),
-          } as DBItem);
+          } as DBItem;
+          if (saveItem.type === "song") {
+            delete (saveItem as Partial<DBItem>).slides;
+            delete saveItem.monitorLayout;
+          }
+          await db.put(saveItem);
         } catch (e) {
           console.error(e);
           failedDocIds.push(id);

@@ -42,6 +42,7 @@ import {
 } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import PopOver from "../../../components/PopOver/PopOver";
 import Icon from "../../../components/Icon/Icon";
 import { Slider } from "../../../components/ui/Slider";
@@ -253,15 +254,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
-      dispatch(
-        updateSlides({
-          slides: updatedItem.slides,
-          formattedSections: updatedItem.formattedSections,
-        })
-      );
-      if (updatedItem.arrangements.length > 0) {
+      if (updatedItem.type === "song") {
+        dispatch(updateArrangements({ arrangements: updatedItem.arrangements }));
+      } else {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements })
+          updateSlides({
+            slides: getActiveItemSlides(updatedItem),
+            formattedSections: updatedItem.formattedSections,
+          })
         );
       }
       if (updatedItem.bibleInfo) {

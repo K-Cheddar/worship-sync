@@ -7,6 +7,7 @@ import type {
   DBMedia,
   MediaType,
 } from "../types";
+import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
@@ -983,14 +984,14 @@ export const attachCloudCopyToLocalImageItem = <
       ),
     }));
 
-  return {
+  return normalizeItemSlides({
     ...item,
     slides: patchSlides(item.slides ?? []),
     arrangements: (item.arrangements ?? []).map((arrangement) => ({
       ...arrangement,
       slides: patchSlides(arrangement.slides ?? []),
     })),
-  } as T;
+  }) as T;
 };
 
 export const updateLocalImageReferenceInItem = <
@@ -1024,14 +1025,14 @@ export const updateLocalImageReferenceInItem = <
       }),
     }));
 
-  return {
+  return normalizeItemSlides({
     ...item,
     slides: patchSlides(item.slides ?? []),
     arrangements: (item.arrangements ?? []).map((arrangement) => ({
       ...arrangement,
       slides: patchSlides(arrangement.slides ?? []),
     })),
-  } as T;
+  }) as T;
 };
 
 export const persistLocalImageReferencePatch = async ({
@@ -1052,7 +1053,7 @@ export const persistLocalImageReferencePatch = async ({
       const patched = updateLocalImageReferenceInItem(current, assetId, patch);
       const next = applyPouchAudit(
         current,
-        { ...patched, updatedAt: new Date().toISOString() },
+        { ...normalizeSongForPersistence(patched), updatedAt: new Date().toISOString() },
         { isNew: false },
       );
       const response = await db.put(next);
@@ -1088,7 +1089,7 @@ export const persistLocalImageCloudCopy = async ({
       });
       const next = applyPouchAudit(
         current,
-        { ...patched, updatedAt: new Date().toISOString() },
+        { ...normalizeSongForPersistence(patched), updatedAt: new Date().toISOString() },
         { isNew: false },
       );
       const response = await db.put(next);
@@ -1102,7 +1103,7 @@ export const persistLocalImageCloudCopy = async ({
 };
 
 export const collectLocalImageAssetIds = (
-  item: Pick<DBItem, "slides" | "arrangements">,
+  item: Pick<DBItem, "slides" | "arrangements" | "type">,
 ) => {
   const ids = new Set<string>();
   const collect = (slides: ItemSlideType[]) => {
@@ -1113,10 +1114,13 @@ export const collectLocalImageAssetIds = (
       }),
     );
   };
-  collect(item.slides ?? []);
-  item.arrangements?.forEach((arrangement) =>
-    collect(arrangement.slides ?? []),
-  );
+  if (item.type === "song") {
+    item.arrangements?.forEach((arrangement) =>
+      collect(arrangement.slides ?? []),
+    );
+  } else {
+    collect(item.slides ?? []);
+  }
   return ids;
 };
 
