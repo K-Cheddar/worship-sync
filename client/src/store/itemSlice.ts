@@ -58,6 +58,8 @@ const hasMonitorSizingInputsChanged = (
     return (
       previousBox?.words !== nextBox?.words ||
       previousBox?.width !== nextBox?.width ||
+      previousBox?.height !== nextBox?.height ||
+      previousBox?.fontSize !== nextBox?.fontSize ||
       previousBox?.isBold !== nextBox?.isBold ||
       previousBox?.isItalic !== nextBox?.isItalic
     );
@@ -677,10 +679,27 @@ export const updateArrangements = createAsyncThunk(
     const { selectedArrangement: currentArrangement } = item;
     const { selectedArrangement, arrangements } = args;
     const nextArrangement = selectedArrangement ?? currentArrangement;
-    const newSlides = arrangements[nextArrangement]?.slides ?? [];
+    const nextArrangements = arrangements.map((arrangement, index) => {
+      const previousSlides = item.arrangements[index]?.slides ?? [];
+      const nextSlides = arrangement.slides ?? [];
+      if (
+        item.type !== "song" ||
+        !hasMonitorSizingInputsChanged(previousSlides, nextSlides)
+      ) {
+        const previousLayout = item.arrangements[index]?.monitorLayout;
+        return arrangement.monitorLayout || !previousLayout
+          ? arrangement
+          : { ...arrangement, monitorLayout: previousLayout };
+      }
+      return {
+        ...arrangement,
+        monitorLayout: getMonitorLayoutForSlides(nextSlides),
+      };
+    });
+    const newSlides = nextArrangements[nextArrangement]?.slides ?? [];
     const oldSlides = item.arrangements[currentArrangement]?.slides ?? [];
 
-    dispatch(_updateArrangements(arrangements));
+    dispatch(_updateArrangements(nextArrangements));
     if (selectedArrangement !== undefined) {
       dispatch(_setSelectedArrangement(selectedArrangement));
     }

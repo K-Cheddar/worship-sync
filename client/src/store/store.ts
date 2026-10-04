@@ -31,7 +31,11 @@ import {
   type RemoteOutputState,
 } from "./presentationSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
-import { getActiveItemSlides, normalizeItemSlides } from "../utils/activeItemSlides";
+import {
+  getActiveItemSlides,
+  normalizeItemSlides,
+  normalizeSongForPersistence,
+} from "../utils/activeItemSlides";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -1002,11 +1006,10 @@ listenerMiddleware.startListening({
       formattedSections: item.formattedSections,
       updatedAt,
     };
-    if (item.type === "song") {
-      delete (nextItem as Partial<DBItem>).slides;
-      delete nextItem.monitorLayout;
-    }
-    db_item = applyPouchAudit(db_item, nextItem, {
+    const persistenceItem = item.type === "song"
+      ? normalizeSongForPersistence(nextItem)
+      : nextItem;
+    db_item = applyPouchAudit(db_item, persistenceItem, {
       // Doc came from db.get — always an update (legacy rows may lack createdAt).
       isNew: false,
     });

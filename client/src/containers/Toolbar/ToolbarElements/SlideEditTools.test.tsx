@@ -134,6 +134,34 @@ describe("SlideEditTools", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads formatting from the selected song arrangement with empty root slides", () => {
+    const song = makeItem({
+      _id: "song-1",
+      type: "song",
+      slides: [],
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        songOrder: [],
+        formattedLyrics: [],
+        slides: [{
+          id: "song-slide",
+          type: "Verse",
+          name: "Verse 1",
+          boxes: [
+            { id: "bg", width: 100, height: 100, brightness: 80 },
+            { id: "text", width: 50, height: 50, words: "Song words", fontSize: 64, fontColor: "#123456", isBold: true, align: "center" },
+          ],
+        }],
+      }],
+    });
+    mockState.undoable.present.item = song;
+
+    render(<SlideEditTools />);
+
+    expect(screen.getByDisplayValue("64")).toBeInTheDocument();
+  });
+
   it("renders tools on an auxiliary controller item route", () => {
     mockPathname = "/aux-controller/ctrl_lobby/item/abc/list-1";
     render(<SlideEditTools />);

@@ -36,6 +36,7 @@ import {
   removeOverlayHistoryDoc,
   updateAllDocs,
 } from "./dbUtils";
+import { allDocsSlice } from "../store/allDocsSlice";
 
 type MockDb = {
   get: jest.Mock;
@@ -75,6 +76,44 @@ describe("dbUtils", () => {
     expect(dispatch).toHaveBeenCalledWith({
       type: "allDocs/updateAllSongDocs",
       payload: [song],
+    });
+  });
+
+  it("keeps song library state arrangement-canonical without measuring monitor sizing", async () => {
+    const db = createDb();
+    const legacySlide = {
+      id: "legacy", type: "Verse", name: "Verse 1", boxes: [],
+      monitorCurrentBandBoxes: [{ id: "clone", fontSize: 27 }],
+    };
+    const song = {
+      _id: "song-legacy", name: "Legacy Song", type: "song", slides: [legacySlide],
+      monitorLayout: { currentFontSizePx: 35, nextFontSizePx: 34 },
+      arrangements: [{
+        id: "arr", name: "Master", slides: [], formattedLyrics: [], songOrder: [],
+      }],
+    };
+    db.allDocs.mockResolvedValue({ rows: [{ doc: song }] });
+    let state = allDocsSlice.getInitialState();
+    const dispatch = jest.fn((action) => {
+      state = allDocsSlice.reducer(state, action as any);
+    });
+
+    await updateAllDocs(dispatch, db as unknown as PouchDB.Database);
+
+    const [librarySong] = state.allSongDocs;
+    expect(librarySong).not.toHaveProperty("slides");
+    expect(librarySong).not.toHaveProperty("monitorLayout");
+    expect(librarySong.arrangements[0].slides).toEqual([{
+      id: "legacy",
+      type: "Verse",
+      name: "Verse 1",
+      boxes: [],
+    }]);
+    expect(librarySong.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(librarySong.arrangements[0]).not.toHaveProperty("monitorNextBandBoxes");
+    expect(librarySong.arrangements[0].monitorLayout).toEqual({
+      currentFontSizePx: 27,
+      nextFontSizePx: 27,
     });
   });
 
@@ -678,6 +717,7 @@ describe("dbUtils", () => {
     );
     const savedSong = db.put.mock.calls[0][0];
     expect(savedSong).not.toHaveProperty("slides");
+    expect(savedSong).not.toHaveProperty("monitorLayout");
     expect(savedSong.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
     expect(savedSong.arrangements[0].slides[0]).not.toHaveProperty("monitorNextBandBoxes");
   });

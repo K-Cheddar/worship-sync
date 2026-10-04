@@ -164,10 +164,6 @@ const resolveSlidesFromDoc = (
     const arrangementIndex = source.selectedArrangement ?? 0;
     const arrangementSlides = source.arrangements?.[arrangementIndex]?.slides;
     if (arrangementSlides?.length) return arrangementSlides;
-    const hasUsableArrangementSlides = source.arrangements?.some(
-      (arrangement) => (arrangement.slides?.length ?? 0) > 0,
-    );
-    if (hasUsableArrangementSlides) return EMPTY_ITEM_SLIDES;
     return source.slides ?? EMPTY_ITEM_SLIDES;
   }
   return source.slides ?? EMPTY_ITEM_SLIDES;
@@ -221,15 +217,10 @@ export const buildOutlineSlideSections = (
       source?.type === "song"
         ? source.arrangements?.[source.selectedArrangement ?? 0]
         : undefined;
-    const hasUsableArrangementSlides =
-      source?.type === "song" &&
-      source.arrangements?.some(
-        (arrangement) => (arrangement.slides?.length ?? 0) > 0,
-      );
     let legacyMonitorSlides: ItemSlideType[] = EMPTY_ITEM_SLIDES;
     if (sourceArrangement?.slides?.length) {
       legacyMonitorSlides = sourceArrangement.slides;
-    } else if (!hasUsableArrangementSlides) {
+    } else if (source?.type === "song") {
       legacyMonitorSlides = source?.slides ?? EMPTY_ITEM_SLIDES;
     }
     const resolvedMonitorLayout =

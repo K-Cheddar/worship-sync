@@ -11,6 +11,7 @@ import RadioButton, {
 } from "../../../components/RadioButton/RadioButton";
 import PopOver from "../../../components/PopOver/PopOver";
 import { updateBoxProperties } from "../../../utils/formatter";
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import { setItemFormatting } from "../../../store/itemSlice";
 import { useToast } from "../../../context/toastContext";
 import {
@@ -123,7 +124,8 @@ const BoxEditor = ({
   const dispatch = useDispatch();
   const { showToast, removeToast } = useToast();
   const item = useSelector((state) => state.undoable.present.item);
-  const { selectedSlide, selectedBox, slides } = item;
+  const { selectedSlide, selectedBox } = item;
+  const slides = getActiveItemSlides(item);
 
   const boxes = useMemo(() => {
     return slides[selectedSlide]?.boxes || [];

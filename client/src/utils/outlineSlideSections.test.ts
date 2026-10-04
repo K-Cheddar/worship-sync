@@ -122,7 +122,7 @@ describe("outlineSlideSections", () => {
     expect(neighborSlides.map((item) => item.id)).toEqual(["cached"]);
   });
 
-  it("ignores legacy root slides when another arrangement has usable slides", () => {
+  it("recovers selected arrangement legacy root slides when another arrangement has slides", () => {
     const doc = {
       ...songDoc("song-legacy", "1-a", []),
       selectedArrangement: 0,
@@ -142,7 +142,7 @@ describe("outlineSlideSections", () => {
       outlineItem({ _id: "song-legacy", listId: "l-1", name: "Song", type: "song" }),
       { activeItem: {}, docsById },
     );
-    expect(slides).toEqual([]);
+    expect(slides.map((item) => item.id)).toEqual(["stale-root"]);
   });
 
   it("uses allDocs slides for inactive items and keys sections by listId", () => {

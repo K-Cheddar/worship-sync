@@ -1,5 +1,6 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
+import { itemDocMatchesEditorState, itemSlice, updateArrangements } from "./itemSlice";
+import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import type { ItemState } from "../types";
 
 type ItemSliceState = { item: ItemState };
@@ -434,6 +435,52 @@ describe("itemSlice", () => {
         "Edited line",
       );
       expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("recalculates compact monitor layout when updateArrangements replaces sizing inputs", async () => {
+      const originalSlides = [{
+        id: "slide-1",
+        type: "Verse" as const,
+        name: "Verse 1",
+        boxes: [
+          { id: "bg", width: 100, height: 100 },
+          { id: "text", width: 80, height: 50, words: "Short", fontSize: 40 },
+        ],
+      }];
+      const nextSlides = [{
+        ...originalSlides[0],
+        boxes: [
+          ...originalSlides[0].boxes.slice(0, 1),
+          { ...originalSlides[0].boxes[1], height: 35 },
+        ],
+      }];
+      const item = {
+        ...itemSlice.getInitialState(),
+        _id: "song-monitor-layout",
+        type: "song",
+        selectedArrangement: 0,
+        selectedSlide: 0,
+        arrangements: [{
+          id: "arr-1",
+          name: "Master",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: originalSlides,
+          monitorLayout: { currentFontSizePx: 999, nextFontSizePx: 999 },
+        }],
+      } as ItemState;
+      const dispatch = jest.fn();
+      const getState = () => ({ undoable: { present: { item } } });
+
+      await updateArrangements({
+        arrangements: [{ ...item.arrangements[0], slides: nextSlides }],
+      })(dispatch as any, getState as any, undefined);
+
+      const action = dispatch.mock.calls.find(([entry]) =>
+        entry.type === "item/_updateArrangements",
+      )?.[0];
+      expect(action.payload[0].monitorLayout).toEqual(getMonitorLayoutForSlides(nextSlides));
+      expect(action.payload[0].monitorLayout.currentFontSizePx).not.toBe(999);
     });
 
     it("applies an already-persisted Canva replacement without marking the item dirty", () => {

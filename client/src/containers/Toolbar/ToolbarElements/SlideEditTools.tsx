@@ -232,7 +232,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     (state) =>
       state.undoable.present.preferences?.scrollbarWidth ?? "thin"
   );
-  const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
+  const slides = getActiveItemSlides(item);
+  const { selectedSlide, selectedBox, timerInfo, type } = item;
   const { timers } = useSelector((state) => state.timers);
 
   const timer = timers.find((t) => t.id === timerInfo?.id);

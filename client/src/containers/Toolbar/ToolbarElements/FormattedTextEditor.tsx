@@ -65,7 +65,8 @@ type fieldType =
 const FormattedTextEditor = ({ className }: { className?: string }) => {
   const item = useSelector((state) => state.undoable.present.item);
 
-  const { slides, selectedSlide, type } = item;
+  const { selectedSlide, type } = item;
+  const slides = getActiveItemSlides(item);
 
   const formattedTextDisplayInfo = useMemo(() => {
     return slides[selectedSlide]?.formattedTextDisplayInfo;
@@ -160,7 +161,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     }
   };
 
-  if (type !== "free")
+  if (type !== "free" && type !== "song")
     return (
       <section className="flex flex-wrap max-lg:pb-4 invisible">
         <Button svg={Image} iconSize="lg" padding="py-1 px-0" className="w-0" />

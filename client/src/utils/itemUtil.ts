@@ -29,7 +29,7 @@ import {
   tryParseSectionLabel,
 } from "./lyricsSectionInference";
 import { applyPouchAudit } from "./pouchAudit";
-import { normalizeItemSlides } from "./activeItemSlides";
+import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
@@ -767,11 +767,10 @@ export const createNewItemInDb = async ({
   } catch (error) {
     const now = new Date().toISOString();
     const newDoc: DBItem = { ...item, createdAt: now, updatedAt: now };
-    if (newDoc.type === "song") {
-      delete (newDoc as Partial<DBItem>).slides;
-      delete newDoc.monitorLayout;
-    }
-    const doc = applyPouchAudit(null, newDoc, { isNew: true });
+    const persistedDoc = newDoc.type === "song"
+      ? normalizeSongForPersistence(newDoc)
+      : newDoc;
+    const doc = applyPouchAudit(null, persistedDoc, { isNew: true });
     // Do not return a newly-created item until its local database write has
     // completed. Callers such as Service Plan's "Create and attach" flow use
     // this resolution as their signal that a library reference is durable.

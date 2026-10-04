@@ -5,6 +5,7 @@ import {
   updateLocalImageReferenceInItem,
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
+import { normalizeSongForLibrary } from "../utils/activeItemSlides";
 
 function getDocsKey(type: string): keyof AllDocsState | null {
   if (type === "song") return "allSongDocs";
@@ -33,7 +34,7 @@ export const allDocsSlice = createSlice({
   initialState,
   reducers: {
     updateAllSongDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allSongDocs = action.payload;
+      state.allSongDocs = action.payload.map(normalizeSongForLibrary);
     },
     updateAllFreeFormDocs: (state, action: PayloadAction<DBItem[]>) => {
       state.allFreeFormDocs = action.payload;
@@ -45,7 +46,9 @@ export const allDocsSlice = createSlice({
       state.allBibleDocs = action.payload;
     },
     upsertItemInAllDocs: (state, action: PayloadAction<DBItem>) => {
-      const doc = action.payload;
+      const doc = action.payload.type === "song"
+        ? normalizeSongForLibrary(action.payload)
+        : action.payload;
       const key = getDocsKey(doc.type);
       if (!key) return;
       const arr = state[key];
@@ -57,7 +60,10 @@ export const allDocsSlice = createSlice({
       }
     },
     upsertItemsInAllDocs: (state, action: PayloadAction<DBItem[]>) => {
-      for (const doc of action.payload) {
+      for (const inputDoc of action.payload) {
+        const doc = inputDoc.type === "song"
+          ? normalizeSongForLibrary(inputDoc)
+          : inputDoc;
         const key = getDocsKey(doc.type);
         if (!key) continue;
         const arr = state[key];
