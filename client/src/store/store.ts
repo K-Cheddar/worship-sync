@@ -37,6 +37,7 @@ import {
   itemDocMatchesEditorState,
   itemSlice,
 } from "./itemSlice";
+import { getActiveItemSlides, normalizeItemSlides } from "../utils/activeItemSlides";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -1937,7 +1938,7 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     const currentItem = state.undoable.present.item;
     let item: DBItem | null = null;
-    if (currentItem._id === itemId && currentItem.slides?.length > 1) {
+    if (currentItem._id === itemId && getActiveItemSlides(currentItem).length > 1) {
       item = currentItem as unknown as DBItem;
     } else if (dbAtStart) {
       try {
@@ -1951,8 +1952,11 @@ listenerMiddleware.startListening({
       globalFireDbInfo.db !== fireDbAtStart ||
       globalFireDbInfo.churchId !== churchIdAtStart
     ) return;
-    if (!item?.slides?.length || item.slides.length < 2) return;
-    const wrapUpSlide = item.slides[1];
+    if (!item) return;
+    item = normalizeItemSlides(item);
+    const slides = getActiveItemSlides(item);
+    if (slides.length < 2) return;
+    const wrapUpSlide = slides[1];
     const presentationType = item.type === "timer" ? "timer" : monitorInfo.type;
     listenerApi.dispatch(
       updateMonitor({

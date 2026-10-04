@@ -111,6 +111,7 @@ import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 import type { OwnedItemContentMutation } from "../../utils/ownedItemContentMutation";
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -160,7 +161,6 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     selectedArrangement,
     selectedSlide,
     selectedBox,
-    slides: __slides,
     isLyricsEditorOpen,
     isLoading,
     isSectionLoading,
@@ -181,10 +181,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const arrangement = arrangements[selectedArrangement];
 
-  const slides = useMemo(() => {
-    const _slides = arrangement?.slides || __slides || [];
-    return isLoading ? [] : _slides;
-  }, [isLoading, __slides, arrangement?.slides]);
+  const slides = useMemo(
+    () => (isLoading ? [] : getActiveItemSlides(item)),
+    [isLoading, item],
+  );
 
   const outputSlots = useSelector(
     (state: RootState) => state.presentation.outputs,
@@ -569,15 +569,13 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       name,
       type: "song" as const,
       arrangements,
-      slides: __slides,
-      selectedArrangement,
+        selectedArrangement,
       songMetadata,
       songLinks,
       songAudio,
     }) as DBItem,
     [
       _id,
-      __slides,
       arrangements,
       baseItem,
       name,
@@ -637,7 +635,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       dispatch(updateBoxes({ boxes: newBoxes, expectedOwner }));
     }
 
-    const updatedSlides = currentItem.slides.map((slide, slideIndex) => {
+    const updatedSlides = slides.map((slide, slideIndex) => {
       if (slideIndex === selectedSlide) {
         return { ...slide, boxes: newBoxes };
       }
@@ -897,6 +895,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     dispatch,
     item,
     selectedSlide,
+    slides,
     arrangements,
     selectedArrangement,
   ]);

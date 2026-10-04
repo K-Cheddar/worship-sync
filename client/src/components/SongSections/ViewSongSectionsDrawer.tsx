@@ -19,6 +19,7 @@ import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
+import { normalizeSongForPersistence } from "../../utils/activeItemSlides";
 import {
   ItemDetailsEditorFields,
   type ItemDetailsSavePayload,
@@ -127,7 +128,7 @@ const ViewSongSectionsDrawer = ({
         }
       }
 
-      const audited = applyPouchAudit(existing, next, { isNew: false });
+      const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
       const result = await db.put(audited);
       const saved = { ...audited, _rev: result.rev };
       if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
@@ -174,7 +175,7 @@ const ViewSongSectionsDrawer = ({
         next.songMetadata = songMetadata;
       }
 
-      const audited = applyPouchAudit(existing, next, { isNew: false });
+      const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
       const result = await db.put(audited);
       const saved = { ...audited, _rev: result.rev };
       dispatch(upsertItemInAllDocs(saved));
