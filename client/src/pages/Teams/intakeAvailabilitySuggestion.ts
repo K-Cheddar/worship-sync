@@ -1,7 +1,11 @@
 import type { TeamIntakeForm, TeamService } from "../../api/authTypes";
 import type { TeamIntakeFormPayload } from "../../api/auth";
+import { serverDate } from "../../utils/serverTime";
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
+import { parsePlainDate } from "../../utils/plainDate";
 import { ALL_INTAKE_FORM_FIELDS, resolveIntakeFormFields } from "./intakeFormFields";
+import { getUpcomingServiceRange } from "./servicePeriodRange";
+import { shiftRange } from "./rangeSelection";
 
 export type UpcomingAvailabilitySuggestion = {
   name: string;
@@ -12,19 +16,13 @@ export type UpcomingAvailabilitySuggestion = {
   draft: TeamIntakeFormPayload;
 };
 
-const toPlainDate = (date: Date) => {
-  // Match the server's plain-date deadline comparison, which uses the UTC
-  // calendar date rather than interpreting these date-only values in local time.
-  return date.toISOString().slice(0, 10);
-};
-
 const isEffectivelyOpen = (form: TeamIntakeForm, today: string) => {
   const deadline = form.responseDeadline || form.endDate;
   return Boolean(form.active && !form.archivedAt && deadline && deadline >= today);
 };
 
-const monthLabel = (date: Date) =>
-  date.toLocaleDateString(undefined, { month: "long", timeZone: "UTC" });
+const monthLabel = (startDate: string) =>
+  parsePlainDate(startDate)?.toLocaleDateString(undefined, { month: "long" }) || "";
 
 const safeTemplate = (forms: TeamIntakeForm[]) =>
   forms
@@ -55,13 +53,15 @@ const scopeCovers = (existingTeamIds: string[], proposedTeamIds: string[]) => {
 export const getUpcomingAvailabilitySuggestion = ({
   services,
   forms,
-  now = new Date(),
+  now = serverDate(),
 }: {
   services: TeamService[];
   forms: TeamIntakeForm[];
   now?: Date;
 }): UpcomingAvailabilitySuggestion | null => {
-  const today = toPlainDate(now);
+  // Match the server's response-deadline comparison, which treats date-only
+  // deadlines as UTC calendar dates. Period ranges below retain local calendar semantics.
+  const today = now.toISOString().slice(0, 10);
   const activeServices = services.filter((service) => !service.archivedAt);
   if (!activeServices.length) return null;
 
@@ -75,38 +75,30 @@ export const getUpcomingAvailabilitySuggestion = ({
     getFormOccurrenceIds(form, services).forEach((id) => coveredOccurrenceIds.add(id));
   });
 
+  // Upcoming starts with the same full period used by the Teams range selector.
   // Look ahead only far enough to find the next useful month; no records are created.
+  let range = getUpcomingServiceRange(activeServices, now);
   for (let offset = 0; offset < 12; offset += 1) {
-    const month = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth() + offset,
-      1,
-      12,
-    ));
-    const startDate = offset === 0 ? today : toPlainDate(month);
-    const endDate = toPlainDate(new Date(Date.UTC(
-      month.getUTCFullYear(),
-      month.getUTCMonth() + 1,
-      0,
-      12,
-    )));
     const occurrences = generateScheduleOccurrences({
       services: activeServices,
       serviceIds: activeServices.map(({ serviceId }) => serviceId),
-      startDate,
-      endDate,
+      startDate: range.start,
+      endDate: range.end,
     });
     const uncovered = occurrences.filter(({ occurrenceId }) => !coveredOccurrenceIds.has(occurrenceId));
-    if (!uncovered.length) continue;
+    if (!uncovered.length) {
+      range = shiftRange("upcoming", range, 1);
+      continue;
+    }
 
     const serviceIds = [...new Set(uncovered.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId]))];
     const serviceById = new Map(activeServices.map((service) => [service.serviceId, service]));
-    const label = monthLabel(month);
+    const label = monthLabel(range.start);
     const draft: TeamIntakeFormPayload = {
       name: `${label} Availability`,
-      startDate,
-      endDate,
-      responseDeadline: endDate,
+      startDate: range.start,
+      endDate: range.end,
+      responseDeadline: range.end,
       availabilityServices: serviceIds.map((serviceId) => ({
         serviceId,
         name: serviceById.get(serviceId)?.name || serviceId,
@@ -123,8 +115,8 @@ export const getUpcomingAvailabilitySuggestion = ({
     };
     return {
       name: draft.name,
-      startDate,
-      endDate,
+      startDate: range.start,
+      endDate: range.end,
       serviceCount: serviceIds.length,
       occurrenceCount: uncovered.length,
       draft,

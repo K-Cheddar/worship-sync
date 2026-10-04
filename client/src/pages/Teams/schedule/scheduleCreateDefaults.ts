@@ -1,78 +1,72 @@
 import type {
+  TeamPosition,
   TeamSchedule,
   TeamScheduleSummary,
   TeamService,
 } from "../../../api/authTypes";
-import { formatPlainDate } from "@/utils/plainDate";
-import { formatSchedulePeriodName } from "./schedulePeriodUtils";
+import { parsePlainDate } from "@/utils/plainDate";
+import { findInitialTeamSchedulePeriod } from "./teamSchedulePeriod";
+import {
+  findReusablePeriodSchedule,
+  formatSchedulePeriodName,
+} from "./schedulePeriodUtils";
 import { filterServicesWithOccurrencesInRange } from "@/utils/teamScheduleOccurrences";
-import { scheduleDateRangesOverlap } from "./scheduleConflicts";
 import { isActive } from "../teamsUtils";
+import { serverDate } from "@/utils/serverTime";
 
 export type ScheduleDateRange = { startDate: string; endDate: string };
 
-/** Calendar month range, optionally offset from `now` (0 = this month, 1 = next). */
-export const getCalendarMonthRange = (
-  monthOffset = 0,
-  now: Date = new Date(),
-): ScheduleDateRange => {
-  const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + monthOffset + 1, 0);
-  return {
-    startDate: formatPlainDate(start),
-    endDate: formatPlainDate(end),
-  };
-};
-
-const activeTeamSchedules = (
-  schedules: (TeamSchedule | TeamScheduleSummary)[],
-  teamId: string,
-) =>
-  schedules.filter(
-    (schedule) => schedule.teamId === teamId && isActive(schedule),
-  );
-
-/** True when an active schedule for this team overlaps the given range. */
-export const teamHasScheduleOverlappingRange = ({
-  schedules,
-  teamId,
-  range,
-}: {
-  schedules: (TeamSchedule | TeamScheduleSummary)[];
-  teamId: string;
-  range: ScheduleDateRange;
-}) => {
-  if (!teamId) return false;
-  return activeTeamSchedules(schedules, teamId).some((schedule) =>
-    scheduleDateRangesOverlap(schedule, range),
-  );
-};
-
-/**
- * Default create window: current month, or next month when that team already
- * has an active schedule overlapping the current month.
- */
+/** Upcoming team's next relevant period, skipping periods fully covered by a schedule. */
 export const getCreateScheduleDefaultRange = ({
+  churchId,
   teamId,
+  services,
+  positions,
   schedules,
-  now = new Date(),
+  now = serverDate(),
 }: {
+  churchId: string;
   teamId: string;
+  services: TeamService[];
+  positions: TeamPosition[];
   schedules: (TeamSchedule | TeamScheduleSummary)[];
   now?: Date;
 }): ScheduleDateRange => {
-  const currentMonth = getCalendarMonthRange(0, now);
-  if (
-    teamId &&
-    teamHasScheduleOverlappingRange({
-      schedules,
+  let searchDate = now;
+  while (teamId) {
+    const upcoming = findInitialTeamSchedulePeriod({
+      services,
+      positions,
       teamId,
-      range: currentMonth,
-    })
-  ) {
-    return getCalendarMonthRange(1, now);
+      schedules,
+      now: searchDate,
+    });
+    const range = { startDate: upcoming.start, endDate: upcoming.end };
+    const coveredSchedule = upcoming.nextOccurrence && churchId
+      ? findReusablePeriodSchedule({
+        schedules,
+        churchId,
+        teamId,
+        occurrences: upcoming.period.occurrences,
+        visibleStartDate: range.startDate,
+        visibleEndDate: range.endDate,
+      }).schedule
+      : null;
+    if (!coveredSchedule) return range;
+
+    const periodEnd = parsePlainDate(range.endDate);
+    if (!periodEnd) return range;
+    periodEnd.setDate(periodEnd.getDate() + 1);
+    searchDate = periodEnd;
   }
-  return currentMonth;
+  const fallback = findInitialTeamSchedulePeriod({
+    services,
+    positions,
+    teamId,
+    schedules,
+    now,
+  });
+  return { startDate: fallback.start, endDate: fallback.end };
 };
 
 /** Most recent active schedule for a team (by startDate, then endDate). */
@@ -84,7 +78,9 @@ export const getMostRecentTeamSchedule = ({
   teamId: string;
 }): TeamSchedule | TeamScheduleSummary | null => {
   if (!teamId) return null;
-  const sorted = [...activeTeamSchedules(schedules, teamId)].sort(
+  const sorted = [...schedules.filter((schedule) =>
+    schedule.teamId === teamId && isActive(schedule),
+  )].sort(
     (left, right) => {
       const byStart = String(right.startDate || "").localeCompare(
         String(left.startDate || ""),

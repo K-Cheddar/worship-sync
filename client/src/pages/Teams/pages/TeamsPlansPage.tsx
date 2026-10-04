@@ -30,7 +30,7 @@ import {
 } from "../../../api/auth";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { formatPlainDate } from "../../../utils/plainDate";
-import { serverNow } from "../../../utils/serverTime";
+import { serverDate, serverNow } from "../../../utils/serverTime";
 import {
   findNextUpcomingOccurrenceId,
   generateScheduleOccurrences,
@@ -337,9 +337,36 @@ const TeamsPlansPage = () => {
   } = templateResource;
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const resolveUpcomingRange = useCallback(() => {
-    return getUpcomingServiceRange(pageData.services.filter(isActive));
-  }, [pageData.services]);
+  const now = serverDate();
+  const activeServices = useMemo(
+    () => pageData.services.filter(isActive),
+    [pageData.services],
+  );
+  const [initialFilterPreferences] = useState(() =>
+    churchId ? readPlansFilterPreferences(churchId) : null,
+  );
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
+    () => initialFilterPreferences?.serviceIds || [],
+  );
+  const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
+    () => initialFilterPreferences?.organizeMode || readPlansOrganizeMode(),
+  );
+  const [filtersHydratedForChurchId, setFiltersHydratedForChurchId] =
+    useState<string | null>(() => churchId || null);
+  const resolveUpcomingRange = useCallback((referenceTime: Date) => {
+    const serviceIdsForUpcoming = filtersHydratedForChurchId === churchId
+      ? selectedServiceIds
+      : churchId
+        ? readPlansFilterPreferences(churchId)?.serviceIds || []
+        : [];
+    const selectedActiveServices = activeServices.filter((service) =>
+      serviceIdsForUpcoming.includes(service.serviceId),
+    );
+    const servicesForRange = selectedActiveServices.length > 0
+      ? selectedActiveServices
+      : activeServices;
+    return getUpcomingServiceRange(servicesForRange, referenceTime);
+  }, [activeServices, churchId, filtersHydratedForChurchId, selectedServiceIds]);
   const {
     preset: rangePreset,
     range: selectedRange,
@@ -347,16 +374,12 @@ const TeamsPlansPage = () => {
     selectCustomRange: setCustomRange,
     setSelection: setRangeSelection,
   } = useRangeSelection({
+    now,
     resolveUpcomingRange,
-    resolvePresetRange: (preset) => resolveRangePreset(preset),
+    resolvePresetRange: (preset, referenceTime) => resolveRangePreset(preset, referenceTime),
   });
   const windowStart = selectedRange.start;
   const windowEnd = selectedRange.end;
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
-  const [organizeMode, setOrganizeMode] = useState<OccurrenceOrganizeMode>(
-    readPlansOrganizeMode,
-  );
-  const [filtersHydratedForChurchId, setFiltersHydratedForChurchId] = useState<string | null>(null);
   const [planKeysWithPlans, setPlanKeysWithPlans] = useState<Set<string>>(new Set());
   const [bulkApplyOpen, setBulkApplyOpen] = useState(false);
   const [bulkTemplatesLoaded, setBulkTemplatesLoaded] = useState(false);
@@ -569,11 +592,6 @@ const TeamsPlansPage = () => {
     // servicePlansRevision changes when another admin saves/deletes a plan, so
     // the "Add plan"/"Open plan" badges refresh instead of going stale.
   }, [bulkApplyRevision, churchId, servicePlansRevision]);
-
-  const activeServices = useMemo(
-    () => pageData.services.filter(isActive),
-    [pageData.services],
-  );
 
   useEffect(() => {
     if (!churchId || filtersHydratedForChurchId !== churchId) return;
@@ -1354,7 +1372,7 @@ const TeamsPlansPage = () => {
                         planKeysWithPlans.has(getServicePlanKey(occurrence));
                       const isPast =
                         getOccurrenceDate(occurrence) <
-                        formatPlainDate(new Date());
+                        formatPlainDate(now);
                       return (
                         <PlansOccurrenceTile
                           key={occurrence.occurrenceId}
@@ -1532,7 +1550,7 @@ const TeamsPlansPage = () => {
                               );
                             const isPast =
                               getOccurrenceDate(occurrence) <
-                              formatPlainDate(new Date());
+                              formatPlainDate(now);
                             return (
                               <PlansOccurrenceTile
                                 key={occurrence.occurrenceId}

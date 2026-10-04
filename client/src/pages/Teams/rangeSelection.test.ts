@@ -4,10 +4,18 @@ import { createElement } from "react";
 import {
   calendarMonthRange,
   formatResolvedDateRange,
+  resolveRangeSelection,
   resolveRangePreset,
   shiftRange,
   useRangeSelection,
 } from "./rangeSelection";
+import { serverDate, setServerTimeOffset } from "../../utils/serverTime";
+import { formatPlainDate } from "../../utils/plainDate";
+
+afterEach(() => {
+  jest.useRealTimers();
+  setServerTimeOffset(0);
+});
 
 describe("calendar range helpers", () => {
   const lateSeptember = new Date(2026, 8, 29, 12);
@@ -25,6 +33,30 @@ describe("calendar range helpers", () => {
     expect(calendarMonthRange(new Date(2026, 10, 29, 12))).toEqual({
       start: "2026-11-01",
       end: "2026-11-30",
+    });
+  });
+
+  it("uses the server-aligned instant across a local midnight and year boundary", () => {
+    const deviceTime = new Date(2026, 11, 31, 23, 30);
+    jest.useFakeTimers().setSystemTime(deviceTime);
+    setServerTimeOffset(2 * 60 * 60 * 1000);
+
+    expect(formatPlainDate(new Date())).toBe("2026-12-31");
+    expect(resolveRangePreset("thisMonth")).toEqual({
+      start: "2027-01-01",
+      end: "2027-01-31",
+    });
+    expect(resolveRangePreset("thisQuarter")).toEqual({
+      start: "2027-01-01",
+      end: "2027-03-31",
+    });
+    expect(resolveRangeSelection({}).range).toEqual({
+      start: "2027-01-01",
+      end: "2027-01-31",
+    });
+    expect(calendarMonthRange(serverDate())).toEqual({
+      start: "2027-01-01",
+      end: "2027-01-31",
     });
   });
 

@@ -43,7 +43,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/Popover";
 import { cn } from "@/utils/cnHelper";
-import { serverNow } from "@/utils/serverTime";
+import { serverDate, serverNow } from "@/utils/serverTime";
 import {
   findNextUpcomingOccurrenceId,
   formatOccurrenceRowLabel,
@@ -458,13 +458,19 @@ const ScheduleTab = ({
   }, [activeTeams, editableTeamIds, scheduleTeamFilter]);
   const workspaceTeamId = (scheduleTeamFilter || defaultTeamId) ?? "";
   const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
-  const initialTeamPeriodResult = useMemo(
-    () => findInitialTeamSchedulePeriod({
-      services: activeServices,
-      positions: data.positions,
-      teamId: workspaceTeamId,
-      schedules: data.schedules,
-    }),
+  const { initialTeamPeriodResult, periodReferenceTime } = useMemo(() => {
+    const referenceTime = serverDate();
+    return {
+      initialTeamPeriodResult: findInitialTeamSchedulePeriod({
+        services: activeServices,
+        positions: data.positions,
+        teamId: workspaceTeamId,
+        schedules: data.schedules,
+        now: referenceTime,
+      }),
+      periodReferenceTime: referenceTime,
+    };
+  },
     [activeServices, data.positions, data.schedules, workspaceTeamId],
   );
   const initialPeriodRange = useMemo(() => ({
@@ -472,8 +478,10 @@ const ScheduleTab = ({
     end: initialTeamPeriodResult.end,
   }), [initialTeamPeriodResult.end, initialTeamPeriodResult.start]);
   const resolveSchedulePresetRange = useCallback(
-    (preset: Exclude<SchedulePeriodPreset, "upcoming" | "custom">) =>
-      resolveRangePreset(preset),
+    (
+      preset: Exclude<SchedulePeriodPreset, "upcoming" | "custom">,
+      referenceTime: Date,
+    ) => resolveRangePreset(preset, referenceTime),
     [],
   );
   const {
@@ -483,6 +491,7 @@ const ScheduleTab = ({
     selectCustomRange,
     setSelection: setPeriodSelection,
   } = useRangeSelection({
+    now: periodReferenceTime,
     initialPreset: initialTeamPeriodResult.preset,
     initialRange: initialPeriodRange,
     resolvePresetRange: resolveSchedulePresetRange,
@@ -701,10 +710,13 @@ const ScheduleTab = ({
   const defaultRange = useMemo(
     () =>
       getCreateScheduleDefaultRange({
+        churchId,
         teamId: defaultTeamId,
+        services: data.services,
+        positions: data.positions,
         schedules: data.schedules,
       }),
-    [data.schedules, defaultTeamId],
+    [churchId, data.positions, data.schedules, data.services, defaultTeamId],
   );
   const defaultServiceIds = useMemo(
     () =>
@@ -749,7 +761,7 @@ const ScheduleTab = ({
   // Stable placeholder for dateless services in legacy schedules that carry no
   // occurrences and no date range. Computed once so it never drifts as the memo
   // below recomputes on data refreshes.
-  const fallbackStartsAt = useMemo(() => new Date().toISOString(), []);
+  const fallbackStartsAt = useMemo(() => serverDate().toISOString(), []);
   // What occurrences this schedule's services + date range would produce right
   // now. Compared against the stored shape to detect grouping/timing drift.
   const regeneratedOccurrences = useMemo(() => {
@@ -5001,6 +5013,7 @@ const ScheduleTab = ({
       defaultServiceIds={defaultServiceIds}
       defaultRange={defaultRange}
       services={data.services}
+      positions={data.positions}
       activeTeams={activeTeams}
       schedules={onlyHydratedSchedules(data.schedules)}
       seedSchedules={data.schedules}

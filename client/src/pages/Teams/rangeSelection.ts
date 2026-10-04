@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { formatPlainDate } from "../../utils/plainDate";
+import { serverDate } from "../../utils/serverTime";
 
 export type RangePreset =
   | "upcoming"
@@ -32,7 +33,7 @@ export const calendarMonthRange = (date: Date): PlainDateRange => ({
 
 export const resolveRangePreset = (
   preset: Exclude<RangePreset, "upcoming" | "custom">,
-  now = new Date(),
+  now = serverDate(),
 ): PlainDateRange => {
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -76,22 +77,27 @@ export const resolveRangeSelection = ({
   querySelection,
   defaultPreset = "upcoming",
   defaultRange,
-  resolvePresetRange = (preset) => resolveRangePreset(preset),
+  now = serverDate(),
+  resolvePresetRange = (preset, referenceTime) => resolveRangePreset(preset, referenceTime),
 }: {
   querySelection?: RangeSelectionPreference | null;
   defaultPreset?: RangePreset;
   defaultRange?: PlainDateRange;
-  resolvePresetRange?: (preset: Exclude<RangePreset, "upcoming" | "custom">) => PlainDateRange;
+  now?: Date;
+  resolvePresetRange?: (
+    preset: Exclude<RangePreset, "upcoming" | "custom">,
+    now: Date,
+  ) => PlainDateRange;
 }): { preset: RangePreset; range: PlainDateRange; source: "query" | "default" } => {
   const selected = querySelection
     ? { selection: querySelection, source: "query" as const }
     : { selection: { preset: defaultPreset, range: defaultRange }, source: "default" as const };
   const { selection } = selected;
   const range = selection.preset === "custom"
-    ? selection.range || defaultRange || calendarMonthRange(new Date())
+    ? selection.range || defaultRange || calendarMonthRange(now)
     : selection.preset === "upcoming"
-      ? defaultRange || calendarMonthRange(new Date())
-      : resolvePresetRange(selection.preset);
+      ? defaultRange || calendarMonthRange(now)
+      : resolvePresetRange(selection.preset, now);
   return { preset: selection.preset, range, source: selected.source };
 };
 
@@ -121,37 +127,43 @@ type RangeSelectionOptions = {
   initialPreset?: RangePreset;
   initialRange?: PlainDateRange;
   querySelection?: RangeSelectionPreference | null;
-  resolvePresetRange?: (preset: Exclude<RangePreset, "upcoming" | "custom">) => PlainDateRange;
-  resolveUpcomingRange?: () => PlainDateRange;
+  now?: Date;
+  resolvePresetRange?: (
+    preset: Exclude<RangePreset, "upcoming" | "custom">,
+    now: Date,
+  ) => PlainDateRange;
+  resolveUpcomingRange?: (now: Date) => PlainDateRange;
 };
 
 /** Owns transient range selection; page data supplies the current Upcoming target. */
 export const useRangeSelection = ({
   initialPreset = "upcoming",
-  initialRange = calendarMonthRange(new Date()),
+  now = serverDate(),
+  initialRange = calendarMonthRange(now),
   querySelection = null,
-  resolvePresetRange = resolveRangePreset,
-  resolveUpcomingRange = () => calendarMonthRange(new Date()),
+  resolvePresetRange = (preset, referenceTime) => resolveRangePreset(preset, referenceTime),
+  resolveUpcomingRange = (referenceTime) => calendarMonthRange(referenceTime),
 }: RangeSelectionOptions = {}) => {
   const initialSelection = resolveRangeSelection({
     querySelection,
     defaultPreset: initialPreset,
     defaultRange: initialRange,
+    now,
     resolvePresetRange,
   });
   const [preset, setPreset] = useState<RangePreset>(initialSelection.preset);
   const [manualRange, setManualRange] = useState<PlainDateRange>(initialSelection.range);
-  const range = preset === "upcoming" ? resolveUpcomingRange() : manualRange;
+  const range = preset === "upcoming" ? resolveUpcomingRange(now) : manualRange;
 
   const selectPreset = useCallback((nextPreset: RangePreset) => {
     const nextRange = nextPreset === "custom"
       ? range
       : nextPreset === "upcoming"
-        ? resolveUpcomingRange()
-        : resolvePresetRange(nextPreset);
+        ? resolveUpcomingRange(now)
+        : resolvePresetRange(nextPreset, now);
     setManualRange(nextRange);
     setPreset(nextPreset);
-  }, [range, resolvePresetRange, resolveUpcomingRange]);
+  }, [now, range, resolvePresetRange, resolveUpcomingRange]);
 
   const selectCustomRange = useCallback(({ startDate, endDate }: {
     startDate: string;
