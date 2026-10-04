@@ -1358,6 +1358,76 @@ describe("store module", () => {
     expect(persisted.has("media-item:delete-race")).toBe(false);
   });
 
+  it("does not resurrect a row when an item put is already in flight as deletion begins", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
+    const id = "in-flight-delete-race";
+    const docId = `media-item:${id}`;
+    const persisted = new Map<string, Record<string, unknown>>([[docId, {
+      _id: docId,
+      _rev: "1-current",
+      docType: "mediaItem",
+      id,
+      name: "Before",
+    }]]);
+    let resolveWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { markWriteStarted = resolve; });
+    const writeGate = new Promise<void>((resolve) => { resolveWrite = resolve; });
+    db.get.mockImplementation(async (requestedId: string) => {
+      if (requestedId === "media-library-meta") {
+        return { _id: requestedId, schemaVersion: 2 };
+      }
+      const doc = persisted.get(requestedId);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.put.mockImplementation(async (doc: Record<string, unknown>) => {
+      markWriteStarted();
+      await writeGate;
+      const current = persisted.get(String(doc._id));
+      if (!current || current._rev !== doc._rev) {
+        throw Object.assign(new Error("revision conflict"), { status: 409 });
+      }
+      persisted.set(String(doc._id), { ...doc, _rev: "2-written" });
+      return { ok: true, rev: "2-written" } as any;
+    });
+    db.remove.mockImplementation(async (doc: Record<string, unknown>) => {
+      const current = persisted.get(String(doc._id));
+      if (!current || current._rev !== doc._rev) {
+        throw Object.assign(new Error("revision conflict"), { status: 409 });
+      }
+      persisted.delete(String(doc._id));
+      return { ok: true, id: doc._id } as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id, name: "Before" }],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({
+      id,
+      patch: { name: "Edit being saved" },
+    }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await writeStarted;
+
+    // Deletion reads and tombstones the current persisted revision while the
+    // older Pouch put is pending. Pouch revision checking rejects that late put.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { removeMediaItem } = require("../utils/mediaDocUtils");
+    await removeMediaItem(db, id);
+    store.dispatch(mediaSlice.actions.removeMediaItemFromRemote(id));
+    resolveWrite();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(store.getState().media.list).toEqual([]);
+    expect(persisted.has(docId)).toBe(false);
+    expect(db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
   it("does not write, broadcast, or cache stale local media after a remote row wins during a v2 read", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
@@ -4074,6 +4144,60 @@ describe("allItems persistence", () => {
         items: [expect.objectContaining({ _id: "timer-1" })],
       }),
     );
+    jest.useRealTimers();
+  });
+});
+
+const loadStoreWithControllerMediaFolders = () => {
+  let storeModule: any;
+  let preferencesModule: any;
+  let rev = 1;
+  const docs = new Map<string, Record<string, unknown>>();
+  const postMessage = jest.fn();
+  const notFound = Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+  const db = {
+    get: jest.fn(async (id: string) => {
+      const doc = docs.get(id);
+      if (!doc) throw notFound;
+      return { ...doc };
+    }),
+    put: jest.fn(async (doc: Record<string, unknown>) => {
+      const next = { ...doc, _rev: `${rev++}-test` };
+      docs.set(String(doc._id), next);
+      return { ok: true, rev: next._rev };
+    }),
+  };
+  jest.isolateModules(() => {
+    jest.doMock("../context/controllerInfo", () => ({ globalDb: db, globalBroadcastRef: { postMessage } }));
+    jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: { db: undefined, churchId: undefined }, globalHostId: "host-123" }));
+    jest.doMock("firebase/database", () => ({ ref: jest.fn(), set: jest.fn(), get: jest.fn() }));
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    storeModule = require("./store");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    preferencesModule = require("./preferencesSlice");
+  });
+  return { store: storeModule.default, preferences: preferencesModule, docs, db, postMessage };
+};
+
+describe("controller media folder persistence", () => {
+  it("writes and broadcasts only the scoped folder doc", async () => {
+    jest.useFakeTimers();
+    const { store, preferences, docs, db, postMessage } = loadStoreWithControllerMediaFolders();
+    store.dispatch(preferences.setIsInitialized(true));
+    store.dispatch(preferences.initiateMediaRouteFolders({ controllerProfileId: "aux-1", mediaRouteFolders: {} }));
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "aux-1", key: "controller-item-image", folderId: "videos" }));
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect([...docs.keys()]).toEqual(["mediaRouteFolders:aux-1"]);
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put.mock.calls.every(([doc]) => doc._id === "mediaRouteFolders:aux-1")).toBe(true);
+    expect(postMessage.mock.calls[0][0].data.docs[0]).toMatchObject({
+      _id: "mediaRouteFolders:aux-1",
+      controllerProfileId: "aux-1",
+      mediaRouteFolders: { "controller-item-image": "videos" },
+    });
     jest.useRealTimers();
   });
 });

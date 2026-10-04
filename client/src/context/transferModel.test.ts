@@ -30,5 +30,6 @@ describe("getTransferOverview", () => {
 
   it("excludes terminal transfers from the aggregate", () => {
     expect(getTransferOverview([{ ...transfer("done", 100), status: "complete" }]).progress).toBeNull();
+    expect(getTransferOverview([{ ...transfer("partial", 70), status: "partial" }]).progress).toBeNull();
   });
 });

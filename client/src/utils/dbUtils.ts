@@ -36,6 +36,7 @@ import {
   DBPreferences,
   DBQuickLinksDoc,
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  isControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
@@ -1316,7 +1317,7 @@ function inferDocType(
   if (id === "media-library-meta") return "mediaLibraryMeta";
   if (id === QUICK_LINKS_POUCH_ID) return "quickLinks";
   if (id === MONITOR_SETTINGS_POUCH_ID) return "monitorSettings";
-  if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID) return "mediaRouteFolders";
+  if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID || isControllerMediaRouteFoldersDocId(id)) return "mediaRouteFolders";
   if (id === "preferences") return "preferences";
   if (id === "overlay-templates") return "overlayTemplates";
   if (id === "services") return "services";

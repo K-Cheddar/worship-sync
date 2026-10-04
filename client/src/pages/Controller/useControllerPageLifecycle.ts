@@ -9,7 +9,8 @@ import {
   DBAllItems,
   DBItemListDetails,
   DBOverlayTemplates,
-  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  isControllerMediaRouteFoldersDocId,
+  getControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   PreferencesClusterRemoteDoc,
@@ -52,6 +53,8 @@ import {
   initiateMonitorSettings,
   initiatePreferences,
   initiateQuickLinks,
+  initiateMediaRouteFolders,
+  updateControllerMediaRouteFoldersFromRemote,
   preferencesClusterLoadFallback,
   setIsLoading,
   updatePreferencesFromRemote,
@@ -96,6 +99,7 @@ import {
   useActiveControllerProfile,
 } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
+import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -279,13 +283,17 @@ export const useControllerPageLifecycle = () => {
             _update._id === PREFERENCES_POUCH_ID ||
             _update._id === QUICK_LINKS_POUCH_ID ||
             _update._id === MONITOR_SETTINGS_POUCH_ID ||
-            _update._id === MEDIA_ROUTE_FOLDERS_POUCH_ID
+            isControllerMediaRouteFoldersDocId(_update._id)
           ) {
-            dispatch(
-              updatePreferencesFromRemote(
-                _update as PreferencesClusterRemoteDoc,
-              ),
-            );
+            if (isControllerMediaRouteFoldersDocId(_update._id) && "controllerProfileId" in _update) {
+              if (_update._id !== getControllerMediaRouteFoldersDocId(_update.controllerProfileId)) continue;
+              dispatch(updateControllerMediaRouteFoldersFromRemote({
+                controllerProfileId: _update.controllerProfileId,
+                mediaRouteFolders: _update.mediaRouteFolders ?? {},
+              }));
+            } else {
+              dispatch(updatePreferencesFromRemote(_update as PreferencesClusterRemoteDoc));
+            }
           }
         }
       } catch (e) {
@@ -407,13 +415,7 @@ export const useControllerPageLifecycle = () => {
     const getPreferences = async () => {
       try {
         const bundle = await loadOrCreatePreferencesBundle(db);
-        dispatch(
-          initiatePreferences({
-            preferences: bundle.preferences,
-            isMusic: access === "music",
-            mediaRouteFolders: bundle.mediaRouteFolders,
-          }),
-        );
+        dispatch(initiatePreferences({ preferences: bundle.preferences, isMusic: access === "music" }));
         dispatch(initiateQuickLinks(bundle.quickLinks));
         dispatch(initiateMonitorSettings(bundle.monitorSettings));
       } catch (e) {
@@ -423,7 +425,6 @@ export const useControllerPageLifecycle = () => {
           initiatePreferences({
             preferences: fb.preferences,
             isMusic: access === "music",
-            mediaRouteFolders: fb.mediaRouteFolders,
           }),
         );
         dispatch(initiateQuickLinks(fb.quickLinks));
@@ -439,6 +440,24 @@ export const useControllerPageLifecycle = () => {
     };
     void getPreferences();
   }, [dispatch, db, access, showToast]);
+
+  useEffect(() => {
+    if (!db || !activeControllerId) return;
+    let isCurrent = true;
+    const controllerProfileId = activeControllerId;
+    dispatch(initiateMediaRouteFolders({ controllerProfileId, mediaRouteFolders: {} }));
+    void loadOrCreateControllerMediaRouteFolders(db, controllerProfileId).then(
+      (doc) => {
+        if (isCurrent) dispatch(initiateMediaRouteFolders({
+          controllerProfileId,
+          mediaRouteFolders: doc.mediaRouteFolders,
+        }));
+      },
+    ).catch((error) => {
+      console.error("Could not load controller media folder preferences", error);
+    });
+    return () => { isCurrent = false; };
+  }, [dispatch, db, activeControllerId]);
 
   useEffect(() => {
     if (!db) return;

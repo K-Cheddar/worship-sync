@@ -189,6 +189,42 @@ export async function removeMediaItem(
   return undefined;
 }
 
+/** Read the persisted v2 revision used to prepare one destructive media operation. */
+export async function readMediaItemForDeletion(
+  db: PouchDB.Database,
+  id: string,
+): Promise<{ doc: MediaItemDoc; item: MediaType } | null> {
+  await requireMediaLibraryV2(db);
+  let doc: MediaItemDoc;
+  try {
+    doc = (await db.get(mediaItemDocId(id))) as MediaItemDoc;
+  } catch (error) {
+    if (isPouchNotFound(error)) return null;
+    throw error;
+  }
+  if (doc.docType !== "mediaItem" || doc.id !== id) {
+    throw new Error(`Invalid persisted media item document for ${id}.`);
+  }
+  const item = { ...doc } as Partial<MediaItemDoc>;
+  delete item._id;
+  delete item._rev;
+  delete item.docType;
+  return { doc, item: item as MediaType };
+}
+
+/** Tombstone only the exact revision whose references were prepared for cleanup. */
+export async function removeMediaItemAtRevision(
+  db: PouchDB.Database,
+  doc: MediaItemDoc,
+): Promise<PouchDB.Core.Response | undefined> {
+  try {
+    return await db.remove(doc as MediaItemDoc & { _rev: string });
+  } catch (error) {
+    if (isPouchNotFound(error)) return undefined;
+    throw error;
+  }
+}
+
 export async function saveMediaFolders(
   db: PouchDB.Database,
   folders: MediaFolder[],

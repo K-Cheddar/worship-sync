@@ -15,6 +15,7 @@ export const formatTransferProgress = (progressValue: number | null) => {
 const statusLabel = (transfer: TransferOverviewItem) => {
   if (transfer.status === "queued") return "Queued";
   if (transfer.status === "complete") return "Complete";
+  if (transfer.status === "partial") return "Completed with errors";
   if (transfer.status === "failed") return "Failed";
   if (transfer.status === "cancelled") return "Cancelled";
   return transfer.phase?.label || "In progress";
@@ -32,7 +33,7 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
   const phaseText = `${transfer.type ? `${transfer.type} · ` : ""}${label}${transfer.phase?.current !== undefined && transfer.phase.total !== undefined ? ` · ${transfer.phase.current} of ${transfer.phase.total}` : ""}`;
   const StatusIcon = transfer.status === "complete"
     ? CheckCircle2
-    : transfer.status === "failed"
+    : transfer.status === "failed" || transfer.status === "partial"
       ? CircleAlert
       : transfer.status === "cancelled"
         ? XCircle
@@ -45,8 +46,8 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
           {!summary ? <StatusIcon size={compact ? 14 : 18} aria-hidden className="shrink-0 text-cyan-200" /> : null}
           <p className={compact ? "truncate text-xs font-medium" : "truncate text-sm font-medium"}>{transfer.name}</p>
         </div>
-        <span className="shrink-0 text-xs text-gray-300" aria-label={`${label}${transfer.status === "active" ? `, ${percentLabel(transfer)}` : ""}`}>
-          {transfer.status === "active" ? percentLabel(transfer) : label}
+        <span className="shrink-0 text-xs text-gray-300" aria-label={`${label}${transfer.status === "active" || transfer.status === "partial" ? `, ${percentLabel(transfer)}` : ""}`}>
+          {transfer.status === "active" ? percentLabel(transfer) : transfer.status === "partial" ? `${label} · ${percentLabel(transfer)}` : label}
         </span>
       </div>
       <p className={`${compact ? "mt-0.5" : "mt-1"} truncate text-xs text-gray-300`}>

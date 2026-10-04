@@ -798,6 +798,7 @@ describe("dbUtils", () => {
         { doc: { _id: "overlay-abc", type: "participant" } },
         { doc: { _id: "credit-xyz" } },
         { doc: { _id: "credits-outline-seed-outline" } },
+        { doc: { _id: "mediaRouteFolders:aux%2Fone", controllerProfileId: "aux/one", mediaRouteFolders: {} } },
         { doc: { _id: "list-1", items: [], overlays: [] } },
         { doc: { _id: "unknown-1" } },
       ],
@@ -809,7 +810,7 @@ describe("dbUtils", () => {
 
     const result = await migrateDocTypes(db as unknown as PouchDB.Database);
 
-    expect(result).toEqual({ updatedCount: 4, errorCount: 1, skippedCount: 3 });
+    expect(result).toEqual({ updatedCount: 5, errorCount: 1, skippedCount: 3 });
     expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "overlay-abc", docType: "overlay" }),
@@ -825,6 +826,9 @@ describe("dbUtils", () => {
     );
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "list-1", docType: "itemListDetails" }),
+    );
+    expect(db.put).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "mediaRouteFolders:aux%2Fone", docType: "mediaRouteFolders" }),
     );
   });
 

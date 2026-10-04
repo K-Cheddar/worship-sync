@@ -143,7 +143,7 @@ describe("flushMediaLibraryDocToPouch", () => {
       { id: "keep-row", folderId: null },
     ] as any;
     const subtreeDelete = deleteFolderAndSubtree("parent", folders, list);
-    const rows = new Map(
+    const rows = new Map<string, { _id: string; _rev: string; docType: string; id: string }>(
       list.map((item: { id: string }) => [`media-item:${item.id}`, {
         _id: `media-item:${item.id}`,
         _rev: "1-current",

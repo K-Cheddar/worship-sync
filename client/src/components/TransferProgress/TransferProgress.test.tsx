@@ -49,4 +49,10 @@ describe("TransferProgress", () => {
     rerender(<MemoryRouter><TransferProgress transfer={{ ...base, status: "complete" }} variant="card" /></MemoryRouter>);
     expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
   });
+
+  it("shows partial completion alongside the actual batch progress", () => {
+    render(<TransferProgress transfer={{ ...base, status: "partial", progress: 70, phase: { key: "partial", label: "Upload completed with errors" } }} variant="card" />);
+    expect(screen.getByText("Completed with errors · 70%")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "photo.png progress" })).toHaveAttribute("aria-valuenow", "70");
+  });
 });

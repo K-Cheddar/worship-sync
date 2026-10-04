@@ -58,16 +58,28 @@ type TransferContextValue = {
   startCanvaTransfer: (input: CanvaTransferInput) => string;
   updateTransfer: (transfer: Transfer) => void;
   removeTransfer: (id: string) => void;
+  registerTransferAction: (id: string, key: string, handler: () => void | Promise<void>) => () => void;
   runTransferAction: (id: string, key: string) => Promise<void>;
 };
 
+type TransferActionsValue = Omit<TransferContextValue, "transfers" | "isMinimized" | "minimizeTransfers" | "restoreTransfers"> & {
+  getTransfer: (id: string) => Transfer | undefined;
+};
+
 const TransferContext = createContext<TransferContextValue | null>(null);
+const TransferActionsContext = createContext<TransferActionsValue | null>(null);
 export const useTransfers = () => {
   const context = useContext(TransferContext);
   if (!context) throw new Error("Transfer panel is unavailable.");
   return context;
 };
 export const useOptionalTransfers = () => useContext(TransferContext);
+export const useTransferActions = () => {
+  const context = useContext(TransferActionsContext);
+  if (!context) throw new Error("Transfer actions are unavailable.");
+  return context;
+};
+export const useOptionalTransferActions = () => useContext(TransferActionsContext);
 
 const getCanvaProgress = (item: CanvaTransferRuntime) => {
   const pages = item.pages.filter((page) => !item.pageStatus[page]?.skipped);
@@ -81,15 +93,16 @@ const toCanvaTransfer = (job: CanvaTransferRuntime): Transfer => {
   const processing = job.status === "processing" || Object.values(job.pageStatus).some((page) => ["processing", "saving"].includes(page.status) || (page.status === "ready" && !page.skipped));
   const terminal = ["completed", "partial", "failed", "cancelled"].includes(job.status);
   const status: Transfer["status"] = job.status === "queued" ? "queued"
-    : job.status === "completed" || job.status === "partial" ? "complete"
+    : job.status === "completed" ? "complete"
+      : job.status === "partial" ? "partial"
       : job.status === "failed" ? "failed"
         : job.status === "cancelled" ? "cancelled" : "active";
   const calculatedProgress = status === "complete" ? 100 : total ? ((requested + processed) / (total * 2)) * 100 : 0;
   job.lastProgress = status === "complete" ? 100 : Math.max(job.lastProgress ?? 0, calculatedProgress);
   const progress = job.lastProgress;
   const currentWaiting = job.pages.find((page) => job.pageStatus[page]?.status === "waiting");
-  const phase = status === "complete"
-    ? { key: "complete", label: job.status === "partial" ? "Import completed with some pages failed" : "Import complete" }
+  const phase = status === "complete" || status === "partial"
+    ? { key: status, label: status === "partial" ? "Import completed with some pages failed" : "Import complete" }
     : status === "failed"
       ? { key: "failed", label: "Import failed" }
       : status === "cancelled"
@@ -186,10 +199,27 @@ const TransferPanel = ({ transfers, isMinimized, onMinimize, runTransferAction }
 
 export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const transfersRef = useRef(transfers);
+  transfersRef.current = transfers;
   const [isMinimized, setIsMinimized] = useState(false);
   const canvaQueue = useRef(Promise.resolve());
   const jobs = useRef(new Map<string, CanvaTransferRuntime>());
   const dedupeJobs = useRef(new Map<string, string>());
+  const actionHandlers = useRef(new Map<string, Map<string, () => void | Promise<void>>>());
+  const unregisterTransferActions = useCallback((id: string) => {
+    actionHandlers.current.delete(id);
+  }, []);
+  const registerTransferAction = useCallback<TransferContextValue["registerTransferAction"]>((id, key, handler) => {
+    const handlers = actionHandlers.current.get(id) ?? new Map();
+    handlers.set(key, handler);
+    actionHandlers.current.set(id, handlers);
+    return () => {
+      const current = actionHandlers.current.get(id);
+      if (current?.get(key) !== handler) return;
+      current.delete(key);
+      if (!current.size) actionHandlers.current.delete(id);
+    };
+  }, []);
   const publishCanva = useCallback((job: CanvaTransferRuntime) => {
     const normalized = toCanvaTransfer(job);
     setTransfers((current) => [normalized, ...current.filter((transfer) => transfer.id !== job.id)]);
@@ -210,6 +240,50 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       Object.assign(current, patch);
       publishCanva(current);
     };
+    registerTransferAction(job.id, "dismiss", () => {
+      jobs.current.delete(job.id);
+      unregisterTransferActions(job.id);
+      setTransfers((current) => current.filter((transfer) => transfer.id !== job.id));
+    });
+    registerTransferAction(job.id, "cancel", () => {
+      job.controller?.abort();
+      if (job.status === "queued") {
+        job.status = "cancelled";
+        job.error = "Canva import cancelled before it started.";
+        publishCanva(job);
+      }
+    });
+    registerTransferAction(job.id, "retry-cleanup", async () => {
+      if (!job.cleanupRetry) return;
+      job.cleanupRetryPending = true;
+      publishCanva(job);
+      try {
+        await job.cleanupRetry();
+        job.cleanupError = undefined;
+        job.cleanupRetry = undefined;
+      } catch (error) {
+        job.cleanupError = error instanceof Error ? error.message : "Some files could not be removed. Try again.";
+      } finally {
+        job.cleanupRetryPending = false;
+        publishCanva(job);
+      }
+    });
+    registerTransferAction(job.id, "retry-custom-item", async () => {
+      if (!job.customItemRetry) return;
+      job.customItemRetryPending = true;
+      publishCanva(job);
+      try {
+        const viewPath = await job.customItemRetry();
+        job.customItemError = undefined;
+        if (viewPath) job.viewPath = viewPath;
+        job.status = job.failedPages?.length ? "partial" : "completed";
+      } catch (error) {
+        job.customItemError = error instanceof Error ? error.message : "Try again.";
+      } finally {
+        job.customItemRetryPending = false;
+        publishCanva(job);
+      }
+    });
     const execute = async () => {
       const persistedPages = new Set<number>();
       try {
@@ -275,58 +349,26 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     };
     canvaQueue.current = canvaQueue.current.then(execute, execute);
     return job.id;
-  }, [publishCanva]);
+  }, [publishCanva, registerTransferAction, unregisterTransferActions]);
 
   const updateTransfer = useCallback((transfer: Transfer) => {
     setTransfers((current) => [transfer, ...current.filter((item) => item.id !== transfer.id)]);
   }, []);
-  const removeTransfer = useCallback((id: string) => setTransfers((current) => current.filter((item) => item.id !== id)), []);
+  const removeTransfer = useCallback((id: string) => {
+    unregisterTransferActions(id);
+    setTransfers((current) => current.filter((item) => item.id !== id));
+  }, [unregisterTransferActions]);
 
   const runTransferAction = useCallback<TransferContextValue["runTransferAction"]>(async (id, key) => {
-    const job = jobs.current.get(id);
-    if (!job) {
-      if (key === "dismiss") removeTransfer(id);
-      return;
-    }
-    if (key === "dismiss") {
-      jobs.current.delete(id);
+    const handler = actionHandlers.current.get(id)?.get(key);
+    if (handler) {
+      await handler();
+    } else if (key === "dismiss") {
       removeTransfer(id);
-    } else if (key === "cancel") {
-      job.controller?.abort();
-      if (job.status === "queued") {
-        job.status = "cancelled";
-        job.error = "Import cancelled before it started.";
-        publishCanva(job);
-      }
-    } else if (key === "retry-cleanup" && job.cleanupRetry) {
-      job.cleanupRetryPending = true;
-      publishCanva(job);
-      try {
-        await job.cleanupRetry();
-        job.cleanupError = undefined;
-        job.cleanupRetry = undefined;
-      } catch (error) {
-        job.cleanupError = error instanceof Error ? error.message : "Some files could not be removed. Try again.";
-      } finally {
-        job.cleanupRetryPending = false;
-        publishCanva(job);
-      }
-    } else if (key === "retry-custom-item" && job.customItemRetry) {
-      job.customItemRetryPending = true;
-      publishCanva(job);
-      try {
-        const viewPath = await job.customItemRetry();
-        job.customItemError = undefined;
-        if (viewPath) job.viewPath = viewPath;
-        job.status = job.failedPages?.length ? "partial" : "completed";
-      } catch (error) {
-        job.customItemError = error instanceof Error ? error.message : "Try again.";
-      } finally {
-        job.customItemRetryPending = false;
-        publishCanva(job);
-      }
     }
-  }, [publishCanva, removeTransfer]);
+  }, [removeTransfer]);
+
+  useEffect(() => () => actionHandlers.current.clear(), []);
 
   useEffect(() => {
     const active = transfers.some((item) => item.blocksUnload && (item.status === "queued" || item.status === "active"));
@@ -337,8 +379,16 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   }, [transfers]);
   const minimizeTransfers = useCallback(() => setIsMinimized(true), []);
   const restoreTransfers = useCallback(() => setIsMinimized(false), []);
-  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateTransfer, removeTransfer, runTransferAction }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateTransfer, removeTransfer, runTransferAction]);
-  return <TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} onMinimize={minimizeTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider>;
+  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
+  const actionValue = useMemo(() => ({
+    startCanvaTransfer,
+    updateTransfer,
+    removeTransfer,
+    registerTransferAction,
+    runTransferAction,
+    getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
+  }), [startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
+  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} onMinimize={minimizeTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 
 export { getTransferOverview };

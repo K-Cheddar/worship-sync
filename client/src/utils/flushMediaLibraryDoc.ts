@@ -9,16 +9,37 @@ import type { MediaFolder, MediaType } from "../types";
 import { extractMediaUrlsFromBackgrounds } from "./mediaCacheUtils";
 import {
   mediaItemDocId,
+  removeMediaItemAtRevision,
   persistMediaLibraryChanges,
   persistMediaLibrarySnapshot,
   removeMediaItem,
 } from "./mediaDocUtils";
+import type { MediaItemDoc } from "./mediaDocUtils";
 
 const safePostMessage = (message: unknown) => {
   if (globalBroadcastRef) {
     globalBroadcastRef.postMessage(message);
   }
 };
+
+/** Tombstone and broadcast only the exact persisted revision prepared for deletion. */
+export async function deleteMediaItemAtRevisionFromPouch(
+  db: PouchDB.Database,
+  doc: MediaItemDoc,
+): Promise<"deleted" | "missing"> {
+  if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
+  const result = await removeMediaItemAtRevision(db, doc);
+  if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
+  if (!result) return "missing";
+  safePostMessage({
+    type: "update",
+    data: {
+      docs: [{ _id: doc._id, id: doc.id, _deleted: true }],
+      hostId: globalHostId,
+    },
+  });
+  return "deleted";
+}
 
 /** `error.message` when {@link flushMediaLibraryDocToPouch} could not run because `db` is unset. */
 export const FLUSH_MEDIA_NO_DB_MESSAGE =

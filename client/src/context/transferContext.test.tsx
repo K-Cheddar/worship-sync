@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import { useRef } from "react";
 import { getTransferOverview, TransferProvider, useTransfers } from "./transferContext";
 import { MediaAddControl } from "../containers/Media/MediaAddControl";
 import { CanvaMediaReconciliationRequiredError } from "../utils/canvaMediaReplacement";
@@ -19,10 +20,7 @@ const Harness = () => {
   const location = useLocation();
   const navigate = useNavigate();
   return <>
-    <MediaAddControl
-      uploadProgress={{ isUploading: false, progress: 0 }}
-      uploadTitle="Add Media"
-    >
+    <MediaAddControl>
       <button>Add media</button>
     </MediaAddControl>
     <p>Route {location.pathname}</p>
@@ -63,16 +61,55 @@ test("keeps Canva jobs alive across route changes and shares the panel with medi
   expect(screen.getByRole("link", { name: "View presentation" })).toHaveClass("cursor-pointer");
 });
 
+test("invokes producer-neutral actions and unregisters handlers cleanly", async () => {
+  const user = userEvent.setup();
+  const action = jest.fn();
+  const GenericActionHarness = () => {
+    const { updateTransfer, registerTransferAction } = useTransfers();
+    const unregisterRef = useRef<(() => void) | null>(null);
+    return <>
+      <button onClick={() => {
+        unregisterRef.current = registerTransferAction("generic-transfer", "custom", action);
+        updateTransfer({ id: "generic-transfer", type: "Example", name: "Generic work", status: "active", progress: 10, actions: [{ key: "custom", label: "Run custom action" }, { key: "dismiss", label: "Dismiss" }] });
+      }}>Start generic work</button>
+      <button onClick={() => unregisterRef.current?.()}>Unregister action</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><GenericActionHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start generic work" }));
+  await user.click(screen.getByRole("button", { name: "Run custom action" }));
+  expect(action).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Unregister action" }));
+  await user.click(screen.getByRole("button", { name: "Run custom action" }));
+  expect(action).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.queryByText("Generic work")).not.toBeInTheDocument();
+});
+
+test("dismisses completed Canva transfers through their registered action", async () => {
+  const user = userEvent.setup();
+  const DismissHarness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <button onClick={() => startCanvaTransfer({
+      id: "dismiss-canva", title: "Dismissible deck", format: "png", pages: [1],
+      run: async () => result,
+      finalize: async () => ({ importedCount: 1 }),
+    })}>Import dismissible deck</button>;
+  };
+  render(<MemoryRouter><TransferProvider><DismissHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Import dismissible deck" }));
+  expect(await screen.findByText("Dismissible deck")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.queryByText("Dismissible deck")).not.toBeInTheDocument();
+});
+
 test("minimizing and restoring keeps the active Canva import progress", async () => {
   const gate = deferred<typeof result>();
   const user = userEvent.setup();
   const SlowHarness = () => {
     const { startCanvaTransfer } = useTransfers();
     return <>
-    <MediaAddControl
-      uploadProgress={{ isUploading: false, progress: 0 }}
-      uploadTitle="Add Media"
-    ><button>Add media</button></MediaAddControl>
+    <MediaAddControl><button>Add media</button></MediaAddControl>
     <button onClick={() => startCanvaTransfer({
       id: "slow-canva", title: "Slow deck", format: "mp4", pages: [1, 2],
       run: (_signal, progress) => {
@@ -179,10 +216,7 @@ test("keeps Add available and summarizes the shared aggregate across active tran
   const AggregateHarness = () => {
     const { startCanvaTransfer, updateTransfer } = useTransfers();
     return <>
-      <MediaAddControl
-        uploadProgress={{ isUploading: false, progress: 0 }}
-        uploadTitle="Add Media"
-      ><button onClick={addAction}>Add media</button></MediaAddControl>
+      <MediaAddControl><button onClick={addAction}>Add media</button></MediaAddControl>
       <button onClick={() => startCanvaTransfer({
         id: "aggregate-canva",
         title: "Aggregate deck",
@@ -464,7 +498,7 @@ test("keeps successful pages and reports failed pages as a partial import", asyn
   expect(await screen.findByText(/Import completed with some pages failed/)).toBeInTheDocument();
   expect(screen.getByText(/Page 2: Could not export this page/)).toBeInTheDocument();
   expect(screen.getByText(/1 of 2 pages processed · 1 slides imported/)).toBeInTheDocument();
-  expect(screen.getByRole("progressbar", { name: "Partial deck progress" })).toHaveAttribute("aria-valuenow", "100");
+  expect(screen.getByRole("progressbar", { name: "Partial deck progress" })).toHaveAttribute("aria-valuenow", "50");
   expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
 });
 

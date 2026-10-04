@@ -1,4 +1,4 @@
-export type TransferStatus = "queued" | "active" | "complete" | "failed" | "cancelled";
+export type TransferStatus = "queued" | "active" | "complete" | "partial" | "failed" | "cancelled";
 
 export type Transfer = {
   id: string;
@@ -57,3 +57,6 @@ export const getTransferOverview = (transfers: Transfer[]) => {
     transfers: activeTransfers as TransferOverviewItem[],
   };
 };
+
+export const getMediaTransferOverview = (transfers: Transfer[]) =>
+  getTransferOverview(transfers.filter((transfer) => transfer.type === "Media upload"));

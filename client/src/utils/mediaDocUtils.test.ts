@@ -7,6 +7,8 @@ import {
   persistMediaLibraryChanges,
   persistMediaStateChanges,
   removeMediaItem,
+  removeMediaItemAtRevision,
+  readMediaItemForDeletion,
   saveMediaFolders,
   siblingNameExists,
   updateMediaItem,
@@ -269,6 +271,43 @@ describe("v2 media repository", () => {
     });
     expect(remove.mock.calls.map(([doc]) => doc._rev)).toEqual(["1-a", "2-newer"]);
     expect(docs.has(mediaItemDocId("conflict"))).toBe(false);
+  });
+
+  it("does not retry an exact-revision deletion after a conflict", async () => {
+    const doc = {
+      ...media("exact-revision"),
+      _id: mediaItemDocId("exact-revision"),
+      _rev: "4-captured",
+      docType: "mediaItem",
+    } as any;
+    const db = {
+      remove: jest.fn(async () => { throw Object.assign(new Error("conflict"), { status: 409 }); }),
+    } as unknown as PouchDB.Database;
+
+    await expect(removeMediaItemAtRevision(db, doc)).rejects.toMatchObject({ status: 409 });
+    expect(db.remove).toHaveBeenCalledTimes(1);
+    expect(db.remove).toHaveBeenCalledWith(doc);
+  });
+
+  it("returns authoritative media metadata and revision from the v2 item document", async () => {
+    const persisted = {
+      ...media("authoritative"),
+      name: "Persisted name",
+      publicId: "persisted-provider-id",
+      _id: mediaItemDocId("authoritative"),
+      _rev: "7-persisted",
+      docType: "mediaItem",
+    };
+    const db = {
+      get: jest.fn(async (id: string) => id === "media-library-meta"
+        ? { _id: id, schemaVersion: 2 }
+        : persisted),
+    } as unknown as PouchDB.Database;
+
+    await expect(readMediaItemForDeletion(db, "authoritative")).resolves.toEqual({
+      doc: persisted,
+      item: expect.objectContaining({ name: "Persisted name", publicId: "persisted-provider-id" }),
+    });
   });
 
   it("treats an already missing item document as an idempotent deletion", async () => {

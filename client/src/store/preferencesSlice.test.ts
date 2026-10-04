@@ -8,7 +8,7 @@ import {
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
   MONITOR_SETTINGS_POUCH_ID,
-  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  getControllerMediaRouteFoldersDocId,
 } from "../types";
 
 jest.mock("../utils/generateRandomId", () => ({
@@ -69,6 +69,9 @@ const {
   setFocusMediaId,
   setRequestOpenMediaPanel,
   setMediaRouteFolder,
+  initiateMediaRouteFolders,
+  updateControllerMediaRouteFoldersFromRemote,
+  markMediaRouteFolderPersisted,
 } = preferencesSlice.actions;
 
 type PreferencesState = ReturnType<typeof preferencesSlice.reducer>;
@@ -498,8 +501,9 @@ describe("preferencesSlice", () => {
   describe("setMediaRouteFolder", () => {
     it("sets a media route folder by key", () => {
       const store = createStore();
+      store.dispatch(initiateMediaRouteFolders({ controllerProfileId: "presentation", mediaRouteFolders: {} }));
       store.dispatch(
-        setMediaRouteFolder({ key: "controller-item-image", folderId: "folder-123" }),
+        setMediaRouteFolder({ controllerProfileId: "presentation", key: "controller-item-image", folderId: "folder-123" }),
       );
       expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBe(
         "folder-123",
@@ -508,7 +512,8 @@ describe("preferencesSlice", () => {
 
     it("allows setting a folder to null (all media)", () => {
       const store = createStore();
-      store.dispatch(setMediaRouteFolder({ key: "controller-item-image", folderId: null }));
+      store.dispatch(initiateMediaRouteFolders({ controllerProfileId: "presentation", mediaRouteFolders: {} }));
+      store.dispatch(setMediaRouteFolder({ controllerProfileId: "presentation", key: "controller-item-image", folderId: null }));
       expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBeNull();
     });
   });
@@ -703,17 +708,51 @@ describe("preferencesSlice", () => {
       expect(store.getState().preferences.monitorSettings.timerId).toBe("t2");
     });
 
-    it("updates mediaRouteFolders when _id is MEDIA_ROUTE_FOLDERS_POUCH_ID", () => {
+    it("applies a scoped remote map only to its active controller", () => {
       const store = createStore();
+      store.dispatch(initiateMediaRouteFolders({ controllerProfileId: "presentation", mediaRouteFolders: {} }));
       store.dispatch(
-        updatePreferencesFromRemote({
-          _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-          mediaRouteFolders: { "controller-item-image": "folder-1" },
-        } as any),
+        updateControllerMediaRouteFoldersFromRemote({
+          controllerProfileId: "aux-1",
+          mediaRouteFolders: { "controller-item-image": "folder-aux" },
+        }),
       );
+      expect(store.getState().preferences.mediaRouteFolders).toEqual({});
+      store.dispatch(updateControllerMediaRouteFoldersFromRemote({
+        controllerProfileId: "presentation",
+        mediaRouteFolders: { "controller-item-image": "folder-presentation" },
+      }));
       expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBe(
-        "folder-1",
+        "folder-presentation",
       );
+    });
+
+    it("ignores writes captured for a different active profile", () => {
+      const store = createStore();
+      store.dispatch(initiateMediaRouteFolders({ controllerProfileId: "aux-2", mediaRouteFolders: {} }));
+      store.dispatch(setMediaRouteFolder({ controllerProfileId: "aux-1", key: "controller-item-image", folderId: "wrong" }));
+      expect(store.getState().preferences.mediaRouteFolders).toEqual({});
+      expect(getControllerMediaRouteFoldersDocId("custom/profile:one")).toBe("mediaRouteFolders:custom%2Fprofile%3Aone");
+    });
+
+    it("keeps a local route choice while its save is pending, then accepts remote updates", () => {
+      const store = createStore();
+      store.dispatch(initiateMediaRouteFolders({ controllerProfileId: "presentation", mediaRouteFolders: {} }));
+      store.dispatch(setMediaRouteFolder({ controllerProfileId: "presentation", key: "controller-item-image", folderId: "local" }));
+      store.dispatch(updateControllerMediaRouteFoldersFromRemote({
+        controllerProfileId: "presentation",
+        mediaRouteFolders: { "controller-item-image": "remote", "controller-item-song": "songs" },
+      }));
+      expect(store.getState().preferences.mediaRouteFolders).toEqual({
+        "controller-item-image": "local",
+        "controller-item-song": "songs",
+      });
+      store.dispatch(markMediaRouteFolderPersisted({ controllerProfileId: "presentation", key: "controller-item-image", folderId: "local" }));
+      store.dispatch(updateControllerMediaRouteFoldersFromRemote({
+        controllerProfileId: "presentation",
+        mediaRouteFolders: { "controller-item-image": "remote-latest" },
+      }));
+      expect(store.getState().preferences.mediaRouteFolders["controller-item-image"]).toBe("remote-latest");
     });
 
     it("does nothing for an unrecognized _id", () => {

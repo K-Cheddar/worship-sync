@@ -885,6 +885,22 @@ export const MONITOR_SETTINGS_POUCH_ID = "monitorSettings" as const;
 
 /** Pouch `_id` for last-selected media library folder per route. */
 export const MEDIA_ROUTE_FOLDERS_POUCH_ID = "mediaRouteFolders" as const;
+export const CONTROLLER_MEDIA_ROUTE_FOLDERS_PREFIX = "mediaRouteFolders:" as const;
+
+export function getControllerMediaRouteFoldersDocId(controllerProfileId: string): string {
+  return `${CONTROLLER_MEDIA_ROUTE_FOLDERS_PREFIX}${encodeURIComponent(controllerProfileId)}`;
+}
+
+export function isControllerMediaRouteFoldersDocId(id: unknown): boolean {
+  if (typeof id !== "string" || !id.startsWith(CONTROLLER_MEDIA_ROUTE_FOLDERS_PREFIX)) return false;
+  const encoded = id.slice(CONTROLLER_MEDIA_ROUTE_FOLDERS_PREFIX.length);
+  if (!encoded) return false;
+  try {
+    return encodeURIComponent(decodeURIComponent(encoded)) === encoded;
+  } catch {
+    return false;
+  }
+}
 
 /** Slim preferences document (split layout). */
 export type DBPreferences = {
@@ -923,12 +939,23 @@ export type DBMediaRouteFoldersDoc = {
   docType?: DocType;
 };
 
+export type DBControllerMediaRouteFoldersDoc = {
+  _id: string;
+  _rev?: string;
+  controllerProfileId: string;
+  mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  createdAt?: string;
+  updatedAt?: string;
+  docType: "mediaRouteFolders";
+};
+
 /** Any Pouch doc that can update the preferences slice from local sync. */
 export type PreferencesClusterRemoteDoc =
   | DBPreferences
   | DBQuickLinksDoc
   | DBMonitorSettingsDoc
-  | DBMediaRouteFoldersDoc;
+  | DBMediaRouteFoldersDoc
+  | DBControllerMediaRouteFoldersDoc;
 
 /** Prefix for outline-scoped credits index docs. Legacy global index uses `_id: "credits"`. */
 export const CREDITS_OUTLINE_INDEX_PREFIX = "credits-outline-";
@@ -1278,6 +1305,7 @@ export type DBDoc =
   | DBQuickLinksDoc
   | DBMonitorSettingsDoc
   | DBMediaRouteFoldersDoc
+  | DBControllerMediaRouteFoldersDoc
   | DBCredits
   | DBCredit
   | DBCreditHistory

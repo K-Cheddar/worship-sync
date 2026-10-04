@@ -3,30 +3,16 @@ import { DropdownMenuItem } from "../../components/ui/DropdownMenu";
 import Button from "../../components/Button/Button";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../../components/ui/Popover";
 import { formatTransferProgress, TransferProgress } from "../../components/TransferProgress/TransferProgress";
-import { getTransferOverview, useOptionalTransfers } from "../../context/transferContext";
-import type { Transfer } from "../../context/transferModel";
+import { useOptionalTransfers } from "../../context/transferContext";
+import { getTransferOverview } from "../../context/transferContext";
 
 type MediaAddControlProps = {
   children: ReactNode;
-  uploadProgress: { isUploading: boolean; progress: number };
-  uploadTitle: string;
 };
 
-export const MediaAddControl = ({
-  children,
-  uploadProgress,
-  uploadTitle,
-}: MediaAddControlProps) => {
+export const MediaAddControl = ({ children }: MediaAddControlProps) => {
   const transferContext = useOptionalTransfers();
-  const transfers: Transfer[] = transferContext?.transfers ?? (uploadProgress.isUploading ? [{
-    id: "media-upload",
-    type: "Media upload",
-    name: uploadTitle,
-    status: "active" as const,
-    progress: uploadProgress.progress,
-    phase: { key: "uploading", label: "Uploading media" },
-  }] : []);
-  const overview = getTransferOverview(transfers);
+  const overview = getTransferOverview(transferContext?.transfers ?? []);
   const progressLabel = formatTransferProgress(overview.progress);
   const headingProgressLabel = overview.progress === null ? progressLabel : `${progressLabel} overall`;
   const accessibleProgressLabel = overview.progress === null ? "progress unknown" : `${progressLabel} overall`;
@@ -49,6 +35,7 @@ export const MediaAddControl = ({
                 <svg viewBox="0 0 24 24" className="absolute inset-0 size-6">
                   <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.24" strokeWidth="2" />
                   <circle
+                    data-testid="aggregate-progress-ring"
                     cx="12"
                     cy="12"
                     r="9"
@@ -56,10 +43,10 @@ export const MediaAddControl = ({
                     stroke="currentColor"
                     strokeWidth="2"
                     strokeLinecap="round"
-                    strokeDasharray={2 * Math.PI * 9}
-                    strokeDashoffset={2 * Math.PI * 9 * (1 - (overview.progress ?? 0) / 100)}
+                    strokeDasharray={overview.progress === null ? "15 42" : 2 * Math.PI * 9}
+                    strokeDashoffset={overview.progress === null ? 0 : 2 * Math.PI * 9 * (1 - overview.progress / 100)}
                     transform="rotate(-90 12 12)"
-                    className="motion-safe:transition-[stroke-dashoffset] motion-safe:duration-300 motion-reduce:transition-none"
+                    className={overview.progress === null ? "motion-safe:animate-spin motion-reduce:animate-none" : "motion-safe:transition-[stroke-dashoffset] motion-safe:duration-300 motion-reduce:transition-none"}
                   />
                 </svg>
               </span>

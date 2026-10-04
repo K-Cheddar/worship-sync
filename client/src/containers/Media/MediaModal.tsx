@@ -6,8 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatTransferProgress } from "../../components/TransferProgress/TransferProgress";
-import { useOptionalTransfers } from "../../context/transferContext";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { useLocation } from "react-router-dom";
@@ -21,11 +19,7 @@ import {
   Minus,
   Maximize,
   Minimize,
-  Plus,
-  ImageUp,
-  HardDrive,
   MonitorUp,
-  Video,
   Folder,
   ZoomIn,
   ZoomOut,
@@ -42,13 +36,7 @@ import { updateMediaItemFields } from "../../store/mediaSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { MediaUploadInputRef } from "./MediaUploadInput";
-import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../../components/ui/DropdownMenu";
+import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
 import {
   useCachedMediaUrl,
   useCachedVideoUrl,
@@ -198,7 +186,6 @@ type MediaModalProps = {
   onDeleteMultipleClick: (selectedIds: Set<string>) => void;
   onPreviewChange: (media: MediaType | null) => void;
   mediaUploadInputRef?: React.MutableRefObject<MediaUploadInputRef | null>;
-  uploadProgress?: { isUploading: boolean; progress: number };
   onAddMediaClick?: () => void;
   onAddVideoInput?: () => void;
   /** Screens and windows on this computer, offered next to hardware inputs. */
@@ -242,7 +229,6 @@ const MediaModal = ({
   onDeleteClick,
   onDeleteMultipleClick,
   mediaUploadInputRef,
-  uploadProgress,
   onAddMediaClick,
   onAddVideoInput,
   onAddScreenShare,
@@ -253,8 +239,6 @@ const MediaModal = ({
   onStorageUsageChanged,
   onStorageUsageRefreshReady,
 }: MediaModalProps) => {
-  const transferContext = useOptionalTransfers();
-  const normalizedUpload = transferContext?.transfers.find((transfer) => transfer.id === "media-upload");
   const dispatch = useDispatch();
   const location = useLocation();
   const { showToast } = useToast();
@@ -310,84 +294,15 @@ const MediaModal = ({
     [],
   );
 
-  const fullscreenAddMediaTitle = useMemo(() => {
-    if (uploadProgress?.isUploading) {
-      return `Uploading... ${formatTransferProgress(normalizedUpload ? normalizedUpload.progress : uploadProgress.progress)}`;
-    }
-    return "Add Media";
-  }, [normalizedUpload, uploadProgress?.isUploading, uploadProgress?.progress]);
-
   const addMediaMenu = mediaUploadInputRef ? (
-    uploadProgress?.isUploading ? (
-      <Button
-        variant="tertiary"
-        svg={Plus}
-        title={fullscreenAddMediaTitle}
-        aria-label="Show upload progress"
-        onClick={() => onAddMediaClick?.()}
-        disabled={mediaUploadDisabled}
-      >
-        {formatTransferProgress(normalizedUpload ? normalizedUpload.progress : uploadProgress.progress)}
-      </Button>
-    ) : (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="tertiary"
-            svg={Plus}
-            title={fullscreenAddMediaTitle}
-            aria-label="Add media"
-            disabled={mediaUploadDisabled}
-          />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {onAddMediaClick ? (
-            <DropdownMenuItem
-              disabled={mediaUploadDisabled}
-              onSelect={() => onAddMediaClick()}
-            >
-              <HardDrive
-                className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon}
-              /> Add files
-            </DropdownMenuItem>
-          ) : null}
-          {onAddVideoInput ? (
-            <DropdownMenuItem
-              disabled={mediaUploadDisabled}
-              onSelect={onAddVideoInput}
-            >
-              <Video
-                className={
-                  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
-                }
-              /> Add video input
-            </DropdownMenuItem>
-          ) : null}
-          {onAddScreenShare ? (
-            <DropdownMenuItem
-              disabled={mediaUploadDisabled}
-              onSelect={onAddScreenShare}
-            >
-              <MonitorUp
-                className={
-                  MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES["video-input"].icon
-                }
-              /> Add screen or window
-            </DropdownMenuItem>
-          ) : null}
-          {onImportFromCanva ? (
-            <DropdownMenuItem
-              disabled={mediaUploadDisabled || isGuestSession}
-              onSelect={() => onImportFromCanva()}
-            >
-              <ImageUp
-                className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.canva.icon}
-              /> Import from Canva
-            </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    )
+    <MediaSourceAddMenu
+      onAddMedia={onAddMediaClick}
+      onAddVideoInput={onAddVideoInput}
+      onAddScreenShare={onAddScreenShare}
+      onImportFromCanva={onImportFromCanva ? () => onImportFromCanva() : undefined}
+      mediaUploadDisabled={mediaUploadDisabled}
+      isGuestSession={isGuestSession}
+    />
   ) : null;
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
