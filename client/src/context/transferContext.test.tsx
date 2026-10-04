@@ -15,7 +15,7 @@ const deferred = <T,>() => {
 };
 
 const Harness = () => {
-  const { startCanvaTransfer, updateUploadTransfer } = useTransfers();
+  const { startCanvaTransfer, updateTransfer } = useTransfers();
   const location = useLocation();
   const navigate = useNavigate();
   return <>
@@ -41,7 +41,7 @@ const Harness = () => {
         return { importedCount: 3, viewPath: "/controller/item-1" };
       },
     })}>Start Canva</button>
-    <button onClick={() => updateUploadTransfer({ id: "media-upload", kind: "upload", title: "Video.mp4", status: "uploading", progress: 42, message: "Uploading video…" })}>Start upload</button>
+    <button onClick={() => updateTransfer({ id: "media-upload", type: "Media upload", name: "Video.mp4", status: "active", progress: 42, phase: { key: "uploading", label: "Uploading" } })}>Start upload</button>
     <button onClick={() => navigate("/elsewhere")}>Navigate elsewhere</button>
   </>;
 };
@@ -58,7 +58,7 @@ test("keeps Canva jobs alive across route changes and shares the panel with medi
   expect(screen.getAllByText("42%", { exact: true })).toHaveLength(2);
   await user.click(screen.getByRole("button", { name: "Navigate elsewhere" }));
   expect(screen.getByText("Route /elsewhere")).toBeInTheDocument();
-  expect(await screen.findByText("3 slides imported")).toBeInTheDocument();
+  expect(await screen.findByText(/3 slides imported/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "View presentation" })).toHaveAttribute("href", "/controller/item-1");
   expect(screen.getByRole("link", { name: "View presentation" })).toHaveClass("cursor-pointer");
 });
@@ -86,7 +86,7 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
   };
   render(<MemoryRouter><TransferProvider><SlowHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start slow import" }));
-  expect(await screen.findByText("Processing Canva pages · 0 of 2")).toBeInTheDocument();
+  expect(await screen.findByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Minimize transfers" }));
   expect(screen.queryByRole("complementary", { name: "Transfers" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Show transfer summary: 1 active transfers, 25% overall/ })).toHaveTextContent("25%");
@@ -94,9 +94,9 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
   expect(screen.getByRole("heading", { name: "Transfers · 1 active · 25% overall" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "View all transfers" }));
   expect(screen.getByRole("complementary", { name: "Transfers" })).toBeInTheDocument();
-  expect(screen.getByText("Processing Canva pages · 0 of 2")).toBeInTheDocument();
+  expect(screen.getByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   await act(async () => gate.resolve(result));
-  expect(await screen.findByText("2 slides imported")).toBeInTheDocument();
+  expect(await screen.findByText(/2 slides imported/)).toBeInTheDocument();
 });
 
 test("only offers View presentation when finalization returns a destination", async () => {
@@ -114,7 +114,7 @@ test("only offers View presentation when finalization returns a destination", as
   };
   render(<MemoryRouter><TransferProvider><NoPresentationHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Import media only" }));
-  expect(await screen.findByText("1 slides imported")).toBeInTheDocument();
+  expect(await screen.findByText(/1 slides imported/)).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
 });
 
@@ -150,24 +150,24 @@ test("shows export and processing phases in overall Canva progress", async () =>
   };
   render(<MemoryRouter><TransferProvider><ProgressHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start phased import" }));
-  expect(await screen.findByText("Requesting Canva export · page 3 of 10")).toBeInTheDocument();
+  expect(await screen.findByText(/Requesting Canva export · 3 of 10/)).toBeInTheDocument();
   const progressbar = screen.getByRole("progressbar", { name: "Ten page deck progress" });
   expect(progressbar).toHaveAttribute("aria-valuenow", "15");
   expect(screen.queryByText(/pages processed ·/)).not.toBeInTheDocument();
 
   await act(async () => remainingRequests.resolve());
-  expect(await screen.findByText("Requesting Canva export · page 10 of 10")).toBeInTheDocument();
+  expect(await screen.findByText(/Requesting Canva export · 10 of 10/)).toBeInTheDocument();
   expect(progressbar).toHaveAttribute("aria-valuenow", "50");
 
   await act(async () => processing.resolve());
-  await screen.findByText(/0 of 10 pages processed · 50%/);
+  await screen.findByText(/Saving presentation slides · 0 of 10/);
   expect(progressbar).toHaveAttribute("aria-valuenow", "50");
 
   await act(async () => persisted.resolve());
-  await screen.findByText(/5 of 10 pages processed · 75%/);
+  await screen.findByText(/Saving presentation slides · 5 of 10/);
   await act(async () => finalizing.resolve());
-  expect(await screen.findByText("5 slides imported")).toBeInTheDocument();
-  expect(screen.getByText("5 of 10 pages processed")).toBeInTheDocument();
+  expect(await screen.findByText(/5 slides imported/)).toBeInTheDocument();
+  expect(screen.getByText(/5 of 10 pages processed/)).toBeInTheDocument();
   expect(progressbar).toHaveAttribute("aria-valuenow", "100");
 });
 
@@ -177,7 +177,7 @@ test("keeps Add available and summarizes the shared aggregate across active tran
   const user = userEvent.setup();
   const addAction = jest.fn();
   const AggregateHarness = () => {
-    const { startCanvaTransfer, updateUploadTransfer } = useTransfers();
+    const { startCanvaTransfer, updateTransfer } = useTransfers();
     return <>
       <MediaAddControl
         uploadProgress={{ isUploading: false, progress: 0 }}
@@ -199,21 +199,21 @@ test("keeps Add available and summarizes the shared aggregate across active tran
           return { importedCount: 2 };
         },
       })}>Start aggregate import</button>
-      <button onClick={() => updateUploadTransfer({
+      <button onClick={() => updateTransfer({
         id: "aggregate-upload",
-        kind: "upload",
-        title: "Video.mp4",
-        status: "uploading",
+        type: "Media upload",
+        name: "Video.mp4",
+        status: "active",
         progress: 75,
-        message: "Uploading video…",
+        phase: { key: "uploading", label: "Uploading" },
       })}>Start aggregate upload</button>
-      <button onClick={() => updateUploadTransfer({
+      <button onClick={() => updateTransfer({
         id: "aggregate-upload",
-        kind: "upload",
-        title: "Video.mp4",
-        status: "completed",
+        type: "Media upload",
+        name: "Video.mp4",
+        status: "complete",
         progress: 100,
-        message: "Upload complete",
+        phase: { key: "complete", label: "Upload complete" },
       })}>Finish aggregate upload</button>
     </>;
   };
@@ -228,9 +228,9 @@ test("keeps Add available and summarizes the shared aggregate across active tran
   expect(progressControl).toHaveTextContent("50%");
   await user.click(progressControl);
   expect(screen.getByRole("heading", { name: "Transfers · 2 active · 50% overall" })).toBeInTheDocument();
-  expect(screen.getByText("Canva · Requesting page 1 of 2 · 25%")).toBeInTheDocument();
-  expect(screen.getByText("Uploading · 75%")).toBeInTheDocument();
-  expect(screen.getAllByRole("progressbar")).toHaveLength(3);
+  expect(screen.getAllByText(/Canva · Requesting Canva export · 1 of 2/)).toHaveLength(2);
+  expect(screen.getAllByText(/Media upload · Uploading/)).toHaveLength(2);
+  expect(screen.getAllByRole("progressbar")).toHaveLength(4);
   await user.click(screen.getByRole("button", { name: "View all transfers" }));
   expect(screen.getByRole("complementary", { name: "Transfers" })).toBeInTheDocument();
   await act(async () => gate.resolve(result));
@@ -241,7 +241,7 @@ test("keeps Add available and summarizes the shared aggregate across active tran
 
 test("uses the arithmetic mean of normalized active transfer progress", () => {
   const upload = (id: string, progress: number) => ({
-    id, kind: "upload" as const, title: id, status: "uploading" as const, progress, message: "Uploading",
+    id, type: "upload", name: id, status: "active" as const, progress, phase: { key: "uploading", label: "Uploading" },
   });
   expect(getTransferOverview([upload("one", 60)]).progress).toBe(60);
   expect(getTransferOverview([upload("first", 80), upload("second", 20)]).progress).toBe(50);
@@ -288,7 +288,7 @@ test("cancellation is explicit and waits for the job to stop", async () => {
   expect(signal?.aborted).toBe(false);
   await user.click(screen.getByRole("button", { name: "Cancel import" }));
   expect(signal?.aborted).toBe(true);
-  expect(await screen.findByText("Import cancelled")).toBeInTheDocument();
+  expect(await screen.findByText(/Import cancelled before/)).toBeInTheDocument();
 });
 
 test("deduplicates an identical Canva job while it is active or queued", async () => {
@@ -314,7 +314,7 @@ test("deduplicates an identical Canva job while it is active or queued", async (
   await user.click(screen.getByRole("button", { name: "Request duplicate" }));
   await waitFor(() => expect(runCount).toBe(1));
   await act(async () => gate.resolve(result));
-  expect(await screen.findByText("2 slides imported")).toBeInTheDocument();
+  expect(await screen.findByText(/2 slides imported/)).toBeInTheDocument();
   expect(runCount).toBe(1);
 });
 
@@ -341,7 +341,7 @@ test("offers a custom-item retry after media import without rerunning Canva", as
   expect(await screen.findByText(/Media was imported, but the custom item was not created/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Retry custom item" }));
   expect(retry).toHaveBeenCalledTimes(1);
-  expect(await screen.findByText("Import complete")).toBeInTheDocument();
+  expect(await screen.findByText("Complete")).toBeInTheDocument();
 });
 
 test("shows and retries cleanup that remained pending after a failed import", async () => {
@@ -390,7 +390,7 @@ test("reports an unresolved Canva replacement as a failed page with recovery gui
 
   await user.click(screen.getByRole("button", { name: "Refresh Canva slide" }));
 
-  expect(await screen.findByText("Import failed")).toBeInTheDocument();
+  expect(await screen.findByText("Failed")).toBeInTheDocument();
   expect(screen.getAllByText(/Saved media references could not be confirmed/)).toHaveLength(2);
   expect(screen.getByText(/0 of 1 pages processed/)).toBeInTheDocument();
 });
@@ -435,12 +435,12 @@ test("cancelling between page saves keeps the first committed page", async () =>
   };
   render(<MemoryRouter><TransferProvider><FinalizingHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start finalizing import" }));
-  await screen.findByText("1 of 2 pages processed · 50%");
+  await screen.findByText(/Saving presentation slides · 1 of 2/);
   await user.click(screen.getByRole("button", { name: "Cancel Finalizing deck" }));
   await user.click(screen.getByRole("button", { name: "Cancel import" }));
   await act(async () => gate.resolve());
   expect(await screen.findByText(/Import cancelled after saving 1 page/)).toBeInTheDocument();
-  expect(screen.getByText("1 of 2 pages processed · 50%")).toBeInTheDocument();
+  expect(screen.getByText(/1 of 2 pages processed/)).toBeInTheDocument();
 });
 
 test("keeps successful pages and reports failed pages as a partial import", async () => {
@@ -461,9 +461,9 @@ test("keeps successful pages and reports failed pages as a partial import", asyn
   };
   render(<MemoryRouter><TransferProvider><PartialHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start partial import" }));
-  expect(await screen.findByText("Import completed with some pages failed")).toBeInTheDocument();
+  expect(await screen.findByText(/Import completed with some pages failed/)).toBeInTheDocument();
   expect(screen.getByText(/Page 2: Could not export this page/)).toBeInTheDocument();
-  expect(screen.getByText("1 of 2 pages processed · 100%")).toBeInTheDocument();
+  expect(screen.getByText(/1 of 2 pages processed · 1 slides imported/)).toBeInTheDocument();
   expect(screen.getByRole("progressbar", { name: "Partial deck progress" })).toHaveAttribute("aria-valuenow", "100");
   expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
 });

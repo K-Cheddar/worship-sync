@@ -315,7 +315,7 @@ export async function hasSupersededMediaReferences(
 
   const allDocs = (await db.allDocs({ include_docs: true })) as allDocsType;
   return allDocs.rows.some(({ id, doc }) =>
-    id !== "media" && Boolean(doc) && containsOldReference(doc),
+    Boolean(doc) && !isMediaLibraryStorageDoc(doc as Record<string, unknown>, id) && containsOldReference(doc),
   );
 }
 
@@ -336,6 +336,22 @@ function buildDeletedVideoSourceIdSet(rows: MediaType[]): Set<string> {
     if (sourceId) s.add(sourceId);
   }
   return s;
+}
+
+/** Media-library documents are storage records, never saved presentation items. */
+function isMediaLibraryStorageDoc(
+  doc: Record<string, unknown>,
+  id: string,
+): boolean {
+  return (
+    id === "media" ||
+    id === "media-folders" ||
+    id === "media-library-meta" ||
+    id.startsWith("media-item:") ||
+    doc.docType === "mediaItem" ||
+    doc.docType === "mediaFolders" ||
+    doc.docType === "mediaLibraryMeta"
+  );
 }
 
 /**
@@ -497,7 +513,7 @@ export async function sweepMediaReferencesBeforeDelete(
       id === QUICK_LINKS_POUCH_ID ||
       id === MONITOR_SETTINGS_POUCH_ID ||
       id === MEDIA_ROUTE_FOLDERS_POUCH_ID ||
-      id === "media"
+      isMediaLibraryStorageDoc(doc, id)
     )
       continue;
 
@@ -715,7 +731,7 @@ export async function replaceMediaReferencesForReplacement(
       id === QUICK_LINKS_POUCH_ID ||
       id === MONITOR_SETTINGS_POUCH_ID ||
       id === MEDIA_ROUTE_FOLDERS_POUCH_ID ||
-      id === "media"
+      isMediaLibraryStorageDoc(doc, id)
     ) {
       continue;
     }

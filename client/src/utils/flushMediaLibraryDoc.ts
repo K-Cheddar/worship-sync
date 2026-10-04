@@ -7,7 +7,12 @@ import { setMediaCacheMap } from "../store/mediaCacheMapSlice";
 import store from "../store/store";
 import type { MediaFolder, MediaType } from "../types";
 import { extractMediaUrlsFromBackgrounds } from "./mediaCacheUtils";
-import { persistMediaLibraryChanges, persistMediaLibrarySnapshot } from "./mediaDocUtils";
+import {
+  mediaItemDocId,
+  persistMediaLibraryChanges,
+  persistMediaLibrarySnapshot,
+  removeMediaItem,
+} from "./mediaDocUtils";
 
 const safePostMessage = (message: unknown) => {
   if (globalBroadcastRef) {
@@ -20,6 +25,42 @@ export const FLUSH_MEDIA_NO_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: no database instance";
 export const FLUSH_MEDIA_STALE_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: database is no longer active";
+
+/** Tombstone known v2 rows directly and publish those tombstones to other local controllers. */
+export async function deleteMediaItemsFromPouch(
+  db: PouchDB.Database,
+  ids: string[],
+): Promise<{ deletedIds: string[]; failed: Array<{ id: string; error: unknown }> }> {
+  const deletedIds: string[] = [];
+  const failed: Array<{ id: string; error: unknown }> = [];
+  for (const id of [...new Set(ids)]) {
+    if (activeDb !== db) {
+      failed.push({ id, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) });
+      continue;
+    }
+    try {
+      await removeMediaItem(db, id, () => activeDb === db);
+      if (activeDb !== db) {
+        failed.push({ id, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) });
+        continue;
+      }
+      deletedIds.push(id);
+    } catch (error) {
+      console.error("Failed to tombstone media library item:", { id, error });
+      failed.push({ id, error });
+    }
+  }
+  if (deletedIds.length > 0 && activeDb === db) {
+    safePostMessage({
+      type: "update",
+      data: {
+        docs: deletedIds.map((id) => ({ _id: mediaItemDocId(id), id, _deleted: true })),
+        hostId: globalHostId,
+      },
+    });
+  }
+  return { deletedIds, failed };
+}
 
 /** Reconcile a list-shaped workflow to the active schema using item-level writes in v2. */
 export async function flushMediaLibraryDocToPouch(

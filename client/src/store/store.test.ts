@@ -971,16 +971,9 @@ describe("store module", () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
     db.get.mockImplementation(async (id: string) => {
-      if (id === "media-library-meta") {
-        throw Object.assign(new Error("missing"), { status: 404 });
-      }
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
       store.dispatch({ type: "RESET" });
-      return {
-        _id: "media",
-        _rev: "1-media",
-        list: [{ id: "media-1", name: "Original" }],
-        folders: [],
-      };
+      return { _id: id, _rev: "1-item", id: "media-1", name: "Original", docType: "mediaItem" };
     });
 
     store.dispatch(
@@ -1000,20 +993,21 @@ describe("store module", () => {
     await flushListenerEffects();
 
     expect(db.get).toHaveBeenCalledWith("media-library-meta");
-    expect(db.get).toHaveBeenCalledWith("media");
+    expect(db.get).toHaveBeenCalledWith("media-item:media-1");
     expect(db.put).not.toHaveBeenCalled();
   });
 
   it("persists media when the initialized state snapshot remains current", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
-    db.get.mockResolvedValue({
-      _id: "media",
-      _rev: "1-media",
-      list: [{ id: "media-1", name: "Original" }],
-      folders: [],
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      if (id === "media-item:media-1") {
+        return { _id: id, _rev: "1-item", id: "media-1", name: "Original", docType: "mediaItem" };
+      }
+      throw Object.assign(new Error("missing"), { status: 404 });
     });
-    db.put.mockResolvedValue({ ok: true, id: "media", rev: "2-media" });
+    db.put.mockResolvedValue({ ok: true, id: "media-item:media-1", rev: "2-item" });
 
     store.dispatch(
       mediaSlice.actions.initiateMediaFromDoc({
@@ -1033,11 +1027,11 @@ describe("store module", () => {
 
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
-        _id: "media",
-        _rev: "1-media",
-        list: [expect.objectContaining({ id: "media-1", name: "Renamed" })],
-        folders: [],
-        updatedAt: expect.any(String),
+        _id: "media-item:media-1",
+        _rev: "1-item",
+        id: "media-1",
+        docType: "mediaItem",
+        name: "Renamed",
       }),
     );
   });
@@ -1330,128 +1324,43 @@ describe("store module", () => {
     expect(persisted.get("media-item:media-b")?.name).toBe("Local B");
   });
 
-  it("merges a remote legacy row with unrelated local edits and advances the save baseline", async () => {
+  it("does not recreate a directly tombstoned row when an older debounce wakes", async () => {
     jest.useFakeTimers();
     const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
-    let persisted: Record<string, any> = {
-      _id: "media",
-      _rev: "1-media",
-      list: [{ id: "a", name: "A old" }, { id: "b", name: "B old" }],
-      folders: [],
-    };
-    let simulatedRemote = false;
+    const persisted = new Map<string, Record<string, unknown>>();
     db.get.mockImplementation(async (id: string) => {
-      if (id === "media-library-meta") throw Object.assign(new Error("missing"), { status: 404 });
-      return persisted;
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
     });
-    db.put.mockImplementation(async (doc: Record<string, any>) => {
-      if (!simulatedRemote) {
-        simulatedRemote = true;
-        store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({ id: "b", name: "B remote" }));
-        persisted = { ...persisted, _rev: "2-remote", list: [{ id: "a", name: "A old" }, { id: "b", name: "B remote" }] };
-        throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
-      }
-      if (doc._rev !== persisted._rev) {
-        throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
-      }
-      persisted = { ...doc, _rev: "3-local" };
-      return { ok: true, id: "media", rev: "3-local" } as any;
+    db.put.mockImplementation(async (doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), doc);
+      return { ok: true } as any;
     });
 
     store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
-      list: [{ id: "a", name: "A old" }, { id: "b", name: "B old" }],
+      list: [{ id: "delete-race", name: "Before" }],
       folders: [],
     }));
-    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "a", patch: { name: "A local" } }));
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-
-    expect(persisted.list).toEqual([{ id: "a", name: "A local" }, { id: "b", name: "B remote" }]);
-    expect(store.getState().media.list).toEqual(persisted.list);
-    const completedWrites = db.put.mock.calls.length;
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-    expect(db.put).toHaveBeenCalledTimes(completedWrites);
-    expect(persisted.list[1].name).toBe("B remote");
-  });
-
-  it("keeps a remote-winning legacy row when its local edit conflicts", async () => {
-    jest.useFakeTimers();
-    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
-    let persisted: Record<string, any> = {
-      _id: "media", _rev: "1-media", list: [{ id: "a", name: "A old" }], folders: [],
-    };
-    let simulatedRemote = false;
-    db.get.mockImplementation(async (id: string) => {
-      if (id === "media-library-meta") throw Object.assign(new Error("missing"), { status: 404 });
-      return persisted;
-    });
-    db.put.mockImplementation(async (doc: Record<string, any>) => {
-      if (!simulatedRemote) {
-        simulatedRemote = true;
-        store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({ id: "a", name: "A remote" }));
-        persisted = { ...persisted, _rev: "2-remote", list: [{ id: "a", name: "A remote" }] };
-        throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
-      }
-      persisted = { ...doc, _rev: "3-local" };
-      return { ok: true, id: "media", rev: "3-local" } as any;
-    });
-
-    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "a", name: "A old" }], folders: [] }));
-    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "a", patch: { name: "A local" } }));
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-
-    expect(persisted.list).toEqual([{ id: "a", name: "A remote" }]);
-    expect(store.getState().media.list).toEqual(persisted.list);
-    const completedWrites = db.put.mock.calls.length;
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-    expect(db.put).toHaveBeenCalledTimes(completedWrites);
-    expect(persisted.list[0].name).toBe("A remote");
-  });
-
-  it("keeps remote legacy folders while committing unrelated local media rows", async () => {
-    jest.useFakeTimers();
-    const { store, mediaSlice, db } = loadStoreWithMediaPersistence();
-    const remoteFolders = [{ id: "remote", name: "Remote folder", parentId: null }];
-    let persisted: Record<string, any> = {
-      _id: "media", _rev: "1-media", list: [{ id: "a", name: "A old" }], folders: [],
-    };
-    let simulatedRemote = false;
-    db.get.mockImplementation(async (id: string) => {
-      if (id === "media-library-meta") throw Object.assign(new Error("missing"), { status: 404 });
-      return persisted;
-    });
-    db.put.mockImplementation(async (doc: Record<string, any>) => {
-      if (!simulatedRemote) {
-        simulatedRemote = true;
-        store.dispatch(mediaSlice.actions.updateMediaFoldersFromRemote(remoteFolders));
-        persisted = { ...persisted, _rev: "2-remote", folders: remoteFolders };
-        throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
-      }
-      persisted = { ...doc, _rev: "3-local" };
-      return { ok: true, id: "media", rev: "3-local" } as any;
-    });
-
-    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "a", name: "A old" }], folders: [] }));
-    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "a", patch: { name: "A local" } }));
-    store.dispatch(mediaSlice.actions.setMediaListAndFolders({
-      list: [{ id: "a", name: "A local" }],
-      folders: [{ id: "local", name: "Local folder", parentId: null }],
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({
+      id: "delete-race",
+      patch: { name: "Stale edit" },
     }));
+    // The delete path has already committed this Pouch tombstone.
+    store.dispatch(mediaSlice.actions.removeMediaItemFromRemote("delete-race"));
+
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
-    expect(persisted.list).toEqual([{ id: "a", name: "A local" }]);
-    expect(persisted.folders).toEqual(remoteFolders);
-    expect(store.getState().media.folders).toEqual(remoteFolders);
+    expect(store.getState().media.list).toEqual([]);
+    expect(db.put).not.toHaveBeenCalled();
+    expect(persisted.has("media-item:delete-race")).toBe(false);
   });
 
-  it("does not broadcast or cache a stale local row after a remote same-row win", async () => {
+  it("does not write, broadcast, or cache stale local media after a remote row wins during a v2 read", async () => {
     jest.useFakeTimers();
-    const { store, mediaSlice, db, postMessage } =
-      loadStoreWithMediaPersistence();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
     const previousElectronApiDescriptor = Object.getOwnPropertyDescriptor(window, "electronAPI");
     const syncMediaCache = jest.fn().mockResolvedValue({ downloaded: 0, cleaned: 0 });
     const getMediaCacheMap = jest.fn().mockResolvedValue({});
@@ -1459,99 +1368,63 @@ describe("store module", () => {
       configurable: true,
       value: { syncMediaCache, getMediaCacheMap },
     });
-    let legacyMetaReads = 0;
-    let remoteWonBeforeWrite = false;
-    let persistedLegacy: Record<string, any> = {
-      _id: "media",
-      _rev: "1-media",
-      list: [
-        { id: "media-1", name: "Original", type: "image", background: "https://example.test/original.png" },
-        { id: "media-2", name: "Other original", type: "image", background: "https://example.test/other.png" },
-      ],
-      folders: [],
-    };
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-1", {
+        _id: "media-item:media-1", _rev: "1-a", docType: "mediaItem", id: "media-1",
+        name: "Original", type: "image", background: "https://example.test/original.png",
+      }],
+    ]);
+    let remoteWon = false;
     db.get.mockImplementation(async (id: string) => {
-      if (id === "media-library-meta") {
-        legacyMetaReads += 1;
-        if (legacyMetaReads === 3 && !remoteWonBeforeWrite) {
-          remoteWonBeforeWrite = true;
-        store.dispatch(mediaSlice.actions.updateMediaItemFields({
-          id: "media-2",
-          patch: { name: "Newer unrelated local edit" },
-        }));
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (id === "media-item:media-1" && !remoteWon) {
+        remoteWon = true;
+        const remoteDoc = {
+          ...doc,
+          _rev: "2-remote",
+          name: "Remote rename",
+          background: "https://example.test/remote.png",
+        };
+        persisted.set(id, remoteDoc);
         store.dispatch(mediaSlice.actions.upsertMediaItemFromRemote({
           id: "media-1",
           name: "Remote rename",
+          type: "image",
           background: "https://example.test/remote.png",
-        }));
-          persistedLegacy = {
-            ...persistedLegacy,
-            _rev: "2-remote",
-            list: [
-              { ...persistedLegacy.list[0], name: "Remote rename", background: "https://example.test/remote.png" },
-              persistedLegacy.list[1],
-            ],
-          };
-        }
-        throw Object.assign(new Error("missing"), { status: 404 });
+        } as any));
+        return remoteDoc;
       }
-      return persistedLegacy;
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
     });
-    db.put.mockImplementation(async (doc: Record<string, any>) => {
-      if (doc._rev !== persistedLegacy._rev) {
-        throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
-      }
-      persistedLegacy = { ...doc, _rev: "3-local" };
-      return { ok: true, id: "media", rev: "2-media" };
-    });
+    db.allDocs.mockImplementation(async () => ({
+      rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })),
+    } as any));
 
-    store.dispatch(
-      mediaSlice.actions.initiateMediaFromDoc({
-        list: [
-          { id: "media-1", name: "Original", type: "image", background: "https://example.test/original.png" },
-          { id: "media-2", name: "Other original", type: "image", background: "https://example.test/other.png" },
-        ],
-        folders: [],
-      }),
-    );
-    store.dispatch(
-      mediaSlice.actions.updateMediaItemFields({
-        id: "media-1",
-        patch: { name: "Local rename" },
-      }),
-    );
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({
+      list: [{ id: "media-1", name: "Original", type: "image", background: "https://example.test/original.png" } as any],
+      folders: [],
+    }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({
+      id: "media-1",
+      patch: { name: "Local rename" },
+    }));
 
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
+    await flushListenerEffects();
 
-    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(remoteWon).toBe(true);
+    expect(db.put).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
-    expect(store.getState().media.list).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "media-1", name: "Remote rename", background: "https://example.test/remote.png" }),
-      expect.objectContaining({ id: "media-2", name: "Newer unrelated local edit", background: "https://example.test/other.png" }),
-    ]));
-    expect(syncMediaCache).toHaveBeenCalledWith([
-      "https://example.test/remote.png",
-      "https://example.test/other.png",
-    ]);
-    await jest.advanceTimersByTimeAsync(1500);
-    await flushListenerEffects();
-    expect(db.put).toHaveBeenCalledTimes(3);
-    expect(postMessage).toHaveBeenCalledTimes(1);
-    expect(postMessage.mock.calls[0][0].data.docs).toEqual([
-      expect.objectContaining({
-        _id: "media",
-        list: expect.arrayContaining([
-          expect.objectContaining({ id: "media-1", name: "Remote rename" }),
-          expect.objectContaining({ id: "media-2", name: "Newer unrelated local edit" }),
-        ]),
-      }),
-    ]);
-    expect(persistedLegacy.list).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "media-1", name: "Remote rename" }),
-      expect.objectContaining({ id: "media-2", name: "Newer unrelated local edit" }),
-    ]));
-    expect(getMediaCacheMap).toHaveBeenCalledTimes(2);
+    expect(persisted.get("media-item:media-1")).toEqual(expect.objectContaining({
+      name: "Remote rename",
+      background: "https://example.test/remote.png",
+    }));
+    expect(syncMediaCache).toHaveBeenCalledWith(["https://example.test/remote.png"]);
+    expect(syncMediaCache).not.toHaveBeenCalledWith(["https://example.test/original.png"]);
+    expect(getMediaCacheMap).toHaveBeenCalledTimes(1);
     if (previousElectronApiDescriptor) {
       Object.defineProperty(window, "electronAPI", previousElectronApiDescriptor);
     } else {

@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import { DropdownMenuItem } from "../../components/ui/DropdownMenu";
 import Button from "../../components/Button/Button";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../../components/ui/Popover";
+import { formatTransferProgress, TransferProgress } from "../../components/TransferProgress/TransferProgress";
 import { getTransferOverview, useOptionalTransfers } from "../../context/transferContext";
+import type { Transfer } from "../../context/transferModel";
 
 type MediaAddControlProps = {
   children: ReactNode;
@@ -16,19 +18,18 @@ export const MediaAddControl = ({
   uploadTitle,
 }: MediaAddControlProps) => {
   const transferContext = useOptionalTransfers();
-  const transfers = transferContext?.transfers ?? (uploadProgress.isUploading ? [{
+  const transfers: Transfer[] = transferContext?.transfers ?? (uploadProgress.isUploading ? [{
     id: "media-upload",
-    kind: "upload" as const,
-    title: uploadTitle,
-    status: "uploading" as const,
+    type: "Media upload",
+    name: uploadTitle,
+    status: "active" as const,
     progress: uploadProgress.progress,
-    message: "Uploading media",
+    phase: { key: "uploading", label: "Uploading media" },
   }] : []);
   const overview = getTransferOverview(transfers);
-  const percent = overview.progress === null ? null : Math.round(overview.progress);
-  const progressLabel = percent === null ? "Working…" : `${percent}%`;
-  const headingProgressLabel = percent === null ? progressLabel : `${progressLabel} overall`;
-  const accessibleProgressLabel = percent === null ? "progress unknown" : `${percent}% overall`;
+  const progressLabel = formatTransferProgress(overview.progress);
+  const headingProgressLabel = overview.progress === null ? progressLabel : `${progressLabel} overall`;
+  const accessibleProgressLabel = overview.progress === null ? "progress unknown" : `${progressLabel} overall`;
   const showProgress = overview.activeCount > 0;
 
   return (
@@ -68,24 +69,7 @@ export const MediaAddControl = ({
           <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] space-y-3 p-3">
             <h2 className="text-sm font-semibold">Transfers · {overview.activeCount} active · {headingProgressLabel}</h2>
             <ul className="max-h-64 space-y-3 overflow-y-auto">
-              {overview.transfers.map((transfer) => (
-                <li key={transfer.id} className="min-w-0">
-                  <p className="truncate text-sm font-medium">{transfer.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {transfer.type ? `${transfer.type} · ` : ""}{transfer.status} · {Math.round(transfer.progress)}%
-                  </p>
-                  <div
-                    role="progressbar"
-                    aria-label={`${transfer.name} progress`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(transfer.progress)}
-                    className="mt-1.5 h-1 overflow-hidden rounded bg-muted"
-                  >
-                    <div className="h-full rounded bg-primary transition-[width] motion-reduce:transition-none" style={{ width: `${transfer.progress}%` }} />
-                  </div>
-                </li>
-              ))}
+              {overview.transfers.map((transfer) => <li key={transfer.id} className="min-w-0"><TransferProgress transfer={transfer} variant="summary" /></li>)}
             </ul>
             <PopoverClose asChild>
               <Button variant="tertiary" className="w-full justify-center" onClick={transferContext?.restoreTransfers}>

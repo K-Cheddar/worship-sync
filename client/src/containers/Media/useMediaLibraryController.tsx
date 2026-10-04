@@ -15,6 +15,7 @@ import { MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import {
   addItemToMediaList,
   removeItemFromMediaList,
+  removeMediaItemFromRemote,
   setMediaListAndFolders,
   updateMediaItemFields,
 } from "../../store/mediaSlice";
@@ -104,7 +105,7 @@ import { addItemToItemList, ensureCanvaItemInItemList } from "../../store/itemLi
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
-import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
+import { deleteMediaItemsFromPouch, flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 import { loadMediaLibrary } from "../../utils/mediaDocUtils";
 import { mediaLibraryFlushFailureMessage } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
@@ -1205,26 +1206,74 @@ export function useMediaLibraryController({
     async (
       rows: MediaType[],
     ): Promise<
-      { phase: "sweep_failed" } | { phase: "ok"; providerFailed: MediaType[] }
+      {
+        phase: "sweep_failed" | "library_failed" | "ok";
+        deletedRows: MediaType[];
+        failedRows: MediaType[];
+        providerFailed: MediaType[];
+      }
     > => {
-      if (rows.length === 0) return { phase: "ok", providerFailed: [] };
+      if (rows.length === 0) return { phase: "ok", deletedRows: [], failedRows: [], providerFailed: [] };
       if (!db) {
-        showToast("Could not update references before delete.", "error");
-        return { phase: "sweep_failed" };
+        return { phase: "library_failed", deletedRows: [], failedRows: rows, providerFailed: [] };
       }
-      const sweep = await sweepMediaReferencesBeforeDelete(
-        db,
-        new Set(rows.map((r) => r.id)),
-        rows,
-      );
+      let sweep: Awaited<ReturnType<typeof sweepMediaReferencesBeforeDelete>>;
+      try {
+        sweep = await sweepMediaReferencesBeforeDelete(
+          db,
+          new Set(rows.map((r) => r.id)),
+          rows,
+        );
+      } catch (error) {
+        console.error("Media reference cleanup could not complete; library deletion was stopped:", error);
+        return { phase: "sweep_failed", deletedRows: [], failedRows: rows, providerFailed: [] };
+      }
       if (!sweep.ok) {
-        showToast(sweep.message || "Could not update references before delete.", "error");
-        return { phase: "sweep_failed" };
+        console.error("Media reference cleanup failed; library deletion was stopped:", {
+          failedDocIds: sweep.failedDocIds,
+          message: sweep.message,
+        });
+        return { phase: "sweep_failed", deletedRows: [], failedRows: rows, providerFailed: [] };
       }
-      const providerFailed = await deleteFromProviders(rows);
-      return { phase: "ok", providerFailed };
+      const persisted = await deleteMediaItemsFromPouch(db, rows.map((row) => row.id));
+      const deletedIds = new Set(persisted.deletedIds);
+      const deletedRows = rows.filter((row) => deletedIds.has(row.id));
+      const failedRows = rows.filter((row) => !deletedIds.has(row.id));
+      deletedRows.forEach((row) => dispatch(removeMediaItemFromRemote(row.id)));
+      const canvaRows = deletedRows.filter((row) => getCanvaMediaSource(row));
+      const providerFailed = deletedRows.length > 0
+        ? await deleteFromProviders(deletedRows.filter((row) => !getCanvaMediaSource(row)))
+        : [];
+      const attemptedCanvaCleanupKeys = new Set<string>();
+      for (const row of canvaRows) {
+        const cleanupKey = getCanvaProviderCleanupKey(row);
+        if (attemptedCanvaCleanupKeys.has(cleanupKey)) continue;
+        attemptedCanvaCleanupKeys.add(cleanupKey);
+        const identity = getCanvaProviderIdentity(row);
+        const isStillReferenced = (items: MediaType[]) =>
+          Boolean(identity) && items.some((item) => getCanvaProviderIdentity(item) === identity);
+        if (isStillReferenced(getCurrentMediaList())) continue;
+        try {
+          const latestLibrary = await loadMediaLibrary(db);
+          if (isStillReferenced(latestLibrary.list)) continue;
+        } catch (error) {
+          console.error("Could not verify remaining Canva media before provider cleanup:", {
+            mediaId: row.id,
+            error,
+          });
+          providerFailed.push(row);
+          continue;
+        }
+        if (!(await deleteCanvaProvider(row))) providerFailed.push(row);
+      }
+      return {
+        phase: failedRows.length > 0 ? "library_failed" : "ok",
+        deletedRows,
+        failedRows,
+        providerFailed,
+      };
     },
-    [db, deleteFromProviders, showToast],
+    [db, deleteCanvaProvider, deleteFromProviders, dispatch, getCurrentMediaList],
   );
 
   const handleDeleteFolderKeepContents = useCallback(
@@ -1303,7 +1352,23 @@ export function useMediaLibraryController({
         next.removedMediaIds.includes(m.id),
       );
       const result = await removeMediaRowsAfterSweep(removedRows);
-      if (result.phase !== "ok") return false;
+      if (result.providerFailed.length > 0) {
+        setProviderRetryRows(result.providerFailed);
+        setShowProviderRetryModal(true);
+      }
+      if (result.phase === "sweep_failed") {
+        showToast("Could not clean up media references. The media was kept.", "error");
+        return false;
+      }
+      if (result.phase === "library_failed") {
+        showToast(
+          result.deletedRows.length > 0
+            ? `${result.deletedRows.length} ${result.deletedRows.length === 1 ? "item was" : "items were"} removed. ${result.failedRows.length} could not be removed from the library.`
+            : "Could not remove media from the library. The media was kept.",
+          "error",
+        );
+        return false;
+      }
 
       for (const key of Object.keys(repairs) as MediaRouteKey[]) {
         const nextFolder = repairs[key];
@@ -1313,23 +1378,19 @@ export function useMediaLibraryController({
       }
       dispatch(
         setMediaListAndFolders({
-          list: next.list,
+          list: getCurrentMediaList(),
           folders: next.folders,
         }),
       );
       const flushResult = await flushMediaLibraryDocToPouch(
         db,
-        next.list,
+        getCurrentMediaList(),
         next.folders,
         () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
-        { list, folders },
+        { list: getCurrentMediaList(), folders },
       );
       if (!flushResult.ok) {
         showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
-      }
-      if (result.providerFailed.length > 0) {
-        setProviderRetryRows(result.providerFailed);
-        setShowProviderRetryModal(true);
       }
       clearSelection();
       dispatch(ActionCreators.clearHistory());
@@ -1345,6 +1406,7 @@ export function useMediaLibraryController({
       clearSelection,
       showToast,
       store,
+      getCurrentMediaList,
     ],
   );
 
@@ -1388,7 +1450,7 @@ export function useMediaLibraryController({
           return next;
         });
         updateToast(toastId, {
-          message: "Media could not be deleted.",
+          message: "Could not save the media library. The media was kept.",
           variant: "error",
           persist: false,
           duration: 7000,
@@ -1405,52 +1467,24 @@ export function useMediaLibraryController({
             return next;
           });
           updateToast(toastId, {
-            message: "Media could not be deleted.",
+            message: result.phase === "sweep_failed"
+              ? "Could not clean up media references. The media was kept."
+              : result.deletedRows.length > 0
+                ? `${result.deletedRows.length} ${result.deletedRows.length === 1 ? "item was" : "items were"} removed. ${result.failedRows.length} could not be removed from the library.`
+                : "Could not remove media from the library. The media was kept.",
             variant: "error",
             persist: false,
             duration: 7000,
           });
-          return { succeeded: [], failed: rows };
-        }
-
-        const failedIds = new Set(result.providerFailed.map((row) => row.id));
-        const succeeded = rows.filter((row) => !failedIds.has(row.id));
-        const failed = rows.filter((row) => failedIds.has(row.id));
-        const updatedList = currentMediaListRef.current.filter(
-          (item) => !succeeded.some((row) => row.id === item.id),
-        );
-        const currentFolders = currentMediaFoldersRef.current;
-
-        dispatch(
-          setMediaListAndFolders({
-            list: updatedList,
-            folders: currentFolders,
-          }),
-        );
-
-        const flushResult = await flushMediaLibraryDocToPouch(
-          db,
-          updatedList,
-          currentFolders,
-        );
-        if (!flushResult.ok) {
-          showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
-          // Keep the optimistic rows hidden while the local library is out of
-          // sync. This also prevents a stale remote echo from making a
-          // provider-deleted asset look available again during reconciliation.
-          updateToast(toastId, {
-            message:
-              "Media deletion was not saved. The items remain pending until the library can be reconciled.",
-            variant: "error",
-            persist: true,
-            showCloseButton: true,
-          });
-          if (failed.length > 0) {
-            setProviderRetryRows(failed);
+          if (result.providerFailed.length > 0) {
+            setProviderRetryRows(result.providerFailed);
             setShowProviderRetryModal(true);
           }
-          return { succeeded, failed };
+          return { succeeded: result.deletedRows, failed: result.failedRows };
         }
+
+        const succeeded = result.deletedRows;
+        const failed = result.providerFailed;
 
         setPendingDeletionIds((current) => {
           const next = new Set(current);
@@ -1465,16 +1499,16 @@ export function useMediaLibraryController({
         updateToast(toastId, {
           message:
             failed.length > 0
-              ? `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted. ${failed.length} could not be deleted.`
+              ? `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} removed. ${failed.length} provider ${failed.length === 1 ? "asset needs" : "assets need"} cleanup.`
               : `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted`,
-          variant: failed.length > 0 ? "error" : "success",
+          variant: failed.length > 0 ? "warning" : "success",
           persist: false,
           duration: 7000,
         });
         if (succeeded.length > 0) dispatch(ActionCreators.clearHistory());
         return { succeeded, failed };
       } catch (error) {
-        console.error("Error deleting media:", error);
+        console.error("Unexpected error during media deletion:", error);
         setPendingDeletionIds((current) => {
           const next = new Set(current);
           rows.forEach((row) => next.delete(row.id));
@@ -1489,7 +1523,7 @@ export function useMediaLibraryController({
         return { succeeded: [], failed: rows };
       }
     },
-    [db, dispatch, removeMediaRowsAfterSweep, showToast, updateToast],
+    [db, dispatch, removeMediaRowsAfterSweep, updateToast],
   );
 
   const handleConfirmDelete = async () => {

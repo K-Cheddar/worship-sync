@@ -6,7 +6,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
 import { initiateMediaFromDoc } from "../../store/mediaSlice";
-import { isMediaLibraryV2, loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
+import { loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
@@ -39,12 +39,8 @@ jest.mock("../../utils/controllerBootstrapDocs", () => ({
 
 jest.mock("../../utils/mediaDocUtils", () => ({
   loadMediaLibrary: jest.fn().mockResolvedValue({ list: [], folders: [] }),
-  isMediaLibraryV2: jest.fn().mockResolvedValue(false),
-  MEDIA_LIBRARY_META_ID: "media-library-meta",
-  MEDIA_LIBRARY_SCHEMA_VERSION: 2,
+  requireMediaLibraryV2: jest.fn().mockResolvedValue(undefined),
   parseMediaReplicationDoc: jest.requireActual("../../utils/mediaDocUtils").parseMediaReplicationDoc,
-  loadOrCreateMediaDoc: jest.fn(),
-  normalizeMediaDoc: jest.fn(),
 }));
 
 jest.mock("../../utils/formatItemList", () => ({
@@ -93,7 +89,6 @@ describe("useControllerPageLifecycle selected outline loading", () => {
   beforeEach(() => {
     store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
     jest.mocked(useGlobalBroadcast).mockClear();
-    jest.mocked(isMediaLibraryV2).mockResolvedValue(false);
     jest.mocked(readMediaLibrary).mockResolvedValue({ list: [], folders: [] });
   });
 
@@ -159,7 +154,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     dispatchSpy.mockRestore();
   });
 
-  it("accepts legacy media replication while the initialized library is schema v1", async () => {
+  it("ignores legacy aggregate media replication", async () => {
     const db = createDb({});
     const updater = new EventTarget();
 
@@ -178,9 +173,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       detail: [{ _id: "media", list: [{ id: "legacy", name: "Legacy" }], folders: [] }],
     })));
 
-    expect(store.getState().media.list).toEqual([
-      expect.objectContaining({ id: "legacy", name: "Legacy" }),
-    ]);
+    expect(store.getState().media.list).toEqual([]);
   });
 
   it("re-reads the media library when an item replicates during its initial read", async () => {
@@ -223,10 +216,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().media.list).toEqual(latest.list);
   });
 
-  it("ignores stale legacy media replication after loading schema v2", async () => {
+  it("ignores stale legacy aggregate media replication", async () => {
     const currentV2List = [{ id: "current", name: "Current v2 item" }] as any;
-    const schemaRead = deferred<boolean>();
-    jest.mocked(isMediaLibraryV2).mockReturnValueOnce(schemaRead.promise);
     jest.mocked(readMediaLibrary).mockResolvedValue({ list: currentV2List, folders: [] } as any);
     const db = createDb({});
     const updater = new EventTarget();
@@ -242,16 +233,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
         </Provider>
       ),
     });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    act(() => updater.dispatchEvent(new CustomEvent("update", {
-      detail: [{ _id: "media-library-meta", schemaVersion: 2 }],
-    })));
-    await act(async () => {
-      schemaRead.resolve(false);
-      await schemaRead.promise;
-      await Promise.resolve();
-      await Promise.resolve();
-    });
     act(() => updater.dispatchEvent(new CustomEvent("update", {
       detail: [{ _id: "media", list: [{ id: "stale", name: "Stale v1 item" }], folders: [] }],
     })));

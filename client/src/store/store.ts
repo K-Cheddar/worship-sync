@@ -1999,9 +1999,6 @@ listenerMiddleware.startListening({
           const broadcastDocs = changedDocs.filter((value) => {
             if (!value || typeof value !== "object") return true;
             const doc = value as { _id?: unknown };
-            if (doc._id === "media") {
-              return remoteChanges.itemIds.size === 0 && remoteChanges.folderIds.size === 0;
-            }
             if (typeof doc._id !== "string") return true;
             if (doc._id.startsWith("media-item:")) {
               return !remoteChanges.itemIds.has(doc._id.slice("media-item:".length));
@@ -2152,7 +2149,7 @@ listenerMiddleware.startListening({
   },
 });
 
-// Sync media cache when media list is updated from remote (media doc)
+// Sync media cache when v2 media items are updated from remote.
 listenerMiddleware.startListening({
   predicate: (action) =>
     mediaItemsSlice.actions.syncMediaFromRemote.match(action) ||

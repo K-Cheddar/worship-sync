@@ -4,17 +4,12 @@ import type {
   ItemSlideType,
   Arrangment,
   DBItem,
-  DBMedia,
   MediaType,
 } from "../types";
 import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import { isRecognizedImageFile } from "./mediaFileTypes";
-import {
-  MEDIA_LIBRARY_META_ID,
-  MEDIA_LIBRARY_SCHEMA_VERSION,
-} from "./mediaDocUtils";
 
 const DB_NAME = "worshipsync-local-assets";
 const DB_VERSION = 4;
@@ -1143,20 +1138,8 @@ export const cleanupOrphanedLocalImages = async ({
     listLocalImagesForWorkspace(workspaceId),
     db.allDocs({ include_docs: true }),
   ]);
-  const schemaV2Active = allDocs.rows.some((row) => {
-    const doc = row.doc as { _id?: string; schemaVersion?: number } | undefined;
-    return doc?._id === MEDIA_LIBRARY_META_ID &&
-      Number(doc.schemaVersion) >= MEDIA_LIBRARY_SCHEMA_VERSION;
-  });
   const referenced = new Set<string>();
   allDocs.rows.forEach((row) => {
-    const mediaDoc = row.doc as Partial<DBMedia> | undefined;
-    if (!schemaV2Active && mediaDoc?._id === "media" && Array.isArray(mediaDoc.list)) {
-      mediaDoc.list.forEach((media) => {
-        const id = media.localImage?.id;
-        if (id) referenced.add(id);
-      });
-    }
     const mediaItem = row.doc as (MediaType & { docType?: string }) | undefined;
     if (mediaItem?.docType === "mediaItem" && mediaItem.localImage?.id) {
       referenced.add(mediaItem.localImage.id);

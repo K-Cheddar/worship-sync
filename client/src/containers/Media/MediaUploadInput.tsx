@@ -38,11 +38,10 @@ import {
 } from "./utils/muxUpload";
 import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { FileList } from "./components/FileList";
-import { UploadStatusDisplay } from "./components/UploadStatusDisplay";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
 import { useOptionalTransfers } from "../../context/transferContext";
-import { ProgressPopup } from "./components/ProgressPopup";
+import { TransferProgress } from "../../components/TransferProgress/TransferProgress";
 
 const isLocalMediaPlaybackError = (error: unknown) =>
   error instanceof Error &&
@@ -72,7 +71,8 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const { isGuestSession = false } = useContext(ControllerInfoContext) || {};
     const transferContext = useOptionalTransfers();
     const overlayPortalContainer = useOverlayPortalContainer();
-    const updateUploadTransfer = transferContext?.updateUploadTransfer;
+    const updateTransfer = transferContext?.updateTransfer;
+    const removeTransfer = transferContext?.removeTransfer;
     const resolvedUploadPreset = contextUploadPreset || uploadPreset;
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
@@ -517,26 +517,31 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     }, [addFiles, openModal, uploadDisabled]);
 
     const isUploading = uploadStatus === "uploading" || uploadStatus === "processing";
+    const cloudEnabled = !isGuestSession && uploadToCloud;
 
     const transferItem = useMemo(() => uploadStatus === "idle" ? null : {
       id: "media-upload",
-      kind: "upload" as const,
-      title: selectedFiles.length === 1 ? selectedFiles[0].displayName : `${selectedFiles.length} media files`,
-      status: uploadStatus === "ready" ? "completed" as const : uploadStatus === "error" ? "failed" as const : uploadStatus,
+      type: "Media upload",
+      name: selectedFiles.length === 1 ? selectedFiles[0].displayName : `${selectedFiles.length} media files`,
+      status: uploadStatus === "ready" ? "complete" as const : uploadStatus === "error" ? (/cancel/i.test(statusMessage) ? "cancelled" as const : "failed" as const) : "active" as const,
       progress: overallProgress,
-      message: statusMessage || (uploadStatus === "error" ? error : ""),
-    }, [error, overallProgress, selectedFiles, statusMessage, uploadStatus]);
+      phase: { key: uploadStatus === "ready" ? "complete" : uploadStatus === "error" ? (/cancel/i.test(statusMessage) ? "cancelled" : "failed") : uploadStatus === "processing" ? "processing" : "uploading", label: uploadStatus === "ready" ? "Upload complete" : uploadStatus === "error" ? (/cancel/i.test(statusMessage) ? "Upload cancelled" : "Upload failed") : uploadStatus === "processing" ? "Processing media" : cloudEnabled ? "Uploading media" : "Adding media" },
+      ...(statusMessage ? { detail: statusMessage.replace(/\s+\d+%$/, "") } : {}),
+      ...(uploadStatus === "error" ? { error: { message: error || statusMessage || "Upload failed." } } : {}),
+      ...(uploadStatus === "ready" || uploadStatus === "error" ? { actions: [{ key: "dismiss", label: "Dismiss" }] } : {}),
+    }, [cloudEnabled, error, overallProgress, selectedFiles, statusMessage, uploadStatus]);
     const transferItemRef = useRef(transferItem);
     transferItemRef.current = transferItem;
     useEffect(() => {
-      updateUploadTransfer?.(transferItem);
-    }, [updateUploadTransfer, transferItem]);
+      if (transferItem) updateTransfer?.(transferItem);
+      else removeTransfer?.("media-upload");
+    }, [removeTransfer, transferItem, updateTransfer]);
     useEffect(() => () => {
       const lastTransfer = transferItemRef.current;
-      if (lastTransfer?.status === "uploading" || lastTransfer?.status === "processing") {
-        updateUploadTransfer?.({ ...lastTransfer, status: "failed", message: "Upload stopped when the Media page closed." });
+      if (lastTransfer?.status === "active") {
+        updateTransfer?.({ ...lastTransfer, status: "failed", error: { message: "Upload stopped when the Media page closed." } });
       }
-    }, [updateUploadTransfer]);
+    }, [updateTransfer]);
 
     const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
       disabled: uploadDisabled || isUploading,
@@ -556,9 +561,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       }),
       [openModal, openModalWithFiles, isUploading, overallProgress, uploadStatus],
     );
-    const cloudEnabled = !isGuestSession && uploadToCloud;
-    const showProgressPopup = !transferContext &&
-      (isUploading || uploadStatus === "ready" || uploadStatus === "error") &&
+    const showProgressPopup = !transferContext && transferItem &&
       isMinimized && !isMinimizedToButton;
     const getControllerElement = () => document.getElementById("controller-main") || document.body;
     const offlineConversionCandidates = selectedFiles.reduce<number[]>(
@@ -640,17 +643,16 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     return (
       <>
-        {showProgressPopup && createPortal(
-          <ProgressPopup
-            uploadStatus={uploadStatus}
-            overallProgress={overallProgress}
-            statusMessage={statusMessage}
-            progressLabel={cloudEnabled ? "Upload" : "Add"}
-            currentFileIndex={currentFileIndex}
-            totalFiles={selectedFiles.length}
-            onRestore={() => { setIsMinimized(false); setIsMinimizedToButton(false); }}
-            onMinimize={() => { setIsMinimizedToButton(true); setIsMinimized(false); }}
-          />,
+        {showProgressPopup && transferItem && createPortal(
+          <div className="pointer-events-auto fixed bottom-1 right-4 z-10 min-w-[320px] max-w-[400px] rounded-lg border border-gray-600 bg-gray-800 p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <TransferProgress transfer={transferItem} variant="compact" />
+              <div className="flex shrink-0 gap-1">
+                <Button variant="tertiary" onClick={() => { setIsMinimized(false); setIsMinimizedToButton(false); }} aria-label="Restore upload" title="Restore upload">Restore</Button>
+                <Button variant="tertiary" onClick={() => { setIsMinimizedToButton(true); setIsMinimized(false); }} aria-label="Minimize upload to Add button" title="Minimize to Add button">Minimize</Button>
+              </div>
+            </div>
+          </div>,
           overlayPortalContainer ?? getControllerElement(),
         )}
         {showButton && (
@@ -759,13 +761,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               </p>
             </div>
 
-            <UploadStatusDisplay
-              uploadStatus={uploadStatus}
-              statusMessage={statusMessage}
-              overallProgress={overallProgress}
-              currentFileIndex={currentFileIndex}
-              totalFiles={selectedFiles.length}
-            />
+            {transferItem ? <TransferProgress transfer={transferItem} variant="card" /> : null}
 
             {error && <p className="text-red-500 text-sm">{error}</p>}
 

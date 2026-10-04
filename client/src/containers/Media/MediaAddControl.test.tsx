@@ -20,8 +20,9 @@ beforeEach(() => {
       id: "canva-import",
       name: "Slides",
       type: "Canva",
-      status: "Saving presentation slides",
+      status: "active",
       progress: 100,
+      phase: { key: "saving", label: "Saving presentation slides" },
     }],
   });
   mockUseOptionalTransfers.mockReturnValue({
@@ -29,7 +30,9 @@ beforeEach(() => {
     isMinimized: false,
     minimizeTransfers: jest.fn(),
     restoreTransfers: jest.fn(),
-    updateUploadTransfer: jest.fn(),
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    runTransferAction: jest.fn(),
     startCanvaTransfer: jest.fn(),
   });
 });
@@ -55,8 +58,9 @@ it("labels unknown aggregate progress without exposing null percent text", async
       id: "canva-import",
       name: "Slides",
       type: "Canva",
-      status: "Saving presentation slides",
-      progress: 100,
+      status: "active",
+      progress: null,
+      phase: { key: "saving", label: "Saving presentation slides" },
     }],
   });
   render(

@@ -33,6 +33,54 @@ const videoInputMedia = (sourceId: string): MediaType => ({
 });
 
 describe("sweepMediaReferencesBeforeDelete", () => {
+  it("never rewrites v2 media storage rows that resemble saved image items", async () => {
+    const mediaDoc = {
+      _id: "media-item:image-1",
+      _rev: "1-media",
+      docType: "mediaItem",
+      id: "image-1",
+      type: "image",
+      background: "https://cdn.example/deleted.png",
+    };
+    const put = jest.fn(async () => ({ ok: true, rev: "2" }));
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === PREFERENCES_POUCH_ID) {
+          return {
+            _id: PREFERENCES_POUCH_ID,
+            _rev: "1-prefs",
+            preferences: {
+              defaultSongBackground: { background: "song-bg" },
+              defaultTimerBackground: { background: "" },
+              defaultBibleBackground: { background: "bible-bg" },
+              defaultFreeFormBackground: { background: "free-bg" },
+            },
+          };
+        }
+        if (id === QUICK_LINKS_POUCH_ID) {
+          return { _id: QUICK_LINKS_POUCH_ID, _rev: "1-ql", quickLinks: [] };
+        }
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      put,
+      allDocs: jest.fn(async () => ({ rows: [{ id: mediaDoc._id, doc: mediaDoc }] })),
+    } as unknown as PouchDB.Database;
+
+    const deletedRow = {
+      id: "image-1",
+      type: "image",
+      background: mediaDoc.background,
+    } as MediaType;
+    const result = await sweepMediaReferencesBeforeDelete(
+      db,
+      new Set([deletedRow.id]),
+      [deletedRow],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("clears slide mediaSource for deleted live video inputs", async () => {
     const sourceId = "cam-1";
     const media = videoInputMedia(sourceId);

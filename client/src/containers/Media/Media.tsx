@@ -64,6 +64,7 @@ import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
 import { MediaAddControl, ShowTransfersMenuItem } from "./MediaAddControl";
+import { formatTransferProgress } from "../../components/TransferProgress/TransferProgress";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -206,7 +207,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
 
   let toolbarAddMediaTitle = "Add Media";
   if (c.uploadProgress.isUploading) {
-    toolbarAddMediaTitle = `Uploading... ${Math.round(c.uploadProgress.progress)}%`;
+    toolbarAddMediaTitle = `Uploading... ${formatTransferProgress(c.uploadProgress.progress)}`;
   }
 
   const addLocalMedia = useCallback(

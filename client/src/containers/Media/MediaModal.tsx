@@ -6,6 +6,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { formatTransferProgress } from "../../components/TransferProgress/TransferProgress";
+import { useOptionalTransfers } from "../../context/transferContext";
 import { useToast } from "../../context/toastContext";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { useLocation } from "react-router-dom";
@@ -251,6 +253,8 @@ const MediaModal = ({
   onStorageUsageChanged,
   onStorageUsageRefreshReady,
 }: MediaModalProps) => {
+  const transferContext = useOptionalTransfers();
+  const normalizedUpload = transferContext?.transfers.find((transfer) => transfer.id === "media-upload");
   const dispatch = useDispatch();
   const location = useLocation();
   const { showToast } = useToast();
@@ -308,10 +312,10 @@ const MediaModal = ({
 
   const fullscreenAddMediaTitle = useMemo(() => {
     if (uploadProgress?.isUploading) {
-      return `Uploading... ${Math.round(uploadProgress.progress)}%`;
+      return `Uploading... ${formatTransferProgress(normalizedUpload ? normalizedUpload.progress : uploadProgress.progress)}`;
     }
     return "Add Media";
-  }, [uploadProgress?.isUploading, uploadProgress?.progress]);
+  }, [normalizedUpload, uploadProgress?.isUploading, uploadProgress?.progress]);
 
   const addMediaMenu = mediaUploadInputRef ? (
     uploadProgress?.isUploading ? (
@@ -323,7 +327,7 @@ const MediaModal = ({
         onClick={() => onAddMediaClick?.()}
         disabled={mediaUploadDisabled}
       >
-        {`${Math.round(uploadProgress.progress)}%`}
+        {formatTransferProgress(normalizedUpload ? normalizedUpload.progress : uploadProgress.progress)}
       </Button>
     ) : (
       <DropdownMenu>
