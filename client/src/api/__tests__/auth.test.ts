@@ -507,6 +507,185 @@ describe("api/auth", () => {
     expect(authErrorHandler).not.toHaveBeenCalled();
   });
 
+  it("recovers a stale workstation CSRF token through bootstrap and retries once", async () => {
+    setAuthenticatedSessionExpected(true);
+    workstationTokenStore.value = "ws-1";
+    csrfStore.token = "old-csrf";
+    const recoveryHandler = jest.fn(async () => {
+      const bootstrap = await getAuthBootstrap({ workstationToken: "ws-1" });
+      csrfStore.token = bootstrap.csrfToken || "";
+      return bootstrap.authenticated;
+    });
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () =>
+          Promise.resolve({
+            errorMessage: "Could not verify this request.",
+            code: "AUTH_CSRF_MISMATCH",
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ authenticated: true, csrfToken: "new-csrf" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true }),
+      });
+
+    try {
+      await expect(
+        apiFetch("api/workstations/device-1/operator", {
+          method: "POST",
+          body: JSON.stringify({ operatorName: "Sam" }),
+        }),
+      ).resolves.toEqual({ success: true });
+    } finally {
+      unsubscribeRecovery();
+    }
+
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:5000/api/workstations/device-1/operator",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "x-csrf-token": "old-csrf" }),
+      }),
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:5000/api/auth/me",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ "x-workstation-token": "ws-1" }),
+      }),
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:5000/api/workstations/device-1/operator",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "x-csrf-token": "new-csrf" }),
+      }),
+    );
+  });
+
+  it("does not recover or retry an ordinary permission 403", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(true));
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: () =>
+        Promise.resolve({ error: "Full access is required.", code: "FORBIDDEN" }),
+    });
+
+    try {
+      await expect(
+        apiFetch("api/test", { method: "POST" }),
+      ).rejects.toMatchObject({
+        message: "Full access is required.",
+        status: 403,
+        code: "FORBIDDEN",
+      });
+    } finally {
+      unsubscribeRecovery();
+    }
+
+    expect(recoveryHandler).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the original CSRF error when auth recovery fails", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(false));
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: () =>
+        Promise.resolve({
+          error: "Could not verify this request.",
+          code: "AUTH_CSRF_MISMATCH",
+        }),
+    });
+
+    try {
+      await expect(apiFetch("api/test", { method: "POST" })).rejects.toMatchObject({
+        message: "Could not verify this request.",
+        status: 403,
+        code: "AUTH_CSRF_MISMATCH",
+      });
+    } finally {
+      unsubscribeRecovery();
+    }
+
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start another recovery when a retry still has a CSRF mismatch", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(true));
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({ code: "AUTH_CSRF_MISMATCH", error: "CSRF 1" }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({ code: "AUTH_CSRF_MISMATCH", error: "CSRF 2" }),
+      });
+
+    try {
+      await expect(apiFetch("api/test", { method: "POST" })).rejects.toMatchObject({
+        message: "CSRF 2",
+        status: 403,
+        code: "AUTH_CSRF_MISMATCH",
+      });
+    } finally {
+      unsubscribeRecovery();
+    }
+
+    expect(recoveryHandler).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not use CSRF mutation recovery for GET requests", async () => {
+    setAuthenticatedSessionExpected(true);
+    const recoveryHandler = jest.fn(() => Promise.resolve(true));
+    const unsubscribeRecovery = registerAuthRecoveryHandler(recoveryHandler);
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: () => Promise.resolve({ code: "AUTH_CSRF_MISMATCH", error: "CSRF" }),
+    });
+
+    try {
+      await expect(apiFetch("api/test", { method: "GET" })).rejects.toMatchObject({
+        status: 403,
+        code: "AUTH_CSRF_MISMATCH",
+      });
+    } finally {
+      unsubscribeRecovery();
+    }
+
+    expect(recoveryHandler).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("announces a 401 when silent recovery cannot restore the session", async () => {
     setAuthenticatedSessionExpected(true);
     const recoveryHandler = jest.fn(() => Promise.resolve(false));

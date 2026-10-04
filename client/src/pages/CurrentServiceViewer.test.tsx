@@ -13,6 +13,7 @@ import {
 import ServicePublicView from "./ServicePublicView";
 import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
 import type { TeamScheduleOccurrence } from "../api/authTypes";
+import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 import store from "../store/store";
@@ -608,6 +609,76 @@ describe("CurrentServiceViewer", () => {
     });
     expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
     expect(getServicePlanViewer).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the enriched snapshot visible while an SSE refresh is pending", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    const enrichedSnapshot = {
+      ...buildServicePlanFlowSnapshot({
+        plan,
+        startsAt: "2026-09-13T13:00:00.000Z",
+        churchName: "Test Church",
+      }),
+      servingTeams: [{
+        teamId: "worship",
+        teamName: "Worship Team",
+        members: [{
+          positionId: "lead",
+          positionName: "Lead vocal",
+          memberName: "Avery Stone",
+          profileImageUrl: "https://example.com/avery.jpg",
+          microphones: [{ id: "mic-blue", name: "Blue", type: "Headset" }],
+          equipment: [{ id: "iem-red", name: "Red IEM", category: "iem" }],
+        }],
+      }],
+    } as PublicServiceFlowSnapshot;
+    const updatedPlan = { ...plan, name: "Updated live service" };
+    const updatedSnapshot = {
+      ...buildServicePlanFlowSnapshot({
+        plan: updatedPlan,
+        startsAt: "2026-09-13T13:00:00.000Z",
+        churchName: "Test Church",
+      }),
+      servingTeams: enrichedSnapshot.servingTeams,
+    } as PublicServiceFlowSnapshot;
+    let resolveRefresh: ((value: {
+      success: true;
+      plan: ServicePlan;
+      snapshot: PublicServiceFlowSnapshot;
+    }) => void) | undefined;
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({ success: true, plan, snapshot: enrichedSnapshot })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }));
+
+    renderViewer([morningService]);
+    expect(await screen.findByText("Avery Stone")).toBeInTheDocument();
+    expect(screen.getByText("Red IEM")).toBeInTheDocument();
+
+    const onMessage = jest.mocked(useTeamsLiveSync).mock.calls[0]?.[1];
+    act(() => {
+      onMessage?.({ type: "service-plan-updated", servicePlan: updatedPlan });
+    });
+
+    expect(screen.getByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+    expect(screen.getByText("Red IEM")).toBeInTheDocument();
+    expect(getServicePlanViewer).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveRefresh?.({
+        success: true,
+        plan: updatedPlan,
+        snapshot: updatedSnapshot,
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "Updated live service" })).toBeInTheDocument();
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+    expect(screen.getByText("Red IEM")).toBeInTheDocument();
   });
 
   it("does not carry an old request error into a newly selected occurrence", async () => {

@@ -1,13 +1,14 @@
 import {
   addMediaItem,
   loadMediaLibrary,
-  loadOrCreateMediaDoc,
   mediaItemDocId,
   normalizeMediaDoc,
   parseMediaReplicationDoc,
   persistMediaLibraryChanges,
   persistMediaStateChanges,
   removeMediaItem,
+  removeMediaItemAtRevision,
+  readMediaItemForDeletion,
   saveMediaFolders,
   siblingNameExists,
   updateMediaItem,
@@ -16,98 +17,6 @@ import {
 import type { DBMedia, MediaFolder, MediaType } from "../types";
 
 const pouchNotFound = () => Object.assign(new Error("missing"), { status: 404 });
-
-describe("loadOrCreateMediaDoc", () => {
-  const existingDoc = {
-    _id: "media",
-    _rev: "1-media",
-    list: [],
-    folders: [],
-  } as DBMedia;
-
-  it("returns an existing media document without writing", async () => {
-    const db = {
-      get: jest.fn().mockResolvedValue(existingDoc),
-      put: jest.fn(),
-    } as unknown as PouchDB.Database;
-
-    await expect(loadOrCreateMediaDoc(db)).resolves.toBe(existingDoc);
-    expect(db.put).not.toHaveBeenCalled();
-  });
-
-  it("creates and rereads an empty media document after a confirmed 404", async () => {
-    const createdDoc = { ...existingDoc, _rev: "1-created" };
-    const db = {
-      get: jest
-        .fn()
-        .mockRejectedValueOnce({ status: 404, name: "not_found" })
-        .mockResolvedValueOnce(createdDoc),
-      put: jest.fn().mockResolvedValue({
-        ok: true,
-        id: "media",
-        rev: "1-created",
-      }),
-    } as unknown as PouchDB.Database;
-
-    await expect(loadOrCreateMediaDoc(db)).resolves.toEqual(createdDoc);
-    expect(db.put).toHaveBeenCalledWith({
-      _id: "media",
-      list: [],
-      folders: [],
-      createdAt: expect.any(String),
-      updatedAt: expect.any(String),
-      docType: "media",
-    });
-    expect(db.get).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not initialize a legacy document after the active database changes during a missing-doc read", async () => {
-    let canCommit = true;
-    let rejectMediaRead: (error: unknown) => void = () => undefined;
-    let resolveReadStarted: () => void = () => undefined;
-    const readStarted = new Promise<void>((resolve) => { resolveReadStarted = resolve; });
-    const pendingRead = new Promise<never>((_resolve, reject) => { rejectMediaRead = reject; });
-    const db = {
-      get: jest.fn(() => {
-        resolveReadStarted();
-        return pendingRead;
-      }),
-      put: jest.fn(),
-    } as unknown as PouchDB.Database;
-
-    const load = loadOrCreateMediaDoc(db, () => canCommit);
-    await readStarted;
-    canCommit = false;
-    rejectMediaRead(pouchNotFound());
-
-    await expect(load).resolves.toBeUndefined();
-    expect(db.put).not.toHaveBeenCalled();
-  });
-
-  it("rereads the winner when another writer creates the document first", async () => {
-    const winningDoc = { ...existingDoc, _rev: "1-winner" };
-    const db = {
-      get: jest
-        .fn()
-        .mockRejectedValueOnce({ status: 404 })
-        .mockResolvedValueOnce(winningDoc),
-      put: jest.fn().mockRejectedValue({ status: 409, name: "conflict" }),
-    } as unknown as PouchDB.Database;
-
-    await expect(loadOrCreateMediaDoc(db)).resolves.toEqual(winningDoc);
-  });
-
-  it("does not create an empty document for a real read error", async () => {
-    const readError = { status: 500, message: "storage unavailable" };
-    const db = {
-      get: jest.fn().mockRejectedValue(readError),
-      put: jest.fn(),
-    } as unknown as PouchDB.Database;
-
-    await expect(loadOrCreateMediaDoc(db)).rejects.toBe(readError);
-    expect(db.put).not.toHaveBeenCalled();
-  });
-});
 
 describe("normalizeMediaDoc", () => {
   it("fills folders and fixes orphan folderId", () => {
@@ -182,17 +91,30 @@ describe("v2 media repository", () => {
     expect(db.get).not.toHaveBeenCalledWith("media");
   });
 
-  it("keeps legacy reads active until schema v2 is explicitly marked", async () => {
-    const legacy = { _id: "media", _rev: "1-media", list: [media("old")], folders: [] } as DBMedia;
+  it("fails closed when the v2 marker is absent without reading or creating the legacy aggregate", async () => {
     const db = {
-      get: jest.fn(async (id: string) => {
-        if (id === "media-library-meta") throw pouchNotFound();
-        return legacy;
-      }),
+      get: jest.fn().mockRejectedValue(pouchNotFound()),
+      put: jest.fn(),
       allDocs: jest.fn(),
     } as unknown as PouchDB.Database;
-    await expect(loadMediaLibrary(db)).resolves.toEqual({ list: [{ ...media("old"), folderId: null }], folders: [] });
+    await expect(loadMediaLibrary(db)).rejects.toThrow("schema v2 is not initialized");
+    await expect(updateMediaItem(db, "item", { name: "Changed" })).rejects.toThrow("schema v2 is not initialized");
     expect(db.allDocs).not.toHaveBeenCalled();
+    expect(db.get).not.toHaveBeenCalledWith("media");
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("does not remove or update anything when the v2 marker is absent", async () => {
+    const db = {
+      get: jest.fn().mockRejectedValue(pouchNotFound()),
+      put: jest.fn(),
+      remove: jest.fn(),
+    } as unknown as PouchDB.Database;
+    await expect(removeMediaItem(db, "item")).rejects.toThrow("schema v2 is not initialized");
+    await expect(saveMediaFolders(db, [])).rejects.toThrow("schema v2 is not initialized");
+    expect(db.put).not.toHaveBeenCalled();
+    expect(db.remove).not.toHaveBeenCalled();
+    expect(db.get).not.toHaveBeenCalledWith("media");
   });
 
   it("writes only changed item docs and folder metadata for v2 changes", async () => {
@@ -321,10 +243,109 @@ describe("v2 media repository", () => {
     ]);
     expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:one" }));
   });
+
+  it("re-fetches and retries a conflicting deletion with the latest revision", async () => {
+    const docs = new Map<string, any>([[
+      mediaItemDocId("conflict"),
+      { ...media("conflict"), _id: mediaItemDocId("conflict"), docType: "mediaItem", _rev: "1-a" },
+    ]]);
+    const get = jest.fn(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = docs.get(id);
+      if (!doc) throw pouchNotFound();
+      return doc;
+    });
+    const remove = jest.fn(async (doc: any) => {
+      if (remove.mock.calls.length === 1) {
+        docs.set(doc._id, { ...doc, _rev: "2-newer" });
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      docs.delete(doc._id);
+      return { ok: true, id: doc._id };
+    });
+    const db = { get, remove } as unknown as PouchDB.Database;
+
+    await expect(removeMediaItem(db, "conflict")).resolves.toEqual({
+      ok: true,
+      id: mediaItemDocId("conflict"),
+    });
+    expect(remove.mock.calls.map(([doc]) => doc._rev)).toEqual(["1-a", "2-newer"]);
+    expect(docs.has(mediaItemDocId("conflict"))).toBe(false);
+  });
+
+  it("does not retry an exact-revision deletion after a conflict", async () => {
+    const doc = {
+      ...media("exact-revision"),
+      _id: mediaItemDocId("exact-revision"),
+      _rev: "4-captured",
+      docType: "mediaItem",
+    } as any;
+    const db = {
+      remove: jest.fn(async () => { throw Object.assign(new Error("conflict"), { status: 409 }); }),
+    } as unknown as PouchDB.Database;
+
+    await expect(removeMediaItemAtRevision(db, doc)).rejects.toMatchObject({ status: 409 });
+    expect(db.remove).toHaveBeenCalledTimes(1);
+    expect(db.remove).toHaveBeenCalledWith(doc);
+  });
+
+  it("returns authoritative media metadata and revision from the v2 item document", async () => {
+    const persisted = {
+      ...media("authoritative"),
+      name: "Persisted name",
+      publicId: "persisted-provider-id",
+      _id: mediaItemDocId("authoritative"),
+      _rev: "7-persisted",
+      docType: "mediaItem",
+    };
+    const db = {
+      get: jest.fn(async (id: string) => id === "media-library-meta"
+        ? { _id: id, schemaVersion: 2 }
+        : persisted),
+    } as unknown as PouchDB.Database;
+
+    await expect(readMediaItemForDeletion(db, "authoritative")).resolves.toEqual({
+      doc: persisted,
+      item: expect.objectContaining({ name: "Persisted name", publicId: "persisted-provider-id" }),
+    });
+  });
+
+  it("treats an already missing item document as an idempotent deletion", async () => {
+    const get = jest.fn(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      throw pouchNotFound();
+    });
+    const remove = jest.fn();
+    const db = { get, remove } as unknown as PouchDB.Database;
+
+    await expect(removeMediaItem(db, "already-gone")).resolves.toBeUndefined();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("treats a concurrent tombstone after get as idempotent success", async () => {
+    const doc = {
+      ...media("concurrent-delete"),
+      _id: mediaItemDocId("concurrent-delete"),
+      docType: "mediaItem",
+      _rev: "1-current",
+    };
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        return doc;
+      }),
+      remove: jest.fn(async () => {
+        throw pouchNotFound();
+      }),
+    } as unknown as PouchDB.Database;
+
+    await expect(removeMediaItem(db, "concurrent-delete")).resolves.toBeUndefined();
+    expect(db.remove).toHaveBeenCalledWith(doc);
+  });
 });
 
 describe("media replication document changes", () => {
-  it("maps individual item updates, deletions, folders, and legacy docs without a full v2 list", () => {
+  it("maps individual item updates, deletions, and folders without a full v2 list", () => {
     const item = { id: "slide-1", name: "Page 1", type: "image", background: "/one" } as MediaType;
     expect(parseMediaReplicationDoc({
       ...item,
@@ -342,29 +363,24 @@ describe("media replication document changes", () => {
     expect(parseMediaReplicationDoc({ _id: "unrelated", docType: "other" })).toBeNull();
   });
 
-  it("accepts legacy replication only while schema v1 is active", () => {
+  it("ignores legacy aggregate replication documents", () => {
     const legacy = { _id: "media", list: [{ id: "old", name: "Old" }], folders: [] };
-    expect(parseMediaReplicationDoc(legacy)).toEqual({
-      kind: "legacy",
-      list: [{ id: "old", name: "Old", folderId: null }],
-      folders: [],
-    });
-    expect(parseMediaReplicationDoc(legacy, true)).toBeNull();
+    expect(parseMediaReplicationDoc(legacy)).toBeNull();
   });
 
-  it("continues to parse v2 item updates, deletes, and folders when schema v2 is active", () => {
+  it("parses v2 item updates, deletes, and folders", () => {
     expect(parseMediaReplicationDoc({
       _id: "media-item:slide-1", id: "slide-1", docType: "mediaItem", name: "Updated",
-    }, true)).toEqual({
+    })).toEqual({
       kind: "item-upsert",
       item: { id: "slide-1", name: "Updated" },
     });
     expect(parseMediaReplicationDoc({
       _id: "media-item:slide-1", _deleted: true,
-    }, true)).toEqual({ kind: "item-delete", id: "slide-1" });
+    })).toEqual({ kind: "item-delete", id: "slide-1" });
     expect(parseMediaReplicationDoc({
       _id: "media-folders", folders: [{ id: "folder-1", name: "Folder" }],
-    }, true)).toEqual({
+    })).toEqual({
       kind: "folders",
       folders: [{ id: "folder-1", name: "Folder" }],
     });

@@ -215,6 +215,92 @@ describe("findInitialTeamSchedulePeriod", () => {
     expect(result.nextOccurrence?.serviceId).toBe("october");
   });
 
+  it("uses the occurrence calendar month in the requested timezone when UTC is in the next month", () => {
+    const startsAt = "2026-10-01T05:00:00.000Z";
+    const result = findInitialTeamSchedulePeriod({
+      services: [service({
+        serviceId: "late-september",
+        dateTimeISO: "2026-09-30T22:00:00-07:00",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      positions,
+      teamId: "media",
+      now: new Date("2026-10-01T02:00:00.000Z"),
+      timeZone: "America/Los_Angeles",
+    });
+
+    expect(result).toMatchObject({ start: "2026-09-01", end: "2026-09-30" });
+    expect(result.nextOccurrence).toMatchObject({
+      occurrenceId: `late-september@${startsAt}`,
+      startsAt,
+    });
+    expect(result.period.occurrences.map((occurrence) => occurrence.occurrenceId)).toContain(
+      `late-september@${startsAt}`,
+    );
+  });
+
+  it("uses the occurrence calendar month when UTC is in the prior month", () => {
+    const startsAt = "2026-09-30T15:30:00.000Z";
+    const result = findInitialTeamSchedulePeriod({
+      services: [service({
+        serviceId: "october-service",
+        dateTimeISO: "2026-10-01T00:30:00+09:00",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      positions,
+      teamId: "media",
+      now: new Date("2026-09-30T10:00:00.000Z"),
+      timeZone: "Asia/Tokyo",
+    });
+
+    expect(result).toMatchObject({ start: "2026-10-01", end: "2026-10-31" });
+    expect(result.nextOccurrence).toMatchObject({
+      occurrenceId: `october-service@${startsAt}`,
+      startsAt,
+    });
+    expect(result.period.occurrences.map((occurrence) => occurrence.occurrenceId)).toContain(
+      `october-service@${startsAt}`,
+    );
+  });
+
+  it("orders saved occurrences by their parsed timestamps across offset formats", () => {
+    const earlier = {
+      occurrenceId: "earlier-offset@2026-10-01T01:00:00.000Z",
+      serviceId: "earlier-offset",
+      name: "Earlier",
+      startsAt: "2026-10-01T01:00:00.000Z",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    } satisfies TeamScheduleOccurrence;
+    const later = {
+      occurrenceId: "later-offset@2026-10-01T00:00:00-07:00",
+      serviceId: "later-offset",
+      name: "Later",
+      startsAt: "2026-10-01T00:00:00-07:00",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    } satisfies TeamScheduleOccurrence;
+    const result = findInitialTeamSchedulePeriod({
+      services: [],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "saved-offsets",
+        churchId: "church-1",
+        name: "Saved services",
+        teamId: "media",
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        serviceIds: [],
+        occurrences: [later, earlier],
+        assignments: {},
+        source: "custom",
+      }],
+      now: new Date("2026-09-30T00:00:00.000Z"),
+      timeZone: "UTC",
+    });
+
+    expect(result.nextOccurrence?.occurrenceId).toBe(earlier.occurrenceId);
+  });
+
   it("moves to December after the last relevant November occurrence", () => {
     const result = findInitialTeamSchedulePeriod({
       services: [

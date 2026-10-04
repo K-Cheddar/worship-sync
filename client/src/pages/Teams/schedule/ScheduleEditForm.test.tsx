@@ -103,6 +103,7 @@ describe("ScheduleEditForm", () => {
               mode="edit"
               draftKey={schedule.scheduleId}
               selectedSchedule={schedule}
+              positions={[]}
               defaultTeamId={team.teamId}
               defaultServiceIds={[service.serviceId]}
               defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}
@@ -200,6 +201,7 @@ describe("ScheduleEditForm", () => {
               mode="edit"
               draftKey={schedule.scheduleId}
               selectedSchedule={schedule}
+              positions={[]}
               defaultTeamId={team.teamId}
               defaultServiceIds={[service.serviceId]}
               defaultRange={{ startDate: schedule.startDate!, endDate: schedule.endDate! }}
@@ -298,6 +300,7 @@ describe("ScheduleEditForm", () => {
               mode="create-custom"
               draftKey="new:custom"
               selectedSchedule={activePeriodSchedule}
+              positions={[]}
               defaultTeamId={team.teamId}
               defaultServiceIds={[service.serviceId]}
               defaultRange={{ startDate: "2026-10-01", endDate: "2026-10-31" }}
@@ -360,6 +363,7 @@ describe("ScheduleEditForm", () => {
               mode="create-custom"
               draftKey="new:custom"
               selectedSchedule={null}
+              positions={[]}
               defaultTeamId=""
               defaultServiceIds={[service.serviceId]}
               defaultRange={{ startDate: "2026-10-01", endDate: "2026-10-31" }}
@@ -429,6 +433,7 @@ describe("ScheduleEditForm", () => {
     };
     const copyDraft = buildScheduleCopyDraft({ source, occurrences: [occurrence] });
     const commonProps = {
+      positions: [],
       defaultTeamId: team.teamId,
       defaultServiceIds: [service.serviceId],
       defaultRange: { startDate: "2026-10-01", endDate: "2026-10-31" },

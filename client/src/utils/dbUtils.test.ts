@@ -24,7 +24,6 @@ import {
   migrateFontSizesToDefaults,
   migrateFontSizesToPixels,
   migrateLegacyCreditsToActiveOutlineIfNeeded,
-  migrateMediaLibraryFoldersFieldIfNeeded,
   migrateSplitPreferencesDocs,
   loadPreferencesBundle,
   putCreditDoc,
@@ -828,10 +827,12 @@ describe("dbUtils", () => {
     db.allDocs.mockResolvedValue({
       rows: [
         { doc: { _id: "_design/index" } },
+        { doc: { _id: "media", list: [{ id: "large-legacy-item" }], folders: [] } },
         { doc: { _id: "allItems", docType: "allItems" } },
         { doc: { _id: "overlay-abc", type: "participant" } },
         { doc: { _id: "credit-xyz" } },
         { doc: { _id: "credits-outline-seed-outline" } },
+        { doc: { _id: "mediaRouteFolders:aux%2Fone", controllerProfileId: "aux/one", mediaRouteFolders: {} } },
         { doc: { _id: "list-1", items: [], overlays: [] } },
         { doc: { _id: "unknown-1" } },
       ],
@@ -843,7 +844,8 @@ describe("dbUtils", () => {
 
     const result = await migrateDocTypes(db as unknown as PouchDB.Database);
 
-    expect(result).toEqual({ updatedCount: 4, errorCount: 1, skippedCount: 2 });
+    expect(result).toEqual({ updatedCount: 5, errorCount: 1, skippedCount: 3 });
+    expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "overlay-abc", docType: "overlay" }),
     );
@@ -859,41 +861,9 @@ describe("dbUtils", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "list-1", docType: "itemListDetails" }),
     );
-  });
-
-  it("migrateMediaLibraryFoldersFieldIfNeeded adds folders and normalizes orphan folderId", async () => {
-    const db = createDb();
-    db.get.mockResolvedValue({
-      _id: "media",
-      _rev: "1-abc",
-      list: [{ id: "m1", folderId: "ghost" }],
-    });
-    db.put.mockResolvedValue({});
-    const changed = await migrateMediaLibraryFoldersFieldIfNeeded(
-      db as unknown as PouchDB.Database,
-    );
-    expect(changed).toBe(true);
     expect(db.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        folders: [],
-        list: [expect.objectContaining({ id: "m1", folderId: null })],
-      }),
+      expect.objectContaining({ _id: "mediaRouteFolders:aux%2Fone", docType: "mediaRouteFolders" }),
     );
-  });
-
-  it("migrateMediaLibraryFoldersFieldIfNeeded is a no-op when shape is already valid", async () => {
-    const db = createDb();
-    db.get.mockResolvedValue({
-      _id: "media",
-      _rev: "1-abc",
-      list: [],
-      folders: [],
-    });
-    const changed = await migrateMediaLibraryFoldersFieldIfNeeded(
-      db as unknown as PouchDB.Database,
-    );
-    expect(changed).toBe(false);
-    expect(db.put).not.toHaveBeenCalled();
   });
 
   it("loadPreferencesBundle loads only split preference docs", async () => {

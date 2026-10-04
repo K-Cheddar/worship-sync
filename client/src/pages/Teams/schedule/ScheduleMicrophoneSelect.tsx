@@ -122,7 +122,7 @@ const ScheduleMicrophoneSelect = ({
           <SelectTrigger
             size="sm"
             aria-label={ariaLabel}
-            className="h-8 w-full justify-between border-gray-700 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100"
+            className="h-8 w-full justify-between border-gray-700 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100 max-md:text-sm"
           >
             <SelectValue placeholder="No microphone">
               {selectedMicrophone ? (
@@ -189,7 +189,7 @@ const ScheduleMicrophoneSelect = ({
               disabled={savingIem}
               onValueChange={(next) => onIemChange(next === NO_IEM_VALUE ? [] : [next])}
             >
-              <SelectTrigger size="sm" aria-label={`${ariaLabel} IEM`} className="h-8 w-full justify-between border-cyan-900/70 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100">
+              <SelectTrigger size="sm" aria-label={`${ariaLabel} IEM`} className="h-8 w-full justify-between border-cyan-900/70 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100 max-md:text-sm">
                 <SelectValue placeholder="No IEM">{selectedIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedIem} color={selectedIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedIem.name}</span></span> : "No IEM"}</SelectValue>
               </SelectTrigger>
               <SelectContent className="min-w-[14rem]">

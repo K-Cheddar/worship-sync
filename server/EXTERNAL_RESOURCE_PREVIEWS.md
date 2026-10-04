@@ -1,12 +1,13 @@
 # External resource previews
 
-External URLs enter the shared preview path through the Service Plan resource
-normalizer. `ContentPreviewDialog` consumes only a normalized descriptor; it
+External URLs enter the shared preview path from either a Service Plan resource
+normalizer or an external ChurchResource. The Resources page and Service Plans
+both render through `ContentPreviewDialog`, which consumes a normalized descriptor; it
 does not contain provider-specific URL rules. Public URLs are resolved by
 `server/externalResourceProviders.js` and `server/externalResourceService.js`:
 
 ```text
-ServicePlanContentResource
+ServicePlanContentResource or ChurchResource.external.url
   -> normalizeServicePlanResourceForPreview
   -> ContentPreviewDialog
   -> GET /api/resources/resolve?url=...
@@ -15,12 +16,25 @@ ServicePlanContentResource
   -> shared image/audio/video/document renderer
 ```
 
+Creating an external ChurchResource calls the same authenticated resolver and
+persists only the canonical original URL plus provider-neutral metadata. A
+ChurchResource reference in a Service Plan remains its stable ID; external URLs
+are not copied into plan records.
+
 The resolver registry handles YouTube, Dropbox, Google Drive/Docs,
 OneDrive, SharePoint, and Box before falling back to direct URL metadata
 detection. Provider strategies only normalize public share links; they do not
 forward credentials or decide previewability. HTTP metadata, Content-Disposition,
-and URL extensions then determine the media type. HTML is classified as a web
-page and is never proxied.
+and URL extensions then determine the media type. HTML is never proxied; generic
+web pages may be shown in the existing sandboxed iframe path, while SharePoint
+HTML responses are treated as unresolved sharing pages.
+
+SharePoint anonymous/“Anyone with the link” URLs are supported when they resolve
+to publicly accessible file bytes. The resolver preserves the original sharing
+URL for external opening, probes the normalized download candidate, and follows
+only validated public redirects. Authenticated or private SharePoint resources
+are not supported; adding provider-specific authentication would be a separate
+future feature.
 
 `GET /api/resources/resolve?url=` requires an authenticated app session. It
 returns a provider-neutral descriptor. Previewable images, audio, video, and

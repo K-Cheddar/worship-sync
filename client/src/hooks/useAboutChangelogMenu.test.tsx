@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { useAboutChangelogMenu } from "./useAboutChangelogMenu";
 import { useElectronWindows } from "./useElectronWindows";
 import {
@@ -51,5 +51,28 @@ describe("useAboutChangelogMenu", () => {
     await waitFor(() => {
       expect(result.current.updateReadyVersion).toBe("");
     });
+  });
+
+  it("exposes What's New and keeps About available", () => {
+    mockUseElectronWindows.mockReturnValue({
+      isElectron: false,
+    } as ReturnType<typeof useElectronWindows>);
+    mockGetBuildTimeVersion.mockReturnValue("2.41.0");
+    mockGetServerVersion.mockResolvedValue("2.41.0");
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ notes: [] }),
+    } as Response);
+
+    const { result } = renderHook(() => useAboutChangelogMenu());
+    const { unmount } = render(result.current.aboutChangelogMenuItems[0].element);
+
+    expect(screen.getByText("What's New")).toBeInTheDocument();
+    unmount();
+    act(() => result.current.aboutChangelogMenuItems[0].onClick?.());
+    render(result.current.aboutChangelogModals);
+
+    expect(screen.getByRole("dialog", { name: "What's New" })).toBeInTheDocument();
+    expect(result.current.aboutChangelogMenuItems[1].element).toBeTruthy();
   });
 });

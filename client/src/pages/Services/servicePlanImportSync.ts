@@ -1,5 +1,6 @@
 import { richTextSemanticEqual, richTextToPlainText } from "../../types/richText";
 import {
+  getServicePlanElementType,
   getServicePlanElementAssignees,
   getServicePlanElementSongRefs,
   isUnassignedServicePlanAssignee,
@@ -14,10 +15,11 @@ import type {
 import { insertNewServicePlanSectionRuns } from "./servicePlanImportSectionPlacement";
 import { reconcileReviewedServicePlanParts, servicePlanNoteFingerprint, upgradeLegacyImportedDescriptionTitles } from "./servicePlanImportOwnership";
 import { splitServicePlanningLedByNames } from "./servicePlanFromImport";
-import { copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
+import { claimServicePlanAssigneeSlot, copyServicePlanAssigneeEquipment, hasServicePlanAssigneeEquipment, stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
 import {
   servicePlanImportAmbiguityShouldQueue,
 } from "./servicePlanningTitleClassifier";
+import { getServicePlanSongReferenceFingerprint } from "./servicePlanSongAttachmentUtils";
 
 export type ServicePlanningRefreshOptions = {
   updateTitles: boolean;
@@ -136,6 +138,27 @@ const sameSongContent = (
       normalized(left.key || "") === normalized(right.key || "");
   }
   return false;
+};
+
+const dismissedSourceSongStillMatches = (
+  current: ServicePlanElement,
+  imported: ServicePlanElement,
+): boolean => {
+  if (!current.sourceSongReferenceDismissed) return false;
+  const dismissedOccurrenceId = current.sourceSongReferenceDismissedOccurrenceId || current.sourceOccurrenceId;
+  if (dismissedOccurrenceId && dismissedOccurrenceId !== imported.sourceOccurrenceId) return false;
+  const importedRefs = getServicePlanElementSongRefs(imported);
+  if (current.sourceSongReferenceDismissedFingerprint) {
+    return importedRefs.some((songRef) =>
+      getServicePlanSongReferenceFingerprint(songRef) === current.sourceSongReferenceDismissedFingerprint,
+    );
+  }
+  // Older dismissals did not retain a song fingerprint. Keep them only while
+  // both the durable row identity (when present) and raw source title match.
+  return sameSourceValue(
+    current.sourceContentTitleRaw || richTextToPlainText(current.title),
+    imported.sourceContentTitleRaw || richTextToPlainText(imported.title),
+  ) && normalized(current.sourceElementTypeRaw || "") === normalized(imported.sourceElementTypeRaw || "");
 };
 
 /** Reuse occurrence IDs through increasingly weaker, deterministic evidence. */
@@ -604,7 +627,12 @@ const reconcileImportedSourceAssignees = (
       ...(isSamePerson && previous?.memberId ? { memberId: previous.memberId } : {}),
     };
     if (!isSamePerson) delete importedIdentity.memberId;
-    const assignee = copyServicePlanAssigneeEquipment(importedIdentity, previous);
+    const assignee = previous && isUnassignedServicePlanAssignee(previous)
+      ? claimServicePlanAssigneeSlot([previous], importedIdentity, {
+          preferredSlotId: previous.id,
+          reuseSameName: false,
+        }).assignee
+      : copyServicePlanAssigneeEquipment(importedIdentity, previous);
     return {
       assignee,
       ownership: {
@@ -617,7 +645,7 @@ const reconcileImportedSourceAssignees = (
 
   const ownershipById = new Map<string, NonNullable<NonNullable<ServicePlanElement["servicePlanningImport"]>["managedAssignees"]>[number]>();
   const emitted = new Set<number>();
-  const result = existing.flatMap((assignee, index) => {
+  let result = existing.flatMap((assignee, index) => {
     const matchedIncoming = [...currentByIncoming.entries()].find(([, currentIndex]) => currentIndex === index)?.[0];
     if (matchedIncoming !== undefined && !operatorOwnedMatches.has(index)) {
       emitted.add(matchedIncoming);
@@ -648,7 +676,24 @@ const reconcileImportedSourceAssignees = (
     const duplicate = result.find((assignee) => normalizedName(assignee.name) === normalizedName(incomingAssignee.name));
     if (duplicate) {
       const prior = ownershipById.get(duplicate.id);
-      if (!prior && incomingItem.ownership.fields.includes("ledBy")) return;
+      if (!prior) return; // Reuse a manual same-name row without claiming it.
+      // Older imports appended a source person beside a blank template slot.
+      // Repair only when saved provenance still identifies that exact row.
+      if (incomingItem.ownership.fields.includes("title") && prior.fields.includes("title") &&
+        prior.fingerprint === assigneeFingerprint(duplicate) && !hasServicePlanAssigneeEquipment(duplicate)) {
+        const repaired = claimServicePlanAssigneeSlot(result, incomingAssignee, { replaceAssigneeId: duplicate.id, reuseSameName: false });
+        if (repaired.claimedSlot) {
+          result = repaired.assignees;
+          ownershipById.delete(duplicate.id);
+          ownershipById.set(repaired.assignee.id, {
+            ...incomingItem.ownership,
+            id: repaired.assignee.id,
+            fields: [...new Set([...prior.fields, ...incomingItem.ownership.fields])],
+            fingerprint: assigneeFingerprint(repaired.assignee),
+          });
+          return;
+        }
+      }
       const fields = [...new Set([...(prior?.fields || []), ...incomingItem.ownership.fields])];
       ownershipById.set(duplicate.id, {
         ...incomingItem.ownership,
@@ -658,8 +703,28 @@ const reconcileImportedSourceAssignees = (
       });
       return;
     }
-    result.push(incomingAssignee);
-    ownershipById.set(incomingAssignee.id, { ...incomingItem.ownership, id: incomingAssignee.id, fingerprint: assigneeFingerprint(incomingAssignee) });
+    const placed = claimServicePlanAssigneeSlot(result, incomingAssignee);
+    result = placed.assignees;
+    ownershipById.set(placed.assignee.id, { ...incomingItem.ownership, id: placed.assignee.id, fingerprint: assigneeFingerprint(placed.assignee) });
+  });
+  // A prior append-only title person can remain beside the same imported
+  // person after Led By reconciliation has already claimed the equipment row.
+  // Merge only when both rows still have verified source provenance.
+  existingOwnership.forEach((ownership) => {
+    if (!ownership.fields.includes("title")) return;
+    const oldPerson = result.find((assignee) => assignee.id === ownership.id);
+    if (!oldPerson || hasServicePlanAssigneeEquipment(oldPerson) || ownership.fingerprint !== assigneeFingerprint(oldPerson)) return;
+    const replacement = result.find((assignee) => assignee.id !== oldPerson.id &&
+      normalizedName(assignee.name) === normalizedName(oldPerson.name) && ownershipById.has(assignee.id));
+    if (!replacement) return;
+    const replacementOwnership = ownershipById.get(replacement.id)!;
+    result = result.filter((assignee) => assignee !== oldPerson);
+    ownershipById.delete(oldPerson.id);
+    ownershipById.set(replacement.id, {
+      ...replacementOwnership,
+      fields: [...new Set([...replacementOwnership.fields, ...ownership.fields])],
+      fingerprint: assigneeFingerprint(replacement),
+    });
   });
   return {
     assignees: result,
@@ -867,6 +932,16 @@ const mergeElement = (
     if (!songRefsUnchanged) {
       next.songRefs = mergedSongRefs;
       delete next.songRef;
+    }
+    if (current.sourceSongReferenceDismissed) {
+      if (dismissedSourceSongStillMatches(current, imported)) {
+        next.songRefs = [];
+        delete next.songRef;
+      } else {
+        delete next.sourceSongReferenceDismissed;
+        delete next.sourceSongReferenceDismissedFingerprint;
+        delete next.sourceSongReferenceDismissedOccurrenceId;
+      }
     }
     if (reconciledSongs.songMappings?.length) {
       const ambiguity = next.importAmbiguity || imported.importAmbiguity || {
@@ -1121,7 +1196,9 @@ const mergeElement = (
       status: "unresolved",
     };
   }
-  return upgradeLegacyImportedDescriptionTitles(next, imported);
+  const upgraded = upgradeLegacyImportedDescriptionTitles(next, imported);
+  upgraded.type = getServicePlanElementType(upgraded);
+  return upgraded;
 };
 
 /**

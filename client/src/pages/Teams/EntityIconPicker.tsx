@@ -111,7 +111,7 @@ export const TEAM_RECOMMENDED_GROUPS: Array<{ label: string; icons: IconRef[] }>
   { label: "Worship & Ministry", icons: [{ source: "lucide", name: "Church" }, { source: "tabler", name: "bible" }, { source: "tabler", name: "pray" }, { source: "lucide", name: "Cross" }, { source: "lucide", name: "HeartHandshake" }] },
   { label: "Hospitality", icons: [{ source: "lucide", name: "HandHelping" }, { source: "lucide", name: "Coffee" }, { source: "lucide", name: "Utensils" }, { source: "lucide", name: "Heart" }] },
   { label: "Children & Youth", icons: [{ source: "lucide", name: "Baby" }, { source: "lucide", name: "Gamepad2" }, { source: "lucide", name: "Smile" }, { source: "lucide", name: "Users" }] },
-  { label: "Administration", icons: [{ source: "lucide", name: "ClipboardList" }, { source: "lucide", name: "BriefcaseBusiness" }, { source: "lucide", name: "CalendarDays" }, { source: "lucide", name: "Settings2" }] },
+  { label: "Administration", icons: [{ source: "lucide", name: "ClipboardList" }, { source: "lucide", name: "BriefcaseBusiness" }, { source: "lucide", name: "CalendarDays" }, { source: "lucide", name: "Settings2" }, { source: "lucide", name: "Award" }] },
   { label: "Security & Facilities", icons: [{ source: "lucide", name: "ShieldCheck" }, { source: "lucide", name: "KeyRound" }, { source: "lucide", name: "Building" }, { source: "lucide", name: "Wrench" }] },
   { label: "Communications", icons: [{ source: "lucide", name: "Megaphone" }, { source: "lucide", name: "MessageCircle" }, { source: "lucide", name: "Captions" }, { source: "lucide", name: "Phone" }] },
 ];
@@ -123,6 +123,8 @@ type EntityIconPickerProps = {
   label?: string;
   context?: "position" | "team";
   value: EntityIcon | "";
+  /** Render and select this icon when value is empty, without persisting it. */
+  fallbackIcon?: EntityIcon;
   onChange: (icon: EntityIcon | "") => void;
 };
 
@@ -178,7 +180,7 @@ const recommendedEntry = (group: { label: string; icons: IconRef[] }): IconCatal
     searchTerms: [group.label],
   }));
 
-const EntityIconPicker = ({ label = "Icon", context = "position", value, onChange }: EntityIconPickerProps) => {
+const EntityIconPicker = ({ label = "Icon", context = "position", value, fallbackIcon, onChange }: EntityIconPickerProps) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<PickerView>("recommended");
@@ -189,7 +191,9 @@ const EntityIconPicker = ({ label = "Icon", context = "position", value, onChang
   const [shownCount, setShownCount] = useState(INITIAL_VISIBLE_COUNT);
   const allScrollRef = useRef<HTMLDivElement>(null);
   const current = normalizeEntityIcon(value);
-  const selectedKey = iconKey(value);
+  const fallback = normalizeEntityIcon(fallbackIcon || "");
+  const displayedIcon = current ?? fallback;
+  const selectedKey = iconKey(value || fallbackIcon || "");
   const committedColor = current?.color ?? ENTITY_ICON_DEFAULT_COLOR;
   const [previewColor, setPreviewColor] = useState(() => getEntityIconColor(value));
   const [colorResetSignal, setColorResetSignal] = useState(0);
@@ -280,7 +284,11 @@ const EntityIconPicker = ({ label = "Icon", context = "position", value, onChang
   };
 
   const placeholder = view === "recommended" ? "Search recommended icons…" : "Search icons…";
-  const currentLabel = current ? iconLabel(current) : "Choose an icon";
+  const currentLabel = current
+    ? iconLabel(current)
+    : fallback
+      ? `${iconLabel(fallback)} (default)`
+      : "Choose an icon";
   return (
     <div>
       <span className="block p-1 text-sm font-semibold text-white">{label}:</span>
@@ -294,8 +302,8 @@ const EntityIconPicker = ({ label = "Icon", context = "position", value, onChang
               "hover:border-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40",
             )}
           >
-            <EntityIconBadge icon={value} className="h-7 w-7" />
-            <span className={cn(!value && "text-gray-400")}>{currentLabel}</span>
+            <EntityIconBadge icon={displayedIcon ?? ""} className="h-7 w-7" />
+            <span className={cn(!displayedIcon && "text-gray-400")}>{currentLabel}</span>
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-80 rounded-md border border-gray-700 bg-gray-900 p-3 shadow-xl">

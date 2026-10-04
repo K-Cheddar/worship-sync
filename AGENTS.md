@@ -103,6 +103,16 @@ Tests represent behavior contracts. Do not rewrite an existing expectation merel
 
 If that cannot be established, fix the implementation or clarify the intended behavior instead of weakening the test. Use focused tests for changed logic and risk-appropriate validation for live display, media, overlay, timer, synchronization, and persistence changes. State verification gaps plainly.
 
+### Test execution strategy
+
+During implementation and normal agent verification, prefer focused tests for changed source files, changed behavior, directly affected consumers, and likely regression surfaces. For client changes, use Jest related-test selection such as `--findRelatedTests` where appropriate. Always run directly modified or newly added test files.
+
+Broaden verification when a change affects shared or cross-cutting behavior, including global or shared state, shared utilities, authentication or permissions, persistence, synchronization, display rendering, media, overlays, timers, Electron or window behavior, and common data contracts. If a focused test fails or reveals unexpected behavior, expand verification before handoff.
+
+Do not routinely run the full `npm run checks`, the complete client Jest suite, or the complete server test suite during normal Codex implementation work. GitHub CI remains responsible for exhaustive repository-wide verification. A full local suite is appropriate when the user asks for full verification, focused testing is inadequate for a sufficiently cross-cutting change, focused tests reveal suspicious behavior that needs broader investigation, or CI is unavailable and complete verification is necessary.
+
+In the existing `Verified (required)` completion section, report the exact focused tests and checks actually run. Do not imply that the full suite passed unless it was run.
+
 Async and stateful regression tests must exercise interruption boundaries, including identity or route changes during pending work, durable success followed by later failure and retry, live events during loading, and stale responses after newer state is active. Reproduce the production transition and meaningful values; convenient test values that remove the failure condition are not valid coverage.
 
 ## Completion contract
@@ -159,4 +169,6 @@ A change is ready only when it is correct, low-regression, understandable, respo
 
 ## Brand voice
 
-For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `$brand-voice`.
+For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-facing copy, use `$brand-voice`.
+
+For meaningful user-visible changes, add or update a fragment under `release-notes/` following `release-notes/README.md` and use `$brand-voice`. Internal-only changes do not need release notes. Do not use `CHANGELOG.md` for product copy.

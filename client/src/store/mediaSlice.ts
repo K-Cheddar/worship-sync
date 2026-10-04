@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
-import type { DBMedia, MediaFolder, MediaType } from "../types";
+import type { MediaFolder, MediaType } from "../types";
 import { normalizeMediaDoc } from "../utils/mediaDocUtils";
 
 export type MediaLoadStatus = "idle" | "loading" | "ready" | "error";
@@ -74,11 +74,9 @@ export const mediaItemsSlice = createSlice({
      */
     updateMediaListFromRemote: (state, action: PayloadAction<MediaType[]>) => {
       const { list, folders } = normalizeMediaDoc({
-        _id: "media",
-        _rev: "",
         list: action.payload,
         folders: state.folders,
-      } satisfies DBMedia);
+      });
       state.list = list;
       state.folders = folders;
       state.isInitialized = true;

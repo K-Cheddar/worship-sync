@@ -32,4 +32,22 @@ describe("service equipment visuals", () => {
 
     expect(screen.getByLabelText("Blue · Wireless beltpack")).toBeInTheDocument();
   });
+
+  it("uses the catalog color for the whole IEM pill", () => {
+    render(
+      <ServiceEquipmentChip equipment={{
+        id: "iem-red",
+        category: "iem",
+        name: "Red",
+        subtype: "wireless-beltpack",
+        color: "#ef4444",
+      }} />,
+    );
+
+    expect(screen.getByLabelText("Red · Wireless beltpack")).toHaveStyle({
+      borderColor: "rgba(239, 68, 68, 0.45)",
+      backgroundColor: "rgba(239, 68, 68, 0.14)",
+      color: "rgb(255, 255, 255)",
+    });
+  });
 });

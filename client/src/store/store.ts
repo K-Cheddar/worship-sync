@@ -64,14 +64,13 @@ import {
   DBPreferences,
   DBQuickLinksDoc,
   DBMonitorSettingsDoc,
-  DBMediaRouteFoldersDoc,
-  MEDIA_ROUTE_FOLDERS_POUCH_ID,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
   DBServices,
   FormattedTextDisplayInfo,
   getCreditsDocId,
+  getControllerMediaRouteFoldersDocId,
   OverlayInfo,
   Presentation,
   ServiceTime,
@@ -129,6 +128,7 @@ import {
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+import { patchControllerMediaRouteFolder } from "../utils/controllerMediaRouteFolders";
 
 /**
  * Store wipes that drop presentation/session slices.
@@ -159,6 +159,7 @@ export function broadcastItemUpdate(doc: DBItem) {
     data: { docs: doc, hostId: globalHostId },
   });
 }
+
 
 const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
@@ -2011,9 +2012,6 @@ listenerMiddleware.startListening({
           const broadcastDocs = changedDocs.filter((value) => {
             if (!value || typeof value !== "object") return true;
             const doc = value as { _id?: unknown };
-            if (doc._id === "media") {
-              return remoteChanges.itemIds.size === 0 && remoteChanges.folderIds.size === 0;
-            }
             if (typeof doc._id !== "string") return true;
             if (doc._id.startsWith("media-item:")) {
               return !remoteChanges.itemIds.has(doc._id.slice("media-item:".length));
@@ -2164,7 +2162,7 @@ listenerMiddleware.startListening({
   },
 });
 
-// Sync media cache when media list is updated from remote (media doc)
+// Sync media cache when v2 media items are updated from remote.
 listenerMiddleware.startListening({
   predicate: (action) =>
     mediaItemsSlice.actions.syncMediaFromRemote.match(action) ||
@@ -2235,6 +2233,11 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.setTab,
       preferencesSlice.actions.setScrollbarWidth,
       preferencesSlice.actions.updatePreferencesFromRemote,
+      preferencesSlice.actions.setMediaRouteFolder,
+      preferencesSlice.actions.initiateMediaRouteFolders,
+      preferencesSlice.actions.updateControllerMediaRouteFoldersFromRemote,
+      preferencesSlice.actions.markMediaRouteFolderPersisted,
+      preferencesSlice.actions.repairActiveMediaRouteFolders,
       preferencesSlice.actions.replaceMediaReferencesInPreferences,
       preferencesSlice.actions.setIsInitialized,
     );
@@ -2256,7 +2259,7 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
 
-      const { preferences, monitorSettings, quickLinks, mediaRouteFolders } = (
+      const { preferences, monitorSettings, quickLinks } = (
         listenerApi.getState() as RootState
       ).undoable.present.preferences;
 
@@ -2359,35 +2362,10 @@ listenerMiddleware.startListening({
           _rev: (monRes as { rev: string }).rev,
         } as DBMonitorSettingsDoc;
 
-        const f0 = (await getDoc(
-          MEDIA_ROUTE_FOLDERS_POUCH_ID,
-        )) as DBMediaRouteFoldersDoc | null;
-        const foldToPut = (
-          f0
-            ? {
-                ...f0,
-                mediaRouteFolders: { ...mediaRouteFolders },
-                updatedAt: now,
-                docType: "mediaRouteFolders" as const,
-              }
-            : {
-                _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-                mediaRouteFolders: { ...mediaRouteFolders },
-                createdAt: now,
-                updatedAt: now,
-                docType: "mediaRouteFolders" as const,
-              }
-        ) as DBMediaRouteFoldersDoc;
-        const foldRes = await pouchDb.put(foldToPut);
-        const foldOut = {
-          ...foldToPut,
-          _rev: (foldRes as { rev: string }).rev,
-        } as DBMediaRouteFoldersDoc;
-
         safePostMessage({
           type: "update",
           data: {
-            docs: [prefsOut, qlOut, monOut, foldOut],
+            docs: [prefsOut, qlOut, monOut],
             hostId: globalHostId,
           },
         });
@@ -2400,6 +2378,33 @@ listenerMiddleware.startListening({
           AUTOSAVE_DEBOUNCE_KEYS.preferences,
         ),
       );
+    }
+  },
+});
+
+// Media route navigation owns one small scoped document and does not autosave
+// the unrelated preferences cluster. Each action captures its profile ID.
+const mediaFolderSaveQueues = new Map<string, Promise<void>>();
+listenerMiddleware.startListening({
+  actionCreator: preferencesSlice.actions.setMediaRouteFolder,
+  effect: async (action, listenerApi) => {
+    if (!db) return;
+    const { controllerProfileId, key, folderId } = action.payload;
+    if ((listenerApi.getState() as RootState).undoable.present.preferences.mediaRouteFoldersControllerProfileId !== controllerProfileId) return;
+    const id = getControllerMediaRouteFoldersDocId(controllerProfileId);
+    const previous = mediaFolderSaveQueues.get(id) ?? Promise.resolve();
+    const save = previous.catch(() => undefined).then(async () => {
+      const saved = await patchControllerMediaRouteFolder(db!, controllerProfileId, key, folderId);
+      listenerApi.dispatch(preferencesSlice.actions.markMediaRouteFolderPersisted({ controllerProfileId, key, folderId }));
+      safePostMessage({ type: "update", data: { docs: [saved], hostId: globalHostId } });
+    });
+    mediaFolderSaveQueues.set(id, save);
+    try {
+      await save;
+    } catch (error) {
+      console.error("Could not save controller media folder selection", error);
+    } finally {
+      if (mediaFolderSaveQueues.get(id) === save) mediaFolderSaveQueues.delete(id);
     }
   },
 });

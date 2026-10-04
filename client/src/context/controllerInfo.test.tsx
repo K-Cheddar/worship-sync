@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../store/store";
@@ -24,6 +24,8 @@ const liveSyncHandles: Array<{
 }> = [];
 const liveSyncBatchSizes: number[] = [];
 const liveSyncOwners: string[] = [];
+const liveSyncOptions: Array<Record<string, unknown>> = [];
+const replicationCalls: Array<{ name: string; options?: Record<string, unknown> }> = [];
 
 const createSyncHandle = (completeAfterSetup = false) => {
   const listeners = new Map<string, (value?: any) => void>();
@@ -46,15 +48,19 @@ jest.mock("pouchdb-browser", () => {
       name,
       destroy: jest.fn().mockResolvedValue(undefined),
       bulkDocs: jest.fn().mockResolvedValue([]),
-      sync: jest.fn((_remote: unknown, options?: { batch_size?: number }) => {
+      sync: jest.fn((_remote: unknown, options?: Record<string, unknown>) => {
         liveSyncOwners.push(name);
+        liveSyncOptions.push(options ?? {});
         if (typeof options?.batch_size === "number") liveSyncBatchSizes.push(options.batch_size);
         const handle = createSyncHandle();
         liveSyncHandles.push(handle);
         return handle;
       }),
       replicate: {
-        to: jest.fn(() => createSyncHandle(true)),
+        to: jest.fn((_target: unknown, options?: Record<string, unknown>) => {
+          replicationCalls.push({ name, options });
+          return createSyncHandle(true);
+        }),
       },
       changes: jest.fn(() => createSyncHandle()),
     };
@@ -76,6 +82,7 @@ const Probe = () => {
       <div data-testid="status">{context?.connectionStatus.status}</div>
       <div data-testid="message">{context?.connectionStatus.message}</div>
       <div data-testid="has-db">{context?.db ? "yes" : "no"}</div>
+      <button type="button" onClick={() => context?.pullFromRemote()}>Pull</button>
     </div>
   );
 };
@@ -86,6 +93,8 @@ describe("ControllerInfoProvider", () => {
     liveSyncHandles.length = 0;
     liveSyncBatchSizes.length = 0;
     liveSyncOwners.length = 0;
+    liveSyncOptions.length = 0;
+    replicationCalls.length = 0;
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -146,6 +155,8 @@ describe("controller replication 413 batch policy", () => {
     liveSyncHandles.length = 0;
     liveSyncBatchSizes.length = 0;
     liveSyncOwners.length = 0;
+    liveSyncOptions.length = 0;
+    replicationCalls.length = 0;
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -193,6 +204,9 @@ describe("controller replication 413 batch policy", () => {
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("failed"));
     expect(liveSyncHandles).toHaveLength(6);
     expect(liveSyncBatchSizes).toEqual([40, 20, 10, 5, 2, 1]);
+    expect(liveSyncOptions[0]).toEqual(expect.objectContaining({
+      selector: { _id: { $ne: "media" } },
+    }));
     expect(smallestBatch.cancel).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("message")).toHaveTextContent("one database document is too large");
   });
@@ -219,6 +233,34 @@ describe("controller replication 413 batch policy", () => {
     expect(liveSyncHandles[1].cancel).not.toHaveBeenCalled();
     act(() => liveSyncHandles[1].emit("active"));
     expect(screen.getByTestId("status")).toHaveTextContent("connected");
+  });
+
+  it("excludes the legacy media aggregate from startup and reconnect pulls", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+    await waitFor(() => expect(liveSyncHandles).toHaveLength(1));
+
+    const startupPull = replicationCalls.find(({ options }) => options?.batch_size === 150);
+    expect(startupPull?.options).toEqual(expect.objectContaining({
+      selector: { _id: { $ne: "media" } },
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Pull" }));
+    await waitFor(() => expect(replicationCalls.filter(({ options }) => options?.retry === false)).toHaveLength(1));
+    expect(replicationCalls.find(({ options }) => options?.retry === false)?.options).toEqual(expect.objectContaining({
+      selector: { _id: { $ne: "media" } },
+    }));
   });
 
   it("does not resume an old church sync after renewal finishes", async () => {

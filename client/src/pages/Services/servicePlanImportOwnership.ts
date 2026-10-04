@@ -19,7 +19,11 @@ import {
   createServicePlanTextResource,
 } from "./servicePlanResources";
 import { getBibleImportDisplayName } from "../../utils/servicePlanningBibleImport";
-import { stripServicePlanAssigneeIdentityPreservingEquipment } from "./servicePlanAssigneeUtils";
+import {
+  claimServicePlanAssigneeSlot,
+  hasServicePlanAssigneeEquipment,
+  stripServicePlanAssigneeIdentityPreservingEquipment,
+} from "./servicePlanAssigneeUtils";
 
 type Part = ServicePlanImportAmbiguity["parts"][number];
 
@@ -155,15 +159,35 @@ export const applyReviewedServicePlanParts = (
 
   nextParts.forEach((part) => {
     if (part.destination === "assignee") {
+      const managed = part.managed?.kind === "assignee"
+        ? assignees.find((person) => person.id === part.managed!.id && JSON.stringify({ name: person.name }) === part.managed!.fingerprint)
+        : undefined;
+      if (managed) {
+        if (!hasServicePlanAssigneeEquipment(managed)) {
+          const repaired = claimServicePlanAssigneeSlot(
+            assignees,
+            { id: generateRandomId(), name: part.value },
+            { replaceAssigneeId: managed.id, reuseSameName: false },
+          );
+          if (repaired.claimedSlot) {
+            assignees = repaired.assignees;
+            part.managed = { kind: "assignee", id: repaired.assignee.id, fingerprint: JSON.stringify({ name: repaired.assignee.name }) };
+            return;
+          }
+        }
+        const updated = { ...managed, name: part.value };
+        assignees = assignees.map((person) => person.id === managed.id ? updated : person);
+        part.managed = { kind: "assignee", id: updated.id, fingerprint: JSON.stringify({ name: updated.name }) };
+        return;
+      }
       const existing = assignees.find((person) => person.name?.trim().toLocaleLowerCase() === part.value.trim().toLocaleLowerCase());
       if (existing) {
-        if (part.managed?.kind === "assignee" && part.managed.id === existing.id) return;
         delete part.managed;
         return; // Matching operator-owned assignee is reused, never claimed.
       }
-      const created = { id: generateRandomId(), name: part.value };
-      assignees = [...assignees, created];
-      part.managed = { kind: "assignee", id: created.id, fingerprint: JSON.stringify({ name: created.name }) };
+      const placed = claimServicePlanAssigneeSlot(assignees, { id: generateRandomId(), name: part.value });
+      assignees = placed.assignees;
+      part.managed = { kind: "assignee", id: placed.assignee.id, fingerprint: JSON.stringify({ name: placed.assignee.name }) };
       return;
     }
 
@@ -334,11 +358,41 @@ export const reconcileReviewedServicePlanParts = (
       const existing = part.managed?.kind === "assignee"
         ? getServicePlanElementAssignees(next).find((person) => person.id === part.managed!.id)
         : undefined;
-      const id = existing?.id || generateRandomId();
-      const person = { ...existing, id, name: part.value };
       const assignees = getServicePlanElementAssignees(next);
-      next.assignees = existing ? assignees.map((item) => item === existing ? person : item) : [...assignees, person];
-      return { ...part, managed: { kind: "assignee" as const, id, fingerprint: JSON.stringify({ name: person.name }) } };
+      if (existing) {
+        if (!hasServicePlanAssigneeEquipment(existing)) {
+          const repaired = claimServicePlanAssigneeSlot(
+            assignees,
+            { id: generateRandomId(), name: part.value },
+            { replaceAssigneeId: existing.id, reuseSameName: false },
+          );
+          if (repaired.claimedSlot) {
+            next.assignees = repaired.assignees;
+            return { ...part, managed: { kind: "assignee" as const, id: repaired.assignee.id, fingerprint: JSON.stringify({ name: repaired.assignee.name }) } };
+          }
+        }
+        const person = { ...existing, name: part.value };
+        next.assignees = assignees.map((item) => item === existing ? person : item);
+        return { ...part, managed: { kind: "assignee" as const, id: person.id, fingerprint: JSON.stringify({ name: person.name }) } };
+      }
+      const sameName = assignees.find((person) => person.name?.trim().toLocaleLowerCase() === part.value.trim().toLocaleLowerCase());
+      if (sameName) return { ...part, managed: undefined };
+
+      // A verified managed row without equipment plus a remaining blank slot
+      // is the unambiguous shape produced by the former append-only importer.
+      const priorManaged = part.managed?.kind === "assignee"
+        ? getServicePlanElementAssignees(next).find((person) => person.id === part.managed!.id)
+        : undefined;
+      const replaceAssigneeId = priorManaged && !hasServicePlanAssigneeEquipment(priorManaged)
+        ? priorManaged.id
+        : undefined;
+      const placed = claimServicePlanAssigneeSlot(
+        assignees,
+        { id: generateRandomId(), name: part.value },
+        { ...(replaceAssigneeId ? { replaceAssigneeId } : {}) },
+      );
+      next.assignees = placed.assignees;
+      return { ...part, managed: { kind: "assignee" as const, id: placed.assignee.id, fingerprint: JSON.stringify({ name: placed.assignee.name }) } };
     }
     if ((part.kind === "description" || part.kind === "url") && (part.destination === "resource" || part.destination === "content")) {
       const incomingResource = (incoming.resources || []).find((resource) =>
@@ -401,7 +455,12 @@ export const reconcileReviewedServicePlanParts = (
       const installed = installIncoming({ ...freshPart, managed: oldPart.destination === freshPart.destination ? managed : undefined });
       incomingParts[incomingIndex] = installed;
     } else {
-      incomingParts[incomingIndex] = { ...freshPart, destination: oldPart.destination, managed };
+      const unchanged = { ...freshPart, destination: oldPart.destination, managed };
+      // Re-run source-managed assignee placement on refresh so old append-only
+      // rows can be safely folded back into a matching equipment slot.
+      incomingParts[incomingIndex] = managed.kind === "assignee"
+        ? installIncoming(unchanged)
+        : unchanged;
     }
   });
 

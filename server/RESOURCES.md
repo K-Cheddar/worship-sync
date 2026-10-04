@@ -1,5 +1,30 @@
 # Church resources
 
+ChurchResources have one canonical metadata record and one of two sources:
+
+- `sourceType: "upload"` stores file metadata and a private R2 key. Legacy
+  records without `sourceType` are treated as uploads.
+- `sourceType: "external"` stores the original public URL and server-resolved
+  provider metadata. It does not store an R2 key or count toward R2 usage.
+
+External links can be previewed when the provider permits public access. Phase
+one does not use provider sign-in, private user credentials, or OAuth. When a
+provider blocks fetching or embedding, WorshipSync keeps the original URL and
+offers the shared preview fallback and external-open action.
+
+Future indexing should resolve either source through the provider-neutral
+resource boundary, extract text, and store chunks outside the ChurchResource
+metadata document:
+
+```text
+ChurchResource -> uploaded R2 content | external provider content
+              -> content extraction -> text/chunks -> semantic search / AI
+```
+
+`contentIndex` is reserved for small lifecycle/version metadata. Do not store
+large extracted text in Firestore; keep text and chunks in a separately managed
+index store so resource metadata and synchronization payloads stay bounded.
+
 ChurchResource files use the private Cloudflare R2 bucket configured by:
 
 ```text

@@ -13,6 +13,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import Input from "../../../components/Input/Input";
 import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
+import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
 import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../../components/ServiceEquipmentIcon";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -179,7 +180,10 @@ const PositionManager = ({
     () =>
       data.qualificationAreas
         .filter((area) => area.teamId === teamId && isActive(area))
-        .map((area) => ({ label: area.name, value: area.areaId })),
+        .map((area) => ({
+          label: <span className="inline-flex items-center gap-2"><EntityIconBadge icon={area.icon || "Award"} className="size-5 shrink-0" iconClassName="size-3" /><span>{area.name}</span></span>,
+          value: area.areaId,
+        })),
     [data.qualificationAreas, teamId],
   );
 

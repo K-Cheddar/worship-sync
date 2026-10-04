@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CircleAlert, Info, ScrollText } from "lucide-react";
+import { CircleAlert, Info, Sparkles } from "lucide-react";
 import Icon from "../components/Icon/Icon";
-import ChangelogModal from "../components/ChangelogModal/ChangelogModal";
+import WhatsNewModal from "../components/WhatsNewModal/WhatsNewModal";
 import AboutModal from "../components/AboutModal/AboutModal";
 import type { MenuItemType } from "../types";
 import { useElectronWindows } from "./useElectronWindows";
@@ -85,8 +85,8 @@ export const useAboutChangelogMenu = (): {
       {
         element: (
           <div className="flex items-center gap-2 max-md:min-h-12">
-            <Icon svg={ScrollText} color="#d1d5dc" />
-            Changelog
+            <Icon svg={Sparkles} color="#d1d5dc" />
+            What's New
           </div>
         ),
         onClick: () => setIsChangelogOpen(true),
@@ -110,7 +110,7 @@ export const useAboutChangelogMenu = (): {
   const aboutChangelogModals = useMemo(
     () => (
       <>
-        <ChangelogModal
+        <WhatsNewModal
           isOpen={isChangelogOpen}
           onClose={() => setIsChangelogOpen(false)}
         />

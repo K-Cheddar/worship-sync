@@ -16,6 +16,7 @@ import { MediaFolder, MediaRouteKey, MediaType } from "../../types";
 import {
   addItemToMediaList,
   removeItemFromMediaList,
+  removeMediaItemFromRemote,
   setMediaListAndFolders,
   updateMediaItemFields,
 } from "../../store/mediaSlice";
@@ -92,6 +93,8 @@ import { getControllerOutputs } from "../../utils/controllerProfiles";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 import { getControllerItemPath } from "../../utils/outlineSlideSections";
 import { RootState } from "../../store/store";
+import { broadcastControllerMediaRouteFoldersUpdate, repairPersistedMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
+import { repairActiveMediaRouteFolders } from "../../store/preferencesSlice";
 import {
   updateProjector,
   selectOutputSlot,
@@ -105,8 +108,8 @@ import { addItemToItemList, ensureCanvaItemInItemList } from "../../store/itemLi
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { createNewFreeForm, runCanvaCustomItemCreationOnce } from "../../utils/itemUtil";
 import { createSlideFromMedia } from "../../utils/slideCreation";
-import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
-import { loadMediaLibrary } from "../../utils/mediaDocUtils";
+import { deleteMediaItemAtRevisionFromPouch, flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
+import { loadMediaLibrary, readMediaItemForDeletion } from "../../utils/mediaDocUtils";
 import { mediaLibraryFlushFailureMessage } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import { ActionCreators } from "redux-undo";
@@ -133,6 +136,8 @@ import { buildVideoPlaybackCueForSend } from "../../utils/videoBackgroundPlaybac
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useMediaLibraryFocus } from "./useMediaLibraryFocus";
 import { replaceMediaReferencesInPresentation as replacePresentationMediaReferences } from "../../store/presentationSlice";
+
+const EMPTY_MEDIA_ROUTE_FOLDERS: Partial<Record<MediaRouteKey, string | null>> = {};
 
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
@@ -251,6 +256,7 @@ export function useMediaLibraryController({
     selectedPreference,
     selectedQuickLink,
     mediaRouteFolders,
+    mediaRouteFoldersControllerProfileId,
     focusMediaId,
     preferences: {
       defaultFreeFormBackgroundBrightness,
@@ -266,6 +272,10 @@ export function useMediaLibraryController({
    * screen.
    */
   const controllerProfile = useActiveControllerProfile();
+  const activeMediaRouteFolders =
+    mediaRouteFoldersControllerProfileId === controllerProfile.id
+      ? mediaRouteFolders
+      : EMPTY_MEDIA_ROUTE_FOLDERS;
   const displayOutputs = useSelector(selectDisplayOutputs);
   const projectorTargets = useMemo(
     () =>
@@ -293,9 +303,9 @@ export function useMediaLibraryController({
 
   const routeKey = getMediaRouteKey(location.pathname, pageMode, item.type);
   const selectedLibraryFilter =
-    mediaRouteFolders[routeKey] === undefined
+    activeMediaRouteFolders[routeKey] === undefined
       ? null
-      : mediaRouteFolders[routeKey]!;
+      : activeMediaRouteFolders[routeKey]!;
 
   const [typeFilter, setTypeFilter] = useState<MediaTypeFilterValue>("all");
   const [originFilter, setOriginFilter] =
@@ -319,16 +329,9 @@ export function useMediaLibraryController({
   /** Fullscreen Media modal only; panel grid shows names only while searching. */
   const [showName, setShowName] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{
-    isUploading: boolean;
-    progress: number;
-  }>({ isUploading: false, progress: 0 });
   const mediaUploadInputRef = useRef<MediaUploadInputRef>(null);
   const mediaListRef = useRef<HTMLElement>(null);
   const mediaGridRef = useRef<VirtualMediaGridHandle>(null);
-  const uploadPollingIntervalRef = useRef<ReturnType<
-    typeof setInterval
-  > | null>(null);
   const lastBrowseFolderIdRef = useRef<string>(MEDIA_LIBRARY_ROOT_VIEW);
   const [folderRenameOpen, setFolderRenameOpen] = useState(false);
   const [mediaRenameOpen, setMediaRenameOpen] = useState(false);
@@ -459,6 +462,7 @@ export function useMediaLibraryController({
     selectedLibraryFilter,
     pendingDeletionIds,
     deviceId,
+    controllerProfileId: controllerProfile.id,
     routeKey,
     mediaGridRef,
     setSearchTerm,
@@ -512,9 +516,9 @@ export function useMediaLibraryController({
   const navigateToFolder = useCallback(
     (folderId: string | null) => {
       clearSelection();
-      dispatch(setMediaRouteFolder({ key: routeKey, folderId }));
+      dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key: routeKey, folderId }));
     },
-    [clearSelection, dispatch, routeKey],
+    [clearSelection, controllerProfile.id, dispatch, routeKey],
   );
 
   const handleShowAllChange = useCallback(
@@ -523,17 +527,18 @@ export function useMediaLibraryController({
         if (selectedLibraryFilter !== null) {
           lastBrowseFolderIdRef.current = selectedLibraryFilter;
         }
-        dispatch(setMediaRouteFolder({ key: routeKey, folderId: null }));
+        dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key: routeKey, folderId: null }));
       } else {
         dispatch(
           setMediaRouteFolder({
+            controllerProfileId: controllerProfile.id,
             key: routeKey,
             folderId: lastBrowseFolderIdRef.current,
           }),
         );
       }
     },
-    [dispatch, routeKey, selectedLibraryFilter],
+    [controllerProfile.id, dispatch, routeKey, selectedLibraryFilter],
   );
 
   const handleGoUp = useCallback(() => {
@@ -1208,43 +1213,176 @@ export function useMediaLibraryController({
     async (
       rows: MediaType[],
     ): Promise<
-      { phase: "sweep_failed" } | { phase: "ok"; providerFailed: MediaType[] }
+      {
+        phase: "sweep_failed" | "library_failed" | "ok";
+        deletedRows: MediaType[];
+        failedRows: MediaType[];
+        providerFailed: MediaType[];
+      }
     > => {
-      if (rows.length === 0) return { phase: "ok", providerFailed: [] };
+      if (rows.length === 0) return { phase: "ok", deletedRows: [], failedRows: [], providerFailed: [] };
       if (!db) {
-        showToast("Could not update references before delete.", "error");
-        return { phase: "sweep_failed" };
+        return { phase: "library_failed", deletedRows: [], failedRows: rows, providerFailed: [] };
       }
-      const sweep = await sweepMediaReferencesBeforeDelete(
-        db,
-        new Set(rows.map((r) => r.id)),
-        rows,
-      );
-      if (!sweep.ok) {
-        showToast(sweep.message || "Could not update references before delete.", "error");
-        return { phase: "sweep_failed" };
+      const deletedRows: MediaType[] = [];
+      const failedRows: MediaType[] = [];
+      const providerFailed: MediaType[] = [];
+      let sweepFailed = false;
+      const attemptedCanvaCleanupKeys = new Set<string>();
+      for (const requestedRow of rows) {
+        let completed = false;
+        for (let attempt = 0; attempt < 3 && !completed; attempt += 1) {
+          let authoritative: Awaited<ReturnType<typeof readMediaItemForDeletion>>;
+          try {
+            authoritative = await readMediaItemForDeletion(db, requestedRow.id);
+          } catch (error) {
+            console.error("Could not load authoritative media before deletion:", {
+              mediaId: requestedRow.id,
+              error,
+            });
+            failedRows.push(requestedRow);
+            completed = true;
+            break;
+          }
+          if (!authoritative) {
+            // Another controller already removed this row. Never clean up a provider
+            // asset using only the stale UI snapshot.
+            dispatch(removeMediaItemFromRemote(requestedRow.id));
+            deletedRows.push(requestedRow);
+            completed = true;
+            break;
+          }
+
+          let sweep: Awaited<ReturnType<typeof sweepMediaReferencesBeforeDelete>>;
+          try {
+            sweep = await sweepMediaReferencesBeforeDelete(
+              db,
+              new Set([requestedRow.id]),
+              [authoritative.item],
+            );
+          } catch (error) {
+            console.error("Media reference cleanup could not complete; library deletion was stopped:", error);
+            sweepFailed = true;
+            failedRows.push(requestedRow);
+            completed = true;
+            break;
+          }
+          if (!sweep.ok) {
+            console.error("Media reference cleanup failed; library deletion was stopped:", {
+              failedDocIds: sweep.failedDocIds,
+              message: sweep.message,
+              rollbackStatus: sweep.rollbackStatus,
+            });
+            sweepFailed = true;
+            failedRows.push(requestedRow);
+            completed = true;
+            break;
+          }
+
+          try {
+            const result = await deleteMediaItemAtRevisionFromPouch(db, authoritative.doc);
+            // A concurrent tombstone is idempotent. The reference sweep is safe to
+            // keep, but cleanup data is not ours to infer from the old row.
+            if (result === "missing") {
+              dispatch(removeMediaItemFromRemote(requestedRow.id));
+              deletedRows.push(requestedRow);
+              completed = true;
+              break;
+            }
+            dispatch(removeMediaItemFromRemote(requestedRow.id));
+            deletedRows.push(authoritative.item);
+            if (getCanvaMediaSource(authoritative.item)) {
+              const row = authoritative.item;
+              const cleanupKey = getCanvaProviderCleanupKey(row);
+              const identity = getCanvaProviderIdentity(row);
+              const isStillReferenced = (items: MediaType[]) =>
+                Boolean(identity) && items.some((item) => getCanvaProviderIdentity(item) === identity);
+              if (!attemptedCanvaCleanupKeys.has(cleanupKey)) {
+                let stillReferenced = isStillReferenced(getCurrentMediaList());
+                if (!stillReferenced) {
+                  try {
+                    const latestLibrary = await loadMediaLibrary(db);
+                    stillReferenced = isStillReferenced(latestLibrary.list);
+                  } catch (error) {
+                    console.error("Could not verify remaining Canva media before provider cleanup:", {
+                      mediaId: row.id,
+                      error,
+                    });
+                    providerFailed.push(row);
+                    attemptedCanvaCleanupKeys.add(cleanupKey);
+                    stillReferenced = true;
+                  }
+                }
+                if (!stillReferenced) {
+                  attemptedCanvaCleanupKeys.add(cleanupKey);
+                  if (!(await deleteCanvaProvider(row))) providerFailed.push(row);
+                }
+              }
+            } else {
+              providerFailed.push(...await deleteFromProviders([authoritative.item]));
+            }
+            completed = true;
+          } catch (error) {
+            const isConflict = (error as { status?: number })?.status === 409 ||
+              (error as { name?: string })?.name === "conflict";
+            const rollbackStatus = await sweep.rollback?.() ?? "uncertain";
+            if (rollbackStatus === "uncertain") {
+              console.error("Media deletion stopped because reference rollback was uncertain:", {
+                mediaId: requestedRow.id,
+                error,
+              });
+              failedRows.push(requestedRow);
+              sweepFailed = true;
+              completed = true;
+              break;
+            }
+            if (isConflict && attempt < 2) continue;
+            console.error("Could not tombstone the authoritative media revision:", {
+              mediaId: requestedRow.id,
+              error,
+            });
+            failedRows.push(requestedRow);
+            completed = true;
+          }
+        }
       }
-      const providerFailed = await deleteFromProviders(rows);
-      return { phase: "ok", providerFailed };
+
+      return {
+        phase: failedRows.length > 0
+          ? (sweepFailed && deletedRows.length === 0 ? "sweep_failed" : "library_failed")
+          : "ok",
+        deletedRows,
+        failedRows,
+        providerFailed,
+      };
     },
-    [db, deleteFromProviders, showToast],
+    [db, deleteCanvaProvider, deleteFromProviders, dispatch, getCurrentMediaList],
   );
 
   const handleDeleteFolderKeepContents = useCallback(
-    (folderId: string) => {
+    async (folderId: string) => {
       const target = folders.find((f) => f.id === folderId);
       const fallback =
         target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
-        mediaRouteFolders,
+        activeMediaRouteFolders,
         new Set([folderId]),
         fallback,
       );
+      dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
       for (const key of Object.keys(repairs) as MediaRouteKey[]) {
-        const nextFolder = repairs[key];
-        if (nextFolder !== undefined) {
-          dispatch(setMediaRouteFolder({ key, folderId: nextFolder }));
+        const folderId = repairs[key];
+        if (folderId !== undefined) {
+          dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId }));
         }
+      }
+      try {
+        if (!db) throw new Error("Media database is unavailable");
+        const docs = await repairPersistedMediaRouteFolders(db, new Set([folderId]), fallback);
+        broadcastControllerMediaRouteFoldersUpdate(docs);
+      } catch (error) {
+        console.error("Could not repair saved media folder selections", error);
+        showToast("Could not update saved Media folders. Check your connection and try again.", "error");
       }
       const next = deleteFolderKeepContents(folderId, folders, list);
       dispatch(setMediaListAndFolders(next));
@@ -1262,7 +1400,7 @@ export function useMediaLibraryController({
         },
       );
     },
-    [db, dispatch, folders, list, mediaRouteFolders, showToast, store],
+    [activeMediaRouteFolders, controllerProfile.id, db, dispatch, folders, list, showToast, store],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -1296,7 +1434,7 @@ export function useMediaLibraryController({
       const fallback =
         target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
-        mediaRouteFolders,
+        activeMediaRouteFolders,
         subtree,
         fallback,
       );
@@ -1306,33 +1444,54 @@ export function useMediaLibraryController({
         next.removedMediaIds.includes(m.id),
       );
       const result = await removeMediaRowsAfterSweep(removedRows);
-      if (result.phase !== "ok") return false;
+      if (result.providerFailed.length > 0) {
+        setProviderRetryRows(result.providerFailed);
+        setShowProviderRetryModal(true);
+      }
+      if (result.phase === "sweep_failed") {
+        showToast("Could not clean up media references. The media was kept.", "error");
+        return false;
+      }
+      if (result.phase === "library_failed") {
+        showToast(
+          result.deletedRows.length > 0
+            ? `${result.deletedRows.length} ${result.deletedRows.length === 1 ? "item was" : "items were"} removed. ${result.failedRows.length} could not be removed from the library.`
+            : "Could not remove media from the library. The media was kept.",
+          "error",
+        );
+        return false;
+      }
 
+      dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
       for (const key of Object.keys(repairs) as MediaRouteKey[]) {
-        const nextFolder = repairs[key];
-        if (nextFolder !== undefined) {
-          dispatch(setMediaRouteFolder({ key, folderId: nextFolder }));
+        const folderId = repairs[key];
+        if (folderId !== undefined) {
+          dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId }));
         }
+      }
+      try {
+        if (!db) throw new Error("Media database is unavailable");
+        const docs = await repairPersistedMediaRouteFolders(db, subtree, fallback);
+        broadcastControllerMediaRouteFoldersUpdate(docs);
+      } catch (error) {
+        console.error("Could not repair saved media folder selections", error);
+        showToast("Could not update saved Media folders. Check your connection and try again.", "error");
       }
       dispatch(
         setMediaListAndFolders({
-          list: next.list,
+          list: getCurrentMediaList(),
           folders: next.folders,
         }),
       );
       const flushResult = await flushMediaLibraryDocToPouch(
         db,
-        next.list,
+        getCurrentMediaList(),
         next.folders,
         () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
-        { list, folders },
+        { list: getCurrentMediaList(), folders },
       );
       if (!flushResult.ok) {
         showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
-      }
-      if (result.providerFailed.length > 0) {
-        setProviderRetryRows(result.providerFailed);
-        setShowProviderRetryModal(true);
       }
       clearSelection();
       dispatch(ActionCreators.clearHistory());
@@ -1340,38 +1499,18 @@ export function useMediaLibraryController({
     },
     [
       folders,
+      controllerProfile.id,
       list,
       db,
       dispatch,
-      mediaRouteFolders,
+      activeMediaRouteFolders,
       removeMediaRowsAfterSweep,
       clearSelection,
       showToast,
       store,
+      getCurrentMediaList,
     ],
   );
-
-  // Poll upload status only while an upload is in progress; start/stop via MediaUploadInput callback
-  const handleUploadActiveChange = useCallback((active: boolean) => {
-    if (!active) {
-      if (uploadPollingIntervalRef.current) {
-        clearInterval(uploadPollingIntervalRef.current);
-        uploadPollingIntervalRef.current = null;
-      }
-      setUploadProgress({ isUploading: false, progress: 0 });
-      return;
-    }
-    if (uploadPollingIntervalRef.current) return;
-    uploadPollingIntervalRef.current = setInterval(() => {
-      const status = mediaUploadInputRef.current?.getUploadStatus();
-      if (status) {
-        setUploadProgress({
-          isUploading: status.isUploading,
-          progress: status.progress,
-        });
-      }
-    }, 500);
-  }, []);
 
   const dismissDeleteModal = useCallback(() => {
     setShowDeleteModal(false);
@@ -1391,7 +1530,7 @@ export function useMediaLibraryController({
           return next;
         });
         updateToast(toastId, {
-          message: "Media could not be deleted.",
+          message: "Could not save the media library. The media was kept.",
           variant: "error",
           persist: false,
           duration: 7000,
@@ -1408,52 +1547,24 @@ export function useMediaLibraryController({
             return next;
           });
           updateToast(toastId, {
-            message: "Media could not be deleted.",
+            message: result.phase === "sweep_failed"
+              ? "Could not clean up media references. The media was kept."
+              : result.deletedRows.length > 0
+                ? `${result.deletedRows.length} ${result.deletedRows.length === 1 ? "item was" : "items were"} removed. ${result.failedRows.length} could not be removed from the library.`
+                : "Could not remove media from the library. The media was kept.",
             variant: "error",
             persist: false,
             duration: 7000,
           });
-          return { succeeded: [], failed: rows };
-        }
-
-        const failedIds = new Set(result.providerFailed.map((row) => row.id));
-        const succeeded = rows.filter((row) => !failedIds.has(row.id));
-        const failed = rows.filter((row) => failedIds.has(row.id));
-        const updatedList = currentMediaListRef.current.filter(
-          (item) => !succeeded.some((row) => row.id === item.id),
-        );
-        const currentFolders = currentMediaFoldersRef.current;
-
-        dispatch(
-          setMediaListAndFolders({
-            list: updatedList,
-            folders: currentFolders,
-          }),
-        );
-
-        const flushResult = await flushMediaLibraryDocToPouch(
-          db,
-          updatedList,
-          currentFolders,
-        );
-        if (!flushResult.ok) {
-          showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
-          // Keep the optimistic rows hidden while the local library is out of
-          // sync. This also prevents a stale remote echo from making a
-          // provider-deleted asset look available again during reconciliation.
-          updateToast(toastId, {
-            message:
-              "Media deletion was not saved. The items remain pending until the library can be reconciled.",
-            variant: "error",
-            persist: true,
-            showCloseButton: true,
-          });
-          if (failed.length > 0) {
-            setProviderRetryRows(failed);
+          if (result.providerFailed.length > 0) {
+            setProviderRetryRows(result.providerFailed);
             setShowProviderRetryModal(true);
           }
-          return { succeeded, failed };
+          return { succeeded: result.deletedRows, failed: result.failedRows };
         }
+
+        const succeeded = result.deletedRows;
+        const failed = result.providerFailed;
 
         setPendingDeletionIds((current) => {
           const next = new Set(current);
@@ -1468,16 +1579,16 @@ export function useMediaLibraryController({
         updateToast(toastId, {
           message:
             failed.length > 0
-              ? `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted. ${failed.length} could not be deleted.`
+              ? `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} removed. ${failed.length} provider ${failed.length === 1 ? "asset needs" : "assets need"} cleanup.`
               : `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted`,
-          variant: failed.length > 0 ? "error" : "success",
+          variant: failed.length > 0 ? "warning" : "success",
           persist: false,
           duration: 7000,
         });
         if (succeeded.length > 0) dispatch(ActionCreators.clearHistory());
         return { succeeded, failed };
       } catch (error) {
-        console.error("Error deleting media:", error);
+        console.error("Unexpected error during media deletion:", error);
         setPendingDeletionIds((current) => {
           const next = new Set(current);
           rows.forEach((row) => next.delete(row.id));
@@ -1492,7 +1603,7 @@ export function useMediaLibraryController({
         return { succeeded: [], failed: rows };
       }
     },
-    [db, dispatch, removeMediaRowsAfterSweep, showToast, updateToast],
+    [db, dispatch, removeMediaRowsAfterSweep, updateToast],
   );
 
   const handleConfirmDelete = async () => {
@@ -1963,7 +2074,6 @@ export function useMediaLibraryController({
     isMediaExpanded,
     setSearchTerm,
     mediaUploadInputRef,
-    uploadProgress,
     requestMediaUpload,
     addNewBackground,
     addCanvaImage,
@@ -1973,7 +2083,6 @@ export function useMediaLibraryController({
     refreshCanvaImage,
     refreshCanvaVideo,
     cleanupCanvaAsset,
-    handleUploadActiveChange,
     isMediaLoading,
     hasMediaLoadError,
     isMediaReadOnly,

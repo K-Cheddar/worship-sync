@@ -10,6 +10,7 @@ import {
 import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
+import { RehearsalPlaybackProvider } from "../../components/RehearsalPlayer/RehearsalPlaybackContext";
 import { createMockGlobalContext } from "../../test/mocks";
 import {
   listServicePlanTemplates,
@@ -246,25 +247,27 @@ const editorTree = ({
       >
     }
   >
-    <ToastProvider>
-      <ServicePlanEditor
-        service={service}
-        occurrence={occurrenceProp}
-        members={members}
-        positions={positions}
-        teams={teams}
-        canEdit={canEdit}
-        initialEditing={initialEditing}
-        onBack={onBack}
-        planNavigation={planNavigation}
-        occurrenceSwitcher={occurrenceSwitcher}
-        teamEquipment={teamEquipment}
-        scheduledAssignmentRows={scheduledAssignmentRows}
-        mobileServingContent={mobileServingContent}
-        onPlanTimingChange={onPlanTimingChange}
-        templateResource={templateResource}
-      />
-    </ToastProvider>
+    <RehearsalPlaybackProvider>
+      <ToastProvider>
+        <ServicePlanEditor
+          service={service}
+          occurrence={occurrenceProp}
+          members={members}
+          positions={positions}
+          teams={teams}
+          canEdit={canEdit}
+          initialEditing={initialEditing}
+          onBack={onBack}
+          planNavigation={planNavigation}
+          occurrenceSwitcher={occurrenceSwitcher}
+          teamEquipment={teamEquipment}
+          scheduledAssignmentRows={scheduledAssignmentRows}
+          mobileServingContent={mobileServingContent}
+          onPlanTimingChange={onPlanTimingChange}
+          templateResource={templateResource}
+        />
+      </ToastProvider>
+    </RehearsalPlaybackProvider>
   </GlobalInfoContext.Provider>
 );
 
@@ -578,7 +581,7 @@ describe("ServicePlanEditor", () => {
         screen.getByText(/No scheduled roles for teams that use equipment yet/i),
       ).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /Order of service/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /Setlist/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Rehearse/i })).toBeInTheDocument();
     });
   });
 
@@ -715,7 +718,7 @@ describe("ServicePlanEditor", () => {
     });
   });
 
-  it("shows an ordered compact setlist and opens full song details", async () => {
+  it("shows the rehearsal collection and opens full song details", async () => {
     const user = userEvent.setup();
     mockAllSongDocs = [{
       _id: "song-1",
@@ -766,14 +769,14 @@ describe("ServicePlanEditor", () => {
     });
 
     renderEditor();
-    await user.click(await screen.findByRole("tab", { name: "Setlist" }));
+    await user.click(await screen.findByRole("tab", { name: "Rehearse" }));
 
-    const setlist = await screen.findByRole("region", { name: "Service setlist" });
+    const setlist = await screen.findByRole("region", { name: "Rehearse songs" });
     expect(within(setlist).getByRole("link", { name: /Tutorial/i })).toHaveAttribute(
       "href",
       "https://example.com/tutorial",
     );
-    expect(within(setlist).getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(within(setlist).getByRole("button", { name: "Play Living Hope" })).toBeInTheDocument();
     expect(within(setlist).queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
 
     await user.click(
@@ -2989,6 +2992,12 @@ Opening Song to begin the worship experience.
     // Header Share is md+ only (`hidden md:inline-flex`); below that (and in
     // jsdom, where the base `hidden` rule wins) share stays in Plan actions.
     await user.click(await screen.findByRole("button", { name: /Plan actions/i }));
+    const planActionsMenu = screen.getByRole("menu");
+    expect(planActionsMenu).toHaveClass(
+      "w-80",
+      "max-w-[calc(100vw-1rem)]",
+      "md:w-64",
+    );
     expect(
       await screen.findByRole("button", { name: /Copy detailed view link/i }),
     ).toBeInTheDocument();
@@ -3007,6 +3016,24 @@ Opening Song to begin the worship experience.
     expect(
       screen.getByRole("button", { name: /Email simple view/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Copy detailed view link/i }),
+    ).toHaveClass("max-md:min-w-0");
+    expect(
+      screen.getByRole("button", { name: /View detailed view/i }),
+    ).toHaveClass("max-md:min-w-0");
+    expect(
+      screen.getByRole("button", { name: /Email detailed view/i }),
+    ).toHaveClass("max-md:min-w-0");
+    expect(
+      screen.getByRole("button", { name: /Copy simple view link/i }),
+    ).toHaveClass("max-md:min-w-0");
+    expect(
+      screen.getByRole("button", { name: /View simple view/i }),
+    ).toHaveClass("max-md:min-w-0");
+    expect(
+      screen.getByRole("button", { name: /Email simple view/i }),
+    ).toHaveClass("max-md:min-w-0");
     expect(screen.queryByRole("menuitem", { name: /^Email$/i })).not.toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /Save as template/i }),
@@ -3438,7 +3465,7 @@ Opening Song to begin the worship experience.
 
     await user.click(makeSongLive);
     await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("tab", { name: "Setlist" }));
+    await user.click(screen.getByRole("tab", { name: "Rehearse" }));
     await act(async () => resolveLiveUpdate?.({
       success: true,
       servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "song" } },
@@ -3452,7 +3479,7 @@ Opening Song to begin the worship experience.
     const makeWelcomeLive = await screen.findByRole("button", { name: /Make Welcome live/i });
     await user.click(makeWelcomeLive);
     await waitFor(() => expect(mockUpdateServicePlanPublicLive).toHaveBeenCalledTimes(2));
-    await user.click(screen.getByRole("tab", { name: "Setlist" }));
+    await user.click(screen.getByRole("tab", { name: "Rehearse" }));
     await act(async () => resolveLiveUpdate?.({
       success: true,
       servicePlan: { ...initialPlan, publicLive: { mode: "manual", currentElementId: "welcome" } },
@@ -3885,7 +3912,7 @@ Opening Song to begin the worship experience.
     expect(screen.queryByText("Lyrics — Appeal Song")).not.toBeInTheDocument();
   });
 
-  it("creates a pending song from Setlist and links every exact occurrence", async () => {
+  it("creates a pending song from Rehearse while preserving every Plan occurrence", async () => {
     const pendingSong = {
       kind: "pending" as const,
       title: "Appeal Song",
@@ -3937,8 +3964,8 @@ Opening Song to begin the worship experience.
 
     const user = userEvent.setup();
     renderEditor();
-    await user.click(await screen.findByRole("tab", { name: "Setlist" }));
-    const setlist = await screen.findByRole("region", { name: "Service setlist" });
+    await user.click(await screen.findByRole("tab", { name: "Rehearse" }));
+    const setlist = await screen.findByRole("region", { name: "Rehearse songs" });
     expect(
       within(setlist).getAllByRole("button", {
         name: /Create Appeal Song in the library/i,
@@ -3963,9 +3990,14 @@ Opening Song to begin the worship experience.
         within(setlist).getAllByRole("button", {
           name: /View song details for Appeal Song/i,
         }),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
     });
     expect(within(setlist).queryByText(/Not in library/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Plan / Order of service" }));
+    expect(
+      screen.getAllByRole("button", { name: /View song details for Appeal Song/i }),
+    ).toHaveLength(2);
   });
 
   it("explains when a library song badge cannot be resolved", async () => {

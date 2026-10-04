@@ -35,12 +35,12 @@ import {
   getOverlayHistoryDocId,
   OVERLAY_HISTORY_ID_PREFIX,
   DBDoc,
-  DBMedia,
   DBMediaRouteFoldersDoc,
   DBMonitorSettingsDoc,
   DBPreferences,
   DBQuickLinksDoc,
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  isControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
@@ -49,7 +49,6 @@ import {
   PreferencesType,
   QuickLinkType,
 } from "../types";
-import { isMediaLibraryV2, normalizeMediaDoc } from "./mediaDocUtils";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
 
@@ -1327,13 +1326,12 @@ function inferDocType(
     if (id.includes("-credit-")) return "credit";
     return "credits";
   }
-  if (id === "media") return "media";
   if (typeof id === "string" && id.startsWith("media-item:")) return "mediaItem";
   if (id === "media-folders") return "mediaFolders";
   if (id === "media-library-meta") return "mediaLibraryMeta";
   if (id === QUICK_LINKS_POUCH_ID) return "quickLinks";
   if (id === MONITOR_SETTINGS_POUCH_ID) return "monitorSettings";
-  if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID) return "mediaRouteFolders";
+  if (id === MEDIA_ROUTE_FOLDERS_POUCH_ID || isControllerMediaRouteFoldersDocId(id)) return "mediaRouteFolders";
   if (id === "preferences") return "preferences";
   if (id === "overlay-templates") return "overlayTemplates";
   if (id === "services") return "services";
@@ -1376,7 +1374,7 @@ export const migrateDocTypes = async (
     let skippedCount = 0;
     for (const row of result.rows) {
       const doc = row.doc as DBDoc | undefined;
-      if (!doc || doc._id.startsWith("_design/")) {
+      if (!doc || doc._id === "media" || doc._id.startsWith("_design/")) {
         skippedCount++;
         continue;
       }
@@ -1406,39 +1404,5 @@ export const migrateDocTypes = async (
   } catch (error) {
     console.error("migrateDocTypes failed", error);
     throw error;
-  }
-};
-
-/**
- * Legacy `media` docs may omit `folders`. Persist `folders: []` and normalized list
- * so replication and older clients stay consistent.
- */
-export const migrateMediaLibraryFoldersFieldIfNeeded = async (
-  db: PouchDB.Database,
-): Promise<boolean> => {
-  if (!db) return false;
-  try {
-    if (await isMediaLibraryV2(db)) return false;
-    const media = (await db.get("media")) as DBMedia;
-    let changed = false;
-    if (!Array.isArray(media.folders)) {
-      media.folders = [];
-      changed = true;
-    }
-    const { list, folders } = normalizeMediaDoc(media);
-    if (JSON.stringify(media.list) !== JSON.stringify(list)) {
-      media.list = list;
-      changed = true;
-    }
-    if (JSON.stringify(media.folders) !== JSON.stringify(folders)) {
-      media.folders = folders;
-      changed = true;
-    }
-    if (!changed) return false;
-    media.updatedAt = new Date().toISOString();
-    await db.put(media);
-    return true;
-  } catch {
-    return false;
   }
 };

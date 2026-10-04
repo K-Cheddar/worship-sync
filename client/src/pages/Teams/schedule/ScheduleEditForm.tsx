@@ -70,6 +70,7 @@ const ScheduleEditForm = ({
   defaultServiceIds,
   defaultRange,
   services,
+  positions,
   activeTeams,
   seedSchedules,
   churchId,
@@ -201,7 +202,10 @@ const ScheduleEditForm = ({
 
   const applyTeamCreateDefaults = (teamId: string) => {
     const range = getCreateScheduleDefaultRange({
+      churchId,
       teamId,
+      services,
+      positions,
       schedules: seedSchedules,
     });
     const serviceIds = getCreateScheduleDefaultServiceIds({

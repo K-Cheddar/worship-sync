@@ -79,7 +79,7 @@ export type PublicServiceFlowItem = {
   notes: ServiceFlowRichText;
   teamNotes?: PublicServiceFlowTeamNote[];
   microphoneAssignments?: PublicServiceFlowMicrophoneAssignment[];
-  /** Controller-only equipment details; omitted from anonymous public views. */
+  /** Service-plan IEM allocations; omitted from simple/general public views. */
   equipmentAssignments?: PublicServiceFlowEquipmentAssignment[];
   creditName?: string;
 };
@@ -127,7 +127,7 @@ export type PublicServiceFlowRole = {
   teamName?: string;
 };
 
-/** Scheduled members holding church microphones on the detailed/team view. */
+/** Scheduled members holding allocated equipment on the detailed/team view. */
 export type PublicServiceFlowServingTeam = {
   teamId: string;
   teamName: string;
@@ -137,6 +137,7 @@ export type PublicServiceFlowServingTeam = {
     memberName: string;
     profileImageUrl?: string;
     microphones: PublicServiceFlowMicrophoneAssignment["microphone"][];
+    equipment?: PublicServiceFlowEquipment[];
   }>;
 };
 

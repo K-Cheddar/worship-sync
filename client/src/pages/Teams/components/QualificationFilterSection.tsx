@@ -55,6 +55,7 @@ const buildTeamAreaGroups = ({
             id: area.areaId,
             label: area.name,
             archived: area.archivedAt,
+            icon: area.icon || "Award",
           }),
         ),
     }))

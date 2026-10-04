@@ -221,7 +221,7 @@ const ScheduleBoardCell = memo(({
               <MemberAvatar
                 profileImageUrl={assignedMember.profileImageUrl}
                 memberName={`${assignedMember.firstName} ${assignedMember.lastName}`}
-                className="h-5 w-5 text-[8px]"
+                size="schedule"
               />
             ) : null}
             <span className={scheduleAssignmentLabelClassName}>

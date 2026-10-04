@@ -2,6 +2,23 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import MemberAvatar from "./MemberAvatar";
 
 describe("MemberAvatar", () => {
+  it("uses the fixed responsive schedule size when requested", () => {
+    render(<MemberAvatar memberName="Rae Kim" size="schedule" />);
+
+    expect(screen.getByText("RK")).toHaveClass(
+      "size-[1.5rem]",
+      "max-md:size-[1.75rem]",
+      "text-[8px]",
+      "max-md:text-[10px]",
+    );
+  });
+
+  it("keeps the existing default size for other surfaces", () => {
+    render(<MemberAvatar memberName="Rae Kim" />);
+
+    expect(screen.getByText("RK")).toHaveClass("h-8", "w-8");
+  });
+
   it("shows a decorative photo when a profile image URL is available", () => {
     render(
       <MemberAvatar

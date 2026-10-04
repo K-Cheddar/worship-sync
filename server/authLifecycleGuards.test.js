@@ -100,3 +100,22 @@ test("createHumanSession rejects empty credentials", async () => {
   assert.ok(res.statusCode >= 400);
   assert.equal(res.payload?.success, false);
 });
+
+test("workstation operator CSRF failures return a stable error code", async () => {
+  const res = createRes();
+  await authHandlers.updateWorkstationOperator(
+    createReq({
+      params: { deviceId: "workstation-1" },
+      session: {
+        auth: { sessionKind: "workstation" },
+        csrfToken: "expected-csrf",
+      },
+      body: { operatorName: "Sam" },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.payload?.errorMessage, "Could not verify this request.");
+  assert.equal(res.payload?.code, "AUTH_CSRF_MISMATCH");
+});

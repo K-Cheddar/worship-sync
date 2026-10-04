@@ -8,8 +8,8 @@ jest.mock("../../context/transferContext", () => ({
   useOptionalTransfers: jest.fn(),
 }));
 
-const mockGetTransferOverview = jest.mocked(getTransferOverview);
 const mockUseOptionalTransfers = jest.mocked(useOptionalTransfers);
+const mockGetTransferOverview = jest.mocked(getTransferOverview);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -20,8 +20,9 @@ beforeEach(() => {
       id: "canva-import",
       name: "Slides",
       type: "Canva",
-      status: "Saving presentation slides",
+      status: "active",
       progress: 100,
+      phase: { key: "saving", label: "Saving presentation slides" },
     }],
   });
   mockUseOptionalTransfers.mockReturnValue({
@@ -29,14 +30,17 @@ beforeEach(() => {
     isMinimized: false,
     minimizeTransfers: jest.fn(),
     restoreTransfers: jest.fn(),
-    updateUploadTransfer: jest.fn(),
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    registerTransferAction: jest.fn(),
+    runTransferAction: jest.fn(),
     startCanvaTransfer: jest.fn(),
   });
 });
 
 it("keeps the transfer summary available while an active import finalizes at 100%", () => {
   render(
-    <MediaAddControl uploadProgress={{ isUploading: false, progress: 0 }} uploadTitle="Upload">
+    <MediaAddControl>
       <button type="button">Add media</button>
     </MediaAddControl>,
   );
@@ -55,12 +59,13 @@ it("labels unknown aggregate progress without exposing null percent text", async
       id: "canva-import",
       name: "Slides",
       type: "Canva",
-      status: "Saving presentation slides",
-      progress: 100,
+      status: "active",
+      progress: null,
+      phase: { key: "saving", label: "Saving presentation slides" },
     }],
   });
   render(
-    <MediaAddControl uploadProgress={{ isUploading: false, progress: 0 }} uploadTitle="Upload">
+    <MediaAddControl>
       <button type="button">Add media</button>
     </MediaAddControl>,
   );
@@ -70,6 +75,7 @@ it("labels unknown aggregate progress without exposing null percent text", async
   });
   expect(trigger).toHaveTextContent("Working…");
   expect(screen.queryByText(/null%/i)).not.toBeInTheDocument();
+  expect(screen.getByTestId("aggregate-progress-ring")).toHaveClass("motion-safe:animate-spin", "motion-reduce:animate-none");
   expect(trigger).not.toHaveAttribute("aria-label", expect.stringContaining("null%"));
   await user.click(trigger);
   expect(screen.getByRole("heading", { name: "Transfers · 1 active · Working…" })).toBeInTheDocument();

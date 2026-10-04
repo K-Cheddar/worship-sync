@@ -76,6 +76,15 @@ describe("ScheduleBoardCell", () => {
     expect(screen.queryByAltText("")).not.toBeInTheDocument();
   });
 
+  it("uses the responsive schedule avatar size for the assigned member", () => {
+    renderCell({ assignmentCell: { primaryMemberId: "m1" } });
+
+    expect(screen.getByText("KA")).toHaveClass(
+      "size-[1.5rem]",
+      "max-md:size-[1.75rem]",
+    );
+  });
+
   it("activates the matching slot, anchored to the row, when clicked (picker parity)", () => {
     const { activateSlot } = renderCell({ assignmentCell: { primaryMemberId: "m1" } });
     const trigger = screen.getByRole("button");

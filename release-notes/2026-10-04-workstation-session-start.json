@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-04-workstation-session-start",
+  "date": "2026-10-04",
+  "type": "fixed",
+  "title": "Shared workstation sessions",
+  "description": "Starting a session on a shared workstation now recovers more reliably when its security token is out of date."
+}
