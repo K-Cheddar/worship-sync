@@ -2,7 +2,7 @@ import { Ban, Eye, EyeOff, Info, ScanLine } from "lucide-react";
 import { useState, type ReactElement } from "react";
 import Button from "../../../components/Button/Button";
 import Modal from "../../../components/Modal/Modal";
-import PopOver from "../../../components/PopOver/PopOver";
+import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import { DeviceQrScanner } from "../../../components/DeviceQrScanner/DeviceQrScanner";
 import { DevicePairingApproval } from "../../DevicePairingApprove";
 import {
@@ -47,7 +47,7 @@ const DeviceDetailsPopover = ({
   details: DeviceDetail[];
   action?: ReactElement;
 }) => (
-  <PopOver
+  <PopoverPanel
     TriggeringButton={
       <Button
         variant="tertiary"
@@ -74,7 +74,7 @@ const DeviceDetailsPopover = ({
       </dl>
       {action && <div className="mt-3 border-t border-gray-700 pt-3">{action}</div>}
     </div>
-  </PopOver>
+  </PopoverPanel>
 );
 
 const AccountSetupPage = () => {

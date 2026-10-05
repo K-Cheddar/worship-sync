@@ -405,8 +405,9 @@ const shouldProbeByGet = (response, { provider, candidateUrl, finalUrl }) => {
     finalUrl || candidateUrl,
   );
   const expectedFile = expectedType !== "unknown" && expectedType !== "web";
+  const hostedFile = ["dropbox", "google-drive", "onedrive", "box", "sharepoint"].includes(provider);
   return (provider === "sharepoint" && (isHtmlResponse(response) || !expectedFile)) ||
-    (isHtmlResponse(response) && expectedFile);
+    (isHtmlResponse(response) && (hostedFile || expectedFile));
 };
 
 const sharePointHtmlReason = ({ response, finalUrl, bodyText = "" }) => {

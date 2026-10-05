@@ -1,3 +1,4 @@
+import TextArea from "../../components/TextArea/TextArea";
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Check, RotateCcw, Send, X } from "lucide-react";
 import type {
@@ -330,13 +331,13 @@ const ServicePlanEmailModal = ({
             >
               Message
             </label>
-            <textarea
+            <TextArea
               id="service-plan-email-message"
-              className="min-h-28 w-full resize-y rounded-md border border-gray-600 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-65"
+              textareaClassName="min-h-28 w-full resize-y rounded-md border border-gray-600 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-65"
               value={message}
               maxLength={5000}
               disabled={isSending}
-              onChange={(event) => setMessage(event.target.value)}
+              onChange={setMessage}
             />
           </div>
           {status === "error" ? (

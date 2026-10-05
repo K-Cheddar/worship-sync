@@ -1215,7 +1215,7 @@ test("Upcoming ensure creates the full December period beside a partial custom s
   assert.equal((await getDoc("teamSchedules", savedScheduleId)).assignments[occurrence.occurrenceId][`${cameraId}::0`].primaryMemberId, "existing-member");
 });
 
-test("generated schedule ensure reuses a populated schedule after all service identities change", async (t) => {
+test("generated schedule ensure preserves an incomplete saved schedule and creates current rows", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("custom_schedule_occurrence_drift");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -1282,12 +1282,12 @@ test("generated schedule ensure reuses a populated schedule after all service id
     .digest("hex");
 
   assert.equal(result.statusCode, 200);
-  assert.equal(result.payload.created, false);
-  assert.equal(result.payload.schedule.scheduleId, customScheduleId);
-  assert.equal(result.payload.schedule.occurrences.length, savedOccurrenceIds.length);
-  assert.deepEqual(result.payload.schedule.serviceIds, ["old-service"]);
-  assert.deepEqual(result.payload.schedule.assignments[savedOccurrenceIds[0]], existingAssignment);
-  assert.equal(await getDoc("teamSchedules", `generated_${generatedKey}`), null);
+  assert.equal(result.payload.created, true);
+  assert.equal(result.payload.schedule.scheduleId, `generated_${generatedKey}`);
+  assert.equal(result.payload.schedule.occurrences.length, currentOccurrences.length);
+  assert.deepEqual(result.payload.schedule.serviceIds, currentOccurrences.map((occurrence) => occurrence.serviceId));
+  assert.deepEqual(result.payload.schedule.assignments, {});
+  assert.ok(await getDoc("teamSchedules", `generated_${generatedKey}`));
   assert.deepEqual(
     (await getDoc("teamSchedules", customScheduleId)).assignments[savedOccurrenceIds[0]],
     existingAssignment,
@@ -14074,4 +14074,49 @@ test("portable schedule import can resolve foreign service and member references
     },
   );
   assert.equal(unresolvedPreview.payload.rows[0].action, "invalid");
+});
+
+
+test("generated period rejects incomplete canonical reuse without overwriting any saved map", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("canonical_missing_rows");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const first = { occurrenceId: "first@2026-10-03T10:00:00.000Z", serviceId: "first", name: "First", startsAt: "2026-10-03T10:00:00.000Z", positionRequirements: [] };
+  const second = { ...first, occurrenceId: "second@2026-10-03T10:00:00.000Z", serviceId: "second", name: "Second" };
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: [first, second].map((item) => ({ id: item.serviceId, name: item.name, reccurence: "one_time", dateTimeISO: item.startsAt })) });
+  const body = { name: "October", teamId, startDate: "2026-10-01", endDate: "2026-10-31", timeZone: "UTC", serviceIds: ["first"], occurrences: [first] };
+  const created = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+  await setDoc("teamSchedules", scheduleId, {
+    assignments: { [first.occurrenceId]: { "camera::0": { primaryMemberId: "member" } } },
+    microphoneAssignments: { [first.occurrenceId]: { "camera::0": ["mic"] } },
+    iemAssignments: { [first.occurrenceId]: { "camera::0": ["iem"] } },
+    additionalPositionSlots: { [first.occurrenceId]: ["camera::1"] },
+  }, { merge: true });
+  const before = await getDoc("teamSchedules", scheduleId);
+  const requests = [1, 2].map(() => callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context, body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], preferredScheduleId: scheduleId },
+  }));
+  const results = await Promise.all(requests);
+  assert.deepEqual(results.map((result) => result.statusCode), [409, 409]);
+  assert.match(results[0].payload.errorMessage, /Edit its services or create a custom schedule/);
+  assert.deepEqual(await getDoc("teamSchedules", scheduleId), before);
+});
+
+test("generated ensure reuses semantically equivalent occurrences after service IDs change", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("semantic_id_drift");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const current = { occurrenceId: "new@2026-10-03T10:00:00.000Z", serviceId: "new", name: "Saturday service", startsAt: "2026-10-03T10:00:00.000Z", positionRequirements: [] };
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: [{ id: "new", name: current.name, reccurence: "one_time", dateTimeISO: current.startsAt }] });
+  const saved = { ...current, occurrenceId: "old@2026-10-03T10:00:00.000Z", serviceId: "old" };
+  const schedule = { scheduleId: "custom-old", churchId: context.churchId, name: "October", teamId, source: "custom", startDate: "2026-10-01", endDate: "2026-10-31", serviceIds: ["old"], occurrences: [saved], assignments: { [saved.occurrenceId]: { "camera::0": { primaryMemberId: "member" } } } };
+  await setDoc("teamSchedules", schedule.scheduleId, schedule);
+  const before = await getDoc("teamSchedules", schedule.scheduleId);
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body: { name: "October", teamId, startDate: schedule.startDate, endDate: schedule.endDate, timeZone: "UTC", serviceIds: ["new"], occurrences: [current] } });
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.payload.created, false);
+  assert.equal(result.payload.schedule.scheduleId, schedule.scheduleId);
+  assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
 });

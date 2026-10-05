@@ -450,6 +450,44 @@ test("cancelling a queued Canva job prevents its export from starting", async ()
   expect(secondRun).not.toHaveBeenCalled();
 });
 
+test("cancelling a queued job releases dedupe immediately without clearing its replacement later", async () => {
+  const firstGate = deferred<typeof result>();
+  const retryGate = deferred<typeof result>();
+  const user = userEvent.setup();
+  const cancelledRun = jest.fn(async () => result);
+  const retryRun = jest.fn(() => retryGate.promise);
+  const returnedIds: string[] = [];
+  let requests = 0;
+  const Harness = () => {
+    const { startCanvaTransfer } = useTransfers();
+    return <>
+      <button onClick={() => startCanvaTransfer({ id: "first", title: "First deck", format: "png", pages: [1], run: () => firstGate.promise, finalize: async () => ({ importedCount: 1 }) })}>Start first</button>
+      <button onClick={() => {
+        requests += 1;
+        returnedIds.push(startCanvaTransfer({
+          id: `retry-${requests}`, title: "Retry deck", dedupeKey: "church:design:png:1", format: "png", pages: [1],
+          run: requests === 1 ? cancelledRun : retryRun, finalize: async () => ({ importedCount: 1 }),
+        }));
+      }}>Request import</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><Harness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start first" }));
+  await user.click(screen.getByRole("button", { name: "Request import" }));
+  await user.click(screen.getByRole("button", { name: "Cancel Retry deck" }));
+  await user.click(screen.getByRole("button", { name: "Cancel import" }));
+  await user.click(screen.getByRole("button", { name: "Request import" }));
+  await user.click(screen.getByRole("button", { name: "Request import" }));
+  expect(returnedIds).toEqual(["retry-1", "retry-2", "retry-2"]);
+  expect(retryRun).not.toHaveBeenCalled();
+  await act(async () => firstGate.resolve(result));
+  await waitFor(() => expect(retryRun).toHaveBeenCalledTimes(1));
+  await user.click(screen.getByRole("button", { name: "Request import" }));
+  expect(returnedIds).toEqual(["retry-1", "retry-2", "retry-2", "retry-2"]);
+  expect(cancelledRun).not.toHaveBeenCalled();
+  await act(async () => retryGate.resolve(result));
+});
+
 test("cancelling between page saves keeps the first committed page", async () => {
   const gate = deferred<void>();
   const user = userEvent.setup();

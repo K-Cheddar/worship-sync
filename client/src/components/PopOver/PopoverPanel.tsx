@@ -10,7 +10,7 @@ import { X } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
 import { ButtonProps } from "../Button/Button";
 
-type PopOverProps = {
+type PopoverPanelProps = {
   children: React.ReactNode;
   TriggeringButton: ReactElement<ButtonProps>;
   open?: boolean;
@@ -35,7 +35,7 @@ type PopOverProps = {
   onOpenAutoFocus?: ComponentProps<typeof PopoverContent>["onOpenAutoFocus"];
 };
 
-const PopOver = ({
+const PopoverPanel = ({
   children,
   TriggeringButton,
   open,
@@ -50,7 +50,7 @@ const PopOver = ({
   onPointerDownOutside,
   onInteractOutside,
   onOpenAutoFocus,
-}: PopOverProps) => {
+}: PopoverPanelProps) => {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{TriggeringButton}</PopoverTrigger>
@@ -86,4 +86,4 @@ const PopOver = ({
   );
 };
 
-export default PopOver;
+export default PopoverPanel;

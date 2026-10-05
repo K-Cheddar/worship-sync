@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Checkbox as UICheckbox } from "../../../components/ui/Checkbox";
 import Button from "../../../components/Button/Button";
 import Modal from "../../../components/Modal/Modal";
 import Checkbox from "../../../components/Checkbox/Checkbox";
@@ -177,7 +176,7 @@ const AvailabilityFormSendFlow = ({
       </div>
       <div className="max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-950/50">
         <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 bg-gray-900 px-3 py-3">
-          <div className="flex items-center gap-3"><UICheckbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={busy || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisible(checked === true)} /><span className="text-sm text-gray-200">Select eligible members shown</span><span className="text-xs text-gray-400">{visibleRows.length} shown</span></div>
+          <div className="flex items-center gap-3"><Checkbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={busy || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisible(checked === true)} /><span className="text-sm text-gray-200">Select eligible members shown</span><span className="text-xs text-gray-400">{visibleRows.length} shown</span></div>
           <div className="flex items-center gap-3"><span aria-live="polite" className="text-sm text-gray-300">{selectedIds.length} selected</span><Button variant="textLink" disabled={busy || !selectedIds.length} onClick={() => updateSelectedIds([])}>Clear</Button></div>
         </div>
         <div className="divide-y divide-gray-800" role="list" aria-label="Form recipients">

@@ -1,3 +1,4 @@
+import Spinner from "@/components/Spinner/Spinner";
 import {
   useCallback,
   useContext,
@@ -11,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { ArrowLeft, CheckCircle, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
 import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
 import { GoogleMark, MicrosoftMark } from "../components/AuthProviderMarks";
@@ -1262,7 +1263,7 @@ const Login = () => {
               showWebSessionNavigatingChrome ||
               (isHostedDesktopBrowserFlow &&
                 desktopBrowserFlowStatus === "loading")) && (
-                <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                <Spinner size="sm" className="shrink-0" />
               )}
             <span className="min-w-0">{globalBannerMessage}</span>
             {authServerStatus === "offline" && authServerRetryCount > 0 && (
@@ -1627,10 +1628,7 @@ const Login = () => {
                 role="status"
                 aria-live="polite"
               >
-                <LoaderCircle
-                  className="h-10 w-10 animate-spin text-cyan-400"
-                  aria-hidden="true"
-                />
+                <Spinner size="lg" width="40px" className="shrink-0 text-cyan-400" />
                 <p className="text-sm text-gray-200">Signing you in…</p>
               </div>
             ) : mode === "code" && !isExpiredEmailCodeError ? (

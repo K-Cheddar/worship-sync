@@ -1,3 +1,4 @@
+import Spinner from "@/components/Spinner/Spinner";
 import {
   AudioLines,
   Copy,
@@ -5,7 +6,6 @@ import {
   FileQuestion,
   FileText,
   Image,
-  LoaderCircle,
   Video,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,7 +44,7 @@ const errorMessage = (error: unknown, fallback: string) =>
 
 const LoadingState = ({ label }: { label: string }) => (
   <div className="flex min-h-48 items-center justify-center gap-2 p-6 text-sm text-gray-300" role="status">
-    <LoaderCircle className="size-4 animate-spin text-cyan-300" aria-hidden />
+    <Spinner size="sm" className="shrink-0 text-cyan-300" />
     {label}
   </div>
 );

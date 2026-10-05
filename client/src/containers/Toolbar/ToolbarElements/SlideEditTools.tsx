@@ -43,7 +43,7 @@ import {
 import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
 import { getActiveItemSlides } from "../../../utils/activeItemSlides";
-import PopOver from "../../../components/PopOver/PopOver";
+import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import Icon from "../../../components/Icon/Icon";
 import { Slider } from "../../../components/ui/Slider";
 import { updateTimerColor } from "../../../store/timersSlice";
@@ -535,7 +535,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           }}
         />
 
-        <PopOver
+        <PopoverPanel
           TriggeringButton={
             <Button
               variant="tertiary"
@@ -550,7 +550,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             onChange={_updateFontColor}
             colors={brandColors}
           />
-        </PopOver>
+        </PopoverPanel>
 
         <Button
           variant={isBold ? "secondary" : "tertiary"}
@@ -584,7 +584,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
       <div className="flex gap-1 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
         {type === "timer" && (
-          <PopOver
+          <PopoverPanel
             TriggeringButton={
               <Button
                 variant="tertiary"
@@ -599,7 +599,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               onChange={_updateTimerColor}
               colors={brandColors}
             />
-          </PopOver>
+          </PopoverPanel>
         )}
         {type === "free" && (
           <>
@@ -718,7 +718,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       {/* leaving this outer div in case more tools are added */}
 
       <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
-      <PopOver
+      <PopoverPanel
         TriggeringButton={
           <Button className="lg:hidden" variant="tertiary" svg={Maximize2}>
             Tools
@@ -726,7 +726,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         }
       >
         <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopOver>
+      </PopoverPanel>
     </div>
   );
 };

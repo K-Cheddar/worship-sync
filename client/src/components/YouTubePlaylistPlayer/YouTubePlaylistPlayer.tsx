@@ -146,7 +146,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
   const activeEntryKeyRef = useRef("");
   const rangeTransitioningRef = useRef(false);
   const canResumeRef = useRef(false);
-  const pendingSeekRef = useRef<number | null>(null);
+  const cuedStartSecondsRef = useRef<number | null>(null);
   const shouldPlayRef = useRef(
     Boolean(autoPlayEntryKey && queue[0]?.entryKey === autoPlayEntryKey),
   );
@@ -192,7 +192,7 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
     if (entry) onCurrentEntryChangeRef.current?.(entry.entryKey);
   }, [currentIndex, queue]);
 
-  const loadEntry = useCallback((index: number, play: boolean, rangeIndex = 0) => {
+  const loadEntry = useCallback((index: number, play: boolean, rangeIndex = 0, startSeconds?: number) => {
     const entry = queueRef.current[index];
     if (!entry || failedKeysRef.current.has(entry.entryKey)) return;
     setCurrentQueueIndex(index);
@@ -205,12 +205,14 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
     const player = playerRef.current;
     if (!player || !playerReadyRef.current) return;
     const range = entry.playbackRanges[rangeIndex] ?? {};
+    const playbackStart = startSeconds ?? range.startSeconds;
     const request: YouTubeVideoRequest = {
       videoId: entry.videoId,
-      ...(range.startSeconds === undefined ? {} : { startSeconds: range.startSeconds }),
+      ...(playbackStart === undefined ? {} : { startSeconds: playbackStart }),
       ...(range.endSeconds === undefined ? {} : { endSeconds: range.endSeconds }),
     };
-    setPosition(range.startSeconds ?? 0);
+    cuedStartSecondsRef.current = play ? null : (request.startSeconds ?? 0);
+    setPosition(request.startSeconds ?? 0);
     setDuration(0);
     loadedPlaybackIdentityRef.current = getPlaybackIdentity(entry, rangeIndex);
     if (play) player.loadVideoById(request);
@@ -255,11 +257,15 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
     if (index >= 0) loadEntry(index, true);
   }, [loadEntry]);
 
-  const pause = useCallback(() => playerRef.current?.pauseVideo(), []);
+  const pause = useCallback(() => {
+    shouldPlayRef.current = false;
+    playerRef.current?.pauseVideo();
+  }, []);
   const resume = useCallback(() => {
-    if (canResumeRef.current) playerRef.current?.playVideo();
+    shouldPlayRef.current = true;
+    if (canResumeRef.current && cuedStartSecondsRef.current === null) playerRef.current?.playVideo();
     else if (queueRef.current[currentIndexRef.current]) {
-      loadEntry(currentIndexRef.current, true, activeRangeIndexRef.current);
+      loadEntry(currentIndexRef.current, true, activeRangeIndexRef.current, cuedStartSecondsRef.current ?? undefined);
     }
   }, [loadEntry]);
   const seekTo = useCallback((seconds: number) => {
@@ -279,12 +285,14 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
       const rangeDuration = Math.max(0, end - start);
       if (remaining <= rangeDuration || index === entry.playbackRanges.length - 1) {
         const target = start + Math.min(remaining, rangeDuration);
-        if (index === activeRangeIndexRef.current) {
+        if (index === activeRangeIndexRef.current &&
+          (shouldPlayRef.current || (canResumeRef.current && cuedStartSecondsRef.current === null))) {
           player.seekTo(target, true);
           setPosition(target);
         } else {
-          pendingSeekRef.current = target;
-          loadEntry(currentIndexRef.current, true, index);
+          // seekTo from CUED starts playback. Cue the chosen offset directly
+          // while paused, including another scrub within the newly cued range.
+          loadEntry(currentIndexRef.current, shouldPlayRef.current, index, target);
         }
         return;
       }
@@ -350,17 +358,20 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
             },
             onStateChange: (event) => {
               if (event.data === 1) {
+                shouldPlayRef.current = true;
                 rangeTransitioningRef.current = false;
                 canResumeRef.current = true;
                 setIsPlaying(true);
                 onPlaybackStatusChangeRef.current?.(activeEntryKeyRef.current, true);
                 setMessage("");
-                if (pendingSeekRef.current !== null) {
-                  player.seekTo(pendingSeekRef.current, true);
-                  pendingSeekRef.current = null;
-                }
               } else if (event.data === 2) {
+                shouldPlayRef.current = false;
                 canResumeRef.current = true;
+                setIsPlaying(false);
+                onPlaybackStatusChangeRef.current?.(activeEntryKeyRef.current, false);
+              } else if (event.data === 5 && !shouldPlayRef.current) {
+                canResumeRef.current = false;
+                rangeTransitioningRef.current = false;
                 setIsPlaying(false);
                 onPlaybackStatusChangeRef.current?.(activeEntryKeyRef.current, false);
               } else if (event.data === 0) {
@@ -451,15 +462,10 @@ const YouTubePlaylistPlayer = forwardRef(function YouTubePlaylistPlayer(
     const player = playerRef.current;
     if (!player || !currentEntry) return;
     if (isPlaying) {
-      player.pauseVideo();
+      pause();
       return;
     }
-    if (!canResumeRef.current) {
-      loadEntry(currentIndexRef.current, true);
-      return;
-    }
-    shouldPlayRef.current = true;
-    player.playVideo();
+    resume();
   };
 
   const previous = () => {

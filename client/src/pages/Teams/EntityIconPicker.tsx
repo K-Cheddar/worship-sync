@@ -302,7 +302,7 @@ const EntityIconPicker = ({ label = "Icon", context = "position", value, fallbac
               "hover:border-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40",
             )}
           >
-            <EntityIconBadge icon={displayedIcon ?? ""} className="h-7 w-7" />
+            <EntityIconBadge icon={displayedIcon ?? ""} className="h-7 w-7" data-testid="selected-entity-icon" />
             <span className={cn(!displayedIcon && "text-gray-400")}>{currentLabel}</span>
           </button>
         </PopoverTrigger>

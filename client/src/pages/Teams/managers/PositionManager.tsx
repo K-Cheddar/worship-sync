@@ -67,13 +67,6 @@ import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsTeamSearchParam } from "../hooks/useTeamsTeamSearchParam";
 import type { TeamsData } from "../types";
-import {
-  Select as RadixSelect,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/Select";
 
 type PositionDraft = {
   name: string;
@@ -91,8 +84,6 @@ const CREATE_SAVING_KEY = "__create__";
 // Radix Select forbids an empty-string item value, so "no area picked" needs
 // its own sentinel distinct from the draft's real (empty-string) value.
 const NO_QUALIFICATION_AREA_VALUE = "__none__";
-const NO_DEFAULT_MICROPHONE_VALUE = "__none_microphone__";
-const NO_DEFAULT_IEM_VALUE = "__none_iem__";
 
 type PositionManagerProps = {
   positions: TeamPosition[];
@@ -604,57 +595,13 @@ const PositionManager = ({
             >
               Default microphone:
             </p>
-            <RadixSelect
-              value={draft.defaultMicrophoneId || NO_DEFAULT_MICROPHONE_VALUE}
-              onValueChange={(value) =>
-                setDraft((current) => ({
-                  ...current,
-                  defaultMicrophoneId:
-                    value === NO_DEFAULT_MICROPHONE_VALUE ? "" : value,
-                }))
-              }
-            >
-              <SelectTrigger
-                aria-labelledby={defaultMicrophoneLabelId}
-                className="w-full justify-between"
-              >
-                <SelectValue placeholder="No default microphone">
-                  {selectedDefaultMicrophone ? (
-                    <span className="inline-flex min-w-0 items-center gap-2">
-                      <ServicePlanMicrophoneIcon
-                        microphone={selectedDefaultMicrophone}
-                        color={selectedDefaultMicrophone.color}
-                        className="size-4 shrink-0"
-                      />
-                      <span className="truncate">{selectedDefaultMicrophone.name}</span>
-                    </span>
-                  ) : (
-                    "No default microphone"
-                  )}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_DEFAULT_MICROPHONE_VALUE}>
-                  No default microphone
-                </SelectItem>
-                {microphones.map((microphone) => (
-                  <SelectItem
-                    key={microphone.id}
-                    value={microphone.id}
-                    textValue={microphone.name}
-                  >
-                    <span className="inline-flex min-w-0 items-center gap-2">
-                      <ServicePlanMicrophoneIcon
-                        microphone={microphone}
-                        color={microphone.color}
-                        className="size-4 shrink-0"
-                      />
-                      <span className="truncate">{microphone.name}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </RadixSelect>
+            <Select
+              value={draft.defaultMicrophoneId || ""}
+              onChange={(value) => setDraft((current) => ({ ...current, defaultMicrophoneId: value }))}
+              aria-labelledby={defaultMicrophoneLabelId} placeholder="No default microphone" selectClassName="w-full justify-between"
+              selectedValueLabel={selectedDefaultMicrophone ? <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={selectedDefaultMicrophone} color={selectedDefaultMicrophone.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultMicrophone.name}</span></span> : "No default microphone"}
+              options={[{ value: "", label: "No default microphone" }, ...microphones.map((microphone) => ({ value: microphone.id, textValue: microphone.name, label: <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={microphone} color={microphone.color} className="size-4 shrink-0" /><span className="truncate">{microphone.name}</span></span> }))]}
+            />
             <p className="mt-1 text-xs text-gray-400">
               Applied to this position&apos;s slots when a new schedule is created.
               You can change any date&apos;s microphone in the schedule.
@@ -664,18 +611,13 @@ const PositionManager = ({
         {positionTeamUsesIems ? (
           <div>
             <p className="p-1 text-sm font-semibold">Default IEM:</p>
-            <RadixSelect
-              value={draft.defaultIemId || NO_DEFAULT_IEM_VALUE}
-              onValueChange={(value) => setDraft((current) => ({ ...current, defaultIemId: value === NO_DEFAULT_IEM_VALUE ? "" : value }))}
-            >
-              <SelectTrigger aria-label="Default IEM" className="w-full justify-between">
-                <SelectValue placeholder="No default IEM">{selectedDefaultIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedDefaultIem} color={selectedDefaultIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultIem.name}</span></span> : "No default IEM"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_DEFAULT_IEM_VALUE}>No default IEM</SelectItem>
-                {iems.map((iem) => <SelectItem key={iem.id} value={iem.id} textValue={iem.name}><span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" /><span className="truncate">{iem.name}</span><span className="ml-auto text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span></span></SelectItem>)}
-              </SelectContent>
-            </RadixSelect>
+            <Select
+              value={draft.defaultIemId || ""}
+              onChange={(value) => setDraft((current) => ({ ...current, defaultIemId: value }))}
+              aria-label="Default IEM" placeholder="No default IEM" selectClassName="w-full justify-between"
+              selectedValueLabel={selectedDefaultIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedDefaultIem} color={selectedDefaultIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultIem.name}</span></span> : "No default IEM"}
+              options={[{ value: "", label: "No default IEM" }, ...iems.map((iem) => ({ value: iem.id, textValue: iem.name, label: <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" /><span className="truncate">{iem.name}</span><span className="ml-auto text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span></span> }))]}
+            />
             <p className="mt-1 text-xs text-gray-400">Applied to this position&apos;s slots when a new schedule is created.</p>
           </div>
         ) : null}

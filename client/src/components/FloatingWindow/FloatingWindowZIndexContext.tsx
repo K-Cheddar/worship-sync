@@ -10,7 +10,7 @@ import { cn } from "@/utils/cnHelper";
 
 const BASE_Z = 60;
 /** Above any floating window so the dock stays clickable. */
-const DOCK_Z = 10000;
+export const FLOATING_WINDOW_DOCK_Z = 10000;
 
 export type FloatingWindowEntry = {
   id: string;
@@ -58,7 +58,7 @@ const FloatingWindowDock = () => {
     <div
       data-testid="floating-window-dock"
       className="pointer-events-none fixed inset-x-0 bottom-12 z-[10000] flex justify-center px-2"
-      style={{ zIndex: DOCK_Z }}
+      style={{ zIndex: FLOATING_WINDOW_DOCK_Z }}
     >
       <div
         className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1 rounded-lg border border-gray-600 bg-gray-900/95 p-1 shadow-lg backdrop-blur-sm"

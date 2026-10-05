@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
-import PopOver from "../../../components/PopOver/PopOver";
+import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import { updateBoxProperties } from "../../../utils/formatter";
 import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import { setItemFormatting } from "../../../store/itemSlice";
@@ -599,7 +599,7 @@ const BoxEditor = ({
       <div className="max-lg:hidden flex gap-2 items-center flex-wrap">
         {controls}
       </div>
-      <PopOver
+      <PopoverPanel
         TriggeringButton={
           <Button className="lg:hidden" variant="tertiary" svg={Maximize2}>
             Tools
@@ -607,7 +607,7 @@ const BoxEditor = ({
         }
       >
         <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopOver>
+      </PopoverPanel>
     </div>
   );
 };

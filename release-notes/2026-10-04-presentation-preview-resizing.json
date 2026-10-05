@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-04-presentation-preview-resizing",
+  "date": "2026-10-04",
+  "type": "fixed",
+  "title": "Stable presentation previews while resizing",
+  "description": "Presentation previews stay responsive when you resize the controller, including when Quick Links are visible."
+}

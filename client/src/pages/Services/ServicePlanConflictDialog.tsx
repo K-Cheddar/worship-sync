@@ -28,7 +28,7 @@ const displayValue = (value: unknown) => {
 };
 
 const ServicePlanConflictDialog = ({ conflicts, choices, onChoose, onApply, applying, onUseLatest, onCancel }: Props) => (
-  <Modal isOpen title="Review plan changes" description="Choose which version to keep for each conflicting change." onClose={onCancel} size="xl">
+  <Modal isOpen busy={applying} title="Review plan changes" description="Choose which version to keep for each conflicting change." onClose={onCancel} size="xl">
     <div className="space-y-4">
       <p className="text-sm text-gray-300">Your other changes will be combined automatically. Cancel keeps your draft so you can resolve this later.</p>
       <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
@@ -37,16 +37,19 @@ const ServicePlanConflictDialog = ({ conflicts, choices, onChoose, onApply, appl
             <h3 className="mb-2 text-sm font-semibold text-white">{conflict.label}</h3>
             <div className="grid gap-2 sm:grid-cols-2">
               {(["local", "remote"] as const).map((side) => (
-                <button
+                <Button
+                  variant="none"
+                  wrap
+                  disabled={applying}
                   key={side}
                   type="button"
                   aria-pressed={choices[conflict.path] === side}
                   onClick={() => onChoose(conflict.path, side)}
-                  className={`rounded-md border p-2 text-left ${choices[conflict.path] === side ? "border-cyan-500 bg-cyan-950/40" : "border-gray-700 bg-gray-900"}`}
+                  className={`block w-full rounded-md border p-2 text-left ${choices[conflict.path] === side ? "border-cyan-500 bg-cyan-950/40" : "border-gray-700 bg-gray-900"}`}
                 >
                   <span className="text-xs font-semibold uppercase text-gray-300">{side === "local" ? "Local" : "Remote"}</span>
                   <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words text-xs text-gray-100">{displayValue(side === "local" ? conflict.localValue : conflict.remoteValue)}</pre>
-                </button>
+                </Button>
               ))}
             </div>
           </section>

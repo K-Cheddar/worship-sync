@@ -249,6 +249,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       job.controller?.abort();
       if (job.status === "queued") {
         job.status = "cancelled";
+        if (job.dedupeKey && dedupeJobs.current.get(job.dedupeKey) === job.id) dedupeJobs.current.delete(job.dedupeKey);
         job.error = "Canva import cancelled before it started.";
         publishCanva(job);
       }

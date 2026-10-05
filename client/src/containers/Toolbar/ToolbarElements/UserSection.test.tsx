@@ -64,7 +64,7 @@ jest.mock("../../../components/Button/Button", () => ({
   ),
 }));
 
-jest.mock("../../../components/PopOver/PopOver", () => ({
+jest.mock("../../../components/PopOver/PopoverPanel", () => ({
   __esModule: true,
   default: ({
     children,

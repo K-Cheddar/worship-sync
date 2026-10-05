@@ -13,7 +13,7 @@ import { clearOutput } from "../../store/presentationSlice";
 import Button from "../Button/Button";
 import cn from "classnames";
 import { CLEAR_ACTION_ICON_COLOR } from "../../constants";
-import PopOver from "../PopOver/PopOver";
+import PopoverPanel from "../PopOver/PopoverPanel";
 import {
   Popover,
   PopoverContent,
@@ -121,6 +121,7 @@ const PresentationPreview = ({
   const [shouldShowClearLabel, setShouldShowClearLabel] = useState(true);
   const [shouldShowTransmitLabel, setShouldShowTransmitLabel] = useState(true);
   const quickLinkRailRef = useRef<HTMLUListElement | null>(null);
+  const quickLinkMeasureRef = useRef<HTMLLIElement | null>(null);
   const previewColumnRef = useRef<HTMLDivElement | null>(null);
   const [quickLinkCapacity, setQuickLinkCapacity] = useState(
     1,
@@ -185,25 +186,19 @@ const PresentationPreview = ({
 
     const updateQuickLinkCapacity = () => {
       const rail = quickLinkRailRef.current;
-      const tiles = rail
-        ? Array.from(
-            rail.querySelectorAll<HTMLElement>("[data-quick-link-tile]"),
-          )
-        : [];
-      if (!rail || tiles.length === 0 || rail.clientHeight === 0) {
-        setQuickLinkCapacity(1);
+      const measurement = quickLinkMeasureRef.current;
+      if (!rail || !measurement || previewColumnHeight == null) {
+        setQuickLinkCapacity((current) => (current === 1 ? current : 1));
         return;
       }
       const railStyle = window.getComputedStyle(rail);
       const verticalPadding =
         (parseFloat(railStyle.paddingTop) || 0) +
         (parseFloat(railStyle.paddingBottom) || 0);
-      const availableHeight = Math.max(0, rail.clientHeight - verticalPadding);
-      const tileHeight = Math.max(
-        ...tiles.map((tile) => tile.getBoundingClientRect().height),
-      );
+      const availableHeight = Math.max(0, previewColumnHeight - verticalPadding);
+      const tileHeight = measurement.getBoundingClientRect().height;
       if (tileHeight <= 0) {
-        setQuickLinkCapacity(1);
+        setQuickLinkCapacity((current) => (current === 1 ? current : 1));
         return;
       }
       const rows = Math.max(
@@ -213,7 +208,10 @@ const PresentationPreview = ({
             (tileHeight + COMPACT_QUICK_LINK_GAP),
         ),
       );
-      setQuickLinkCapacity(rows * COMPACT_QUICK_LINK_COLUMNS);
+      const nextCapacity = rows * COMPACT_QUICK_LINK_COLUMNS;
+      setQuickLinkCapacity((current) =>
+        current === nextCapacity ? current : nextCapacity,
+      );
     };
 
     if (typeof ResizeObserver === "undefined") {
@@ -222,22 +220,20 @@ const PresentationPreview = ({
     }
 
     const observer = new ResizeObserver(updateQuickLinkCapacity);
-    if (quickLinkRailRef.current) observer.observe(quickLinkRailRef.current);
-    if (quickLinkRailRef.current) {
-      quickLinkRailRef.current
-        .querySelectorAll<HTMLElement>("[data-quick-link-tile]")
-        .forEach((tile) => observer.observe(tile));
-    }
+    if (quickLinkMeasureRef.current) observer.observe(quickLinkMeasureRef.current);
     updateQuickLinkCapacity();
     return () => observer.disconnect();
-  }, [filteredQuickLinks.length, hideQuickLinks, quickLinkCapacity]);
+  }, [filteredQuickLinks.length, hideQuickLinks, previewColumnHeight]);
 
   useEffect(() => {
     if (hideQuickLinks) return;
 
     const updatePreviewColumnHeight = () => {
       const height = previewColumnRef.current?.clientHeight ?? 0;
-      setPreviewColumnHeight(height > 0 ? height : null);
+      const nextHeight = height > 0 ? height : null;
+      setPreviewColumnHeight((current) =>
+        current === nextHeight ? current : nextHeight,
+      );
     };
 
     if (typeof ResizeObserver === "undefined") {
@@ -282,26 +278,28 @@ const PresentationPreview = ({
       const requiredWidthForTransmitOnly =
         titleWidth + clearIconWidth + labeledToggleWidth + spacingAllowance;
 
+      let nextShouldShowClearLabel = false;
+      let nextShouldShowTransmitLabel = false;
+
       if (headerWidth >= requiredWidthForBoth) {
-        setShouldShowClearLabel(true);
-        setShouldShowTransmitLabel(true);
-        return;
+        nextShouldShowClearLabel = true;
+        nextShouldShowTransmitLabel = true;
+      } else if (headerWidth >= requiredWidthForClearOnly) {
+        nextShouldShowClearLabel = true;
+      } else if (headerWidth >= requiredWidthForTransmitOnly) {
+        nextShouldShowTransmitLabel = true;
       }
 
-      if (headerWidth >= requiredWidthForClearOnly) {
-        setShouldShowClearLabel(true);
-        setShouldShowTransmitLabel(false);
-        return;
-      }
-
-      if (headerWidth >= requiredWidthForTransmitOnly) {
-        setShouldShowClearLabel(false);
-        setShouldShowTransmitLabel(true);
-        return;
-      }
-
-      setShouldShowClearLabel(false);
-      setShouldShowTransmitLabel(false);
+      setShouldShowClearLabel((current) =>
+        current === nextShouldShowClearLabel
+          ? current
+          : nextShouldShowClearLabel,
+      );
+      setShouldShowTransmitLabel((current) =>
+        current === nextShouldShowTransmitLabel
+          ? current
+          : nextShouldShowTransmitLabel,
+      );
     };
 
     if (typeof ResizeObserver === "undefined") {
@@ -390,6 +388,7 @@ const PresentationPreview = ({
         >
           <div
             ref={previewColumnRef}
+            data-measure="presentation-preview-column"
             className={cn(
               "@container/preview flex flex-col self-start",
               (hideQuickLinks || fillWidth) && "w-full min-w-0",
@@ -567,13 +566,22 @@ const PresentationPreview = ({
             <ul
               ref={quickLinkRailRef}
               data-testid={`quick-link-rail-${outputId}`}
-              className="grid min-h-0 w-[clamp(4.5rem,5vw,14rem)] shrink-0 grid-cols-1 content-start gap-1 overflow-hidden py-1 pr-1"
+              className="relative grid min-h-0 w-[clamp(4.5rem,5vw,14rem)] shrink-0 grid-cols-1 content-start gap-1 overflow-hidden py-1 pr-1"
               style={
                 previewColumnHeight != null
                   ? { height: `${previewColumnHeight}px` }
                   : undefined
               }
             >
+              <li
+                ref={quickLinkMeasureRef}
+                aria-hidden="true"
+                data-measure="quick-link-tile"
+                className="pointer-events-none invisible absolute left-0 right-1 top-0 flex flex-col items-center gap-1 rounded border border-gray-500 p-0"
+              >
+                <div className="aspect-video w-full" />
+                <p className="h-10 w-full overflow-hidden px-0.5" />
+              </li>
               {visibleQuickLinks.map((link) => (
                 <QuickLink
                   timers={timers}
@@ -586,7 +594,7 @@ const PresentationPreview = ({
                 />
               ))}
               {overflowQuickLinks.length > 0 && (
-                <PopOver
+                <PopoverPanel
                   TriggeringButton={
                     <Button
                       type="button"
@@ -617,7 +625,7 @@ const PresentationPreview = ({
                       />
                     ))}
                   </ul>
-                </PopOver>
+                </PopoverPanel>
               )}
             </ul>
           )}

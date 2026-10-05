@@ -112,9 +112,7 @@ export const findReusablePeriodSchedule = ({
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate
     ) return false;
-    // Service Setup identities can change after a saved schedule is created.
-    // Schedule identity comes from its owner and covered dates, not that mutable setup.
-    return true;
+    return coversCurrentOccurrences(schedule.occurrences || [], occurrences);
   });
   const deduplicated = deduplicateCanonicalGenerated(eligible);
   const exact = deduplicated.filter((schedule) =>
@@ -132,6 +130,34 @@ export const findReusablePeriodSchedule = ({
     left.scheduleId.localeCompare(right.scheduleId),
   );
   return { schedule: preferred || ordered[0] || null, ambiguous: false };
+};
+
+const coversCurrentOccurrences = (
+  stored: TeamScheduleOccurrence[],
+  current: TeamScheduleOccurrence[],
+) => {
+  const remaining = new Map(stored.map((saved) => [saved.occurrenceId, saved]));
+  // Reserve stable identities before comparing names, and consume each row once.
+  const unmatched = current.filter((occurrence) => {
+    const saved = remaining.get(occurrence.occurrenceId);
+    if (!saved || new Date(saved.startsAt).getTime() !== new Date(occurrence.startsAt).getTime()) return true;
+    remaining.delete(occurrence.occurrenceId);
+    return false;
+  });
+  const semanticKey = (occurrence: TeamScheduleOccurrence) =>
+    JSON.stringify([String(occurrence.name || "").trim().toLowerCase(), new Date(occurrence.startsAt).getTime()]);
+  const counts = new Map<string, number>();
+  remaining.forEach((saved) => {
+    const key = semanticKey(saved);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return unmatched.every((occurrence) => {
+    const key = semanticKey(occurrence);
+    const count = counts.get(key) || 0;
+    if (!count) return false;
+    counts.set(key, count - 1);
+    return true;
+  });
 };
 
 const deduplicateCanonicalGenerated = <T extends TeamScheduleSummary>(schedules: T[]) => {

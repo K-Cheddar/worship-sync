@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
-import PopOver from "../components/PopOver/PopOver";
+import PopoverPanel from "../components/PopOver/PopoverPanel";
 import {
   Popover,
   PopoverContent,
@@ -608,7 +608,7 @@ const ChatWindow = () => {
               : "Reconnecting to live updates. You can still send."
           }
         />
-        <PopOver
+        <PopoverPanel
           open={menuOpen}
           onOpenChange={setMenuOpen}
           align="end"
@@ -679,7 +679,7 @@ const ChatWindow = () => {
               Earlier weeks are read-only. Choose this week to send.
             </p>
           </div>
-        </PopOver>
+        </PopoverPanel>
       </div>
 
       {bannerError ? (
