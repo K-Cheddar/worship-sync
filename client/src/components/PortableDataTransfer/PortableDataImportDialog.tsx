@@ -173,7 +173,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   };
 
   return (
-    <Modal isOpen={open} onClose={() => onOpenChange(false)} busy={Boolean(busy)}
+    <Modal isOpen={open} onClose={() => onOpenChange(false)} busy={busy === "commit"}
       title={`Import ${currentType.label} from CSV`} size="lg"
       description="Choose a CSV, map its columns, review matches, then confirm the rows to import. Selecting a file never changes your data. Imports do not archive or restore records; skip rows marked Archived."
       surfaceClassName="rounded-lg border border-gray-700 bg-gray-900 text-white">

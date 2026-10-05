@@ -308,49 +308,45 @@ const TeamsTemplatesPage = () => {
               },
             ];
             return (
-              <div
-                key={template.templateId}
-                role="button"
-                tabIndex={0}
-                aria-label={canEdit ? `Edit ${displayName}` : `View ${displayName}`}
-                onClick={openTemplate}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    openTemplate();
-                  }
-                }}
-                className={cn(
-                  "relative flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 pr-12 transition-colors sm:flex-row sm:items-start sm:justify-between",
-                  "cursor-pointer hover:border-gray-600/80 hover:bg-gray-900/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
-                )}
-              >
-                <div className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-semibold text-gray-100">
-                    {displayName}
-                  </p>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
-                      {template.sections.length === 1
-                        ? "1 section"
-                        : `${template.sections.length} sections`}
-                      {" · "}
-                      {itemCount === 1 ? "1 item" : `${itemCount} items`}
+              <article key={template.templateId} className="relative">
+                <Button
+                  type="button"
+                  variant="none"
+                  aria-label={canEdit ? `Edit ${displayName}` : `View ${displayName}`}
+                  onClick={openTemplate}
+                  wrap
+                  className={cn(
+                    "relative flex min-h-0 w-full flex-col items-stretch gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 pr-12 text-left font-normal whitespace-normal transition-colors sm:flex-row sm:items-start sm:justify-between",
+                    "cursor-pointer hover:border-gray-600/80 hover:bg-gray-900/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block truncate text-sm font-semibold text-gray-100">
+                      {displayName}
                     </span>
-                    <span
-                      className={cn(
-                        "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
-                        serviceName
-                          ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
-                          : "border-gray-700 bg-gray-900/70 text-gray-400",
-                      )}
-                    >
-                      {serviceName ? `Preferred for ${serviceName}` : "Any service"}
+                    <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span className="rounded-md border border-gray-700 bg-gray-900/70 px-1.5 py-0.5 text-[11px] font-medium text-gray-300">
+                        {template.sections.length === 1
+                          ? "1 section"
+                          : `${template.sections.length} sections`}
+                        {" · "}
+                        {itemCount === 1 ? "1 item" : `${itemCount} items`}
+                      </span>
+                      <span
+                        className={cn(
+                          "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+                          serviceName
+                            ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
+                            : "border-gray-700 bg-gray-900/70 text-gray-400",
+                        )}
+                      >
+                        {serviceName ? `Preferred for ${serviceName}` : "Any service"}
+                      </span>
                     </span>
-                  </div>
-                </div>
+                  </span>
+                </Button>
                 {canEdit ? (
-                  <div className="absolute right-2 top-2" onClick={(event) => event.stopPropagation()}>
+                  <div className="absolute right-2 top-2">
                     <Menu
                       menuItems={menuItems}
                       TriggeringButton={
@@ -367,7 +363,7 @@ const TeamsTemplatesPage = () => {
                     />
                   </div>
                 ) : null}
-              </div>
+              </article>
             );
           })}
         </div>

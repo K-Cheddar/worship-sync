@@ -27,6 +27,10 @@ type ResourceUploadDialogProps = {
   churchId: string;
   onResourcesUploaded: (resources: ChurchResource[]) => void;
   triggerLabel?: string;
+  /** Expanded dialog visibility; minimized uploads continue while closed. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showTrigger?: boolean;
 };
 
 const controllerElement = () => document.getElementById("controller-main") || document.body;
@@ -37,14 +41,19 @@ const ResourceTransferProgress = ({ transferId, variant }: { transferId: string;
   return transfer ? <TransferProgress transfer={transfer} variant={variant} /> : null;
 };
 
-const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "Upload" }: ResourceUploadDialogProps) => {
+const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "Upload", open, onOpenChange, showTrigger = true }: ResourceUploadDialogProps) => {
   const overlayPortalContainer = useOverlayPortalContainer();
   const transferContext = useOptionalTransferActions();
   const inputRef = useRef<HTMLInputElement>(null);
   const transferIdRef = useRef<string | null>(null);
   const unregisterTransferActionsRef = useRef<Array<() => void>>([]);
   const handleUploadRef = useRef<() => void>(() => undefined);
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isOpen = open ?? internalOpen;
+  const setIsOpen = (nextOpen: boolean) => {
+    if (open === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMinimizedToButton, setIsMinimizedToButton] = useState(false);
   const [files, setFiles] = useState<PendingResource[]>([]);
@@ -114,6 +123,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
     setUploadStatus("uploading");
     setError("");
     setIsMinimized(true);
+    setIsOpen(false);
     const uploaded: ChurchResource[] = [];
     let failed = 0;
     const batchFiles = files.map((file) => ({ ...file }));
@@ -176,28 +186,28 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
 
   return (
     <>
-      {isMinimized && !isMinimizedToButton ? createPortal(
+      {!isOpen && isMinimized && !isMinimizedToButton ? createPortal(
         <div className="pointer-events-auto fixed bottom-1 right-4 z-10 min-w-[320px] max-w-[400px] rounded-lg border border-gray-600 bg-gray-800 p-4 shadow-2xl">
           <div className="flex items-center justify-between gap-2">
             <ResourceTransferProgress transferId={transferIdRef.current || "resource-upload"} variant="compact" />
             <div className="flex shrink-0 gap-1">
-              <Button variant="tertiary" onClick={() => setIsMinimized(false)} aria-label="Restore resource upload">Restore</Button>
+              <Button variant="tertiary" onClick={() => { setIsMinimized(false); setIsOpen(true); }} aria-label="Restore resource upload">Restore</Button>
               <Button variant="tertiary" onClick={() => setIsMinimizedToButton(true)} aria-label="Minimize resource upload to button">Minimize</Button>
             </div>
           </div>
         </div>,
         overlayPortalContainer ?? controllerElement(),
       ) : null}
-      <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
+      {showTrigger || (!isOpen && isMinimizedToButton) ? <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
         {isUploading ? "Uploading..." : triggerLabel}
-      </Button>
+      </Button> : null}
       <Modal
-        isOpen={isOpen && !isMinimized && !isMinimizedToButton}
+        isOpen={isOpen}
         onClose={reset}
         title="Upload resources"
         size="md"
-        showCloseButton={!isUploading}
-        headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => setIsMinimized(true)} /> : undefined}
+        busy={isUploading}
+        headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => { setIsMinimized(true); setIsMinimizedToButton(false); setIsOpen(false); }} /> : undefined}
       >
         <div className="flex flex-col gap-4">
           <input ref={inputRef} type="file" multiple aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />

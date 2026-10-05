@@ -418,6 +418,7 @@ describe("BoardPage", () => {
     const deleteDialog = await screen.findByRole("dialog", {
       name: /Delete this post/i,
     });
+    expect(within(deleteDialog).getByRole("button", { name: /^Delete$/i })).toHaveAttribute("data-variant", "presentDestructive");
     await user.click(within(deleteDialog).getByRole("button", { name: /^Delete$/i }));
 
     await waitFor(() => {
@@ -427,6 +428,46 @@ describe("BoardPage", () => {
         { authorId: "p1" },
       );
     });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Delete this post/i })).not.toBeInTheDocument());
+  });
+
+  it("keeps post deletion locked while pending and shows a retryable error", async () => {
+    localStorage.setItem("worshipsyncBoardName", "Alex");
+    localStorage.setItem("worshipsyncBoardParticipantId", "p1");
+    mockGetBoardPosts.mockResolvedValue({
+      aliasId: "sunday",
+      boardId: "board-a",
+      posts: [{
+        _id: "post:board-a:mine", type: "post", docType: "board-post", id: "mine",
+        aliasId: "sunday", boardId: "board-a", database: "demo", author: "Alex",
+        authorId: "p1", text: "My question", timestamp: 1, hidden: false, highlighted: false,
+      }],
+    });
+    let rejectDelete!: (error: Error) => void;
+    mockDeleteOwnBoardPost.mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectDelete = reject;
+    }));
+
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Delete this post/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete this post?" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    expect(within(dialog).getByRole("button", { name: "Deleting..." })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
+    await user.click(within(dialog).getByRole("button", { name: "Deleting..." }));
+    expect(screen.getByRole("dialog", { name: "Delete this post?" })).toBeInTheDocument();
+    expect(mockDeleteOwnBoardPost).toHaveBeenCalledTimes(1);
+
+    rejectDelete(new Error("The post could not be deleted."));
+    expect(await screen.findByText("The post could not be deleted.")).toBeInTheDocument();
+    const retryDialog = screen.getByRole("dialog", { name: "Delete this post?" });
+    expect(retryDialog).not.toHaveAttribute("aria-busy", "true");
+    expect(within(retryDialog).getByRole("button", { name: "Delete" })).toBeEnabled();
   });
 
   it("refreshes posts when the stream reports an update after a soft delete", async () => {

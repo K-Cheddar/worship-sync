@@ -6,6 +6,7 @@ import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { keepElementInView } from "../../utils/generalUtils";
 import { useLiveOutlinePreview } from "./useLiveOutlinePreview";
 import ServiceOutlineSkeleton from "../../containers/ServiceItems/ServiceOutlineSkeleton";
+import SegmentedControl from "../../components/SegmentedControl/SegmentedControl";
 import type { ServiceItem as ServiceItemType } from "../../types";
 import {
   getDefaultControllerProfiles,
@@ -120,27 +121,14 @@ const CurrentServiceItemList = ({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       {controllers.length > 1 ? (
-        <div
-          className="flex min-h-9 shrink-0 items-center gap-1 overflow-x-auto rounded-lg border border-gray-700 bg-gray-950/40 p-1"
-          role="group"
-          aria-label="Item list controller"
-        >
-          {controllers.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              aria-pressed={option.id === controller.id}
-              onClick={() => onControllerChange?.(option.id)}
-              className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                option.id === controller.id
-                  ? "bg-cyan-600 text-white"
-                  : "text-gray-300 hover:bg-gray-800"
-              }`}
-            >
-              {option.name}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          options={controllers.map(({ id, name }) => ({ value: id, label: name }))}
+          value={controller.id}
+          onChange={(controllerId) => onControllerChange?.(controllerId)}
+          ariaLabel="Item list controller"
+          variant="compact"
+          className="min-h-9 max-w-full shrink-0 overflow-x-auto"
+        />
       ) : null}
       {liveOutputName ? (
         <p className="shrink-0 truncate px-1 text-[11px] font-medium text-gray-400">

@@ -484,29 +484,29 @@ const ServicePlanAssigneeList = ({
                     && !(assignee.microphoneIds || []).includes(candidate.id),
                 );
                 const microphoneChip = (
-                  <ServicePlanMicrophoneChip microphone={microphone} className="gap-1 rounded-full px-2 py-1">
-                    {allowEdit ? (
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        iconSize="sm"
-                        padding="p-0"
-                        className="h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
-                        svg={X}
-                        aria-label={`Remove ${microphone.name} from ${label}`}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          updateAssignee(assignee.id, {
-                            microphoneIds: (assignee.microphoneIds || []).filter(
-                              (id) => id !== microphone.id,
-                            ),
-                          });
-                        }}
-                      />
-                    ) : null}
-                  </ServicePlanMicrophoneChip>
+                  <ServicePlanMicrophoneChip
+                    microphone={microphone}
+                    className="gap-1 rounded-full px-2 py-1"
+                  />
                 );
+                const removeMicrophoneButton = allowEdit ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    iconSize="sm"
+                    padding="p-1"
+                    className="size-8 shrink-0 justify-center rounded-full"
+                    svg={X}
+                    aria-label={`Remove ${microphone.name} from ${label}`}
+                    onClick={() =>
+                      updateAssignee(assignee.id, {
+                        microphoneIds: (assignee.microphoneIds || []).filter(
+                          (id) => id !== microphone.id,
+                        ),
+                      })
+                    }
+                  />
+                ) : null;
                 return (
                   <span
                     key={microphone.id}
@@ -515,14 +515,14 @@ const ServicePlanAssigneeList = ({
                     {allowEdit && replaceableMicrophones.length > 0 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <span
-                            className="inline-flex min-w-0 max-w-full cursor-pointer rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                          <Button
+                            type="button"
+                            variant="none"
+                            className="min-w-0 max-w-full rounded p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
                             aria-label={`Change ${microphone.name} for ${label}`}
-                            role="button"
-                            tabIndex={0}
                           >
                             {microphoneChip}
-                          </span>
+                          </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="min-w-52 overflow-hidden p-0">
                           {scheduleAvailabilityHint ? (
@@ -566,17 +566,20 @@ const ServicePlanAssigneeList = ({
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : microphoneChip}
+                    {removeMicrophoneButton}
                     {scheduledHolders.length ? (
                       <Popover>
                         <PopoverTrigger asChild>
-                          <button
+                          <Button
                             type="button"
+                            variant="tertiary"
+                            iconSize="sm"
+                            padding="p-0.5"
                             className="inline-flex cursor-pointer items-center rounded p-0.5 text-amber-300 hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+                            svg={TriangleAlert}
                             aria-label={`Microphone conflict for ${microphone.name}`}
                             onClick={(event) => event.stopPropagation()}
-                          >
-                            <TriangleAlert className="size-4 shrink-0 max-md:size-5" aria-hidden />
-                          </button>
+                          />
                         </PopoverTrigger>
                         <PopoverContent align="start" className="w-72 border-amber-700/60 bg-gray-900 p-3 text-gray-100">
                           <p className="text-xs font-semibold text-amber-200">Microphone conflict</p>
@@ -618,14 +621,16 @@ const ServicePlanAssigneeList = ({
                   {(scheduledEquipmentHolders?.get(iem.id) || []).length ? (
                     <Popover>
                       <PopoverTrigger asChild>
-                        <button
+                        <Button
                           type="button"
+                          variant="tertiary"
+                          iconSize="sm"
+                          padding="p-0.5"
                           className="inline-flex cursor-pointer items-center rounded p-0.5 text-amber-300 hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+                          svg={TriangleAlert}
                           aria-label={`IEM conflict for ${iem.name}`}
                           onClick={(event) => event.stopPropagation()}
-                        >
-                          <TriangleAlert className="size-4 shrink-0" aria-hidden />
-                        </button>
+                        />
                       </PopoverTrigger>
                       <PopoverContent align="start" className="w-72 border-amber-700/60 bg-gray-900 p-3 text-gray-100">
                         <p className="text-xs font-semibold text-amber-200">IEM conflict</p>

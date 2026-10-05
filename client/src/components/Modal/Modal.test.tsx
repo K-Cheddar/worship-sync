@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Modal from "./Modal";
@@ -7,12 +7,12 @@ import FloatingWindow from "../FloatingWindow/FloatingWindow";
 import { FloatingWindowZIndexProvider } from "../FloatingWindow/FloatingWindowZIndexContext";
 import Select from "../Select/Select";
 
-const DialogExample = ({ busy = false }: { busy?: boolean }) => {
+const DialogExample = ({ busy = false, onCloseAutoFocus }: { busy?: boolean; onCloseAutoFocus?: ComponentProps<typeof Modal>["onCloseAutoFocus"] }) => {
   const [open, setOpen] = useState(false);
   return <>
     <button type="button" onClick={() => setOpen(true)}>Open review</button>
     <button type="button">Outside target</button>
-    <Modal isOpen={open} onClose={() => setOpen(false)} title="Review" description="Review this action." busy={busy}>
+    <Modal isOpen={open} onClose={() => setOpen(false)} title="Review" description="Review this action." busy={busy} onCloseAutoFocus={onCloseAutoFocus}>
       <button type="button">First action</button>
       <button type="button">Last action</button>
     </Modal>
@@ -33,6 +33,32 @@ test("traps keyboard focus, dismisses with Escape and restores the opener", asyn
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+test("restores the opener when a close-focus callback observes the event", async () => {
+  const user = userEvent.setup();
+  const onCloseAutoFocus = jest.fn();
+  render(<DialogExample onCloseAutoFocus={onCloseAutoFocus} />);
+  const trigger = screen.getByRole("button", { name: "Open review" });
+  await user.click(trigger);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+test("respects a close-focus callback that prevents default", async () => {
+  const user = userEvent.setup();
+  const onCloseAutoFocus = jest.fn((event: Parameters<NonNullable<ComponentProps<typeof Modal>["onCloseAutoFocus"]>>[0]) => {
+    event.preventDefault();
+    screen.getByRole("button", { name: "Outside target" }).focus();
+  });
+  render(<DialogExample onCloseAutoFocus={onCloseAutoFocus} />);
+  const trigger = screen.getByRole("button", { name: "Open review" });
+  await user.click(trigger);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "Outside target" })).toHaveFocus();
+  expect(trigger).not.toHaveFocus();
 });
 
 test("busy blocks close, Escape and outside dismissal", async () => {

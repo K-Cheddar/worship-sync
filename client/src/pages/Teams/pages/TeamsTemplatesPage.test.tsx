@@ -286,6 +286,9 @@ describe("TeamsTemplatesPage", () => {
         name: "More actions for Standard Sabbath",
       }),
     );
+    expect(
+      screen.queryByRole("region", { name: "Service plan template" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Copy template" }));
 
     await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled());

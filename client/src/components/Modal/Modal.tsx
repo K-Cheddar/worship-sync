@@ -112,7 +112,8 @@ const Modal = ({
                 returnFocusRef.current = ownerDocument.activeElement as HTMLElement | null;
               }}
               onCloseAutoFocus={(event) => {
-                if (onCloseAutoFocus) { onCloseAutoFocus(event); return; }
+                onCloseAutoFocus?.(event);
+                if (event.defaultPrevented) return;
                 if (returnFocusRef.current?.isConnected) {
                   event.preventDefault();
                   returnFocusRef.current.focus();

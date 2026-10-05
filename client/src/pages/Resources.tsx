@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -9,14 +9,17 @@ import {
   FileText,
   FolderOpen,
   Pencil,
+  Plus,
+  Link2,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
-import Modal from "../components/Modal/Modal";
+import ConfirmDialog from "../components/Modal/ConfirmDialog";
 import ContentPreviewDialog from "../components/ContentPreview/ContentPreviewDialog";
 import { ExternalResourceDialog } from "./ExternalResourceDialog";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -55,6 +58,7 @@ import type {
   ResourceLibraryEntry,
 } from "../types/churchResource";
 import ResourceUploadDialog from "./ResourceUploadDialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/DropdownMenu";
 
 type ResourceFilter = "all" | "document" | "audio";
 type ResourceSortKey = "name" | "type" | "size" | "updated" | "source";
@@ -268,6 +272,9 @@ const ResourcesPage = () => {
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const scrollbarWidth = useSelector((state) => state.undoable.present.preferences.scrollbarWidth);
   const [resources, setResources] = useState<ChurchResource[]>([]);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [externalOpen, setExternalOpen] = useState(false);
+  const pendingResourceDialog = useRef<"upload" | "external" | null>(null);
   const [filter, setFilter] = useState<ResourceFilter>("all");
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<ResourceSortKey | null>(null);
@@ -423,8 +430,7 @@ const ResourcesPage = () => {
 
   const confirmDelete = async () => {
     const candidates = deleteCandidates;
-    if (!churchId || !candidates?.length) return;
-    setDeleteCandidates(null);
+    if (!churchId || !candidates?.length || deletingKey !== null) return;
     setDeletingKey("bulk");
     setError("");
     let storageChanged = false;
@@ -470,6 +476,7 @@ const ResourcesPage = () => {
     } finally {
       if (storageChanged) void storageQuota.refresh();
       setDeletingKey(null);
+      setDeleteCandidates(null);
     }
   };
 
@@ -490,20 +497,32 @@ const ResourcesPage = () => {
             <div className="flex flex-wrap items-end gap-3 border-b border-gray-700 p-4">
               <div className="min-w-[14rem] flex-1"><Input label="Search resources" hideLabel value={query} onChange={(value) => setQuery(String(value))} placeholder="Search..." /></div>
               {selectedEntries.length ? <Button type="button" variant="destructive" svg={Trash2} onClick={requestDeleteSelected}>Delete selected ({selectedEntries.length})</Button> : null}
-              {canEdit && churchId ? <details className="relative">
-                <summary className="inline-flex min-h-10 cursor-pointer list-none items-center rounded bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-500">+ Add resource</summary>
-                <div className="absolute right-0 z-20 mt-2 flex min-w-52 flex-col gap-1 rounded border border-gray-700 bg-gray-900 p-2 shadow-xl">
-                  <ResourceUploadDialog triggerLabel="Upload file" churchId={churchId} onResourcesUploaded={(uploadedResources) => {
+              {canEdit && churchId ? <>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="cta" svg={Plus}>Add resource</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" onCloseAutoFocus={() => {
+                    // Open after the menu releases its focus scope and restores the trigger.
+                    const dialog = pendingResourceDialog.current;
+                    pendingResourceDialog.current = null;
+                    if (dialog === "upload") setUploadOpen(true);
+                    if (dialog === "external") setExternalOpen(true);
+                  }}>
+                    <DropdownMenuItem onSelect={() => { pendingResourceDialog.current = "upload"; }}><Upload />Upload file</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { pendingResourceDialog.current = "external"; }}><Link2 />Add external link</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                  <ResourceUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} showTrigger={false} churchId={churchId} onResourcesUploaded={(uploadedResources) => {
                     setResources((current) => [...uploadedResources, ...current]);
                     setRecentlyUploadedKeys(new Set(uploadedResources.map((resource) => `resource:${resource.id}`)));
                     void storageQuota.refresh();
                   }} />
-                  <ExternalResourceDialog churchId={churchId} onCreated={(resource) => {
+                  <ExternalResourceDialog open={externalOpen} onOpenChange={setExternalOpen} showTrigger={false} churchId={churchId} onCreated={(resource) => {
                     setResources((current) => [resource, ...current]);
                     setRecentlyUploadedKeys(new Set([`resource:${resource.id}`]));
                   }} />
-                </div>
-              </details> : null}
+              </> : null}
             </div>
             <div className="flex flex-wrap gap-2 border-b border-gray-700 px-4 py-2" role="tablist" aria-label="Resource types">
               {(["all", "document", "audio"] as const).map((value) => (
@@ -608,16 +627,23 @@ const ResourcesPage = () => {
               <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} onClose={() => setSelectedKey(null)} />
             ) : null}
             {deleteCandidates?.length ? (
-              <Modal isOpen onClose={() => setDeleteCandidates(null)} title="Delete resource?" size="sm" zIndexLevel={2} description={`Confirm deletion of ${deleteCandidates.length} resource${deleteCandidates.length === 1 ? "" : "s"}`}>
+              <ConfirmDialog
+                open
+                onCancel={() => setDeleteCandidates(null)}
+                onConfirm={() => void confirmDelete()}
+                title="Delete resource?"
+                confirmLabel="Delete"
+                destructive
+                busy={deletingKey !== null}
+                size="sm"
+                zIndexLevel={2}
+                description={`Confirm deletion of ${deleteCandidates.length} resource${deleteCandidates.length === 1 ? "" : "s"}`}
+              >
                 <div className="space-y-4">
                   <p className="text-sm text-gray-200">{deleteCandidates.length === 1 ? resourceEntryDeleteConfirmation(deleteCandidates[0]) : `Delete these ${deleteCandidates.length} resources?`}</p>
                   {deleteCandidates.length > 1 ? <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-gray-300">{deleteCandidates.map((entry) => <li key={entryKey(entry)}>{resourceEntryName(entry)}</li>)}</ul> : null}
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setDeleteCandidates(null)} disabled={deletingKey !== null}>Cancel</Button>
-                    <Button type="button" variant="destructive" svg={Trash2} isLoading={deletingKey !== null} disabled={deletingKey !== null} onClick={() => void confirmDelete()}>Delete</Button>
-                  </div>
                 </div>
-              </Modal>
+              </ConfirmDialog>
             ) : null}
           </>
         )}

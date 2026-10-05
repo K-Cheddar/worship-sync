@@ -1681,9 +1681,14 @@ describe("assignees and their microphones", () => {
     await user.click(
       screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: /Change Orange for Pastor John/i }),
-    );
+    const changeMicrophoneButton = screen.getByRole("button", {
+      name: /Change Orange for Pastor John/i,
+    });
+    expect(within(changeMicrophoneButton).queryByRole("button")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Remove Orange from Pastor John/i }),
+    ).toBeInTheDocument();
+    await user.click(changeMicrophoneButton);
     await user.click(screen.getByRole("menuitem", { name: /Lapel 1/i }));
 
     expect(onUpdate).toHaveBeenCalledWith(
@@ -1835,7 +1840,9 @@ describe("assignees and their microphones", () => {
     });
     await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
     expect(screen.getByRole("group", { name: "Assignees for Pastoral Greetings" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "IEM conflict for IEM 1" }));
+    const conflictTrigger = screen.getByRole("button", { name: "IEM conflict for IEM 1" });
+    expect(conflictTrigger).toHaveAttribute("data-variant", "presentTertiary");
+    await user.click(conflictTrigger);
     expect(await screen.findByText("IEM 1 is scheduled to Jordan Lee.")).toBeInTheDocument();
   });
 
@@ -1940,7 +1947,11 @@ describe("assignees and their microphones", () => {
     });
 
     expect(screen.queryByText(/is scheduled to Johnny Mclain/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Microphone conflict for Orange/i }));
+    const trigger = screen.getByRole("button", {
+      name: /Microphone conflict for Orange/i,
+    });
+    expect(trigger).toHaveAttribute("data-variant", "presentTertiary");
+    await user.click(trigger);
     expect(await screen.findByText(/Orange · Handheld is scheduled to Johnny Mclain/i)).toBeInTheDocument();
   });
 

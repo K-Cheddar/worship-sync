@@ -9,6 +9,7 @@ import {
   Undo2,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../../../components/ui/DropdownMenu";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -1776,15 +1777,21 @@ const IntakeManager = ({
                         >
                           Send SMS
                         </Button>
-                        <details className="relative">
-                          <summary className="cursor-pointer text-gray-300 underline decoration-gray-600 underline-offset-2">More</summary>
-                          <div className="absolute right-0 z-20 mt-1 flex min-w-36 flex-col rounded border border-gray-600 bg-gray-900 p-2 shadow-lg">
-                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} isLoading={recipientActionKey === recipient.recipientId} onClick={() => void getRecipientLink(recipient, { copy: true })}>Copy private link</Button>
-                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} onClick={() => void getRecipientLink(recipient)}>Open form</Button>
-                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} onClick={() => void revokeRecipient(recipient)}>Revoke request</Button>
-                            {recipientIntents.length ? <div className="mt-1 border-t border-gray-700 px-1 pt-2"><p className="text-xs font-semibold text-gray-300">Message history</p><ul className="mt-1 space-y-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul></div> : null}
-                          </div>
-                        </details>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="textLink" isLoading={recipientActionKey === recipient.recipientId}>More</Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                            <DropdownMenuItem disabled={Boolean(recipientActionKey)} onSelect={() => void getRecipientLink(recipient, { copy: true })}>Copy private link</DropdownMenuItem>
+                            <DropdownMenuItem disabled={Boolean(recipientActionKey)} onSelect={() => void getRecipientLink(recipient)}>Open form</DropdownMenuItem>
+                            <DropdownMenuItem variant="destructive" disabled={Boolean(recipientActionKey)} onSelect={() => void revokeRecipient(recipient)}>Revoke request</DropdownMenuItem>
+                            {recipientIntents.length ? <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuLabel className="text-xs text-gray-300">Message history</DropdownMenuLabel>
+                              <ul className="space-y-1 px-2 pb-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul>
+                            </> : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </>
                     ) : null}
                   </div>

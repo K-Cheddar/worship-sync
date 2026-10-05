@@ -35,7 +35,6 @@ const WorkstationUnpairConfirmModal = ({
       title="Unlink this computer?"
       description="This signs you out and removes this computer as a shared workstation."
       size="sm"
-      showCloseButton={!isConfirming}
       contentPadding="p-4"
       zIndexLevel={2}
     >
