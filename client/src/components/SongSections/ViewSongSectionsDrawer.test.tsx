@@ -320,4 +320,18 @@ describe("ViewSongSectionsDrawer", () => {
 
     await waitFor(() => expect(operations).toEqual(["delete", "persist"]));
   });
+  it("blocks v2 audio replacement and removal before touching storage", async () => {
+    renderDrawer({ drawerSong: { ...song, docType: "song-v2-root" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(screen.getByLabelText("Choose MP3"), {
+      target: { files: [new File([new Uint8Array([1])], "replacement.mp3", { type: "audio/mpeg" })] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("schema v2 writes are not enabled");
+    expect(mockUploadSongAudio).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove MP3" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("schema v2 writes are not enabled"));
+    expect(mockDeleteSongAudio).not.toHaveBeenCalled();
+  });
+
 });

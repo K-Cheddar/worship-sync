@@ -494,7 +494,10 @@ describe("FilteredItems", () => {
     } as any;
     const remove = jest.fn().mockResolvedValue({ ok: true });
     const db = {
-      get: jest.fn().mockResolvedValue(song),
+      get: jest.fn(async (id: string) => {
+        if (id !== song._id) throw Object.assign(new Error("Not found"), { status: 404 });
+        return song;
+      }),
       remove,
     } as any;
 

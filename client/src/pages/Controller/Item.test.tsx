@@ -104,7 +104,7 @@ describe("Controller Item page", () => {
   });
 
   it("hydrates exact song reads into arrangement slides", async () => {
-    const dbGet = jest.fn().mockResolvedValue({
+    const legacySong = {
       _id: "song-123",
       name: "Recovered Song",
       type: "song",
@@ -133,7 +133,11 @@ describe("Controller Item page", () => {
           slides: [],
         },
       ],
-    } as unknown as DBItem);
+    } as unknown as DBItem;
+    const dbGet = jest.fn(async (id: string) => {
+      if (id !== legacySong._id) throw Object.assign(new Error("Not found"), { status: 404 });
+      return legacySong;
+    });
     const store = createTestStore();
     const controllerContext = createMockControllerContext({
       db: createMockPouchDB({ get: dbGet }),
@@ -286,18 +290,12 @@ describe("Controller Item page", () => {
   it("does not commit an older item load after navigation moves to a newer item", async () => {
     let resolveB: ((item: DBItem) => void) | undefined;
     let resolveC: ((item: DBItem) => void) | undefined;
+    const pendingB = new Promise<DBItem>((resolve) => { resolveB = resolve; });
+    const pendingC = new Promise<DBItem>((resolve) => { resolveC = resolve; });
     const dbGet = jest.fn((id: string) => {
-      if (id === "item-b") {
-        return new Promise<DBItem>((resolve) => {
-          resolveB = resolve;
-        });
-      }
-      if (id === "item-c") {
-        return new Promise<DBItem>((resolve) => {
-          resolveC = resolve;
-        });
-      }
-      return Promise.reject(new Error(`unexpected item ${id}`));
+      if (id === "item-b") return pendingB;
+      if (id === "item-c") return pendingC;
+      return Promise.reject(Object.assign(new Error(`unexpected item ${id}`), { status: 404 }));
     });
     const controllerContext = createMockControllerContext({
       db: createMockPouchDB({ get: dbGet }),

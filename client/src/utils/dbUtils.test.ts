@@ -79,7 +79,7 @@ describe("dbUtils", () => {
     });
   });
 
-  it("discovers only legacy songs when the library scan includes v2 infrastructure", async () => {
+  it("discovers legacy songs and lightweight v2 projections without exposing children", async () => {
     const db = createDb();
     const legacySong = {
       _id: "song-legacy",
@@ -111,11 +111,29 @@ describe("dbUtils", () => {
 
     expect(dispatch).toHaveBeenCalledWith({
       type: "allDocs/updateAllSongDocs",
-      payload: [legacySong],
+      payload: [legacySong, expect.objectContaining({ _id: "song-v2", docType: "song-v2-root", arrangements: [expect.objectContaining({ slides: [] })] })],
     });
     expect(v2Docs.root).not.toHaveProperty("type");
     expect(v2Docs.arrangements[0]).not.toHaveProperty("type");
     expect(v2Docs.slides[0].type).not.toBe("song");
+  });
+
+  it("does not fetch v2 slide bodies for library refresh", async () => {
+    const db = createDb();
+    const docs = serializeSongToV2Documents({
+      _id: "song-v2", type: "song", name: "V2", selectedArrangement: 0,
+      arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [], slides: [{ id: "s", type: "Verse", name: "Verse", boxes: [] }] }],
+    } as unknown as import("../types").DBItem);
+    const documents = [docs.root, ...docs.arrangements, ...docs.slides];
+    db.allDocs.mockImplementation(async ({ keys, include_docs }) => ({
+      rows: documents.filter((doc) => !keys || keys.includes(doc._id)).map((doc) => ({ id: doc._id, ...(include_docs ? { doc } : {}) })),
+    }));
+    await updateAllDocs(jest.fn(), db as unknown as PouchDB.Database);
+    expect(db.allDocs.mock.calls).toEqual([
+      [{ include_docs: false }],
+      [{ keys: [docs.root._id, docs.arrangements[0]._id], include_docs: true }],
+    ]);
+    expect(db.get).not.toHaveBeenCalled();
   });
 
   it("does not classify v2 root or child documents as legacy items for font migration", async () => {

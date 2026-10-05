@@ -1061,10 +1061,10 @@ listenerMiddleware.startListening({
     allDocsSlice.actions.updateAllTimerDocs,
     allDocsSlice.actions.updateAllBibleDocs,
   ),
-  effect: (action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
-    const currentItem = state.undoable.present.item;
+    let currentItem = state.undoable.present.item;
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
@@ -1076,7 +1076,7 @@ listenerMiddleware.startListening({
       allTimerDocs: previousTimerDocs,
       allBibleDocs: previousBibleDocs,
     } = previousState.allDocs;
-    const doc =
+    let doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
@@ -1088,8 +1088,26 @@ listenerMiddleware.startListening({
       previousBibleDocs.find((d) => d._id === activeId);
 
     if (doc) {
-      if (_.isEqual(doc, previousDoc)) {
+      if (doc.docType !== "song-v2-root" && _.isEqual(doc, previousDoc)) {
         return;
+      }
+
+      if (doc.docType === "song-v2-root") {
+        if (!allDocsSlice.actions.updateAllSongDocs.match(action) || !db) return;
+        try {
+          const projection = doc;
+          const database = db;
+          doc = await loadItemWithSongHydration(database, activeId);
+          const latest = listenerApi.getState() as RootState;
+          const latestItem = latest.undoable.present.item;
+          if (db !== database || latestItem._id !== activeId || latestItem.listId !== listId ||
+            latestItem.baseItem !== currentItem.baseItem ||
+            latest.allDocs.allSongDocs.find((song) => song._id === activeId) !== projection) return;
+          currentItem = latestItem;
+        } catch (error) {
+          console.error("Could not refresh active v2 song", error);
+          return;
+        }
       }
 
       const docMatchesBase =

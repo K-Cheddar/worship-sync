@@ -15,7 +15,7 @@ import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
-import { loadSong, saveSong } from "../../utils/songPersistence";
+import { loadSong, saveSong, SongV2WriteNotEnabledError } from "../../utils/songPersistence";
 import type { Arrangment, DBItem, SongAudio, SongMetadata } from "../../types";
 
 type ServicePlanSongDetailsPanelProps = {
@@ -64,6 +64,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
 
   const uploadSongAudioForEdit = useCallback(async (file: File) => {
     if (!churchId) throw new Error("Sign in to attach an MP3.");
+    if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
     const previousAudio = song.songAudio;
     const audio = await uploadSongAudio({ churchId, songId: song._id, file, previousAudio });
     try {
@@ -89,6 +90,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
 
   const removeSongAudioForEdit = useCallback(async () => {
     if (!churchId || !song.songAudio) return;
+    if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
     const audio = song.songAudio;
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: song._id, audio }),

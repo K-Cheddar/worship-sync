@@ -1,3 +1,5 @@
+import { discoverSongLibrary } from "./songLibraryDiscovery";
+import { updateSongLibraryDiagnostics } from "../store/allDocsSlice";
 import {
   normalizeItemSlides,
   normalizeSongForPersistence,
@@ -620,12 +622,12 @@ export const updateAllDocs = async (
 ): Promise<boolean> => {
   if (!db) return false;
   try {
-    const allDocs: allDocsType = (await db.allDocs({
-      include_docs: true,
-    })) as allDocsType;
-    const allSongs = allDocs.rows
-      .filter((row) => (row.doc as any)?.type === "song")
-      .map((row) => row.doc as DBItem);
+    // Discover IDs first so a library refresh never reads authored v2 slide bodies.
+    const manifest = await db.allDocs({ include_docs: false });
+    const keys = manifest.rows.map((row) => row.id ?? row.key ?? (row.doc as DBItem | undefined)?._id)
+      .filter((id): id is string => Boolean(id) && !id.startsWith("song-v2:slide:"));
+    const allDocs = (keys.length ? await db.allDocs({ keys, include_docs: true }) : { rows: [] }) as allDocsType;
+    const { songs: allSongs, diagnostics } = discoverSongLibrary(allDocs.rows.map((row) => row.doc));
 
     const allFreeFormDocs = allDocs.rows
       .filter((row) => (row.doc as any)?.type === "free")
@@ -641,6 +643,8 @@ export const updateAllDocs = async (
 
     if (!shouldApply()) return false;
 
+    dispatch(updateSongLibraryDiagnostics(diagnostics));
+    if (diagnostics.length) console.warn("Incomplete v2 song library projections", diagnostics);
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));
     dispatch(updateAllTimerDocs(allTimers));

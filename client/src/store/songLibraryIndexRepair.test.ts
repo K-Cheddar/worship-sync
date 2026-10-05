@@ -386,3 +386,19 @@ describe("library index repair middleware", () => {
     expect(store.getState().allItems.list).toEqual([remoteTimer]);
   });
 });
+
+
+it("repairs v2 projections but preserves remote deletions through incomplete replication", () => {
+  const store = createStore();
+  const projection: DBItem = { ...songDoc("v2", "V2"), docType: "song-v2-root", arrangements: [] };
+  store.dispatch(allItemsSlice.actions.initiateAllItemsList([]));
+  store.dispatch(allDocsSlice.actions.updateAllSongDocs([projection]));
+  expect(store.getState().allItems.list).toEqual([{ _id: "v2", name: "V2", type: "song", listId: "v2", background: "" }]);
+  store.dispatch(allItemsSlice.actions.updateAllItemsListFromRemote([]));
+  store.dispatch(allDocsSlice.actions.updateSongLibraryDiagnostics([{ songId: "v2", rootId: "root", code: "incomplete-v2", message: "Missing child" }]));
+  store.dispatch(allDocsSlice.actions.updateAllSongDocs([]));
+  expect(store.getState().allItems.list).toEqual([]);
+  store.dispatch(allDocsSlice.actions.updateSongLibraryDiagnostics([]));
+  store.dispatch(allDocsSlice.actions.updateAllSongDocs([projection]));
+  expect(store.getState().allItems.list).toEqual([]);
+});

@@ -18,7 +18,7 @@ import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
-import { loadSong, saveSong } from "../../utils/songPersistence";
+import { loadSong, saveSong, SongV2WriteNotEnabledError } from "../../utils/songPersistence";
 import {
   ItemDetailsEditorFields,
   type ItemDetailsSavePayload,
@@ -196,6 +196,7 @@ const ViewSongSectionsDrawer = ({
       if (!churchId || !song) {
         throw new Error("Sign in to attach an MP3.");
       }
+      if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
       const previousAudio = song.songAudio;
       const audio = await uploadSongAudio({
         churchId,
@@ -242,6 +243,7 @@ const ViewSongSectionsDrawer = ({
 
   const removeSongAudio = useCallback(async () => {
     if (!churchId || !song?.songAudio) return;
+    if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
     const audio = song.songAudio;
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
