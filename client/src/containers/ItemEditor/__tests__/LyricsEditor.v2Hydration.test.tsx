@@ -10,10 +10,10 @@ jest.mock("../../../hooks", () => ({
 }));
 jest.mock("../LyricsEditorPanel", () => ({
   __esModule: true,
-  default: ({ song, onSaveLyrics }: { song: DBItem; onSaveLyrics?: (payload: { arrangements: DBItem["arrangements"]; selectedArrangement: number }) => Promise<void> }) => (
+  default: ({ song, onSaveLyrics }: { song: DBItem; onSaveLyrics?: (payload: { baselineSong: DBItem; arrangements: DBItem["arrangements"]; selectedArrangement: number }) => Promise<void> }) => (
     <div>
       <span>{song.name}: {song.arrangements[0].slides.length} authored slides</span>
-      <button onClick={() => { void onSaveLyrics?.({ arrangements: song.arrangements, selectedArrangement: 0 }).catch(() => undefined); }}>Save hydrated lyrics</button>
+      <button onClick={() => { void onSaveLyrics?.({ baselineSong: song, arrangements: song.arrangements, selectedArrangement: 0 }).catch(() => undefined); }}>Save hydrated lyrics</button>
     </div>
   ),
 }));
@@ -28,7 +28,7 @@ const projection = (id = "song-1") => {
   const docs = persistence.serializeSongToV2Documents(fullSong(id));
   return persistence.buildSongV2LibraryProjection(docs.root, docs.arrangements);
 };
-const editor = (db: PouchDB.Database, song: DBItem, save?: (payload: { arrangements: DBItem["arrangements"]; selectedArrangement: number }) => Promise<void>) => (
+const editor = (db: PouchDB.Database, song: DBItem, save?: (payload: { baselineSong: DBItem; arrangements: DBItem["arrangements"]; selectedArrangement: number }) => Promise<void>) => (
   <ControllerInfoContext.Provider value={{ db } as never}>
     <LyricsEditor song={song} isOpen onClose={jest.fn()} onSaveLyrics={save} />
   </ControllerInfoContext.Provider>
@@ -37,28 +37,25 @@ const editor = (db: PouchDB.Database, song: DBItem, save?: (payload: { arrangeme
 describe("library lyrics editor exact v2 hydration", () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it("loads slides before initializing the draft and a normal save cannot remove v2 children", async () => {
+  it("loads slides before initializing the draft and passes that exact song as the save baseline", async () => {
     const docs = persistence.serializeSongToV2Documents(fullSong());
     const documents = new Map([docs.root, ...docs.arrangements, ...docs.slides].map((doc) => [doc._id, doc]));
-    const put = jest.fn();
-    const remove = jest.fn();
     const db = {
       get: jest.fn(async (id: string) => documents.get(id)),
       allDocs: jest.fn(async ({ keys }: { keys: string[] }) => ({ rows: keys.map((id) => ({ doc: documents.get(id) })) })),
-      put, remove,
     } as unknown as PouchDB.Database;
     const librarySong = projection();
-    const save = jest.fn(async (payload: { arrangements: DBItem["arrangements"]; selectedArrangement: number }) => {
-      await persistence.saveSong(db, { ...librarySong, ...payload });
-    });
+    const save = jest.fn().mockResolvedValue(undefined);
     render(editor(db, librarySong, save));
     expect(screen.queryByRole("button", { name: "Save hydrated lyrics" })).not.toBeInTheDocument();
     await screen.findByText("song-1: 1 authored slides");
     fireEvent.click(screen.getByRole("button", { name: "Save hydrated lyrics" }));
-    await waitFor(() => expect(save).toHaveBeenCalledWith({ arrangements: expect.arrayContaining([expect.objectContaining({ slides: fullSong().arrangements[0].slides })]), selectedArrangement: 0 }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      baselineSong: expect.objectContaining({ docType: "song-v2-root", arrangements: [expect.objectContaining({ slides: fullSong().arrangements[0].slides })] }),
+      arrangements: expect.arrayContaining([expect.objectContaining({ slides: fullSong().arrangements[0].slides })]),
+      selectedArrangement: 0,
+    })));
     expect(db.get).toHaveBeenCalledWith(docs.root._id);
-    expect(put).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
     expect(documents.get(docs.slides[0]._id)).toEqual(docs.slides[0]);
   });
 

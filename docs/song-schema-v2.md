@@ -15,11 +15,11 @@ use that field to identify complete v1 song documents. Hydrating a v2 root
 creates an application-facing song with `type: "song"` while retaining the
 root `docType` as its storage-version marker.
 
-Presence of a v2 root currently enables v2 reads. Normal v2 mutations remain
-intentionally disabled: normal save and delete operations on a v2-backed song
-fail with SongV2WriteNotEnabledError. The isolated writer below is available
-only to focused tests and future migration tooling. No normal application flow
-creates v2 documents; migration, shadow roots, and dual writes are not enabled.
+Presence of a v2 root currently enables v2 reads. Interactive saves of an
+already-v2-backed song now use the targeted writer and require the editor's
+authored baseline. Normal whole-song v2 deletion remains guarded. No normal
+application flow creates v2 documents; migration, shadow roots, and dual writes
+are not enabled.
 
 The legacy song `_rev` and v2 root `_rev` belong to different physical
 documents. They must never be mixed: in particular, a v2 root revision cannot
@@ -38,21 +38,22 @@ be used when writing the legacy document with the song's original ID.
   that is expected.
 
 Boxes remain together inside their slide document. There is no automatic
-conflict resolution in the isolated writer.
+conflict resolution in the writer.
 
 Songs without a v2 root continue to be read from their legacy single document,
-and all normal song writes remain v1. This document describes the v2 contract;
-it does not enable migration, production v2 writes, or legacy cleanup.
+and continue to use the v1 save path. Already-v2-backed songs use targeted
+interactive saves. This document does not enable migration, v2 creation for
+legacy songs, or legacy cleanup.
 
 
-## Isolated write engine
+## Targeted write engine
 
 > A normal edit must touch only the physical documents whose durable content changed.
 
-The engine is deliberately dormant. Normal `createSong`, `saveSong`, and
-`deleteSong` retain v1 behavior and the existing v2 guards. No Redux autosave,
-song-details, linking, audio, library discovery, or migration workflow calls
-the new APIs. A root is still absent from legacy `type === "song"` scans.
+Normal `createSong` remains v1 and `deleteSong` retains its v2 guard. Normal
+`saveSong` supports v1 and already-v2-backed songs; v2 saves require an authored
+baseline. Migration, root publication, and legacy cleanup remain out of scope.
+A root is still absent from legacy `type === "song"` scans.
 
 - `loadSongV2Snapshot(db, songId)` returns `{ root, arrangements, slides,
   hydrated }`. Only manifest-referenced children are loaded. Physical
@@ -69,6 +70,14 @@ the new APIs. A root is still absent from legacy `type === "song"` scans.
   snapshot. Passing a freshly loaded baseline for a stale whole-song draft
   would turn unrelated concurrent edits into apparent changes and must be
   avoided. Every update uses its own baseline document revision.
+- `saveSongV2FromBaseline(db, baselineSong, desiredSong)` derives a pure
+  baseline-to-desired intent plan before loading current v2 state. It validates
+  only intended physical documents against their serialized baseline content,
+  then rebases those writes onto current documents and their `_rev` values.
+  Intended creates also check deterministic IDs for existing or orphaned docs.
+- Normal `saveSong(db, desired, baseline)` routes already-v2-backed songs
+  through that path. A missing authored baseline fails safely; a fresh database
+  read is never substituted for the user's baseline.
 - `createSongV2(db, song)` writes slides, then arrangements, then the root
   **last**. Root publication is the activation marker. Before it exists,
   exact-song reads still use v1 (or return not found for a v2-only song).
@@ -168,7 +177,7 @@ Physical whole-song v2 deletion is deliberately deferred. Normal delete still
 rejects v2-backed songs. Migration must first define how deletion behaves when
 v1 and v2 coexist, then implement root-first deactivation and child cleanup.
 Library discovery is now v2-aware as described below. This phase does not migrate,
-dual-write, delete legacy songs, or activate production v2 writes.
+create v2 roots for legacy songs, dual-write, or delete legacy songs.
 
 ## Library discovery and lazy slides
 
@@ -202,10 +211,40 @@ library state. Active-controller refresh also exact-loads before applying or buf
 remote slide content, including slide-only changes. Resource, audio, matching, and
 lyrics viewing paths use projection metadata and formatted lyrics directly.
 
-Normal `createSong`, `saveSong`, and `deleteSong` are unchanged. V2 saves/deletes remain
-guarded by `SongV2WriteNotEnabledError`; opening an editor does not activate writes.
-Audio replacement/removal is also guarded before external storage mutations.
-This phase does not migrate songs, publish roots, dual-write, or delete predecessors.
+Normal `createSong` remains v1 and whole-song v2 deletion remains guarded by
+`SongV2WriteNotEnabledError`. Audio replacement writes the new root pointer
+before deleting the previous object. V2 removal clears the pointer before
+external cleanup so a root conflict preserves the previous object. This phase
+does not migrate songs, publish roots, dual-write, or delete predecessors.
+
+## Interactive editing and conflict isolation
+
+The active controller's `baseItem` is the authored editing baseline. A
+successful save advances it to the acknowledged hydrated song, and accepting a
+buffered remote update makes that accepted song the next baseline. Child
+physical `_rev` values stay in the freshly loaded `SongV2Snapshot`, never in the
+hydrated editor song. The library lyrics editor retains the exact hydrated song
+used to open its draft and passes it back as `baselineSong` when saving.
+
+The baseline and desired editor song define intent. Only after that intent is
+known does the repository load the current authoritative v2 documents. It
+validates each intended root, arrangement, or slide against the corresponding
+serialized baseline document, then rebases the intended payload onto current
+revisions and uses the existing ordered executor. Changes to the same document
+conflict; changes to different physical documents preserve each other. A slide
+being deleted is checked against its baseline too, so a concurrent slide edit
+conflicts before logical deletion.
+
+This prevents stale whole-song overwrites. If the editor changed Slide A while
+the database independently changed Slide B, only Slide A is in the intent plan.
+The current Slide B is preserved and its stale editor value is never treated as
+authored intent. The fresh snapshot supplies current revisions and untouched
+state, but it is never used to infer what the editor intended to change.
+
+After a v2 save, library Redux receives a lightweight projection with empty
+slide arrays. Cross-window `broadcastItemUpdate` also sends the projection;
+receivers use it with their existing refresh path instead of receiving a
+hydrated slide payload as a whole-song document.
 
 ### Consumer audit
 
@@ -213,8 +252,8 @@ This phase does not migrate songs, publish roots, dual-write, or delete predeces
 | --- | --- |
 | FilteredItems, song selectors, index repair | Projection metadata and formatted lyrics; incomplete IDs suppress stale index rows. |
 | Service Plan matching, reference resolution, Service Planning import | Logical IDs, names, metadata, and formatted lyrics; no authored slide dependency. |
-| ViewSongSectionsDrawer, ServicePlanSongDetailsPanel | Viewing uses formatted lyrics; shared LyricsEditor exact-loads before initializing a v2 draft. Metadata saves already exact-load. Audio side effects are guarded for v2. |
-| Resources and song-audio viewing | Root metadata/audio pointers; the Resources UI only selects/deletes church resources. |
+| ViewSongSectionsDrawer, ServicePlanSongDetailsPanel | Viewing uses formatted lyrics; shared LyricsEditor exact-loads before initializing a v2 draft and returns that exact baseline on save. Metadata and audio pointer edits use baseline-aware targeted writes. |
+| Resources and song-audio viewing | Root metadata/audio pointers; v2 attachment removal clears the pointer before external object cleanup. |
 | AddSongSectionsDrawer | Imports formatted sections only, without reading slide boxes. |
 | Controller opening, outline attachment, Service Plan outline push | Attachments remain lightweight ServiceItems; Controller Item and createNewItemInDb already use loadItemWithSongHydration. |
 | Active controller replication refresh | Exact-loads before applying/buffering v2 content; keeps dirty drafts and discards obsolete owner/database/projection loads. |

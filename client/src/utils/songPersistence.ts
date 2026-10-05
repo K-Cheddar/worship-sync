@@ -55,6 +55,13 @@ export class SongV2WriteNotEnabledError extends Error {
   }
 }
 
+export class SongV2BaselineRequiredError extends Error {
+  constructor(songId: string) {
+    super(`Cannot save schema v2 song ${songId} without its authored editing baseline.`);
+    this.name = "SongV2BaselineRequiredError";
+  }
+}
+
 const getAuditFields = (
   song: Pick<DBItem, "createdAt" | "updatedAt" | "createdBy" | "updatedBy">,
 ) => ({
@@ -329,6 +336,18 @@ export async function loadSongV2LibraryProjection(
   return buildSongV2LibraryProjection(root, arrangements);
 }
 
+/** Reduces an acknowledged hydrated v2 song to the global library read model. */
+export function songToLibraryProjection(song: DBItem): DBItem {
+  if (song.docType !== "song-v2-root") return song;
+  const documents = serializeSongToV2Documents(song);
+  const root = {
+    ...documents.root,
+    ...(song._rev ? { _rev: song._rev } : {}),
+    ...getAuditFields(song),
+  };
+  return buildSongV2LibraryProjection(root, documents.arrangements);
+}
+
 export const isPouchNotFoundError = (error: unknown) =>
   typeof error === "object" && error !== null &&
   (("status" in error && error.status === 404) ||
@@ -465,11 +484,17 @@ export async function saveSong(
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
   if (song.docType === "song-v2-root" || currentSong?.docType === "song-v2-root") {
-    throw new SongV2WriteNotEnabledError(song._id, "save");
+    if (!currentSong || currentSong.docType !== "song-v2-root") {
+      throw new SongV2BaselineRequiredError(song._id);
+    }
+    const { saveSongV2FromBaseline } = await import("./songV2Writer");
+    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
   }
   const existing = currentSong ?? await loadSong(db, song._id);
   if (existing.docType === "song-v2-root") {
-    throw new SongV2WriteNotEnabledError(song._id, "save");
+    if (!currentSong) throw new SongV2BaselineRequiredError(song._id);
+    const { saveSongV2FromBaseline } = await import("./songV2Writer");
+    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
   }
   if (existing.type !== "song") {
     throw new Error(`Document ${song._id} is not a song`);
@@ -505,6 +530,6 @@ export async function deleteSong(
   if (document.type !== "song") {
     throw new Error(`Document ${songId} is not a song`);
   }
-  await db.remove(document);
+  await db.remove(document as PouchDB.Core.RemoveDocument);
   return document;
 }

@@ -1628,6 +1628,101 @@ describe("store module", () => {
     songPersistence.saveSong.mockClear();
   });
 
+  it("uses baseItem intent for v2 autosave, preserves remote siblings, and advances the baseline", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({
+      arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+        { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "a-box", words: "A old", width: 1920, height: 1080 }] },
+        { id: "b1", name: "B1", type: "Verse", boxes: [{ id: "b-box", words: "B old", width: 1920, height: 1080 }] },
+      ] }],
+    });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>();
+    docs.set(physical.root._id, { ...physical.root, _rev: "1-root" });
+    physical.arrangements.forEach((doc: any) => docs.set(doc._id, { ...doc, _rev: "1-arr" }));
+    physical.slides.forEach((doc: any) => docs.set(doc._id, { ...doc, _rev: "1-slide" }));
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map((id) => docs.has(id) ? { id, doc: docs.get(id) } : { id, error: "not_found" }),
+    })) as any;
+    let sequence = 1;
+    db.put.mockImplementation(async (next: any) => {
+      const existing = docs.get(next._id);
+      if (existing && next._rev !== existing._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${++sequence}-saved`;
+      docs.set(next._id, { ...next, _rev: rev });
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    const remoteB = docs.get(physical.slides[1]._id);
+    docs.set(remoteB._id, { ...remoteB, boxes: [{ ...remoteB.boxes[0], words: "B remote" }], _rev: "2-remote" });
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const localSlides = baseline.arrangements[0].slides.map((slide: any) => ({ ...slide, boxes: slide.id === "a1" ? [{ ...slide.boxes[0], words: "A local" }] : slide.boxes }));
+    store.dispatch(itemSlice.actions._updateSlides(localSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put.mock.calls.map(([doc]: [any]) => doc._id)).toEqual([physical.slides[0]._id]);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    const librarySong = store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === "song-1");
+    expect(librarySong.arrangements[0].slides).toEqual([]);
+    store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+    expect(store.getState().undoable.present.item.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
+    const nextSlides = store.getState().undoable.present.item.arrangements[0].slides.map((slide: any) => ({ ...slide, boxes: slide.id === "b1" ? [{ ...slide.boxes[0], words: "B next" }] : slide.boxes }));
+    store.dispatch(itemSlice.actions._updateSlides(nextSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(docs.get(physical.slides[1]._id).boxes[0].words).toBe("B next");
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B next");
+  });
+
+  it("keeps a v2 same-slide draft dirty when a concurrent edit conflicts", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({ rows: keys.map((id) => ({ id, doc: docs.get(id) })) })) as any;
+    const slide = docs.get(physical.slides[0]._id);
+    docs.set(slide._id, { ...slide, boxes: [{ ...slide.boxes[0], words: "remote" }], _rev: "2-remote" });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), [slide]);
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{ ...baseline.arrangements[0].slides[0], boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local" }] }]));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2ConcurrentEditError" }));
+  });
+
   it("omits legacy root slides from song saves and retains non-song slide persistence", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();

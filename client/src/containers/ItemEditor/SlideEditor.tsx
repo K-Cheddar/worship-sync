@@ -63,6 +63,7 @@ import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
 } from "../../utils/persistSongAudioAttachment";
+import { loadSong, songToLibraryProjection } from "../../utils/songPersistence";
 import { resolveEditorPreviewVideoPlayback } from "../../utils/videoBackgroundPlayback";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
@@ -437,7 +438,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (!churchId || !db) {
         throw new Error("Sign in to attach an MP3.");
       }
-      const previousAudio = songAudio;
+      const loadedSong = baseItem?.docType === "song-v2-root" ? baseItem : await loadSong(db, _id);
+      const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+      const previousAudio = baselineSong?.songAudio ?? songAudio;
       const audio = await uploadSongAudio({
         churchId,
         songId: _id,
@@ -450,6 +453,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           db,
           songId: _id,
           audio,
+          baselineSong,
         });
       } catch (error) {
         // A replacement overwrites the existing final key. Deleting it here
@@ -465,7 +469,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
 
       dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved }));
-      dispatch(upsertItemInAllDocs(saved));
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
       broadcastItemUpdate(saved);
 
       if (previousAudio && previousAudio.key !== audio.key) {
@@ -481,7 +485,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
       showToast?.({ message: "MP3 attached.", variant: "success" });
     },
-    [_id, churchId, db, dispatch, showToast, songAudio],
+    [_id, baseItem, churchId, db, dispatch, showToast, songAudio],
   );
 
   const resolveSongAudioUrl = useCallback(
@@ -502,23 +506,41 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const removeSongAudio = useCallback(async () => {
     if (!churchId || !db || !songAudio) return;
+    const baselineSong = baseItem ?? await loadSong(db, _id);
+    const audioToRemove = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? songAudio
+      : songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      const saved = await persistSongAudioAttachment({ db, songId: _id, audio: null, baselineSong });
+      dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved }));
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
+      broadcastItemUpdate(saved);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      showToast?.({ message: "MP3 removed.", variant: "success" });
+      return;
+    }
     const saved = await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
-        deleteSongAudioWithRetry({ churchId, songId: _id, audio: songAudio }),
+        deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove }),
       clearMetadata: () =>
         persistSongAudioAttachment({
           db,
           songId: _id,
           audio: null,
+          baselineSong: baselineSong.docType === "song-v2-root" ? baselineSong : undefined,
         }),
     });
     dispatch(
       applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved }),
     );
-    dispatch(upsertItemInAllDocs(saved));
+    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
     broadcastItemUpdate(saved);
     showToast?.({ message: "MP3 removed.", variant: "success" });
-  }, [_id, churchId, db, dispatch, showToast, songAudio]);
+  }, [_id, baseItem, churchId, db, dispatch, showToast, songAudio]);
 
   const onNameEditButtonClick = () => {
     if (!canEdit) return;

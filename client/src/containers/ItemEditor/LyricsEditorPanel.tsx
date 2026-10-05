@@ -88,6 +88,7 @@ type LyricsEditorPanelProps = {
   song?: DBItem | null;
   onClose?: () => void;
   onSaveLyrics?: (payload: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
@@ -964,6 +965,7 @@ const LyricsEditorPanel = ({
       setIsSaving(true);
       try {
         await onSaveLyrics({
+          baselineSong: item,
           arrangements: formattedItem.arrangements,
           selectedArrangement: localSelectedArrangement,
           songMetadata: localSongMetadata,

@@ -38,6 +38,7 @@ import {
 import {
   loadItemWithSongHydration,
   saveSong,
+  songToLibraryProjection,
 } from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
@@ -157,9 +158,10 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 }
 
 export function broadcastItemUpdate(doc: DBItem) {
+  const payload = doc.docType === "song-v2-root" ? songToLibraryProjection(doc) : doc;
   safePostMessage({
     type: "update",
-    data: { docs: doc, hostId: globalHostId },
+    data: { docs: payload, hostId: globalHostId },
   });
 }
 
@@ -984,7 +986,11 @@ listenerMiddleware.startListening({
     // update Item
     const item = state.undoable.present.item;
     if (!db) return;
-    let db_item: DBItem = await loadItemWithSongHydration(db, item._id);
+    const editorBaseline = item.baseItem;
+    const usesV2Baseline = item.type === "song" && editorBaseline?.docType === "song-v2-root";
+    let db_item: DBItem = usesV2Baseline
+      ? editorBaseline
+      : await loadItemWithSongHydration(db, item._id);
     listenerApi.throwIfCancelled();
 
     const updatedAt = new Date().toISOString();
@@ -1010,9 +1016,46 @@ listenerMiddleware.startListening({
       formattedSections: item.formattedSections,
       updatedAt,
     };
+    if (usesV2Baseline && editorBaseline) {
+      if ((item.background ?? "") === (editorBaseline.background ?? "")) {
+        nextItem.background = editorBaseline.background;
+      }
+      if (!!item.shouldSkipTitle === !!editorBaseline.shouldSkipTitle) {
+        nextItem.shouldSkipTitle = editorBaseline.shouldSkipTitle;
+      }
+      if (_.isEqual(item.songLinks ?? [], editorBaseline.songLinks ?? [])) {
+        nextItem.songLinks = editorBaseline.songLinks;
+      }
+      const defaultRouting = { projector: true, monitor: true, stream: true };
+      if (_.isEqual(item.shouldSendTo, editorBaseline.shouldSendTo ?? defaultRouting)) {
+        nextItem.shouldSendTo = editorBaseline.shouldSendTo;
+      }
+    }
     listenerApi.throwIfCancelled();
     if (item.type === "song") {
-      db_item = await saveSong(db, nextItem, db_item);
+      try {
+        const saveBaseline = usesV2Baseline
+          ? editorBaseline
+          : db_item.docType === "song-v2-root" ? undefined : db_item;
+        db_item = await saveSong(db, nextItem, saveBaseline);
+      } catch (error) {
+        if (!isListenerCancelledTaskError(error)) {
+          console.error("Could not save active song draft", error);
+          if (error instanceof Error && error.name === "SongV2ConcurrentEditError") {
+            try {
+              const remoteSong = await loadItemWithSongHydration(db, item._id);
+              const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
+              if (latestItem._id === item._id && latestItem.listId === item.listId &&
+                latestItem.baseItem === editorBaseline && !latestItem.hasRemoteUpdate) {
+                listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remoteSong));
+              }
+            } catch (refreshError) {
+              console.error("Could not load the conflicting song version", refreshError);
+            }
+          }
+        }
+        return;
+      }
     } else {
       db_item = applyPouchAudit(db_item, nextItem, {
         // Doc came from db.get — always an update (legacy rows may lack createdAt).
@@ -1021,11 +1064,34 @@ listenerMiddleware.startListening({
       const result = await db.put(db_item);
       db_item = { ...db_item, _rev: result.rev };
     }
-    listenerApi.throwIfCancelled();
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
-    listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+    if (usesV2Baseline) {
+      const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
+      if (latestItem._id === item._id && latestItem.listId === item.listId &&
+        latestItem.baseItem === editorBaseline) {
+        const editorMatchesSubmitted = itemDocMatchesEditorState(item, latestItem);
+        const editorMatchesAcknowledged = itemDocMatchesEditorState(db_item, latestItem);
+        listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+        if (editorMatchesSubmitted || editorMatchesAcknowledged) {
+          listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+        }
+        if (!editorMatchesAcknowledged) {
+          // The acknowledged current snapshot may include untouched remote
+          // documents absent from the editor draft. Keep them available to apply.
+          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+        }
+      } else {
+        // The write is durable, but this editor no longer owns its acknowledgement.
+        return;
+      }
+    } else {
+      listenerApi.throwIfCancelled();
+      listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+      listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+    }
 
-    listenerApi.dispatch(upsertItemInAllDocs(db_item));
+    listenerApi.dispatch(upsertItemInAllDocs(
+      db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
+    ));
     if (db_item.type === "free") {
       const indexedItem = (listenerApi.getState() as RootState).allItems.list.find(
         (candidate) => candidate._id === db_item._id,
@@ -1044,7 +1110,7 @@ listenerMiddleware.startListening({
     safePostMessage({
       type: "update",
       data: {
-        docs: db_item,
+        docs: db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
         hostId: globalHostId,
       },
     });

@@ -12,6 +12,7 @@ import {
 } from "../../test/mocks";
 import type { DBItem } from "../../types";
 import { deleteSongAudioWithRetry, uploadSongAudio } from "../../api/auth";
+import * as songPersistence from "../../utils/songPersistence";
 import ViewSongSectionsDrawer from "./ViewSongSectionsDrawer";
 
 jest.mock("../../api/auth", () => ({
@@ -320,18 +321,53 @@ describe("ViewSongSectionsDrawer", () => {
 
     await waitFor(() => expect(operations).toEqual(["delete", "persist"]));
   });
-  it("blocks v2 audio replacement and removal before touching storage", async () => {
-    renderDrawer({ drawerSong: { ...song, docType: "song-v2-root" } });
+  it("attaches and removes v2 audio through targeted root saves", async () => {
+    const baseline = { ...song, docType: "song-v2-root" as const };
+    const replacementAudio = { ...song.songAudio!, id: "replacement", key: "replacement.mp3" };
+    const operations: string[] = [];
+    jest.spyOn(songPersistence, "loadSong").mockResolvedValue(baseline);
+    jest.spyOn(songPersistence, "saveSong").mockImplementation(async (_db, desired) => {
+      operations.push("persist");
+      return { ...baseline, songAudio: desired.songAudio };
+    });
+    mockUploadSongAudio.mockResolvedValue(replacementAudio);
+    mockDeleteSongAudio.mockImplementation(async () => {
+      operations.push("delete");
+      return { success: true };
+    });
+    renderDrawer({ drawerSong: baseline });
     fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
     fireEvent.change(screen.getByLabelText("Choose MP3"), {
       target: { files: [new File([new Uint8Array([1])], "replacement.mp3", { type: "audio/mpeg" })] },
     });
-    expect(await screen.findByRole("alert")).toHaveTextContent("schema v2 writes are not enabled");
-    expect(mockUploadSongAudio).not.toHaveBeenCalled();
+    await waitFor(() => expect(songPersistence.saveSong).toHaveBeenCalledTimes(1));
+    expect(mockUploadSongAudio).toHaveBeenCalledTimes(1);
+    expect(operations).toEqual(["persist", "delete"]);
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove MP3" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("schema v2 writes are not enabled"));
-    expect(mockDeleteSongAudio).not.toHaveBeenCalled();
+    await waitFor(() => expect(songPersistence.saveSong).toHaveBeenCalledTimes(2));
+    expect(operations.slice(-2)).toEqual(["persist", "delete"]);
+  });
+
+  it("cleans a new upload after a v2 root conflict and keeps the previous object", async () => {
+    const baseline = { ...song, docType: "song-v2-root" as const };
+    const replacementAudio = { ...song.songAudio!, id: "replacement", key: "replacement.mp3" };
+    jest.spyOn(songPersistence, "loadSong").mockResolvedValue(baseline);
+    jest.spyOn(songPersistence, "saveSong").mockRejectedValue(Object.assign(new Error("Song root changed"), { status: 409 }));
+    mockUploadSongAudio.mockResolvedValue(replacementAudio);
+    mockDeleteSongAudio.mockResolvedValue({ success: true });
+    renderDrawer({ drawerSong: baseline });
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(screen.getByLabelText("Choose MP3"), {
+      target: { files: [new File([new Uint8Array([1])], "replacement.mp3", { type: "audio/mpeg" })] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Song root changed");
+    expect(mockDeleteSongAudio).toHaveBeenCalledTimes(1);
+    expect(mockDeleteSongAudio).toHaveBeenCalledWith({
+      churchId: "church-1", songId: song._id, audio: replacementAudio,
+    });
+    expect(mockDeleteSongAudio).not.toHaveBeenCalledWith(expect.objectContaining({ audio: song.songAudio }));
   });
 
 });

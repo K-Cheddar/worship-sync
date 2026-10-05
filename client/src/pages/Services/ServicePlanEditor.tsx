@@ -69,7 +69,7 @@ import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { sortNamesInList } from "../../utils/sort";
 import { getYouTubeVideoReference } from "../../utils/youtube";
-import { loadSong, saveSong } from "../../utils/songPersistence";
+import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
 import type { DBAllItems, DBItem } from "../../types";
 import {
   getServicePlan,
@@ -2264,7 +2264,7 @@ const ServicePlanEditor = ({
       else nextLinks.push(nextLink);
 
       const saved = await saveSong(db, { ...existing, songLinks: nextLinks }, existing);
-      dispatch(upsertItemInAllDocs(saved));
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
       dispatch(
         upsertItemInAllItemsList({
           _id: saved._id,

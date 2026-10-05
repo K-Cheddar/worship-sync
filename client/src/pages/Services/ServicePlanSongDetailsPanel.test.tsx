@@ -23,11 +23,12 @@ jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
   }: {
     isOpen: boolean;
     song: DBItem;
-    onSaveLyrics: (patch: { arrangements: DBItem["arrangements"]; selectedArrangement: number }) => void;
+    onSaveLyrics: (patch: { baselineSong: DBItem; arrangements: DBItem["arrangements"]; selectedArrangement: number }) => void;
   }) => isOpen ? (
     <button
       type="button"
       onClick={() => onSaveLyrics({
+        baselineSong: song,
         arrangements: song.arrangements,
         selectedArrangement: 0,
       })}
@@ -92,7 +93,7 @@ describe("ServicePlanSongDetailsPanel song persistence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save lyrics patch" }));
 
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(songPersistence.loadSong).toHaveBeenCalledWith(db, song._id);
+    expect(songPersistence.loadSong).not.toHaveBeenCalled();
     expect(save).toHaveBeenCalledWith(
       db,
       expect.objectContaining({
