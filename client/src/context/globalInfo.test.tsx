@@ -5,6 +5,7 @@ import GlobalInfoProvider, {
   GlobalInfoContext,
   globalFireDbInfo,
 } from "./globalInfo";
+import { useTeamsLiveSync } from "../pages/Teams/hooks/useTeamsLiveSync";
 import * as authApi from "../api/auth";
 import { requestAuthRecovery } from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
@@ -308,6 +309,15 @@ const createDeferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
+const TeamsLiveProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  useTeamsLiveSync(context?.churchId, () => undefined, Boolean(context?.canUseTeamsLiveSync));
+  return <div>
+    <div data-testid="teams-live-church">{context?.churchId}</div>
+    <div data-testid="teams-live-capability">{String(context?.canUseTeamsLiveSync)}</div>
+  </div>;
+};
+
 const ContextProbe = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
@@ -538,6 +548,34 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       status: 200,
       json: () => Promise.resolve(false),
     }) as jest.Mock;
+  });
+
+  it.each([
+    ["admin", { ...loggedInHumanBootstrap, permissions: { teams: "none" } }, true],
+    ["Teams viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "view" } }, true],
+    ["Teams editor", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "edit" } }, true],
+    ["Services editor", { ...loggedInHumanBootstrap, role: "member", permissions: { services: "edit" } }, true],
+    ["scoped manager", { ...loggedInHumanBootstrap, role: "member", permissions: { teamScopes: { worship: "edit" } } }, false],
+    ["membership reader", { ...loggedInHumanBootstrap, role: "member", appAccess: "member", permissions: { teams: "none" } }, false],
+    ["Services viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { services: "view" } }, false],
+    ["booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" }, device: { ...loggedInWorkstationBootstrap.device, serviceWorkspaceAccess: true } }, true],
+    ["normalized booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" } }, true],
+    ["default workstation", { ...loggedInWorkstationBootstrap, permissions: { services: "view" } }, false],
+    ["display", loggedInDisplayBootstrap, false],
+  ])("gates full Teams EventSource access for %s", async (_name, bootstrap, allowed) => {
+    const original = global.EventSource;
+    const construct = jest.fn(() => ({ close: jest.fn() }));
+    global.EventSource = construct as unknown as typeof EventSource;
+    try {
+      (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(bootstrap);
+      const { unmount } = renderProvider(<TeamsLiveProbe />);
+      await waitFor(() => expect(screen.getByTestId("teams-live-church")).toHaveTextContent("church-1"));
+      expect(screen.getByTestId("teams-live-capability")).toHaveTextContent(String(allowed));
+      expect(construct).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      unmount();
+    } finally {
+      global.EventSource = original;
+    }
   });
 
   it("does not sign shared-data auth out while initial bootstrap is loading", async () => {

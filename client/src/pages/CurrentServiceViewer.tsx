@@ -255,6 +255,7 @@ const useCurrentServiceViewerData = (
   churchId: string,
   canViewServices: boolean,
   canViewTeams: boolean,
+  canUseTeamsLiveSync: boolean,
   occurrence: TeamScheduleOccurrence | null,
 ): ViewerData => {
   const [planState, setPlanState] = useState<ViewerPlanState>({ kind: "idle" });
@@ -441,7 +442,11 @@ const useCurrentServiceViewerData = (
     [refresh],
   );
 
-  useTeamsLiveSync(canViewTeams ? churchId : null, handleStreamEvent);
+  useTeamsLiveSync(
+    canViewTeams ? churchId : null,
+    handleStreamEvent,
+    canUseTeamsLiveSync,
+  );
 
   const currentPlanState: ViewerPlanState = !activePlanKey
     ? { kind: "idle" }
@@ -602,6 +607,7 @@ const CurrentServiceViewer = () => {
   const {
     canViewServices = false,
     canViewTeams = false,
+    canUseTeamsLiveSync = false,
     churchId = "",
     churchName = "",
     churchBranding,
@@ -614,6 +620,7 @@ const CurrentServiceViewer = () => {
     churchId,
     canViewServices,
     canViewTeams,
+    canUseTeamsLiveSync,
     selection.occurrence,
   );
   const options = useMemo(

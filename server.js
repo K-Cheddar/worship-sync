@@ -25,7 +25,7 @@ import {
   queryDocs,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
-  requireTeamsViewSession,
+  requireBroadTeamsViewSession,
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
   setDoc,
@@ -2853,10 +2853,9 @@ app.get(
       return;
     }
 
-    // Retain the legacy administrative Teams read guard here. Membership-derived
-    // bootstrap readers are not admitted to this stream before its access audit.
+    // Full church-wide documents require broad access; scoped readers use REST.
     try {
-      await requireTeamsViewSession(req, churchId);
+      await requireBroadTeamsViewSession(req, churchId);
     } catch {
       res.status(403).json({ error: "Teams access required" });
       return;

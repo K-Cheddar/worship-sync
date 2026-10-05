@@ -4867,6 +4867,21 @@ export const requireTeamsViewSession = async (req, churchId) => {
   return bootstrap;
 };
 
+// Full-document church-wide reads must not inherit selected-team access.
+export const requireBroadTeamsViewSession = async (req, churchId) => {
+  const bootstrap = await requireTeamsViewSession(req, churchId);
+  if (
+    bootstrap.role !== "admin" &&
+    bootstrap.permissions?.teams !== "view" &&
+    bootstrap.permissions?.teams !== "edit" &&
+    !(bootstrap.sessionKind === SESSION_KIND_HUMAN &&
+      bootstrap.permissions?.services === "edit")
+  ) {
+    throw httpError(403, "Teams access required");
+  }
+  return bootstrap;
+};
+
 // Deliberately narrower than requireTeamsViewSession: also admits a paired
 // workstation with view-only `services` (default pairing), but only for
 // reading saved Service Plans. Prefer requireTeamsViewSession for
@@ -6359,6 +6374,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireTeamsEditForTeamSession,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  requireBroadTeamsViewSession,
   resolveRequestBootstrap,
   getSessionActorUid,
   requireFirestore,

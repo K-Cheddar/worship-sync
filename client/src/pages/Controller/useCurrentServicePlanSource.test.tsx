@@ -62,8 +62,8 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
 
 jest.mock("../Teams/hooks/useTeamsLiveSync", () => ({
   ...jest.requireActual("../Teams/hooks/useTeamsLiveSync"),
-  useTeamsLiveSync: (churchId: string | null, onMessage: (e: unknown) => void) => {
-    mockLiveHandler = churchId ? onMessage : null;
+  useTeamsLiveSync: (churchId: string | null, onMessage: (e: unknown) => void, enabled: boolean) => {
+    mockLiveHandler = churchId && enabled ? onMessage : null;
   },
 }));
 
@@ -265,6 +265,7 @@ const enabledGlobalInfo = {
   churchId: "church-1",
   canViewServices: true,
   canViewTeams: true,
+  canUseTeamsLiveSync: true,
   loginState: "success",
 };
 
@@ -823,6 +824,13 @@ describe("useCurrentServicePlanSource", () => {
       "church-1",
       "service-1@2026-08-01",
     );
+    expect(mockLiveHandler).toBeNull();
+  });
+
+  it("loads existing Services data without full Teams live sync for scoped access", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, canUseTeamsLiveSync: false });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalled());
     expect(mockLiveHandler).toBeNull();
   });
 

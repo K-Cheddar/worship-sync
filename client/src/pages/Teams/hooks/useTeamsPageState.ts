@@ -986,6 +986,7 @@ export const useTeamsPageState = (
   const { connectionState, reconnectVersion } = useTeamsLiveSync(
     churchId,
     applyTeamsStreamEvent,
+    Boolean(context?.canUseTeamsLiveSync),
   );
 
   const handledReconnectVersionRef = useRef(0);

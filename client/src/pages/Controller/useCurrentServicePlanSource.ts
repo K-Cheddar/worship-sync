@@ -56,7 +56,7 @@ import { useActiveControllerId } from "../../context/activeController";
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
   const activeControllerId = useActiveControllerId();
-  const { canViewServices, canViewTeams, churchId, loginState } =
+  const { canViewServices, canViewTeams, canUseTeamsLiveSync, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { loadPlanPreview } = useServicePlanningImport();
@@ -879,6 +879,7 @@ export const useCurrentServicePlanSource = () => {
   useTeamsLiveSync(
     liveChurchId,
     handleLiveEvent,
+    Boolean(canUseTeamsLiveSync),
   );
 
   const refresh = useCallback(

@@ -509,7 +509,7 @@ const ServicePlanEditor = ({
   onPlanTimingChange,
   templateResource,
 }: ServicePlanEditorProps) => {
-  const { churchId, userId, access, churchBranding, churchIntegrations } =
+  const { churchId, userId, access, churchBranding, churchIntegrations, canUseTeamsLiveSync } =
     useContext(GlobalInfoContext) || {};
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
@@ -1286,7 +1286,7 @@ const ServicePlanEditor = ({
       return;
     }
     applyRemoteServicePlan(event.servicePlan);
-  });
+  }, Boolean(canUseTeamsLiveSync));
   liveSyncStateRef.current = liveSync.connectionState;
 
   useEffect(() => {

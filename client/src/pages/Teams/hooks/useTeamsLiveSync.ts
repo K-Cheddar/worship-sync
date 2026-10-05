@@ -71,6 +71,7 @@ export const isServicePlanTemplateRemovedEvent = (
   && typeof (event as { templateId?: unknown }).templateId === "string";
 
 /**
+ * Requires the broad session capability: scoped readers use projected REST.
  * Subscribes to the church's Teams live channel (SSE). The server pushes
  * schedule mutations made by other admins so the scheduling grid collaborates
  * in real time. Mirrors `useBoardEventStream` — see server/teamsSse.js for the
@@ -79,6 +80,7 @@ export const isServicePlanTemplateRemovedEvent = (
 export const useTeamsLiveSync = (
   churchId: string | null | undefined,
   onMessage: (event: TeamsStreamEvent) => void,
+  canUseTeamsLiveSync: boolean,
 ) => {
   const onMessageRef = useRef(onMessage);
   const [connectionState, setConnectionState] =
@@ -96,7 +98,7 @@ export const useTeamsLiveSync = (
     setConnectionState("connecting");
     setReconnectVersion(0);
 
-    if (!churchId) {
+    if (!churchId || !canUseTeamsLiveSync) {
       setConnectionState("unavailable");
       return undefined;
     }
@@ -142,7 +144,7 @@ export const useTeamsLiveSync = (
       disposed = true;
       source.close();
     };
-  }, [churchId]);
+  }, [churchId, canUseTeamsLiveSync]);
 
   return { connectionState, reconnectVersion };
 };

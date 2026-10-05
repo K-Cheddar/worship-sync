@@ -60,6 +60,7 @@ const flushMicrotasks = async () =>
 
 describe("useTeamsPageState bootstrap recovery", () => {
   let churchId: string;
+  let canUseTeamsLiveSync: boolean;
 
   const renderPageState = (
     onTemplateEvent?: Parameters<typeof useTeamsPageState>[0],
@@ -69,7 +70,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
       wrapper: ({ children }: PropsWithChildren) => (
         <GlobalInfoContext.Provider
           value={
-            createMockGlobalContext({ churchId }) as React.ContextType<
+            createMockGlobalContext({ churchId, canUseTeamsLiveSync }) as React.ContextType<
               typeof GlobalInfoContext
             >
           }
@@ -91,6 +92,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-24T12:00:00.000Z"));
     churchId = "church-1";
+    canUseTeamsLiveSync = true;
     mockState = {
       undoable: { present: { serviceTimes: { list: [] } } },
     };
@@ -124,6 +126,22 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
 
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("uses bounded REST refresh without EventSource for scoped/member access", async () => {
+    canUseTeamsLiveSync = false;
+    const { unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(MockEventSource.instances).toHaveLength(0);
+    emitFocus();
+    emitVisibilityChange();
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(MockEventSource.instances).toHaveLength(0);
     unmount();
   });
 

@@ -585,6 +585,7 @@ const PreviewPanel = ({
 const CurrentServiceWorkspace = () => {
   const {
     canViewTeams,
+    canUseTeamsLiveSync,
     canEditServices,
     canEditTeams,
     churchId,
@@ -910,7 +911,11 @@ const CurrentServiceWorkspace = () => {
   }, [canLoadRoleData, churchId]);
 
   const liveChurchId = canLoadRoleData ? churchId : null;
-  useTeamsLiveSync(liveChurchId, applyTeamsStreamEvent);
+  useTeamsLiveSync(
+    liveChurchId,
+    applyTeamsStreamEvent,
+    Boolean(canUseTeamsLiveSync),
+  );
   useSyncOnReconnect(canLoadRoleData ? loadRoleData : undefined);
 
   useEffect(() => {

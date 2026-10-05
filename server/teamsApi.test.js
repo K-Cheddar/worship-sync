@@ -26,6 +26,8 @@ import {
 
 const {
   authHandlers,
+  requireBroadTeamsViewSession,
+  requireTeamsViewSession,
   COLLECTIONS,
   canSeedHumanBearerAuthForServerTests,
   getDoc,
@@ -14689,4 +14691,129 @@ test("effective Teams reads do not infer a unique account link from a capped ros
   assert.equal(full.statusCode, 200);
   assert.equal(full.payload.truncated, true);
   assert.equal(full.payload.members.length, 5000);
+});
+
+// Iteration 4: full church-wide channels require broad stored/session access.
+test("broad Teams read guard preserves global SSE access and denies scoped/roster readers", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("broad_guard");
+  const cases = [
+    ["admin", "admin", {}, true],
+    ["viewer", "member", { teams: "view" }, true],
+    ["editor", "member", { teams: "edit" }, true],
+    ["services_editor", "member", { services: "edit" }, true],
+    ["services_viewer", "member", { services: "view" }, false],
+    ["scoped", "member", { teamScopes: { [fixture.ids.worship]: "edit" } }, false],
+    ["roster", "member", { teams: "none" }, false],
+  ];
+  for (const [name, role, permissions, allowed] of cases) {
+    const context = await createHumanContext(`broad_guard_${name}`, {
+      churchId: fixture.churchId, role, permissions,
+      ...(name === "roster" ? { userId: fixture.userId, appAccess: "member" } : {}),
+    });
+    const req = createReq(context);
+    if (allowed) {
+      assert.equal((await requireBroadTeamsViewSession(req, fixture.churchId)).churchId, fixture.churchId);
+    } else {
+      await assert.rejects(requireBroadTeamsViewSession(req, fixture.churchId), { statusCode: 403 });
+    }
+    await assert.rejects(requireBroadTeamsViewSession(req, "another-church"), { statusCode: 403 });
+    if (name === "scoped") {
+      assert.equal((await requireTeamsViewSession(req, fixture.churchId)).churchId, fixture.churchId);
+    }
+  }
+  await assert.rejects(requireBroadTeamsViewSession(createReq(), fixture.churchId), { statusCode: 401 });
+});
+
+test("broad Teams read guard retains booth SSE access and excludes default workstations", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("broad_guard_booth");
+  for (const serviceWorkspaceAccess of [true, false]) {
+    const pairing = await callHandler(authHandlers.createWorkstationPairing, {
+      context: owner,
+      body: { label: "Booth", platformType: "web", appAccess: "full", serviceWorkspaceAccess },
+    });
+    assert.equal(pairing.statusCode, 200);
+    const session = createSession();
+    const redeemed = createRes();
+    await authHandlers.redeemWorkstationPairing(createReq({
+      session, body: { token: pairing.payload.pairing.token, platformType: "web" },
+    }), redeemed);
+    assert.equal(redeemed.statusCode, 200);
+    const req = createReq({ session });
+    if (serviceWorkspaceAccess) {
+      assert.equal((await requireBroadTeamsViewSession(req, owner.churchId)).sessionKind, "workstation");
+    } else {
+      await assert.rejects(requireBroadTeamsViewSession(req, owner.churchId), { statusCode: 403 });
+    }
+    await assert.rejects(requireBroadTeamsViewSession(req, "another-church"), { statusCode: 403 });
+  }
+});
+
+test("intake SMS history requires broad access even for a managed team's form", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("broad_sms_history");
+  const formId = `${fixture.churchId}_formId`;
+  const foreignOwner = await createAdminContext("foreign_sms_history");
+  await setDoc(COLLECTIONS.teamIntakeForms, "other-church-form", {
+    formId: "other-church-form", churchId: foreignOwner.churchId,
+  }, { merge: false });
+  for (const [name, role, permissions, allowed] of [
+    ["admin", "admin", {}, true],
+    ["viewer", "member", { teams: "view" }, true],
+    ["editor", "member", { teams: "edit" }, true],
+    ["services_editor", "member", { services: "edit" }, true],
+    ["scoped", "member", { teamScopes: { [fixture.ids.worship]: "edit" } }, false],
+    ["roster", "member", { teams: "none" }, false],
+  ]) {
+    const context = await createHumanContext(`broad_sms_${name}`, {
+      churchId: fixture.churchId, role, permissions,
+      ...(name === "roster" ? { userId: fixture.userId, appAccess: "member" } : {}),
+    });
+    const result = await callHandler(authHandlers.getTeamIntakeSmsAttempts, { context, params: { formId } });
+    assert.equal(result.statusCode, allowed ? 200 : 403);
+    if (allowed) {
+      assert.deepEqual(result.payload.attempts, []);
+      const foreignForm = await callHandler(authHandlers.getTeamIntakeSmsAttempts, {
+        context, params: { formId: "other-church-form" },
+      });
+      assert.equal(foreignForm.statusCode, 404);
+    }
+    const crossChurch = await callHandler(authHandlers.getTeamIntakeSmsAttempts, {
+      context, params: { churchId: "another-church", formId },
+    });
+    assert.equal(crossChurch.statusCode, 403);
+  }
+});
+
+test("scoped and roster bootstrap skip intake and SMS consent reads while broad bootstrap retains them", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("bootstrap_admin_reads");
+  // A valid US number exercises the actual per-phone consent read.
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.memberId, { phoneNumber: "+12125550123" }, { merge: true });
+  for (const [name, permissions, administrative] of [
+    ["global", { teams: "view" }, true],
+    ["scoped", { teamScopes: { [fixture.ids.worship]: "edit" } }, false],
+    ["roster", { teams: "none" }, false],
+  ]) {
+    const context = await createHumanContext(`bootstrap_reads_${name}`, {
+      churchId: fixture.churchId, role: "member", permissions,
+      ...(name === "roster" ? { userId: fixture.userId, appAccess: "member" } : {}),
+    });
+    for (const query of [{}, { schedules: "summary" }]) {
+      const reads = [];
+      setAuthReadObserverForServerTests((read) => reads.push(read));
+      let result;
+      try {
+        result = await callHandler(authHandlers.getTeamsBootstrap, { context, query });
+      } finally {
+        setAuthReadObserverForServerTests(null);
+      }
+      assert.equal(result.statusCode, 200);
+      for (const collectionName of [COLLECTIONS.teamIntakeForms, COLLECTIONS.teamIntakeSubmissions, COLLECTIONS.teamIntakeRecipients, COLLECTIONS.smsConsents]) {
+        assert.equal(reads.some((read) => read.collectionName === collectionName), administrative, `${name}: ${collectionName}`);
+      }
+      assert.equal(Object.hasOwn(result.payload, "smsEligibilityByMemberId"), administrative);
+    }
+  }
 });

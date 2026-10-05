@@ -172,6 +172,7 @@ export const createTeamsAuthHandlers = ({
   requireTeamsEditForTeamSession,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  requireBroadTeamsViewSession,
   resolveRequestBootstrap,
   getSessionActorUid = (bootstrap) => bootstrap?.user?.uid || null,
   requireFirestore,
@@ -198,6 +199,8 @@ export const createTeamsAuthHandlers = ({
     requireTeamsEditForTeamSession ||
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
+  const requireBroadTeamsView =
+    requireBroadTeamsViewSession || requireAdminSession;
   // Narrower than requireTeamsView: also admits a view-only paired
   // workstation, but only for reading saved Service Plans (no roster PII).
   const requireServicePlansView =
@@ -3516,7 +3519,7 @@ export const createTeamsAuthHandlers = ({
 
   const buildTeamsBootstrap = async (
     churchId,
-    { scheduleMode = "full", canonical } = {},
+    { scheduleMode = "full", canonical, includeAdministrativeTeamsData } = {},
   ) => {
     const { members, teams, truncatedCollections } =
       canonical || (await loadCanonicalTeamRoster(churchId));
@@ -3557,29 +3560,34 @@ export const createTeamsAuthHandlers = ({
         churchId,
         { truncatedCollections },
       ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamIntakeForms,
-        "formId",
-        churchId,
-        { truncatedCollections },
-      ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamIntakeSubmissions,
-        "submissionId",
-        churchId,
-        { truncatedCollections },
-      ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamIntakeRecipients,
-        "recipientId",
-        churchId,
-        { truncatedCollections },
-      ),
+      includeAdministrativeTeamsData
+        ? listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeForms,
+            "formId",
+            churchId,
+            { truncatedCollections },
+          )
+        : [],
+      includeAdministrativeTeamsData
+        ? listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeSubmissions,
+            "submissionId",
+            churchId,
+            { truncatedCollections },
+          )
+        : [],
+      includeAdministrativeTeamsData
+        ? listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeRecipients,
+            "recipientId",
+            churchId,
+            { truncatedCollections },
+          )
+        : [],
     ]);
-    const smsEligibilityByMemberId = await buildSmsEligibilityByMemberId(
-      churchId,
-      members,
-    );
+    const smsEligibilityByMemberId = includeAdministrativeTeamsData
+      ? await buildSmsEligibilityByMemberId(churchId, members)
+      : undefined;
     const submissionCountByForm = new Map();
     intakeSubmissions.forEach((submission) => {
       submissionCountByForm.set(
@@ -3627,7 +3635,6 @@ export const createTeamsAuthHandlers = ({
 
     return {
       members,
-      smsEligibilityByMemberId,
       positions: sortPositionsByOrder(positions),
       teams,
       teamRoles,
@@ -3642,11 +3649,16 @@ export const createTeamsAuthHandlers = ({
             },
           }
         : {}),
-      intakeForms,
-      intakeSubmissions,
-      intakeRecipients: intakeRecipients.map(
-        sanitizeTeamIntakeRecipientForAdmin,
-      ),
+      ...(includeAdministrativeTeamsData
+        ? {
+            smsEligibilityByMemberId,
+            intakeForms,
+            intakeSubmissions,
+            intakeRecipients: intakeRecipients.map(
+              sanitizeTeamIntakeRecipientForAdmin,
+            ),
+          }
+        : {}),
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
     };
   };
@@ -11345,6 +11357,7 @@ export const createTeamsAuthHandlers = ({
             data: await buildTeamsBootstrap(req.params.churchId, {
               scheduleMode,
               canonical,
+              includeAdministrativeTeamsData: access.viewAll,
             }),
             access,
           }),
@@ -11361,7 +11374,7 @@ export const createTeamsAuthHandlers = ({
      */
     async getTeamIntakeSmsAttempts(req, res) {
       try {
-        await requireTeamsView(req, req.params.churchId);
+        await requireBroadTeamsView(req, req.params.churchId);
         const form = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
