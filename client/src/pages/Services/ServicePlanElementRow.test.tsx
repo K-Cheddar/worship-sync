@@ -1947,7 +1947,11 @@ describe("assignees and their microphones", () => {
     });
 
     expect(screen.queryByText(/is scheduled to Johnny Mclain/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Microphone conflict for Orange/i }));
+    const trigger = screen.getByRole("button", {
+      name: /Microphone conflict for Orange/i,
+    });
+    expect(trigger).toHaveAttribute("data-variant", "presentTertiary");
+    await user.click(trigger);
     expect(await screen.findByText(/Orange · Handheld is scheduled to Johnny Mclain/i)).toBeInTheDocument();
   });
 
