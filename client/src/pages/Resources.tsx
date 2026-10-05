@@ -16,7 +16,7 @@ import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
-import Modal from "../components/Modal/Modal";
+import ConfirmDialog from "../components/Modal/ConfirmDialog";
 import ContentPreviewDialog from "../components/ContentPreview/ContentPreviewDialog";
 import { ExternalResourceDialog } from "./ExternalResourceDialog";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -423,8 +423,7 @@ const ResourcesPage = () => {
 
   const confirmDelete = async () => {
     const candidates = deleteCandidates;
-    if (!churchId || !candidates?.length) return;
-    setDeleteCandidates(null);
+    if (!churchId || !candidates?.length || deletingKey !== null) return;
     setDeletingKey("bulk");
     setError("");
     let storageChanged = false;
@@ -470,6 +469,7 @@ const ResourcesPage = () => {
     } finally {
       if (storageChanged) void storageQuota.refresh();
       setDeletingKey(null);
+      setDeleteCandidates(null);
     }
   };
 
@@ -608,16 +608,23 @@ const ResourcesPage = () => {
               <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} onClose={() => setSelectedKey(null)} />
             ) : null}
             {deleteCandidates?.length ? (
-              <Modal isOpen onClose={() => setDeleteCandidates(null)} title="Delete resource?" size="sm" zIndexLevel={2} description={`Confirm deletion of ${deleteCandidates.length} resource${deleteCandidates.length === 1 ? "" : "s"}`}>
+              <ConfirmDialog
+                open
+                onCancel={() => setDeleteCandidates(null)}
+                onConfirm={() => void confirmDelete()}
+                title="Delete resource?"
+                confirmLabel="Delete"
+                destructive
+                busy={deletingKey !== null}
+                size="sm"
+                zIndexLevel={2}
+                description={`Confirm deletion of ${deleteCandidates.length} resource${deleteCandidates.length === 1 ? "" : "s"}`}
+              >
                 <div className="space-y-4">
                   <p className="text-sm text-gray-200">{deleteCandidates.length === 1 ? resourceEntryDeleteConfirmation(deleteCandidates[0]) : `Delete these ${deleteCandidates.length} resources?`}</p>
                   {deleteCandidates.length > 1 ? <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-gray-300">{deleteCandidates.map((entry) => <li key={entryKey(entry)}>{resourceEntryName(entry)}</li>)}</ul> : null}
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setDeleteCandidates(null)} disabled={deletingKey !== null}>Cancel</Button>
-                    <Button type="button" variant="destructive" svg={Trash2} isLoading={deletingKey !== null} disabled={deletingKey !== null} onClick={() => void confirmDelete()}>Delete</Button>
-                  </div>
                 </div>
-              </Modal>
+              </ConfirmDialog>
             ) : null}
           </>
         )}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ServicePlanShareEmailResult } from "../../api/auth";
 import ServicePlanEmailModal, {
@@ -10,13 +10,14 @@ const renderModal = (
     draft: ServicePlanEmailDraft,
   ) => Promise<ServicePlanShareEmailResult>,
   initialShareVersion: ServicePlanEmailDraft["shareVersion"] = "detailed",
+  onClose = jest.fn(),
 ) =>
   render(
     <ServicePlanEmailModal
       serviceName="Easter Sunday"
       dateLabel="July 26, 2026"
       initialShareVersion={initialShareVersion}
-      onClose={jest.fn()}
+      onClose={onClose}
       onSend={onSend}
     />,
   );
@@ -32,6 +33,7 @@ describe("ServicePlanEmailModal", () => {
 
   it("prepopulates editable fields and prevents duplicate clicks while sending", async () => {
     const user = userEvent.setup({ delay: null });
+    const onClose = jest.fn();
     let resolveSend!: () => void;
     const sentDrafts: ServicePlanEmailDraft[] = [];
     const onSend = jest.fn(
@@ -47,7 +49,7 @@ describe("ServicePlanEmailModal", () => {
             });
         }),
     );
-    renderModal(onSend);
+    renderModal(onSend, "detailed", onClose);
 
     expect(screen.getByRole("textbox", { name: /^Subject:/ })).toHaveValue(
       "Easter Sunday Service Plan — July 26, 2026",
@@ -79,8 +81,17 @@ describe("ServicePlanEmailModal", () => {
     expect(
       await screen.findByRole("button", { name: "Sending…" }),
     ).toBeDisabled();
+    const dialog = screen.getByRole("dialog", { name: "Email service plan" });
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    const closeButton = screen.getByRole("button", { name: "Close modal" });
+    expect(closeButton).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove one@example.com" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Sending…" }));
+    await user.click(closeButton);
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByRole("dialog", { name: "Email service plan" })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
     expect(onSend).toHaveBeenCalledTimes(1);
 
     resolveSend();
@@ -89,6 +100,9 @@ describe("ServicePlanEmailModal", () => {
         "Service plan email sent successfully to one@example.com, two@example.com.",
       ),
     ).toBeInTheDocument();
+    await waitFor(() => expect(dialog).not.toHaveAttribute("aria-busy", "true"));
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("shows a useful provider error and keeps the draft available", async () => {
