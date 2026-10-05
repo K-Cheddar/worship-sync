@@ -1594,9 +1594,13 @@ describe("store module", () => {
     const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
     const persistedAudio = createSongAudio("audio-new");
-    db.get.mockResolvedValue(
-      createSongDoc({ _rev: "2-song", songAudio: persistedAudio }),
-    );
+    const persistedSong = createSongDoc({ _rev: "2-song", songAudio: persistedAudio });
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("Not found"), { status: 404 });
+      }
+      return persistedSong;
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
 
     store.dispatch(
@@ -1628,10 +1632,16 @@ describe("store module", () => {
     jest.useFakeTimers();
     const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
     const arrangementSlide = { id: "arr-slide", name: "Verse", type: "Verse", boxes: [] };
-    db.get.mockResolvedValue(createSongDoc({
+    const persistedSong = createSongDoc({
       _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
       arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
-    }));
+    });
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("Not found"), { status: 404 });
+      }
+      return persistedSong;
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
     store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
       _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],

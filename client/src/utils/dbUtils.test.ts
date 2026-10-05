@@ -35,6 +35,7 @@ import {
   removeOverlayHistoryDoc,
   updateAllDocs,
 } from "./dbUtils";
+import { serializeSongToV2Documents } from "./songPersistence";
 import { allDocsSlice } from "../store/allDocsSlice";
 
 type MockDb = {
@@ -76,6 +77,83 @@ describe("dbUtils", () => {
       type: "allDocs/updateAllSongDocs",
       payload: [song],
     });
+  });
+
+  it("discovers only legacy songs when the library scan includes v2 infrastructure", async () => {
+    const db = createDb();
+    const legacySong = {
+      _id: "song-legacy",
+      name: "Legacy song",
+      type: "song",
+      arrangements: [],
+    };
+    const v2Docs = serializeSongToV2Documents({
+      _id: "song-v2",
+      type: "song",
+      name: "V2 song",
+      arrangements: [{
+        id: "arr-1",
+        name: "Arrangement",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [{ id: "slide-1", type: "Verse", name: "Verse 1", boxes: [] }],
+      }],
+      selectedArrangement: 0,
+      slides: [],
+    } as unknown as import("../types").DBItem);
+    db.allDocs.mockResolvedValue({
+      rows: [legacySong, v2Docs.root, ...v2Docs.arrangements, ...v2Docs.slides]
+        .map((doc) => ({ doc })),
+    });
+    const dispatch = jest.fn();
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "allDocs/updateAllSongDocs",
+      payload: [legacySong],
+    });
+    expect(v2Docs.root).not.toHaveProperty("type");
+    expect(v2Docs.arrangements[0]).not.toHaveProperty("type");
+    expect(v2Docs.slides[0].type).not.toBe("song");
+  });
+
+  it("does not classify v2 root or child documents as legacy items for font migration", async () => {
+    const db = createDb();
+    const legacySong = {
+      _id: "song-legacy",
+      name: "Legacy song",
+      type: "song",
+      arrangements: [],
+      slides: [],
+    };
+    const v2Docs = serializeSongToV2Documents({
+      _id: "song-v2",
+      type: "song",
+      name: "V2 song",
+      arrangements: [{
+        id: "arr-1",
+        name: "Arrangement",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [{ id: "slide-1", type: "Verse", name: "Verse 1", boxes: [] }],
+      }],
+      selectedArrangement: 0,
+      slides: [],
+    } as unknown as import("../types").DBItem);
+    db.allDocs.mockResolvedValue({
+      rows: [legacySong, v2Docs.root, ...v2Docs.arrangements, ...v2Docs.slides]
+        .map((doc) => ({ doc })),
+    });
+    db.put.mockResolvedValue({ ok: true, id: legacySong._id, rev: "2-legacy" });
+
+    await expect(migrateFontSizesToPixels(db as unknown as PouchDB.Database)).resolves.toEqual({
+      migratedCount: 1,
+      errorCount: 0,
+    });
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: legacySong._id }));
   });
 
   it("keeps song library state arrangement-canonical without measuring monitor sizing", async () => {
