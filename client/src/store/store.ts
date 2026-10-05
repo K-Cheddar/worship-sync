@@ -40,8 +40,11 @@ import {
 import {
   getActiveItemSlides,
   normalizeItemSlides,
-  normalizeSongForPersistence,
 } from "../utils/activeItemSlides";
+import {
+  loadItemWithSongHydration,
+  saveSong,
+} from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -1171,7 +1174,7 @@ listenerMiddleware.startListening({
       const desired = currentPending.desired;
       const writeBaseline = currentPending.baseline;
       const writeDatabase = currentPending.database;
-      let db_item: DBItem = await writeDatabase.get(desired._id);
+      let db_item: DBItem = await loadItemWithSongHydration(writeDatabase, desired._id);
       if (pendingItemAutosaves.get(saveKey)?.mutationVersion !== mutationVersion) return;
       const changedFields = getItemPersistenceChanges(desired, writeBaseline);
       const conflicts = getItemPersistenceConflicts(
@@ -1218,20 +1221,25 @@ listenerMiddleware.startListening({
         ) as Partial<DBItem>),
         updatedAt,
       };
-      const persistenceItem = nextItem.type === "song"
-        ? normalizeSongForPersistence(nextItem)
-        : nextItem;
-      db_item = applyPouchAudit(db_item, persistenceItem, {
-        // Doc came from db.get â€” always an update (legacy rows may lack createdAt).
-        isNew: false,
-      });
       let result: { rev: string };
       try {
-        result = await writeDatabase.put(db_item);
+        if (nextItem.type === "song") {
+          db_item = await saveSong(writeDatabase, nextItem, db_item);
+          result = { rev: db_item._rev! };
+        } else {
+          db_item = applyPouchAudit(db_item, nextItem, {
+            // Doc came from db.get — always an update (legacy rows may lack createdAt).
+            isNew: false,
+          });
+          result = await writeDatabase.put(db_item);
+          db_item = { ...db_item, _rev: result.rev };
+        }
       } catch (error) {
         if ((error as { status?: number })?.status === 409) {
-          const latest = (await writeDatabase
-            .get(desired._id)
+          const latest = (await loadItemWithSongHydration(
+            writeDatabase,
+            desired._id,
+          )
             .catch(() => null)) as DBItem | null;
           const latestState = listenerApi.getState() as RootState;
           const activeItem = latestState.undoable.present.item;
@@ -1949,7 +1957,7 @@ listenerMiddleware.startListening({
       item = currentItem as unknown as DBItem;
     } else if (dbAtStart) {
       try {
-        item = (await dbAtStart.get(itemId)) as DBItem;
+        item = await loadItemWithSongHydration(dbAtStart, itemId);
       } catch {
         return;
       }
@@ -1960,7 +1968,7 @@ listenerMiddleware.startListening({
       globalFireDbInfo.churchId !== churchIdAtStart
     ) return;
     if (!item) return;
-    item = normalizeItemSlides(item);
+    if (item.type !== "song") item = normalizeItemSlides(item);
     const slides = getActiveItemSlides(item);
     if (slides.length < 2) return;
     const wrapUpSlide = slides[1];

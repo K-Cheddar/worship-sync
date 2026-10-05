@@ -29,7 +29,11 @@ import {
   tryParseSectionLabel,
 } from "./lyricsSectionInference";
 import { applyPouchAudit } from "./pouchAudit";
-import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
+import { normalizeItemSlides } from "./activeItemSlides";
+import {
+  createSong,
+  loadItemWithSongHydration,
+} from "./songPersistence";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
@@ -756,8 +760,10 @@ export const createNewItemInDb = async ({
 }: CreateNewItemInDbType): Promise<ItemState> => {
   if (!db) return item;
   try {
-    const response: DBItem = await db.get(item._id);
-    const normalized = normalizeItemSlides(response);
+    const response = await loadItemWithSongHydration(db, item._id);
+    const normalized = response.type === "song"
+      ? response
+      : normalizeItemSlides(response);
     return {
       ...item,
       ...normalized,
@@ -767,14 +773,15 @@ export const createNewItemInDb = async ({
   } catch (error) {
     const now = new Date().toISOString();
     const newDoc: DBItem = { ...item, createdAt: now, updatedAt: now };
-    const persistedDoc = newDoc.type === "song"
-      ? normalizeSongForPersistence(newDoc)
-      : newDoc;
-    const doc = applyPouchAudit(null, persistedDoc, { isNew: true });
     // Do not return a newly-created item until its local database write has
     // completed. Callers such as Service Plan's "Create and attach" flow use
     // this resolution as their signal that a library reference is durable.
-    await db.put(doc);
+    if (newDoc.type === "song") {
+      await createSong(db, newDoc);
+    } else {
+      const doc = applyPouchAudit(null, newDoc, { isNew: true });
+      await db.put(doc);
+    }
     return item;
   }
 };

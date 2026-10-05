@@ -15,6 +15,7 @@ import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../../utils/itemUtil";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getFormattedSections } from "../../utils/overflow";
+import { loadItemWithSongHydration } from "../../utils/songPersistence";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 
 const Item = () => {
@@ -75,7 +76,10 @@ const Item = () => {
       try {
         setStatus("loading");
         dispatch(setItemIsLoading(true));
-        const response: DBItem | undefined = await db?.get(decodedItemId);
+        const response: DBItem | undefined = await loadItemWithSongHydration(
+          db,
+          decodedItemId,
+        );
         if (!isCurrentLoad()) return;
         if (!response) return setStatus("error");
         const itemWithSections: DBItem =

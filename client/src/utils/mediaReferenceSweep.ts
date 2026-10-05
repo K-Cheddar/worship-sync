@@ -595,10 +595,14 @@ export async function sweepMediaReferencesBeforeDelete(
     for (let index = applied.length - 1; index >= 0; index -= 1) {
       const saved = applied[index];
       try {
-        await db.put({
+        const previousDocument: Record<string, unknown> = {
           ...saved.previous,
           ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
-        });
+        };
+        const rollbackDocument = previousDocument.type === "song"
+          ? normalizeSongForPersistence(previousDocument as unknown as DBItem)
+          : previousDocument;
+        await db.put(rollbackDocument);
       } catch (error) {
         status = "uncertain";
         console.error("Failed to roll back media deletion reference cleanup:", {

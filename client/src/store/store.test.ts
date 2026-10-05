@@ -213,6 +213,7 @@ let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
+  let songPersistenceModule: any;
   const postMessage = jest.fn();
   const db = {
     get: jest.fn(),
@@ -221,6 +222,13 @@ const loadStoreWithItemPersistence = () => {
   mockActiveItemDb = db;
 
   jest.isolateModules(() => {
+    jest.doMock("../utils/songPersistence", () => {
+      const actual = jest.requireActual("../utils/songPersistence");
+      return {
+        ...actual,
+        saveSong: jest.fn(actual.saveSong),
+      };
+    });
     jest.doMock("../context/controllerInfo", () => ({
       get globalDb() { return mockActiveItemDb; },
       globalBroadcastRef: { postMessage },
@@ -239,6 +247,8 @@ const loadStoreWithItemPersistence = () => {
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    songPersistenceModule = require("../utils/songPersistence");
   });
 
   return {
@@ -248,6 +258,7 @@ const loadStoreWithItemPersistence = () => {
     db,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
+    songPersistence: songPersistenceModule,
   };
 };
 
@@ -2236,7 +2247,7 @@ describe("store module", () => {
 
   it("preserves newer persisted song audio during an ordinary item autosave", async () => {
     jest.useFakeTimers();
-    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
     const persistedAudio = createSongAudio("audio-new");
     db.get.mockResolvedValue(
@@ -2260,11 +2271,18 @@ describe("store module", () => {
         songAudio: persistedAudio,
       }),
     );
+    expect(songPersistence.saveSong).toHaveBeenCalledTimes(1);
+    expect(songPersistence.saveSong).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ name: "Edited Song", songAudio: persistedAudio }),
+      expect.objectContaining({ _rev: "2-song", songAudio: persistedAudio }),
+    );
+    songPersistence.saveSong.mockClear();
   });
 
   it("omits legacy root slides from song saves and retains non-song slide persistence", async () => {
     jest.useFakeTimers();
-    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
     const arrangementSlide = { id: "arr-slide", name: "Verse", type: "Verse", boxes: [] };
     db.get.mockResolvedValue(createSongDoc({
       _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
@@ -2282,6 +2300,8 @@ describe("store module", () => {
     const savedSong = db.put.mock.calls[0][0];
     expect(savedSong).not.toHaveProperty("slides");
     expect(savedSong.arrangements[0].slides).toEqual([arrangementSlide]);
+    expect(songPersistence.saveSong).toHaveBeenCalledTimes(1);
+    songPersistence.saveSong.mockClear();
 
     const nonSong = createTimerItem({ _rev: "1-timer" });
     store.dispatch(itemSlice.actions.setActiveItem(nonSong));
@@ -2291,6 +2311,7 @@ describe("store module", () => {
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
     expect(db.put.mock.calls[0][0].slides).toEqual(nonSong.slides);
+    expect(songPersistence.saveSong).not.toHaveBeenCalled();
   });
 
   it("updates the selected arrangement's compact monitor layout when source sizing inputs change", async () => {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import FormattedTextEditor from "./FormattedTextEditor";
 import type { ItemState } from "../../../types";
 
@@ -58,21 +58,40 @@ describe("FormattedTextEditor", () => {
     } as ItemState;
   });
 
-  it("reads and edits formatted text from the selected song arrangement", () => {
+  it("keeps Stream Format controls hidden for songs", () => {
     render(<FormattedTextEditor />);
 
-    const fontSize = screen.getByDisplayValue("52");
+    expect(screen.queryByLabelText(/Padding X/i)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("52")).not.toBeInTheDocument();
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+  });
+
+  it("continues to expose Stream Format controls for free-form items", () => {
+    mockItem = {
+      ...mockItem,
+      type: "free",
+      slides: [{
+        id: "free-slide",
+        type: "Section",
+        name: "Section 1",
+        boxes: [],
+        formattedTextDisplayInfo: {
+          text: "Free-form stream text",
+          backgroundColor: "#111111",
+          textColor: "#eeeeee",
+          fontSize: 5.2,
+          paddingX: 4,
+          paddingY: 3,
+          align: "center",
+          isBold: true,
+          isItalic: false,
+        },
+      }],
+      arrangements: [],
+    } as ItemState;
+    render(<FormattedTextEditor />);
+
     expect(screen.getByLabelText(/Padding X/i)).toHaveValue(4);
     expect(screen.getByLabelText(/Padding Y/i)).toHaveValue(3);
-    fireEvent.change(fontSize, { target: { value: "60" } });
-
-    expect(mockUpdateSlides).toHaveBeenCalledWith({
-      slides: [expect.objectContaining({
-        formattedTextDisplayInfo: expect.objectContaining({ fontSize: 6 }),
-      })],
-    });
-    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      type: "item/updateSlides",
-    }));
   });
 });
