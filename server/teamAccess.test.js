@@ -11,10 +11,12 @@ const bootstrap = ({
   teams = "none",
   teamScopes = {},
   services = "none",
+  appAccess = "full",
   uid = "user-1",
   sessionKind = "human",
 } = {}) => ({
   role,
+  appAccess,
   sessionKind,
   churchId: "church-1",
   user: { uid },
@@ -155,6 +157,27 @@ test("manager may manage a team they do not belong to", () => {
   );
   assertTeamAccess(access, "worship", { view: true, edit: true });
   assertTeamAccess(access, "av", { view: true, edit: false });
+});
+
+test("member-tier scoped manager keeps edit on one team and roster read on another", () => {
+  const access = resolve(
+    bootstrap({
+      appAccess: "member",
+      teams: "none",
+      services: "none",
+      teamScopes: { worship: "edit" },
+    }),
+    records({
+      members: [{ memberId: "member-1", churchId: "church-1", userId: "user-1" }],
+      teams: [
+        { teamId: "worship", churchId: "church-1", memberIds: [] },
+        { teamId: "av", churchId: "church-1", memberIds: ["member-1"] },
+      ],
+    }),
+  );
+  assertTeamAccess(access, "worship", { view: true, edit: true });
+  assertTeamAccess(access, "av", { view: true, edit: false });
+  assertTeamAccess(access, "youth", { view: false, edit: false });
 });
 
 test("unlinked account has no effective Teams access", () => {

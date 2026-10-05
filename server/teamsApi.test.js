@@ -9945,13 +9945,17 @@ test("my blockout dates prunes history past the retention window", async (t) => 
   );
 });
 
-test("schedule-only access cannot retain teams or services permissions", async (t) => {
+test("member-tier access retains scoped Teams grants while forcing global permissions off", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createHumanContext("member_tier_perms", {
     userId: "member_tier_target",
     role: "member",
     appAccess: "view",
-    permissions: { teams: "edit", services: "edit" },
+    permissions: {
+      teams: "edit",
+      services: "edit",
+      teamScopes: { worship: "edit" },
+    },
   });
 
   const bootstrap = await callHandler(authHandlers.getAuthMe, { context });
@@ -9963,19 +9967,24 @@ test("schedule-only access cannot retain teams or services permissions", async (
     userId: "member_tier_narrow",
     role: "member",
     appAccess: "member",
-    permissions: { teams: "edit", services: "edit" },
+    permissions: {
+      teams: "edit",
+      services: "edit",
+      teamScopes: { worship: "edit" },
+    },
   });
   const narrowedBootstrap = await callHandler(authHandlers.getAuthMe, {
     context: narrowed,
   });
 
-  // A schedule-only volunteer cannot reach those surfaces, so a retained grant
-  // would read as active in Account while doing nothing — and would come back
-  // to life if their tier were widened later. Normalized on read, so already
-  // stored contradictions are corrected without a migration.
+  // Member-tier access may use the Teams workspace, but global Teams and
+  // Services permissions remain disabled even if a direct write submits them.
   assert.equal(narrowedBootstrap.statusCode, 200);
   assert.equal(narrowedBootstrap.payload.permissions.teams, "none");
   assert.equal(narrowedBootstrap.payload.permissions.services, "none");
+  assert.deepEqual(narrowedBootstrap.payload.permissions.teamScopes, {
+    worship: "edit",
+  });
 });
 
 /** YYYY-MM-DD that stays ahead of `fromDate` in blockout conflict recording. */
@@ -14365,6 +14374,7 @@ test("effective Teams reads scope managers and reuse canonical member/team queri
   const context = await createHumanContext("effective_scoped_manager", {
     churchId: fixture.churchId,
     role: "member",
+    appAccess: "member",
     permissions: {
       teams: "none",
       teamScopes: { [fixture.ids.worship]: "edit" },

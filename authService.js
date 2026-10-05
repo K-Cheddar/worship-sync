@@ -271,11 +271,8 @@ const normalizeTeamScopes = (teamScopes) => {
   );
 };
 /**
- * @param appAccess When "member", teams/services permissions are forced off.
- *   A schedule-only volunteer cannot reach those surfaces (the route allowlist
- *   refuses them), so retaining a grant would be a permission that reads as
- *   active in Account while doing nothing — and would quietly come back to life
- *   if their tier were later widened.
+ * Member-tier accounts may retain selected-team scopes because Teams is an
+ * allowed member surface. Global Teams and Services permissions remain off.
  */
 const normalizeMembershipPermissions = (
   permissions,
@@ -286,12 +283,40 @@ const normalizeMembershipPermissions = (
     return { teams: "edit", services: "edit", teamScopes: {} };
   }
   if (appAccess === "member") {
-    return { teams: "none", services: "none", teamScopes: {} };
+    return {
+      teams: "none",
+      services: "none",
+      teamScopes: normalizeTeamScopes(permissions?.teamScopes),
+    };
   }
   return {
     teams: normalizeTeamPermission(permissions?.teams, "none"),
     services: normalizeServicesPermission(permissions?.services, "none"),
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
+  };
+};
+const normalizeMembershipPermissionsForChurch = async ({
+  permissions,
+  role,
+  appAccess,
+  churchId,
+}) => {
+  const normalized = normalizeMembershipPermissions(
+    permissions,
+    role,
+    appAccess,
+  );
+  const validScopes = await Promise.all(
+    Object.entries(normalized.teamScopes).map(async ([teamId, scope]) => {
+      const team = await getDoc(COLLECTIONS.teams, teamId);
+      return team && team.churchId === churchId && !team.archivedAt
+        ? [teamId, scope]
+        : null;
+    }),
+  );
+  return {
+    ...normalized,
+    teamScopes: Object.fromEntries(validScopes.filter(Boolean)),
   };
 };
 // Per-user notification preferences stored on the membership, one tri-state per
@@ -384,7 +409,7 @@ const validateUpdateInviteAccessPayload = (body) => {
   return {
     role,
     appAccess,
-    permissions: normalizeMembershipPermissions(permissions, role, appAccess),
+      permissions: normalizeMembershipPermissions(permissions, role, appAccess),
   };
 };
 
@@ -2548,6 +2573,7 @@ const membershipCanEditTeams = (membership, formTeamIds) => {
   const permissions = normalizeMembershipPermissions(
     membership.permissions,
     membership.role,
+    membership.appAccess,
   );
   return isTeamEditorForForm({
     role: membership.role,
@@ -2579,6 +2605,7 @@ const resolveScopedTeamNamesForInvite = async (invite) => {
   const permissions = normalizeMembershipPermissions(
     invite.permissions,
     invite.role || "member",
+    invite.appAccess,
   );
   const scopedTeamIds = listEditableTeamScopeIds(permissions);
   if (scopedTeamIds.length === 0) {
@@ -4013,6 +4040,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
           permissions: normalizeMembershipPermissions(
             invite.permissions,
             invite.role,
+            invite.appAccess,
           ),
           status: "active",
           createdAt: invite.createdAt || nowIso(),
@@ -4089,6 +4117,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
         permissions: normalizeMembershipPermissions(
           latestInvite.permissions,
           latestInvite.role,
+          latestInvite.appAccess,
         ),
         status: "active",
         createdAt: invite.createdAt || nowIso(),
@@ -5080,7 +5109,7 @@ export const seedActiveHumanBearerForServerTests = async ({
       userId,
       role,
       appAccess,
-      permissions: normalizeMembershipPermissions(permissions, role),
+      permissions: normalizeMembershipPermissions(permissions, role, appAccess),
       status: "active",
       createdAt: nowIso(),
       createdByUid: userId,
@@ -5198,7 +5227,7 @@ export const seedPendingInviteForServerTests = async ({
     email: normalizedEmail,
     role,
     appAccess,
-    permissions: normalizeMembershipPermissions(permissions, role),
+    permissions: normalizeMembershipPermissions(permissions, role, appAccess),
     status,
     tokenHash: hashValue(token),
     expiresAt,
@@ -7990,6 +8019,7 @@ export const authHandlers = {
             permissions: normalizeMembershipPermissions(
               membership.permissions,
               membership.role,
+              membership.appAccess,
             ),
             user: user
               ? {
@@ -8187,16 +8217,17 @@ export const authHandlers = {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const email = normalizeEmail(req.body?.email);
-      const role = req.body?.role || "admin";
-      const appAccess = req.body?.appAccess || "full";
-      const permissions = normalizeMembershipPermissions(
-        req.body?.permissions,
-        role,
-        appAccess,
-      );
       if (!email) {
         throw httpError(400, "Email is required.");
       }
+      const role = req.body?.role || "admin";
+      const appAccess = req.body?.appAccess || "full";
+      const permissions = await normalizeMembershipPermissionsForChurch({
+        permissions: req.body?.permissions,
+        role,
+        appAccess,
+        churchId: req.params.churchId,
+      });
       // Optional binding to a roster member. When present, accepting this
       // invite links that member record to the new account — the only path
       // besides a logged-in intake submission that may establish the link.
@@ -8380,16 +8411,23 @@ export const authHandlers = {
       }
       const { role, appAccess, permissions } =
         validateUpdateInviteAccessPayload(req.body);
+      const normalizedPermissions =
+        await normalizeMembershipPermissionsForChurch({
+          permissions,
+          role,
+          appAccess,
+          churchId: req.params.churchId,
+        });
       const updatedInvite = {
         ...invite,
         role,
         appAccess,
-        permissions,
+        permissions: normalizedPermissions,
       };
       await setDoc(
         COLLECTIONS.invites,
         inviteId,
-        { role, appAccess, permissions },
+        { role, appAccess, permissions: normalizedPermissions },
         { merge: true },
       );
       await addSecurityEvent({
@@ -8399,7 +8437,7 @@ export const authHandlers = {
         inviteId,
         email: invite.email || null,
         appAccess,
-        permissions,
+        permissions: normalizedPermissions,
       });
       return res.json({
         success: true,
@@ -8754,11 +8792,12 @@ export const authHandlers = {
       if (targetMembership.role === "admin" && appAccess !== "full") {
         throw httpError(400, "Admins must keep full access.");
       }
-      const permissions = normalizeMembershipPermissions(
-        req.body?.permissions,
-        targetMembership.role,
+      const permissions = await normalizeMembershipPermissionsForChurch({
+        permissions: req.body?.permissions,
+        role: targetMembership.role,
         appAccess,
-      );
+        churchId: req.params.churchId,
+      });
       await updateMemberAccessSettings({
         churchId: req.params.churchId,
         userId: req.params.userId,

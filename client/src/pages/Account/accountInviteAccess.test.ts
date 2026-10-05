@@ -3,6 +3,7 @@ import {
   getInviteAccessSummaryLabel,
   inviteAccessDraftFromInvite,
   resolveInviteAccessPayload,
+  scopedTeamsHelperText,
 } from "./accountInviteAccess";
 
 describe("accountInviteAccess", () => {
@@ -85,5 +86,11 @@ describe("accountInviteAccess", () => {
         teamScopeIds: [],
       }),
     ).toBe("Full access · No Teams access · Edit services and plans");
+  });
+
+  it("explains roster read access and independent team management", () => {
+    expect(scopedTeamsHelperText("none", false)).toBe(
+      "Team membership gives read-only access automatically. Select teams here to let this person manage them. They don't need to be on a team's roster.",
+    );
   });
 });

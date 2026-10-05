@@ -316,6 +316,11 @@ const TeamsLiveProbe = () => {
     <div data-testid="teams-live-church">{context?.churchId}</div>
     <div data-testid="teams-live-capability">{String(context?.canUseTeamsLiveSync)}</div>
       <div data-testid="teams-broad-capability">{String(context?.hasBroadTeamsReadAccess)}</div>
+      <div data-testid="can-edit-teams">{String(context?.canEditTeams)}</div>
+      <div data-testid="can-edit-worship">{String(context?.canEditTeam?.("worship"))}</div>
+      <div data-testid="can-edit-av">{String(context?.canEditTeam?.("av"))}</div>
+      <div data-testid="can-view-teams">{String(context?.canViewTeams)}</div>
+      <div data-testid="broad-teams-read">{String(context?.hasBroadTeamsReadAccess)}</div>
   </div>;
 };
 
@@ -578,6 +583,27 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     } finally {
       global.EventSource = original;
     }
+  });
+
+  it("derives scoped edit after member-tier bootstrap without broad Teams access", async () => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      role: "member",
+      appAccess: "member",
+      permissions: {
+        teams: "none",
+        services: "none",
+        teamScopes: { worship: "edit" },
+      },
+    });
+    renderProvider(<TeamsLiveProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("can-edit-worship")).toHaveTextContent("true"),
+    );
+    expect(screen.getByTestId("can-edit-teams")).toHaveTextContent("false");
+    expect(screen.getByTestId("can-edit-av")).toHaveTextContent("false");
+    expect(screen.getByTestId("can-view-teams")).toHaveTextContent("true");
+    expect(screen.getByTestId("broad-teams-read")).toHaveTextContent("false");
   });
 
   it("keeps broad Teams read separate from transport eligibility", async () => {

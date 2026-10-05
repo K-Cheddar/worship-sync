@@ -399,6 +399,29 @@ describe("schedule-only member routing", () => {
     expect(isRouteAllowedForSession("/resources", member)).toBe(false);
   });
 
+  it("keeps scoped managers on member-tier routes", () => {
+    const scopedManager = {
+      ...member,
+      permissions: {
+        teams: "none" as const,
+        services: "none" as const,
+        teamScopes: { worship: "edit" as const },
+      },
+    };
+    expect(
+      isRouteAllowedForSession("/teams-and-services/schedules", scopedManager),
+    ).toBe(true);
+    for (const path of [
+      "/current-service",
+      "/controller",
+      "/account",
+      "/resources",
+      "/boards/controller",
+    ]) {
+      expect(isRouteAllowedForSession(path, scopedManager)).toBe(false);
+    }
+  });
+
   it("is deny-by-default, so a route added later stays closed", () => {
     expect(isRouteAllowedForSession("/some-future-operator-page", member)).toBe(
       false,

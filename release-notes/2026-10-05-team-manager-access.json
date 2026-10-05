@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-05-team-manager-access",
+  "date": "2026-10-05",
+  "type": "improved",
+  "title": "Grant access to specific teams",
+  "description": "Admins can give a member access to manage selected teams without granting global Teams or Services access. Team members keep their automatic read-only access, and managers do not need to join a team's roster."
+}

@@ -116,17 +116,8 @@ export const getInviteAccessSummaryLabel = (draft: InviteAccessDraft) => {
 };
 
 export const scopedTeamsHelperText = (
-  teamsAccess: TeamsPermission,
-  hasScopedTeams: boolean,
+  _teamsAccess: TeamsPermission,
+  _hasScopedTeams: boolean,
 ) => {
-  if (teamsAccess === "none" && hasScopedTeams) {
-    return "This person can open Teams only for checked teams. Global Teams access stays off.";
-  }
-  if (teamsAccess === "view" && hasScopedTeams) {
-    return "They can view every team, and edit only the checked teams below.";
-  }
-  if (teamsAccess === "none") {
-    return "Check teams below to grant per-team edit access without enabling global Teams access.";
-  }
-  return "Optional. Add edit access for specific teams without changing global access above.";
+  return "Team membership gives read-only access automatically. Select teams here to let this person manage them. They don't need to be on a team's roster.";
 };
