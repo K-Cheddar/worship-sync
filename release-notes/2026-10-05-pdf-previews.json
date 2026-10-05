@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-05-pdf-previews",
+  "date": "2026-10-05",
+  "type": "fixed",
+  "title": "PDF previews display correctly",
+  "description": "PDFs now render in the in-app preview."
+}

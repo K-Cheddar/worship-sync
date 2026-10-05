@@ -363,7 +363,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
             title={title}
             src={sourceUrl}
             className="h-full w-full border-0"
-            sandbox={kind === "web" ? "allow-forms allow-modals allow-popups allow-presentation allow-scripts" : ""}
+            sandbox={kind === "web" ? "allow-forms allow-modals allow-popups allow-presentation allow-scripts" : undefined}
             referrerPolicy="no-referrer"
             onLoad={handleMediaReady}
             onError={handleMediaError}
