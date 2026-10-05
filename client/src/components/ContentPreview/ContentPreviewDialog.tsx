@@ -3,6 +3,9 @@ import {
   AudioLines,
   Copy,
   ExternalLink,
+  Maximize2,
+  Minimize2,
+  MoreHorizontal,
   FileQuestion,
   FileText,
   Image,
@@ -12,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/DropdownMenu";
 import YouTubePlaylistPlayer from "../YouTubePlaylistPlayer/YouTubePlaylistPlayer";
 import type { YouTubePlaylistEntry } from "../YouTubePlaylistPlayer/youtubePlaylist";
 import ServiceFlowRichText from "../ServiceFlowRichText/ServiceFlowRichText";
@@ -32,20 +36,24 @@ type ContentPreviewDialogProps = {
   resource: ContentPreviewResource | null;
   onClose: () => void;
   dialogLabel?: string;
-  details?: ReactNode;
+  metadata?: ReactNode;
+  secondaryInfo?: ReactNode;
+  menuActions?: ReactNode;
 };
 
-type RenderStatus = "loading" | "ready" | "error";
+type RenderStatus = "loading" | "slow" | "ready" | "error";
 
 const EMBED_TIMEOUT_MS = 7000;
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
 
-const LoadingState = ({ label }: { label: string }) => (
-  <div className="flex min-h-48 items-center justify-center gap-2 p-6 text-sm text-gray-300" role="status">
-    <Spinner size="sm" className="shrink-0 text-cyan-300" />
-    {label}
+const LoadingState = ({ label, slow = false }: { label: string; slow?: boolean }) => (
+  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-gray-950/75 p-6 text-center text-sm text-gray-200" role="status">
+    {slow ? null : (
+      <Spinner size="sm" className="shrink-0 text-cyan-300" />
+    )}
+    {slow ? <span>This preview is taking longer than expected.</span> : <span>{label}</span>}
   </div>
 );
 
@@ -58,7 +66,7 @@ const PreviewFallback = ({
   message: string;
   providerLabel?: string;
 }) => (
-  <div className="flex min-h-40 flex-col items-center justify-center gap-2 p-6 text-center">
+  <div className="flex h-full min-h-56 w-full flex-col items-center justify-center gap-2 p-6 text-center">
     <FileQuestion className="size-8 text-gray-500" aria-hidden />
     <h3 className="text-sm font-semibold text-gray-100">Preview unavailable</h3>
     <p className="max-w-md text-sm text-gray-300">{message}</p>
@@ -84,7 +92,7 @@ const PreviewKindIcon = ({ kind }: { kind: ContentPreviewKind }) => {
   return <Icon className="size-5 shrink-0 text-cyan-300" aria-hidden />;
 };
 
-const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: ContentPreviewDialogProps) => {
+const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, secondaryInfo, menuActions }: ContentPreviewDialogProps) => {
   const [source, setSource] = useState<ContentPreviewResolvedSource | null>(null);
   const [resolvedText, setResolvedText] = useState("");
   const [resolving, setResolving] = useState(false);
@@ -94,6 +102,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [openingExternal, setOpeningExternal] = useState(false);
   const [copyingLink, setCopyingLink] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const actionGenerationRef = useRef(0);
 
   const resourceKey = resource
@@ -129,6 +138,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
     setOpeningExternal(false);
     setCopyingLink(false);
     setRenderStatus("loading");
+    setExpanded(false);
 
     if (!resource.resolveSource) {
       if (!directUrl && resource.textContent === undefined) {
@@ -225,7 +235,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
       resolveError ||
       renderStatus !== "loading"
     ) return;
-    const timer = window.setTimeout(() => setRenderStatus("error"), EMBED_TIMEOUT_MS);
+    const timer = window.setTimeout(() => setRenderStatus("slow"), EMBED_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [kind, renderStatus, resolveError, resolving, sourceUrl]);
 
@@ -271,7 +281,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
   };
 
   const handleMediaError = () => setRenderStatus("error");
-  const handleMediaReady = () => setRenderStatus("ready");
+  const handleMediaReady = () => setRenderStatus((current) => current === "error" ? current : "ready");
   const waitingForSource = Boolean(resource?.url && resolving && !source && !resolveError);
   const showFallback = Boolean(resolveError) || (
     !resolving && Boolean(resolution && !resolution.canPreview)
@@ -297,13 +307,13 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
       }]
     : [];
 
-  const renderPreview = () => {
-    if (!resource || resolving || waitingForSource) return <LoadingState label="Preparing preview…" />;
+  const renderPreviewContent = () => {
+    if (!resource || resolving || waitingForSource) return null;
     if (showFallback) return <PreviewFallback kind={kind} message={fallbackMessage} providerLabel={metadataLabel} />;
     if (kind === "text") {
       if (resource.richTextContent && !isRichTextEmpty(resource.richTextContent)) {
         return (
-          <div className="max-h-[min(65vh,42rem)] overflow-auto p-4">
+          <div className="h-full w-full overflow-auto p-4">
             <ServiceFlowRichText
               document={resource.richTextContent}
               className="text-left text-neutral-100"
@@ -312,57 +322,54 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
         );
       }
       return (
-        <div className="max-h-[min(65vh,42rem)] overflow-auto whitespace-pre-wrap p-4 text-left text-sm text-neutral-100">
+        <div className="h-full w-full overflow-auto whitespace-pre-wrap p-4 text-left text-sm text-neutral-100">
           {resource.textContent ?? resolvedText}
         </div>
       );
     }
     if (kind === "youtube" && youtubeQueue.length) {
       return (
-        <div className="relative w-full bg-black p-2">
-          {renderStatus === "loading" ? <LoadingState label="Loading video player…" /> : null}
-          <YouTubePlaylistPlayer
-            queue={youtubeQueue}
-            mode="preview"
-            onPlayerReady={handleMediaReady}
-            onVideoUnavailable={handleMediaError}
-          />
+        <div className="flex h-full w-full items-center justify-center bg-black p-2">
+          <div className={`w-full max-w-5xl ${renderStatus === "ready" ? "" : "invisible"}`}>
+            <YouTubePlaylistPlayer
+              queue={youtubeQueue}
+              mode="preview"
+              onPlayerReady={handleMediaReady}
+              onVideoUnavailable={handleMediaError}
+            />
+          </div>
         </div>
       );
     }
     if (!sourceUrl) return <PreviewFallback kind={kind} message={fallbackMessage} providerLabel={metadataLabel} />;
     if (kind === "image") {
       return (
-        <div className="flex min-h-56 w-full items-center justify-center bg-black p-2">
-          {renderStatus === "loading" ? <LoadingState label="Loading image…" /> : null}
-          <img src={sourceUrl} alt={title} className="max-h-[min(65vh,42rem)] max-w-full object-contain" onLoad={handleMediaReady} onError={handleMediaError} />
+        <div className="flex h-full w-full items-center justify-center bg-black p-2">
+          <img src={sourceUrl} alt={title} className={`max-h-full max-w-full object-contain ${renderStatus === "ready" ? "" : "invisible"}`} onLoad={handleMediaReady} onError={handleMediaError} />
         </div>
       );
     }
     if (kind === "audio") {
       return (
-        <div className="flex min-h-48 items-center justify-center p-4">
-          {renderStatus === "loading" ? <LoadingState label="Loading audio…" /> : null}
-          <audio controls className="w-full max-w-2xl" src={sourceUrl} aria-label={title} onCanPlay={handleMediaReady} onError={handleMediaError} />
+        <div className="flex h-full w-full items-center justify-center p-4">
+          <audio controls className={`w-full max-w-2xl ${renderStatus === "ready" ? "" : "invisible"}`} src={sourceUrl} aria-label={title} onCanPlay={handleMediaReady} onError={handleMediaError} />
         </div>
       );
     }
     if (kind === "video") {
       return (
-        <div className="flex min-h-56 w-full items-center justify-center bg-black p-2">
-          {renderStatus === "loading" ? <LoadingState label="Loading video…" /> : null}
-          <video controls playsInline className="aspect-video max-h-[min(65vh,42rem)] w-full max-w-5xl object-contain" src={sourceUrl} aria-label={title} onCanPlay={handleMediaReady} onError={handleMediaError} />
+        <div className="flex h-full w-full items-center justify-center bg-black p-2">
+          <video controls playsInline className={`aspect-video max-h-full w-full max-w-5xl object-contain ${renderStatus === "ready" ? "" : "invisible"}`} src={sourceUrl} aria-label={title} onCanPlay={handleMediaReady} onError={handleMediaError} />
         </div>
       );
     }
     if (kind === "document" || kind === "web") {
       return (
-        <div className="relative h-[min(65vh,42rem)] min-h-56 bg-white">
-          {renderStatus === "loading" ? <LoadingState label={kind === "web" ? "Loading embedded page…" : "Loading document…"} /> : null}
+        <div data-testid="document-preview-container" className="relative h-full min-h-0 w-full bg-white">
           <iframe
             title={title}
             src={sourceUrl}
-            className="h-full w-full border-0"
+            className={`h-full w-full border-0 ${renderStatus === "ready" ? "" : "invisible"}`}
             sandbox={kind === "web" ? "allow-forms allow-modals allow-popups allow-presentation allow-scripts" : undefined}
             referrerPolicy="no-referrer"
             onLoad={handleMediaReady}
@@ -378,42 +385,55 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, details }: Conte
     <Modal
       isOpen={Boolean(resource)}
       onClose={onClose}
-      title={(
-        <span className="flex min-w-0 items-start gap-2">
-          <PreviewKindIcon kind={kind} />
-          <span className="min-w-0">
-            <span className="block truncate" title={externalUrl || sourceUrl}>{title}</span>
-            {metadataLabel ? <span className="mt-0.5 block truncate text-xs font-normal text-gray-400">{metadataLabel}</span> : null}
-          </span>
-        </span>
-      )}
-      titleClassName="min-w-0 flex-1"
-      headerClassName="items-start gap-3"
+      title={<span className="flex min-w-0 items-center gap-2"><PreviewKindIcon kind={kind} /><span className="truncate">{title}</span></span>}
+      titleClassName="min-w-0 truncate text-lg"
+      headerClassName="gap-3 pb-0"
       description={`Preview of ${title}`}
       ariaLabel={dialogLabel}
-      size={showFallback ? "md" : "xl"}
+      size={expanded ? "full" : "xl"}
       zIndexLevel={2}
       contentPadding="p-0"
       headerAction={(
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <Button type="button" variant="tertiary" svg={expanded ? Minimize2 : Maximize2} aria-label={expanded ? "Exit expanded preview" : "Expand preview"} onClick={() => setExpanded((current) => !current)} />
           {canOpenExternally ? (
-            <Button type="button" variant="secondary" svg={ExternalLink} className="max-md:min-h-0" isLoading={openingExternal} disabled={openingExternal} onClick={() => void handleOpenExternal()}>
-              {openingExternal ? "Opening…" : "Open in new tab"}
-            </Button>
+            <Button type="button" variant="tertiary" svg={ExternalLink} aria-label={openingExternal ? "Opening in new tab" : "Open in new tab"} title="Open in new tab" className="max-md:min-h-0" isLoading={openingExternal} disabled={openingExternal} onClick={() => void handleOpenExternal()} />
           ) : null}
-          {canOpenExternally ? (
-            <Button type="button" variant="tertiary" svg={Copy} aria-label={copyingLink ? "Copying link" : "Copy link"} className="max-md:min-h-0" isLoading={copyingLink} disabled={copyingLink} onClick={() => void handleCopyLink()}>
-              <span className="sr-only">Copy link</span>
-              {copyingLink ? "Copying…" : copyState === "copied" ? "Copied" : "Copy"}
-            </Button>
+          {(canOpenExternally || menuActions) ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="tertiary" svg={MoreHorizontal} aria-label="More preview actions" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                // Modal content uses z-55; keep its portaled menu above the modal surface.
+                className="z-[60]"
+              >
+                {canOpenExternally ? (
+                  <DropdownMenuItem disabled={copyingLink} onSelect={(event) => { event.preventDefault(); void handleCopyLink(); }}>
+                    <Copy />{copyingLink ? "Copying link…" : copyState === "copied" ? "Link copied" : "Copy link"}
+                  </DropdownMenuItem>
+                ) : null}
+                {menuActions ? <>{canOpenExternally ? <DropdownMenuSeparator /> : null}{menuActions}</> : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
         </div>
       )}
     >
       {actionError ? <p className="border-b border-amber-800/60 bg-amber-950/30 px-4 py-2 text-xs text-amber-200" role="alert">{actionError}</p> : null}
       {copyState === "error" ? <p className="border-b border-amber-800/60 bg-amber-950/30 px-4 py-2 text-xs text-amber-200" role="alert">The link could not be copied.</p> : null}
-      {details}
-      {renderPreview()}
+      <div className="flex min-h-8 w-full shrink-0 flex-wrap items-center gap-x-2 border-b border-gray-700 px-4 pb-1 pt-0 text-xs leading-5 text-gray-400">
+        {metadataLabel ? <span>{metadataLabel}</span> : null}
+        {metadata ? <span>· {metadata}</span> : null}
+      </div>
+      {secondaryInfo ? <div className="shrink-0 px-4 pb-2 text-xs text-gray-400">{secondaryInfo}</div> : null}
+      <div data-testid="preview-stage" className={`relative flex min-h-56 w-full items-center justify-center overflow-hidden ${expanded ? "min-h-0 flex-1" : "h-[min(65vh,42rem)]"} ${kind === "text" ? "bg-gray-900" : "bg-gray-950"}`}>
+        {renderPreviewContent()}
+        {(resolving || waitingForSource || renderStatus === "loading" || renderStatus === "slow") && !showFallback ? (
+          <LoadingState slow={renderStatus === "slow"} label={resolving || waitingForSource ? "Preparing preview…" : kind === "web" ? "Loading embedded page…" : kind === "document" ? "Loading document…" : kind === "youtube" ? "Loading video player…" : `Loading ${kind}…`} />
+        ) : null}
+      </div>
     </Modal>
   );
 };

@@ -193,6 +193,7 @@ describe("ElectronMediaSurfacePool", () => {
         outputId="projector"
         windowRole="projector"
         candidates={[candidate]}
+        candidateDiagnostics={[]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
@@ -227,7 +228,11 @@ describe("ElectronMediaSurfacePool", () => {
             };
           }
         ).__wsMediaSurfacePoolDiagnostics,
-      ).toMatchObject({ surfaceCount: 1, readyCount: 1, candidateDetails: [expect.any(Object)] });
+      ).toMatchObject({
+        surfaceCount: 1,
+        readyCount: 1,
+        candidateDetails: [expect.objectContaining({ mediaKey: candidate.mediaKey, selected: true })],
+      });
     });
     rerender(
       <ElectronMediaSurfacePool

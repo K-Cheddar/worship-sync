@@ -110,6 +110,7 @@ describe("service-plan content resources", () => {
     expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("File");
     expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "document" } as never).label).toBe("File");
     expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label).toBe("Audio");
+    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "image" } as never).label).toBe("Other");
     expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "other" } as never).label).toBe("Other");
   });
 

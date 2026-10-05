@@ -1,6 +1,6 @@
 import type { SongAudio } from "../types";
 
-export type ChurchResourceKind = "document" | "audio" | "other";
+export type ChurchResourceKind = "document" | "audio" | "image" | "other";
 
 export type ChurchResourceExternalSource = {
   url: string;

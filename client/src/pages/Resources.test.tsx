@@ -110,6 +110,14 @@ const resource = {
   updatedBy: "user-1",
 } satisfies ChurchResource;
 
+const imageResource = {
+  ...resource,
+  id: "image-resource-1",
+  name: "Profile.jpg",
+  kind: "image" as const,
+  storage: { ...resource.storage, key: "churches/church-1/files/image-resource-1/original", fileName: "Profile.jpg", contentType: "image/jpeg" },
+} satisfies ChurchResource;
+
 const externalResource = (
   id: string,
   name: string,
@@ -262,8 +270,9 @@ describe("Resources page", () => {
     expect(await screen.findByRole("dialog", { name: "Team guide" })).toBeInTheDocument();
     expect(mockGetExternalResourceResolution).toHaveBeenCalledWith(externalResource.external.url);
     expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Download" })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Download" })).not.toBeInTheDocument();
   });
 
   it("keeps an external resource visible when the server blocks deletion due to plan references", async () => {
@@ -370,6 +379,16 @@ describe("Resources page", () => {
     expect(screen.getByText("Guidelines.pdf")).toBeInTheDocument();
   });
 
+  it("shows uploaded JPEG resources in the Images filter", async () => {
+    mockResources = [resource, imageResource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    renderPage();
+    expect(await screen.findByText("Profile.jpg")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Images" }));
+    expect(screen.getByText("Profile.jpg")).toBeInTheDocument();
+    expect(screen.queryByText("Guidelines.pdf")).not.toBeInTheDocument();
+  });
+
   it("filters only documents and audio while keeping other external resources under All", async () => {
     const externalDocument = externalResource("external-doc", "Volunteer guide", "document", "https://docs.example.test/guide", "document");
     const externalAudio = externalResource("external-audio", "Rehearsal MP3", "audio", "https://files.example.test/rehearsal.mp3", "audio");
@@ -417,7 +436,7 @@ describe("Resources page", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: new RegExp(`Preview ${external.name}`) }));
-    expect(await screen.findByText(new RegExp(`^${expectedLabel} · External · Updated`))).toBeInTheDocument();
+    expect(await screen.findByText(new RegExp(`${expectedLabel} · External · Updated`))).toBeInTheDocument();
   });
 
   it("sorts resources by the selected column and toggles direction", async () => {
@@ -510,7 +529,10 @@ describe("Resources page", () => {
 
     await userEvent.setup().click(await screen.findByRole("button", { name: /guidelines\.pdf/i }));
 
-    expect(await screen.findByRole("button", { name: "Download" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getByText("WorshipSync • Document")).toBeVisible();
+    expect(screen.getByText(/PDF · 100 B · Updated/)).toBeVisible();
     expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute(
       "src",
       "https://abc.r2.cloudflarestorage.com/worshipsync-resources/guide.pdf",
@@ -540,7 +562,17 @@ describe("Resources page", () => {
     renderPage();
 
     await userEvent.setup().click(await screen.findByRole("button", { name: /Preview Guidelines\.pdf/i }));
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Delete" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "More preview actions" }));
+    const deleteAction = await screen.findByRole("menuitem", { name: "Delete" });
+    expect(deleteAction).toHaveAttribute("data-variant", "destructive");
+    expect(screen.getByRole("menuitem", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual([
+      "Download",
+      "Rename",
+      "Delete",
+    ]);
+    await userEvent.setup().click(deleteAction);
 
     const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
     expect(confirmation).toHaveTextContent("Guidelines.pdf");

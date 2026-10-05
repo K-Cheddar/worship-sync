@@ -13,6 +13,7 @@ import {
   Files,
   FileText,
   Link as LinkIcon,
+  Image as ImageIcon,
   Music,
   Pencil,
   Play,
@@ -855,7 +856,7 @@ const ServicePlanContentPanel = ({
             {churchResourceError ? <p className="text-sm text-red-300" role="alert">{churchResourceError}</p> : null}
             {!churchResourceLoading && !churchResourceError && filteredChurchResources.length ? <div className="space-y-1">{filteredChurchResources.map((resource) => {
               const alreadyAttached = resources.some((candidate) => getServicePlanChurchResourceId(candidate) === resource.id);
-              const ResourceIcon = resource.kind === "audio" ? AudioLines : FileText;
+                      const ResourceIcon = resource.kind === "audio" ? AudioLines : resource.kind === "image" ? ImageIcon : FileText;
               return (
                 <div key={resource.id} className="flex min-w-0 items-center gap-1 rounded-md border border-gray-800 bg-gray-950/50 px-1">
                   <Button type="button" variant="tertiary" className="min-w-0 flex-1 justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanChurchResourceReference({ resourceId: resource.id })]); setChurchResourcePickerOpen(false); }}><ResourceIcon className={`size-4 shrink-0 ${resource.kind === "audio" ? "text-amber-300" : "text-cyan-300"}`} aria-hidden /><span className="truncate">{resource.name}</span><span className="ml-auto truncate text-xs text-gray-500">{resource.sourceType === "external" ? resource.external.provider || "External link" : resource.storage.fileName}</span></Button>

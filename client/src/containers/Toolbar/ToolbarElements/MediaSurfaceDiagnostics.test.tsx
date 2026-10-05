@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import { readMediaPreparationPublicationStatus, useRemoteMediaPreparationManifest, useRemoteMediaPreparationReadinessReports } from "../../../hooks/useMediaPreparationManifest";
@@ -19,6 +19,7 @@ jest.mock("../../../hooks/useMediaPreparationManifest", () => ({
 const mockUseReadinessReports = jest.mocked(useRemoteMediaPreparationReadinessReports);
 const mockUseManifest = jest.mocked(useRemoteMediaPreparationManifest);
 const mockReadPublication = jest.mocked(readMediaPreparationPublicationStatus);
+const emptyReports: MediaPreparationReadinessReport[] = [];
 
 const renderDiagnostics = () => {
   const list: DisplayOutput[] = [
@@ -155,7 +156,7 @@ describe("MediaSurfaceDiagnostics", () => {
     expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("keeps the operator view compact, exposes failures, and discloses detailed records only on demand", () => {
+  it("shows operator video rows immediately and keeps raw records under Advanced diagnostics", () => {
     Object.defineProperty(window, "electronAPI", { configurable: true, value: undefined });
     renderDiagnostics();
     act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
@@ -183,12 +184,58 @@ describe("MediaSurfaceDiagnostics", () => {
     expect(screen.getByLabelText("Computer health")).toHaveTextContent("Unavailable — Electron only");
     expect(screen.getByRole("alert")).toHaveTextContent("decode failed");
     expect(screen.getByRole("button", { name: "Retry preparation" })).toBeInTheDocument();
-    expect(screen.getByText("Videos 0/1 prepared")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Videos 0/1 prepared"));
+    expect(screen.getByRole("region", { name: "Video readiness list" })).toBeVisible();
     expect(screen.getByText("Closing Video.mp4")).toBeInTheDocument();
     expect(screen.getAllByText("Failed")).toHaveLength(2);
     expect(screen.getByText("Candidate details (1)")).not.toBeVisible();
     delete (window as { electronAPI?: unknown }).electronAPI;
+  });
+
+  it("shows a protected ready video without an inventory denominator", () => {
+    renderDiagnostics();
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        outputId: "projector", windowRole: "projector", candidateCount: 1, discoveredCount: 0,
+        surfaceCount: 1, readyCount: 0, preparingCount: 0, playingCount: 1, resettingCount: 0,
+        errorCount: 0, evictions: [],
+        candidateDetails: [{ mediaKey: "protected:current", originalSource: "https://cdn.example.test/current.mp4", status: "eligible", selected: true }],
+        surfaces: [{ mediaKey: "protected:current", source: "media-cache://current.mp4", phase: "playing", sourceKind: "cache" }],
+        discovery: { renderer: "projector", itemCount: 0, items: [], uniqueVideoInventoryCount: 0, finitePlayableSourceCount: 0, pendingHlsCacheCount: 0, intentionallyExcludedVideoCount: 0, outlineLoadState: "loaded" },
+      },
+    })));
+    expect(screen.getByTestId("media-surface-diagnostics-trigger")).toHaveTextContent("Videos · 1/1 ready");
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+    expect(screen.getByText("current.mp4")).toBeVisible();
+    expect(screen.getByText("Playing", { exact: true })).toBeVisible();
+    expect(screen.getByText(/0 finite inventory · 1 selected finite · 1 ready/)).toBeVisible();
+    expect(screen.queryByText(/1\/0/)).not.toBeInTheDocument();
+  });
+
+  it("keeps inventory, selection, readiness and deferral populations separate for a bounded pool", () => {
+    const now = Date.now();
+    const videos = Array.from({ length: 30 }, (_, index) => ({
+      mediaKey: `finite:${index}`,
+      name: `Video ${index + 1}.mp4`,
+      status: index < 10 ? "ready" as const : index < 12 ? "preparing" as const : "deferred" as const,
+    }));
+    const boundedReport: MediaPreparationReadinessReport = {
+      contract: "worshipsync.media-preparation-readiness", version: 1, outputId: "projector",
+      deviceId: "device-bounded", sessionId: "window-bounded", reportedAt: now,
+      manifestRevision: 3, manifestReceivedAt: now, source: "remote-manifest",
+      candidateCount: 30, finiteCandidateCount: 30, pendingCacheCount: 0,
+      selectedCandidateCount: 12, selectedFiniteCandidateCount: 12, selectedPendingCacheCount: 0, selectedExcludedCount: 0,
+      selectedFiniteInventoryCount: 12, deferredFiniteCount: 18, mountedSurfaceCount: 12,
+      readyCount: 10, preparingCount: 2, failedCount: 0, errors: [], videos,
+    };
+    const boundedReports = [boundedReport];
+    mockUseReadinessReports.mockImplementation(({ outputId }) => outputId === "projector" ? boundedReports : emptyReports);
+    mockUseManifest.mockReturnValue({ manifest: { revision: 3 } as never, cacheMap: {}, manifestReceivedAt: now });
+    renderDiagnostics();
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+    const card = screen.getByRole("group", { name: "Remote device 1" });
+    expect(card).toHaveTextContent("30 finite inventory · 12 selected finite · 10 ready · 18 deferred");
+    expect(card).not.toHaveTextContent("10/30");
+    expect(within(card).getByText("Video 1.mp4")).toBeVisible();
   });
 
   it("shows each remote session’s own revision, readiness, error and connection age", () => {
