@@ -2360,7 +2360,12 @@ describe("store module", () => {
     jest.useFakeTimers();
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
-    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song" }));
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== "song-1") {
+        throw Object.assign(new Error("missing document"), { status: 404 });
+      }
+      return createSongDoc({ _rev: "2-song" });
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
 
     store.dispatch(
@@ -2376,6 +2381,8 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Edited Song",
+        _id: "song-1",
+        type: "song",
       }),
     );
     expect(db.put.mock.calls[0][0]).not.toHaveProperty("songAudio");

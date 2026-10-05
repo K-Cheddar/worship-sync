@@ -178,6 +178,7 @@ export function hydrateSongFromV2Documents(
   root: SongV2RootDocument,
   arrangementDocuments: SongV2ArrangementDocument[],
   slideDocuments: SongV2SlideDocument[],
+  structural = false,
 ): DBItem {
   assertValidV2Root(root);
   assertUniqueIds(root.arrangementIds, `song ${root.songId} arrangement reference`);
@@ -269,7 +270,8 @@ export function hydrateSongFromV2Documents(
     };
   });
 
-  return normalizeItemSlides({
+  const normalize = structural ? normalizeSongForLibrary : normalizeItemSlides;
+  const hydrated = normalize({
     _id: root.songId,
     ...(root._rev !== undefined ? { _rev: root._rev } : {}),
     docType: root.docType,
@@ -288,6 +290,7 @@ export function hydrateSongFromV2Documents(
     ...(root.songAudio !== undefined ? { songAudio: root.songAudio } : {}),
     ...getAuditFields(root),
   } as DBItem);
+  return structural ? { ...hydrated, slides: [] } : hydrated;
 }
 
 export const isPouchNotFoundError = (error: unknown) =>
@@ -318,10 +321,12 @@ const getReferencedDocuments = async <T,>(
   );
 };
 
-const loadV2Song = async (
+export type SongV2Snapshot = SongV2Documents & { hydrated: DBItem };
+
+const loadV2Documents = async (
   db: PouchDB.Database,
   root: SongV2RootDocument,
-): Promise<DBItem> => {
+): Promise<SongV2Documents> => {
   const arrangementIds = root.arrangementIds.map((arrangementId) =>
     getSongV2ArrangementDocId(root.songId, arrangementId),
   );
@@ -342,8 +347,23 @@ const loadV2Song = async (
     ),
   );
   const slides = await getReferencedDocuments<SongV2SlideDocument>(db, slideIds);
-  return hydrateSongFromV2Documents(root, arrangements, slides);
+  return { root, arrangements, slides };
 };
+
+/** Loads only authoritative v2 documents, retaining their physical revisions. */
+export async function loadSongV2Snapshot(
+  db: PouchDB.Database,
+  songId: string,
+): Promise<SongV2Snapshot> {
+  const root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId));
+  if (root.songId !== songId) throw new SongV2DocumentError("V2 snapshot song identity mismatch");
+  assertValidV2Root(root);
+  const documents = await loadV2Documents(db, root);
+  return {
+    ...documents,
+    hydrated: hydrateSongFromV2Documents(documents.root, documents.arrangements, documents.slides, true),
+  };
+}
 
 /** Loads a document and hydrates songs into the editor's canonical shape. */
 export async function loadItemWithSongHydration(
@@ -371,7 +391,8 @@ export async function loadSong(
       );
     }
     assertValidV2Root(v2Root);
-    return loadV2Song(db, v2Root);
+    const snapshot = await loadV2Documents(db, v2Root);
+    return hydrateSongFromV2Documents(snapshot.root, snapshot.arrangements, snapshot.slides);
   }
   const document = (await db.get(songId)) as DBItem;
   if (document.type !== "song") {
