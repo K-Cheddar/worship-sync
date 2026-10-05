@@ -81,10 +81,11 @@ describe("ContentPreviewDialog", () => {
 
   it("uses video and audio renderers", async () => {
     const { rerender } = renderPreview({ id: "video-1", url: "https://example.test/clip.mp4" });
-    expect(await screen.findByLabelText("clip.mp4")).toHaveAttribute("src", "https://worshipsync.test/api/resources/proxy?token=clip.mp4");
+    const clipVideo = await screen.findByLabelText("clip.mp4", { selector: "video" });
+    expect(clipVideo).toHaveAttribute("src", "https://worshipsync.test/api/resources/proxy?token=clip.mp4");
 
     rerender(<ContentPreviewDialog resource={{ id: "audio-1", url: "https://example.test/track.mp3" }} onClose={jest.fn()} />);
-    expect(await screen.findByLabelText("track.mp3")).toHaveAttribute("src", "https://worshipsync.test/api/resources/proxy?token=track.mp3");
+    expect(await screen.findByLabelText("track.mp3", { selector: "audio" })).toHaveAttribute("src", "https://worshipsync.test/api/resources/proxy?token=track.mp3");
   });
 
   it("renders Dropbox MP4 shares through the same-origin proxy and opens the original share link externally", async () => {
@@ -94,13 +95,15 @@ describe("ContentPreviewDialog", () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     renderPreview({ id: "dropbox-video", url: dropboxMp4Url });
 
-    const video = await screen.findByLabelText("Pathfinder-Day-Ingles-1.mp4");
+    const video = await screen.findByLabelText("Pathfinder-Day-Ingles-1.mp4", { selector: "video" });
     expect(video.getAttribute("src")).toContain("/api/resources/proxy");
     expect(screen.getByText("Dropbox • Video")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith(dropboxMp4Url, "_blank", "noopener,noreferrer"));
-    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    await user.click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(screen.getByRole("menu")).toHaveClass("z-[60]");
+    await user.click(screen.getByRole("menuitem", { name: "Copy link" }));
     expect(writeText).toHaveBeenCalledWith(dropboxMp4Url);
   });
 
@@ -115,7 +118,7 @@ describe("ContentPreviewDialog", () => {
     expect(await screen.findByLabelText("YouTube player")).toBeInTheDocument();
   });
 
-  it("renders text and PDF/document previews internally without sandboxing the PDF viewer", async () => {
+  it("keeps the PDF viewer full-width so its document controls remain available", async () => {
     const { rerender } = renderPreview({ id: "text-1", title: "Notes", textContent: "Welcome." });
     expect(screen.getByText("Welcome.")).toBeInTheDocument();
 
@@ -123,6 +126,8 @@ describe("ContentPreviewDialog", () => {
     const pdfFrame = await screen.findByTitle("Guide");
     expect(pdfFrame).toHaveAttribute("src", expect.stringContaining("/api/resources/proxy"));
     expect(pdfFrame).not.toHaveAttribute("sandbox");
+    expect(screen.getByTestId("document-preview-container")).toHaveClass("w-full");
+    expect(pdfFrame).toHaveClass("w-full");
   });
 
   it("keeps the expected sandbox on web previews", async () => {
@@ -150,7 +155,7 @@ describe("ContentPreviewDialog", () => {
     expect(screen.getByText("Important note")).toHaveClass("font-bold", "italic");
   });
 
-  it("shows a blocked-page fallback while keeping external actions available", async () => {
+  it("keeps a slow embedded page mounted and lets it become ready", async () => {
     const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
     jest.useFakeTimers();
     renderPreview({ id: "web-1", title: "Blocked page", url: "https://example.test/page" });
@@ -159,10 +164,42 @@ describe("ContentPreviewDialog", () => {
     });
     act(() => jest.advanceTimersByTime(7000));
 
-    expect(await screen.findByText("This site doesn’t allow an embedded preview.")).toBeInTheDocument();
+    expect(await screen.findByText("This preview is taking longer than expected.")).toBeInTheDocument();
+    const iframe = screen.getByTitle("Blocked page");
+    expect(iframe).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("https://example.test/page", "_blank", "noopener,noreferrer"));
+    fireEvent.load(iframe);
+    expect(screen.queryByText("This preview is taking longer than expected.")).not.toBeInTheDocument();
+    expect(iframe).toBeInTheDocument();
     jest.useRealTimers();
+  });
+
+  it("shows a fallback for an actual media failure without resizing the dialog", async () => {
+    renderPreview({ id: "image-error", title: "Failed image", url: "https://example.test/slide.png" });
+    const dialog = await screen.findByRole("dialog");
+    const originalStageClass = screen.getByTestId("preview-stage").className;
+    expect(dialog).toHaveClass("max-w-6xl");
+    fireEvent.error(await screen.findByAltText("Failed image"));
+    expect(await screen.findByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-6xl");
+    expect(screen.getByTestId("preview-stage")).toHaveClass(originalStageClass);
+    expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
+  });
+
+  it("expands and restores the preview while keeping its stage sizing", async () => {
+    const user = userEvent.setup();
+    renderPreview({ id: "pdf-1", title: "Guide", mimeType: "application/pdf", url: "https://example.test/guide.pdf" });
+    await screen.findByTitle("Guide");
+    const stage = screen.getByTestId("preview-stage");
+    const normalStageClass = stage.className;
+    await user.click(screen.getByRole("button", { name: "Expand preview" }));
+    expect(screen.getByRole("dialog")).toHaveClass("inset-0");
+    expect(screen.getByRole("button", { name: "Exit expanded preview" })).toBeInTheDocument();
+    expect(stage).toHaveClass("flex-1");
+    await user.click(screen.getByRole("button", { name: "Exit expanded preview" }));
+    expect(screen.getByRole("dialog")).toHaveClass("max-w-6xl");
+    expect(stage.className).toBe(normalStageClass);
   });
 
   it("keeps a loaded embedded page available after the timeout window", async () => {
@@ -181,7 +218,8 @@ describe("ContentPreviewDialog", () => {
     const writeText = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const view = renderPreview({ id: "web-1", title: "Safe page", url: "https://example.test/page" });
-    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    await user.click(screen.getByRole("button", { name: "More preview actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy link" }));
     expect(writeText).toHaveBeenCalledWith("https://example.test/page");
 
     const unsafeUrl = ["java", "script:alert(1)"].join("");
@@ -210,24 +248,23 @@ describe("ContentPreviewDialog", () => {
     await user.click(openButton);
     expect(openButton).toBeDisabled();
     expect(openButton).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByText("Opening…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Opening in new tab" })).toBeInTheDocument();
     await user.click(openButton);
     expect(mockOpenExternalUrl).toHaveBeenCalledTimes(1);
 
     resolveOpen(true);
     await waitFor(() => expect(openButton).not.toBeDisabled());
 
-    const copyButton = screen.getByRole("button", { name: "Copy link" });
+    await user.click(screen.getByRole("button", { name: "More preview actions" }));
+    const copyButton = screen.getByRole("menuitem", { name: "Copy link" });
     await user.click(copyButton);
-    expect(copyButton).toBeDisabled();
-    expect(copyButton).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByText("Copying…")).toBeInTheDocument();
-    await user.click(copyButton);
+    const pendingCopyItem = screen.getByRole("menuitem", { name: "Copying link…" });
+    expect(pendingCopyItem).toHaveAttribute("aria-disabled", "true");
+    await user.click(pendingCopyItem);
     expect(writeText).toHaveBeenCalledTimes(1);
 
     resolveCopy();
-    await waitFor(() => expect(copyButton).not.toBeDisabled());
-    expect(copyButton).toHaveTextContent("Copied");
+    expect(await screen.findByRole("menuitem", { name: "Link copied" })).toBeInTheDocument();
   });
 
   it("shows loading while a private resource URL resolves and ignores a rejected resolver", async () => {

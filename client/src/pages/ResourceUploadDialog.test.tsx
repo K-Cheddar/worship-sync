@@ -24,6 +24,41 @@ describe("ResourceUploadDialog", () => {
     mockUploadChurchResource.mockReset();
   });
 
+  it("limits the file picker to supported formats and accepts common image uploads", async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    const onResourcesUploaded = jest.fn();
+    mockUploadChurchResource.mockImplementation(async ({ file, name }) => ({
+      id: "jpeg-resource", churchId: "church-1", name: name || file.name, kind: "image",
+      storage: { key: file.name, fileName: file.name, contentType: file.type, sizeBytes: file.size, uploadedAt: "2026-10-05" },
+      createdAt: "2026-10-05", createdBy: "user-1", updatedAt: "2026-10-05", updatedBy: "user-1",
+    }));
+    render(<ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} />);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+    const input = screen.getByLabelText("Select resource files");
+    for (const contentType of ["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif"]) {
+      expect(input).toHaveAttribute("accept", expect.stringContaining(contentType));
+    }
+    await user.upload(input, [
+      new File(["jpeg"], "profile.jpg", { type: "image/jpeg" }),
+      new File(["png"], "slide.png", { type: "image/png" }),
+      new File(["gif"], "banner.gif", { type: "image/gif" }),
+      new File(["webp"], "photo.webp", { type: "image/webp" }),
+      new File(["avif"], "cover.avif", { type: "image/avif" }),
+      new File(["svg"], "unsupported.svg", { type: "image/svg+xml" }),
+    ]);
+    expect(screen.getByText(/unsupported\.svg: Choose a JPEG, PNG, GIF, WebP, AVIF/)).toBeVisible();
+    for (const fileName of ["profile.jpg", "slide.png", "banner.gif", "photo.webp", "cover.avif"]) {
+      expect(screen.getByRole("textbox", { name: `Resource name for ${fileName}` })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("textbox", { name: "Resource name for unsupported.svg" })).not.toBeInTheDocument();
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Upload (5 files)" }));
+    await waitFor(() => expect(mockUploadChurchResource).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(onResourcesUploaded).toHaveBeenCalledTimes(1));
+    expect(mockUploadChurchResource.mock.calls.map(([input]) => input.file.name)).toEqual([
+      "profile.jpg", "slide.png", "banner.gif", "photo.webp", "cover.avif",
+    ]);
+  });
+
   it("supports controlled opening, locks dismissal, and keeps minimize and restore available during upload", async () => {
     const user = userEvent.setup();
     const onResourcesUploaded = jest.fn();

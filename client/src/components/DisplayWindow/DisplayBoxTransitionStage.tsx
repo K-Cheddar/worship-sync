@@ -622,7 +622,7 @@ const DisplayBoxTransitionStage = ({
         itemId: item.itemId,
         itemName: item.itemName,
       })));
-  const readinessVideos = buildMediaPreparationReadinessVideos(readinessVideoInventory.map((video) => {
+  const readinessVideoInputs = readinessVideoInventory.map((video) => {
     const surface = remoteVideoStatuses.get(video.mediaKey);
     return {
       mediaKey: video.mediaKey,
@@ -634,7 +634,26 @@ const DisplayBoxTransitionStage = ({
       phase: surface?.phase,
       error: surface?.error,
     };
-  }));
+  });
+  const selectedReadinessVideoInputs = (poolEnabled ? poolCandidates : []).map((candidate) => {
+    const surface = remoteVideoStatuses.get(candidate.mediaKey);
+    const pendingCache = isHLSVideoSource(candidate.source);
+    const eligible = isPlayableMediaSource(candidate.source) && !pendingCache;
+    return {
+      mediaKey: candidate.mediaKey,
+      name: getMediaReadinessFileName(candidate.originalSource ?? candidate.source),
+      itemId: candidate.itemId,
+      itemName: candidate.itemName,
+      status: eligible ? "eligible" as const : pendingCache ? "pending-cache" as const : "excluded" as const,
+      selected: true,
+      phase: surface?.phase,
+      error: surface?.error,
+    };
+  });
+  const readinessVideos = buildMediaPreparationReadinessVideos(
+    readinessVideoInputs,
+    selectedReadinessVideoInputs,
+  );
   const readinessErrors = remoteSurfaceStatuses
     .filter((status) => status.phase === "error" && selectedPoolMediaKeys.has(status.mediaKey))
     .map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]"));
