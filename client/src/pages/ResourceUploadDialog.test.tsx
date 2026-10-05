@@ -47,10 +47,14 @@ describe("ResourceUploadDialog", () => {
       new File(["svg"], "unsupported.svg", { type: "image/svg+xml" }),
     ]);
     expect(screen.getByText(/unsupported\.svg: Choose a JPEG, PNG, GIF, WebP, AVIF/)).toBeVisible();
+    expect(screen.getByText("Drop files here or choose files")).toBeInTheDocument();
+    expect(screen.getByText("Images, documents, and MP3 audio")).toBeInTheDocument();
+    expect(screen.queryByText(/Choose JPEG, PNG/)).not.toBeInTheDocument();
     for (const fileName of ["profile.jpg", "slide.png", "banner.gif", "photo.webp", "cover.avif"]) {
-      expect(screen.getByRole("textbox", { name: `Resource name for ${fileName}` })).toBeInTheDocument();
+      expect(screen.getByText(fileName)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: `Edit name for ${fileName}` })).toBeInTheDocument();
     }
-    expect(screen.queryByRole("textbox", { name: "Resource name for unsupported.svg" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Source: profile.jpg")).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Upload (5 files)" }));
     await waitFor(() => expect(mockUploadChurchResource).toHaveBeenCalledTimes(5));
     await waitFor(() => expect(onResourcesUploaded).toHaveBeenCalledTimes(1));
@@ -138,9 +142,13 @@ describe("ResourceUploadDialog", () => {
       new File(["two"], "two.txt", { type: "text/plain" }),
     ]);
 
-    const firstName = screen.getByRole("textbox", { name: "Resource name for one.pdf" });
+    await user.click(screen.getByRole("button", { name: "Edit name for one.pdf" }));
+    const firstName = screen.getByRole("textbox", { name: "Display name for one.pdf" });
     await user.clear(firstName);
     await user.type(firstName, "Service guide");
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("Source: one.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove one.pdf" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Upload (2 files)" }));
 
     await waitFor(() => expect(onResourcesUploaded).toHaveBeenCalledWith(expect.arrayContaining([

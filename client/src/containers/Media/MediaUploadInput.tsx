@@ -706,27 +706,26 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               />
               <div
                 {...fileDropHandlers}
-                className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-3 transition-colors ${isFileDragOver ? "border-blue-400 bg-blue-500/10" : "border-transparent"}`}
+                className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-4 transition-colors ${isFileDragOver ? "border-blue-400 bg-blue-500/10" : "border-gray-600"}`}
               >
                 {isFileDragOver && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-blue-950/70 text-sm font-semibold text-blue-100">
                     Drop files to add media
                   </div>
                 )}
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading || uploadDisabled}
-                  className="w-full justify-center"
-                >
-                  Choose Files
+                <Upload className="size-8 text-blue-300" aria-hidden="true" />
+                <p className="text-sm text-gray-300">Drop media here or choose files</p>
+                <p className="text-xs text-gray-500">Images and videos</p>
+                <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading || uploadDisabled}>
+                  Choose files
                 </Button>
-                <FileList
-                  files={selectedFiles}
-                  isUploading={isUploading}
-                  onRemoveFile={handleRemoveFile}
-                  onDisplayNameChange={updateFileDisplayName}
-                />
               </div>
+              <FileList
+                files={selectedFiles}
+                isUploading={isUploading}
+                onRemoveFile={handleRemoveFile}
+                onDisplayNameChange={updateFileDisplayName}
+              />
               {selectedFiles.length > 0 && (
                 <div className="text-xs text-gray-400 text-center">
                   {imageCount > 0 && videoCount > 0 && (

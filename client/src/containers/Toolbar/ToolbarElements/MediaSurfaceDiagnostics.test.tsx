@@ -211,6 +211,50 @@ describe("MediaSurfaceDiagnostics", () => {
     expect(screen.queryByText(/1\/0/)).not.toBeInTheDocument();
   });
 
+  it("uses compact ready surfaces without inferring a ratio from inventory", () => {
+    renderDiagnostics();
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        outputId: "projector", windowRole: "projector", candidateCount: 0, discoveredCount: 0,
+        surfaceCount: 1, readyCount: 0, preparingCount: 0, playingCount: 1, resettingCount: 0,
+        errorCount: 0, evictions: [],
+        surfaces: [{ mediaKey: "protected:current", source: "", phase: "playing", sourceKind: "remote" }],
+        discovery: { renderer: "projector", itemCount: 0, items: [], uniqueVideoInventoryCount: 0, finitePlayableSourceCount: 0, pendingHlsCacheCount: 0, intentionallyExcludedVideoCount: 0, outlineLoadState: "loaded" },
+      },
+    })));
+
+    const toolbar = screen.getByTestId("media-surface-diagnostics-trigger");
+    expect(toolbar).toHaveTextContent("Videos · 1 ready");
+    expect(toolbar).not.toHaveTextContent("1/0");
+  });
+
+  it("shows per-video loading for a compact snapshot and replaces it when details arrive", () => {
+    const compact = {
+      outputId: "projector", windowRole: "projector", candidateCount: 0, discoveredCount: 0,
+      surfaceCount: 1, readyCount: 0, preparingCount: 0, playingCount: 1, resettingCount: 0,
+      errorCount: 0, evictions: [],
+      surfaces: [{ mediaKey: "protected:current", source: "", phase: "playing", sourceKind: "remote" }],
+      discovery: { renderer: "projector", itemCount: 0, items: [], uniqueVideoInventoryCount: 0, finitePlayableSourceCount: 0, pendingHlsCacheCount: 0, intentionallyExcludedVideoCount: 0, outlineLoadState: "loaded" },
+    };
+    renderDiagnostics();
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", { detail: compact })));
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+
+    expect(screen.getByText("Loading per-video readiness…")).toBeVisible();
+    expect(screen.queryByText("Per-video details unavailable from this device version.")).not.toBeInTheDocument();
+
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        ...compact,
+        candidateDetails: [{ mediaKey: "protected:current", originalSource: "https://cdn.example.test/current.mp4", itemName: "Current item", status: "eligible", selected: true }],
+      },
+    })));
+
+    expect(screen.getByText("current.mp4")).toBeVisible();
+    expect(screen.getByText("Playing", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Loading per-video readiness…")).not.toBeInTheDocument();
+  });
+
   it("keeps inventory, selection, readiness and deferral populations separate for a bounded pool", () => {
     const now = Date.now();
     const videos = Array.from({ length: 30 }, (_, index) => ({
