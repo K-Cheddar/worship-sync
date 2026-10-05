@@ -248,3 +248,33 @@ test("non-human sessions do not receive roster-derived access", () => {
   assert.deepEqual(access.memberTeamIds, new Set());
   assertTeamAccess(access, "worship", { view: false, edit: false });
 });
+
+test("duplicate linked roster users fail closed for roster-derived team access", () => {
+  const duplicateRecords = records({
+    members: [
+      { memberId: "member-1", churchId: "church-1", userId: "user-1" },
+      { memberId: "member-2", churchId: "church-1", userId: "user-1" },
+    ],
+    teams: [
+      { teamId: "worship", churchId: "church-1", memberIds: ["member-1"] },
+      { teamId: "av", churchId: "church-1", memberIds: ["member-2"] },
+      { teamId: "youth", churchId: "church-1", memberIds: [] },
+    ],
+  });
+  const access = resolve(
+    bootstrap({ teamScopes: { worship: "edit" } }),
+    duplicateRecords,
+  );
+  const adminAccess = resolve(
+    bootstrap({ role: "admin" }),
+    duplicateRecords,
+  );
+
+  assert.deepEqual(access.memberTeamIds, new Set());
+  assertTeamAccess(access, "worship", { view: true, edit: true });
+  assertTeamAccess(access, "av", { view: false, edit: false });
+  assertTeamAccess(access, "youth", { view: false, edit: false });
+  assert.deepEqual(adminAccess.memberTeamIds, new Set());
+  assert.equal(adminAccess.viewAll, true);
+  assert.equal(adminAccess.editAll, true);
+});
