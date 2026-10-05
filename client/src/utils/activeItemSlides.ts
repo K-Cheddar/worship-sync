@@ -1,5 +1,11 @@
-import type { Arrangment, DBItem, ItemSlideType, ItemState, MonitorLayout } from "../types";
+import type { DBItem, ItemSlideType, ItemState, MonitorLayout } from "../types";
 import { getMonitorLayoutForSlides } from "./monitorSlideFormatter";
+import {
+  getMonitorLayoutFromLegacySlides,
+  normalizeLegacySongSlides,
+} from "./songNormalization";
+
+export { getMonitorLayoutFromLegacySlides, normalizeLegacySongSlides, normalizeSongForLibrary } from "./songNormalization";
 
 /** The editor and controller's canonical slide collection. */
 export const getActiveItemSlides = (
@@ -9,42 +15,6 @@ export const getActiveItemSlides = (
     ? (item.arrangements[item.selectedArrangement]?.slides ?? [])
     : item.slides;
 
-/** Writes a song's normalized legacy root slides into its selected arrangement once. */
-export const normalizeLegacySongSlides = <T extends {
-  _id?: string;
-  name?: string;
-  type?: string;
-  selectedArrangement?: number;
-  arrangements?: Arrangment[];
-  slides?: ItemSlideType[];
-}>(item: T): T => {
-  if (item.type !== "song") return item;
-  const arrangements = [...(item.arrangements ?? [])];
-  const rootSlides = item.slides ?? [];
-  let selectedArrangement = Math.max(0, item.selectedArrangement ?? 0);
-  if (!arrangements.length && rootSlides.length) {
-    selectedArrangement = 0;
-    arrangements.push({
-      id: `legacy-${item._id ?? "song"}`,
-      name: item.name ?? "Arrangement",
-      formattedLyrics: [],
-      songOrder: [],
-      slides: rootSlides,
-    });
-  } else if (arrangements.length) {
-    selectedArrangement = Math.min(selectedArrangement, arrangements.length - 1);
-    const selectedSlides = arrangements[selectedArrangement]?.slides ?? [];
-    if (!selectedSlides.length && rootSlides.length) {
-      arrangements[selectedArrangement] = {
-        ...arrangements[selectedArrangement],
-        slides: rootSlides,
-      };
-    }
-  }
-  return { ...item, arrangements, selectedArrangement, slides: [] };
-};
-
-
 const withoutLegacyMonitorBoxes = (slide: ItemSlideType): ItemSlideType => {
   if (
     !("monitorCurrentBandBoxes" in slide) &&
@@ -52,23 +22,6 @@ const withoutLegacyMonitorBoxes = (slide: ItemSlideType): ItemSlideType => {
   ) return slide;
   const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
   return clean;
-};
-
-const legacyFontSize = (boxes: ItemSlideType["boxes"] | undefined) =>
-  boxes?.[0]?.monitorFontSizePx ?? boxes?.[0]?.fontSize;
-
-export const getMonitorLayoutFromLegacySlides = (slides: ItemSlideType[]): MonitorLayout | undefined => {
-  const currentFontSizePx = slides
-    .map((slide) => legacyFontSize(slide.monitorCurrentBandBoxes))
-    .find((size): size is number => size != null);
-  const nextFontSizePx = slides
-    .map((slide) => legacyFontSize(slide.monitorNextBandBoxes))
-    .find((size): size is number => size != null);
-  if (currentFontSizePx == null && nextFontSizePx == null) return undefined;
-  return {
-    currentFontSizePx: currentFontSizePx ?? nextFontSizePx!,
-    nextFontSizePx: nextFontSizePx ?? currentFontSizePx!,
-  };
 };
 
 /** Converts persisted full monitor-box clones into compact layout data at the load boundary. */
@@ -109,34 +62,6 @@ export const normalizeItemSlides = <T extends {
     ...(monitorLayout ? { monitorLayout } : {}),
     slides: rootSlides.map(withoutLegacyMonitorBoxes),
   };
-};
-
-/** Cleans song library state without measuring monitor layout for every document. */
-export const normalizeSongForLibrary = <T extends {
-  _id?: string;
-  name?: string;
-  type?: string;
-  selectedArrangement?: number;
-  arrangements?: Arrangment[];
-  slides?: ItemSlideType[];
-  monitorLayout?: MonitorLayout;
-}>(item: T): T => {
-  if (item.type !== "song") return item;
-  const normalized = normalizeLegacySongSlides(item);
-  const arrangements = (normalized.arrangements ?? []).map((arrangement) => {
-    const slides = arrangement.slides ?? [];
-    const monitorLayout =
-      arrangement.monitorLayout ?? getMonitorLayoutFromLegacySlides(slides);
-    return {
-      ...arrangement,
-      ...(monitorLayout ? { monitorLayout } : {}),
-      slides: slides.map(withoutLegacyMonitorBoxes),
-    };
-  });
-  const libraryDoc = { ...normalized, arrangements };
-  delete (libraryDoc as { slides?: ItemSlideType[] }).slides;
-  delete (libraryDoc as { monitorLayout?: MonitorLayout }).monitorLayout;
-  return libraryDoc;
 };
 
 /** Prepares a song document for persistence while preserving legacy slide recovery. */
