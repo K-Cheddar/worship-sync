@@ -2,11 +2,33 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { readReleaseNotes } from "./releaseNotes.js";
 
 const createTempDirectory = () =>
   fs.mkdtemp(path.join(os.tmpdir(), "worshipsync-release-notes-"));
+const repositoryReleaseNotesDirectory = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../release-notes",
+);
+
+test("validates every checked-in release-note fragment", async () => {
+  const filenames = (await fs.readdir(repositoryReleaseNotesDirectory))
+    .filter((filename) => filename.endsWith(".json"));
+  const errors = [];
+  const notes = await readReleaseNotes(repositoryReleaseNotesDirectory, {
+    error: (...args) => errors.push(args),
+  });
+
+  assert.deepEqual(errors, [], "all checked-in fragments must parse and match the schema");
+  assert.equal(notes.length, filenames.length, "every checked-in fragment must be accepted");
+  assert.equal(
+    new Set(notes.map((note) => note.id)).size,
+    notes.length,
+    "fragment IDs must be unique",
+  );
+});
 
 test("reads valid JSON fragments newest first with stable ordering for matching dates", async (t) => {
   const directory = await createTempDirectory();

@@ -3,6 +3,9 @@ import type { ServiceOutline } from "./types/importedPlan";
 export type Option = {
   label: import("react").ReactNode;
   value: string;
+  /** Plain text for rich option typeahead and accessibility. */
+  textValue?: string;
+  disabled?: boolean;
   /** Optional Tailwind classes for styling this option's label (e.g. text color). */
   className?: string;
   /** Optional heading this option sits under. Consecutive options sharing a

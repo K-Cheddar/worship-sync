@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardPaste } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Select from "../../../components/Select/Select";
-import Textarea from "@/components/ui/Textarea";
+import TextArea from "../../../components/TextArea/TextArea";
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import {
   Sheet,
   SheetContent,
@@ -183,23 +184,15 @@ const SchedulePasteRowDialog = ({
             >
               Pasted row:
             </label>
-            <Textarea
+            <TextArea
               id="schedule-paste-row-input"
               ref={textareaRef}
               rows={2}
               value={pastedText}
-              onChange={(event) => setPastedText(event.target.value)}
+              onChange={setPastedText}
               placeholder="Paste a row of names here (tab or comma separated)"
             />
-            <label className="mt-2 flex items-center gap-2 p-1 text-sm text-neutral-300">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-neutral-500 bg-neutral-900 accent-cyan-500"
-                checked={skipFirstCell}
-                onChange={(event) => setSkipFirstCell(event.target.checked)}
-              />
-              First cell is a date or label — skip it
-            </label>
+            <Checkbox className="mt-2 p-1 text-sm text-neutral-300" label="First cell is a date or label — skip it" checked={skipFirstCell} onCheckedChange={setSkipFirstCell} />
           </div>
 
           {hasInput ? (

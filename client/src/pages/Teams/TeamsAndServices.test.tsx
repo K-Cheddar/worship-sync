@@ -30,6 +30,7 @@ import {
   updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentIems,
   updateTeamScheduleAssignmentSwap,
+  removeTeamScheduleGuest,
 } from "../../api/auth";
 import type { TeamSchedulePayload } from "../../api/auth";
 import type {
@@ -125,6 +126,7 @@ jest.mock("../../api/auth", () => ({
   updateTeamSchedule: jest.fn(),
   archiveTeamSchedule: jest.fn(),
   deleteTeamSchedule: jest.fn(),
+  removeTeamScheduleGuest: jest.fn(),
 }));
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
@@ -490,6 +492,47 @@ describe("Teams", () => {
     setServerTimeOffset(0);
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
+  });
+
+  it("confirms guest removal in-app, preserves cancel and blocks duplicate activation", async () => {
+    const user = userEvent.setup();
+    const schedule = { ...scheduleBootstrap.schedules[0], guests: [{ guestId: "guest-alex", name: "Alex Rivera" }], assignments: { [sundayOccurrenceId]: { "position-keys::0": { primaryMemberId: "guest-alex" } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [schedule] }));
+    let finishRemoval!: (result: Awaited<ReturnType<typeof removeTeamScheduleGuest>>) => void;
+    jest.mocked(removeTeamScheduleGuest).mockImplementation(() => new Promise((resolve) => { finishRemoval = resolve; }));
+    renderTeams();
+    await waitForScheduleGrid();
+    await openVocalSlot(user);
+    await user.click(screen.getByRole("button", { name: "Recent guests" }));
+    await user.click(screen.getByRole("button", { name: "Edit Alex Rivera" }));
+    await user.click(screen.getByRole("button", { name: "Remove from schedule" }));
+    expect(screen.getByRole("dialog", { name: "Remove guest from schedule?" })).toHaveTextContent("This will clear 1 assignment.");
+    expect(removeTeamScheduleGuest).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(removeTeamScheduleGuest).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Remove from schedule" }));
+    await user.click(screen.getByRole("button", { name: "Remove guest" }));
+    await waitFor(() => expect(removeTeamScheduleGuest).toHaveBeenCalledWith("church-1", "schedule-july", "guest-alex"));
+    expect(screen.getByRole("button", { name: "Remove from schedule" })).toBeDisabled();
+    await act(async () => { finishRemoval({ success: true, schedule: { ...schedule, guests: [], assignments: {} } }); });
+    expect(removeTeamScheduleGuest).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Guest removed from this schedule.")).toBeInTheDocument();
+  });
+
+  it("cancels a guest confirmation when its schedule view unmounts", async () => {
+    const user = userEvent.setup();
+    const schedule = { ...scheduleBootstrap.schedules[0], guests: [{ guestId: "guest-alex", name: "Alex Rivera" }] };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({ ...scheduleBootstrap, schedules: [schedule] }));
+    const { unmount } = renderTeams();
+    await waitForScheduleGrid();
+    await openVocalSlot(user);
+    await user.click(screen.getByRole("button", { name: "Recent guests" }));
+    await user.click(screen.getByRole("button", { name: "Edit Alex Rivera" }));
+    await user.click(screen.getByRole("button", { name: "Remove from schedule" }));
+    expect(screen.getByRole("dialog", { name: "Remove guest from schedule?" })).toBeInTheDocument();
+    await act(async () => unmount());
+    expect(removeTeamScheduleGuest).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("shows both sidebar domains and navigates between their sections", async () => {
@@ -2425,6 +2468,8 @@ describe("Teams", () => {
     await user.click(videoButtons[videoButtons.length - 1]);
     await user.click(screen.getByRole("button", { name: "Choose custom icon color" }));
     await user.click(screen.getByRole("button", { name: "Color #22C55E" }));
+    // Wait for the existing color debounce to commit to the draft before saving.
+    await waitFor(() => expect(within(screen.getByRole("button", { name: /Icon picker/i })).getByTestId("selected-entity-icon")).toHaveStyle({ backgroundColor: "#22C55E" }));
     await user.click(screen.getAllByRole("button", { name: /Create position/i })[1]);
 
     await waitFor(() => {

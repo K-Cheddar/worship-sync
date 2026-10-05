@@ -1,7 +1,7 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ChurchBrandColor } from "../../api/authTypes";
 import { OverlayFormatting } from "../../types";
-import PopOver from "../PopOver/PopOver";
+import PopoverPanel from "../PopOver/PopoverPanel";
 import Button from "../Button/Button";
 import { HexAlphaColorPicker, HexColorInput, HexColorPicker } from "react-colorful";
 import cn from "classnames";
@@ -332,7 +332,7 @@ export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
   const contrastColor = getContrastingTextColor(effectiveColor);
 
   return (
-    <PopOver
+    <PopoverPanel
       align="start"
       contentClassName="w-[min(28rem,calc(100vw-2rem))]"
       bodyClassName="px-3 pb-3"
@@ -363,7 +363,7 @@ export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
         alpha={alpha}
         hexInputLabel={`${label} hex`}
       />
-    </PopOver>
+    </PopoverPanel>
   );
 };
 
@@ -435,7 +435,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           : label}
         :
       </label>
-      <PopOver
+      <PopoverPanel
         onOpenChange={onPopoverOpenChange}
         TriggeringButton={
           <Button
@@ -457,7 +457,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           colors={brandColors}
           alpha={alpha}
         />
-      </PopOver>
+      </PopoverPanel>
     </div>
   );
 };

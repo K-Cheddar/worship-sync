@@ -1,5 +1,4 @@
-import Modal from "../Modal/Modal";
-import Button from "../Button/Button";
+import ConfirmDialog from "../Modal/ConfirmDialog";
 
 export const WORKSTATION_UNLINK_TRIGGER_LABEL = "Unlink this computer";
 
@@ -25,10 +24,16 @@ const WorkstationUnpairConfirmModal = ({
   };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={handleClose}
+    <ConfirmDialog
+      open={isOpen}
+      onCancel={handleClose}
+      onConfirm={() => void onConfirm()}
+      confirmLabel="Unlink"
+      destructive
+      busy={isConfirming}
+      cancelVariant="tertiary"
       title="Unlink this computer?"
+      description="This signs you out and removes this computer as a shared workstation."
       size="sm"
       showCloseButton={!isConfirming}
       contentPadding="p-4"
@@ -47,28 +52,7 @@ const WorkstationUnpairConfirmModal = ({
           </li>
         </ul>
       </div>
-      <div className="mt-6 flex w-full gap-3">
-        <Button
-          className="flex-1 justify-center"
-          type="button"
-          variant="tertiary"
-          onClick={handleClose}
-          disabled={isConfirming}
-        >
-          Cancel
-        </Button>
-        <Button
-          className="flex-1 justify-center"
-          type="button"
-          variant="destructive"
-          onClick={() => void onConfirm()}
-          disabled={isConfirming}
-          isLoading={isConfirming}
-        >
-          Unlink
-        </Button>
-      </div>
-    </Modal>
+    </ConfirmDialog>
   );
 };
 

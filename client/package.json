@@ -116,6 +116,77 @@
     "extends": [
       "react-app",
       "react-app/jest"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "src/**/*.{ts,tsx,js,jsx}"
+        ],
+        "excludedFiles": [
+          "src/components/ui/**"
+        ],
+        "rules": {
+          "no-restricted-imports": [
+            "error",
+            {
+              "patterns": [
+                {
+                  "group": [
+                    "@radix-ui/*"
+                  ],
+                  "message": "Import owner-aware primitives from components/ui; feature code uses app-facing controls."
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "files": [
+          "src/**/*.{ts,tsx,js,jsx}"
+        ],
+        "excludedFiles": [
+          "src/components/ui/**",
+          "src/components/Button/**",
+          "src/components/Input/**",
+          "src/components/TextArea/**",
+          "src/components/Select/**",
+          "src/components/Checkbox/**",
+          "src/components/Toggle/**",
+          "src/components/Modal/**",
+          "src/components/TimePicker/TimePickerCountdown.tsx",
+          "src/components/TimePicker/TimePickerTimer.tsx",
+          "**/*.test.*",
+          "**/__tests__/**"
+        ],
+        "rules": {
+          "no-restricted-imports": [
+            "error",
+            {
+              "patterns": [
+                {
+                  "group": [
+                    "@radix-ui/*"
+                  ],
+                  "message": "Use the shared UI primitives or app-facing controls."
+                },
+                {
+                  "group": [
+                    "**/ui/Button",
+                    "**/ui/Input",
+                    "**/ui/Checkbox",
+                    "**/ui/Switch",
+                    "**/ui/Select",
+                    "**/ui/Textarea",
+                    "**/ui/dialog"
+                  ],
+                  "message": "Use the canonical app-facing Button, Input, Checkbox, Toggle, Select, TextArea or Modal."
+                }
+              ]
+            }
+          ]
+        }
+      }
     ]
   },
   "browserslist": {

@@ -3,5 +3,5 @@
   "date": "2026-10-02",
   "type": "improved",
   "title": "Team scheduling",
-  "description": "Schedule date ranges stay consistent as services change. Newly relevant services remain visible, and schedules with missing services keep their saved rows and assignments when refresh is unavailable."
+  "description": "Team schedules stay aligned with service dates, while saved assignments remain available if a service refresh fails."
 }

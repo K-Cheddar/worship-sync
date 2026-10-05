@@ -1,3 +1,4 @@
+import Spinner from "../Spinner/Spinner";
 import { useEffect, useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import Modal from "../Modal/Modal";
@@ -95,7 +96,7 @@ const WhatsNewModal = ({ isOpen, onClose }: WhatsNewModalProps) => {
     <Modal isOpen={isOpen} onClose={onClose} title="What's New" size="md">
       {isLoading ? (
         <div role="status" className="py-8 text-center">
-          <div className="mx-auto size-8 animate-spin rounded-full border-b-2 border-white" />
+          <Spinner size="md" width="32px" borderWidth="2px" className="mx-auto" />
           <p className="mt-2 text-gray-300">Loading updates...</p>
         </div>
       ) : hasError ? (

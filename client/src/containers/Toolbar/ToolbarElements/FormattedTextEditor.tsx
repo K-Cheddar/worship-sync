@@ -18,7 +18,7 @@ import { ALargeSmall } from "lucide-react";
 import { Bold } from "lucide-react";
 import { Italic } from "lucide-react";
 import { ChevronDown } from "lucide-react";
-import PopOver from "../../../components/PopOver/PopOver";
+import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
 import cn from "classnames";
 import Icon from "../../../components/Icon/Icon";
@@ -247,7 +247,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             )
           }
         />
-        <PopOver
+        <PopoverPanel
           TriggeringButton={
             <Button
               variant="tertiary"
@@ -262,7 +262,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             onChange={(val) => handleChange("textColor", val)}
             colors={brandColors}
           />
-        </PopOver>
+        </PopoverPanel>
         <Button
           variant={formattedTextState.isBold ? "secondary" : "tertiary"}
           svg={Bold}
@@ -303,7 +303,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         />
       </section>
       <section className="flex gap-2 items-center lg:border-l-2 lg:pl-2 max-lg:border-t-2 max-lg:pt-4">
-        <PopOver
+        <PopoverPanel
           TriggeringButton={
             <Button
               variant="tertiary"
@@ -319,7 +319,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
             colors={brandColors}
             alpha
           />
-        </PopOver>
+        </PopoverPanel>
         <Input
           type="number"
           value={formattedTextState.paddingX}
@@ -376,7 +376,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   return (
     <section className={cn("flex gap-1 items-center", className)}>
       <div className="max-lg:hidden flex gap-2 items-center">{controls}</div>
-      <PopOver
+      <PopoverPanel
         TriggeringButton={
           <Button className="lg:hidden" variant="tertiary" svg={ChevronsUpDown}>
             Tools
@@ -384,7 +384,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
         }
       >
         <div className="flex flex-col gap-4 items-center p-4">{controls}</div>
-      </PopOver>
+      </PopoverPanel>
     </section>
   );
 };

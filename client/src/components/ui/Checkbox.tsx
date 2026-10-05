@@ -2,16 +2,17 @@
 
 import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 
 import { cn } from "@/utils/cnHelper";
 
 const Checkbox = React.forwardRef<
   React.ElementRef<typeof CheckboxPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>
->(({ className, ...props }, ref) => (
+>(({ className, checked, ...props }, ref) => (
   <CheckboxPrimitive.Root
     ref={ref}
+    checked={checked}
     data-slot="checkbox"
     className={cn(
       // Rem sizes on small screens: fluid `--spacing` would otherwise shrink
@@ -20,6 +21,7 @@ const Checkbox = React.forwardRef<
       "focus-visible:border-cyan-400 focus-visible:ring-2 focus-visible:ring-cyan-400/50",
       "disabled:cursor-not-allowed disabled:opacity-50",
       "data-[state=checked]:border-cyan-400 data-[state=checked]:bg-cyan-400 data-[state=checked]:text-gray-950",
+      "data-[state=indeterminate]:border-cyan-400 data-[state=indeterminate]:bg-cyan-400 data-[state=indeterminate]:text-gray-950",
       className,
     )}
     {...props}
@@ -28,7 +30,7 @@ const Checkbox = React.forwardRef<
       data-slot="checkbox-indicator"
       className="flex items-center justify-center text-current"
     >
-      <Check className="size-[0.875rem] stroke-[3] md:size-3" aria-hidden />
+      {checked === "indeterminate" ? <Minus className="size-[0.875rem] stroke-[3] md:size-3" aria-hidden /> : <Check className="size-[0.875rem] stroke-[3] md:size-3" aria-hidden />}
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
 ));

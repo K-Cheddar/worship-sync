@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import Button from "../components/Button/Button";
-import { useOverlayPortalContainer } from "../components/FloatingWindow/FloatingWindowPortalContext";
+import Modal from "../components/Modal/Modal";
 import { getChatImageUrl } from "./api";
 import type { ChatImageAttachment as ChatImageAttachmentType } from "./types";
 
@@ -57,7 +56,6 @@ const ChatImageAttachment = ({
   authorName: string;
   attachment: ChatImageAttachmentType;
 }) => {
-  const overlayPortalContainer = useOverlayPortalContainer();
   const [thumbnailUrl, setThumbnailUrl] = useState("");
   const [fullUrl, setFullUrl] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -68,7 +66,14 @@ const ChatImageAttachment = ({
   );
   const [retrySequence, setRetrySequence] = useState(0);
   const triggerRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
-  const closeRef = useRef<HTMLButtonElement | HTMLAnchorElement>(null);
+  const fullRequestRef = useRef(0);
+
+  useEffect(() => {
+    setIsOpen(false);
+    setFullUrl("");
+    setThumbnailUrl("");
+    return () => { fullRequestRef.current += 1; };
+  }, [churchId, messageId]);
 
   useEffect(() => {
     const expiresAt = attachment.expiresAt;
@@ -124,31 +129,17 @@ const ChatImageAttachment = ({
     };
   }, [churchId, isExpired, messageId, retrySequence]);
 
-  const close = useCallback(() => {
-    setIsOpen(false);
-    queueMicrotask(() => triggerRef.current?.focus());
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    queueMicrotask(() => closeRef.current?.focus());
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-      if (event.key === "Tab") {
-        event.preventDefault();
-        closeRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [close, isOpen]);
+  const close = () => setIsOpen(false);
 
   const openFullImage = async () => {
     setIsOpen(true);
     if (fullUrl) return;
+    const request = ++fullRequestRef.current;
     try {
-      setFullUrl(await loadImageUrl(churchId, messageId, "full"));
+      const url = await loadImageUrl(churchId, messageId, "full");
+      if (request === fullRequestRef.current) setFullUrl(url);
     } catch (loadError) {
+      if (request !== fullRequestRef.current) return;
       const expired = loadError instanceof Error && loadError.message === "Image expired.";
       setError(expired ? "Image expired." : "Photo unavailable. Try again.");
       if (expired) setIsExpired(true);
@@ -211,47 +202,42 @@ const ChatImageAttachment = ({
         )}
       </div>
 
-      {isOpen
-        ? createPortal(
-            <div
-              className="pointer-events-auto fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-4"
-              role="dialog"
-              aria-modal="true"
-              aria-label={`Photo from ${authorName}`}
-            >
-              <Button
-                ref={closeRef}
-                variant="none"
-                svg={X}
-                color="#ffffff"
-                iconSize="lg"
-                className="absolute right-4 top-4 rounded-full bg-black/60 p-2 max-md:!min-h-11 max-md:!min-w-11"
-                aria-label="Close photo"
-                onClick={close}
-              />
-              {fullUrl ? (
-                <img
-                  src={fullUrl}
-                  alt={`Shared by ${authorName}`}
-                  className="max-h-full max-w-full rounded-lg object-contain"
-                  width={attachment.width}
-                  height={attachment.height}
-                  onError={() => {
-                    invalidateImageUrl(churchId, messageId, "full");
-                    setFullUrl("");
-                    setError("Photo unavailable. Try again.");
-                    setIsOpen(false);
-                  }}
-                />
-              ) : (
-                <span className="text-sm text-gray-200" role="status">
-                  Loading photo…
-                </span>
-              )}
-            </div>,
-            overlayPortalContainer ?? document.body,
-          )
-        : null}
+      <Modal
+        isOpen={isOpen} onClose={close} size="full" showCloseButton={false}
+        ariaLabel={`Photo from ${authorName}`} description={`Shared by ${authorName}`}
+        backdropClassName="bg-black/90" surfaceClassName="h-full bg-transparent"
+        contentPadding="flex items-center justify-center p-4"
+        onCloseAutoFocus={(event) => { event.preventDefault(); triggerRef.current?.focus(); }}
+      >
+        <Button
+          variant="none"
+          svg={X}
+          color="#ffffff"
+          iconSize="lg"
+          className="absolute right-4 top-4 rounded-full bg-black/60 p-2 max-md:!min-h-11 max-md:!min-w-11"
+          aria-label="Close photo"
+          onClick={close}
+        />
+        {fullUrl ? (
+          <img
+            src={fullUrl}
+            alt={`Shared by ${authorName}`}
+            className="max-h-full max-w-full rounded-lg object-contain"
+            width={attachment.width}
+            height={attachment.height}
+            onError={() => {
+              invalidateImageUrl(churchId, messageId, "full");
+              setFullUrl("");
+              setError("Photo unavailable. Try again.");
+              setIsOpen(false);
+            }}
+          />
+        ) : (
+          <span className="text-sm text-gray-200" role="status">
+            Loading photo…
+          </span>
+        )}
+      </Modal>
     </>
   );
 };

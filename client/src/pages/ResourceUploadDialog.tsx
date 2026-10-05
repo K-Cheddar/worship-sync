@@ -1,3 +1,4 @@
+import Input from "../components/Input/Input";
 import { useCallback, useRef, useState } from "react";
 import { FileText, Minimize2, Trash2, Upload } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -212,7 +213,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
               <div key={`${pending.file.name}-${index}`} className="rounded border border-gray-700 bg-gray-950/40 p-3">
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
-                    {!isUploading ? <input aria-label={`Resource name for ${pending.file.name}`} value={pending.name} onChange={(event) => updateName(index, event.target.value)} className="w-full truncate rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-gray-100" /> : <p className="truncate text-sm text-gray-100">{pending.name}</p>}
+                    {!isUploading ? <Input aria-label={`Resource name for ${pending.file.name}`} value={pending.name} onChange={(value) => updateName(index, String(value))} inputClassName="w-full truncate rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-gray-100" /> : <p className="truncate text-sm text-gray-100">{pending.name}</p>}
                     <p className="truncate text-xs text-gray-500">Source: {pending.file.name} - {formatStorageBytes(pending.file.size)}</p>
                   </div>
                   {!isUploading ? <div className="flex shrink-0 gap-1"><Button type="button" variant="tertiary" svg={Trash2} aria-label={`Remove ${pending.file.name}`} onClick={() => removeFile(index)} /></div> : null}

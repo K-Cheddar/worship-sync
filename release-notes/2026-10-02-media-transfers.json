@@ -3,5 +3,5 @@
   "date": "2026-10-02",
   "type": "improved",
   "title": "Media transfers",
-  "description": "Transfer progress is easier to follow, and media changes sync more reliably across controllers and devices. Cancelled Canva imports can be retried immediately, even while another import is running."
+  "description": "Media imports now provide clearer progress and more reliable transfers and syncing across devices."
 }

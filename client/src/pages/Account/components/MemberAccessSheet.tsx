@@ -1,3 +1,4 @@
+import Checkbox from "../../../components/Checkbox/Checkbox";
 import { useMemo } from "react";
 import { Save } from "lucide-react";
 import Button from "../../../components/Button/Button";
@@ -437,29 +438,18 @@ const MemberAccessSheet = () => {
                   {teams.map((team) => {
                     const checked = selectedTeamScopeIds.includes(team.teamId);
                     return (
-                      <label
+                      <Checkbox
                         key={team.teamId}
+                        label={team.name}
+                        checked={checked}
+                        onCheckedChange={(next) => handleTeamScopeToggle(team.teamId, next, currentTeamScopeIds)}
                         className={cn(
                           "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
                           checked
                             ? "border-cyan-500/40 bg-cyan-950/25 text-cyan-50"
                             : "border-gray-700 text-gray-200",
                         )}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-cyan-500"
-                          checked={checked}
-                          onChange={(event) =>
-                            handleTeamScopeToggle(
-                              team.teamId,
-                              event.target.checked,
-                              currentTeamScopeIds,
-                            )
-                          }
-                        />
-                        <span>{team.name}</span>
-                      </label>
+                      />
                     );
                   })}
                 </div>

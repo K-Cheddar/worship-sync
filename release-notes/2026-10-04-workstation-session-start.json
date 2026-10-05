@@ -3,5 +3,5 @@
   "date": "2026-10-04",
   "type": "fixed",
   "title": "Shared workstation sessions",
-  "description": "Starting a shared workstation session, updating your profile, managing invites, and approving devices now recover more reliably when a security token is out of date."
+  "description": "Shared workstation sessions recover more reliably when a security token is out of date, helping teams continue setup and device approval."
 }
