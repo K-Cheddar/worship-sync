@@ -14,6 +14,9 @@ const READ_ONLY_MEMBER_FIELDS = [
   "lastName",
   "profileImageUrl",
 ];
+// userId and invitedAt stay omitted: the current Member editor uses them for
+// account-link controls, which scoped manager UI must separate from team
+// management before those controls can be exposed here.
 const MANAGER_MEMBER_FIELDS = [
   "email",
   "phoneNumber",
@@ -24,6 +27,7 @@ const MANAGER_MEMBER_FIELDS = [
   "blockoutDates",
   "notes",
   "profileImagePublicId",
+  "serviceAvailability",
 ];
 const QUALIFICATION_FIELDS = [
   "qualificationId",
@@ -34,6 +38,38 @@ const QUALIFICATION_FIELDS = [
   "expiresAt",
   "notes",
 ];
+const VIEW_ONLY_SCHEDULE_FIELDS = [
+  "scheduleId",
+  "churchId",
+  "name",
+  "description",
+  "teamId",
+  "startDate",
+  "endDate",
+  "serviceIds",
+  "source",
+  "generatedPeriodKey",
+  "occurrences",
+  "archivedAt",
+  "assignmentsOmitted",
+  "sentAt",
+  "assignmentCounts",
+  "hasScheduleData",
+  "assignments",
+  "microphoneAssignments",
+  "iemAssignments",
+  "additionalPositionSlots",
+];
+
+const projectViewOnlySchedule = (schedule) => {
+  const projected = copyDefinedFields(schedule, VIEW_ONLY_SCHEDULE_FIELDS);
+  if (Array.isArray(schedule.guests)) {
+    projected.guests = schedule.guests
+      .filter((guest) => guest && typeof guest === "object")
+      .map((guest) => copyDefinedFields(guest, ["guestId", "name"]));
+  }
+  return projected;
+};
 
 /**
  * Project the full church Teams bootstrap to data a resolved access object may
@@ -56,6 +92,31 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       team && !team.archivedAt && visibleTeamIds.has(team.teamId || team.id),
   );
   const projectedTeamIds = new Set(teams.map((team) => team.teamId || team.id));
+  const activeSourceTeams = (
+    Array.isArray(source.teams) ? source.teams : []
+  ).filter((team) => team && !team.archivedAt && (team.teamId || team.id));
+  const activeSourceTeamIds = new Set(
+    activeSourceTeams.map((team) => team.teamId || team.id),
+  );
+  const sourceTeamIds = new Set(
+    (Array.isArray(source.teams) ? source.teams : [])
+      .map((team) => team?.teamId || team?.id)
+      .filter(Boolean),
+  );
+  const allPositions = Array.isArray(source.positions) ? source.positions : [];
+  const allPositionById = new Map(
+    allPositions
+      .filter((position) => position?.positionId)
+      .map((position) => [position.positionId, position]),
+  );
+  const allQualificationAreas = Array.isArray(source.qualificationAreas)
+    ? source.qualificationAreas
+    : [];
+  const allAreaById = new Map(
+    allQualificationAreas
+      .filter((area) => area?.areaId)
+      .map((area) => [area.areaId, area]),
+  );
   const positions = (
     Array.isArray(source.positions) ? source.positions : []
   ).filter((position) => position && projectedTeamIds.has(position.teamId));
@@ -90,25 +151,75 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
   );
 
   const members = [];
+  const editableMemberIds = [];
   for (const memberId of memberIds) {
     const member = membersById.get(memberId);
     if (!member) continue;
 
     const memberTeamIds = new Set(
-      teams
+      activeSourceTeams
         .filter((team) => team.memberIds?.includes(memberId))
         .map((team) => team.teamId || team.id),
     );
+    const relevantTeamIds = new Set(memberTeamIds);
+    // Truncation means this projection cannot prove it considered every team.
+    let hasUnresolvedOwnership = source.truncated === true;
+    for (const teamId of Object.keys(member.teamMemberships || {})) {
+      if (activeSourceTeamIds.has(teamId)) relevantTeamIds.add(teamId);
+      else if (!sourceTeamIds.has(teamId)) hasUnresolvedOwnership = true;
+    }
+    for (const positionId of Array.isArray(member.positionIds)
+      ? member.positionIds
+      : []) {
+      const position = allPositionById.get(positionId);
+      if (!position) {
+        hasUnresolvedOwnership = true;
+        continue;
+      }
+      if (activeSourceTeamIds.has(position.teamId)) {
+        relevantTeamIds.add(position.teamId);
+      } else if (position.teamId && !sourceTeamIds.has(position.teamId)) {
+        hasUnresolvedOwnership = true;
+      }
+    }
+    for (const qualification of Array.isArray(member.qualifications)
+      ? member.qualifications
+      : []) {
+      const areaTeamId = allAreaById.get(qualification?.areaId)?.teamId;
+      if (qualification?.areaId && !allAreaById.has(qualification.areaId)) {
+        hasUnresolvedOwnership = true;
+      }
+      if (
+        qualification?.areaId &&
+        allAreaById.has(qualification.areaId) &&
+        !areaTeamId
+      ) {
+        hasUnresolvedOwnership = true;
+      }
+      for (const teamId of [qualification?.teamId, areaTeamId]) {
+        if (teamId && activeSourceTeamIds.has(teamId)) {
+          relevantTeamIds.add(teamId);
+        } else if (teamId && !activeSourceTeamIds.has(teamId)) {
+          // Stale/unknown ownership is treated conservatively until it can be
+          // confirmed against the complete active team collection.
+          hasUnresolvedOwnership = true;
+        }
+      }
+    }
+    const isFullyEditable =
+      relevantTeamIds.size > 0 &&
+      !hasUnresolvedOwnership &&
+      [...relevantTeamIds].every((teamId) => editableTeamIds.has(teamId));
     const managedMemberTeamIds = new Set(
       [...memberTeamIds].filter((teamId) => editableTeamIds.has(teamId)),
     );
-    const isManagerVisible = managedMemberTeamIds.size > 0;
     const projected = copyDefinedFields(member, READ_ONLY_MEMBER_FIELDS);
     projected.positionIds = (
       Array.isArray(member.positionIds) ? member.positionIds : []
     ).filter((positionId) => positionById.has(positionId));
 
-    if (isManagerVisible) {
+    if (isFullyEditable) {
+      editableMemberIds.push(memberId);
       Object.assign(
         projected,
         copyDefinedFields(member, MANAGER_MEMBER_FIELDS),
@@ -186,14 +297,19 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
 
   const result = {
     members,
+    editableMemberIds,
     positions,
     teams,
     teamRoles,
     qualificationAreas,
     qualificationLevels,
-    schedules: (Array.isArray(source.schedules) ? source.schedules : []).filter(
-      (schedule) => schedule && projectedTeamIds.has(schedule.teamId),
-    ),
+    schedules: (Array.isArray(source.schedules) ? source.schedules : [])
+      .filter((schedule) => schedule && projectedTeamIds.has(schedule.teamId))
+      .map((schedule) =>
+        editableTeamIds.has(schedule.teamId)
+          ? schedule
+          : projectViewOnlySchedule(schedule),
+      ),
   };
   if (source.scheduleHydrationWindow) {
     result.scheduleHydrationWindow = {
