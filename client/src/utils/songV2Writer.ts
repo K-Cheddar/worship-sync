@@ -3,7 +3,7 @@ import type {
   SongV2SlideDocument, SongV2Documents,
 } from "../types";
 import {
-  hydrateSongFromV2Documents, serializeSongToV2Documents,
+  hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
   SongV2DocumentError, type SongV2Snapshot,
 } from "./songPersistence";
 import { applyPouchAudit } from "./pouchAudit";
@@ -16,6 +16,19 @@ export type SongV2ChangePlan = {
   arrangements: Changes<SongV2ArrangementDocument>;
   slides: Changes<SongV2SlideDocument>;
 };
+
+export class SongV2ConcurrentEditError extends Error {
+  readonly status = 409;
+  constructor(
+    readonly songId: string,
+    readonly documentId: string,
+    readonly documentKind: "root" | "arrangement" | "slide",
+    readonly reason: "changed" | "already-exists" | "missing",
+  ) {
+    super(`Song ${songId} ${documentKind} ${documentId} ${reason === "changed" ? "changed while you were editing" : reason === "missing" ? "is no longer available" : "already exists"}.`);
+    this.name = "SongV2ConcurrentEditError";
+  }
+}
 
 // Compare authored JSON values, ignoring object key order and absent/undefined
 // equivalence. Only top-level physical revision and audit fields are excluded.
@@ -59,6 +72,20 @@ export function planSongV2Changes(current: SongV2Snapshot, desired: DBItem): Son
     ...(changed(current.root, next.root) ? { root: { current: current.root, next: next.root } } : {}),
     arrangements: planChildren(current.arrangements, next.arrangements),
     slides: planChildren(current.slides, next.slides),
+  };
+}
+
+/** Derives authored intent without using a newly-read database snapshot. */
+export function planSongV2Intent(baselineSong: DBItem, desiredSong: DBItem): SongV2ChangePlan {
+  if (baselineSong._id !== desiredSong._id || baselineSong.type !== "song" || desiredSong.type !== "song") {
+    throw new SongV2DocumentError("Cannot plan song v2 intent for different songs");
+  }
+  const baseline = serializeSongToV2Documents(JSON.parse(JSON.stringify(baselineSong)));
+  const desired = serializeSongToV2Documents(JSON.parse(JSON.stringify(desiredSong)));
+  return {
+    ...(changed(baseline.root, desired.root) ? { root: { current: baseline.root, next: desired.root } } : {}),
+    arrangements: planChildren(baseline.arrangements, desired.arrangements),
+    slides: planChildren(baseline.slides, desired.slides),
   };
 }
 
@@ -169,15 +196,8 @@ async function execute(db: PouchDB.Database, initial: WriteState): Promise<SongV
   return { ...state.progress, snapshot, song: snapshot.hydrated };
 }
 
-/** Dormant v2 save: baseline revisions are required and never silently reloaded. */
-export async function saveSongV2(
-  db: PouchDB.Database, current: SongV2Snapshot, desired: DBItem,
-): Promise<SongV2WriteResult> {
-  // Detach all input before the first await so later draft mutations cannot
-  // change the payload or original owner of pending work.
-  const baseline: SongV2Snapshot = JSON.parse(JSON.stringify(current));
-  const plan = planSongV2Changes(baseline, JSON.parse(JSON.stringify(desired)));
-  const steps = [
+function buildSteps(plan: SongV2ChangePlan): WriteStep[] {
+  return [
     ...plan.slides.create.map(doc => putStep(doc)),
     ...plan.slides.update.map(({ current: before, next }) => putStep(next, before)),
     ...plan.arrangements.create.map(doc => putStep(doc)),
@@ -186,7 +206,92 @@ export async function saveSongV2(
     ...plan.arrangements.delete.map(removeStep),
     ...plan.slides.delete.map(removeStep),
   ];
-  return execute(db, { documents: baseline, steps, progress: emptyProgress() });
+}
+
+function sameDocument<T extends Document>(a: T | undefined, b: T): boolean {
+  return !!a && !changed(a, b);
+}
+
+/** Applies only baseline-to-desired intent after validating touched documents against current state. */
+export async function saveSongV2FromBaseline(
+  db: PouchDB.Database, baselineSong: DBItem, desiredSong: DBItem,
+): Promise<SongV2WriteResult> {
+  if (baselineSong.docType !== "song-v2-root") {
+    throw new SongV2DocumentError("Song v2 interactive saves require a v2 authored baseline");
+  }
+  const baseline = JSON.parse(JSON.stringify(baselineSong)) as DBItem;
+  const desired = JSON.parse(JSON.stringify(desiredSong)) as DBItem;
+  const intent = planSongV2Intent(baseline, desired);
+  let current: SongV2Snapshot;
+  try {
+    current = await loadSongV2Snapshot(db, baseline._id);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 404) {
+      throw new SongV2ConcurrentEditError(baseline._id, `song-v2:root:${encodeURIComponent(baseline._id)}`, "root", "missing");
+    }
+    throw error;
+  }
+  const currentArrangements = new Map(current.arrangements.map(doc => [doc._id, doc]));
+  const currentSlides = new Map(current.slides.map(doc => [doc._id, doc]));
+  const baselineDocs = serializeSongToV2Documents(baseline);
+  const baselineArrangements = new Map(baselineDocs.arrangements.map(doc => [doc._id, doc]));
+  const baselineSlides = new Map(baselineDocs.slides.map(doc => [doc._id, doc]));
+  const validateUpdates = <T extends Document>(
+    kind: "arrangement" | "slide", updates: Update<T>[], deletes: T[],
+    currentDocs: Map<string, T>, baselineDocsById: Map<string, T>,
+  ) => {
+    for (const { current: authoredBaseline } of updates) {
+      const dbDoc = currentDocs.get(authoredBaseline._id);
+      const baseDoc = baselineDocsById.get(authoredBaseline._id);
+      if (!baseDoc || !sameDocument(dbDoc, baseDoc)) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, dbDoc ? "changed" : "missing");
+    }
+    for (const authoredBaseline of deletes) {
+      const dbDoc = currentDocs.get(authoredBaseline._id);
+      const baseDoc = baselineDocsById.get(authoredBaseline._id);
+      if (!baseDoc || !sameDocument(dbDoc, baseDoc)) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, dbDoc ? "changed" : "missing");
+    }
+  };
+  if (intent.root && !sameDocument(current.root, baselineDocs.root)) {
+    throw new SongV2ConcurrentEditError(baseline._id, current.root._id, "root", "changed");
+  }
+  validateUpdates("arrangement", intent.arrangements.update, intent.arrangements.delete, currentArrangements, baselineArrangements);
+  validateUpdates("slide", intent.slides.update, intent.slides.delete, currentSlides, baselineSlides);
+
+  const checkCreateIds = async <T extends Document>(kind: "arrangement" | "slide", creates: T[], currentDocs: Map<string, T>) => {
+    for (const doc of creates) {
+      if (currentDocs.has(doc._id)) throw new SongV2ConcurrentEditError(baseline._id, doc._id, kind, "already-exists");
+      try {
+        await db.get(doc._id);
+        throw new SongV2ConcurrentEditError(baseline._id, doc._id, kind, "already-exists");
+      } catch (error) {
+        if (error instanceof SongV2ConcurrentEditError) throw error;
+        if (!(typeof error === "object" && error !== null && "status" in error && error.status === 404)) throw error;
+      }
+    }
+  };
+  await checkCreateIds("arrangement", intent.arrangements.create, currentArrangements);
+  await checkCreateIds("slide", intent.slides.create, currentSlides);
+
+  const rebase = <T extends Document>(changes: Changes<T>, currentDocs: Map<string, T>): Changes<T> => ({
+    create: changes.create,
+    update: changes.update.map(({ next }) => ({ current: currentDocs.get(next._id)!, next })),
+    delete: changes.delete.map(doc => currentDocs.get(doc._id)!),
+  });
+  const plan: SongV2ChangePlan = {
+    ...(intent.root ? { root: { current: current.root, next: intent.root.next } } : {}),
+    arrangements: rebase(intent.arrangements, currentArrangements),
+    slides: rebase(intent.slides, currentSlides),
+  };
+  return execute(db, { documents: current, steps: buildSteps(plan), progress: emptyProgress() });
+}
+
+/** Snapshot-based low-level writer retained for migration tooling and focused tests. */
+export async function saveSongV2(
+  db: PouchDB.Database, current: SongV2Snapshot, desired: DBItem,
+): Promise<SongV2WriteResult> {
+  const baseline: SongV2Snapshot = JSON.parse(JSON.stringify(current));
+  const plan = planSongV2Changes(baseline, JSON.parse(JSON.stringify(desired)));
+  return execute(db, { documents: baseline, steps: buildSteps(plan), progress: emptyProgress() });
 }
 
 /** Root-last publication. Existing children/root cause normal Couch conflicts. */

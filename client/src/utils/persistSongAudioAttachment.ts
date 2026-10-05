@@ -24,12 +24,15 @@ export const persistSongAudioAttachment = async ({
   db,
   songId,
   audio,
+  baselineSong,
 }: {
   db: PouchDB.Database;
   songId: string;
   audio: SongAudio | null;
+  baselineSong?: DBItem;
 }): Promise<DBItem> => {
-  const existing = await loadSong(db, songId);
+  const existing = baselineSong ?? await loadSong(db, songId);
+  if (existing._id !== songId) throw new Error("Cannot save audio using another song's baseline");
   const next: DBItem = { ...existing };
   next.songAudio = audio ?? undefined;
 

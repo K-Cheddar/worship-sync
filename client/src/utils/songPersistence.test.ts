@@ -11,6 +11,7 @@ import {
   loadItemWithSongHydration,
   loadSong,
   saveSong,
+  SongV2BaselineRequiredError,
   SongV2WriteNotEnabledError,
   serializeSongToV2Documents,
 } from "./songPersistence";
@@ -575,7 +576,7 @@ describe("songPersistence", () => {
     expect(deleted).toBe(source);
   });
 
-  it("blocks saves of hydrated v2 songs before writing a legacy document", async () => {
+  it("requires the authored baseline before saving a hydrated v2 song", async () => {
     const source = song();
     const documents = serializeSongToV2Documents(source);
     const { db, put } = makeDb(
@@ -584,8 +585,8 @@ describe("songPersistence", () => {
     );
     const loaded = await loadSong(db, source._id);
 
-    await expect(saveSong(db, { ...loaded, name: "Edited" }, loaded)).rejects.toBeInstanceOf(
-      SongV2WriteNotEnabledError,
+    await expect(saveSong(db, { ...loaded, name: "Edited" })).rejects.toBeInstanceOf(
+      SongV2BaselineRequiredError,
     );
     expect(put).not.toHaveBeenCalled();
   });

@@ -18,7 +18,7 @@ import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
-import { loadSong, saveSong, SongV2WriteNotEnabledError } from "../../utils/songPersistence";
+import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
 import {
   ItemDetailsEditorFields,
   type ItemDetailsSavePayload,
@@ -100,12 +100,12 @@ const ViewSongSectionsDrawer = ({
   }, [isOpen]);
 
   const persistSongPatch = useCallback(
-    async (patch: PersistSongPatch) => {
+    async (patch: PersistSongPatch, baselineSong?: DBItem) => {
       if (!db || !song) {
         throw new Error("The song library is not available. Try again.");
       }
 
-      const existing = await loadSong(db, song._id);
+      const existing = baselineSong ?? await loadSong(db, song._id);
       const next: DBItem = { ...existing };
       if (patch.name !== undefined) next.name = patch.name;
 
@@ -130,7 +130,7 @@ const ViewSongSectionsDrawer = ({
       const saved = await saveSong(db, next, existing);
       if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
         persistenceScopeRef.current.churchId !== churchId) return;
-      dispatch(upsertItemInAllDocs(saved));
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
       dispatch(
         upsertItemInAllItemsList({
           _id: saved._id,
@@ -148,10 +148,12 @@ const ViewSongSectionsDrawer = ({
 
   const persistSongLyrics = useCallback(
     async ({
+      baselineSong,
       arrangements,
       selectedArrangement,
       songMetadata,
     }: {
+      baselineSong: DBItem;
       arrangements: Arrangment[];
       selectedArrangement: number;
       songMetadata?: SongMetadata;
@@ -160,9 +162,8 @@ const ViewSongSectionsDrawer = ({
         throw new Error("The song library is not available. Try again.");
       }
 
-      const existing = await loadSong(db, song._id);
       const next: DBItem = {
-        ...existing,
+        ...baselineSong,
         arrangements,
         selectedArrangement,
       };
@@ -172,8 +173,8 @@ const ViewSongSectionsDrawer = ({
         next.songMetadata = songMetadata;
       }
 
-      const saved = await saveSong(db, next, existing);
-      dispatch(upsertItemInAllDocs(saved));
+      const saved = await saveSong(db, next, baselineSong);
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
       dispatch(
         upsertItemInAllItemsList({
           _id: saved._id,
@@ -207,11 +208,12 @@ const ViewSongSectionsDrawer = ({
 
   const attachSongAudio = useCallback(
     async (file: File) => {
-      if (!churchId || !song) {
+      if (!churchId || !db || !song) {
         throw new Error("Sign in to attach an MP3.");
       }
-      if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
-      const previousAudio = song.songAudio;
+      const loadedSong = await loadSong(db, song._id);
+      const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+      const previousAudio = baselineSong?.songAudio ?? song.songAudio;
       const audio = await uploadSongAudio({
         churchId,
         songId: song._id,
@@ -221,7 +223,7 @@ const ViewSongSectionsDrawer = ({
       try {
         await persistSongPatch({
           songAudioPatch: audio,
-        });
+        }, baselineSong);
       } catch (error) {
         // Replacement uploads reuse the current final key. Keep that object if
         // metadata persistence fails so the existing document stays playable.
@@ -251,13 +253,24 @@ const ViewSongSectionsDrawer = ({
         }
       }
     },
-    [churchId, persistSongPatch, song],
+    [churchId, db, persistSongPatch, song],
   );
 
   const removeSongAudio = useCallback(async () => {
-    if (!churchId || !song?.songAudio) return;
-    if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
-    const audio = song.songAudio;
+    if (!churchId || !db || !song?.songAudio) return;
+    const baselineSong = await loadSong(db, song._id);
+    const audio = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? song.songAudio
+      : song.songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      await persistSongPatch({ name: baselineSong.name, songAudioPatch: null }, baselineSong);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      return;
+    }
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
         deleteSongAudioWithRetry({
@@ -270,7 +283,7 @@ const ViewSongSectionsDrawer = ({
           songAudioPatch: null,
         }),
     });
-  }, [churchId, persistSongPatch, song]);
+  }, [churchId, db, persistSongPatch, song]);
 
   if (!song) {
     return null;

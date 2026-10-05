@@ -2,8 +2,8 @@ import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import type { DBItem } from "../types";
-import { createSong, loadSong, loadSongV2Snapshot } from "./songPersistence";
-import { createSongV2, saveSongV2 } from "./songV2Writer";
+import { createSong, loadSong, loadSongV2Snapshot, saveSong, songToLibraryProjection } from "./songPersistence";
+import { createSongV2, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
 
 const source = (): DBItem => ({
   _id: "real-song", name: "Song", type: "song", selectedArrangement: 0, slides: [],
@@ -51,6 +51,122 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
       status: 409, documentId: baseline.slides[0]._id,
     });
     expect((await loadSongV2Snapshot(db, "real-song")).hydrated.arrangements[0].slides[0].boxes[0].words).toBe("First editor");
+  });
+
+  it("rebases only the active editor's changed slide and preserves a remote edit to another slide", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const remote = copy(baseline.hydrated);
+    remote.arrangements[0].slides[1].boxes[0].words = "Remote B";
+    await saveSongV2(db, baseline, remote);
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides[0].boxes[0].words = "Local A";
+    const put = jest.spyOn(db, "put");
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(result.written).toEqual(["song-v2:slide:real-song:a:s1"]);
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual(["song-v2:slide:real-song:a:s1"]);
+    expect(result.song.arrangements[0].slides.map(slide => slide.boxes[0].words))
+      .toEqual(["Local A", "Remote B", "Words 3"]);
+  });
+
+  it("routes the normal repository save API through the baseline-aware writer", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSong(db, "real-song");
+    const desired = copy(baseline);
+    desired.name = "Renamed";
+    const result = await saveSong(db, desired, baseline);
+    expect(result.name).toBe("Renamed");
+    expect((await db.get("song-v2:root:real-song") as any).name).toBe("Renamed");
+    const projection = songToLibraryProjection(result);
+    expect(projection.arrangements[0].slides).toEqual([]);
+    expect(projection.slides).toEqual([]);
+    await expect(db.get("real-song")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("rejects a same-slide remote edit without overwriting it", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const remote = copy(baseline.hydrated);
+    remote.arrangements[0].slides[0].boxes[0].words = "Remote A";
+    await saveSongV2(db, baseline, remote);
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides[0].boxes[0].words = "Local A";
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2ConcurrentEditError", status: 409,
+      songId: "real-song", documentId: "song-v2:slide:real-song:a:s1", documentKind: "slide",
+    });
+    expect((await loadSongV2Snapshot(db, "real-song")).hydrated.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Remote A");
+  });
+
+  it("keeps root, slide, and separate arrangement conflicts independent", async () => {
+    const song = source();
+    song.arrangements.push({
+      id: "b", name: "B", formattedLyrics: [], songOrder: [],
+      slides: [{ id: "b1", name: "B1", type: "Verse", boxes: [{ id: "b-box", words: "B old", width: 1920, height: 1080 }] }],
+    });
+    await createSongV2(db, song);
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const remote = copy(baseline.hydrated);
+    remote.name = "Remote title";
+    remote.arrangements[1].name = "Remote B";
+    await saveSongV2(db, baseline, remote);
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides[0].boxes[0].words = "Local slide";
+    local.arrangements[0].name = "Local A";
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(result.written).toEqual([
+      "song-v2:slide:real-song:a:s1",
+      "song-v2:arrangement:real-song:a",
+    ]);
+    expect(result.song.name).toBe("Remote title");
+    expect(result.song.arrangements.map(arrangement => arrangement.name)).toEqual(["Local A", "Remote B"]);
+  });
+
+  it("allows a root metadata edit when another editor changed a slide", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const remote = copy(baseline.hydrated);
+    remote.arrangements[0].slides[1].boxes[0].words = "Remote slide";
+    await saveSongV2(db, baseline, remote);
+    const local = copy(baseline.hydrated);
+    local.songMetadata = { source: "manual", trackName: "Local metadata", importedAt: "test", artistName: "Local metadata" };
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(result.written).toEqual(["song-v2:root:real-song"]);
+    expect(result.song.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide");
+    expect(result.song.songMetadata?.artistName).toBe("Local metadata");
+  });
+
+  it("conflicts before deleting a slide that changed remotely", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const remote = copy(baseline.hydrated);
+    remote.arrangements[0].slides[0].boxes[0].words = "Remote work";
+    await saveSongV2(db, baseline, remote);
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides.shift();
+    const put = jest.spyOn(db, "put");
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2ConcurrentEditError", documentId: "song-v2:slide:real-song:a:s1", documentKind: "slide",
+    });
+    expect(put).not.toHaveBeenCalled();
+    expect((await loadSongV2Snapshot(db, "real-song")).hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Remote work");
+  });
+
+  it("does not adopt an orphan that collides with an intended deterministic create", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const orphan = {
+      _id: "song-v2:slide:real-song:a:new", docType: "song-v2-slide",
+      songId: "real-song", arrangementId: "a", id: "new", name: "New",
+      type: "Verse", boxes: [],
+    };
+    await db.put(orphan as never);
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides.push({ id: "new", name: "New", type: "Verse", boxes: [] } as never);
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2ConcurrentEditError", documentId: orphan._id, reason: "already-exists",
+    });
   });
 
   it("no-op save changes neither update sequence nor any revisions", async () => {

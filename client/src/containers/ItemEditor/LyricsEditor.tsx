@@ -19,6 +19,7 @@ type LyricsEditorProps = {
   isOpen?: boolean;
   onClose?: () => void;
   onSaveLyrics?: (payload: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;

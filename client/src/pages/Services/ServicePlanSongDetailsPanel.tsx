@@ -15,7 +15,7 @@ import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
-import { loadSong, saveSong, SongV2WriteNotEnabledError } from "../../utils/songPersistence";
+import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
 import type { Arrangment, DBItem, SongAudio, SongMetadata } from "../../types";
 
 type ServicePlanSongDetailsPanelProps = {
@@ -37,9 +37,9 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     onEditingChange?.(next);
   };
 
-  const persistSongPatch = useCallback(async (patch: ItemDetailsSavePayload & { songAudioPatch?: SongAudio | null }) => {
+  const persistSongPatch = useCallback(async (patch: ItemDetailsSavePayload & { songAudioPatch?: SongAudio | null }, baselineSong?: DBItem) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const existing = await loadSong(db, song._id);
+    const existing = baselineSong ?? await loadSong(db, song._id);
     const next: DBItem = { ...existing, name: patch.name };
     if (patch.songMetadataPatch !== undefined) {
       if (patch.songMetadataPatch === null) next.songMetadata = undefined;
@@ -51,7 +51,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       else next.songAudio = patch.songAudioPatch;
     }
     const saved = await saveSong(db, next, existing);
-    dispatch(upsertItemInAllDocs(saved));
+    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
     dispatch(upsertItemInAllItemsList({
       _id: saved._id,
       name: saved.name,
@@ -63,12 +63,13 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
   }, [db, dispatch, song._id]);
 
   const uploadSongAudioForEdit = useCallback(async (file: File) => {
-    if (!churchId) throw new Error("Sign in to attach an MP3.");
-    if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
-    const previousAudio = song.songAudio;
+    if (!churchId || !db) throw new Error("Sign in to attach an MP3.");
+    const loadedSong = await loadSong(db, song._id);
+    const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+    const previousAudio = baselineSong?.songAudio ?? song.songAudio;
     const audio = await uploadSongAudio({ churchId, songId: song._id, file, previousAudio });
     try {
-      await persistSongPatch({ name: song.name, songAudioPatch: audio });
+      await persistSongPatch({ name: song.name, songAudioPatch: audio }, baselineSong);
     } catch (error) {
       if (!previousAudio || previousAudio.key !== audio.key) {
         try { await deleteSongAudioWithRetry({ churchId, songId: song._id, audio }); }
@@ -80,7 +81,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       try { await deleteSongAudioWithRetry({ churchId, songId: song._id, audio: previousAudio }); }
       catch (error) { console.error("Error cleaning replaced song audio:", error); }
     }
-  }, [churchId, persistSongPatch, song]);
+  }, [churchId, db, persistSongPatch, song]);
 
   const getSongAudioUrlForEdit = useCallback(async (disposition: "inline" | "attachment") => {
     if (!churchId || !song.songAudio) throw new Error("Sign in to listen to this MP3.");
@@ -89,35 +90,47 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
   }, [churchId, song]);
 
   const removeSongAudioForEdit = useCallback(async () => {
-    if (!churchId || !song.songAudio) return;
-    if (song.docType === "song-v2-root") throw new SongV2WriteNotEnabledError(song._id, "save");
-    const audio = song.songAudio;
+    if (!churchId || !db || !song.songAudio) return;
+    const baselineSong = await loadSong(db, song._id);
+    const audio = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? song.songAudio
+      : song.songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      await persistSongPatch({ name: baselineSong.name, songAudioPatch: null }, baselineSong);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      return;
+    }
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: song._id, audio }),
       clearMetadata: () => persistSongPatch({ name: song.name, songAudioPatch: null }),
     });
-  }, [churchId, persistSongPatch, song]);
+  }, [churchId, db, persistSongPatch, song]);
 
   const handleSave = async (payload: ItemDetailsSavePayload) => {
     await persistSongPatch(payload);
   };
 
   const saveLyrics = useCallback(async ({
+    baselineSong,
     arrangements,
     selectedArrangement,
     songMetadata,
   }: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
   }) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const existing = await loadSong(db, song._id);
-    const next: DBItem = { ...existing, arrangements, selectedArrangement };
+    const next: DBItem = { ...baselineSong, arrangements, selectedArrangement };
     if (songMetadata === undefined) next.songMetadata = undefined;
     else next.songMetadata = songMetadata;
-    const saved = await saveSong(db, next, existing);
-    dispatch(upsertItemInAllDocs(saved));
+    const saved = await saveSong(db, next, baselineSong);
+    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
     dispatch(upsertItemInAllItemsList({
       _id: saved._id,
       name: saved.name,
@@ -126,7 +139,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       background: typeof saved.background === "string" ? saved.background : "",
     }));
     broadcastItemUpdate(saved);
-  }, [db, dispatch, song._id]);
+  }, [db, dispatch]);
 
   return (
     <div className="space-y-4" aria-label={`Song details for ${song.name}`}>

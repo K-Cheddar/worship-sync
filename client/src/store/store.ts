@@ -44,6 +44,7 @@ import {
 import {
   loadItemWithSongHydration,
   saveSong,
+  songToLibraryProjection,
 } from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
@@ -175,9 +176,10 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 }
 
 export function broadcastItemUpdate(doc: DBItem) {
+  const payload = doc.docType === "song-v2-root" ? songToLibraryProjection(doc) : doc;
   safePostMessage({
     type: "update",
-    data: { docs: doc, hostId: globalHostId },
+    data: { docs: payload, hostId: globalHostId },
   });
 }
 
@@ -1224,7 +1226,15 @@ listenerMiddleware.startListening({
       let result: { rev: string };
       try {
         if (nextItem.type === "song") {
-          db_item = await saveSong(writeDatabase, nextItem, db_item);
+          const authoredBaseline = desired.baseItem;
+          const usesV2Baseline = authoredBaseline?.docType === "song-v2-root";
+          db_item = await saveSong(
+            writeDatabase,
+            nextItem,
+            usesV2Baseline
+              ? authoredBaseline
+              : db_item.docType === "song-v2-root" ? undefined : db_item,
+          );
           result = { rev: db_item._rev! };
         } else {
           db_item = applyPouchAudit(db_item, nextItem, {
@@ -1235,7 +1245,10 @@ listenerMiddleware.startListening({
           db_item = { ...db_item, _rev: result.rev };
         }
       } catch (error) {
-        if ((error as { status?: number })?.status === 409) {
+        if (
+          (error as { status?: number })?.status === 409 ||
+          (error instanceof Error && error.name === "SongV2ConcurrentEditError")
+        ) {
           const latest = (await loadItemWithSongHydration(
             writeDatabase,
             desired._id,
@@ -1296,7 +1309,9 @@ listenerMiddleware.startListening({
         : db === writeDatabase;
       if (!stillInOriginalDatabase) return;
 
-      listenerApi.dispatch(upsertItemInAllDocs(db_item));
+      listenerApi.dispatch(upsertItemInAllDocs(
+        db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
+      ));
       if (db_item.type === "free") {
         const indexedItem = latestState.allItems.list.find(
           (candidate) => candidate._id === db_item._id,
@@ -1312,7 +1327,7 @@ listenerMiddleware.startListening({
       safePostMessage({
         type: "update",
         data: {
-          docs: db_item,
+          docs: db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
           hostId: globalHostId,
         },
       });
