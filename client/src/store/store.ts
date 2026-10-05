@@ -1041,7 +1041,10 @@ listenerMiddleware.startListening({
       } catch (error) {
         if (!isListenerCancelledTaskError(error)) {
           console.error("Could not save active song draft", error);
-          if (error instanceof Error && error.name === "SongV2ConcurrentEditError") {
+          if (error instanceof Error && (
+            error.name === "SongV2ConcurrentEditError" ||
+            (error.name === "SongV2WriteError" && (error as Error & { status?: number }).status === 409)
+          )) {
             try {
               const remoteSong = await loadItemWithSongHydration(db, item._id);
               const latestItem = (listenerApi.getState() as RootState).undoable.present.item;

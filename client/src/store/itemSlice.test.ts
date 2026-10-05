@@ -80,6 +80,7 @@ describe("itemSlice", () => {
       state.baseItem?.arrangements?.[0].formattedLyrics[0].textDocument,
     ).toEqual(textDocument);
     expect(itemDocMatchesEditorState(state.baseItem!, state)).toBe(true);
+    expect(itemDocMatchesEditorState({ ...state.baseItem!, docType: "song-v2-root" }, state)).toBe(true);
   });
 
   describe("reducer only", () => {

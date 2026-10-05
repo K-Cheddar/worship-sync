@@ -69,6 +69,197 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
       .toEqual(["Local A", "Remote B", "Words 3"]);
   });
 
+  it("retries a partial slide update against the original baseline without rewriting committed slides", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides.forEach((slide, index) => { slide.boxes[0].words = `Local ${index + 1}`; });
+    const originalPut = db.put.bind(db);
+    const put = jest.spyOn(db, "put");
+    let failed = false;
+    put.mockImplementation(async doc => {
+      if (doc._id === baseline.slides[1]._id && !failed) {
+        failed = true;
+        throw new Error("temporary offline failure");
+      }
+      return originalPut(doc);
+    });
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2WriteError", progress: { written: [baseline.slides[0]._id] },
+    });
+    put.mockClear();
+
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([baseline.slides[1]._id, baseline.slides[2]._id]);
+    expect(result.song.arrangements[0].slides.map(slide => slide.boxes[0].words)).toEqual(["Local 1", "Local 2", "Local 3"]);
+    expect(result.snapshot.slides[0]._rev).not.toBe(baseline.slides[0]._rev);
+  });
+
+  it("converges when a slide write commits but its acknowledgement is lost", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides[0].boxes[0].words = "Local A";
+    const originalPut = db.put.bind(db);
+    const put = jest.spyOn(db, "put");
+    let lostAcknowledgement = false;
+    put.mockImplementation(async doc => {
+      const response = await originalPut(doc);
+      if (doc._id === baseline.slides[0]._id && !lostAcknowledgement) {
+        lostAcknowledgement = true;
+        throw new Error("connection lost after commit");
+      }
+      return response;
+    });
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2WriteError", progress: { written: [] }, documentId: baseline.slides[0]._id,
+    });
+    put.mockClear();
+
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(put).not.toHaveBeenCalled();
+    expect(result.snapshot.slides[0]._rev).not.toBe(baseline.slides[0]._rev);
+    expect(result.song.arrangements[0].slides[0].boxes[0].words).toBe("Local A");
+  });
+
+  it("skips already-applied root and arrangement updates and returns their current revisions", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const local = copy(baseline.hydrated);
+    local.name = "Local title";
+    local.arrangements[0].formattedLyrics = [{ type: "Verse", name: "Verse 1", words: "Local lyrics", slideSpan: 1, id: "lyric-1" }];
+    const put = jest.spyOn(db, "put");
+    // Model a prior interactive attempt that durably wrote both authored documents.
+    await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    const root = await db.get(baseline.root._id);
+    const arrangement = await db.get(baseline.arrangements[0]._id);
+    put.mockClear();
+
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(put).not.toHaveBeenCalled();
+    expect(result.snapshot.root._rev).toBe(root._rev);
+    expect(result.snapshot.arrangements[0]._rev).toBe(arrangement._rev);
+  });
+
+  it("resumes an exact-match orphan slide and still conflicts on a different orphan", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const local = copy(baseline.hydrated);
+    local.arrangements[0].slides.push({ id: "new", name: "New", type: "Verse", boxes: [] } as never);
+    const originalPut = db.put.bind(db);
+    const put = jest.spyOn(db, "put");
+    const orphanDocs = (await import("./songPersistence")).serializeSongToV2Documents(local);
+    const orphan = orphanDocs.slides[orphanDocs.slides.length - 1];
+    const other = copy(baseline.hydrated);
+    other.arrangements[0].slides.push({ id: "different", name: "Different", type: "Verse", boxes: [] } as never);
+    const differentDocs = (await import("./songPersistence")).serializeSongToV2Documents(other);
+    const differentOrphan = differentDocs.slides[differentDocs.slides.length - 1];
+    await db.put({ ...differentOrphan, name: "Someone else's content" } as never);
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, other)).rejects.toMatchObject({
+      name: "SongV2ConcurrentEditError", documentId: differentOrphan._id, reason: "already-exists",
+    });
+    let failManifest = true;
+    put.mockImplementation(async doc => {
+      if (doc._id === baseline.arrangements[0]._id && failManifest) {
+        failManifest = false;
+        throw new Error("manifest temporarily offline");
+      }
+      return originalPut(doc);
+    });
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2WriteError", progress: { created: [orphan._id] },
+    });
+    put.mockClear();
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([baseline.arrangements[0]._id]);
+    expect(result.snapshot.slides.some(slide => slide._id === orphan._id)).toBe(true);
+
+  });
+
+  it("resumes an exact-match orphan arrangement and its slides after root publication fails", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const local = copy(baseline.hydrated);
+    local.arrangements.push({ id: "new", name: "New", formattedLyrics: [], songOrder: [], slides: [
+      { id: "new-slide", name: "New slide", type: "Verse", boxes: [] },
+    ] });
+    const originalPut = db.put.bind(db);
+    const put = jest.spyOn(db, "put");
+    let failed = false;
+    put.mockImplementation(async doc => {
+      if (doc._id === baseline.root._id && !failed) {
+        failed = true;
+        throw new Error("root publication failed");
+      }
+      return originalPut(doc);
+    });
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2WriteError", progress: { created: ["song-v2:slide:real-song:new:new-slide", "song-v2:arrangement:real-song:new"] },
+    });
+    put.mockClear();
+
+    const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([baseline.root._id]);
+    expect(result.song.arrangements.map(arrangement => arrangement.id)).toEqual(["a", "new"]);
+    expect(result.song.arrangements[1].slides[0].id).toBe("new-slide");
+  });
+
+  it("recognizes completed manifest-backed deletes and rejects a missing referenced slide", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const removedArrangement = copy(baseline.hydrated);
+    removedArrangement.arrangements = [];
+    const put = jest.spyOn(db, "put");
+    await saveSongV2(db, baseline, removedArrangement);
+    put.mockClear();
+    const retry = await saveSongV2FromBaseline(db, baseline.hydrated, removedArrangement);
+    expect(put).not.toHaveBeenCalled();
+    expect(retry.snapshot.root._rev).not.toBe(baseline.root._rev);
+    expect(retry.snapshot.arrangements).toEqual([]);
+    expect(retry.snapshot.slides).toEqual([]);
+
+    const secondSong = source();
+    secondSong._id = "other-song";
+    await createSongV2(db, secondSong);
+    const secondBaseline = await loadSongV2Snapshot(db, "other-song");
+    const removeFirstSlide = copy(secondBaseline.hydrated);
+    removeFirstSlide.arrangements[0].slides.shift();
+    await db.remove(secondBaseline.slides[0]._id, secondBaseline.slides[0]._rev!);
+    put.mockClear();
+    await expect(saveSongV2FromBaseline(db, secondBaseline.hydrated, removeFirstSlide)).rejects.toMatchObject({
+      name: "SongV2DocumentError",
+    });
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("retries cleanup of an unchanged physical child after its manifest was removed", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const desired = copy(baseline.hydrated);
+    desired.arrangements = [];
+    const originalRemove = db.remove.bind(db);
+    const remove = jest.spyOn(db, "remove");
+    let failArrangementCleanup = true;
+    remove.mockImplementation(async (id, rev) => {
+      if (id === baseline.arrangements[0]._id && failArrangementCleanup) {
+        failArrangementCleanup = false;
+        throw new Error("temporary cleanup failure");
+      }
+      return originalRemove(id, rev);
+    });
+    const first = await saveSongV2(db, baseline, desired);
+    expect(first.cleanupErrors.map(error => error.documentId)).toContain(baseline.arrangements[0]._id);
+    expect(first.snapshot.root.arrangementIds).toEqual([]);
+    expect(await db.get(baseline.root._id)).toMatchObject({ arrangementIds: [] });
+    expect(await db.get(baseline.arrangements[0]._id)).toMatchObject({ _rev: baseline.arrangements[0]._rev });
+    remove.mockClear();
+
+    const retry = await saveSongV2FromBaseline(db, baseline.hydrated, desired);
+    expect(remove.mock.calls.map(([id]) => id)).toEqual([baseline.arrangements[0]._id]);
+    expect(retry.snapshot.arrangements).toEqual([]);
+    await expect(db.get(baseline.arrangements[0]._id)).rejects.toMatchObject({ status: 404 });
+  });
+
   it("routes the normal repository save API through the baseline-aware writer", async () => {
     await createSongV2(db, source());
     const baseline = await loadSong(db, "real-song");
@@ -97,6 +288,27 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     });
     expect((await loadSongV2Snapshot(db, "real-song")).hydrated.arrangements[0].slides[0].boxes[0].words)
       .toBe("Remote A");
+  });
+
+  it.each(["root", "arrangement"] as const)("still conflicts when the same %s unit differs from both baseline and desired", async unit => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const remote = copy(baseline.hydrated);
+    const local = copy(baseline.hydrated);
+    let documentId: string;
+    if (unit === "root") {
+      remote.name = "Remote title";
+      local.name = "Local title";
+      documentId = baseline.root._id;
+    } else {
+      remote.arrangements[0].formattedLyrics = [{ type: "Verse", name: "Remote", words: "Remote lyrics", slideSpan: 1, id: "remote" }];
+      local.arrangements[0].formattedLyrics = [{ type: "Verse", name: "Local", words: "Local lyrics", slideSpan: 1, id: "local" }];
+      documentId = baseline.arrangements[0]._id;
+    }
+    await saveSongV2(db, baseline, remote);
+    await expect(saveSongV2FromBaseline(db, baseline.hydrated, local)).rejects.toMatchObject({
+      name: "SongV2ConcurrentEditError", documentId, reason: "changed", documentKind: unit,
+    });
   });
 
   it("keeps root, slide, and separate arrangement conflicts independent", async () => {
@@ -158,7 +370,7 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     const baseline = await loadSongV2Snapshot(db, "real-song");
     const orphan = {
       _id: "song-v2:slide:real-song:a:new", docType: "song-v2-slide",
-      songId: "real-song", arrangementId: "a", id: "new", name: "New",
+      songId: "real-song", arrangementId: "a", id: "new", name: "Different content",
       type: "Verse", boxes: [],
     };
     await db.put(orphan as never);

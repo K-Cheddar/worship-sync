@@ -133,8 +133,32 @@ same revision and the second receives the normal Couch 409.
 
 Required PUT failures throw `SongV2WriteError`, with the original `cause`,
 `status` (including 409), failed `documentId`, acknowledged `progress`, and
-`remainingDocumentIds`. There is no automatic merge, reload, or overwrite.
-The operation does not report success if any required write fails.
+`remainingDocumentIds`. There is no automatic merge or overwrite. The operation
+does not report success if any required write fails.
+
+### Idempotent interactive retries
+
+Interactive saves classify each intended root, arrangement, and slide update by
+authored content, ignoring `_rev` and audit timestamps:
+
+```text
+current == baseline -> pending local intent; write desired
+current == desired  -> already applied; preserve current revision and skip
+otherwise           -> concurrent edit
+```
+
+This three-way rule lets a retry converge after partial writes, lost write
+acknowledgements, or an explicit retry without weakening same-document conflict
+detection. Already-applied documents remain the physical documents loaded from
+PouchDB in the returned snapshot. A deleted child counts as already removed only
+when its authoritative parent manifest no longer references it; a missing child
+still referenced by its parent is an incomplete-state conflict.
+
+When a required child was created but its later manifest publication failed, a
+retry may find the child at its deterministic ID. It resumes publication only
+when the child's authored content exactly matches the intended create, ignoring
+physical revision and audit fields. Different content at that ID remains an
+`already-exists` conflict; the writer does not adopt or merge unknown content.
 
 The successful result contains `song`, `snapshot`, `written`, `created`,
 `deleted` (physical IDs), and `cleanupErrors`. The returned snapshot carries
@@ -149,14 +173,10 @@ children, but does not provide whole-song atomicity, rollback, or a consistent
 cross-document read transaction. Stable independent slide identities are
 preserved; no generations or versioned slide identities are introduced.
 
-An explicit resume uses captured payloads and original revisions for pending
-steps, skipping acknowledged writes. A repeated resume of an already completed
-error can conflict; callers should retain the latest result/error. A lost
-acknowledgement has an unknown outcome and may conflict on retry. The engine
-does not infer success or silently adopt an existing orphan. New preparation
-from an old snapshot may also conflict with an orphan at a stable ID; tooling
-must reconcile that situation explicitly. Retry state is in-memory, not a
-durable recovery journal.
+The low-level explicit resume uses captured payloads and original revisions for
+pending steps, skipping acknowledged writes. Baseline-aware interactive retries
+instead reload and classify current authored content as documented above. Retry
+state is not a durable recovery journal.
 
 ### Audit and optional-field semantics
 

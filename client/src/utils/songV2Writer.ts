@@ -3,7 +3,7 @@ import type {
   SongV2SlideDocument, SongV2Documents,
 } from "../types";
 import {
-  hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
+  getSongV2ArrangementDocId, hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
   SongV2DocumentError, type SongV2Snapshot,
 } from "./songPersistence";
 import { applyPouchAudit } from "./pouchAudit";
@@ -208,8 +208,16 @@ function buildSteps(plan: SongV2ChangePlan): WriteStep[] {
   ];
 }
 
-function sameDocument<T extends Document>(a: T | undefined, b: T): boolean {
-  return !!a && !changed(a, b);
+export type SongV2IntentClassification = "pending" | "already-applied" | "conflict" | "missing";
+
+/** Classifies authored content only; physical revisions and audit fields are ignored. */
+export function classifyIntendedDocument<T extends Document>({
+  baseline, desired, current,
+}: { baseline: T; desired: T; current?: T }): SongV2IntentClassification {
+  if (!current) return "missing";
+  if (!changed(current, baseline)) return "pending";
+  if (!changed(current, desired)) return "already-applied";
+  return "conflict";
 }
 
 /** Applies only baseline-to-desired intent after validating touched documents against current state. */
@@ -236,53 +244,103 @@ export async function saveSongV2FromBaseline(
   const baselineDocs = serializeSongToV2Documents(baseline);
   const baselineArrangements = new Map(baselineDocs.arrangements.map(doc => [doc._id, doc]));
   const baselineSlides = new Map(baselineDocs.slides.map(doc => [doc._id, doc]));
-  const validateUpdates = <T extends Document>(
-    kind: "arrangement" | "slide", updates: Update<T>[], deletes: T[],
-    currentDocs: Map<string, T>, baselineDocsById: Map<string, T>,
-  ) => {
-    for (const { current: authoredBaseline } of updates) {
-      const dbDoc = currentDocs.get(authoredBaseline._id);
-      const baseDoc = baselineDocsById.get(authoredBaseline._id);
-      if (!baseDoc || !sameDocument(dbDoc, baseDoc)) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, dbDoc ? "changed" : "missing");
+  const classifyUpdate = <T extends Document>(kind: "root" | "arrangement" | "slide", base: T, desired: T, currentDoc?: T) => {
+    const classification = classifyIntendedDocument({ baseline: base, desired, current: currentDoc });
+    if (classification === "conflict" || classification === "missing") {
+      throw new SongV2ConcurrentEditError(baseline._id, base._id, kind, classification === "missing" ? "missing" : "changed");
     }
-    for (const authoredBaseline of deletes) {
-      const dbDoc = currentDocs.get(authoredBaseline._id);
-      const baseDoc = baselineDocsById.get(authoredBaseline._id);
-      if (!baseDoc || !sameDocument(dbDoc, baseDoc)) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, dbDoc ? "changed" : "missing");
-    }
+    return classification;
   };
-  if (intent.root && !sameDocument(current.root, baselineDocs.root)) {
-    throw new SongV2ConcurrentEditError(baseline._id, current.root._id, "root", "changed");
-  }
-  validateUpdates("arrangement", intent.arrangements.update, intent.arrangements.delete, currentArrangements, baselineArrangements);
-  validateUpdates("slide", intent.slides.update, intent.slides.delete, currentSlides, baselineSlides);
+  const rootClassification = intent.root
+    ? classifyUpdate("root", baselineDocs.root, intent.root.next, current.root)
+    : undefined;
+  const updateClassifications = <T extends Document>(kind: "arrangement" | "slide", updates: Update<T>[], currentDocs: Map<string, T>, baselineDocsById: Map<string, T>) => new Map(updates.map(({ current: authoredBaseline, next }) => {
+    const baseDoc = baselineDocsById.get(authoredBaseline._id);
+    if (!baseDoc) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, "missing");
+    return [authoredBaseline._id, classifyUpdate(kind, baseDoc, next, currentDocs.get(authoredBaseline._id))];
+  }));
+  const arrangementUpdateStatus = updateClassifications("arrangement", intent.arrangements.update, currentArrangements, baselineArrangements);
+  const slideUpdateStatus = updateClassifications("slide", intent.slides.update, currentSlides, baselineSlides);
 
-  const checkCreateIds = async <T extends Document>(kind: "arrangement" | "slide", creates: T[], currentDocs: Map<string, T>) => {
+  const currentRootIds = new Set(current.root.arrangementIds);
+  const currentArrangementDocs = [...current.arrangements];
+  const currentSlideDocs = [...current.slides];
+  const recoveredArrangementIds = new Set<string>();
+  const recoveredSlideIds = new Set<string>();
+
+  const checkDeletes = async <T extends Document>(kind: "arrangement" | "slide", deletes: T[], currentDocs: Map<string, T>, baselineDocsById: Map<string, T>) => {
+    const classifications = new Map<string, "pending" | "already-applied">();
+    for (const authoredBaseline of deletes) {
+      const baseDoc = baselineDocsById.get(authoredBaseline._id);
+      if (!baseDoc) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, "missing");
+      let dbDoc = currentDocs.get(authoredBaseline._id);
+      if (!dbDoc) {
+        try {
+          dbDoc = await db.get(authoredBaseline._id) as T;
+          currentDocs.set(authoredBaseline._id, dbDoc);
+        } catch (error) {
+          if (!(typeof error === "object" && error !== null && "status" in error && error.status === 404)) throw error;
+        }
+      }
+      if (dbDoc) {
+        if (changed(dbDoc, baseDoc)) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, "changed");
+        classifications.set(authoredBaseline._id, "pending");
+        continue;
+      }
+      // Absence is converged only when the authoritative parent no longer
+      // references the child. Otherwise it is an invalid/incomplete snapshot.
+      const parentReflectsRemoval = kind === "arrangement"
+        ? !currentRootIds.has((baseDoc as SongV2ArrangementDocument).arrangementId)
+        : (() => {
+          const slide = baseDoc as SongV2SlideDocument;
+          const arrangement = currentArrangements.get(getSongV2ArrangementDocId(baseline._id, slide.arrangementId));
+          if (!currentRootIds.has(slide.arrangementId)) return true;
+          return arrangement ? !arrangement.slideIds.includes(slide.id) : false;
+        })();
+      if (!parentReflectsRemoval) throw new SongV2ConcurrentEditError(baseline._id, authoredBaseline._id, kind, "missing");
+      classifications.set(authoredBaseline._id, "already-applied");
+    }
+    return classifications;
+  };
+  const arrangementDeleteStatus = await checkDeletes("arrangement", intent.arrangements.delete, currentArrangements, baselineArrangements);
+  const slideDeleteStatus = await checkDeletes("slide", intent.slides.delete, currentSlides, baselineSlides);
+
+  const checkCreateIds = async <T extends Document>(kind: "arrangement" | "slide", creates: T[], currentDocs: Map<string, T>, recoveredIds: Set<string>, appendCurrent: (doc: T) => void) => {
     for (const doc of creates) {
-      if (currentDocs.has(doc._id)) throw new SongV2ConcurrentEditError(baseline._id, doc._id, kind, "already-exists");
+      const existingInSnapshot = currentDocs.get(doc._id);
+      if (existingInSnapshot) {
+        if (changed(existingInSnapshot, doc)) throw new SongV2ConcurrentEditError(baseline._id, doc._id, kind, "already-exists");
+        recoveredIds.add(doc._id);
+        continue;
+      }
       try {
-        await db.get(doc._id);
-        throw new SongV2ConcurrentEditError(baseline._id, doc._id, kind, "already-exists");
+        const existing = await db.get(doc._id) as T;
+        // Exact authored matches are safe to adopt: the persisted child already
+        // satisfies this deterministic create intent and only needs publication.
+        if (changed(existing, doc)) throw new SongV2ConcurrentEditError(baseline._id, doc._id, kind, "already-exists");
+        recoveredIds.add(doc._id);
+        currentDocs.set(doc._id, existing);
+        appendCurrent(existing);
       } catch (error) {
         if (error instanceof SongV2ConcurrentEditError) throw error;
         if (!(typeof error === "object" && error !== null && "status" in error && error.status === 404)) throw error;
       }
     }
   };
-  await checkCreateIds("arrangement", intent.arrangements.create, currentArrangements);
-  await checkCreateIds("slide", intent.slides.create, currentSlides);
+  await checkCreateIds("arrangement", intent.arrangements.create, currentArrangements, recoveredArrangementIds, doc => currentArrangementDocs.push(doc));
+  await checkCreateIds("slide", intent.slides.create, currentSlides, recoveredSlideIds, doc => currentSlideDocs.push(doc));
 
-  const rebase = <T extends Document>(changes: Changes<T>, currentDocs: Map<string, T>): Changes<T> => ({
-    create: changes.create,
-    update: changes.update.map(({ next }) => ({ current: currentDocs.get(next._id)!, next })),
-    delete: changes.delete.map(doc => currentDocs.get(doc._id)!),
+  const rebase = <T extends Document>(changes: Changes<T>, currentDocs: Map<string, T>, deleteStatus: Map<string, "pending" | "already-applied">): Changes<T> => ({
+    create: changes.create.filter(doc => !(doc.docType === "song-v2-arrangement" ? recoveredArrangementIds : recoveredSlideIds).has(doc._id)),
+    update: changes.update.filter(({ next }) => (next.docType === "song-v2-arrangement" ? arrangementUpdateStatus : slideUpdateStatus).get(next._id) === "pending").map(({ next }) => ({ current: currentDocs.get(next._id)!, next })),
+    delete: changes.delete.filter(doc => deleteStatus.get(doc._id) === "pending").map(doc => currentDocs.get(doc._id)!),
   });
   const plan: SongV2ChangePlan = {
-    ...(intent.root ? { root: { current: current.root, next: intent.root.next } } : {}),
-    arrangements: rebase(intent.arrangements, currentArrangements),
-    slides: rebase(intent.slides, currentSlides),
+    ...(intent.root && rootClassification === "pending" ? { root: { current: current.root, next: intent.root.next } } : {}),
+    arrangements: rebase(intent.arrangements, currentArrangements, arrangementDeleteStatus),
+    slides: rebase(intent.slides, currentSlides, slideDeleteStatus),
   };
-  return execute(db, { documents: current, steps: buildSteps(plan), progress: emptyProgress() });
+  return execute(db, { documents: { ...current, arrangements: currentArrangementDocs, slides: currentSlideDocs }, steps: buildSteps(plan), progress: emptyProgress() });
 }
 
 /** Snapshot-based low-level writer retained for migration tooling and focused tests. */
