@@ -193,7 +193,7 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
 
 /** Strips Couch metadata so echo/sync round-trips match the editor despite new `_rev` / timestamps. */
 const omitItemSyncMetadata = (snap: DBItem) => {
-  const { _rev, updatedAt, createdAt, createdBy, updatedBy, docType, ...rest } = snap;
+  const { _rev, updatedAt, createdAt, createdBy, updatedBy, ...rest } = snap;
   return rest;
 };
 
@@ -310,6 +310,7 @@ const applyItemDataToState = (
     : "contentOwner" in payload
       ? payload.contentOwner
       : undefined;
+  state.docType = payload.docType;
   state.listId = nextListId || state.listId;
   if ("background" in payload && payload.background !== undefined) {
     state.background = payload.background;
