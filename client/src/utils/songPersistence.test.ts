@@ -1,4 +1,5 @@
 import type { DBItem, ItemSlideType } from "../types";
+import { normalizeItemSlides } from "./activeItemSlides";
 import {
   createSong,
   deleteSong,
@@ -44,9 +45,10 @@ const makeDb = (document: DBItem, childDocuments: Array<Record<string, unknown>>
     rev: "2-new",
   }));
   const remove = jest.fn(async () => ({ ok: true, id: document._id, rev: "2-deleted" }));
-  const documentsById = new Map(
-    [[document._id, document], ...childDocuments.map((child) => [String(child._id), child])],
-  );
+  const documentsById = new Map<string, unknown>([
+    [document._id, document],
+    ...childDocuments.map((child): [string, unknown] => [String(child._id), child]),
+  ]);
   const notFound = (id: string) => Object.assign(new Error(`missing ${id}`), {
     status: 404,
     name: "not_found",
@@ -217,6 +219,7 @@ describe("songPersistence", () => {
       ],
     });
     delete source._rev;
+    const canonicalSource = normalizeItemSlides(source);
 
     const documents = serializeSongToV2Documents(source);
     const hydrated = hydrateSongFromV2Documents(
@@ -250,7 +253,7 @@ describe("songPersistence", () => {
       songLinks: source.songLinks,
       songAudio: source.songAudio,
       slides: [],
-      arrangements: source.arrangements,
+      arrangements: canonicalSource.arrangements,
     });
     expect(hydrated.arrangements.map(({ id }) => id)).toEqual(["arr-a", "arr-b", "arr-c"]);
     expect(hydrated.arrangements.map(({ slides }) => slides.map(({ id }) => id))).toEqual([
@@ -290,6 +293,38 @@ describe("songPersistence", () => {
       "referenced-slide",
     ]);
     expect(getSongV2ArrangementDocId(source._id, "arr-a")).toContain("song-v2:arrangement:");
+  });
+
+  it("keeps child document identities stable when names change", () => {
+    const source = song({
+      arrangements: [{
+        id: "stable-arrangement-id",
+        name: "First name",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [songSlide("stable-slide-id")],
+      }],
+    });
+    const renamed = {
+      ...source,
+      name: "Renamed song",
+      arrangements: source.arrangements.map((arrangement) => ({
+        ...arrangement,
+        name: "Renamed arrangement",
+        slides: arrangement.slides.map((slide) => ({ ...slide, name: "Renamed slide" })),
+      })),
+    };
+
+    const initialDocs = serializeSongToV2Documents(source);
+    const renamedDocs = serializeSongToV2Documents(renamed);
+
+    expect(renamedDocs.root._id).toBe(initialDocs.root._id);
+    expect(renamedDocs.arrangements.map(({ _id }) => _id)).toEqual(
+      initialDocs.arrangements.map(({ _id }) => _id),
+    );
+    expect(renamedDocs.slides.map(({ _id }) => _id)).toEqual(
+      initialDocs.slides.map(({ _id }) => _id),
+    );
   });
 
   it("fails explicitly when a referenced arrangement or slide is missing", () => {

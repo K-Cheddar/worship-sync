@@ -47,7 +47,9 @@ export class SongV2DocumentError extends Error {
   }
 }
 
-const getAuditFields = (song: DBItem) => ({
+const getAuditFields = (
+  song: Pick<DBItem, "createdAt" | "updatedAt" | "createdBy" | "updatedBy">,
+) => ({
   ...(song.createdAt !== undefined ? { createdAt: song.createdAt } : {}),
   ...(song.updatedAt !== undefined ? { updatedAt: song.updatedAt } : {}),
   ...(song.createdBy !== undefined ? { createdBy: song.createdBy } : {}),
@@ -63,6 +65,28 @@ const assertUniqueIds = (ids: string[], description: string) => {
       );
     }
     seen.add(id);
+  }
+};
+
+const assertValidV2Root = (root: SongV2RootDocument) => {
+  if (
+    root.docType !== "song-v2-root" ||
+    root.type !== "song" ||
+    root._id !== getSongV2RootDocId(root.songId)
+  ) {
+    throw new SongV2DocumentError(
+      `Song ${root.songId} has an invalid schema v2 root document.`,
+    );
+  }
+  if (root.songSchemaVersion !== SONG_SCHEMA_VERSION) {
+    throw new SongV2DocumentError(
+      `Song ${root.songId} has unsupported schema version ${root.songSchemaVersion}.`,
+    );
+  }
+  if (!Array.isArray(root.arrangementIds)) {
+    throw new SongV2DocumentError(
+      `Song ${root.songId} has no valid arrangement reference list.`,
+    );
   }
 };
 
@@ -148,19 +172,7 @@ export function hydrateSongFromV2Documents(
   arrangementDocuments: SongV2ArrangementDocument[],
   slideDocuments: SongV2SlideDocument[],
 ): DBItem {
-  if (
-    root.docType !== "song-v2-root" ||
-    root._id !== getSongV2RootDocId(root.songId)
-  ) {
-    throw new SongV2DocumentError(
-      `Song ${root.songId} has an invalid schema v2 root document.`,
-    );
-  }
-  if (root.songSchemaVersion !== SONG_SCHEMA_VERSION) {
-    throw new SongV2DocumentError(
-      `Song ${root.songId} has unsupported schema version ${root.songSchemaVersion}.`,
-    );
-  }
+  assertValidV2Root(root);
   assertUniqueIds(root.arrangementIds, `song ${root.songId} arrangement reference`);
 
   const arrangementsById = new Map(
@@ -186,7 +198,8 @@ export function hydrateSongFromV2Documents(
     if (
       arrangement.docType !== "song-v2-arrangement" ||
       arrangement.songId !== root.songId ||
-      arrangement.arrangementId !== arrangementId
+      arrangement.arrangementId !== arrangementId ||
+      !Array.isArray(arrangement.slideIds)
     ) {
       throw new SongV2DocumentError(
         `Song ${root.songId} arrangement ${arrangementId} has an invalid document contract.`,
@@ -219,8 +232,8 @@ export function hydrateSongFromV2Documents(
         );
       }
       const {
-        _id: _id,
-        _rev: _rev,
+        _id,
+        _rev,
         docType: _docType,
         songId: _songId,
         arrangementId: _arrangementId,
@@ -265,11 +278,11 @@ export function hydrateSongFromV2Documents(
     ...(root.songMetadata !== undefined ? { songMetadata: root.songMetadata } : {}),
     ...(root.songLinks !== undefined ? { songLinks: root.songLinks } : {}),
     ...(root.songAudio !== undefined ? { songAudio: root.songAudio } : {}),
-    ...getAuditFields(root as DBItem),
+    ...getAuditFields(root),
   } as DBItem);
 }
 
-const isNotFoundError = (error: unknown) =>
+export const isPouchNotFoundError = (error: unknown) =>
   typeof error === "object" && error !== null &&
   (("status" in error && error.status === 404) ||
     ("name" in error && error.name === "not_found"));
@@ -281,7 +294,7 @@ const getOptionalDocument = async <T,>(
   try {
     return (await db.get(id)) as T;
   } catch (error) {
-    if (isNotFoundError(error)) return null;
+    if (isPouchNotFoundError(error)) return null;
     throw error;
   }
 };
@@ -308,6 +321,13 @@ const loadV2Song = async (
     db,
     arrangementIds,
   );
+  for (const arrangement of arrangements) {
+    if (!Array.isArray(arrangement.slideIds)) {
+      throw new SongV2DocumentError(
+        `Song ${root.songId} arrangement ${arrangement.arrangementId} has no valid slide reference list.`,
+      );
+    }
+  }
   const slideIds = arrangements.flatMap((arrangement) =>
     arrangement.slideIds.map((slideId) =>
       getSongV2SlideDocId(root.songId, arrangement.arrangementId, slideId),
@@ -337,15 +357,12 @@ export async function loadSong(
     getSongV2RootDocId(songId),
   );
   if (v2Root) {
-    if (
-      v2Root.docType !== "song-v2-root" ||
-      v2Root.songId !== songId ||
-      v2Root._id !== getSongV2RootDocId(songId)
-    ) {
+    if (v2Root.songId !== songId) {
       throw new SongV2DocumentError(
         `Song ${songId} has an invalid schema v2 root document.`,
       );
     }
+    assertValidV2Root(v2Root);
     return loadV2Song(db, v2Root);
   }
   const document = (await db.get(songId)) as DBItem;

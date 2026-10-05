@@ -17,8 +17,9 @@ import {
   buildServiceTimeItem,
   removeParentheticalPhrases,
   createNewItemList,
+  createNewItemInDb,
 } from "./itemUtil";
-import type { MediaType, ServiceItem, BibleInfo, verseType } from "../types";
+import type { DBItem, ItemState, MediaType, ServiceItem, BibleInfo, verseType } from "../types";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
@@ -32,6 +33,64 @@ jest.mock("./overflow", () => ({
 }));
 
 describe("itemUtil", () => {
+  it("returns the persisted song revision while retaining transient editor fields", async () => {
+    const missing = Object.assign(new Error("missing"), {
+      status: 404,
+      name: "not_found",
+    });
+    const put = jest.fn(async (document: DBItem) => ({
+      ok: true,
+      id: document._id,
+      rev: "2-persisted",
+    }));
+    const db = {
+      get: jest.fn(async () => { throw missing; }),
+      put,
+    } as unknown as PouchDB.Database;
+    const item = {
+      _id: "song-created",
+      type: "song",
+      name: "Created song",
+      selectedArrangement: 0,
+      arrangements: [],
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: false },
+      selectedSlide: 4,
+      selectedBox: 2,
+      listId: "plan-list",
+    } as ItemState;
+
+    const created = await createNewItemInDb({ item, db });
+
+    expect(created._rev).toBe("2-persisted");
+    expect(created).toMatchObject({ selectedSlide: 4, selectedBox: 2, listId: "plan-list" });
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0][0]).not.toHaveProperty("slides");
+  });
+
+  it("does not replace a song when a repository read fails for a reason other than not found", async () => {
+    const readError = Object.assign(new Error("offline"), { status: 503 });
+    const put = jest.fn();
+    const db = {
+      get: jest.fn(async () => { throw readError; }),
+      put,
+    } as unknown as PouchDB.Database;
+    const item = {
+      _id: "song-existing",
+      type: "song",
+      name: "Existing song",
+      selectedArrangement: 0,
+      arrangements: [],
+      slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: false },
+      selectedSlide: 0,
+      selectedBox: 0,
+    } as ItemState;
+
+    await expect(createNewItemInDb({ item, db })).rejects.toBe(readError);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("shares concurrent Canva custom-item retries for the same operation key", async () => {
     const inFlight = new Map<string, Promise<string>>();
     let finish!: (path: string) => void;
@@ -477,8 +536,12 @@ Let Your fire fall`;
 
     it("does not report a new song as created when the database write fails", async () => {
       const saveError = new Error("database unavailable");
+      const notFound = Object.assign(new Error("not found"), {
+        status: 404,
+        name: "not_found",
+      });
       const db = {
-        get: jest.fn().mockRejectedValue(new Error("not found")),
+        get: jest.fn().mockRejectedValue(notFound),
         put: jest.fn().mockRejectedValue(saveError),
       };
 

@@ -32,6 +32,7 @@ import { applyPouchAudit } from "./pouchAudit";
 import { normalizeItemSlides } from "./activeItemSlides";
 import {
   createSong,
+  isPouchNotFoundError,
   loadItemWithSongHydration,
 } from "./songPersistence";
 import { formatBible, formatFree, formatSong } from "./overflow";
@@ -771,6 +772,7 @@ export const createNewItemInDb = async ({
       name: response.name,
     } as ItemState;
   } catch (error) {
+    if (!isPouchNotFoundError(error)) throw error;
     const now = new Date().toISOString();
     const newDoc: DBItem = { ...item, createdAt: now, updatedAt: now };
     // Do not return a newly-created item until its local database write has

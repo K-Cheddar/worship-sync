@@ -41,6 +41,11 @@ jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
 const mockDeleteSongAudio = jest.mocked(deleteSongAudioWithRetry);
 const mockUploadSongAudio = jest.mocked(uploadSongAudio);
 
+const getLegacySong = (rev = "1-old") => jest.fn(async (id: string) => {
+  if (id === song._id) return { ...song, _rev: rev };
+  throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+});
+
 const song = {
   _id: "song-1",
   name: "Living Hope",
@@ -164,7 +169,7 @@ describe("ViewSongSectionsDrawer", () => {
   });
 
   it("saves the same song details available from the controller editor", async () => {
-    const get = jest.fn().mockResolvedValue({ ...song, _rev: "1-old" });
+    const get = getLegacySong();
     const put = jest.fn().mockResolvedValue({ ok: true, id: song._id, rev: "2-new" });
     const db = createMockPouchDB({ get, put });
     const { store } = renderDrawer({ db });
@@ -235,7 +240,7 @@ describe("ViewSongSectionsDrawer", () => {
   it("keeps MP3 metadata available when storage deletion fails", async () => {
     const put = jest.fn();
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }),
+      get: getLegacySong(),
       put,
     });
     mockDeleteSongAudio.mockRejectedValue(new Error("R2 is unavailable."));
@@ -266,7 +271,7 @@ describe("ViewSongSectionsDrawer", () => {
     };
     mockUploadSongAudio.mockResolvedValue(replacementAudio);
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }),
+      get: getLegacySong(),
       put: jest.fn().mockRejectedValue(new Error("Database unavailable.")),
     });
     renderDrawer({ db });
@@ -301,7 +306,7 @@ describe("ViewSongSectionsDrawer", () => {
       return { success: true };
     });
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }),
+      get: getLegacySong(),
       put: jest.fn().mockImplementation(async () => {
         operations.push("persist");
         return { ok: true, id: song._id, rev: "2-new" };
