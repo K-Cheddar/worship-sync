@@ -253,7 +253,7 @@ const preflightV2Root = async (client, dbUrl, songId) => {
 const assertLegacyRevisionUnchanged = async (client, dbUrl, songId, sourceRevision) => {
   const current = await client.get(`${dbUrl}/${encoded(songId)}`).then((response) => response.data);
   if (current._rev !== sourceRevision) {
-    throw Object.assign(new Error("Legacy song changed during migration; v2 root was not published."), { code: "source_changed" });
+    throw Object.assign(new Error("Legacy song changed during migration."), { code: "source_changed" });
   }
 };
 
@@ -265,6 +265,60 @@ const assertRootAbsent = async (client, dbUrl, songId) => {
     throw Object.assign(new Error("A v2 root became active during preparation; no more child changes were made."), { code: "already_v2" });
   }
   throw new Error(`A v2 root appeared during preparation but is invalid; refusing to overwrite it: ${active.error.message}`);
+};
+
+const publishSongV2Root = async (client, dbUrl, root) => {
+  const response = await client.put(`${dbUrl}/${encoded(root._id)}`, root);
+  let publishedRoot = response.data;
+  if (!publishedRoot?._rev && !publishedRoot?.rev) {
+    try {
+      publishedRoot = await client.get(`${dbUrl}/${encoded(root._id)}`).then((result) => result.data);
+    } catch (error) {
+      throw Object.assign(new Error(`Song v2 root was published, but its revision could not be fetched (${error?.message || "unknown error"}). The root may still be active; manual inspection is required.`), { code: "activation_uncertain" });
+    }
+  }
+  const publishedRevision = publishedRoot?._rev || publishedRoot?.rev;
+  if (typeof publishedRevision !== "string" || !publishedRevision) {
+    throw Object.assign(new Error("Song v2 root was published, but its revision could not be confirmed. The root may still be active; manual inspection is required."), { code: "activation_uncertain" });
+  }
+  return publishedRevision;
+};
+
+const rollbackPublishedRoot = async (client, dbUrl, rootId, publishedRevision) => {
+  let currentRoot;
+  try {
+    currentRoot = await client.get(`${dbUrl}/${encoded(rootId)}`).then((response) => response.data);
+  } catch (error) {
+    if (isMissing(error)) return { rolledBack: true };
+    return { rolledBack: false, reason: `Could not confirm the active root revision: ${error?.message || "unknown error"}` };
+  }
+  if (currentRoot._rev !== publishedRevision) {
+    return {
+      rolledBack: false,
+      reason: `The v2 root changed after this migration published it (published ${publishedRevision}, current ${currentRoot._rev || "unknown"}). Manual inspection is required.`,
+    };
+  }
+  try {
+    await client.delete(`${dbUrl}/${encoded(rootId)}?rev=${encoded(publishedRevision)}`);
+    return { rolledBack: true };
+  } catch (error) {
+    return { rolledBack: false, reason: `Could not remove the published root revision: ${error?.message || "unknown error"}. Manual inspection is required.` };
+  }
+};
+
+const rollbackAfterPublicationFailure = async ({ client, dbUrl, rootId, publishedRevision, report, status, activationResult, error }) => {
+  report.status = status;
+  report.failures.push(error?.message || "Song v2 activation verification failed.");
+  const rollback = await rollbackPublishedRoot(client, dbUrl, rootId, publishedRevision);
+  if (rollback.rolledBack) {
+    report.activationResult = activationResult;
+    report.verificationResult = "failed";
+  } else {
+    report.status = "rollback_blocked";
+    report.activationResult = "rollback_blocked";
+    report.verificationResult = "failed";
+    report.failures.push(`${rollback.reason} The v2 root may still be active; do not assume v1 authority was restored.`);
+  }
 };
 
 export async function migrateSongToV2({ client, database, legacySong, dryRun = false, batchSize = SONG_MIGRATION_BATCH_SIZE }) {
@@ -384,12 +438,63 @@ export async function migrateSongToV2({ client, database, legacySong, dryRun = f
       throw error;
     }
 
-    await client.put(`${dbUrl}/${encoded(rootId)}`, expected.root);
+    let publishedRevision;
+    try {
+      publishedRevision = await publishSongV2Root(client, dbUrl, expected.root);
+    } catch (error) {
+      if (statusOf(error) === 409) {
+        const active = await preflightV2Root(client, dbUrl, songId);
+        if (active.valid) {
+          report.name = active.active.hydrated.name || "";
+          report.arrangementCount = active.active.arrangements.length;
+          report.slideCount = active.active.slides.length;
+          report.existingV2Children = active.active.arrangements.length + active.active.slides.length;
+          report.status = "already_v2";
+          report.activationResult = "activated_concurrently";
+          report.verificationResult = "passed";
+          return report;
+        }
+        report.status = "verification_failed";
+        report.activationResult = "concurrent_root_invalid";
+        throw new Error(`A concurrent v2 root publication conflicted, but the resulting root is invalid; it was left untouched: ${active.error.message}`);
+      }
+      throw error;
+    }
     report.activationResult = "published";
-    const active = await loadActiveSong(client, dbUrl, songId);
-    if (!isDeepStrictEqual(songContentForVerification(active.hydrated), songContentForVerification(legacySong))) {
-      report.status = "verification_failed";
-      throw new Error("Active v2 song did not match the serialized legacy song after root publication.");
+    try {
+      await assertLegacyRevisionUnchanged(client, dbUrl, songId, legacySong._rev);
+    } catch (error) {
+      if (error?.code !== "source_changed") {
+        await rollbackAfterPublicationFailure({
+          client, dbUrl, rootId, publishedRevision, report,
+          status: "verification_failed",
+          activationResult: "rolled_back_verification_failed",
+          error: new Error(`Could not verify the legacy source after root publication: ${error?.message || "unknown error"}`),
+        });
+        return report;
+      }
+      await rollbackAfterPublicationFailure({
+        client, dbUrl, rootId, publishedRevision, report,
+        status: "source_changed",
+        activationResult: "rolled_back_source_changed",
+        error: new Error("Legacy song changed after v2 root publication."),
+      });
+      return report;
+    }
+    let active;
+    try {
+      active = await loadActiveSong(client, dbUrl, songId);
+      if (!isDeepStrictEqual(songContentForVerification(active.hydrated), songContentForVerification(legacySong))) {
+        throw new Error("Active v2 song did not match the serialized legacy song after root publication.");
+      }
+    } catch (error) {
+      await rollbackAfterPublicationFailure({
+        client, dbUrl, rootId, publishedRevision, report,
+        status: "verification_failed",
+        activationResult: "rolled_back_verification_failed",
+        error,
+      });
+      return report;
     }
     report.verificationResult = "passed";
     report.status = "migrated";
@@ -397,7 +502,9 @@ export async function migrateSongToV2({ client, database, legacySong, dryRun = f
     if (error?.code && report.status === "failed") report.status = error.code;
     report.failures.push(error?.message || "Unknown Song v2 migration failure.");
     if (report.verificationResult === "not_run") report.verificationResult = "failed";
-    if (report.activationResult === "not_run") report.activationResult = "not_published";
+    if (report.activationResult === "not_run") {
+      report.activationResult = report.status === "activation_uncertain" ? "activation_uncertain" : "not_published";
+    }
   }
   return report;
 }
@@ -455,7 +562,7 @@ export async function migrateSongDatabaseToV2({ client, database, songId, dryRun
     blockedCount,
     failedCount,
     dryRun,
-    complete: reports.length > 0 && reports.every((entry) => ["migrated", "already_v2", "dry_run_ready"].includes(entry.status)),
+    complete: reports.every((entry) => ["migrated", "already_v2", "dry_run_ready"].includes(entry.status)),
     songs: reports,
   };
 }
