@@ -115,12 +115,23 @@ describe("ContentPreviewDialog", () => {
     expect(await screen.findByLabelText("YouTube player")).toBeInTheDocument();
   });
 
-  it("renders text and PDF/document previews internally", async () => {
+  it("renders text and PDF/document previews internally without sandboxing the PDF viewer", async () => {
     const { rerender } = renderPreview({ id: "text-1", title: "Notes", textContent: "Welcome." });
     expect(screen.getByText("Welcome.")).toBeInTheDocument();
 
     rerender(<ContentPreviewDialog resource={{ id: "pdf-1", title: "Guide", mimeType: "application/pdf", url: "https://example.test/guide.pdf" }} onClose={jest.fn()} />);
-    expect(await screen.findByTitle("Guide")).toHaveAttribute("src", expect.stringContaining("/api/resources/proxy"));
+    const pdfFrame = await screen.findByTitle("Guide");
+    expect(pdfFrame).toHaveAttribute("src", expect.stringContaining("/api/resources/proxy"));
+    expect(pdfFrame).not.toHaveAttribute("sandbox");
+  });
+
+  it("keeps the expected sandbox on web previews", async () => {
+    renderPreview({ id: "web-1", title: "Embedded page", url: "https://example.test/page" });
+
+    expect(await screen.findByTitle("Embedded page")).toHaveAttribute(
+      "sandbox",
+      "allow-forms allow-modals allow-popups allow-presentation allow-scripts",
+    );
   });
 
   it("renders saved rich text formatting in text previews", () => {
