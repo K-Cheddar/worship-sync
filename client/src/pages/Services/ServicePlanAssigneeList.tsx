@@ -570,14 +570,16 @@ const ServicePlanAssigneeList = ({
                     {scheduledHolders.length ? (
                       <Popover>
                         <PopoverTrigger asChild>
-                          <button
+                          <Button
                             type="button"
+                            variant="tertiary"
+                            iconSize="sm"
+                            padding="p-0.5"
                             className="inline-flex cursor-pointer items-center rounded p-0.5 text-amber-300 hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+                            svg={TriangleAlert}
                             aria-label={`Microphone conflict for ${microphone.name}`}
                             onClick={(event) => event.stopPropagation()}
-                          >
-                            <TriangleAlert className="size-4 shrink-0 max-md:size-5" aria-hidden />
-                          </button>
+                          />
                         </PopoverTrigger>
                         <PopoverContent align="start" className="w-72 border-amber-700/60 bg-gray-900 p-3 text-gray-100">
                           <p className="text-xs font-semibold text-amber-200">Microphone conflict</p>
