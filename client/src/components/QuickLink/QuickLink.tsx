@@ -131,8 +131,8 @@ const QuickLink = ({
     <li
       data-quick-link-tile={compact ? "true" : undefined}
       className={cn(
-        "flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit",
-        compact && "border border-gray-500",
+        "flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 h-fit",
+        compact ? "border border-gray-500" : "border-2 border-gray-500",
       )}
     >
       <Button
@@ -160,8 +160,8 @@ const QuickLink = ({
         )}
         <p
           className={cn(
-            "text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis max-h-10",
-            compact && "px-0.5 leading-tight",
+            "text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis",
+            compact ? "h-10 px-0.5 leading-tight" : "max-h-10",
           )}
           style={{ fontSize: compact ? "clamp(0.45rem, 0.55vw, 0.65rem)" : "clamp(0.5rem, 0.6vw, 0.7rem)" }}
         >

@@ -74,7 +74,10 @@ describe("chat image API", () => {
       .mockResolvedValueOnce({
         ok: false,
         status: 403,
-        json: async () => ({ error: "Could not verify this request." }),
+        json: async () => ({
+          error: "Could not verify this request.",
+          code: "AUTH_CSRF_MISMATCH",
+        }),
       })
       .mockResolvedValueOnce({
         ok: true,

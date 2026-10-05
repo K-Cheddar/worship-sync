@@ -376,6 +376,8 @@ export type TeamRole = {
   teamId: string;
   name: string;
   description?: string;
+  /** Optional structured icon ref; legacy Lucide export-name strings remain supported. */
+  icon?: import("../components/icons/iconTypes").EntityIcon;
   archivedAt?: string | null;
 };
 
@@ -385,6 +387,8 @@ export type TeamQualificationArea = {
   teamId: string;
   name: string;
   description?: string;
+  /** Optional structured icon ref; legacy Lucide export-name strings remain supported. */
+  icon?: import("../components/icons/iconTypes").EntityIcon;
   archivedAt?: string | null;
 };
 

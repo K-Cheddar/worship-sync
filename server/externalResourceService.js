@@ -288,6 +288,30 @@ const drainResponse = (response) => {
   if (body && typeof body.destroy === "function") body.destroy();
 };
 
+const readResponsePrefix = async (response, maxBytes = 4096) => {
+  const body = response?.data;
+  if (typeof body === "string") return body.slice(0, maxBytes).toLowerCase();
+  if (Buffer.isBuffer(body)) return body.subarray(0, maxBytes).toString("utf8").toLowerCase();
+  if (!body?.[Symbol.asyncIterator]) return "";
+  const chunks = [];
+  let size = 0;
+  const iterator = body[Symbol.asyncIterator]();
+  try {
+    while (size < maxBytes) {
+      const { value, done } = await iterator.next();
+      if (done) break;
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      const remaining = maxBytes - size;
+      chunks.push(chunk.subarray(0, remaining));
+      size += Math.min(chunk.length, remaining);
+    }
+  } finally {
+    if (size >= maxBytes) await iterator.return?.();
+    drainResponse(response);
+  }
+  return Buffer.concat(chunks, size).toString("utf8").toLowerCase();
+};
+
 const createCache = () => new Map();
 
 const rateLimiter = () => {
@@ -363,9 +387,49 @@ const contentRangeTotal = (value) => {
   return Number.parseInt(match[1], 10);
 };
 
-const shouldProbeByGet = (response) => {
+const isHtmlResponse = (response) => {
+  const mime = normalizeMimeType(headerValue(response?.headers, "content-type"));
+  return mime === "text/html" || mime === "application/xhtml+xml";
+};
+
+const shouldProbeByGet = (response, { provider, candidateUrl, finalUrl }) => {
   const status = Number(response?.status || 0);
-  return status === 405 || status === 501 || (status >= 200 && status < 300 && !headerValue(response?.headers, "content-type"));
+  if (status === 405 || status === 501) return true;
+  if (provider === "sharepoint" && [401, 403].includes(status)) return true;
+  if (status < 200 || status >= 300) return false;
+  if (!headerValue(response?.headers, "content-type")) return true;
+  const filename = filenameFromContentDisposition(headerValue(response?.headers, "content-disposition"));
+  const expectedType = mediaTypeFor(
+    headerValue(response?.headers, "content-type"),
+    filename,
+    finalUrl || candidateUrl,
+  );
+  const expectedFile = expectedType !== "unknown" && expectedType !== "web";
+  const hostedFile = ["dropbox", "google-drive", "onedrive", "box", "sharepoint"].includes(provider);
+  return (provider === "sharepoint" && (isHtmlResponse(response) || !expectedFile)) ||
+    (isHtmlResponse(response) && (hostedFile || expectedFile));
+};
+
+const sharePointHtmlReason = ({ response, finalUrl, bodyText = "" }) => {
+  const status = Number(response?.status || 0);
+  let url;
+  try {
+    url = new URL(finalUrl);
+  } catch {
+    url = null;
+  }
+  const pathAndQuery = `${url?.pathname || ""}${url?.search || ""}`.toLowerCase();
+  if (status === 401 || /login\.microsoftonline\.com|login\.live\.com|signin|authenticate/.test(url?.hostname + pathAndQuery) ||
+      /sign in to your account|sign-in required|login to microsoft|need to sign in/.test(bodyText)) {
+    return "This SharePoint link requires sign-in.";
+  }
+  if (status === 403 || /accessdenied|access-denied|unauthorized/.test(pathAndQuery) || /access denied|you don.t have permission/.test(bodyText)) {
+    return "You don’t have access to this SharePoint file.";
+  }
+  if (/sharinglinkexpired|expired|invalidlink|invalid-link/.test(pathAndQuery) || status === 404 || /link has expired|sharing link is invalid|link is no longer available/.test(bodyText)) {
+    return "This SharePoint sharing link may be expired or invalid.";
+  }
+  return "The SharePoint link did not resolve to a downloadable file.";
 };
 
 const isSuccessful = (response) => Number(response?.status || 0) >= 200 && Number(response?.status || 0) < 300;
@@ -453,7 +517,7 @@ export const createExternalResourceService = ({
       method: "HEAD",
       headers: { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" },
     });
-    if (shouldProbeByGet(result.response)) {
+    if (shouldProbeByGet(result.response, { provider, candidateUrl, finalUrl: result.finalUrl })) {
       drainResponse(result.response);
       result = await requestFollowingRedirects({
         url: candidateUrl,
@@ -473,8 +537,14 @@ export const createExternalResourceService = ({
     const mediaType = mediaTypeFor(mimeType, fileName, result.finalUrl);
     const declaredLength = parseContentLength(headerValue(response.headers, "content-length"));
     const declaredTotal = contentRangeTotal(headerValue(response.headers, "content-range"));
+    const htmlPrefix = provider === "sharepoint" && isHtmlResponse(response)
+      ? await readResponsePrefix(response)
+      : "";
     drainResponse(response);
     if (!isSuccessful(response)) {
+      const reason = provider === "sharepoint"
+        ? sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix })
+        : undefined;
       return buildDescriptor({
         originalUrl,
         provider,
@@ -484,7 +554,7 @@ export const createExternalResourceService = ({
         mimeType,
         fileName,
         mediaType: "unknown",
-        reason: `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
+        reason: reason || `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
       });
     }
     if ((declaredLength !== null && declaredLength > maxBytes) || (declaredTotal !== null && declaredTotal > maxBytes)) {
@@ -498,6 +568,19 @@ export const createExternalResourceService = ({
         fileName,
         mediaType: "unknown",
         reason: "That resource is too large to preview.",
+      });
+    }
+    if (provider === "sharepoint" && (mediaType === "web" || mediaType === "unknown")) {
+      return buildDescriptor({
+        originalUrl,
+        provider,
+        mediaId,
+        candidateUrl,
+        finalUrl: result.finalUrl,
+        mimeType,
+        fileName,
+        mediaType: "unknown",
+        reason: sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix }),
       });
     }
     return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName, mediaType });

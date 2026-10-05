@@ -346,6 +346,7 @@ export const MemberFilterPanel = ({
             id: position.positionId,
             label: position.name,
             archived: Boolean(position.archivedAt),
+            icon: position.icon,
           }),
       }),
     [data.teams, schedulablePositions, scopedTeamIds],
@@ -365,6 +366,7 @@ export const MemberFilterPanel = ({
           id: role.roleId,
           label: role.name,
           archived: Boolean(role.archivedAt),
+          icon: role.icon || "ShieldCheck",
         }),
     });
   }, [data.teamRoles, data.teams, scopedTeamIds]);

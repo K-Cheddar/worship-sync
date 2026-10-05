@@ -32,6 +32,7 @@ import {
 import Button from "../../../components/Button/Button";
 import Menu from "../../../components/Menu/Menu";
 import Modal from "../../../components/Modal/Modal";
+import ConfirmDialog from "../../../components/Modal/ConfirmDialog";
 import Drawer from "../../../components/Drawer/Drawer";
 import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import type { MenuItemType } from "../../../types";
@@ -95,6 +96,8 @@ import {
   updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentIems,
   updateTeamScheduleAssignmentSwap,
+  updateTeamScheduleGuest,
+  removeTeamScheduleGuest,
   addTeamSchedulePositionSlot,
   removeTeamSchedulePositionSlot,
   getNotificationIntents,
@@ -104,6 +107,7 @@ import {
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
+  canRefreshScheduleOccurrences,
   rekeyAssignmentsByServiceDate,
   rekeyScheduleOccurrenceRowsByServiceDate,
 } from "./scheduleDraftUtils";
@@ -702,6 +706,10 @@ const ScheduleTab = ({
     });
     return [...byId.values()];
   }, [schedules, selectedScheduleRecord]);
+  const editableScheduleGuestIds = useMemo(
+    () => new Set((selectedSchedule?.guests || []).map((guest) => guest.guestId)),
+    [selectedSchedule?.guests],
+  );
   const isSelectedScheduleLoading = Boolean(selectedScheduleRecord && !selectedSchedule);
   const scheduleDraftKey = selectedScheduleRecord?.scheduleId || "new";
   const [formState, setFormState] = useState<ScheduleFormState | null>(null);
@@ -804,6 +812,12 @@ const ScheduleTab = ({
     if (stored.length === 0 || !regeneratedOccurrences) return false;
     return !occurrenceIdsMatch(stored, regeneratedOccurrences);
   }, [canEdit, regeneratedOccurrences, selectedSchedule]);
+  const refreshBlocked = Boolean(selectedSchedule && regeneratedOccurrences &&
+    !canRefreshScheduleOccurrences({
+      schedule: selectedSchedule,
+      services: data.services,
+      regeneratedOccurrences,
+    }));
   const [applyingGrouping, setApplyingGrouping] = useState(false);
   // Spreadsheet-style undo/redo for the assignment grid. The stack is
   // session-local and per-schedule (reset when the active schedule changes or an
@@ -845,7 +859,7 @@ const ScheduleTab = ({
   // Re-generate occurrences and re-key assignments onto them, then persist —
   // the one-click path behind the "schedule out of date" nudge.
   const refreshScheduleOccurrences = useCallback(async () => {
-    if (!canEdit || !selectedSchedule || !regeneratedOccurrences) return;
+    if (!canEdit || !selectedSchedule || !regeneratedOccurrences || refreshBlocked || applyingGrouping) return;
     const sourceOccurrences = selectedSchedule.occurrences || [];
     const assignments = rekeyAssignmentsByServiceDate({
       sourceOccurrences,
@@ -906,10 +920,12 @@ const ScheduleTab = ({
       setApplyingGrouping(false);
     }
   }, [
+    applyingGrouping,
     canEdit,
     churchId,
     onScheduleSaved,
     regeneratedOccurrences,
+    refreshBlocked,
     resetUndoHistory,
     selectedSchedule,
     showToast,
@@ -1349,12 +1365,30 @@ const ScheduleTab = ({
     useState<PendingCrossTeamConflict | null>(null);
   const [pendingAvailabilityConfirmation, setPendingAvailabilityConfirmation] =
     useState<PendingAvailabilityConfirmation | null>(null);
+  const [guestRemovalConfirmation, setGuestRemovalConfirmation] = useState<string | null>(null);
+  const guestRemovalResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const guestRemovalOwnerRef = useRef("");
+  const resolveGuestRemoval = (confirmed: boolean) => {
+    guestRemovalResolveRef.current?.(confirmed);
+    guestRemovalResolveRef.current = null;
+    setGuestRemovalConfirmation(null);
+  };
+  useLayoutEffect(() => {
+    guestRemovalOwnerRef.current = `${churchId}:${selectedScheduleRecord?.scheduleId || ""}`;
+    setGuestRemovalConfirmation(null);
+    return () => {
+      guestRemovalOwnerRef.current = "";
+      // A confirmation belongs to the schedule/church that requested it.
+      guestRemovalResolveRef.current?.(false);
+      guestRemovalResolveRef.current = null;
+    };
+  }, [churchId, selectedScheduleRecord?.scheduleId]);
   // Assignment saves are read-modify-write transactions on the same schedule
   // document. The UI updates optimistically, so a member can be removed from one
   // cell and immediately re-added (e.g. as a reverse shadow) before the first
   // save lands. Sent concurrently, the server validates the second request
-  // against the pre-removal schedule and rejects it ("Members can only serve one
-  // position per service"). Chaining the network calls keeps them in order so
+  // against the pre-removal schedule and rejects it ("This person can only serve
+  // one position per service"). Chaining the network calls keeps them in order so
   // each one validates against the previous result.
   const assignmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const scheduleMutationSeqRef = useRef(0);
@@ -1806,7 +1840,7 @@ const ScheduleTab = ({
   }, [scheduleColumns, scheduleOccurrences]);
 
   useEffect(() => {
-    if (!activeSlot) return undefined;
+    if (!activeSlot || guestRemovalConfirmation !== null) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (pendingCellAssignmentRef.current) {
@@ -1817,10 +1851,10 @@ const ScheduleTab = ({
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [activeSlot, clearActiveSlot]);
+  }, [activeSlot, clearActiveSlot, guestRemovalConfirmation]);
 
   useEffect(() => {
-    if (!activeSlot) return undefined;
+    if (!activeSlot || guestRemovalConfirmation !== null) return undefined;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
@@ -1832,7 +1866,7 @@ const ScheduleTab = ({
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [activeSlot, clearActiveSlot]);
+  }, [activeSlot, clearActiveSlot, guestRemovalConfirmation]);
 
   const activeGridLayout = useMemo<ScheduleGridLayout>(
     () => (scheduleLayout === "transpose" ? "transpose" : "grid"),
@@ -2330,11 +2364,19 @@ const ScheduleTab = ({
     );
     if (!occurrence || !column) return;
 
-    let previousSchedule = selectedSchedule;
+    const previousSchedule = selectedSchedule;
     const before =
       previousSchedule.assignments?.[activeSlot.occurrenceId]?.[
       activeSlot.columnKey
       ] ?? "";
+    const moveSource = guest.guestId
+      ? getActiveSlotMoveSource(guest.guestId)
+      : null;
+    const sourceBefore = moveSource
+      ? previousSchedule.assignments?.[moveSource.serviceId]?.[
+        moveSource.positionSlotKey
+      ] ?? ""
+      : "";
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule) return;
@@ -2345,6 +2387,8 @@ const ScheduleTab = ({
           memberId: null,
           guest,
           serviceDate: getOccurrenceDate(occurrence),
+          sourceServiceId: moveSource?.serviceId,
+          sourcePositionSlotKey: moveSource?.positionSlotKey,
         }),
       );
       const after =
@@ -2352,7 +2396,19 @@ const ScheduleTab = ({
         activeSlot.columnKey
         ] ?? "";
       onScheduleSaved(response.schedule);
-      recordAssignmentChange(`assign ${guest.name} to ${column.label}`, [
+      const changes: ScheduleCellChange[] = [];
+      if (moveSource) {
+        changes.push({
+          occurrenceId: moveSource.serviceId,
+          cellKey: moveSource.positionSlotKey,
+          serviceDate: getOccurrenceDate(occurrence),
+          before: sourceBefore,
+          after: response.schedule.assignments?.[moveSource.serviceId]?.[
+            moveSource.positionSlotKey
+          ] ?? "",
+        });
+      }
+      changes.push(
         {
           occurrenceId: activeSlot.occurrenceId,
           cellKey: activeSlot.columnKey,
@@ -2360,7 +2416,11 @@ const ScheduleTab = ({
           before,
           after,
         },
-      ]);
+      );
+      recordAssignmentChange(
+        `${moveSource ? "move" : "assign"} ${guest.name} to ${column.label}`,
+        changes,
+      );
       clearActiveSlot();
       showToast(`${guest.name} added as a guest.`, "success");
     } catch (error) {
@@ -2374,29 +2434,47 @@ const ScheduleTab = ({
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule) return;
-      const guests = (schedule.guests || []).map((existingGuest) =>
-        existingGuest.guestId === guest.guestId ? guest : existingGuest,
-      );
       const response = await enqueueAssignmentSave(() =>
-        updateTeamSchedule(churchId, schedule.scheduleId, {
-          name: schedule.name,
-          description: schedule.description || "",
-          teamId: schedule.teamId,
-          startDate: schedule.startDate || "",
-          endDate: schedule.endDate || "",
-          serviceIds: schedule.serviceIds || [],
-          occurrences: schedule.occurrences,
-          assignments: schedule.assignments,
-          guests,
-          microphoneAssignments: schedule.microphoneAssignments,
-          iemAssignments: schedule.iemAssignments,
-          additionalPositionSlots: schedule.additionalPositionSlots,
-        }),
+        updateTeamScheduleGuest(churchId, schedule.scheduleId, guest),
       );
       onScheduleSaved(response.schedule);
       showToast("Guest details updated.", "success");
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not update this guest.");
+      throw error;
+    }
+  };
+
+  const commitGuestRemoval = async (guest: TeamScheduleGuest) => {
+    if (!canEdit || !selectedSchedule || !editableScheduleGuestIds.has(guest.guestId)) return false;
+    const owner = `${churchId}:${selectedSchedule.scheduleId}`;
+    const assignmentCount = Object.values(selectedSchedule.assignments || {}).reduce(
+      (count, row) => count + Object.values(row || {}).filter((cell) =>
+        getCellPrimaryMemberId(cell) === guest.guestId ||
+        getCellShadowAssignments(cell).some((shadow) => shadow.memberId === guest.guestId),
+      ).length,
+      0,
+    );
+    const confirmation = assignmentCount
+      ? `Remove ${guest.name} from this schedule? This will clear ${assignmentCount} ${assignmentCount === 1 ? "assignment" : "assignments"}.`
+      : `Remove ${guest.name} from this schedule?`;
+    if (guestRemovalResolveRef.current) return false;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      guestRemovalResolveRef.current = resolve;
+      setGuestRemovalConfirmation(confirmation);
+    });
+    if (!confirmed || guestRemovalOwnerRef.current !== owner) return false;
+    try {
+      const schedule = await ensureActiveSchedule();
+      if (!schedule || !schedule.guests?.some((item) => item.guestId === guest.guestId)) return false;
+      const response = await enqueueAssignmentSave(() =>
+        removeTeamScheduleGuest(churchId, schedule.scheduleId, guest.guestId),
+      );
+      onScheduleSaved(response.schedule);
+      showToast("Guest removed from this schedule.", "success");
+      return true;
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not remove this guest.");
       throw error;
     }
   };
@@ -3784,13 +3862,12 @@ const ScheduleTab = ({
   );
 
   const getActiveSlotMoveSource = useCallback(
-    (memberId: string) => {
+    (primaryAssigneeId: string) => {
       if (!activeSlot || !selectedSchedule) return null;
-      if (slotPickerMode === "replace") return null;
       const row = selectedSchedule.assignments?.[activeSlot.occurrenceId] || {};
       const sourceEntry = Object.entries(row).find(([cellKey, cell]) => {
         if (cellKey === activeSlot.columnKey) return false;
-        return getCellPrimaryMemberId(cell) === memberId;
+        return getCellPrimaryMemberId(cell) === primaryAssigneeId;
       });
       if (!sourceEntry) return null;
       const [sourcePositionSlotKey] = sourceEntry;
@@ -3803,7 +3880,7 @@ const ScheduleTab = ({
         positionLabel: sourceColumn?.label || "another position",
       };
     },
-    [activeSlot, scheduleColumns, selectedSchedule, slotPickerMode],
+    [activeSlot, scheduleColumns, selectedSchedule],
   );
 
   const handleActiveSlotMemberSelect = (memberId: string) => {
@@ -3818,6 +3895,8 @@ const ScheduleTab = ({
         cellKey: activeSlot.columnKey,
         basePositionId: activeSlotMeta.positionId,
         memberId,
+        sourceServiceId: moveSource?.serviceId,
+        sourcePositionSlotKey: moveSource?.positionSlotKey,
       });
       return;
     }
@@ -3890,6 +3969,14 @@ const ScheduleTab = ({
       getBlockoutWarning,
       getServiceAvailabilityWarning,
     ],
+  );
+
+  const activeSlotGetGuestWarning = useCallback(
+    (guestId: string) => {
+      const moveSource = getActiveSlotMoveSource(guestId);
+      return moveSource ? `Will move from ${moveSource.positionLabel}` : "";
+    },
+    [getActiveSlotMoveSource],
   );
 
   const activeSlotGetAssignmentActionIssues = useCallback(
@@ -5588,17 +5675,17 @@ const ScheduleTab = ({
                 </div>
               </div>
 
-              {occurrencesStale && !showForm ? (
+              {(occurrencesStale || (canEdit && refreshBlocked)) && !showForm ? (
                 <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-amber-100">
-                    This schedule no longer matches its services (grouping or timing
-                    changed). Refresh it to update the rows — assignments are kept where
-                    the service and date still line up.
+                    {refreshBlocked
+                      ? "This schedule can’t be refreshed safely. Review its services in Service Setup before updating it. Existing rows and assignments have been kept."
+                      : "This schedule no longer matches its services (grouping or timing changed). Refresh it to update the rows — assignments are kept where the service and date still line up."}
                   </p>
                   <Button
                     variant="secondary"
                     iconSize="sm"
-                    disabled={applyingGrouping}
+                    disabled={applyingGrouping || refreshBlocked}
                     onClick={() => void refreshScheduleOccurrences()}
                   >
                     {applyingGrouping ? "Refreshing..." : "Refresh schedule"}
@@ -6063,6 +6150,8 @@ const ScheduleTab = ({
                         : handleActiveSlotCreateMember
                     }
                     recentGuests={recentScheduleGuests}
+                    editableGuestIds={editableScheduleGuestIds}
+                    getGuestWarning={activeSlotGetGuestWarning}
                     onAssignGuest={
                       slotPickerMode === "replace"
                         ? undefined
@@ -6070,6 +6159,16 @@ const ScheduleTab = ({
                     }
                     onEditGuest={
                       slotPickerMode === "replace" ? undefined : commitGuestEdit
+                    }
+                    onRemoveGuest={
+                      slotPickerMode === "replace"
+                        ? undefined
+                        : (guestId) => {
+                          const guest = selectedSchedule?.guests?.find(
+                            (item) => item.guestId === guestId,
+                          );
+                          if (guest) return commitGuestRemoval(guest);
+                        }
                     }
                     onClearAssignment={
                       slotPickerMode === "replace"
@@ -6177,6 +6276,16 @@ const ScheduleTab = ({
           )}
         </>
       )}
+      <ConfirmDialog
+        open={guestRemovalConfirmation !== null}
+        title="Remove guest from schedule?"
+        description={guestRemovalConfirmation ?? ""}
+        confirmLabel="Remove guest"
+        destructive
+        zIndexLevel={2}
+        onConfirm={() => resolveGuestRemoval(true)}
+        onCancel={() => resolveGuestRemoval(false)}
+      />
       <ScheduleBrowserDialog
         isOpen={isBrowsingSchedules}
         onClose={() => setIsBrowsingSchedules(false)}

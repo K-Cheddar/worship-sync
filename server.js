@@ -114,6 +114,7 @@ import {
   createChatImageUploadGuard,
 } from "./server/chatImageUploadGuard.js";
 import { resolveMinimumSupportedWebVersion } from "./server/webUpdatePolicy.js";
+import { readReleaseNotes } from "./server/releaseNotes.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -1662,6 +1663,14 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/assignments",
   authHandlers.updateTeamScheduleAssignment,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/guests/update",
+  authHandlers.updateTeamScheduleGuest,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/guests/remove",
+  authHandlers.removeTeamScheduleGuest,
 );
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/assignments/batch",
@@ -3707,6 +3716,16 @@ app.get("/api/changelog", async (req, res) => {
   } catch (error) {
     console.error("Error reading changelog:", error);
     res.status(500).json({ error: "Failed to load changelog" });
+  }
+});
+
+app.get("/api/release-notes", async (req, res) => {
+  try {
+    const notes = await readReleaseNotes(path.join(dirname, "release-notes"));
+    res.json({ notes });
+  } catch (error) {
+    console.error("Error reading release notes:", error);
+    res.status(500).json({ error: "Failed to load release notes" });
   }
 });
 

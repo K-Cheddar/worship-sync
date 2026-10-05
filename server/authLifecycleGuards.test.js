@@ -100,3 +100,41 @@ test("createHumanSession rejects empty credentials", async () => {
   assert.ok(res.statusCode >= 400);
   assert.equal(res.payload?.success, false);
 });
+
+test("workstation operator CSRF failures return a stable error code", async () => {
+  const res = createRes();
+  await authHandlers.updateWorkstationOperator(
+    createReq({
+      params: { deviceId: "workstation-1" },
+      session: {
+        auth: { sessionKind: "workstation" },
+        csrfToken: "expected-csrf",
+      },
+      body: { operatorName: "Sam" },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.payload?.errorMessage, "Could not verify this request.");
+  assert.equal(res.payload?.code, "AUTH_CSRF_MISMATCH");
+});
+
+test("every directly CSRF-protected auth mutation preserves the recovery contract", async (t) => {
+  const mutations = Object.entries(authHandlers).filter(([, handler]) => /await assertCsrf\(req\)/.test(handler.toString()));
+  assert.ok(mutations.length >= 30, "discover every protected handler rather than a fixed subset");
+  for (const [name, handler] of mutations) {
+    await t.test(name, async () => {
+      const res = createRes();
+      await handler(createReq({
+        params: { churchId: "church-1", deviceId: "device-1", inviteId: "invite-1", requestId: "request-1" },
+        session: { auth: { sessionKind: "workstation" }, csrfToken: "current-token" },
+        headers: { "x-csrf-token": "stale-token" },
+      }), res);
+      assert.equal(res.statusCode, 403);
+      assert.deepEqual(res.payload, {
+        success: false, errorMessage: "Could not verify this request.", code: "AUTH_CSRF_MISMATCH",
+      });
+    });
+  }
+});

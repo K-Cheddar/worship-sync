@@ -559,7 +559,7 @@ export const createNotificationIntentHandlers = ({
       }));
       return res.json({ success: true, intents: enriched, nextCursor: page.nextCursor, limit });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not load message previews.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not load message previews."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -591,7 +591,7 @@ export const createNotificationIntentHandlers = ({
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not load this message preview.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not load this message preview."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -788,7 +788,7 @@ export const createNotificationIntentHandlers = ({
         await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, { status: "pending", outcome: "unknown", failureCode: String(error?.code || "dispatch_interrupted").slice(0, 80), failureMessage: safeErrorMessage(error, "The provider outcome could not be confirmed."), updatedAt }, { merge: true }).catch(() => {});
         await setDoc(COLLECTIONS.notificationIntents, intent.intentId, { status: "unknown", attemptId, updatedAt }, { merge: true }).catch(() => {});
       }
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this message.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this message."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -867,7 +867,7 @@ export const createNotificationIntentHandlers = ({
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this individual intake message.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this individual intake message."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -888,7 +888,7 @@ export const createNotificationIntentHandlers = ({
       };
       return sendIntent({ ...req, params: { ...req.params, churchId, intentId: intent.intentId }, body: { confirmed: true, approvalVersion: req.body.approvalVersion } }, attemptResponse);
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this individual intake message.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this individual intake message."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -995,7 +995,7 @@ export const createNotificationIntentHandlers = ({
         throw error;
       }
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this replacement invitation.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this replacement invitation."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -1032,7 +1032,7 @@ export const createNotificationIntentHandlers = ({
         : await runMemoryClaim(intentId, () => resolve());
       return res.json({ success: true, intent: safeIntentProjection(intent) });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not close this replacement invitation.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not close this replacement invitation."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -1346,7 +1346,7 @@ export const createNotificationIntentHandlers = ({
       await setDoc(COLLECTIONS.notificationBatches, batchId, batch, { merge: true });
       return res.json({ success: true, batch: await formatBatchDetail(batch) });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this message batch.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare this message batch."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -1382,7 +1382,7 @@ export const createNotificationIntentHandlers = ({
       }
       return res.json({ success: true, batch: await formatBatchDetail(current) });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not load this message batch.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not load this message batch."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 
@@ -1477,7 +1477,7 @@ export const createNotificationIntentHandlers = ({
       await setDoc(COLLECTIONS.notificationBatches, batchId, nextBatch, { merge: true });
       return res.json({ success: true, batch: await formatBatchDetail(nextBatch) });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this message batch.") });
+      return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this message batch."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
   };
 

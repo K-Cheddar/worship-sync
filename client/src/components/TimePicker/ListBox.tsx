@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect } from "react";
 import { cn } from "@/utils/cnHelper";
-import Button from "@/components/ui/Button";
+import Button from "@/components/Button/Button";
 
 export interface ListboxProps<T extends string | number> {
   label?: string;
@@ -48,7 +48,6 @@ export function Listbox<T extends string | number>({
             key={String(item)}
             type="button"
             variant="none"
-            size="sm"
             role="option"
             aria-selected={String(value) === String(item)}
             onClick={() => onChange?.(item)}

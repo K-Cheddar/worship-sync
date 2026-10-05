@@ -1,5 +1,5 @@
 import { CircleCheck, Circle } from "lucide-react";
-import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
+import { RadioGroupItem, RadioGroupIndicator } from "@/components/ui/RadioGroup";
 import Icon from "../Icon/Icon";
 import { cn } from "@/utils/cnHelper";
 import { useId, type HTMLAttributes } from "react";
@@ -85,7 +85,7 @@ const RadioButton = ({
       ) : (
         labelBlock
       )}
-      <RadioGroupPrimitive.Item
+      <RadioGroupItem
         value={optionValue}
         disabled={disabled}
         id={itemId}
@@ -106,15 +106,15 @@ const RadioButton = ({
           overrideSmallMobile
           className="pointer-events-none absolute inset-0 group-data-[state=checked]:opacity-0"
         />
-        <RadioGroupPrimitive.Indicator className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <RadioGroupIndicator className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <Icon
             svg={CircleCheck}
             color="#67e8f9"
             overrideSmallMobile
             className="shrink-0"
           />
-        </RadioGroupPrimitive.Indicator>
-      </RadioGroupPrimitive.Item>
+        </RadioGroupIndicator>
+      </RadioGroupItem>
     </div>
   );
 };

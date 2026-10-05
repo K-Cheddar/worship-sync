@@ -43,7 +43,8 @@ const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(({
 }, forwardedRef) => {
   const { onFocus: onFocusProp, onInput: onInputProp, ...textareaDomRest } = rest;
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const id = useId();
+  const generatedId = useId();
+  const id = rest.id || generatedId;
 
   // Callback ref that sets both forwarded ref and internal ref
   const setTextAreaRef = useCallback((node: HTMLTextAreaElement | null) => {

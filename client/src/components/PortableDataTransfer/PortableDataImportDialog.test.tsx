@@ -74,8 +74,10 @@ describe("PortableDataImportDialog import flow", () => {
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" />);
     fireEvent.change(screen.getByLabelText("Choose Members CSV"), { target: { files: [file] } });
     await user.click(await screen.findByRole("button", { name: "Review import" }));
-    await user.selectOptions(await screen.findByLabelText("Resolve Position: Keys for row 2"), "position-b");
-    await user.selectOptions(screen.getByLabelText("Action for row 2"), "create");
+    await user.click(await screen.findByLabelText("Resolve Position: Keys for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Keys" })[1]);
+    await user.click(screen.getByLabelText("Action for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Create new" })[0]);
     await user.click(screen.getByRole("button", { name: "Import 1 row" }));
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ resolutions: [{ field: "positions", referenceIndex: 0, selectedId: "position-b" }] })]));
   });
@@ -95,11 +97,16 @@ describe("PortableDataImportDialog import flow", () => {
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" />);
     fireEvent.change(screen.getByLabelText("Choose Members CSV"), { target: { files: [file] } });
     await user.click(await screen.findByRole("button", { name: "Review import" }));
-    await user.selectOptions(await screen.findByLabelText("Resolve Team: Praise for row 2"), "praise-a");
-    await user.selectOptions(await screen.findByLabelText("Resolve Team: Media for row 2"), "media-b");
-    await user.selectOptions(await screen.findByLabelText("Resolve Position: Vocalist for row 2"), "vocal-b");
-    await user.selectOptions(await screen.findByLabelText("Resolve Position: Keys for row 2"), "keys-a");
-    await user.selectOptions(screen.getByLabelText("Action for row 2"), "create");
+    await user.click(await screen.findByLabelText("Resolve Team: Praise for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Praise" })[0]);
+    await user.click(await screen.findByLabelText("Resolve Team: Media for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Media" })[1]);
+    await user.click(await screen.findByLabelText("Resolve Position: Vocalist for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Vocalist" })[1]);
+    await user.click(await screen.findByLabelText("Resolve Position: Keys for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Keys" })[0]);
+    await user.click(screen.getByLabelText("Action for row 2"));
+    await user.click(screen.getAllByRole("option", { name: "Create new" })[0]);
     await user.click(screen.getByRole("button", { name: "Import 1 row" }));
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", [expect.objectContaining({ resolutions: [
       { field: "teams", referenceIndex: 0, selectedId: "praise-a" },

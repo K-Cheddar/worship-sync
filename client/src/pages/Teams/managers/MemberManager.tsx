@@ -5,6 +5,7 @@ import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
+import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
@@ -994,7 +995,7 @@ const MemberManager = ({
   };
   const qualificationAreaOptions = data.qualificationAreas.map((area) => ({
     value: area.areaId,
-    label: `${area.name}${teamNameById.get(area.teamId) ? ` (${teamNameById.get(area.teamId)})` : ""}`,
+    label: <span className="inline-flex items-center gap-2"><EntityIconBadge icon={area.icon || "Award"} className="size-5 shrink-0" iconClassName="size-3" /><span>{area.name}{teamNameById.get(area.teamId) ? ` (${teamNameById.get(area.teamId)})` : ""}</span></span>,
   }));
 
   const createEmptyQualification = (): TeamMemberQualification => ({
@@ -1740,7 +1741,7 @@ const MemberManager = ({
                 .filter((role) => role.teamId === team.teamId)
                 .map((role) => ({
                   value: role.roleId,
-                  label: `${role.name}${role.archivedAt ? " (archived)" : ""}`,
+                  label: <span className="inline-flex items-center gap-2"><EntityIconBadge icon={role.icon || "ShieldCheck"} className="size-5 shrink-0" iconClassName="size-3" /><span>{role.name}{role.archivedAt ? " (archived)" : ""}</span></span>,
                 })),
             ];
             return (

@@ -1,3 +1,4 @@
+import Checkbox from "../Checkbox/Checkbox";
 import HighlightWords from "../FilteredItems/HighlightWords";
 import { cn } from "../../utils/cnHelper";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
@@ -69,16 +70,7 @@ const SongSectionLyricCard = ({
         isChecked ? "border-cyan-500" : "border-transparent",
       )}
     >
-      <label className="flex cursor-pointer gap-3">
-        <input
-          type="checkbox"
-          className="mt-1 h-4 w-4 shrink-0 accent-cyan-500"
-          checked={isChecked}
-          onChange={onToggle}
-          aria-label={`Import ${label}`}
-        />
-        {body}
-      </label>
+      <Checkbox label={body} aria-label={`Import ${label}`} className="items-start gap-3" checked={isChecked} onCheckedChange={() => onToggle?.()} />
     </li>
   );
 };

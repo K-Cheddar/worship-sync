@@ -1,3 +1,4 @@
+import Spinner from "@/components/Spinner/Spinner";
 import type { CSSProperties } from "react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import cn from "classnames";
@@ -5,7 +6,6 @@ import {
   Eye,
   EyeOff,
   LayoutList,
-  LoaderCircle,
   Menu as MenuIcon,
   MessagesSquare,
   SlidersHorizontal,
@@ -857,7 +857,7 @@ export const BoardControllerContent = () => {
       ) : null}
       {restreamSession.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-gray-300">
-          <LoaderCircle className="animate-spin" size={16} />
+          <Spinner size="sm" className="shrink-0" />
           Loading Restream messages…
         </div>
       ) : null}
@@ -922,7 +922,7 @@ export const BoardControllerContent = () => {
       >
         {isLoading ? (
           <div className="flex items-center gap-2 text-gray-300">
-            <LoaderCircle className="animate-spin" size={18} />
+            <Spinner size="sm" width="18px" className="shrink-0" />
             Loading posts…
           </div>
         ) : liveActivityItems.length === 0 ? (

@@ -223,7 +223,8 @@ describe("FloatingWindow overlay ownership", () => {
     await screen.findByRole("button", { name: "Restore window" });
     await user.click(screen.getByRole("button", { name: "Restore window" }));
     await waitFor(() => expect(host).toHaveStyle({ visibility: "visible" }));
-    await user.click(screen.getByRole("button", { name: "Open minimize-test popover" }));
+    // Restoring the window restores the already-open popover. Clicking its
+    // trigger again would toggle it closed rather than test restoration.
     expect(within(host).getByText("Minimize-test overlay")).toBeInTheDocument();
   });
 

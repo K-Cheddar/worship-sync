@@ -91,7 +91,10 @@ test("requireMutationCsrf verifies mutating app requests", async () => {
   const deniedGuards = createAppSessionGuards({
     resolveRequestBootstrap: async () => null,
     assertRequestCsrf: async () => {
-      const error = new Error("Could not verify this request.");
+      const error = Object.assign(
+        new Error("Could not verify this request."),
+        { code: "AUTH_CSRF_MISMATCH" },
+      );
       error.statusCode = 403;
       throw error;
     },
@@ -100,6 +103,7 @@ test("requireMutationCsrf verifies mutating app requests", async () => {
   assert.equal(denied.res.statusCode, 403);
   assert.deepEqual(denied.res.payload, {
     error: "Could not verify this request.",
+    code: "AUTH_CSRF_MISMATCH",
   });
 });
 

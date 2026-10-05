@@ -55,7 +55,7 @@ jest.mock("../../../utils/itemNewlineCleanup", () => ({
   cleanItemNewlines: (item: ItemState) => mockCleanItemNewlines(item),
 }));
 
-jest.mock("../../../components/PopOver/PopOver", () => ({
+jest.mock("../../../components/PopOver/PopoverPanel", () => ({
   __esModule: true,
   default: ({ TriggeringButton }: { TriggeringButton: ReactNode }) => (
     <>{TriggeringButton}</>

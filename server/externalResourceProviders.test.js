@@ -33,8 +33,8 @@ test("normalizes supported provider share-link variants", () => {
     ],
     [
       "sharepoint",
-      "https://church.sharepoint.com/:v:/s/team/Evideo",
-      "https://church.sharepoint.com/:v:/s/team/Evideo?download=1",
+      "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token&web=1",
+      "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token&web=1&download=1",
     ],
     [
       "box",

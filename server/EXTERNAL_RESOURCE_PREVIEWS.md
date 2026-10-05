@@ -25,8 +25,16 @@ The resolver registry handles YouTube, Dropbox, Google Drive/Docs,
 OneDrive, SharePoint, and Box before falling back to direct URL metadata
 detection. Provider strategies only normalize public share links; they do not
 forward credentials or decide previewability. HTTP metadata, Content-Disposition,
-and URL extensions then determine the media type. HTML is classified as a web
-page and is never proxied.
+and URL extensions then determine the media type. HTML is never proxied; generic
+web pages may be shown in the existing sandboxed iframe path, while SharePoint
+HTML responses are treated as unresolved sharing pages.
+
+SharePoint anonymous/“Anyone with the link” URLs are supported when they resolve
+to publicly accessible file bytes. The resolver preserves the original sharing
+URL for external opening, probes the normalized download candidate, and follows
+only validated public redirects. Authenticated or private SharePoint resources
+are not supported; adding provider-specific authentication would be a separate
+future feature.
 
 `GET /api/resources/resolve?url=` requires an authenticated app session. It
 returns a provider-neutral descriptor. Previewable images, audio, video, and

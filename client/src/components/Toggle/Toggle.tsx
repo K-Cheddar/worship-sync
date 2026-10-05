@@ -1,14 +1,15 @@
-import { useId, ReactNode } from "react";
+import { useId, ReactNode, type AriaAttributes } from "react";
 import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/utils/cnHelper";
 import { LucideIcon } from "lucide-react";
 
-type ToggleProps = {
+type ToggleProps = AriaAttributes & {
   label?: string | ReactNode;
   value: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
   className?: string;
+  switchClassName?: string;
   /** Merged onto the text label when `label` is set (e.g. `text-xs`). */
   labelClassName?: string;
   /** `stacked`: label row then switch (e.g. form grids). Default keeps label and switch on one row. */
@@ -24,11 +25,13 @@ const Toggle = ({
   onChange,
   disabled,
   className,
+  switchClassName,
   labelClassName,
   layout = "inline",
   id: idProp,
   color,
   icon: Icon,
+  ...ariaProps
 }: ToggleProps) => {
   const generatedId = useId();
   const id = idProp || generatedId;
@@ -56,6 +59,8 @@ const Toggle = ({
       onCheckedChange={onChange}
       disabled={disabled}
       id={id}
+      className={switchClassName}
+      {...ariaProps}
       color={color}
       icon={
         Icon && (

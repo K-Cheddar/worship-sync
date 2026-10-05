@@ -131,6 +131,8 @@ const providerResolvers = [
     provider: "sharepoint",
     matches: (url) => isSharePointHost(url.hostname.toLowerCase()),
     resolve: (url) => ({
+      // Keep the tenant's path and every sharing token intact. SharePoint share
+      // links can route through a viewer unless explicitly asked to download.
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
     }),
   },

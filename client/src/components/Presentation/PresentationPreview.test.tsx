@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PresentationPreview from "./PresentationPreview";
+import ErrorBoundary from "../ErrorBoundary/ErrorBoundary";
 
 const mockDisplayWindow = jest.fn((_: any) => (
   <div data-testid="display-window" />
@@ -35,23 +36,43 @@ const makeRect = (width: number) => ({
 
 describe("PresentationPreview", () => {
   let headerWidth = 320;
+  let previewColumnHeight = 240;
+  let measuredQuickLinkHeight = 100;
+  let triggerResizeObservers = () => {};
+  let quickLinkTileMeasurements = 0;
 
   beforeEach(() => {
     mockDisplayWindow.mockClear();
+    headerWidth = 320;
+    previewColumnHeight = 240;
+    measuredQuickLinkHeight = 100;
+    quickLinkTileMeasurements = 0;
+    const observers: Array<{ trigger: () => void }> = [];
 
     class ResizeObserverMock {
       private readonly callback: ResizeObserverCallback;
+      private active = true;
 
       constructor(callback: ResizeObserverCallback) {
         this.callback = callback;
+        observers.push({
+          trigger: () => {
+            if (this.active) {
+              this.callback([], this as unknown as ResizeObserver);
+            }
+          },
+        });
       }
 
       observe() {
         this.callback([], this as unknown as ResizeObserver);
       }
 
-      disconnect() {}
+      disconnect() {
+        this.active = false;
+      }
     }
+    triggerResizeObservers = () => observers.forEach(({ trigger }) => trigger());
 
     Object.defineProperty(window, "ResizeObserver", {
       writable: true,
@@ -67,6 +88,15 @@ describe("PresentationPreview", () => {
         }
         if (this.getAttribute("data-testid") === "quick-link-rail-projector") {
           return 300;
+        }
+        return 0;
+      });
+
+    jest
+      .spyOn(HTMLElement.prototype, "clientHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("data-measure") === "presentation-preview-column") {
+          return previewColumnHeight;
         }
         return 0;
       });
@@ -96,8 +126,18 @@ describe("PresentationPreview", () => {
         if (measure === "presentation-toggle-label-width") {
           return makeRect(88) as DOMRect;
         }
+        if (measure === "quick-link-tile") {
+          return { ...makeRect(0), height: measuredQuickLinkHeight } as DOMRect;
+        }
         if (this.getAttribute("data-quick-link-tile") === "true") {
-          return { ...makeRect(0), height: 100 } as DOMRect;
+          quickLinkTileMeasurements += 1;
+          const label = this.textContent ?? "";
+          const height = label.includes("Link 3")
+            ? 180
+            : label.includes("Link 2")
+              ? 80
+              : 60;
+          return { ...makeRect(0), height } as DOMRect;
         }
         return makeRect(0) as DOMRect;
       });
@@ -406,6 +446,39 @@ describe("PresentationPreview", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("updates Clear and Live labels across responsive resize boundaries", () => {
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={basePresentation}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Live:" })).toBeInTheDocument();
+
+    headerWidth = 220;
+    act(() => triggerResizeObservers());
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+
+    headerWidth = 160;
+    act(() => triggerResizeObservers());
+    expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Live:" })).not.toBeInTheDocument();
+
+    headerWidth = 320;
+    act(() => triggerResizeObservers());
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Live:" })).toBeInTheDocument();
+  });
+
   it("uses full monitor layout only for monitor previews", () => {
     render(
       <PresentationPreview
@@ -632,7 +705,7 @@ describe("PresentationPreview", () => {
         configurable: true,
         value: originalVisibilityState,
       });
-      document.dispatchEvent(new Event("visibilitychange"));
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
     }
   });
 
@@ -698,6 +771,54 @@ describe("PresentationPreview", () => {
     expect(screen.getByRole("button", { name: "Link 5" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Link 6" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Link 2" })).toHaveLength(1);
+  });
+
+  it("settles Quick Link capacity from stable geometry across repeated resize boundaries", async () => {
+    const links = [1, 2, 3, 4, 5, 6].map((number) => ({
+      id: `q${number}`,
+      label: `Link ${number}`,
+      action: "slide",
+    }));
+    render(
+      <ErrorBoundary fallback={<div>Transmit preview failed</div>}>
+        <PresentationPreview
+          name="Projector"
+          outputId="projector"
+          info={basePresentation}
+          prevInfo={basePresentation}
+          isTransmitting={false}
+          toggleIsTransmitting={jest.fn()}
+          quickLinks={links as never[]}
+          timers={[]}
+        />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByRole("button", { name: "Show 5 more Quick Links" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 1" })).toBeInTheDocument();
+    expect(quickLinkTileMeasurements).toBe(0);
+
+    previewColumnHeight = 180;
+    measuredQuickLinkHeight = 100;
+    act(() => triggerResizeObservers());
+    expect(screen.getByRole("button", { name: "Show 5 more Quick Links" })).toBeInTheDocument();
+
+    previewColumnHeight = 400;
+    measuredQuickLinkHeight = 80;
+    act(() => triggerResizeObservers());
+    expect(screen.getByRole("button", { name: "Show 3 more Quick Links" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link 3" })).toBeInTheDocument();
+
+    previewColumnHeight = 180;
+    measuredQuickLinkHeight = 100;
+    const triggerResize = triggerResizeObservers;
+    for (let index = 0; index < 20; index += 1) {
+      act(() => triggerResize());
+      expect(screen.getByRole("button", { name: "Show 5 more Quick Links" })).toBeInTheDocument();
+    }
+
+    expect(quickLinkTileMeasurements).toBe(0);
+    expect(mockDisplayWindow.mock.calls.length).toBeLessThan(12);
+    expect(screen.queryByText("Transmit preview failed")).not.toBeInTheDocument();
   });
 
   it("does not render an overflow control when all links fit", () => {

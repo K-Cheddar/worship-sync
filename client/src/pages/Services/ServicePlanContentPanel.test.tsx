@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import Modal from "../../components/Modal/Modal";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchResource, getChurchResourceUrl, listChurchResources } from "../../api/auth";
@@ -53,8 +54,8 @@ jest.mock("../../components/YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => 
 
 jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
   __esModule: true,
-  default: ({ resource }: { resource: { title?: string; url?: string } | null }) => resource ? (
-    <div role="dialog" aria-label="Content preview" data-preview-url={resource.url}>{resource.title || resource.url}</div>
+  default: ({ resource, onClose }: { resource: { title?: string; url?: string } | null; onClose: () => void }) => resource ? (
+    <Modal isOpen onClose={onClose} title="Content preview" description="Preview resource" zIndexLevel={2}><div data-preview-url={resource.url}>{resource.title || resource.url}</div></Modal>
   ) : null,
 }));
 
@@ -431,6 +432,7 @@ describe("ServicePlanContentPanel resources", () => {
     await user.click(screen.getByRole("button", { name: "Preview file Service guide" }));
     expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveTextContent("Service guide");
     expect(onUpdate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
 
     await user.click(screen.getByRole("button", { name: /^Service guide/ }));
     expect(onUpdate).toHaveBeenCalledWith({
@@ -470,8 +472,9 @@ describe("ServicePlanContentPanel resources", () => {
     await user.click(screen.getByRole("button", { name: "Add resource" }));
     await user.click(screen.getByRole("menuitem", { name: "File" }));
     await user.click(await screen.findByRole("button", { name: "Preview file External guide" }));
-    expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveAttribute("data-preview-url", externalUrl);
+    expect(within(screen.getByRole("dialog", { name: "Content preview" })).getByText("External guide")).toHaveAttribute("data-preview-url", externalUrl);
     expect(onUpdate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
 
     await user.click(screen.getByRole("button", { name: /^External guide/ }));
     expect(onUpdate).toHaveBeenCalledWith({
@@ -571,7 +574,7 @@ describe("ServicePlanContentPanel resources", () => {
 
     expect(await screen.findByText("Video")).toBeInTheDocument();
     await userEvent.setup().click(screen.getAllByRole("button", { name: "Preview Service clip" })[0]);
-    expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveAttribute("data-preview-url", externalUrl);
+    expect(within(screen.getByRole("dialog", { name: "Content preview" })).getByText("Service clip")).toHaveAttribute("data-preview-url", externalUrl);
   });
 
   it("keeps legacy song and scripture attachments visible and detachable", async () => {
@@ -600,6 +603,39 @@ describe("ServicePlanContentPanel resources", () => {
     expect(onUpdate).toHaveBeenCalledWith({ songRef: undefined, songRefs: [] });
     await user.click(screen.getByRole("button", { name: "Remove scripture John 3:16 (NIV)" }));
     expect(onUpdate).toHaveBeenCalledWith({ scriptureRef: undefined, scriptureRefs: [] });
+  });
+
+  it("dismisses the final imported pending song and stays empty after rerender", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const importedElement = element({
+      type: "song",
+      sourceOccurrenceId: "source-occurrence-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Unmatched Song",
+      songRef: { kind: "pending", title: "Unmatched Song", lyricsText: "" },
+    });
+    const { rerender } = render(
+      <ServicePlanContentPanel element={importedElement} allowEdit onUpdate={onUpdate} />,
+    );
+
+    expect(screen.getByText("Not in library")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove song Unmatched Song" }));
+
+    const update = onUpdate.mock.calls[0][0];
+    expect(update).toMatchObject({
+      songRef: undefined,
+      songRefs: [],
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedOccurrenceId: "source-occurrence-1",
+    });
+    expect(update.sourceSongReferenceDismissedFingerprint).toBeTruthy();
+    rerender(
+      <ServicePlanContentPanel element={{ ...importedElement, ...update }} allowEdit onUpdate={onUpdate} />,
+    );
+
+    expect(screen.queryByText("Not in library")).not.toBeInTheDocument();
+    expect(screen.getByText("No song attached.")).toBeInTheDocument();
   });
 
   it("attaches multiple custom documents by ordered id references and removes one", async () => {

@@ -1,3 +1,4 @@
+import Modal from "../../components/Modal/Modal";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -51,6 +52,7 @@ import {
   type ServicePlanSongReference,
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
+import { getServicePlanSongReferencesUpdate } from "./servicePlanSongAttachmentUtils";
 import {
   EMPTY_RICH_TEXT,
   isRichTextEmpty,
@@ -240,10 +242,10 @@ const ServicePlanContentPanel = ({
     updateContent({ contentOrder: ordered.map((resource) => resource.id) });
   };
   const updateSongs = (next: ServicePlanSongReference[]) =>
-    updateContent({
-      songRef: undefined,
-      songRefs: next.map((songRef) => songRef.id ? songRef : { ...songRef, id: generateRandomId() }),
-    });
+    updateContent(getServicePlanSongReferencesUpdate(
+      element,
+      next.map((songRef) => songRef.id ? songRef : { ...songRef, id: generateRandomId() }),
+    ));
   const updateScriptures = (next: ServicePlanScriptureReference[]) =>
     updateContent({
       scriptureRef: undefined,
@@ -826,21 +828,18 @@ const ServicePlanContentPanel = ({
         />
       ) : null}
       {audioPickerOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Choose media">
-          <div className="max-h-[min(32rem,calc(100vh-2rem))] w-[min(30rem,100%)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-3 shadow-xl">
-            <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-white">Choose an MP3</h3><Button type="button" variant="tertiary" iconSize="sm" svg={X} aria-label="Close media picker" onClick={() => setAudioPickerOpen(false)} /></div>
+        <Modal isOpen onClose={() => { setAudioPickerOpen(false); }} title="Choose an MP3" ariaLabel="Choose media" description="Choose a library resource to attach to this plan." size="sm" surfaceClassName="rounded-lg border border-gray-700 bg-gray-900" contentPadding="p-3">
+
             {audioSongs.length ? <div className="space-y-1">{audioSongs.map((song) => {
               const audio = song.songAudio!;
               const alreadyAttached = resources.some((resource) => resource.type === "audio" && resource.mediaId === audio.id);
               return <Button key={`${song._id}:${audio.id}`} type="button" variant="tertiary" className="w-full justify-start" disabled={alreadyAttached} onClick={() => { updateResources([...resources, createServicePlanAudioResource({ title: audio.fileName, songId: song._id, audioId: audio.id })]); setAudioPickerOpen(false); }}><AudioLines className="size-4 shrink-0 text-amber-300" aria-hidden /><span className="truncate">{audio.fileName}</span><span className="ml-auto text-xs text-gray-500">{song.name}</span></Button>;
             })}</div> : <p className="text-sm text-gray-400">No MP3s are available in the song library yet.</p>}
-          </div>
-        </div>
+        </Modal>
       ) : null}
       {churchResourcePickerOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-label="Choose a file">
-          <div className="max-h-[min(32rem,calc(100vh-2rem))] w-[min(30rem,100%)] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 p-3 shadow-xl">
-            <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-white">Choose a file</h3><Button type="button" variant="tertiary" iconSize="sm" svg={X} aria-label="Close file picker" onClick={() => { setChurchResourcePickerOpen(false); setChurchResourceSearch(""); }} /></div>
+        <Modal isOpen onClose={() => { setChurchResourcePickerOpen(false); setChurchResourceSearch(""); }} title="Choose a file" ariaLabel="Choose a file" description="Choose a library resource to attach to this plan." size="sm" surfaceClassName="rounded-lg border border-gray-700 bg-gray-900" contentPadding="p-3">
+
             <Input
               label="Search files"
               hideLabel
@@ -865,8 +864,7 @@ const ServicePlanContentPanel = ({
               );
             })}</div> : null}
             {!churchResourceLoading && !churchResourceError && !filteredChurchResources.length ? <p className="text-sm text-gray-400">{churchResources.length ? "No files match your search." : "No files are available yet."}</p> : null}
-          </div>
-        </div>
+        </Modal>
       ) : null}
       <ContentPreviewDialog
         resource={previewResource}

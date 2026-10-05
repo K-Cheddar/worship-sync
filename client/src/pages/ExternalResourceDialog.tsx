@@ -57,9 +57,9 @@ export const ExternalResourceDialog = ({
     <Modal isOpen={open} onClose={close} title="Add external link" size="md" showCloseButton={!saving}>
       <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <p className="text-sm text-gray-300">Link to a document or resource stored elsewhere, such as Google Drive, Dropbox, OneDrive, SharePoint, or Box.</p>
-        <Input label="URL" type="url" required value={url} onChange={(value) => setUrl(String(value))} placeholder="https://" autoFocus />
-        <Input label="Name (optional)" value={name} onChange={(value) => setName(String(value))} />
-        <Input label="Description (optional)" value={description} onChange={(value) => setDescription(String(value))} />
+        <Input label="URL" labelClassName="text-white" type="url" required value={url} onChange={(value) => setUrl(String(value))} placeholder="https://" autoFocus />
+        <Input label="Name (optional)" labelClassName="text-white" value={name} onChange={(value) => setName(String(value))} />
+        <Input label="Description (optional)" labelClassName="text-white" value={description} onChange={(value) => setDescription(String(value))} />
         {saving ? <p className="text-sm text-gray-300" role="status">Checking link and adding resource…</p> : null}
         {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
         <div className="flex justify-end gap-2">

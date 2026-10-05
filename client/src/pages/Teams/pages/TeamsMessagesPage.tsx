@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Checkbox as UICheckbox } from "../../../components/ui/Checkbox";
+import ConfirmDialog from "../../../components/Modal/ConfirmDialog";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
@@ -345,7 +345,7 @@ const TeamsMessagesPage = () => {
           <div className="max-h-80 touch-pan-y overflow-y-auto overscroll-contain rounded-lg border border-gray-700 bg-gray-950/50">
             <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-gray-700 bg-gray-900 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <UICheckbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={loading || sending || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
+                <Checkbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={loading || sending || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
                 <span className="text-sm text-gray-200">Select all {visibleEligibleIds.length} eligible shown</span>
                 <span className="text-xs text-gray-400">{recipientRows.length} shown</span>
               </div>
@@ -410,19 +410,19 @@ const TeamsMessagesPage = () => {
       /> : null}
 
       {confirmOpen && reviewedBatch ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation">
-          <section role="dialog" aria-modal="true" aria-labelledby="confirm-batch-heading" className="w-full max-w-lg space-y-4 rounded-lg border border-gray-600 bg-gray-900 p-5 shadow-xl">
-            <h2 id="confirm-batch-heading" className="text-lg font-semibold text-white">Send this form?</h2>
-            <p className="text-sm text-gray-200">Send exactly {reviewedBatch.summary.eligible} selected message{reviewedBatch.summary.eligible === 1 ? "" : "s"} for this intake form? This batch totals {reviewedBatch.summary.totalSegments} SMS segments. Volunteers excluded from the reviewed list will not be contacted.</p>
+        <ConfirmDialog
+          open title="Send this form?"
+          description="Review the selected volunteers before sending this form."
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => void confirmBatch()}
+          confirmLabel={`Send ${reviewedBatch.summary.eligible} message${reviewedBatch.summary.eligible === 1 ? "" : "s"}`}
+          busy={sending}
+        >
+          <p className="mb-4 text-sm text-gray-200">Send exactly {reviewedBatch.summary.eligible} selected message{reviewedBatch.summary.eligible === 1 ? "" : "s"} for this intake form? This batch totals {reviewedBatch.summary.totalSegments} SMS segments. Volunteers excluded from the reviewed list will not be contacted.</p>
             <ul className="max-h-48 space-y-1 overflow-y-auto text-sm text-gray-300">
               {reviewedBatch.recipients.filter((recipient) => recipient.eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}
             </ul>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" disabled={sending} onClick={() => setConfirmOpen(false)}>Cancel</Button>
-              <Button disabled={sending} isLoading={sending} onClick={() => void confirmBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button>
-            </div>
-          </section>
-        </div>
+        </ConfirmDialog>
       ) : null}
     </main>
   );

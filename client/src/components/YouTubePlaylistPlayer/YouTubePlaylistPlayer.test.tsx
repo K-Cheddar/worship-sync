@@ -250,3 +250,59 @@ describe("YouTubePlaylistPlayer", () => {
     delete (window as Window & { YT?: unknown }).YT;
   });
 });
+
+
+describe("seeking across playback ranges", () => {
+  it.each([false, true])("preserves playback intent when playing is %s", async (playing) => {
+    const player = {
+      playVideo: jest.fn(), pauseVideo: jest.fn(), stopVideo: jest.fn(),
+      cueVideoById: jest.fn(), loadVideoById: jest.fn(), seekTo: jest.fn(),
+      getCurrentTime: jest.fn(() => 0), getDuration: jest.fn(() => 60),
+      setVolume: jest.fn(), destroy: jest.fn(),
+    };
+    let events: { onReady?: () => void; onStateChange?: (event: { data: number }) => void } = {};
+    const Player = jest.fn((_element: HTMLElement, options: { events?: typeof events }) => {
+      events = options.events || {};
+      queueMicrotask(() => events.onReady?.());
+      return player;
+    });
+    (window as Window & { YT?: unknown }).YT = { Player };
+    const ref = createRef<YouTubePlaylistPlayerHandle>();
+    const rangedQueue = [{ ...queue[0], playbackRanges: [{ startSeconds: 10, endSeconds: 20 }, { startSeconds: 30, endSeconds: 45 }] }];
+    const { unmount } = render(<YouTubePlaylistPlayer ref={ref} queue={rangedQueue} />);
+    await waitFor(() => expect(player.cueVideoById).toHaveBeenCalledTimes(1));
+    act(() => ref.current?.playAll());
+    act(() => events.onStateChange?.({ data: 1 }));
+    if (!playing) act(() => ref.current?.pause());
+    player.loadVideoById.mockClear();
+    player.cueVideoById.mockClear();
+    // Seek before PAUSED arrives: the operator's intent already owns the seek.
+    act(() => ref.current?.seekToPlaybackPosition(15));
+    const request = { videoId: "aaaaaaaaaaa", startSeconds: 35, endSeconds: 45 };
+    const expectedCalls = playing ? { load: [request], cue: [] } : { load: [], cue: [request] };
+    expect({ load: player.loadVideoById.mock.calls.map(([arg]) => arg), cue: player.cueVideoById.mock.calls.map(([arg]) => arg) }).toEqual(expectedCalls);
+    act(() => events.onStateChange?.({ data: playing ? 1 : 5 }));
+    expect(player.seekTo).not.toHaveBeenCalled();
+    // A second scrub in the cued range must also remain paused.
+    if (!playing) {
+      act(() => ref.current?.seekToPlaybackPosition(20));
+      act(() => events.onStateChange?.({ data: 5 }));
+    }
+    const selectedRequest = { ...request, startSeconds: playing ? 35 : 40 };
+    const expectedCueCalls = playing ? [] : [request, selectedRequest];
+    expect(player.cueVideoById.mock.calls.map(([arg]) => arg)).toEqual(expectedCueCalls);
+    expect(player.seekTo).not.toHaveBeenCalled();
+    act(() => ref.current?.resume());
+    expect(player.playVideo).toHaveBeenCalledTimes(playing ? 1 : 0);
+    expect(player.loadVideoById.mock.calls.map(([arg]) => arg)).toEqual([selectedRequest]);
+    act(() => events.onStateChange?.({ data: 1 }));
+    act(() => ref.current?.pause());
+    act(() => events.onStateChange?.({ data: 2 }));
+    act(() => ref.current?.seekToPlaybackPosition(5));
+    act(() => events.onStateChange?.({ data: 5 }));
+    expect(player.cueVideoById).toHaveBeenLastCalledWith({ videoId: "aaaaaaaaaaa", startSeconds: 15, endSeconds: 20 });
+    expect(player.seekTo).not.toHaveBeenCalled();
+    unmount();
+    delete (window as Window & { YT?: unknown }).YT;
+  });
+});

@@ -1327,14 +1327,15 @@ describe("ServicePlanElementRow", () => {
   it("removes an inferred source-classified song instead of recreating it", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
+    const importedElement = {
+      ...baseElement,
+      sourceElementTypeRaw: "Song",
+      title: plainTextToRichText("Welcome and announcements"),
+    };
 
-    renderRow({
+    const view = renderRow({
       onUpdate,
-      element: {
-        ...baseElement,
-        sourceElementTypeRaw: "Song",
-        title: plainTextToRichText("Welcome and announcements"),
-      },
+      element: importedElement,
     });
 
     await user.click(screen.getByRole("button", { name: "Remove song" }));
@@ -1343,7 +1344,37 @@ describe("ServicePlanElementRow", () => {
       songRef: undefined,
       songRefs: [],
       sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedFingerprint: expect.any(String),
+      sourceSongReferenceDismissedOccurrenceId: undefined,
     });
+    view.unmount();
+    renderRow({ element: { ...importedElement, ...onUpdate.mock.calls[0][0] } });
+    expect(screen.queryByRole("img", { name: /Not in library/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add content/i })).toBeInTheDocument();
+  });
+
+  it("does not dismiss the source song while another song remains", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        sourceElementTypeRaw: "Song",
+        songRefs: [
+          { kind: "pending", title: "Opening Song", lyricsText: "" },
+          { kind: "pending", title: "Response Song", lyricsText: "" },
+        ],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /Manage content for Pastoral Greetings/i }));
+    await user.click(await screen.findByRole("button", { name: "Remove song Response Song" }));
+
+    expect(onUpdate.mock.calls[0][0]).toMatchObject({
+      songRefs: [{ kind: "pending", title: "Opening Song" }],
+    });
+    expect(onUpdate.mock.calls[0][0].sourceSongReferenceDismissed).toBeUndefined();
   });
 
   it("shows a song added to the library after the import as linked", async () => {

@@ -259,4 +259,27 @@ describe("ContentPreviewDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("https://cdn.example.test/clip.mp4", "_blank", "noopener,noreferrer"));
   });
+
+  it("shows the resolver reason for an unsupported SharePoint link and keeps the original link available", async () => {
+    const originalUrl = "https://church.sharepoint.com/:b:/s/team/Eprivate?e=share-token";
+    const open = jest.spyOn(window, "open").mockReturnValue({} as Window);
+    mockGetExternalResourceResolution.mockResolvedValueOnce({
+      originalUrl,
+      externalUrl: originalUrl,
+      provider: "sharepoint",
+      title: "SharePoint",
+      mediaType: "unknown",
+      previewType: "unsupported",
+      previewUrl: null,
+      requiresProxy: false,
+      canPreview: false,
+      reason: "This SharePoint link requires sign-in.",
+    });
+
+    renderPreview({ id: "sharepoint-private", url: originalUrl });
+
+    expect(await screen.findByText("This SharePoint link requires sign-in.")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open in new tab" }));
+    await waitFor(() => expect(open).toHaveBeenCalledWith(originalUrl, "_blank", "noopener,noreferrer"));
+  });
 });

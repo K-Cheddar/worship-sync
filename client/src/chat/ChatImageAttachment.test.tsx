@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { getChatImageUrl } from "./api";
 import ChatImageAttachment from "./ChatImageAttachment";
+import type { ChatImageAttachment as ImageAttachment } from "./types";
 
 jest.mock("./api", () => ({
   getChatImageUrl: jest.fn(),
@@ -83,5 +84,25 @@ describe("ChatImageAttachment", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("Image expired");
     expect(mockedGetChatImageUrl).not.toHaveBeenCalled();
+  });
+
+  it("ignores a full image response after the message identity changes", async () => {
+    let resolveFull!: (value: Awaited<ReturnType<typeof getChatImageUrl>>) => void;
+    mockedGetChatImageUrl.mockImplementation(async (_church, message, variant) => {
+      if (message === "pending-message" && variant === "full") {
+        return new Promise((resolve) => { resolveFull = resolve; });
+      }
+      return { url: `https://r2.example.test/${message}/${variant}`, expiresAt: new Date(Date.now() + 900_000).toISOString() };
+    });
+    const attachment: ImageAttachment = { type: "image", id: "pending-image", contentType: "image/webp", sizeBytes: 1200, thumbnailSizeBytes: 300, width: 1200, height: 800, thumbnailWidth: 480, thumbnailHeight: 320, expiresAt: Date.now() + 900_000 };
+    const { rerender } = render(<ChatImageAttachment churchId="church-identity" messageId="pending-message" authorName="Alex" attachment={attachment} />);
+    await screen.findByRole("button", { name: "Open photo from Alex" });
+    fireEvent.click(screen.getByRole("button", { name: "Open photo from Alex" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Loading photo");
+    rerender(<ChatImageAttachment churchId="church-identity" messageId="new-message" authorName="Morgan" attachment={{ ...attachment, id: "new-image" }} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => resolveFull({ url: "https://r2.example.test/old/full", expiresAt: new Date(Date.now() + 900_000).toISOString() }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open photo from Morgan" }));
+    expect(await within(screen.getByRole("dialog")).findByAltText("Shared by Morgan")).toHaveAttribute("src", "https://r2.example.test/new-message/full");
   });
 });

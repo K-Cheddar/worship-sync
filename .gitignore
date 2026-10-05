@@ -71,3 +71,9 @@ email-templates/.preview/
 
 #codex-generated-files
 .codex/
+
+# jest cache
+jest/
+
+# node-compilers cache
+node-compile-cache/

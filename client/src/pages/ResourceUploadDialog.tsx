@@ -1,3 +1,4 @@
+import Input from "../components/Input/Input";
 import { useCallback, useRef, useState } from "react";
 import { FileText, Minimize2, Trash2, Upload } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -9,6 +10,7 @@ import { useNativeFileDrop } from "../containers/Media/useNativeFileDrop";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
 import { useOptionalTransferActions, useOptionalTransfers } from "../context/transferContext";
 import type { Transfer } from "../context/transferModel";
+import { formatStorageBytes } from "../components/StorageUsage/storageUsageFormatting";
 import type { ChurchResource } from "../types/churchResource";
 
 type ResourceUploadStatus = "queued" | "uploading" | "complete" | "error";
@@ -18,7 +20,6 @@ type PendingResource = {
   file: File;
   name: string;
   status: ResourceUploadStatus;
-  progress: number;
   error?: string;
 };
 
@@ -61,7 +62,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
     if (isUploading || newFiles.length === 0) return;
     setFiles((current) => [
       ...current,
-      ...newFiles.map((file) => ({ file, name: file.name, status: "queued" as const, progress: 0 })),
+      ...newFiles.map((file) => ({ file, name: file.name, status: "queued" as const })),
     ]);
     setError("");
   }, [isUploading]);
@@ -123,8 +124,8 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
     for (let index = 0; index < batchFiles.length; index += 1) {
       const pending = batchFiles[index];
       if (pending.status === "complete") continue;
-      batchFiles[index] = { ...pending, status: "uploading", progress: 0, error: undefined };
-      updateFile(index, { status: "uploading", progress: 0, error: undefined });
+      batchFiles[index] = { ...pending, status: "uploading", error: undefined };
+      updateFile(index, { status: "uploading", error: undefined });
       const progressBase = completedFiles;
       try {
         const resource = await uploadChurchResource({
@@ -132,15 +133,13 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
           file: pending.file,
           name: pending.name,
           onProgress: (progress) => {
-            batchFiles[index] = { ...batchFiles[index], progress };
-            updateFile(index, { progress });
             const overall = ((progressBase + progress / 100) / files.length) * 100;
             publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: "active", progress: overall, phase: { key: "uploading", label: `Uploading ${index + 1} of ${files.length}`, current: index + 1, total: files.length }, detail: pending.name });
           },
         });
         uploaded.push(resource);
-        batchFiles[index] = { ...batchFiles[index], status: "complete", progress: 100 };
-        updateFile(index, { status: "complete", progress: 100 });
+        batchFiles[index] = { ...batchFiles[index], status: "complete" };
+        updateFile(index, { status: "complete" });
         completedFiles += 1;
       } catch (uploadError) {
         failed += 1;
@@ -208,18 +207,18 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
             <p className="text-sm text-gray-300">Choose one or more files, or drag them here.</p>
             <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>Choose files</Button>
           </div>
-          <div className="max-h-64 space-y-2 overflow-y-auto">
+          <div className="max-h-64 space-y-2 overflow-y-auto scrollbar-variable">
             {files.length === 0 ? <p className="text-center text-sm text-gray-500">No files selected.</p> : null}
             {files.map((pending, index) => (
               <div key={`${pending.file.name}-${index}`} className="rounded border border-gray-700 bg-gray-950/40 p-3">
                 <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
-                    {!isUploading ? <input aria-label={`Resource name for ${pending.file.name}`} value={pending.name} onChange={(event) => updateName(index, event.target.value)} className="w-full truncate rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-gray-100" /> : <p className="truncate text-sm text-gray-100">{pending.name}</p>}
-                    <p className="truncate text-xs text-gray-500">Source: {pending.file.name} - {(pending.file.size / 1024 / 1024).toFixed(2)} MB</p>
+                    {!isUploading ? <Input aria-label={`Resource name for ${pending.file.name}`} value={pending.name} onChange={(value) => updateName(index, String(value))} inputClassName="w-full truncate rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-gray-100" /> : <p className="truncate text-sm text-gray-100">{pending.name}</p>}
+                    <p className="truncate text-xs text-gray-500">Source: {pending.file.name} - {formatStorageBytes(pending.file.size)}</p>
                   </div>
                   {!isUploading ? <div className="flex shrink-0 gap-1"><Button type="button" variant="tertiary" svg={Trash2} aria-label={`Remove ${pending.file.name}`} onClick={() => removeFile(index)} /></div> : null}
                 </div>
-                <TransferProgress transfer={{ id: `resource-file-${index}`, type: "Resource", name: pending.name, status: pending.status === "queued" ? "queued" : pending.status === "uploading" ? "active" : pending.status === "complete" ? "complete" : "failed", progress: pending.status === "queued" ? null : pending.progress, phase: { key: pending.status, label: pending.status === "uploading" ? "Uploading" : pending.status === "error" ? "Upload failed" : pending.status === "complete" ? "Complete" : "Queued" }, ...(pending.error ? { error: { message: pending.error } } : {}) }} variant="summary" />
+                {pending.error ? <p className="mt-2 text-xs text-red-300">{pending.error}</p> : null}
               </div>
             ))}
           </div>

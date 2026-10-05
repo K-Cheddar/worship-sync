@@ -1,3 +1,4 @@
+import Input from "../../../components/Input/Input";
 import { useState } from "react";
 import { Image, Pencil, Video, X } from "lucide-react";
 import { FileUploadProgress } from "../MediaUploadInput.types";
@@ -40,15 +41,15 @@ export const FileList = ({
             )}
             <div className="flex-1 min-w-0">
               {editingIndex === index && !isUploading ? (
-                <input
+                <Input
                   aria-label={`Display name for ${fileProgress.file.name}`}
                   value={fileProgress.displayName}
-                  onChange={(event) =>
-                    onDisplayNameChange(index, event.target.value)
+                  onChange={(value) =>
+                    onDisplayNameChange(index, String(value))
                   }
                   onBlur={() => setEditingIndex(null)}
                   autoFocus
-                  className="w-full rounded border border-gray-500 bg-gray-900 px-1 text-gray-100 outline-none focus:border-blue-400"
+                  inputClassName="w-full rounded border border-gray-500 bg-gray-900 px-1 text-gray-100 outline-none focus:border-blue-400"
                 />
               ) : (
                 <div className="text-gray-300 truncate">

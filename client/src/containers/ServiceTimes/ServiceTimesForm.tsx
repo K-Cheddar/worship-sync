@@ -1,3 +1,4 @@
+import Checkbox from "../../components/Checkbox/Checkbox";
 import {
   useCallback,
   useContext,
@@ -336,12 +337,7 @@ const ServiceTimesForm = ({
                             key={d.value}
                             className="flex items-center gap-3"
                           >
-                            <label className="flex w-32 shrink-0 cursor-pointer items-center gap-2">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 accent-cyan-400"
-                                checked={checked}
-                                onChange={() => {
+                            <Checkbox className="w-32 shrink-0" label={<span className="text-sm text-gray-200">{d.label}</span>} checked={checked} onCheckedChange={() => {
                                   if (checked) {
                                     setDaysOfWeek(
                                       daysOfWeek.filter(
@@ -360,12 +356,7 @@ const ServiceTimesForm = ({
                                       { day: d.value, time: defaultTime },
                                     ]);
                                   }
-                                }}
-                              />
-                              <span className="text-sm text-gray-200">
-                                {d.label}
-                              </span>
-                            </label>
+                                }} />
                             {/* Always rendered to prevent layout shift; hidden via visibility when unchecked */}
                             <div
                               className={cn(
