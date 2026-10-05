@@ -116,18 +116,23 @@ const MemberAccessSheet = () => {
   const selectedMemberAccess = member ? getMemberAccessValue(member) : "full";
   const selectedInviteAccess = inviteDraft.access;
   const selectedAccess = isMemberTarget ? selectedMemberAccess : selectedInviteAccess;
+  const isMemberTierSelected = selectedAccess === "member";
   const currentMemberAccess = member
     ? toMemberAccessOption(member.appAccess)
     : "full";
   const currentTeamsAccess = member
     ? toTeamsAccessOption(member.permissions, member.role)
     : inviteDraft.teamsAccess;
-  const selectedTeamsAccess = member
+  const draftTeamsAccess = member
     ? getMemberTeamsAccessValue(member)
     : inviteDraft.teamsAccess;
-  const selectedServicesAccess = member
+  const draftServicesAccess = member
     ? getMemberServicesAccessValue(member)
     : inviteDraft.servicesAccess;
+  const selectedTeamsAccess = isMemberTierSelected ? "none" : draftTeamsAccess;
+  const selectedServicesAccess = isMemberTierSelected
+    ? "none"
+    : draftServicesAccess;
   const currentServicesAccess = member
     ? toServicesAccessOption(member.permissions, member.role)
     : inviteDraft.servicesAccess;
@@ -160,9 +165,10 @@ const MemberAccessSheet = () => {
     (isMemberTarget || selectedInviteAccess !== "admin");
   const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
   const servicesEditingIncluded =
-    isAdminInviteAccess ||
-    selectedTeamsAccess === "edit" ||
-    member?.role === "admin";
+    !isMemberTierSelected &&
+    (isAdminInviteAccess ||
+      selectedTeamsAccess === "edit" ||
+      member?.role === "admin");
 
   const headerTitle = isMemberTarget
     ? memberLabel
@@ -281,15 +287,27 @@ const MemberAccessSheet = () => {
         ...prev,
         [member.membershipId]: value as MemberAccessOption,
       }));
+      if (value === "member") {
+        setMemberTeamsAccessDrafts((prev) => ({
+          ...prev,
+          [member.membershipId]: "none",
+        }));
+        setMemberServicesAccessDrafts((prev) => ({
+          ...prev,
+          [member.membershipId]: "none",
+        }));
+      }
       return;
     }
 
     const nextAccess = value as InviteAccessOption;
     updateInviteDraft({
       access: nextAccess,
-      ...(nextAccess === "admin"
-        ? { teamsAccess: "edit" as TeamsPermission, teamScopeIds: [] }
-        : {}),
+      ...(nextAccess === "member"
+        ? { teamsAccess: "none", servicesAccess: "none" }
+        : nextAccess === "admin"
+          ? { teamsAccess: "edit" as TeamsPermission, teamScopeIds: [] }
+          : {}),
     });
   };
 
@@ -408,14 +426,27 @@ const MemberAccessSheet = () => {
             <Select
               id={teamsAccessFieldId}
               label="Global Teams access"
-              value={isAdminInviteAccess ? "edit" : selectedTeamsAccess}
+              value={
+                isMemberTierSelected
+                  ? "none"
+                  : isAdminInviteAccess
+                    ? "edit"
+                    : selectedTeamsAccess
+              }
               options={teamsPageAccessOptions}
+              selectedValueLabel={isMemberTierSelected ? "None" : undefined}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isAdminInviteAccess}
+              disabled={isMemberTierSelected || isAdminInviteAccess}
               onChange={(value) =>
                 handleTeamsAccessChange(value as TeamsPermission)
               }
             />
+            {isMemberTierSelected ? (
+              <p className="text-xs text-gray-400">
+                Member access does not include church-wide Teams access. Use the
+                team checkboxes below to let this person manage specific teams.
+              </p>
+            ) : null}
 
             {selectedTeamsAccess === "edit" || isAdminInviteAccess ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
@@ -467,14 +498,26 @@ const MemberAccessSheet = () => {
             <Select
               id={getServicesAccessFieldId(target)}
               label="Service editing"
-              value={servicesEditingIncluded ? "edit" : selectedServicesAccess}
+              value={
+                isMemberTierSelected
+                  ? "none"
+                  : servicesEditingIncluded
+                    ? "edit"
+                    : selectedServicesAccess
+              }
               options={serviceEditingAccessOptions}
+              selectedValueLabel={isMemberTierSelected ? "None" : undefined}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={servicesEditingIncluded}
+              disabled={isMemberTierSelected || servicesEditingIncluded}
               onChange={(value) =>
                 handleServicesAccessChange(value as ServicesPermission)
               }
             />
+            {isMemberTierSelected ? (
+              <p className="text-xs text-gray-400">
+                Member access does not include Services editing.
+              </p>
+            ) : null}
             {servicesEditingIncluded ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
                 {member?.role === "admin" || isAdminInviteAccess

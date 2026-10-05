@@ -65,14 +65,24 @@ export const buildPermissionsFromAccessDraft = (
     InviteAccessDraft,
     "access" | "teamsAccess" | "servicesAccess" | "teamScopeIds"
   >,
-): MemberPermissions => ({
-  teams: draft.access === "admin" ? "edit" : draft.teamsAccess,
-  services: draft.access === "admin" ? "edit" : draft.servicesAccess,
-  teamScopes:
-    draft.access === "admin" || draft.teamsAccess === "edit"
-      ? {}
-      : buildTeamScopesPermissions(draft.teamScopeIds),
-});
+): MemberPermissions => {
+  if (draft.access === "member") {
+    return {
+      teams: "none",
+      services: "none",
+      teamScopes: buildTeamScopesPermissions(draft.teamScopeIds),
+    };
+  }
+
+  return {
+    teams: draft.access === "admin" ? "edit" : draft.teamsAccess,
+    services: draft.access === "admin" ? "edit" : draft.servicesAccess,
+    teamScopes:
+      draft.access === "admin" || draft.teamsAccess === "edit"
+        ? {}
+        : buildTeamScopesPermissions(draft.teamScopeIds),
+  };
+};
 
 export const resolveInviteAccessPayload = (
   draft: InviteAccessDraft,
@@ -99,6 +109,9 @@ export const getInviteAccessSummaryLabel = (draft: InviteAccessDraft) => {
     draft.servicesAccess === "edit" ? " · Edit services and plans" : "";
   if (draft.access === "admin") {
     return `${accessLabel} · Edit all teams and services`;
+  }
+  if (draft.access === "member") {
+    return `${accessLabel} · ${draft.teamScopeIds.length > 0 ? "Per-team edit only" : "No global Teams access"}`;
   }
   if (draft.teamsAccess === "edit") {
     return `${accessLabel} · Edit all teams and services`;

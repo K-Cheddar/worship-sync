@@ -40,6 +40,50 @@ describe("accountInviteAccess", () => {
     });
   });
 
+  it("strips stale broad permissions from member-tier invite payloads", () => {
+    expect(
+      buildPermissionsFromAccessDraft({
+        access: "member",
+        teamsAccess: "edit",
+        servicesAccess: "edit",
+        teamScopeIds: ["worship"],
+      }),
+    ).toEqual({
+      teams: "none",
+      services: "none",
+      teamScopes: { worship: "edit" },
+    });
+  });
+
+  it("serializes member access with scoped team edit for new and pending invites", () => {
+    const payload = resolveInviteAccessPayload({
+      access: "member",
+      teamsAccess: "edit",
+      servicesAccess: "edit",
+      teamScopeIds: ["worship"],
+    });
+    expect(payload).toEqual({
+      role: "member",
+      appAccess: "member",
+      permissions: {
+        teams: "none",
+        services: "none",
+        teamScopes: { worship: "edit" },
+      },
+    });
+  });
+
+  it("summarizes a member-tier invite by its effective scoped permissions", () => {
+    expect(
+      getInviteAccessSummaryLabel({
+        access: "member",
+        teamsAccess: "edit",
+        servicesAccess: "edit",
+        teamScopeIds: ["worship"],
+      }),
+    ).toBe("Schedule only · Per-team edit only");
+  });
+
   it("resolves invite payloads with admin Teams access", () => {
     expect(
       resolveInviteAccessPayload({
