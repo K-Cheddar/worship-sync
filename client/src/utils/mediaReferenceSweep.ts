@@ -597,7 +597,7 @@ export async function sweepMediaReferencesBeforeDelete(
     for (let index = applied.length - 1; index >= 0; index -= 1) {
       const saved = applied[index];
       try {
-        const previousDocument = {
+        const previousDocument: Record<string, unknown> = {
           ...saved.previous,
           ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
         };

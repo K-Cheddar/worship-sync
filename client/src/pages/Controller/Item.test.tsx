@@ -103,6 +103,71 @@ describe("Controller Item page", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it("hydrates exact song reads into arrangement slides", async () => {
+    const dbGet = jest.fn().mockResolvedValue({
+      _id: "song-123",
+      name: "Recovered Song",
+      type: "song",
+      selectedArrangement: 1,
+      slides: [{
+        id: "legacy-slide",
+        type: "Verse",
+        name: "Verse 1",
+        boxes: [],
+        monitorCurrentBandBoxes: [{ id: "current", fontSize: 30 }],
+        monitorNextBandBoxes: [{ id: "next", fontSize: 28 }],
+      }],
+      arrangements: [
+        {
+          id: "populated",
+          name: "Other",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [{ id: "other-slide", type: "Verse", name: "Verse", boxes: [] }],
+        },
+        {
+          id: "selected",
+          name: "Selected",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [],
+        },
+      ],
+    } as unknown as DBItem);
+    const store = createTestStore();
+    const controllerContext = createMockControllerContext({
+      db: createMockPouchDB({ get: dbGet }),
+    });
+    const itemId = window.btoa(encodeURI("song-123"));
+    const listId = window.btoa(encodeURI("list-1"));
+
+    render(
+      <Provider store={store}>
+        <ControllerInfoContext.Provider value={controllerContext as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={[`/controller/item/${itemId}/${listId}`]}>
+              <Routes>
+                <Route path="/controller/item/:itemId/:listId" element={<Item />} />
+              </Routes>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await screen.findByTestId("slide-editor");
+    const loaded = store.getState().undoable.present.item;
+    expect(dbGet).toHaveBeenCalledWith("song-123");
+    expect(loaded.slides).toEqual([]);
+    expect(loaded.arrangements[0].slides[0].id).toBe("other-slide");
+    expect(loaded.arrangements[1].slides[0].id).toBe("legacy-slide");
+    expect(loaded.arrangements[1].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(loaded.arrangements[1].monitorLayout).toEqual({
+      currentFontSizePx: 30,
+      nextFontSizePx: 28,
+    });
+  });
+
   it("backfills formatted sections for free items missing them", async () => {
     const dbGet = jest.fn().mockResolvedValue({
       _id: "item-123",

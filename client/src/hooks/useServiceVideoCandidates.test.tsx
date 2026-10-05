@@ -1199,4 +1199,32 @@ describe("useServiceVideoCandidates", () => {
       "remote:current-b",
     ]);
   });
+
+  it("hydrates legacy song slides before discovering current-item media", async () => {
+    const legacySlide = slide("legacy-video-slide", [
+      { id: "legacy-video", mediaInfo: video("legacy-video", "https://cdn.example.com/legacy.mp4") },
+    ]);
+    const legacySong = {
+      _id: "song-legacy",
+      name: "Legacy Song",
+      type: "song",
+      selectedArrangement: 0,
+      slides: [legacySlide],
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
+        slides: [],
+      }],
+    } as unknown as DBItem;
+    const { result } = renderCandidates(
+      [legacySong],
+      { currentItemId: legacySong._id, scope: "current-item", maxSurfaces: 8 },
+    );
+
+    await waitFor(() => expect(result.current.candidates).toHaveLength(1));
+    expect(result.current.candidates[0].mediaKey).toBe("remote:legacy-video");
+  });
 });

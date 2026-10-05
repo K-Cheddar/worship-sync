@@ -45,6 +45,7 @@ import {
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
 import { getActiveItemSlides } from "../utils/activeItemSlides";
+import { loadItemWithSongHydration } from "../utils/songPersistence";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -675,7 +676,7 @@ export const useServiceVideoCandidates = ({
           apply([]);
           return;
         }
-        const currentDoc = await db.get(currentItemId);
+        const currentDoc = await loadItemWithSongHydration(db, currentItemId);
         if (generation !== loadGenerationRef.current) return;
         activeListIdRef.current = undefined;
         serviceItemIdsRef.current = new Set([currentItemId]);

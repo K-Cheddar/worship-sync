@@ -161,7 +161,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     }
   };
 
-  if (type !== "free" && type !== "song")
+  if (type !== "free")
     return (
       <section className="flex flex-wrap max-lg:pb-4 invisible">
         <Button svg={Image} iconSize="lg" padding="py-1 px-0" className="w-0" />

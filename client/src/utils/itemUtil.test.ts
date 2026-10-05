@@ -387,6 +387,36 @@ Let Your fire fall`;
       expect(item._id).toBe("song-fixed-id");
     });
 
+    it("creates songs through the canonical persistence boundary", async () => {
+      const db = {
+        get: jest.fn().mockRejectedValue(Object.assign(new Error("missing"), { status: 404 })),
+        put: jest.fn().mockResolvedValue({ ok: true, id: "song-fixed-id", rev: "1-song" }),
+      } as unknown as PouchDB.Database;
+
+      await createNewSong({
+        name: "Canonical Song",
+        formattedLyrics: [],
+        songOrder: [],
+        list: [],
+        db,
+        background: "#000",
+        brightness: 100,
+      });
+
+      expect(db.put).toHaveBeenCalledTimes(1);
+      const persisted = (db.put as jest.Mock).mock.calls[0][0];
+      expect(persisted.type).toBe("song");
+      expect(persisted).not.toHaveProperty("slides");
+      expect(persisted).not.toHaveProperty("monitorLayout");
+      expect(persisted.arrangements[0].slides).toHaveLength(2);
+      expect(persisted.arrangements[0].monitorLayout).toEqual(
+        expect.objectContaining({
+          currentFontSizePx: expect.any(Number),
+          nextFontSizePx: expect.any(Number),
+        }),
+      );
+    });
+
     it("persists song metadata on new songs when provided", async () => {
       const { formattedLyrics, songOrder } = createSections({
         unformattedLyrics: "Verse 1",

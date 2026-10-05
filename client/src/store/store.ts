@@ -34,8 +34,11 @@ import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
 import {
   getActiveItemSlides,
   normalizeItemSlides,
-  normalizeSongForPersistence,
 } from "../utils/activeItemSlides";
+import {
+  loadItemWithSongHydration,
+  saveSong,
+} from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -981,7 +984,7 @@ listenerMiddleware.startListening({
     // update Item
     const item = state.undoable.present.item;
     if (!db) return;
-    let db_item: DBItem = await db.get(item._id);
+    let db_item: DBItem = await loadItemWithSongHydration(db, item._id);
     listenerApi.throwIfCancelled();
 
     const updatedAt = new Date().toISOString();
@@ -1007,20 +1010,18 @@ listenerMiddleware.startListening({
       formattedSections: item.formattedSections,
       updatedAt,
     };
-    const persistenceItem = item.type === "song"
-      ? normalizeSongForPersistence(nextItem)
-      : nextItem;
-    db_item = applyPouchAudit(db_item, persistenceItem, {
-      // Doc came from db.get — always an update (legacy rows may lack createdAt).
-      isNew: false,
-    });
     listenerApi.throwIfCancelled();
-    const result = await db.put(db_item);
+    if (item.type === "song") {
+      db_item = await saveSong(db, nextItem, db_item);
+    } else {
+      db_item = applyPouchAudit(db_item, nextItem, {
+        // Doc came from db.get — always an update (legacy rows may lack createdAt).
+        isNew: false,
+      });
+      const result = await db.put(db_item);
+      db_item = { ...db_item, _rev: result.rev };
+    }
     listenerApi.throwIfCancelled();
-    db_item = {
-      ...db_item,
-      _rev: result.rev,
-    };
     listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
     listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
 
@@ -1660,13 +1661,13 @@ listenerMiddleware.startListening({
       item = currentItem as unknown as DBItem;
     } else if (db) {
       try {
-        item = (await db.get(itemId)) as DBItem;
+        item = await loadItemWithSongHydration(db, itemId);
       } catch {
         return;
       }
     }
     if (!item) return;
-    item = normalizeItemSlides(item);
+    if (item.type !== "song") item = normalizeItemSlides(item);
     const slides = getActiveItemSlides(item);
     if (slides.length < 2) return;
     const wrapUpSlide = slides[1];
