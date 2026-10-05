@@ -42,7 +42,7 @@ const GUEST_ALLOWED_EXACT = new Set([
 ]);
 
 /**
- * Everything a member-tier human may open.
+ * The member-tier human's strict allowlist outside the Teams workspace.
  *
  * An **allowlist**, not a subtraction from the human list: this tier exists so a
  * volunteer never reaches an operator surface, and expressing that as "human
@@ -50,14 +50,15 @@ const GUEST_ALLOWED_EXACT = new Set([
  * named here is refused, so a new operator page is closed to members by default.
  */
 const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule"]);
-const MEMBER_ALLOWED_PREFIXES = ["/teams-and-services"];
+
+/** Teams workspace is safe to attempt for any human; bootstrap is authoritative. */
+export const isTeamsWorkspacePath = (pathname: string): boolean =>
+  pathname === "/teams-and-services" ||
+  pathname.startsWith("/teams-and-services/");
 
 /** Whether a schedule-only member may open this path. Deny by default. */
 export const isMemberAllowedPath = (pathname: string): boolean =>
-  MEMBER_ALLOWED_EXACT.has(pathname) ||
-  MEMBER_ALLOWED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  MEMBER_ALLOWED_EXACT.has(pathname);
 
 const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account", "/aux-controller"];
 const HUMAN_ALLOWED_EXACT = new Set([
@@ -193,7 +194,7 @@ export const isRouteAllowedForSession = (
     // links on Home is presentation only, and typing the URL would otherwise
     // still open a read-only controller.
     if (context.access === "member") {
-      return isMemberAllowedPath(pathname);
+      return isMemberAllowedPath(pathname) || isTeamsWorkspacePath(pathname);
     }
     if (
       !matchesAllowedRoute(
@@ -201,6 +202,7 @@ export const isRouteAllowedForSession = (
         HUMAN_ALLOWED_EXACT,
         HUMAN_ALLOWED_PREFIXES,
       ) &&
+      !isTeamsWorkspacePath(pathname) &&
       !(
         (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) ||
         (pathname === CURRENT_SERVICE_VIEW_PATH &&

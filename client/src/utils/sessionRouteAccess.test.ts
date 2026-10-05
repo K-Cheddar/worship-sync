@@ -145,13 +145,42 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
-  it("blocks teams routes for human sessions without Teams access", () => {
+  it.each(["member", "view", "music", "full"] as const)(
+    "allows a %s human to attempt Teams without stored permission",
+    (access) => {
+      const context = {
+        sessionKind: "human" as const,
+        loginState: "success" as const,
+        access,
+        permissions: { teams: "none" as const, services: "none" as const, teamScopes: {} },
+      };
+      expect(isRouteAllowedForSession("/teams-and-services", context)).toBe(true);
+      expect(
+        isRouteAllowedForSession("/teams-and-services/schedules", context),
+      ).toBe(true);
+      expect(isRouteAllowedForSession("/teams-and-services-extra", context)).toBe(
+        false,
+      );
+    },
+  );
+
+  it("keeps view and music restrictions outside the Teams workspace", () => {
+    for (const access of ["view", "music"] as const) {
+      expect(
+        isRouteAllowedForSession("/boards/controller", {
+          sessionKind: "human",
+          loginState: "success",
+          access,
+          permissions: { teams: "none", services: "none", teamScopes: {} },
+        }),
+      ).toBe(false);
+    }
     expect(
-      isRouteAllowedForSession("/teams/schedules", {
+      isRouteAllowedForSession("/projector", {
         sessionKind: "human",
         loginState: "success",
-        access: "full",
-        permissions: { teams: "none" },
+        access: "view",
+        permissions: { teams: "none", services: "none", teamScopes: {} },
       }),
     ).toBe(false);
   });
@@ -367,7 +396,6 @@ describe("schedule-only member routing", () => {
     expect(isRouteAllowedForSession("/credits-editor", member)).toBe(false);
     expect(isRouteAllowedForSession("/account", member)).toBe(false);
     expect(isRouteAllowedForSession("/current-service", member)).toBe(false);
-    expect(isRouteAllowedForSession("/account", member)).toBe(false);
     expect(isRouteAllowedForSession("/resources", member)).toBe(false);
   });
 

@@ -8,6 +8,7 @@ import { useCloseOnEscape } from "../hooks/useCloseOnEscape";
 import { getElectronDisplayWindowKeyFromLocation } from "../utils/electronDisplayWindowFromPath";
 import {
   isMemberAllowedPath,
+  isTeamsWorkspacePath,
   isWorkstationDisplaySurfacePath,
 } from "../utils/sessionRouteAccess";
 
@@ -140,7 +141,8 @@ const AuthGate = ({
   if (
     sessionKind === "human" &&
     access === "member" &&
-    !isMemberAllowedPath(location.pathname)
+    !isMemberAllowedPath(location.pathname) &&
+    !isTeamsWorkspacePath(location.pathname)
   ) {
     return <Navigate to="/my-schedule" replace />;
   }

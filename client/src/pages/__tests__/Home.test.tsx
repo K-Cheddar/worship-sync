@@ -210,7 +210,51 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
-  it("gives member-tier users a My teams entry without operator or admin cards", () => {
+  it.each(["member", "view", "music", "full"] as const)(
+    "gives a %s human without normal Teams access a My teams entry",
+    (access) => {
+      render(
+        <MemoryRouter initialEntries={["/home"]}>
+          <GlobalInfoContext.Provider
+            value={
+              createMockGlobalContext({
+                access,
+                role: access === "member" ? "member" : "volunteer",
+                permissions: {
+                  teams: "none",
+                  services: "none",
+                  teamScopes: {},
+                },
+                canViewTeams: false,
+                canViewServices: false,
+                canEditTeams: false,
+                canEditServices: false,
+              }) as any
+            }
+          >
+            <ControllerInfoContext.Provider
+              value={createMockControllerContext() as any}
+            >
+              <Home />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole("link", { name: /My teams/ })).toHaveAttribute(
+        "href",
+        "/teams-and-services",
+      );
+      expect(
+        screen.queryByRole("link", { name: /^Teams /i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText("View your team rosters, positions, and schedules."),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("keeps member-tier Home free of admin and operator cards", () => {
     render(
       <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
@@ -235,15 +279,32 @@ describe("Home", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("link", { name: /My teams/ })).toHaveAttribute(
-      "href",
-      "/teams-and-services",
-    );
-    expect(screen.getByText("View your team rosters, positions, and schedules.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Resources/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Service Workspace/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Presentation/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the existing Teams entry without a duplicate My teams card", () => {
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ canViewTeams: true }) as any}
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: /^Teams /i })).toHaveAttribute(
+      "href",
+      "/teams-and-services",
+    );
+    expect(screen.queryByRole("link", { name: /My teams/ })).not.toBeInTheDocument();
   });
 
   it("shows a pending state on a home card before navigation completes", async () => {

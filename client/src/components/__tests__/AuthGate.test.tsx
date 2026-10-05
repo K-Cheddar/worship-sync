@@ -43,6 +43,14 @@ const renderWithGate = (
             }
           />
           <Route
+            path="/teams-and-services/*"
+            element={
+              <AuthGate allowedKinds={allowedKinds}>
+                <div data-testid="teams-workspace">Teams</div>
+              </AuthGate>
+            }
+          />
+          <Route
             path="/workstation/operator"
             element={<div data-testid="operator-page">Operator</div>}
           />
@@ -67,6 +75,15 @@ describe("AuthGate", () => {
       ["human", "workstation"]
     );
     expect(screen.getByTestId("protected")).toBeInTheDocument();
+  });
+
+  it("lets member-tier humans attempt the Teams workspace", () => {
+    renderWithGate(
+      { sessionKind: "human", access: "member" },
+      ["human"],
+      "/teams-and-services/schedules",
+    );
+    expect(screen.getByTestId("teams-workspace")).toBeInTheDocument();
   });
 
   it("sends workstation sessions without an operator name to the operator prompt", async () => {

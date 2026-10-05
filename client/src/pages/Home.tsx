@@ -414,7 +414,7 @@ const Welcome = () => {
   const showCurrentServiceViewer =
     !isMemberAccess && Boolean(canViewServices);
   const showMySchedule = isLoggedIn && isHumanSession;
-  const showMyTeams = isLoggedIn && isHumanSession && isMemberAccess;
+  const showMyTeams = isLoggedIn && isHumanSession && !canViewTeams;
   const visibleSecondaryControllers = isMemberAccess
     ? []
     : isMusicAccess

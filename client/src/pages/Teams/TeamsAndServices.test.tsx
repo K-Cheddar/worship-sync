@@ -3631,28 +3631,38 @@ describe("Teams", () => {
     expect(screen.queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
   });
 
-  it("shows a no-team-access state after the authoritative bootstrap 403", async () => {
-    mockGetTeamsBootstrap.mockRejectedValueOnce(
-      Object.assign(new Error("Forbidden"), { status: 403 }),
-    );
-    renderTeams("/teams-and-services", {
-      access: "member",
-      role: "member",
-      permissions: { teams: "none", services: "none", teamScopes: {} },
-      canViewTeams: false,
-      canEditTeams: false,
-      canEditTeam: jest.fn(() => false),
-      canViewTeam: jest.fn(() => false),
-      canViewServices: false,
-      hasBroadTeamsReadAccess: false,
-      canUseTeamsLiveSync: false,
-    });
+  it.each(["member", "full"] as const)(
+    "shows a no-team-access state for a %s human after the authoritative bootstrap 403",
+    async (access) => {
+      mockGetTeamsBootstrap.mockRejectedValueOnce(
+        Object.assign(new Error("Forbidden"), { status: 403 }),
+      );
+      renderTeams("/teams-and-services", {
+        access,
+        role: access === "member" ? "member" : "volunteer",
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+        canViewTeams: false,
+        canEditTeams: false,
+        canEditTeam: jest.fn(() => false),
+        canViewTeam: jest.fn(() => false),
+        canViewServices: false,
+        hasBroadTeamsReadAccess: false,
+        canUseTeamsLiveSync: false,
+      });
 
-    expect(await screen.findByRole("heading", { name: "No team access" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/home");
-    expect(screen.queryByRole("link", { name: "Schedules" })).not.toBeInTheDocument();
-    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
-  });
+      expect(
+        await screen.findByRole("heading", { name: "No team access" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute(
+        "href",
+        "/home",
+      );
+      expect(
+        screen.queryByRole("link", { name: "Schedules" }),
+      ).not.toBeInTheDocument();
+      expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("keeps Messages in schedule overflow and opens Members beside the workspace on narrow layouts", async () => {
     const user = userEvent.setup();

@@ -16,8 +16,7 @@ const TeamsAccessGuard = ({
   if (
     context?.canViewTeams ||
     (allowMembershipDerivedAccess &&
-      context?.sessionKind === "human" &&
-      context?.access === "member")
+      context?.sessionKind === "human")
   ) {
     return <>{children}</>;
   }
