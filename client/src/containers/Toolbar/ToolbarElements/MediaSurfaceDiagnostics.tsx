@@ -85,14 +85,21 @@ const ReadinessVideos = ({
   summary,
   unavailable,
   truncated,
+  loading,
+  emptyMessage,
 }: {
   videos?: MediaPreparationReadinessVideo[];
   summary?: string;
   unavailable?: boolean;
   truncated?: boolean;
+  loading?: boolean;
+  emptyMessage?: string;
 }) => {
   if (unavailable) return <p className="mt-2 text-xs text-gray-400">Per-video details unavailable from this device version.</p>;
-  if (!videos?.length) return null;
+  if (loading) return <p className="mt-3 border-t border-gray-700 pt-2 text-xs text-gray-400" role="status">Loading per-video readiness…</p>;
+  if (!videos?.length) return emptyMessage
+    ? <p className="mt-3 border-t border-gray-700 pt-2 text-xs text-gray-400">{emptyMessage}</p>
+    : null;
   return (
     <section className="mt-3 border-t border-gray-700 pt-2" aria-label="Video readiness list">
       <h3 className="text-xs font-medium text-gray-300">Video readiness{summary ? ` · ${summary}` : ""}</h3>
@@ -284,9 +291,9 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
         const selectedKeys = getSelectedFiniteKeys(entry);
         const preparedKeys = getPreparedKeys(entry);
         const ready = [...preparedKeys].filter((key) => selectedKeys.has(key)).length;
-        return selectedKeys.size > 0
+        return entry.candidateDetails !== undefined
           ? `Videos · ${ready}/${selectedKeys.size} ready`
-          : ready > 0 ? `Videos · ${ready} ready` : "Videos";
+          : preparedKeys.size > 0 ? `Videos · ${preparedKeys.size} ready` : "Videos";
       })()
     : issues > 0
       ? `Videos · ${issues} issue${issues === 1 ? "" : "s"}`
@@ -418,6 +425,8 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                   videos={readinessVideos.videos}
                   summary={`${finiteCount} finite inventory · ${selectedFiniteKeys.size} selected finite · ${selectedReadyCount} ready${deferredFiniteCount === undefined ? "" : ` · ${deferredFiniteCount} deferred`}`}
                   truncated={readinessVideos.videosTruncated}
+                  loading={entry.candidateDetails === undefined}
+                  emptyMessage="No videos in this readiness pool."
                 />
 
                 <p className="mt-3 text-xs text-gray-300">

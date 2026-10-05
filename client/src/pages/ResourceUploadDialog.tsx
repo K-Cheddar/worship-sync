@@ -1,6 +1,5 @@
-import Input from "../components/Input/Input";
 import { useCallback, useRef, useState } from "react";
-import { FileText, Minimize2, Trash2, Upload } from "lucide-react";
+import { Minimize2, Upload } from "lucide-react";
 import { createPortal } from "react-dom";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
@@ -10,8 +9,8 @@ import { useNativeFileDrop } from "../containers/Media/useNativeFileDrop";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
 import { useOptionalTransferActions, useOptionalTransfers } from "../context/transferContext";
 import type { Transfer } from "../context/transferModel";
-import { formatStorageBytes } from "../components/StorageUsage/storageUsageFormatting";
 import type { ChurchResource } from "../types/churchResource";
+import SelectedUploadFileRow from "../components/SelectedUploadFileRow";
 
 type ResourceUploadStatus = "queued" | "uploading" | "complete" | "error";
 type UploadStatus = "idle" | "uploading" | "ready" | "error";
@@ -245,25 +244,26 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
       >
         <div className="flex flex-col gap-4">
           <input ref={inputRef} type="file" multiple accept={RESOURCE_UPLOAD_ACCEPT} aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />
-          <div {...fileDropHandlers} className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-4 ${isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600"}`}>
+          <div {...fileDropHandlers} className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-4 transition-colors ${isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600"}`}>
             {isFileDragOver ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-cyan-950/80 text-sm font-semibold text-cyan-100">Drop files to add resources</div> : null}
-            <FileText className="size-8 text-cyan-300" aria-hidden />
-            <p className="text-sm text-gray-300">Choose JPEG, PNG, GIF, WebP, AVIF, PDF, text, Office, or MP3 files, or drag them here.</p>
+            <Upload className="size-8 text-cyan-300" aria-hidden="true" />
+            <p className="text-sm text-gray-300">Drop files here or choose files</p>
+            <p className="text-xs text-gray-500">Images, documents, and MP3 audio</p>
             <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>Choose files</Button>
           </div>
           <div className="max-h-64 space-y-2 overflow-y-auto scrollbar-variable">
             {files.length === 0 ? <p className="text-center text-sm text-gray-500">No files selected.</p> : null}
             {files.map((pending, index) => (
-              <div key={`${pending.file.name}-${index}`} className="rounded border border-gray-700 bg-gray-950/40 p-3">
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    {!isUploading ? <Input aria-label={`Resource name for ${pending.file.name}`} value={pending.name} onChange={(value) => updateName(index, String(value))} inputClassName="w-full truncate rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-gray-100" /> : <p className="truncate text-sm text-gray-100">{pending.name}</p>}
-                    <p className="truncate text-xs text-gray-500">Source: {pending.file.name} - {formatStorageBytes(pending.file.size)}</p>
-                  </div>
-                  {!isUploading ? <div className="flex shrink-0 gap-1"><Button type="button" variant="tertiary" svg={Trash2} aria-label={`Remove ${pending.file.name}`} onClick={() => removeFile(index)} /></div> : null}
-                </div>
-                {pending.error ? <p className="mt-2 text-xs text-red-300">{pending.error}</p> : null}
-              </div>
+              <SelectedUploadFileRow
+                key={`${pending.file.name}-${index}`}
+                file={pending.file}
+                displayName={pending.name}
+                visualType={pending.file.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(pending.file.name) ? "image" : "file"}
+                editable={!isUploading}
+                onRename={(name) => updateName(index, name)}
+                onRemove={() => removeFile(index)}
+                error={pending.error}
+              />
             ))}
           </div>
           {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
