@@ -1,5 +1,6 @@
 import type { TeamPosition, TeamSchedule, TeamService } from "../../../api/authTypes";
 import { setServerTimeOffset } from "../../../utils/serverTime";
+import { generateScheduleOccurrences } from "../../../utils/teamScheduleOccurrences";
 import {
   formatSuggestedScheduleName,
   getCreateScheduleDefaultRange,
@@ -22,7 +23,12 @@ const schedule = (
   startDate: "2026-09-01",
   endDate: "2026-09-30",
   serviceIds: ["svc-sunday"],
-  occurrences: [],
+  occurrences: generateScheduleOccurrences({
+    services: [weeklyService({ serviceId: "svc-media", name: "Media service" })],
+    serviceIds: ["svc-media"],
+    startDate: overrides.startDate || "2026-09-01",
+    endDate: overrides.endDate || "2026-09-30",
+  }),
   assignments: {},
   archivedAt: null,
   ...overrides,
@@ -106,6 +112,17 @@ describe("getCreateScheduleDefaultRange", () => {
         endDate: "2026-10-31",
       })],
     })).toEqual({ startDate: "2026-11-01", endDate: "2026-11-30" });
+  });
+
+  it("keeps October when a newly relevant service is missing from its saved schedule", () => {
+    expect(resolve({
+      now: new Date(2026, 9, 2, 12),
+      services: [mediaService, weeklyService({
+        serviceId: "svc-extra", name: "Extra service", dayOfWeek: 3,
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      schedules: [schedule({ scheduleId: "october", teamId: "team-media", startDate: "2026-10-01", endDate: "2026-10-31" })],
+    })).toEqual({ startDate: "2026-10-01", endDate: "2026-10-31" });
   });
 
   it("continues advancing while successive Upcoming periods are fully covered", () => {

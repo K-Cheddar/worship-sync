@@ -325,12 +325,12 @@ const octoberServiceOccurrences = (
   positionId: string,
   days: number[],
 ) => days.map((day) => {
-  const date = `2026-10-${String(day).padStart(2, "0")}`;
+  const startsAt = new Date(2026, 9, day, 10).toISOString();
   return {
-    occurrenceId: `${serviceId}@${date}T10:00:00.000Z`,
+    occurrenceId: `${serviceId}@${startsAt}`,
     serviceId,
     name,
-    startsAt: `${date}T10:00:00.000Z`,
+    startsAt,
     positionRequirements: [{ positionId, count: 1 }],
   };
 });
@@ -1231,20 +1231,21 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
   });
 
-  it("opens Media's saved five-occurrence October schedule when Setup now generates seven", async () => {
+  it("shows all seven relevant occurrences while keeping the saved five-row schedule selectable", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
     setServerTimeOffset(36 * 60 * 60 * 1000);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     const serviceId = "sabbath-service";
     const cameraId = "position-camera";
     const memberId = "member-media";
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => {
-      const date = `2026-10-${String(day).padStart(2, "0")}`;
+      const startsAt = new Date(2026, 9, day, 10).toISOString();
       return {
-        occurrenceId: `${serviceId}@${date}T10:00:00.000Z`,
+        occurrenceId: `${serviceId}@${startsAt}`,
         serviceId,
         name: "Sabbath Service",
-        startsAt: `${date}T10:00:00.000Z`,
+        startsAt,
         positionRequirements: [{ positionId: cameraId, count: 1 }],
       };
     });
@@ -1289,12 +1290,51 @@ describe("Teams", () => {
     renderTeams();
     await waitForTeamsBootstrap();
 
-    expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(5);
+    expect(await screen.findByRole("button", { name: /Media Special 1 Camera, Empty/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Media Special 2 Camera, Empty/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Camera, Empty/i })).toHaveLength(7);
     expect(screen.getByText("Oct 1, 2026 – Oct 31, 2026")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
     expect(screen.getAllByText("Up next")).toHaveLength(1);
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
+    await user.click(screen.getByRole("button", { name: /^October 2026 Oct 1/i }));
+    expect(await screen.findByRole("button", { name: /Sabbath Service Camera, Morgan/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(5);
+  });
+
+  it("blocks refreshing unresolved service IDs while keeping all saved rows and maps", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const positionId = "position-camera";
+    const savedOccurrences = octoberServiceOccurrences("old-service", "Saturday service", positionId, [3, 10, 17, 24, 31]);
+    const savedSchedule: TeamSchedule = {
+      scheduleId: "saved-old-ids", churchId: "church-1", name: "October 2026", teamId: "team-main", source: "custom",
+      startDate: "2026-10-01", endDate: "2026-10-31", serviceIds: ["old-service"], occurrences: savedOccurrences,
+      assignments: { [savedOccurrences[0].occurrenceId]: { [positionId + "::0"]: { primaryMemberId: "member-avery" } } },
+      microphoneAssignments: { [savedOccurrences[0].occurrenceId]: { [positionId + "::0"]: ["mic-1"] } },
+      iemAssignments: { [savedOccurrences[0].occurrenceId]: { [positionId + "::0"]: ["iem-1"] } },
+      additionalPositionSlots: { [savedOccurrences[0].occurrenceId]: [positionId] },
+    };
+    const snapshot = JSON.parse(JSON.stringify(savedSchedule));
+    mockState = { undoable: { present: { serviceTimes: { list: [octoberSaturdayService("new-service", positionId)] } } } };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Camera" }],
+      members: [{ ...scheduleBootstrap.members[0], positionIds: [positionId] }],
+      schedules: [savedSchedule],
+    }));
+    renderTeams();
+    await waitForTeamsBootstrap();
+    const refresh = await screen.findByRole("button", { name: "Refresh schedule" });
+    expect(refresh).toBeDisabled();
+    expect(screen.getByText(/This schedule can’t be refreshed safely/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Saturday service Camera, Avery/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Saturday service on Oct 31/i })).toBeInTheDocument();
+    await user.click(refresh);
+    expect(mockUpdateTeamSchedule).not.toHaveBeenCalled();
+    expect(savedSchedule).toEqual(snapshot);
   });
 
   it("keeps the saved Praise Team 11 AM Worship Experience schedule across Setup drift", async () => {
@@ -1304,12 +1344,12 @@ describe("Teams", () => {
     const vocalId = "position-vocal";
     const memberId = "member-praise";
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => {
-      const date = `2026-10-${String(day).padStart(2, "0")}`;
+      const startsAt = new Date(2026, 9, day, 11).toISOString();
       return {
-        occurrenceId: `${worshipId}@${date}T11:00:00.000Z`,
+        occurrenceId: `${worshipId}@${startsAt}`,
         serviceId: worshipId,
         name: "Worship Experience",
-        startsAt: `${date}T11:00:00.000Z`,
+        startsAt,
         positionRequirements: [{ positionId: vocalId, count: 1 }],
       };
     });

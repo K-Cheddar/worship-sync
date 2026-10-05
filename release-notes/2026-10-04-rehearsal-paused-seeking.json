@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-04-rehearsal-paused-seeking",
+  "date": "2026-10-04",
+  "type": "fixed",
+  "title": "Paused rehearsal playback",
+  "description": "Scrubbing across playback ranges in a paused YouTube rehearsal keeps playback paused at the position you choose."
+}

@@ -106,6 +106,43 @@ test("uses conclusive SharePoint HEAD metadata without a GET probe", async () =>
   assert.match(descriptor.previewUrl, /^\/api\/resources\/proxy\?token=/);
 });
 
+test("probes HTML HEAD responses for every hosted-file provider and follows GET redirects", async (t) => {
+  for (const originalUrl of [
+    "https://www.dropbox.com/scl/fi/id/guide?dl=0",
+    "https://drive.google.com/file/d/guide/view",
+    "https://1drv.ms/u/s!guide",
+    "https://app.box.com/s/public-file",
+  ]) {
+    await t.test(originalUrl, async () => {
+      const finalUrl = "https://files.example.test/guide.pdf";
+      const client = createMockClient((config) => {
+        if (config.method === "HEAD") return response(200, { "content-type": "text/html" });
+        if (config.url !== finalUrl) return response(302, { location: finalUrl });
+        return response(206, { "content-type": "application/pdf", "content-range": "bytes 0-0/200" }, Readable.from([Buffer.from("%") ]));
+      });
+      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+      const descriptor = await service.resolve(originalUrl);
+      assert.deepEqual(client.calls.map(({ method }) => method), ["HEAD", "GET", "GET"]);
+      assert.equal(client.calls[1].headers.Range, "bytes=0-0");
+      assert.equal(client.calls[1].headers.Cookie, undefined);
+      assert.equal(client.calls[1].headers.Authorization, undefined);
+      assert.equal(descriptor.previewType, "document");
+      assert.equal(descriptor.requiresProxy, true);
+      const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+      assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
+    });
+  }
+});
+
+test("falls back to web only after a hosted-file GET confirms HTML", async () => {
+  const client = createMockClient(() => response(200, { "content-type": "text/html" }));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve("https://drive.google.com/file/d/guide/view");
+  assert.deepEqual(client.calls.map(({ method }) => method), ["HEAD", "GET"]);
+  assert.equal(descriptor.previewType, "web");
+  assert.equal(descriptor.requiresProxy, false);
+});
+
 test("retries inconclusive SharePoint HTML HEAD with a ranged GET and follows public file redirects", async () => {
   const originalUrl = "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token";
   const finalUrl = "https://church.sharepoint.com/sites/public/guide.pdf?download-token=abc";

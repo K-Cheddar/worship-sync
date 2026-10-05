@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-04-hosted-file-previews",
+  "date": "2026-10-04",
+  "type": "fixed",
+  "title": "Hosted file previews",
+  "description": "Public Dropbox, Google Drive, OneDrive, and Box links now check for a downloadable file more reliably before showing a web preview."
+}

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
 import { emitTeamsEvent } from "./teamsSse.js";
 import {
@@ -250,20 +251,18 @@ export const createTeamsAuthHandlers = ({
     if (statusCode >= 500) {
       console.error(fallbackMessage, error);
     }
-    return res.status(statusCode).json({
-      success: false,
+    return res.status(statusCode).json(serializeAuthError(error, {
       errorMessage:
         statusCode < 500 && error?.message
           ? error.message
           : withTeamsErrorNextStep(fallbackMessage),
-      ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}),
       ...(Array.isArray(error?.occurrenceConflicts)
         ? {
             occurrenceConflicts: error.occurrenceConflicts,
             conflictFingerprint: error.conflictFingerprint || "",
           }
         : {}),
-    });
+    }));
   };
 
   const buildPublicTokenRateLimitKey = (req, token) => {
@@ -855,6 +854,31 @@ export const createTeamsAuthHandlers = ({
       .update(`${churchId}\u0000${teamId}\u0000${startDate}\u0000${endDate}`)
       .digest("hex");
   const generatedPeriodScheduleId = (key) => `generated_${key}`;
+  // Keep the coverage contract aligned with schedulePeriodUtils on the client.
+  const coversCurrentOccurrences = (stored, current) => {
+    const remaining = new Map(stored.map((saved) => [saved.occurrenceId, saved]));
+    // Reserve stable identities before comparing names, and consume each row once.
+    const unmatched = current.filter((occurrence) => {
+      const saved = remaining.get(occurrence.occurrenceId);
+      if (!saved || new Date(saved.startsAt).getTime() !== new Date(occurrence.startsAt).getTime()) return true;
+      remaining.delete(occurrence.occurrenceId);
+      return false;
+    });
+    const semanticKey = (occurrence) =>
+      JSON.stringify([String(occurrence.name || "").trim().toLowerCase(), new Date(occurrence.startsAt).getTime()]);
+    const counts = new Map();
+    remaining.forEach((saved) => {
+      const key = semanticKey(saved);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return unmatched.every((occurrence) => {
+      const key = semanticKey(occurrence);
+      const count = counts.get(key) || 0;
+      if (!count) return false;
+      counts.set(key, count - 1);
+      return true;
+    });
+  };
   const generatedPeriodEnsureQueues = new Map();
 
   const withGeneratedPeriodEnsureLock = async (key, operation) => {
@@ -8675,11 +8699,10 @@ export const createTeamsAuthHandlers = ({
     if (statusCode >= 500) console.error(fallback, error);
     return res
       .status(statusCode)
-      .json({
-        success: false,
+      .json(serializeAuthError(error, {
         errorMessage:
           statusCode < 500 && error?.message ? error.message : fallback,
-      });
+      }));
   };
 
   const PORTABLE_FIELDS = {
@@ -13926,7 +13949,8 @@ export const createTeamsAuthHandlers = ({
           // partial custom schedule remains an overlap-picker option.
           const compatible = activeTeamSchedules.filter(
             (schedule) => schedule.churchId === churchId &&
-              schedule.startDate && schedule.endDate,
+              schedule.startDate && schedule.endDate &&
+              coversCurrentOccurrences(schedule.occurrences || [], payload.occurrences),
           );
           const canonicalGenerated = compatible.filter(
             (schedule) =>
@@ -13979,6 +14003,12 @@ export const createTeamsAuthHandlers = ({
           if (selected) return { schedule: selected, created: false };
 
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
+          const reuseExisting = (existing) => {
+            if (!coversCurrentOccurrences(existing.occurrences || [], payload.occurrences)) {
+              throw httpError(409, "This saved period is missing current services. Edit its services or create a custom schedule for this period.");
+            }
+            return { schedule: existing, created: false };
+          };
           const db = requireFirestore();
           if (db) {
             return db.runTransaction(async (transaction) => {
@@ -14000,7 +14030,7 @@ export const createTeamsAuthHandlers = ({
                     "The generated schedule identity is unavailable.",
                   );
                 }
-                return { schedule: existing, created: false };
+                return reuseExisting(existing);
               }
               const now = nowIso();
               const document = {
@@ -14024,7 +14054,7 @@ export const createTeamsAuthHandlers = ({
               scheduleId,
             );
             if (existing)
-              return { schedule: { scheduleId, ...existing }, created: false };
+              return reuseExisting({ scheduleId, ...existing });
             const now = nowIso();
             const document = {
               ...payload,

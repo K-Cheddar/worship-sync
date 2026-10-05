@@ -106,6 +106,7 @@ import {
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import {
+  canRefreshScheduleOccurrences,
   rekeyAssignmentsByServiceDate,
   rekeyScheduleOccurrenceRowsByServiceDate,
 } from "./scheduleDraftUtils";
@@ -810,6 +811,12 @@ const ScheduleTab = ({
     if (stored.length === 0 || !regeneratedOccurrences) return false;
     return !occurrenceIdsMatch(stored, regeneratedOccurrences);
   }, [canEdit, regeneratedOccurrences, selectedSchedule]);
+  const refreshBlocked = Boolean(selectedSchedule && regeneratedOccurrences &&
+    !canRefreshScheduleOccurrences({
+      schedule: selectedSchedule,
+      services: data.services,
+      regeneratedOccurrences,
+    }));
   const [applyingGrouping, setApplyingGrouping] = useState(false);
   // Spreadsheet-style undo/redo for the assignment grid. The stack is
   // session-local and per-schedule (reset when the active schedule changes or an
@@ -851,7 +858,7 @@ const ScheduleTab = ({
   // Re-generate occurrences and re-key assignments onto them, then persist —
   // the one-click path behind the "schedule out of date" nudge.
   const refreshScheduleOccurrences = useCallback(async () => {
-    if (!canEdit || !selectedSchedule || !regeneratedOccurrences) return;
+    if (!canEdit || !selectedSchedule || !regeneratedOccurrences || refreshBlocked || applyingGrouping) return;
     const sourceOccurrences = selectedSchedule.occurrences || [];
     const assignments = rekeyAssignmentsByServiceDate({
       sourceOccurrences,
@@ -912,10 +919,12 @@ const ScheduleTab = ({
       setApplyingGrouping(false);
     }
   }, [
+    applyingGrouping,
     canEdit,
     churchId,
     onScheduleSaved,
     regeneratedOccurrences,
+    refreshBlocked,
     resetUndoHistory,
     selectedSchedule,
     showToast,
@@ -5641,17 +5650,17 @@ const ScheduleTab = ({
                 </div>
               </div>
 
-              {occurrencesStale && !showForm ? (
+              {(occurrencesStale || (canEdit && refreshBlocked)) && !showForm ? (
                 <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-amber-100">
-                    This schedule no longer matches its services (grouping or timing
-                    changed). Refresh it to update the rows — assignments are kept where
-                    the service and date still line up.
+                    {refreshBlocked
+                      ? "This schedule can’t be refreshed safely. Review its services in Service Setup before updating it. Existing rows and assignments have been kept."
+                      : "This schedule no longer matches its services (grouping or timing changed). Refresh it to update the rows — assignments are kept where the service and date still line up."}
                   </p>
                   <Button
                     variant="secondary"
                     iconSize="sm"
-                    disabled={applyingGrouping}
+                    disabled={applyingGrouping || refreshBlocked}
                     onClick={() => void refreshScheduleOccurrences()}
                   >
                     {applyingGrouping ? "Refreshing..." : "Refresh schedule"}

@@ -3,5 +3,5 @@
   "date": "2026-10-02",
   "type": "improved",
   "title": "Team scheduling",
-  "description": "Schedule date ranges and existing schedules stay more consistent as service plans change."
+  "description": "Schedule date ranges stay consistent as services change. Newly relevant services remain visible, and schedules with missing services keep their saved rows and assignments when refresh is unavailable."
 }
