@@ -67,9 +67,9 @@ import { initiateAllItemsList } from "../../store/allItemsSlice";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
-import { applyPouchAudit } from "../../utils/pouchAudit";
 import { sortNamesInList } from "../../utils/sort";
 import { getYouTubeVideoReference } from "../../utils/youtube";
+import { loadSong, saveSong } from "../../utils/songPersistence";
 import type { DBAllItems, DBItem } from "../../types";
 import {
   getServicePlan,
@@ -2236,7 +2236,7 @@ const ServicePlanEditor = ({
   const linkYouTubeVideoToSong = useCallback(
     async (song: DBItem, result: YouTubeSearchResult) => {
       if (!db) throw new Error("The song library is not available. Try again.");
-      const existing = (await db.get(song._id)) as DBItem;
+      const existing = await loadSong(db, song._id);
       const currentLinks = existing.songLinks ?? [];
       const existingYouTubeIndex = currentLinks.findIndex(
         (link) => getYouTubeVideoReference(link.url)?.videoId === result.videoId,
@@ -2261,13 +2261,7 @@ const ServicePlanEditor = ({
       if (replacementIndex >= 0) nextLinks[replacementIndex] = nextLink;
       else nextLinks.push(nextLink);
 
-      const audited = applyPouchAudit(
-        existing,
-        { ...existing, songLinks: nextLinks },
-        { isNew: false },
-      );
-      const savedResult = await db.put(audited);
-      const saved = { ...audited, _rev: savedResult.rev };
+      const saved = await saveSong(db, { ...existing, songLinks: nextLinks }, existing);
       dispatch(upsertItemInAllDocs(saved));
       dispatch(
         upsertItemInAllItemsList({

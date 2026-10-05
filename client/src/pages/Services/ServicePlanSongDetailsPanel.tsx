@@ -14,9 +14,8 @@ import { useDispatch } from "../../hooks";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { broadcastItemUpdate } from "../../store/store";
-import { applyPouchAudit } from "../../utils/pouchAudit";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
-import { normalizeSongForPersistence } from "../../utils/activeItemSlides";
+import { loadSong, saveSong } from "../../utils/songPersistence";
 import type { Arrangment, DBItem, SongAudio, SongMetadata } from "../../types";
 
 type ServicePlanSongDetailsPanelProps = {
@@ -40,20 +39,18 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
 
   const persistSongPatch = useCallback(async (patch: ItemDetailsSavePayload & { songAudioPatch?: SongAudio | null }) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const existing = (await db.get(song._id)) as DBItem;
+    const existing = await loadSong(db, song._id);
     const next: DBItem = { ...existing, name: patch.name };
     if (patch.songMetadataPatch !== undefined) {
-      if (patch.songMetadataPatch === null) delete next.songMetadata;
+      if (patch.songMetadataPatch === null) next.songMetadata = undefined;
       else next.songMetadata = patch.songMetadataPatch;
     }
     if (patch.songLinksPatch !== undefined) next.songLinks = patch.songLinksPatch;
     if (patch.songAudioPatch !== undefined) {
-      if (patch.songAudioPatch === null) delete next.songAudio;
+      if (patch.songAudioPatch === null) next.songAudio = undefined;
       else next.songAudio = patch.songAudioPatch;
     }
-    const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
-    const result = await db.put(audited);
-    const saved = { ...audited, _rev: result.rev };
+    const saved = await saveSong(db, next, existing);
     dispatch(upsertItemInAllDocs(saved));
     dispatch(upsertItemInAllItemsList({
       _id: saved._id,
@@ -113,13 +110,11 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     songMetadata?: SongMetadata;
   }) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const existing = (await db.get(song._id)) as DBItem;
+    const existing = await loadSong(db, song._id);
     const next: DBItem = { ...existing, arrangements, selectedArrangement };
-    if (songMetadata === undefined) delete next.songMetadata;
+    if (songMetadata === undefined) next.songMetadata = undefined;
     else next.songMetadata = songMetadata;
-    const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
-    const result = await db.put(audited);
-    const saved = { ...audited, _rev: result.rev };
+    const saved = await saveSong(db, next, existing);
     dispatch(upsertItemInAllDocs(saved));
     dispatch(upsertItemInAllItemsList({
       _id: saved._id,

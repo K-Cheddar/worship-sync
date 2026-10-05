@@ -16,10 +16,9 @@ import {
 import { useDispatch } from "../../hooks";
 import { upsertItemInAllDocs } from "../../store/allDocsSlice";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
-import { applyPouchAudit } from "../../utils/pouchAudit";
 import { broadcastItemUpdate } from "../../store/store";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
-import { normalizeSongForPersistence } from "../../utils/activeItemSlides";
+import { loadSong, saveSong } from "../../utils/songPersistence";
 import {
   ItemDetailsEditorFields,
   type ItemDetailsSavePayload,
@@ -95,12 +94,12 @@ const ViewSongSectionsDrawer = ({
         throw new Error("The song library is not available. Try again.");
       }
 
-      const existing = (await db.get(song._id)) as DBItem;
+      const existing = await loadSong(db, song._id);
       const next: DBItem = { ...existing, name: patch.name };
 
       if (patch.songMetadataPatch !== undefined) {
         if (patch.songMetadataPatch === null) {
-          delete next.songMetadata;
+          next.songMetadata = undefined;
         } else {
           next.songMetadata = patch.songMetadataPatch;
         }
@@ -110,15 +109,13 @@ const ViewSongSectionsDrawer = ({
       }
       if (patch.songAudioPatch !== undefined) {
         if (patch.songAudioPatch === null) {
-          delete next.songAudio;
+          next.songAudio = undefined;
         } else {
           next.songAudio = patch.songAudioPatch;
         }
       }
 
-      const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
-      const result = await db.put(audited);
-      const saved = { ...audited, _rev: result.rev };
+      const saved = await saveSong(db, next, existing);
       dispatch(upsertItemInAllDocs(saved));
       dispatch(
         upsertItemInAllItemsList({
@@ -149,21 +146,19 @@ const ViewSongSectionsDrawer = ({
         throw new Error("The song library is not available. Try again.");
       }
 
-      const existing = (await db.get(song._id)) as DBItem;
+      const existing = await loadSong(db, song._id);
       const next: DBItem = {
         ...existing,
         arrangements,
         selectedArrangement,
       };
       if (songMetadata === undefined) {
-        delete next.songMetadata;
+        next.songMetadata = undefined;
       } else {
         next.songMetadata = songMetadata;
       }
 
-      const audited = applyPouchAudit(existing, normalizeSongForPersistence(next), { isNew: false });
-      const result = await db.put(audited);
-      const saved = { ...audited, _rev: result.rev };
+      const saved = await saveSong(db, next, existing);
       dispatch(upsertItemInAllDocs(saved));
       dispatch(
         upsertItemInAllItemsList({

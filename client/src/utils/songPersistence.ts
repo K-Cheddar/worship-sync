@@ -1,14 +1,330 @@
-import type { DBItem } from "../types";
+import type {
+  Arrangment,
+  DBItem,
+  ItemSlideType,
+  SongV2ArrangementDocument,
+  SongV2Documents,
+  SongV2RootDocument,
+  SongV2SlideDocument,
+} from "../types";
 import { applyPouchAudit } from "./pouchAudit";
-import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
+import {
+  normalizeItemSlides,
+  normalizeSongForPersistence,
+} from "./activeItemSlides";
+
+export const SONG_SCHEMA_VERSION = 2 as const;
+export const SONG_V2_ROOT_ID_PREFIX = "song-v2:root:";
+export const SONG_V2_ARRANGEMENT_ID_PREFIX = "song-v2:arrangement:";
+export const SONG_V2_SLIDE_ID_PREFIX = "song-v2:slide:";
+
+const encodeIdPart = (id: string) => encodeURIComponent(id);
+
+export const getSongV2RootDocId = (songId: string) =>
+  `${SONG_V2_ROOT_ID_PREFIX}${encodeIdPart(songId)}`;
+
+export const getSongV2ArrangementIdPrefix = (songId: string) =>
+  `${SONG_V2_ARRANGEMENT_ID_PREFIX}${encodeIdPart(songId)}:`;
+
+export const getSongV2ArrangementDocId = (
+  songId: string,
+  arrangementId: string,
+) => `${getSongV2ArrangementIdPrefix(songId)}${encodeIdPart(arrangementId)}`;
+
+export const getSongV2SlideIdPrefix = (songId: string, arrangementId: string) =>
+  `${SONG_V2_SLIDE_ID_PREFIX}${encodeIdPart(songId)}:${encodeIdPart(arrangementId)}:`;
+
+export const getSongV2SlideDocId = (
+  songId: string,
+  arrangementId: string,
+  slideId: string,
+) => `${getSongV2SlideIdPrefix(songId, arrangementId)}${encodeIdPart(slideId)}`;
+
+export class SongV2DocumentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SongV2DocumentError";
+  }
+}
+
+const getAuditFields = (song: DBItem) => ({
+  ...(song.createdAt !== undefined ? { createdAt: song.createdAt } : {}),
+  ...(song.updatedAt !== undefined ? { updatedAt: song.updatedAt } : {}),
+  ...(song.createdBy !== undefined ? { createdBy: song.createdBy } : {}),
+  ...(song.updatedBy !== undefined ? { updatedBy: song.updatedBy } : {}),
+});
+
+const assertUniqueIds = (ids: string[], description: string) => {
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!id || seen.has(id)) {
+      throw new SongV2DocumentError(
+        `Song schema v2 requires unique, non-empty ${description} IDs; found ${JSON.stringify(id)}.`,
+      );
+    }
+    seen.add(id);
+  }
+};
+
+/** Purely splits a hydrated song into deterministic v2 documents. */
+export function serializeSongToV2Documents(song: DBItem): SongV2Documents {
+  if (song.type !== "song") throw new Error("Only songs can be serialized as schema v2");
+  const hydrated = normalizeItemSlides(song);
+  const arrangements = hydrated.arrangements ?? [];
+  const arrangementIds = arrangements.map(({ id }) => id);
+  assertUniqueIds(arrangementIds, "arrangement");
+
+  const root: SongV2RootDocument = {
+    _id: getSongV2RootDocId(song._id),
+    docType: "song-v2-root",
+    songId: song._id,
+    songSchemaVersion: SONG_SCHEMA_VERSION,
+    type: "song",
+    name: hydrated.name,
+    selectedArrangement: hydrated.selectedArrangement ?? 0,
+    arrangementIds,
+    ...getAuditFields(hydrated),
+    ...(hydrated.shouldSkipTitle !== undefined
+      ? { shouldSkipTitle: hydrated.shouldSkipTitle }
+      : {}),
+    ...(hydrated.background !== undefined ? { background: hydrated.background } : {}),
+    ...(hydrated.shouldSendTo !== undefined
+      ? { shouldSendTo: hydrated.shouldSendTo }
+      : {}),
+    ...(hydrated.songMetadata !== undefined
+      ? { songMetadata: hydrated.songMetadata }
+      : {}),
+    ...(hydrated.songLinks !== undefined ? { songLinks: hydrated.songLinks } : {}),
+    ...(hydrated.songAudio !== undefined ? { songAudio: hydrated.songAudio } : {}),
+  };
+
+  const arrangementDocuments: SongV2ArrangementDocument[] = [];
+  const slideDocuments: SongV2SlideDocument[] = [];
+  for (const arrangement of arrangements) {
+    const slides = arrangement.slides ?? [];
+    const slideIds = slides.map(({ id }) => id);
+    assertUniqueIds(slideIds, `slide in arrangement ${arrangement.id}`);
+    arrangementDocuments.push({
+      _id: getSongV2ArrangementDocId(song._id, arrangement.id),
+      docType: "song-v2-arrangement",
+      songId: song._id,
+      arrangementId: arrangement.id,
+      name: arrangement.name,
+      formattedLyrics: arrangement.formattedLyrics,
+      songOrder: arrangement.songOrder,
+      slideIds,
+      ...getAuditFields(hydrated),
+      ...(arrangement.monitorLayout !== undefined
+        ? { monitorLayout: arrangement.monitorLayout }
+        : {}),
+    });
+
+    for (const slide of slides) {
+      const {
+        monitorCurrentBandBoxes: _monitorCurrentBandBoxes,
+        monitorNextBandBoxes: _monitorNextBandBoxes,
+        ...durableSlide
+      } = slide as ItemSlideType & {
+        monitorCurrentBandBoxes?: ItemSlideType["boxes"];
+        monitorNextBandBoxes?: ItemSlideType["boxes"];
+      };
+      slideDocuments.push({
+        _id: getSongV2SlideDocId(song._id, arrangement.id, slide.id),
+        ...durableSlide,
+        docType: "song-v2-slide",
+        songId: song._id,
+        arrangementId: arrangement.id,
+        ...getAuditFields(hydrated),
+      });
+    }
+  }
+
+  return { root, arrangements: arrangementDocuments, slides: slideDocuments };
+}
+
+/** Rebuilds the application-facing song shape using only authoritative references. */
+export function hydrateSongFromV2Documents(
+  root: SongV2RootDocument,
+  arrangementDocuments: SongV2ArrangementDocument[],
+  slideDocuments: SongV2SlideDocument[],
+): DBItem {
+  if (
+    root.docType !== "song-v2-root" ||
+    root._id !== getSongV2RootDocId(root.songId)
+  ) {
+    throw new SongV2DocumentError(
+      `Song ${root.songId} has an invalid schema v2 root document.`,
+    );
+  }
+  if (root.songSchemaVersion !== SONG_SCHEMA_VERSION) {
+    throw new SongV2DocumentError(
+      `Song ${root.songId} has unsupported schema version ${root.songSchemaVersion}.`,
+    );
+  }
+  assertUniqueIds(root.arrangementIds, `song ${root.songId} arrangement reference`);
+
+  const arrangementsById = new Map(
+    arrangementDocuments
+      .filter((document) => document.songId === root.songId)
+      .map((document) => [document.arrangementId, document]),
+  );
+  const slidesByArrangement = new Map<string, Map<string, SongV2SlideDocument>>();
+  for (const document of slideDocuments) {
+    if (document.songId !== root.songId) continue;
+    const slides = slidesByArrangement.get(document.arrangementId) ?? new Map();
+    slides.set(document.id, document);
+    slidesByArrangement.set(document.arrangementId, slides);
+  }
+
+  const arrangements: Arrangment[] = root.arrangementIds.map((arrangementId) => {
+    const arrangement = arrangementsById.get(arrangementId);
+    if (!arrangement) {
+      throw new SongV2DocumentError(
+        `Song ${root.songId} references missing arrangement ${arrangementId}.`,
+      );
+    }
+    if (
+      arrangement.docType !== "song-v2-arrangement" ||
+      arrangement.songId !== root.songId ||
+      arrangement.arrangementId !== arrangementId
+    ) {
+      throw new SongV2DocumentError(
+        `Song ${root.songId} arrangement ${arrangementId} has an invalid document contract.`,
+      );
+    }
+    assertUniqueIds(
+      arrangement.slideIds,
+      `song ${root.songId} arrangement ${arrangementId} slide reference`,
+    );
+    const slidesById = slidesByArrangement.get(arrangementId) ?? new Map();
+    const slides = arrangement.slideIds.map((slideId) => {
+      const slide = slidesById.get(slideId);
+      if (!slide) {
+        throw new SongV2DocumentError(
+          `Song ${root.songId} arrangement ${arrangementId} references missing slide ${slideId}.`,
+        );
+      }
+      if (
+        slide.docType !== "song-v2-slide" ||
+        slide.songId !== root.songId ||
+        slide.arrangementId !== arrangementId
+      ) {
+        throw new SongV2DocumentError(
+          `Song ${root.songId} arrangement ${arrangementId} slide ${slideId} has an invalid document contract.`,
+        );
+      }
+      if (slide._id !== getSongV2SlideDocId(root.songId, arrangementId, slideId)) {
+        throw new SongV2DocumentError(
+          `Song ${root.songId} arrangement ${arrangementId} slide ${slideId} has an invalid document ID.`,
+        );
+      }
+      const {
+        _id: _id,
+        _rev: _rev,
+        docType: _docType,
+        songId: _songId,
+        arrangementId: _arrangementId,
+        createdAt: _createdAt,
+        updatedAt: _updatedAt,
+        createdBy: _createdBy,
+        updatedBy: _updatedBy,
+        ...authoredSlide
+      } = slide;
+      return authoredSlide;
+    });
+    if (arrangement._id !== getSongV2ArrangementDocId(root.songId, arrangementId)) {
+      throw new SongV2DocumentError(
+        `Song ${root.songId} arrangement ${arrangementId} has an invalid document ID.`,
+      );
+    }
+    return {
+      id: arrangement.arrangementId,
+      name: arrangement.name,
+      formattedLyrics: arrangement.formattedLyrics,
+      songOrder: arrangement.songOrder,
+      ...(arrangement.monitorLayout !== undefined
+        ? { monitorLayout: arrangement.monitorLayout }
+        : {}),
+      slides,
+    };
+  });
+
+  return normalizeItemSlides({
+    _id: root.songId,
+    ...(root._rev !== undefined ? { _rev: root._rev } : {}),
+    type: "song",
+    name: root.name,
+    selectedArrangement: root.selectedArrangement,
+    arrangements,
+    slides: [],
+    ...(root.shouldSkipTitle !== undefined
+      ? { shouldSkipTitle: root.shouldSkipTitle }
+      : {}),
+    ...(root.background !== undefined ? { background: root.background } : {}),
+    ...(root.shouldSendTo !== undefined ? { shouldSendTo: root.shouldSendTo } : {}),
+    ...(root.songMetadata !== undefined ? { songMetadata: root.songMetadata } : {}),
+    ...(root.songLinks !== undefined ? { songLinks: root.songLinks } : {}),
+    ...(root.songAudio !== undefined ? { songAudio: root.songAudio } : {}),
+    ...getAuditFields(root as DBItem),
+  } as DBItem);
+}
+
+const isNotFoundError = (error: unknown) =>
+  typeof error === "object" && error !== null &&
+  (("status" in error && error.status === 404) ||
+    ("name" in error && error.name === "not_found"));
+
+const getOptionalDocument = async <T,>(
+  db: PouchDB.Database,
+  id: string,
+): Promise<T | null> => {
+  try {
+    return (await db.get(id)) as T;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+};
+
+const getReferencedDocuments = async <T,>(
+  db: PouchDB.Database,
+  ids: string[],
+): Promise<T[]> => {
+  if (!ids.length) return [];
+  const result = await db.allDocs({ keys: ids, include_docs: true });
+  return result.rows.flatMap((row) =>
+    row.doc ? [row.doc as unknown as T] : [],
+  );
+};
+
+const loadV2Song = async (
+  db: PouchDB.Database,
+  root: SongV2RootDocument,
+): Promise<DBItem> => {
+  const arrangementIds = root.arrangementIds.map((arrangementId) =>
+    getSongV2ArrangementDocId(root.songId, arrangementId),
+  );
+  const arrangements = await getReferencedDocuments<SongV2ArrangementDocument>(
+    db,
+    arrangementIds,
+  );
+  const slideIds = arrangements.flatMap((arrangement) =>
+    arrangement.slideIds.map((slideId) =>
+      getSongV2SlideDocId(root.songId, arrangement.arrangementId, slideId),
+    ),
+  );
+  const slides = await getReferencedDocuments<SongV2SlideDocument>(db, slideIds);
+  return hydrateSongFromV2Documents(root, arrangements, slides);
+};
 
 /** Loads a document and hydrates songs into the editor's canonical shape. */
 export async function loadItemWithSongHydration(
   db: PouchDB.Database,
   itemId: string,
 ): Promise<DBItem> {
-  const document = (await db.get(itemId)) as DBItem;
-  return document.type === "song" ? normalizeItemSlides(document) : document;
+  const document = await getOptionalDocument<DBItem>(db, itemId);
+  if (!document) return loadSong(db, itemId);
+  return document.type === "song" ? loadSong(db, itemId) : document;
 }
 
 /** Loads one song document and returns its canonical hydrated application shape. */
@@ -16,6 +332,22 @@ export async function loadSong(
   db: PouchDB.Database,
   songId: string,
 ): Promise<DBItem> {
+  const v2Root = await getOptionalDocument<SongV2RootDocument>(
+    db,
+    getSongV2RootDocId(songId),
+  );
+  if (v2Root) {
+    if (
+      v2Root.docType !== "song-v2-root" ||
+      v2Root.songId !== songId ||
+      v2Root._id !== getSongV2RootDocId(songId)
+    ) {
+      throw new SongV2DocumentError(
+        `Song ${songId} has an invalid schema v2 root document.`,
+      );
+    }
+    return loadV2Song(db, v2Root);
+  }
   const document = (await db.get(songId)) as DBItem;
   if (document.type !== "song") {
     throw new Error(`Document ${songId} is not a song`);
@@ -57,15 +389,16 @@ export async function saveSong(
   if (existing._id !== song._id) {
     throw new Error("Cannot save a song using another song's revision");
   }
-  const persisted = applyPouchAudit(
-    existing,
-    normalizeSongForPersistence({
-      ...existing,
-      ...song,
-      _rev: existing._rev,
-    }),
-    { isNew: false },
-  );
+  const normalized = normalizeSongForPersistence({
+    ...existing,
+    ...song,
+    _rev: existing._rev,
+  });
+  const persistedFields = normalized as Record<string, unknown>;
+  for (const [key, value] of Object.entries(persistedFields)) {
+    if (value === undefined) delete persistedFields[key];
+  }
+  const persisted = applyPouchAudit(existing, normalized, { isNew: false });
   const result = await db.put(persisted);
   return normalizeItemSlides({ ...persisted, _rev: result.rev });
 }

@@ -176,6 +176,9 @@ export type DocType =
   | "credit"
   | "credit-history"
   | "overlay-history"
+  | "song-v2-root"
+  | "song-v2-arrangement"
+  | "song-v2-slide"
   | "board-alias"
   | "board"
   | "board-post"
@@ -193,6 +196,59 @@ export type DBItem = ItemProperties & {
   createdBy?: string;
   updatedBy?: string;
   docType?: DocType;
+};
+
+type SongV2AuditFields = Pick<DBItem, "createdAt" | "updatedAt" | "createdBy" | "updatedBy">;
+
+/** Song-level data for the fragmented song representation. */
+export type SongV2RootDocument = SongV2AuditFields & {
+  _id: string;
+  _rev?: string;
+  docType: "song-v2-root";
+  songId: string;
+  songSchemaVersion: 2;
+  type: "song";
+  name: string;
+  shouldSkipTitle?: boolean;
+  selectedArrangement: number;
+  arrangementIds: string[];
+  background?: string;
+  shouldSendTo?: ShouldSendTo;
+  songMetadata?: SongMetadata;
+  songLinks?: SongLink[];
+  songAudio?: SongAudio;
+};
+
+/** Arrangement-authored data and the explicit order of its slide references. */
+export type SongV2ArrangementDocument = SongV2AuditFields & {
+  _id: string;
+  _rev?: string;
+  docType: "song-v2-arrangement";
+  songId: string;
+  arrangementId: string;
+  name: string;
+  formattedLyrics: Arrangment["formattedLyrics"];
+  songOrder: Arrangment["songOrder"];
+  monitorLayout?: MonitorLayout;
+  slideIds: string[];
+};
+
+/** One authored slide is the smallest independently conflicting content unit. */
+export type SongV2SlideDocument = Omit<
+  ItemSlideType,
+  "monitorCurrentBandBoxes" | "monitorNextBandBoxes"
+> & SongV2AuditFields & {
+  _id: string;
+  _rev?: string;
+  docType: "song-v2-slide";
+  songId: string;
+  arrangementId: string;
+};
+
+export type SongV2Documents = {
+  root: SongV2RootDocument;
+  arrangements: SongV2ArrangementDocument[];
+  slides: SongV2SlideDocument[];
 };
 
 export type SongMetadata = {
