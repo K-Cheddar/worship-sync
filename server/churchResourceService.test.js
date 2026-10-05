@@ -31,6 +31,22 @@ test("ChurchResource validation accepts supported types and Office extension fal
     validateChurchResourceUpload({ fileName: "track.mp3", contentType: "audio/x-mpeg", sizeBytes: 10 }, env).contentType,
     "audio/mpeg",
   );
+  for (const [fileName, contentType] of [
+    ["profile.jpeg", "image/jpeg"],
+    ["slide.png", "image/png"],
+    ["banner.gif", "image/gif"],
+    ["photo.webp", "image/webp"],
+    ["cover.avif", "image/avif"],
+  ]) {
+    assert.equal(
+      validateChurchResourceUpload({ fileName, contentType: "application/octet-stream", sizeBytes: 10 }, env).contentType,
+      contentType,
+    );
+    assert.equal(
+      validateChurchResourceUpload({ fileName, contentType, sizeBytes: 10 }, env).kind,
+      "image",
+    );
+  }
   assert.throws(
     () => validateChurchResourceUpload({ fileName: "archive.zip", contentType: "application/zip", sizeBytes: 10 }, env),
     ChurchResourceInputError,

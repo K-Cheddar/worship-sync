@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Download,
   FileText,
+  Image as ImageIcon,
   FolderOpen,
   Pencil,
   Plus,
@@ -61,7 +62,7 @@ import type {
 import ResourceUploadDialog from "./ResourceUploadDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/DropdownMenu";
 
-type ResourceFilter = "all" | "document" | "audio";
+type ResourceFilter = "all" | "document" | "image" | "audio";
 type ResourceSortKey = "name" | "type" | "size" | "updated" | "source";
 type SortDirection = "asc" | "desc";
 
@@ -217,6 +218,11 @@ const ResourcePreview = ({
   };
 
   const deletionIncomplete = resource?.deletionStatus === "deleting";
+  const canDownload = entry.source === "song-audio" || resource?.sourceType !== "external";
+  const canRename = Boolean(resource && canEdit);
+  const canDelete = canEdit && entry.source === "church-resource";
+  const hasManagementActions = canDownload || canRename || canDelete;
+  const showSecondaryInfo = Boolean(resource?.description || error || (editingName && resource));
   return (
     <>
       <ContentPreviewDialog
@@ -248,19 +254,21 @@ const ResourcePreview = ({
         } : null}
         onClose={onClose}
         dialogLabel={resourceEntryName(entry)}
-        details={<div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 px-4 py-3">
-          <div className="min-w-0 space-y-1 text-xs text-gray-400">
-            <p>{typeLabel(entry)} · {formatEntrySize(entry)} · Updated {formatDate(entryUpdatedAt(entry))}</p>
-            {resource?.description ? <p className="text-sm text-gray-300">{resource.description}</p> : null}
-            {error ? <p className="text-red-300" role="alert">{error}</p> : null}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {editingName && resource ? <><Input label="Resource name" value={nameDraft} onChange={(value) => setNameDraft(String(value))} /><Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button><Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} /></> : null}
-            {entry.source === "song-audio" || resource?.sourceType !== "external" ? <Button type="button" variant="secondary" svg={Download} isLoading={downloading} disabled={deletionIncomplete || Boolean(error) || downloading || deleting} onClick={() => void download()}>Download</Button> : null}
-            {resource && canEdit && !editingName ? <Button type="button" variant="tertiary" svg={Pencil} disabled={deletionIncomplete || savingName || downloading || deleting} onClick={() => setEditingName(true)}>Rename</Button> : null}
-            {canEdit && entry.source === "church-resource" ? <Button type="button" variant="destructive" svg={Trash2} isLoading={deleting} disabled={deleting || downloading || savingName} onClick={() => void deleteResource()}>{deletionIncomplete ? "Retry deletion" : resourceEntryDeleteActionLabel(entry)}</Button> : null}
-          </div>
-        </div>}
+        metadata={`${typeLabel(entry)} · ${formatEntrySize(entry)} · Updated ${formatDate(entryUpdatedAt(entry))}`}
+        secondaryInfo={showSecondaryInfo ? <>
+          {resource?.description ? <p className="mt-1 text-sm text-gray-300">{resource.description}</p> : null}
+          {error ? <p className="mt-1 text-red-300" role="alert">{error}</p> : null}
+          {editingName && resource ? <div className="mt-2 flex flex-wrap items-end gap-2">
+            <div className="min-w-48 flex-1"><Input label="Resource name" value={nameDraft} onChange={(value) => setNameDraft(String(value))} /></div>
+            <Button type="button" variant="cta" isLoading={savingName} disabled={savingName} onClick={() => void saveName()}>Save</Button>
+            <Button type="button" variant="tertiary" aria-label="Cancel rename" svg={X} onClick={() => setEditingName(false)} />
+          </div> : null}
+        </> : undefined}
+        menuActions={hasManagementActions ? <>
+          {canDownload ? <DropdownMenuItem disabled={deletionIncomplete || Boolean(error) || downloading || deleting} onSelect={(event) => { event.preventDefault(); void download(); }}><Download />{downloading ? "Downloading…" : "Download"}</DropdownMenuItem> : null}
+          {canRename && !editingName ? <DropdownMenuItem disabled={deletionIncomplete || savingName || downloading || deleting} onSelect={() => setEditingName(true)}><Pencil />Rename</DropdownMenuItem> : null}
+          {canDelete ? <DropdownMenuItem variant="destructive" disabled={deleting || downloading || savingName} onSelect={() => void deleteResource()}><Trash2 />{deleting ? "Deleting…" : deletionIncomplete ? "Retry deletion" : resourceEntryDeleteActionLabel(entry)}</DropdownMenuItem> : null}
+        </> : undefined}
       />
     </>
   );
@@ -548,8 +556,8 @@ const ResourcesPage = () => {
               </> : null}
             </div>
             <div className="flex flex-wrap gap-2 border-b border-gray-700 px-4 py-2" role="tablist" aria-label="Resource types">
-              {(["all", "document", "audio"] as const).map((value) => (
-                <Button key={value} type="button" variant="tertiary" isSelected={filter === value} aria-pressed={filter === value} className={filter === value ? "border-cyan-400 bg-cyan-500/20 text-white" : "border-transparent text-gray-300 hover:border-gray-500 hover:bg-gray-800"} onClick={() => setFilter(value)}>{value === "all" ? "All" : value === "document" ? "Documents" : "Audio"}</Button>
+              {(["all", "document", "image", "audio"] as const).map((value) => (
+                <Button key={value} type="button" variant="tertiary" isSelected={filter === value} aria-pressed={filter === value} className={filter === value ? "border-cyan-400 bg-cyan-500/20 text-white" : "border-transparent text-gray-300 hover:border-gray-500 hover:bg-gray-800"} onClick={() => setFilter(value)}>{value === "all" ? "All" : value === "document" ? "Documents" : value === "image" ? "Images" : "Audio"}</Button>
               ))}
             </div>
             {loadErrors.map((loadError) => <div key={loadError} className="mx-4 mt-3 rounded border border-red-700/60 bg-red-950/20 p-3 text-sm text-red-200" role="alert">{loadError}</div>)}
@@ -629,7 +637,7 @@ const ResourcesPage = () => {
                             </td>
                             <td className="max-w-0 px-4 py-3">
                               <span className="flex w-full min-w-0 items-center gap-2 text-left text-gray-100">
-                                {resourceEntryKind(entry) === "audio" ? <AudioLines className="size-4 shrink-0 text-amber-300" aria-hidden /> : <FileText className="size-4 shrink-0 text-cyan-300" aria-hidden />}
+                                {resourceEntryKind(entry) === "audio" ? <AudioLines className="size-4 shrink-0 text-amber-300" aria-hidden /> : resourceEntryKind(entry) === "image" ? <ImageIcon className="size-4 shrink-0 text-cyan-300" aria-hidden /> : <FileText className="size-4 shrink-0 text-cyan-300" aria-hidden />}
                                 <span className="truncate font-semibold">{resourceEntryName(entry)}</span>
                                 {recentlyUploaded ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-medium text-green-200"><CheckCircle2 className="size-3" aria-hidden />{entry.source === "church-resource" && entry.resource.sourceType === "external" ? "Added" : "Uploaded"}</span> : null}
                               </span>

@@ -35,6 +35,33 @@ type ResourceUploadDialogProps = {
 
 const controllerElement = () => document.getElementById("controller-main") || document.body;
 
+const RESOURCE_UPLOAD_ACCEPT = [
+  ".pdf", ".txt", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".mp3", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif",
+  "application/pdf", "text/plain", "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "audio/mpeg", "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+].join(",");
+const RESOURCE_UPLOAD_EXTENSIONS = new Set([
+  "pdf", "txt", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "mp3", "jpg", "jpeg", "png", "gif", "webp", "avif",
+]);
+const RESOURCE_UPLOAD_TYPES = new Set([
+  "application/pdf", "text/plain", "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "audio/mpeg", "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+]);
+
+const isSupportedResourceFile = (file: File) => {
+  const extension = file.name.toLowerCase().split(".").pop() || "";
+  const contentType = file.type.toLowerCase();
+  return RESOURCE_UPLOAD_TYPES.has(contentType) || (
+    (!contentType || contentType === "application/octet-stream") && RESOURCE_UPLOAD_EXTENSIONS.has(extension)
+  );
+};
+
 const ResourceTransferProgress = ({ transferId, variant }: { transferId: string; variant: "card" | "compact" }) => {
   const transferContext = useOptionalTransfers();
   const transfer = transferContext?.transfers.find((item) => item.id === transferId);
@@ -69,11 +96,18 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
 
   const addFiles = useCallback((newFiles: File[]) => {
     if (isUploading || newFiles.length === 0) return;
+    const supportedFiles = newFiles.filter(isSupportedResourceFile);
+    const unsupportedFiles = newFiles.filter((file) => !isSupportedResourceFile(file));
+    if (unsupportedFiles.length) {
+      setError(`${unsupportedFiles.map((file) => file.name).join(", ")}: Choose a JPEG, PNG, GIF, WebP, AVIF, PDF, text, Office, or MP3 file.`);
+    } else {
+      setError("");
+    }
+    if (!supportedFiles.length) return;
     setFiles((current) => [
       ...current,
-      ...newFiles.map((file) => ({ file, name: file.name, status: "queued" as const })),
+      ...supportedFiles.map((file) => ({ file, name: file.name, status: "queued" as const })),
     ]);
-    setError("");
   }, [isUploading]);
 
   const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
@@ -210,11 +244,11 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
         headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => { setIsMinimized(true); setIsMinimizedToButton(false); setIsOpen(false); }} /> : undefined}
       >
         <div className="flex flex-col gap-4">
-          <input ref={inputRef} type="file" multiple aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />
+          <input ref={inputRef} type="file" multiple accept={RESOURCE_UPLOAD_ACCEPT} aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />
           <div {...fileDropHandlers} className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-4 ${isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600"}`}>
             {isFileDragOver ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-cyan-950/80 text-sm font-semibold text-cyan-100">Drop files to add resources</div> : null}
             <FileText className="size-8 text-cyan-300" aria-hidden />
-            <p className="text-sm text-gray-300">Choose one or more files, or drag them here.</p>
+            <p className="text-sm text-gray-300">Choose JPEG, PNG, GIF, WebP, AVIF, PDF, text, Office, or MP3 files, or drag them here.</p>
             <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>Choose files</Button>
           </div>
           <div className="max-h-64 space-y-2 overflow-y-auto scrollbar-variable">

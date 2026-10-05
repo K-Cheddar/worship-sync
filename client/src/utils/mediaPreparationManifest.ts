@@ -148,6 +148,7 @@ const safeReadinessMediaKey = (mediaKey: string): string => {
 /** Derives display-only video rows from the same inventory and surface state as the aggregate report. */
 export const buildMediaPreparationReadinessVideos = (
   inputs: MediaPreparationReadinessVideoInput[],
+  selectedInputs: MediaPreparationReadinessVideoInput[] = [],
 ): { videos: MediaPreparationReadinessVideo[]; videosTruncated: boolean } => {
   const byKey = new Map<string, MediaPreparationReadinessVideoInput>();
   const phasePriority = (phase: ReadinessSurfacePhase | undefined) =>
@@ -156,7 +157,7 @@ export const buildMediaPreparationReadinessVideos = (
         : phase === "preparing" || phase === "activation-requested" || phase === "loading" ? 3
           : phase === "error" ? 2 : 0;
   const candidatePriority: Record<ReadinessCandidateState, number> = { excluded: 0, "pending-cache": 1, eligible: 2 };
-  inputs.forEach((input) => {
+  [...inputs, ...selectedInputs].forEach((input) => {
     const current = byKey.get(input.mediaKey);
     if (!current) {
       byKey.set(input.mediaKey, input);

@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-05-video-readiness-diagnostics",
+  "date": "2026-10-05",
+  "type": "improved",
+  "title": "See video readiness at a glance",
+  "description": "The Video readiness panel now shows which selected videos are ready, playing, preparing, or deferred, with inventory and preparation counts kept clear."
+}

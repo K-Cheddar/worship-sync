@@ -239,7 +239,7 @@ export const getEffectiveServicePlanResourceDefinition = (
       }
     }
     if (churchResource?.kind === "audio") return SERVICE_PLAN_RESOURCE_REGISTRY.audio;
-    if (churchResource?.kind === "other") return SERVICE_PLAN_RESOURCE_REGISTRY.generic;
+    if (churchResource?.kind === "image" || churchResource?.kind === "other") return SERVICE_PLAN_RESOURCE_REGISTRY.generic;
     return SERVICE_PLAN_RESOURCE_REGISTRY.document;
   }
   return getServicePlanResourceDefinition(resource.type);
