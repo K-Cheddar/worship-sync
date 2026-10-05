@@ -16,6 +16,7 @@ describe("WhatsNewModal", () => {
   });
 
   it("shows loading while fetching and groups updates by date", async () => {
+    const user = userEvent.setup();
     jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -33,9 +34,60 @@ describe("WhatsNewModal", () => {
     expect(await screen.findByText("Media transfers")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "October 2, 2026" })).toHaveTextContent("Equipment assignments");
     expect(screen.getByRole("region", { name: "October 1, 2026" })).toHaveTextContent("Member photos");
-    expect(screen.getByText("New")).toBeInTheDocument();
-    expect(screen.getByText("Improved")).toBeInTheDocument();
-    expect(screen.getByText("Fixed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "October 2, 2026" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "October 1, 2026" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("New")).toBeVisible();
+    expect(screen.getByText("Improved")).toBeVisible();
+    expect(screen.getByText("Member photos")).not.toBeVisible();
+    await user.click(screen.getByRole("button", { name: "October 1, 2026" }));
+    expect(screen.getByText("Member photos")).toBeVisible();
+    expect(screen.getByText("Fixed")).toBeVisible();
+    expect(screen.getByText("Media transfers")).toBeVisible();
+  });
+
+  it("lets each date collapse and expand independently with the keyboard", async () => {
+    const user = userEvent.setup();
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ notes: [note, { ...note, id: "older", date: "2026-10-01", title: "Older update" }] }),
+    } as Response);
+    render(<WhatsNewModal isOpen onClose={jest.fn()} />);
+    const newest = await screen.findByRole("button", { name: "October 2, 2026" });
+    await user.click(newest);
+    expect(newest).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Media transfers")).not.toBeVisible();
+    await user.keyboard("{Enter}");
+    expect(newest).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Media transfers")).toBeVisible();
+    await user.tab();
+    await user.keyboard(" ");
+    expect(screen.getByRole("button", { name: "October 1, 2026" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Older update")).toBeVisible();
+    await user.keyboard(" ");
+    expect(screen.getByText("Older update")).not.toBeVisible();
+    expect(screen.getByText("Media transfers")).toBeVisible();
+  });
+
+  it("resets to only the newest date expanded when reopened", async () => {
+    const user = userEvent.setup();
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ notes: [note, { ...note, id: "older", date: "2026-10-01", title: "Older update" }] }),
+    } as Response);
+    const onClose = jest.fn();
+    const { rerender } = render(<WhatsNewModal isOpen onClose={onClose} />);
+    await user.click(await screen.findByRole("button", { name: "October 2, 2026" }));
+    await user.click(screen.getByRole("button", { name: "October 1, 2026" }));
+    expect(screen.getByText("Older update")).toBeVisible();
+    expect(screen.getByText("Media transfers")).not.toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(<WhatsNewModal isOpen={false} onClose={onClose} />);
+    rerender(<WhatsNewModal isOpen onClose={onClose} />);
+    expect(await screen.findByText("Media transfers")).toBeVisible();
+    expect(screen.getByRole("button", { name: "October 2, 2026" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "October 1, 2026" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Older update")).not.toBeVisible();
   });
 
   it("shows an empty state when no updates are available", async () => {
