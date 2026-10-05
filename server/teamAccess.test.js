@@ -49,6 +49,7 @@ test("global Teams editor has global view and edit", () => {
   const access = resolve(bootstrap({ teams: "edit" }));
   assert.equal(access.viewAll, true);
   assert.equal(access.editAll, true);
+  assertTeamAccess(access, "unknown", { view: true, edit: true });
 });
 
 test("global Teams viewer has global view while explicit scoped edit remains", () => {
@@ -60,6 +61,7 @@ test("global Teams viewer has global view while explicit scoped edit remains", (
   assert.equal(access.editAll, false);
   assertTeamAccess(access, "worship", { view: true, edit: true });
   assertTeamAccess(access, "av", { view: true, edit: false });
+  assertTeamAccess(access, "unknown", { view: true, edit: false });
 });
 
 test("scoped manager can view and edit only the explicitly managed team", () => {
@@ -72,6 +74,23 @@ test("scoped manager can view and edit only the explicitly managed team", () => 
 test("scoped view remains readable without edit", () => {
   const access = resolve(bootstrap({ teamScopes: { worship: "view" } }));
   assertTeamAccess(access, "worship", { view: true, edit: false });
+});
+
+test("scopes for teams in another church grant no access", () => {
+  const access = resolve(
+    bootstrap({ teamScopes: { "foreign-team": "edit" } }),
+    records({
+      teams: [{ teamId: "foreign-team", churchId: "church-2", memberIds: [] }],
+    }),
+  );
+  assertTeamAccess(access, "foreign-team", { view: false, edit: false });
+  assert.deepEqual(access.explicitlyEditableTeamIds, new Set());
+});
+
+test("scopes for stale or nonexistent teams grant no access", () => {
+  const access = resolve(bootstrap({ teamScopes: { "stale-team": "edit" } }));
+  assertTeamAccess(access, "stale-team", { view: false, edit: false });
+  assert.deepEqual(access.explicitlyEditableTeamIds, new Set());
 });
 
 test("linked roster member gets read access to one active team", () => {
@@ -164,6 +183,27 @@ test("archived roster members and teams do not create automatic access", () => {
   assert.deepEqual(access.memberTeamIds, new Set());
   assertTeamAccess(access, "archived-team", { view: false, edit: false });
   assertTeamAccess(access, "active-team", { view: false, edit: false });
+});
+
+test("scoped grants do not create normal access to archived teams", () => {
+  const access = resolve(
+    bootstrap({
+      teamScopes: {
+        "archived-view-team": "view",
+        "archived-edit-team": "edit",
+      },
+    }),
+    records({
+      teams: [
+        { teamId: "archived-view-team", churchId: "church-1", memberIds: [], archivedAt: "2026-01-01" },
+        { teamId: "archived-edit-team", churchId: "church-1", memberIds: [], archivedAt: "2026-01-01" },
+      ],
+    }),
+  );
+  assertTeamAccess(access, "archived-view-team", { view: false, edit: false });
+  assertTeamAccess(access, "archived-edit-team", { view: false, edit: false });
+  assert.deepEqual(access.explicitlyViewableTeamIds, new Set());
+  assert.deepEqual(access.explicitlyEditableTeamIds, new Set());
 });
 
 test("roster and team records from another church never create access", () => {

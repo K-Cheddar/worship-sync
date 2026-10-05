@@ -33,8 +33,18 @@ export const resolveEffectiveTeamAccess = ({
   const editAll = isAdmin || globalTeams === "edit";
   const viewAll = editAll || globalTeams === "view";
 
+  // Scopes and roster membership both resolve against the current church's
+  // active team records. A permission entry alone is not proof a team exists.
+  const eligibleTeams = new Map();
+  for (const team of teams) {
+    const teamId = team?.teamId || team?.id;
+    if (teamId && team.churchId === churchId && !team.archivedAt) {
+      eligibleTeams.set(teamId, team);
+    }
+  }
+
   for (const [teamId, permission] of Object.entries(permissions.teamScopes || {})) {
-    if (!teamId) continue;
+    if (!eligibleTeams.has(teamId)) continue;
     if (permission === "view") {
       explicitlyViewableTeamIds.add(teamId);
       viewTeamIds.add(teamId);
@@ -60,15 +70,8 @@ export const resolveEffectiveTeamAccess = ({
     if (linkedMembers.length === 1) {
       const memberId = linkedMembers[0].memberId;
       if (memberId) {
-        for (const team of teams) {
-          const teamId = team?.teamId || team?.id;
-          if (
-            teamId &&
-            team.churchId === churchId &&
-            !team.archivedAt &&
-            Array.isArray(team.memberIds) &&
-            team.memberIds.includes(memberId)
-          ) {
+        for (const [teamId, team] of eligibleTeams) {
+          if (Array.isArray(team.memberIds) && team.memberIds.includes(memberId)) {
             memberTeamIds.add(teamId);
             viewTeamIds.add(teamId);
           }
