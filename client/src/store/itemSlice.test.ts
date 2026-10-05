@@ -80,7 +80,11 @@ describe("itemSlice", () => {
       state.baseItem?.arrangements?.[0].formattedLyrics[0].textDocument,
     ).toEqual(textDocument);
     expect(itemDocMatchesEditorState(state.baseItem!, state)).toBe(true);
-    expect(itemDocMatchesEditorState({ ...state.baseItem!, docType: "song-v2-root" }, state)).toBe(true);
+    expect(itemDocMatchesEditorState({ ...state.baseItem!, docType: "song-v2-root" }, state)).toBe(false);
+    store.dispatch(itemSlice.actions.setActiveItem({ ...item, docType: "song-v2-root" }));
+    const v2State = store.getState().item;
+    expect(v2State.docType).toBe("song-v2-root");
+    expect(itemDocMatchesEditorState(v2State.baseItem!, v2State)).toBe(true);
   });
 
   describe("reducer only", () => {
@@ -147,6 +151,18 @@ describe("itemSlice", () => {
           lrclibId: 8,
         }),
       );
+    });
+
+    it("replaces storage identity when switching to an item without a docType", () => {
+      const store = createStore();
+      store.dispatch(itemSlice.actions.setActiveItem({
+        _id: "v2-song", name: "V2", type: "song", docType: "song-v2-root",
+      }));
+      store.dispatch(itemSlice.actions.setActiveItem({
+        _id: "timer", name: "Timer", type: "timer",
+      }));
+      expect(store.getState().item.docType).toBeUndefined();
+      expect(store.getState().item.baseItem?.docType).toBeUndefined();
     });
 
     it("setActiveItem loads song links and attached audio", () => {

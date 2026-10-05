@@ -47,6 +47,46 @@ describe("active v2 song library refresh", () => {
     expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("Slide-only update");
     expect(store.getState().allDocs.allSongDocs[0].arrangements[0].slides).toEqual([]);
   });
+  it("adopts an identical-content v2 representation as the idle v1 editor baseline", async () => {
+    const { store, item, docs, load } = setup();
+    const v1 = { ...song(), docType: undefined };
+    store.dispatch(item.setActiveItem({ ...v1, listId: "outline-entry" }));
+    const projection = { ...song(), arrangements: song().arrangements.map((arrangement) => ({ ...arrangement, slides: [] })) };
+    load.mockResolvedValue(song());
+
+    store.dispatch(docs.updateAllSongDocs([projection]));
+    await flush();
+
+    const active = store.getState().undoable.present.item;
+    expect(active.docType).toBe("song-v2-root");
+    expect(active.baseItem?.docType).toBe("song-v2-root");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("Song");
+    expect(load).toHaveBeenCalledWith(expect.anything(), "song-1");
+    expect(store.getState().allDocs.allSongDocs[0].arrangements[0].slides).toEqual([]);
+  });
+  it("buffers an equivalent v2 representation while preserving a dirty v1 draft, then adopts it when applied", async () => {
+    const { store, item, docs, load } = setup();
+    const v1 = { ...song(), docType: undefined };
+    store.dispatch(item.setActiveItem({ ...v1, listId: "outline-entry" }));
+    store.dispatch(item._updateSlides([{ ...v1.arrangements[0].slides[0], boxes: [{ id: "box", words: "Local draft", width: 1920, height: 1080 }] }]));
+    const projection = { ...song(), arrangements: song().arrangements.map((arrangement) => ({ ...arrangement, slides: [] })) };
+    load.mockResolvedValue(song());
+
+    store.dispatch(docs.updateAllSongDocs([projection]));
+    await flush();
+
+    let active = store.getState().undoable.present.item;
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("Local draft");
+    expect(active.baseItem?.docType).toBeUndefined();
+    expect(active.pendingRemoteItem?.docType).toBe("song-v2-root");
+    expect(active.hasRemoteUpdate).toBe(true);
+
+    store.dispatch(item.applyPendingRemoteItem());
+    active = store.getState().undoable.present.item;
+    expect(active.docType).toBe("song-v2-root");
+    expect(active.baseItem?.docType).toBe("song-v2-root");
+    expect(active.hasPendingUpdate).toBe(false);
+  });
   it("buffers fully loaded remote content when editing begins during hydration", async () => {
     const { store, item, docs, load } = setup();
     let resolve!: (song: DBItem) => void;

@@ -373,6 +373,8 @@ export type BibleInfo = {
 };
 
 export type ItemState = ItemProperties & {
+  /** Physical storage representation of the active item, when the document has one. */
+  docType?: DocType;
   listId?: string;
   selectedSlide: number;
   selectedBox: number;
