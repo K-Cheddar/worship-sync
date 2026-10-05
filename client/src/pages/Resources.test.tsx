@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -502,7 +502,10 @@ describe("Resources page", () => {
   it("uses the styled confirmation modal before deleting a church resource", async () => {
     mockResources = [resource];
     mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
-    jest.mocked(deleteChurchResource).mockResolvedValue({ success: true });
+    let resolveDelete!: (result: { success: true }) => void;
+    jest.mocked(deleteChurchResource).mockImplementation(() => new Promise((resolve) => {
+      resolveDelete = resolve;
+    }));
     renderPage();
 
     await userEvent.setup().click(await screen.findByRole("button", { name: /Preview Guidelines\.pdf/i }));
@@ -511,7 +514,18 @@ describe("Resources page", () => {
     const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
     expect(confirmation).toHaveTextContent("Guidelines.pdf");
     await userEvent.setup().click(within(confirmation).getByRole("button", { name: "Delete" }));
+    expect(within(confirmation).getByRole("button", { name: "Delete" })).toHaveAttribute("data-variant", "presentDestructive");
+    expect(confirmation).toHaveAttribute("aria-busy", "true");
+    expect(within(confirmation).getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(within(confirmation).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await userEvent.setup().click(within(confirmation).getByRole("button", { name: "Delete" }));
+    expect(deleteChurchResource).toHaveBeenCalledTimes(1);
+    await userEvent.setup().keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByRole("dialog", { name: "Delete resource?" })).toBeInTheDocument();
+    resolveDelete({ success: true });
     await waitFor(() => expect(deleteChurchResource).toHaveBeenCalledWith({ churchId: "church-1", resourceId: "resource-1" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete resource?" })).not.toBeInTheDocument());
     await waitFor(() => expect(mockGetChurchStorageQuota).toHaveBeenCalledTimes(2));
   });
 
@@ -529,6 +543,7 @@ describe("Resources page", () => {
     await user.click(screen.getByRole("button", { name: "Delete selected (2)" }));
 
     const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
+    expect(within(confirmation).getByRole("button", { name: "Delete" })).toHaveAttribute("data-variant", "presentDestructive");
     expect(within(confirmation).getByText("Guidelines.pdf")).toBeInTheDocument();
     expect(within(confirmation).getByText("Second guide.pdf")).toBeInTheDocument();
   });

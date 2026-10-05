@@ -1840,7 +1840,9 @@ describe("assignees and their microphones", () => {
     });
     await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
     expect(screen.getByRole("group", { name: "Assignees for Pastoral Greetings" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "IEM conflict for IEM 1" }));
+    const conflictTrigger = screen.getByRole("button", { name: "IEM conflict for IEM 1" });
+    expect(conflictTrigger).toHaveAttribute("data-variant", "presentTertiary");
+    await user.click(conflictTrigger);
     expect(await screen.findByText("IEM 1 is scheduled to Jordan Lee.")).toBeInTheDocument();
   });
 

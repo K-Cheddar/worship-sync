@@ -226,9 +226,9 @@ const ServicePlanEmailModal = ({
   return (
     <Modal
       isOpen
-      onClose={isSending ? () => undefined : onClose}
+      onClose={onClose}
+      busy={isSending}
       title="Email service plan"
-      showCloseButton={!isSending}
       size="sm"
     >
       {isSent ? (
