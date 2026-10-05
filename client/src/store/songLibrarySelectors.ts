@@ -4,14 +4,16 @@ import { mergeSongLibraryItems } from "../utils/songLibrary";
 
 const selectAllItems = (state: RootState) => state.allItems.list;
 const selectAllSongDocs = (state: RootState) => state.allDocs.allSongDocs;
+const selectDiagnostics = (state: RootState) => state.allDocs.songLibraryDiagnostics;
 const selectAllItemsLoading = (state: RootState) =>
   state.allItems.isAllItemsLoading;
 
 /** Canonical read model for every surface that lists library songs. */
 export const selectSongLibrary = createSelector(
-  [selectAllItems, selectAllSongDocs, selectAllItemsLoading],
-  (allItems, documents, isAllItemsLoading) => {
-    const songs = mergeSongLibraryItems(allItems, documents);
+  [selectAllItems, selectAllSongDocs, selectAllItemsLoading, selectDiagnostics],
+  (allItems, documents, isAllItemsLoading, diagnostics) => {
+    const unavailableIds = new Set(diagnostics?.map((diagnostic) => diagnostic.songId));
+    const songs = mergeSongLibraryItems(allItems, documents).filter((song) => !unavailableIds.has(song._id));
 
     return {
       songs,

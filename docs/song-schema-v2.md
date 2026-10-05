@@ -167,5 +167,118 @@ the writer never calculates a new layout with DOM measurement.
 Physical whole-song v2 deletion is deliberately deferred. Normal delete still
 rejects v2-backed songs. Migration must first define how deletion behaves when
 v1 and v2 coexist, then implement root-first deactivation and child cleanup.
-This phase does not migrate, dual-write, delete legacy songs, enable v2 library
-discovery, or activate production v2 writes.
+Library discovery is now v2-aware as described below. This phase does not migrate,
+dual-write, delete legacy songs, or activate production v2 writes.
+
+## Library discovery and lazy slides
+
+A published `song-v2:root:<songId>` is the authoritative activation marker for reads.
+`discoverSongLibrary()` resolves only the root's ordered `arrangementIds`; orphan
+arrangements and slides never become library items. `buildSongV2LibraryProjection()`
+returns a logical `DBItem` (`_id = songId`, `type = song`, `docType = song-v2-root`)
+with root metadata and arrangements containing IDs, names, `formattedLyrics`,
+`songOrder`, optional `monitorLayout`, and `slides: []`. It performs no DOM measurement
+and copies no child revisions. `loadSongV2LibraryProjection()` independently resolves
+arrangements with bounded `allDocs({ keys, include_docs: true })` reads.
+
+`updateAllDocs()` first lists IDs and excludes v2 slide IDs before reading document
+bodies. Searching titles, artists, and formatted lyrics across every arrangement
+requires no slide documents. The global song library remains a read model, containing
+canonical v1 documents and lightweight v2 projections, even after exact-load upserts.
+
+V2 wins over a coexisting legacy document and over stale `allItems` identifying
+metadata. Legacy-only songs preserve the existing index precedence. `allItems` remains
+a lightweight initialization index; missing rows can be repaired from valid projections.
+Missing or invalid referenced v2 arrangements produce structured `incomplete-v2`
+diagnostics and exclude the song, including its stale index row. They never fall back
+to stale v1 data. A subsequent replication refresh rebuilds the projection and recovers
+when the manifest children arrive. Remote index deletion protections remain in place.
+
+Controller/editor opening and service-plan controller synchronization use exact
+`loadSong()` / `loadItemWithSongHydration()` loads. The library lyrics editor hydrates
+before mounting its draft panel, with pending/error UI and stale-result cancellation.
+Outline slide previews keep exact v2 content in their local cache, rather than Redux
+library state. Active-controller refresh also exact-loads before applying or buffering
+remote slide content, including slide-only changes. Resource, audio, matching, and
+lyrics viewing paths use projection metadata and formatted lyrics directly.
+
+Normal `createSong`, `saveSong`, and `deleteSong` are unchanged. V2 saves/deletes remain
+guarded by `SongV2WriteNotEnabledError`; opening an editor does not activate writes.
+Audio replacement/removal is also guarded before external storage mutations.
+This phase does not migrate songs, publish roots, dual-write, or delete predecessors.
+
+### Consumer audit
+
+| Consumer | Required data / exact-load boundary |
+| --- | --- |
+| FilteredItems, song selectors, index repair | Projection metadata and formatted lyrics; incomplete IDs suppress stale index rows. |
+| Service Plan matching, reference resolution, Service Planning import | Logical IDs, names, metadata, and formatted lyrics; no authored slide dependency. |
+| ViewSongSectionsDrawer, ServicePlanSongDetailsPanel | Viewing uses formatted lyrics; shared LyricsEditor exact-loads before initializing a v2 draft. Metadata saves already exact-load. Audio side effects are guarded for v2. |
+| Resources and song-audio viewing | Root metadata/audio pointers; the Resources UI only selects/deletes church resources. |
+| AddSongSectionsDrawer | Imports formatted sections only, without reading slide boxes. |
+| Controller opening, outline attachment, Service Plan outline push | Attachments remain lightweight ServiceItems; Controller Item and createNewItemInDb already use loadItemWithSongHydration. |
+| Active controller replication refresh | Exact-loads before applying/buffering v2 content; keeps dirty drafts and discards obsolete owner/database/projection loads. |
+| Outline counts/thumbnails/slide previews | useOutlineItemDocs exact-loads referenced v2 songs into a local cache; library upserts strip authored v2 slides. |
+
+### Phase verification (2026-10-05)
+
+Latest upstream merged: `62106c26` into isolated `in-progress-3` (merge `3603928c`),
+with no conflicts. The earlier requested merge included `ddcecb84`. No reverse merge,
+migration, real-song fixtures, normal v2 write activation, or legacy deletion occurred.
+
+Focused Jest selection: 32 suites, 570 tests passed. The exact selected files were:
+
+```text
+src/store/store.test.ts
+src/store/store.v2LibraryRefresh.test.ts
+src/components/SongSections/ViewSongSectionsDrawer.test.tsx
+src/pages/Services/ServicePlanSongDetailsPanel.test.tsx
+src/containers/ItemEditor/__tests__/LyricsEditor.test.tsx
+src/containers/ItemEditor/__tests__/LyricsEditor.v2Hydration.test.tsx
+src/containers/ItemEditor/__tests__/AddSongSectionsDrawer.test.tsx
+src/utils/songSearchUtils.test.ts
+src/utils/songPersistence.test.ts
+src/utils/songV2Writer.test.ts
+src/utils/songV2Writer.indexedDb.test.ts
+src/utils/songLibraryDiscovery.test.ts
+src/utils/songLibrary.test.ts
+src/utils/dbUtils.test.ts
+src/store/songLibrarySelectors.test.ts
+src/store/songLibraryIndexRepair.test.ts
+src/store/allDocsSlice.test.ts
+src/hooks/useOutlineItemDocs.test.tsx
+src/utils/outlineSlideSections.test.ts
+src/pages/Services/useServicePlanOutlinePush.test.tsx
+src/pages/Services/servicePlanOutlineBridge.test.ts
+src/pages/Services/ServicePlanLibraryPicker.test.tsx
+src/pages/Services/SongReferencePicker.test.tsx
+src/pages/Resources.test.tsx
+src/integrations/servicePlanning/buildServicePlanningPreview.test.ts
+src/store/itemLibrarySelectors.test.ts
+src/containers/ServiceItems/ServiceItems.test.tsx
+src/pages/Controller/Item.test.tsx
+src/components/FilteredItems/FilteredItems.test.tsx
+src/components/DisplayWindow/__tests__/DisplayWindow.corePaths.test.tsx
+src/pages/Services/ServicePlanEditor.test.tsx
+src/pages/Services/ServicePlanCustomDocumentPicker.test.tsx
+```
+
+Command: `npm.cmd test --prefix client -- --runInBand <selected files above>`.
+Final follow-up runs: `useOutlineItemDocs.test.tsx` (4 tests passed), and
+`songLibraryDiscovery.test.ts`, `songPersistence.test.ts`, `songV2Writer.test.ts`,
+`songV2Writer.indexedDb.test.ts` (75 tests passed). The latter includes malformed
+referenced lyrics rejection and all established writer invariants.
+
+`npm.cmd run lint:check --prefix client`, `npm.cmd run build:strict --prefix client`,
+and `git diff --check` passed. The full repository suite was not run.
+`npm.cmd run type-check --prefix client` retains three established diagnostics:
+ServicePlanEditor.test.tsx's unknown mock database, itemUtil.test.ts's ItemState
+revision assertion, and deleteSong's optional DBItem revision versus Pouch RemoveDocument.
+The phase adds no new TypeScript diagnostics. Three legacy mock failures were also
+reproduced with the merged-baseline persistence implementation; their mocks now return
+404 for absent v2 roots and reuse deferred reads, preserving every behavior assertion.
+
+Final review found no unresolved phase issues. Normal mutation/delete activation,
+coexistence deletion semantics, migration/recovery validation, and real-device cutover
+acceptance remain separate prerequisites before migration/cutover. Live Electron/OBS
+manual acceptance and the exhaustive CI suite were not run for this read-model phase.

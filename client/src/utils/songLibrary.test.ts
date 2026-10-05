@@ -96,3 +96,22 @@ describe("reconcileSongLibraryIndex", () => {
     ).toBe(allItems);
   });
 });
+
+
+describe("v2 durable metadata authority", () => {
+  const projection: DBItem = { ...songDoc("song-1", "Authoritative"), docType: "song-v2-root" };
+  it.each([
+    { items: [songItem("song-1", "Indexed")], docs: [], name: "Indexed" },
+    { items: [], docs: [songDoc("song-1", "Legacy")], name: "Legacy" },
+    { items: [], docs: [projection], name: "Authoritative" },
+    { items: [songItem("song-1", "Stale")], docs: [projection], name: "Authoritative" },
+    { items: [songItem("song-1", "Stale")], docs: [projection, songDoc("song-1", "Legacy")], name: "Authoritative" },
+  ])("returns one song with $name metadata", ({ items, docs, name }) => {
+    expect(mergeSongLibraryItems(items, docs)).toEqual([expect.objectContaining({ _id: "song-1", name })]);
+  });
+  it("repairs one lightweight index row and never copies root/child fields", () => {
+    expect(reconcileSongLibraryIndex([], [projection, projection])).toEqual([{
+      _id: "song-1", name: "Authoritative", type: "song", listId: "song-1", background: "song-1.jpg",
+    }]);
+  });
+});

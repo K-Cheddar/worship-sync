@@ -293,6 +293,42 @@ export function hydrateSongFromV2Documents(
   return structural ? { ...hydrated, slides: [] } : hydrated;
 }
 
+/** A deterministic library read model; child revisions and authored slides stay in persistence. */
+export function buildSongV2LibraryProjection(
+  root: SongV2RootDocument,
+  arrangementDocuments: SongV2ArrangementDocument[],
+): DBItem {
+  assertValidV2Root(root);
+  assertUniqueIds(root.arrangementIds, "arrangement reference");
+  for (const arrangement of arrangementDocuments) {
+    if (arrangement.songId !== root.songId || !root.arrangementIds?.includes(arrangement.arrangementId)) continue;
+    if (typeof arrangement.name !== "string" || !Array.isArray(arrangement.formattedLyrics) ||
+      arrangement.formattedLyrics.some((lyric) => !lyric || typeof lyric.words !== "string") ||
+      !Array.isArray(arrangement.songOrder) || !Array.isArray(arrangement.slideIds)) {
+      throw new SongV2DocumentError(`Song ${root.songId} arrangement ${arrangement.arrangementId} has an invalid library contract.`);
+    }
+    assertUniqueIds(arrangement.slideIds, "slide reference");
+  }
+  return hydrateSongFromV2Documents(
+    root,
+    arrangementDocuments.map((arrangement) => ({ ...arrangement, slideIds: [] })),
+    [],
+    true,
+  );
+}
+
+/** Resolves only the ordered arrangement manifest, never slide documents. */
+export async function loadSongV2LibraryProjection(
+  db: PouchDB.Database,
+  root: SongV2RootDocument,
+): Promise<DBItem> {
+  assertValidV2Root(root);
+  const arrangements = await getReferencedDocuments<SongV2ArrangementDocument>(
+    db, root.arrangementIds.map((id) => getSongV2ArrangementDocId(root.songId, id)),
+  );
+  return buildSongV2LibraryProjection(root, arrangements);
+}
+
 export const isPouchNotFoundError = (error: unknown) =>
   typeof error === "object" && error !== null &&
   (("status" in error && error.status === 404) ||
@@ -317,7 +353,7 @@ const getReferencedDocuments = async <T,>(
   if (!ids.length) return [];
   const result = await db.allDocs({ keys: ids, include_docs: true });
   return result.rows.flatMap((row) =>
-    row.doc ? [row.doc as unknown as T] : [],
+    "doc" in row && row.doc ? [row.doc as unknown as T] : [],
   );
 };
 

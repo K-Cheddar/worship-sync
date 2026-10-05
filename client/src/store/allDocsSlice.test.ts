@@ -182,3 +182,14 @@ describe("allDocsSlice song normalization boundary", () => {
     }
   });
 });
+
+
+it("keeps exact v2 upserts lightweight and rejects stale legacy echoes", () => {
+  const store = createStore();
+  const exact: DBItem = { ...makeDoc("v2", "song"), docType: "song-v2-root", arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [], slides: [{ id: "s", type: "Verse", name: "Verse", boxes: [] }] }] };
+  store.dispatch(upsertItemInAllDocs(exact));
+  store.dispatch(upsertItemInAllDocs({ ...makeDoc("v2", "song"), name: "Stale" }));
+  store.dispatch(upsertItemsInAllDocs([{ ...makeDoc("v2", "song"), name: "Stale batch" }]));
+  expect(store.getState().allDocs.allSongDocs).toHaveLength(1);
+  expect(store.getState().allDocs.allSongDocs[0]).toMatchObject({ name: "v2", docType: "song-v2-root", arrangements: [{ slides: [] }] });
+});
