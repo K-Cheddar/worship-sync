@@ -98,12 +98,10 @@ const ServicePlanCustomDocumentPicker = ({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={() => {
-        if (!isCreatingDocument) resetAndClose();
-      }}
+      onClose={resetAndClose}
       title={showCreateDocument ? "Create custom document" : "Add custom document"}
       size={showCreateDocument ? "full" : "2xl"}
-      showCloseButton={!isCreatingDocument}
+      busy={isCreatingDocument}
       contentPadding="p-4 pt-0"
       surfaceClassName={
         showCreateDocument ? undefined : "mx-auto w-full max-w-5xl rounded-lg bg-gray-800"

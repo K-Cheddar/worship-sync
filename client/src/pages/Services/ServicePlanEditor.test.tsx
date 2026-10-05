@@ -694,8 +694,16 @@ describe("ServicePlanEditor", () => {
       });
 
       const summary = await screen.findByLabelText("Service summary");
-      await user.click(within(summary).getByRole("button", { name: /^Details$/i }));
+      const details = within(summary).getByRole("button", { name: /^Details$/i });
+      expect(details).toHaveAttribute("data-slot", "button");
+      expect(details).toHaveAttribute("data-variant", "none");
+      expect(details).toHaveAttribute("aria-expanded", "false");
+      await user.click(details);
       expect(within(summary).getByText("Mics: 1/1 assigned")).toBeInTheDocument();
+      const hideDetails = within(summary).getByRole("button", { name: "Hide details" });
+      expect(hideDetails).toHaveAttribute("aria-expanded", "true");
+      await user.click(hideDetails);
+      expect(within(summary).queryByText("Mics: 1/1 assigned")).not.toBeInTheDocument();
     });
 
     it("shows IEM coverage independently for IEM-capable roles", async () => {

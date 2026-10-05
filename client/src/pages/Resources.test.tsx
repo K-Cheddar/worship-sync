@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
@@ -20,18 +20,9 @@ import {
 } from "../api/auth";
 import { updateAllDocs } from "../utils/dbUtils";
 
-let mockUploadedResources: ChurchResource[] = [];
-
 jest.mock("../components/AppPageShell/AppWorkspaceShell", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
-
-jest.mock("./ResourceUploadDialog", () => ({
-  __esModule: true,
-  default: ({ onResourcesUploaded }: { onResourcesUploaded: (resources: ChurchResource[]) => void }) => (
-    <button type="button" onClick={() => onResourcesUploaded(mockUploadedResources)}>Complete resource upload</button>
-  ),
 }));
 
 jest.mock("../api/auth", () => ({
@@ -159,7 +150,6 @@ const deferred = <T,>() => {
 describe("Resources page", () => {
   beforeEach(() => {
     mockGetChurchStorageQuota.mockClear();
-    mockUploadedResources = [resource];
     mockSongDocs = [song()];
     mockResources = [];
     mockState = {
@@ -239,10 +229,12 @@ describe("Resources page", () => {
     mockCreateExternalChurchResource.mockResolvedValue(externalResource);
     renderPage();
 
-    await userEvent.setup().click(await screen.findByText("+ Add resource"));
-    await userEvent.setup().click(screen.getByRole("button", { name: "Add external link" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Add resource" }));
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Add external link" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add external link" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     await userEvent.setup().type(screen.getByPlaceholderText("https://"), externalResource.external.url);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Add resource" }));
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add resource" }));
 
     expect(await screen.findByText("Team guide")).toBeInTheDocument();
     expect(screen.getByText("Google Drive")).toBeInTheDocument();
@@ -317,9 +309,48 @@ describe("Resources page", () => {
 
   it("refreshes R2 usage after a successful Resources upload", async () => {
     const user = userEvent.setup();
+    mockUploadChurchResource.mockResolvedValue(resource);
     renderPage();
-    await user.click(await screen.findByRole("button", { name: "Complete resource upload" }));
+    const trigger = await screen.findByRole("button", { name: "Add resource" });
+    expect(trigger).toHaveAttribute("data-slot", "dropdown-menu-trigger");
+    expect(trigger).toHaveAttribute("data-variant", "presentCta");
+    await user.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "Add external link" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("button")).not.toBeInTheDocument();
+    await user.click(within(menu).getByRole("menuitem", { name: "Upload file" }));
+    const dialog = await screen.findByRole("dialog", { name: "Upload resources" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await user.upload(screen.getByLabelText("Select resource files"), new File(["guide"], "guide.pdf", { type: "application/pdf" }));
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await waitFor(() => expect(mockGetChurchStorageQuota).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
+    await screen.findByRole("dialog", { name: "Upload resources" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("restores an active minimized upload from Add resource without starting another upload", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<ChurchResource>();
+    mockUploadChurchResource.mockReturnValue(pending.promise);
+    renderPage();
+    const trigger = await screen.findByRole("button", { name: "Add resource" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
+    await screen.findByRole("dialog", { name: "Upload resources" });
+    await user.upload(screen.getByLabelText("Select resource files"), new File(["guide"], "guide.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+    await user.click(screen.getByRole("button", { name: "Minimize resource upload to button" }));
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
+    expect(await screen.findByRole("dialog", { name: "Upload resources" })).toHaveAttribute("aria-busy", "true");
+    expect(mockUploadChurchResource).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(resource));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Uploading..." })).not.toBeInTheDocument();
   });
 
   it("combines ChurchResources and song audio, and applies both filters", async () => {

@@ -9,11 +9,22 @@ import type { ChurchResource } from "../types/churchResource";
 export const ExternalResourceDialog = ({
   churchId,
   onCreated,
+  open: controlledOpen,
+  onOpenChange,
+  showTrigger = true,
 }: {
   churchId: string;
   onCreated: (resource: ChurchResource) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showTrigger?: boolean;
 }) => {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (nextOpen: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -53,8 +64,8 @@ export const ExternalResourceDialog = ({
   };
 
   return <>
-    <Button type="button" variant="tertiary" svg={Link2} onClick={() => setOpen(true)}>Add external link</Button>
-    <Modal isOpen={open} onClose={close} title="Add external link" size="md" showCloseButton={!saving}>
+    {showTrigger ? <Button type="button" variant="tertiary" svg={Link2} onClick={() => setOpen(true)}>Add external link</Button> : null}
+    <Modal isOpen={open} onClose={close} title="Add external link" size="md" busy={saving}>
       <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <p className="text-sm text-gray-300">Link to a document or resource stored elsewhere, such as Google Drive, Dropbox, OneDrive, SharePoint, or Box.</p>
         <Input label="URL" labelClassName="text-white" type="url" required value={url} onChange={(value) => setUrl(String(value))} placeholder="https://" autoFocus />

@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { TransferProvider } from "../context/transferContext";
@@ -21,6 +22,53 @@ const mockUploadChurchResource = jest.mocked(uploadChurchResource);
 describe("ResourceUploadDialog", () => {
   beforeEach(() => {
     mockUploadChurchResource.mockReset();
+  });
+
+  it("supports controlled opening, locks dismissal, and keeps minimize and restore available during upload", async () => {
+    const user = userEvent.setup();
+    const onResourcesUploaded = jest.fn();
+    const onOpenChange = jest.fn();
+    let finish!: () => void;
+    mockUploadChurchResource.mockImplementation(({ file, name, onProgress }) => new Promise((resolve) => {
+      onProgress?.(50);
+      finish = () => resolve({
+        id: "resource-1", churchId: "church-1", name: name || file.name, kind: "document",
+        storage: { key: file.name, fileName: file.name, contentType: file.type, sizeBytes: file.size, uploadedAt: "2026-10-05" },
+        createdAt: "2026-10-05", createdBy: "user-1", updatedAt: "2026-10-05", updatedBy: "user-1",
+      });
+    }));
+    const ControlledUpload = () => {
+      const [open, setOpen] = useState(false);
+      return <>
+        <button onClick={() => setOpen(true)}>Open upload</button>
+        <ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} open={open} showTrigger={false} onOpenChange={(next) => { onOpenChange(next); setOpen(next); }} />
+      </>;
+    };
+    render(<MemoryRouter><TransferProvider><ControlledUpload /></TransferProvider></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
+    const opener = screen.getByRole("button", { name: "Open upload" });
+    await user.click(opener);
+    await user.upload(screen.getByLabelText("Select resource files"), new File(["guide"], "guide.pdf", { type: "application/pdf" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Upload" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar", { name: "guide.pdf progress" }).map((bar) => bar.getAttribute("aria-valuenow"))).toEqual(["50", "50"]);
+    await user.click(screen.getByRole("button", { name: "Restore resource upload" }));
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+    expect(within(screen.getByRole("dialog")).getByRole("progressbar", { name: "guide.pdf progress" })).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByRole("button", { name: "Close modal" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close modal" }));
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(opener);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Minimize upload" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Minimize resource upload to button" }));
+    await user.click(screen.getByRole("button", { name: "Uploading..." }));
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+    await act(async () => finish());
+    expect(onResourcesUploaded).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("queues multiple files, preserves edited names, and reports uploaded resources", async () => {
