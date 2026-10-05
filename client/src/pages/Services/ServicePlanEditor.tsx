@@ -2159,14 +2159,16 @@ const ServicePlanEditor = ({
           <span className="text-gray-300">{respondedRows.length}/{filledScheduledRows.length} responses</span>
         ) : null}
         {hasSummaryDetails ? (
-          <button
+          <Button
             type="button"
-            className="ml-auto cursor-pointer rounded px-1.5 py-0.5 text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
+            variant="none"
+            padding="px-1.5 py-0.5"
+            className="ml-auto min-h-0 rounded font-normal text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
             aria-expanded={summaryExpanded}
             onClick={() => setSummaryExpanded((expanded) => !expanded)}
           >
             {summaryExpanded ? "Hide details" : "Details"}
-          </button>
+          </Button>
         ) : null}
       </div>
       {summaryExpanded && hasSummaryDetails ? (

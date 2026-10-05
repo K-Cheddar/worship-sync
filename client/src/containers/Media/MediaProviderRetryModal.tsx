@@ -21,10 +21,10 @@ const MediaProviderRetryModal = ({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={isRetrying ? () => { } : onDismiss}
+      onClose={onDismiss}
       title="Media cleanup"
       size="sm"
-      showCloseButton={!isRetrying}
+      busy={isRetrying}
       contentPadding="p-4"
       zIndexLevel={2}
       description="Some backing files could not be removed after the media was deleted from your library."

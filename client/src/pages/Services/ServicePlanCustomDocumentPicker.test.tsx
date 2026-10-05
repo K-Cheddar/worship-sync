@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ServicePlanCustomDocumentPicker from "./ServicePlanCustomDocumentPicker";
 
 const mockDispatch = jest.fn();
+let mockCompleteCreation: () => void;
 
 const mockDocuments = [
   { _id: "doc-1", name: "Welcome Slides", type: "free", slides: [{ type: "text" }] },
@@ -19,11 +20,15 @@ jest.mock("../../hooks", () => ({
 
 jest.mock("../../containers/CreateItem/CreateItem", () => ({
   __esModule: true,
-  default: ({ embeddedType, onCreated }: {
+  default: ({ embeddedType, onCreated, onCreatingChange }: {
     embeddedType: string;
     onCreated: (item: { _id: string; name: string; type: string }) => void;
-  }) => (
+    onCreatingChange: (creating: boolean) => void;
+  }) => {
+    mockCompleteCreation = () => onCreated({ _id: "new-document", name: "New Document", type: "free" });
+    return (
     <div data-testid="embedded-document-creator" data-type={embeddedType}>
+      <button type="button" onClick={() => onCreatingChange(true)}>Start creation</button>
       <button
         type="button"
         onClick={() => onCreated({
@@ -35,12 +40,8 @@ jest.mock("../../containers/CreateItem/CreateItem", () => ({
         Create and attach
       </button>
     </div>
-  ),
-}));
-
-jest.mock("../../components/Modal/Modal", () => ({
-  __esModule: true,
-  default: ({ children }: { children: ReactNode }) => <div role="dialog">{children}</div>,
+  );
+  },
 }));
 
 jest.mock("../../components/FilteredItems/FilteredItems", () => ({
@@ -141,9 +142,27 @@ describe("ServicePlanCustomDocumentPicker", () => {
     view.rerender(
       <ServicePlanCustomDocumentPicker {...pickerProps} isOpen={false} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Create and attach" }));
-
+    act(() => mockCompleteCreation());
     expect(onSelectDocument).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("blocks dismissal while creating and still attaches the completed document", async () => {
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+    const onSelectDocument = jest.fn();
+    render(<><button>Outside</button><ServicePlanCustomDocumentPicker isOpen onClose={onClose} attachedDocumentIds={[]} onSelectDocument={onSelectDocument} /></>);
+    await user.click(screen.getByRole("button", { name: "Create a new custom document" }));
+    await user.click(screen.getByRole("button", { name: "Start creation" }));
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Close modal" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close modal" }));
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(screen.getByText("Outside"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSelectDocument).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Create and attach" }));
+    expect(onSelectDocument).toHaveBeenCalledWith(expect.objectContaining({ _id: "new-document" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
