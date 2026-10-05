@@ -1681,9 +1681,14 @@ describe("assignees and their microphones", () => {
     await user.click(
       screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: /Change Orange for Pastor John/i }),
-    );
+    const changeMicrophoneButton = screen.getByRole("button", {
+      name: /Change Orange for Pastor John/i,
+    });
+    expect(within(changeMicrophoneButton).queryByRole("button")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Remove Orange from Pastor John/i }),
+    ).toBeInTheDocument();
+    await user.click(changeMicrophoneButton);
     await user.click(screen.getByRole("menuitem", { name: /Lapel 1/i }));
 
     expect(onUpdate).toHaveBeenCalledWith(

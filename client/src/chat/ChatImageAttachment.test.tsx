@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { getChatImageUrl } from "./api";
 import ChatImageAttachment from "./ChatImageAttachment";
 import type { ChatImageAttachment as ImageAttachment } from "./types";
@@ -20,7 +20,7 @@ describe("ChatImageAttachment", () => {
     );
   });
 
-  it("loads a private thumbnail and opens the full image", async () => {
+  it("loads a private thumbnail, opens the full image, and restores focus to its trigger", async () => {
     render(
       <ChatImageAttachment
         churchId="church_1"
@@ -60,6 +60,7 @@ describe("ChatImageAttachment", () => {
     expect(
       screen.queryByRole("dialog", { name: "Photo from Alex" }),
     ).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open photo from Alex" })).toHaveFocus());
   });
 
   it("shows an expired placeholder for legacy images without expiry metadata", () => {

@@ -28,7 +28,7 @@ const displayValue = (value: unknown) => {
 };
 
 const ServicePlanConflictDialog = ({ conflicts, choices, onChoose, onApply, applying, onUseLatest, onCancel }: Props) => (
-  <Modal isOpen busy={applying} title="Review plan changes" description="Choose which version to keep for each conflicting change." onClose={onCancel} size="xl">
+  <Modal isOpen title="Review plan changes" description="Choose which version to keep for each conflicting change." onClose={onCancel} size="xl">
     <div className="space-y-4">
       <p className="text-sm text-gray-300">Your other changes will be combined automatically. Cancel keeps your draft so you can resolve this later.</p>
       <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
@@ -56,7 +56,7 @@ const ServicePlanConflictDialog = ({ conflicts, choices, onChoose, onApply, appl
         ))}
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-700 pt-3">
-        <Button variant="tertiary" disabled={applying} onClick={onCancel}>Cancel</Button>
+        <Button variant="tertiary" onClick={onCancel}>Cancel</Button>
         <Button variant="tertiary" disabled={applying} onClick={onUseLatest}>Use latest and discard local changes</Button>
         <Button variant="cta" disabled={applying || conflicts.some(({ path }) => !choices[path])} onClick={onApply}>
           {applying ? "Checking latest…" : "Apply merged plan"}

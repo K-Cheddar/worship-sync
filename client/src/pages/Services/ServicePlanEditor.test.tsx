@@ -1302,6 +1302,33 @@ describe("ServicePlanEditor", () => {
     await user.click(screen.getByRole("button", { name: "Review changes" }));
     expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use latest and discard local changes" })).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
+    let resolveLatest!: (value: Awaited<ReturnType<typeof getServicePlan>>) => void;
+    mockGetServicePlan.mockReturnValueOnce(new Promise((resolve) => { resolveLatest = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
+    expect(await screen.findByRole("button", { name: "Checking latest…" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review plan changes" })).not.toBeInTheDocument());
+    await act(async () => {
+      resolveLatest({
+        success: true,
+        servicePlan: {
+          ...latestPlan,
+          revision: 10,
+          sections: [{
+            id: "section-1",
+            name: "Worship",
+            elements: [{ id: "el-1", type: "free", title: plainTextToRichText("Stale response") }],
+          }],
+        },
+      });
+    });
+    expect(screen.queryByText("Stale response")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Our item!")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("dialog", { name: "Review plan changes" })).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
     mockGetServicePlan.mockResolvedValueOnce({
       success: true,
       servicePlan: {
@@ -1314,7 +1341,6 @@ describe("ServicePlanEditor", () => {
         }],
       },
     });
-    await user.click(screen.getAllByRole("button", { name: /^Local/ })[0]);
     await user.click(screen.getByRole("button", { name: "Apply merged plan" }));
     expect(await screen.findByText("Newest item")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply merged plan" })).toBeDisabled();

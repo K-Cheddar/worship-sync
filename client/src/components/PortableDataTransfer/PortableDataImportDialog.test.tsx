@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import PortableDataImportDialog from "./PortableDataImportDialog";
-import { commitPortableImport, inspectPortableImport, previewPortableImport } from "../../api/auth";
+import { commitPortableImport, downloadPortableData, inspectPortableImport, previewPortableImport } from "../../api/auth";
 
 jest.mock("../../api/auth", () => ({
   commitPortableImport: jest.fn(),
@@ -20,6 +21,82 @@ describe("PortableDataImportDialog import flow", () => {
     expect(screen.getByRole("heading", { name: "Import Schedules from CSV" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose Schedules CSV" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download CSV template" })).toBeInTheDocument();
+  });
+
+  it("allows closing while CSV inspection is still running", async () => {
+    let resolveInspection!: (value: Awaited<ReturnType<typeof inspectPortableImport>>) => void;
+    jest.mocked(inspectPortableImport).mockReturnValue(new Promise((resolve) => { resolveInspection = resolve; }));
+    const onOpenChange = jest.fn();
+    const file = new File(["first_name,last_name\nJane,Doe"], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => "first_name,last_name\nJane,Doe" });
+    const ControlledDialog = () => {
+      const [open, setOpen] = useState(true);
+      return <>
+        <button type="button">Outside target</button>
+        <PortableDataImportDialog open={open} onOpenChange={(next) => { onOpenChange(next); setOpen(next); }} churchId="church-1" type="members" />
+      </>;
+    };
+    render(<ControlledDialog />);
+
+    fireEvent.change(screen.getByLabelText("Choose Members CSV"), { target: { files: [file] } });
+    expect(await screen.findByRole("button", { name: "Reading CSV…" })).toBeDisabled();
+    expect(screen.getByRole("dialog")).not.toHaveAttribute("aria-busy", "true");
+    await userEvent.setup().keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await act(async () => { resolveInspection({ success: true, headers: [], rowCount: 0, columnCount: 0, issues: [], mapping: {}, sampleRows: [] }); });
+  });
+
+  it("allows outside dismissal while a CSV template is being prepared", async () => {
+    let resolveDownload!: (value: Awaited<ReturnType<typeof downloadPortableData>>) => void;
+    jest.mocked(downloadPortableData).mockReturnValue(new Promise((resolve) => { resolveDownload = resolve; }));
+    const onOpenChange = jest.fn();
+    const ControlledDialog = () => {
+      const [open, setOpen] = useState(true);
+      return <>
+        <button type="button">Outside target</button>
+        <PortableDataImportDialog open={open} onOpenChange={(next) => { onOpenChange(next); setOpen(next); }} churchId="church-1" type="members" />
+      </>;
+    };
+    render(<ControlledDialog />);
+    const outside = screen.getByRole("button", { name: "Outside target", hidden: true });
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Download CSV template" }));
+    expect(await screen.findByRole("button", { name: "Preparing template…" })).toBeDisabled();
+    expect(screen.getByRole("dialog")).not.toHaveAttribute("aria-busy", "true");
+    fireEvent.pointerDown(outside);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await act(async () => { resolveDownload({ blob: new Blob(["template"]), filename: "template.csv" }); });
+  });
+
+  it("blocks Escape and outside dismissal while an import commit is running", async () => {
+    const user = userEvent.setup();
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name"], rowCount: 1, columnCount: 2, issues: [], mapping: { firstName: "First Name", lastName: "Last Name" }, sampleRows: [] });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe" }, action: "create", matchedId: null, candidates: [], issues: [] }], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 } });
+    let resolveCommit!: (value: Awaited<ReturnType<typeof commitPortableImport>>) => void;
+    jest.mocked(commitPortableImport).mockReturnValue(new Promise((resolve) => { resolveCommit = resolve; }));
+    const onOpenChange = jest.fn();
+    const file = new File(["First Name,Last Name\nJane,Doe"], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => "First Name,Last Name\nJane,Doe" });
+    render(<>
+      <button type="button">Outside target</button>
+      <PortableDataImportDialog open onOpenChange={onOpenChange} churchId="church-1" type="members" />
+    </>);
+    const outside = screen.getByRole("button", { name: "Outside target", hidden: true });
+
+    fireEvent.change(screen.getByLabelText("Choose Members CSV"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review import" }));
+    await user.click(await screen.findByRole("button", { name: "Import 1 row" }));
+    expect(await screen.findByRole("button", { name: "Importing…" })).toBeDisabled();
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Close modal" })).toBeDisabled();
+
+    await user.keyboard("{Escape}");
+    fireEvent.pointerDown(outside);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await act(async () => { resolveCommit({ success: true, results: [{ row: 2, status: "created", id: "member-1" }], summary: { created: 1, updated: 0, failed: 0 } }); });
   });
 
   it("inspects and previews an uploaded CSV without writing until the admin confirms", async () => {
