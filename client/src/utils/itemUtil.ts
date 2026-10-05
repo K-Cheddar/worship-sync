@@ -777,7 +777,8 @@ export const createNewItemInDb = async ({
     // completed. Callers such as Service Plan's "Create and attach" flow use
     // this resolution as their signal that a library reference is durable.
     if (newDoc.type === "song") {
-      await createSong(db, newDoc);
+      const saved = await createSong(db, newDoc);
+      return { ...item, ...saved, _rev: saved._rev } as ItemState;
     } else {
       const doc = applyPouchAudit(null, newDoc, { isNew: true });
       await db.put(doc);
