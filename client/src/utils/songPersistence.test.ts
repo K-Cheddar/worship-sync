@@ -1,5 +1,6 @@
 import type { DBItem, ItemSlideType } from "../types";
 import { normalizeItemSlides } from "./activeItemSlides";
+import * as monitorSlideFormatter from "./monitorSlideFormatter";
 import {
   createSong,
   deleteSong,
@@ -10,6 +11,7 @@ import {
   loadItemWithSongHydration,
   loadSong,
   saveSong,
+  SongV2WriteNotEnabledError,
   serializeSongToV2Documents,
 } from "./songPersistence";
 
@@ -230,6 +232,8 @@ describe("songPersistence", () => {
 
     expect(documents.root._id).toBe(getSongV2RootDocId(source._id));
     expect(documents.root.songSchemaVersion).toBe(2);
+    expect(documents.root).not.toHaveProperty("type");
+    expect(documents.root.docType).toBe("song-v2-root");
     expect(documents.root.arrangementIds).toEqual(["arr-a", "arr-b", "arr-c"]);
     expect(documents.root).not.toHaveProperty("slides");
     expect(documents.root).not.toHaveProperty("arrangements");
@@ -245,6 +249,8 @@ describe("songPersistence", () => {
     )).toBe(true);
     expect(hydrated).toMatchObject({
       _id: source._id,
+      docType: "song-v2-root",
+      type: "song",
       name: source.name,
       selectedArrangement: 1,
       background: "song-background",
@@ -264,6 +270,27 @@ describe("songPersistence", () => {
     expect(hydrated.arrangements[0].slides[0].boxes[0].background).toBe("media/a2.jpg");
     expect(hydrated.arrangements[0].slides[1]).not.toHaveProperty("monitorCurrentBandBoxes");
     expect(hydrated.arrangements[0].slides[1]).not.toHaveProperty("monitorNextBandBoxes");
+  });
+
+  it("serializes songs without monitor layouts or legacy clones without measuring text", () => {
+    const measureMonitorLayout = jest.spyOn(
+      monitorSlideFormatter,
+      "getMonitorLayoutForSlides",
+    );
+    const source = song({
+      arrangements: [{
+        id: "arr-no-layout",
+        name: "Arrangement",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [songSlide("slide-no-layout")],
+      }],
+    });
+
+    const documents = serializeSongToV2Documents(source);
+
+    expect(measureMonitorLayout).not.toHaveBeenCalled();
+    expect(documents.arrangements[0]).not.toHaveProperty("monitorLayout");
   });
 
   it("uses only manifest references and ignores stale slide documents", () => {
@@ -404,6 +431,16 @@ describe("songPersistence", () => {
     });
   });
 
+  it("rejects a legacy type field on a v2 root", () => {
+    const docs = serializeSongToV2Documents(song());
+
+    expect(() => hydrateSongFromV2Documents(
+      { ...docs.root, type: "song" } as typeof docs.root,
+      docs.arrangements,
+      docs.slides,
+    )).toThrow("invalid schema v2 root");
+  });
+
   it("creates canonical one-document songs with audit fields", async () => {
     const source = song({
       slides: [{
@@ -451,13 +488,14 @@ describe("songPersistence", () => {
   });
 
   it("updates one canonical song while preserving revision and untouched metadata", async () => {
-    const existing = song({
+    const source = song({
       _rev: "3-current",
       createdAt: "created",
       createdBy: "original creator",
       songAudio: { id: "audio-1" } as DBItem["songAudio"],
     });
-    const { db, put } = makeDb(existing);
+    const { db, put } = makeDb(source);
+    const existing = await loadSong(db, source._id);
 
     const edited = {
       _id: existing._id,
@@ -529,10 +567,40 @@ describe("songPersistence", () => {
     const source = song();
     const { db, remove } = makeDb(source);
 
+    await loadSong(db, source._id);
     const deleted = await deleteSong(db, source._id);
 
     expect(db.get).toHaveBeenCalledWith(source._id);
     expect(remove).toHaveBeenCalledWith(source);
     expect(deleted).toBe(source);
+  });
+
+  it("blocks saves of hydrated v2 songs before writing a legacy document", async () => {
+    const source = song();
+    const documents = serializeSongToV2Documents(source);
+    const { db, put } = makeDb(
+      documents.root as unknown as DBItem,
+      [...documents.arrangements, ...documents.slides],
+    );
+    const loaded = await loadSong(db, source._id);
+
+    await expect(saveSong(db, { ...loaded, name: "Edited" }, loaded)).rejects.toBeInstanceOf(
+      SongV2WriteNotEnabledError,
+    );
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("blocks v2 deletion without removing a same-id legacy song", async () => {
+    const legacySong = song();
+    const documents = serializeSongToV2Documents(legacySong);
+    const { db, remove } = makeDb(
+      legacySong,
+      [documents.root, ...documents.arrangements, ...documents.slides],
+    );
+
+    await expect(deleteSong(db, legacySong._id)).rejects.toBeInstanceOf(
+      SongV2WriteNotEnabledError,
+    );
+    expect(remove).not.toHaveBeenCalled();
   });
 });

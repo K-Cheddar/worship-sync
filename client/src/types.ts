@@ -207,7 +207,6 @@ export type SongV2RootDocument = SongV2AuditFields & {
   docType: "song-v2-root";
   songId: string;
   songSchemaVersion: 2;
-  type: "song";
   name: string;
   shouldSkipTitle?: boolean;
   selectedArrangement: number;

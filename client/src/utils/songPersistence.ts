@@ -10,6 +10,7 @@ import type {
 import { applyPouchAudit } from "./pouchAudit";
 import {
   normalizeItemSlides,
+  normalizeSongForLibrary,
   normalizeSongForPersistence,
 } from "./activeItemSlides";
 
@@ -47,6 +48,13 @@ export class SongV2DocumentError extends Error {
   }
 }
 
+export class SongV2WriteNotEnabledError extends Error {
+  constructor(songId: string, operation: "save" | "delete") {
+    super(`Cannot ${operation} song ${songId}: schema v2 writes are not enabled.`);
+    this.name = "SongV2WriteNotEnabledError";
+  }
+}
+
 const getAuditFields = (
   song: Pick<DBItem, "createdAt" | "updatedAt" | "createdBy" | "updatedBy">,
 ) => ({
@@ -71,7 +79,7 @@ const assertUniqueIds = (ids: string[], description: string) => {
 const assertValidV2Root = (root: SongV2RootDocument) => {
   if (
     root.docType !== "song-v2-root" ||
-    root.type !== "song" ||
+    "type" in root ||
     root._id !== getSongV2RootDocId(root.songId)
   ) {
     throw new SongV2DocumentError(
@@ -93,7 +101,7 @@ const assertValidV2Root = (root: SongV2RootDocument) => {
 /** Purely splits a hydrated song into deterministic v2 documents. */
 export function serializeSongToV2Documents(song: DBItem): SongV2Documents {
   if (song.type !== "song") throw new Error("Only songs can be serialized as schema v2");
-  const hydrated = normalizeItemSlides(song);
+  const hydrated = normalizeSongForLibrary(song);
   const arrangements = hydrated.arrangements ?? [];
   const arrangementIds = arrangements.map(({ id }) => id);
   assertUniqueIds(arrangementIds, "arrangement");
@@ -103,7 +111,6 @@ export function serializeSongToV2Documents(song: DBItem): SongV2Documents {
     docType: "song-v2-root",
     songId: song._id,
     songSchemaVersion: SONG_SCHEMA_VERSION,
-    type: "song",
     name: hydrated.name,
     selectedArrangement: hydrated.selectedArrangement ?? 0,
     arrangementIds,
@@ -265,6 +272,7 @@ export function hydrateSongFromV2Documents(
   return normalizeItemSlides({
     _id: root.songId,
     ...(root._rev !== undefined ? { _rev: root._rev } : {}),
+    docType: root.docType,
     type: "song",
     name: root.name,
     selectedArrangement: root.selectedArrangement,
@@ -399,7 +407,13 @@ export async function saveSong(
   currentSong?: DBItem,
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
+  if (song.docType === "song-v2-root" || currentSong?.docType === "song-v2-root") {
+    throw new SongV2WriteNotEnabledError(song._id, "save");
+  }
   const existing = currentSong ?? await loadSong(db, song._id);
+  if (existing.docType === "song-v2-root") {
+    throw new SongV2WriteNotEnabledError(song._id, "save");
+  }
   if (existing.type !== "song") {
     throw new Error(`Document ${song._id} is not a song`);
   }
@@ -425,6 +439,11 @@ export async function deleteSong(
   db: PouchDB.Database,
   songId: string,
 ): Promise<DBItem> {
+  const v2Root = await getOptionalDocument<SongV2RootDocument>(
+    db,
+    getSongV2RootDocId(songId),
+  );
+  if (v2Root) throw new SongV2WriteNotEnabledError(songId, "delete");
   const document = (await db.get(songId)) as DBItem;
   if (document.type !== "song") {
     throw new Error(`Document ${songId} is not a song`);
