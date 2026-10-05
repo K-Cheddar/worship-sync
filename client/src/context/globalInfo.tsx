@@ -428,6 +428,8 @@ type GlobalInfoContextType = {
   access: AccessType;
   permissions: MemberPermissions;
   canViewTeams: boolean;
+  /** Broad Teams read boundary for sections that include church-wide data. */
+  hasBroadTeamsReadAccess: boolean;
   /** Full church-wide SSE access; selected-team and roster-derived reads use REST. */
   canUseTeamsLiveSync: boolean;
   canEditTeams: boolean;
@@ -636,16 +638,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     canEditServices ||
     permissions.teams === "view" ||
     hasScopedTeamsAccess;
+  const hasBroadTeamsReadAccess =
+    role === "admin" ||
+    permissions.teams === "view" ||
+    permissions.teams === "edit" ||
+    (sessionKind === "human" && permissions.services === "edit");
   const canUseTeamsLiveSync =
     (sessionKind === "human" ||
       (sessionKind === "workstation" &&
         (device?.serviceWorkspaceAccess === true ||
           (permissions.services === "edit" &&
             (permissions.teams === "view" || permissions.teams === "edit"))))) &&
-    (role === "admin" ||
-      permissions.teams === "view" ||
-      permissions.teams === "edit" ||
-      (sessionKind === "human" && permissions.services === "edit"));
+    hasBroadTeamsReadAccess;
   const canViewServices = canViewTeams || permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
@@ -3236,6 +3240,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       access,
       permissions,
       canViewTeams,
+      hasBroadTeamsReadAccess,
       canUseTeamsLiveSync,
       canEditTeams,
       canEditServices,
@@ -3308,6 +3313,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       access,
       permissions,
       canViewTeams,
+      hasBroadTeamsReadAccess,
       canUseTeamsLiveSync,
       canEditTeams,
       canEditServices,

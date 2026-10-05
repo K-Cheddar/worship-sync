@@ -352,6 +352,10 @@ describe("schedule-only member routing", () => {
   it("allows only the member surfaces", () => {
     expect(isRouteAllowedForSession("/my-schedule", member)).toBe(true);
     expect(isRouteAllowedForSession("/home", member)).toBe(true);
+    expect(isRouteAllowedForSession("/teams-and-services", member)).toBe(true);
+    expect(
+      isRouteAllowedForSession("/teams-and-services/schedules", member),
+    ).toBe(true);
   });
 
   it("refuses operator surfaces a hidden link would otherwise leave reachable", () => {
@@ -362,7 +366,9 @@ describe("schedule-only member routing", () => {
     expect(isRouteAllowedForSession("/boards/controller", member)).toBe(false);
     expect(isRouteAllowedForSession("/credits-editor", member)).toBe(false);
     expect(isRouteAllowedForSession("/account", member)).toBe(false);
-    expect(isRouteAllowedForSession("/teams-and-services", member)).toBe(false);
+    expect(isRouteAllowedForSession("/current-service", member)).toBe(false);
+    expect(isRouteAllowedForSession("/account", member)).toBe(false);
+    expect(isRouteAllowedForSession("/resources", member)).toBe(false);
   });
 
   it("is deny-by-default, so a route added later stays closed", () => {

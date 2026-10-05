@@ -30,8 +30,8 @@ import { teamsSectionScrollClassName } from "./teamsStyles";
 import { lazyRoute } from "../../utils/lazyRoute";
 import {
   getActiveTeamsNavSection,
-  servicesNavSections,
-  teamsNavSections,
+  getFirstAvailableTeamsNavPath,
+  isTeamsNavPathAvailable,
 } from "./teamsNavSections";
 import {
   getStoredTeamsAndServicesRoute,
@@ -85,29 +85,38 @@ const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
 
 const TeamsAndServicesIndexRedirect = () => {
   const navigate = useNavigate();
+  const { availableNavSections } = useTeamsPage();
 
   useEffect(() => {
-    navigate(getStoredTeamsAndServicesRoute() ?? teamsNavSections[0].path, {
-      replace: true,
-    });
-  }, [navigate]);
+    const storedRoute = getStoredTeamsAndServicesRoute();
+    navigate(
+      storedRoute && isTeamsNavPathAvailable(storedRoute, availableNavSections)
+        ? storedRoute
+        : getFirstAvailableTeamsNavPath(availableNavSections),
+      {
+        replace: true,
+      },
+    );
+  }, [availableNavSections, navigate]);
 
   return null;
 };
 
 const TeamsAndServicesLayout = () => {
-  const { loading, toolbarLogos, churchName } = useTeamsPage();
+  const { loading, toolbarLogos, churchName, availableNavSections } = useTeamsPage();
   const location = useLocation();
   useTeamsAbandonedReturnCleanup();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const storedRoute = getStoredTeamsAndServicesRoute();
+  const activePath =
+    location.pathname === "/teams-and-services"
+      ? storedRoute && isTeamsNavPathAvailable(storedRoute, availableNavSections)
+        ? storedRoute
+        : getFirstAvailableTeamsNavPath(availableNavSections)
+      : location.pathname;
   const activeSection = useMemo(
-    () =>
-      getActiveTeamsNavSection(
-        location.pathname === "/teams-and-services"
-          ? getStoredTeamsAndServicesRoute() ?? teamsNavSections[0].path
-          : location.pathname,
-      ),
-    [location.pathname],
+    () => getActiveTeamsNavSection(activePath),
+    [activePath],
   );
 
   useEffect(() => {
@@ -171,6 +180,7 @@ const TeamsAndServicesLayout = () => {
 const TeamsAndServicesRoutes = () => (
   <Routes>
     <Route element={<TeamsAndServicesLayout />}>
+      <Route element={<TeamsSectionAccessGuard />}>
       <Route index element={<TeamsAndServicesIndexRedirect />} />
       <Route
         path="messages"
@@ -181,7 +191,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[0].routePath}
+        path="schedules"
         element={
           <TeamsSectionRoute>
             <TeamsSchedulesPage />
@@ -189,7 +199,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[1].routePath}
+        path="members"
         element={
           <TeamsSectionRoute>
             <TeamsMembersPage />
@@ -197,7 +207,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[2].routePath}
+        path="positions"
         element={
           <TeamsSectionRoute>
             <TeamsPositionsPage />
@@ -205,7 +215,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[3].routePath}
+        path="groups"
         element={
           <TeamsSectionRoute>
             <TeamsGroupsPage />
@@ -213,7 +223,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[4].routePath}
+        path="roles"
         element={
           <TeamsSectionRoute>
             <TeamsRolesPage />
@@ -221,7 +231,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[5].routePath}
+        path="qualifications"
         element={
           <TeamsSectionRoute>
             <TeamsQualificationsPage />
@@ -229,7 +239,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={teamsNavSections[6].routePath}
+        path="forms"
         element={
           <TeamsSectionRoute>
             <TeamsFormsPage />
@@ -237,7 +247,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={servicesNavSections[0].routePath}
+        path="services"
         element={
           <TeamsSectionRoute>
             <TeamsPlansPage />
@@ -245,7 +255,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={servicesNavSections[1].routePath}
+        path="templates"
         element={
           <TeamsSectionRoute>
             <TeamsTemplatesPage />
@@ -253,7 +263,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={servicesNavSections[2].routePath}
+        path="microphones"
         element={
           <TeamsSectionRoute>
             <TeamsMicrophonesPage />
@@ -261,7 +271,7 @@ const TeamsAndServicesRoutes = () => (
         }
       />
       <Route
-        path={servicesNavSections[3].routePath}
+        path="service-setup"
         element={
           <TeamsSectionRoute>
             <TeamsServiceSettingsPage />
@@ -271,21 +281,60 @@ const TeamsAndServicesRoutes = () => (
       {/* Compatibility redirects retained for one release. */}
       <Route
         path="plans/*"
-        element={<Navigate to={servicesNavSections[0].path} replace />}
+        element={<Navigate to="/teams-and-services/services" replace />}
       />
       <Route
         path="service-settings/*"
-        element={<Navigate to={servicesNavSections[3].path} replace />}
+        element={<Navigate to="/teams-and-services/service-setup" replace />}
       />
       <Route path="*" element={<Navigate to="schedules" replace />} />
+      </Route>
     </Route>
   </Routes>
 );
 
+const TeamsSectionAccessGuard = () => {
+  const { loading, availableNavSections } = useTeamsPage();
+  const location = useLocation();
+
+  if (
+    loading ||
+    location.pathname === "/teams-and-services" ||
+    isTeamsNavPathAvailable(location.pathname, availableNavSections)
+  ) {
+    return <Outlet />;
+  }
+
+  return (
+    <Navigate to={getFirstAvailableTeamsNavPath(availableNavSections)} replace />
+  );
+};
+
+const TeamsNoAccess = () => (
+  <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <section className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/80 p-6 text-center">
+      <h1 className="text-2xl font-semibold">No team access</h1>
+      <p className="mt-2 text-sm leading-relaxed text-gray-200">
+        You aren’t currently linked to a team in WorshipSync. If you think you should be, ask a team leader or administrator.
+      </p>
+      <div className="mt-5 flex justify-center">
+        <Button component="link" to="/home" variant="secondary">
+          Home
+        </Button>
+      </div>
+    </section>
+  </main>
+);
+
+const TeamsAndServicesContent = () => {
+  const { accessDenied } = useTeamsPage();
+  return accessDenied ? <TeamsNoAccess /> : <TeamsAndServicesRoutes />;
+};
+
 const TeamsAndServicesPage = () => (
   <TeamsPageProvider>
     <TeamsNavigationGuardProvider>
-      <TeamsAndServicesRoutes />
+      <TeamsAndServicesContent />
     </TeamsNavigationGuardProvider>
   </TeamsPageProvider>
 );

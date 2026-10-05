@@ -42,7 +42,7 @@ const GUEST_ALLOWED_EXACT = new Set([
 ]);
 
 /**
- * Everything a schedule-only member may open.
+ * Everything a member-tier human may open.
  *
  * An **allowlist**, not a subtraction from the human list: this tier exists so a
  * volunteer never reaches an operator surface, and expressing that as "human
@@ -50,10 +50,14 @@ const GUEST_ALLOWED_EXACT = new Set([
  * named here is refused, so a new operator page is closed to members by default.
  */
 const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule"]);
+const MEMBER_ALLOWED_PREFIXES = ["/teams-and-services"];
 
 /** Whether a schedule-only member may open this path. Deny by default. */
 export const isMemberAllowedPath = (pathname: string): boolean =>
-  MEMBER_ALLOWED_EXACT.has(pathname);
+  MEMBER_ALLOWED_EXACT.has(pathname) ||
+  MEMBER_ALLOWED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 
 const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account", "/aux-controller"];
 const HUMAN_ALLOWED_EXACT = new Set([
@@ -189,7 +193,7 @@ export const isRouteAllowedForSession = (
     // links on Home is presentation only, and typing the URL would otherwise
     // still open a read-only controller.
     if (context.access === "member") {
-      return MEMBER_ALLOWED_EXACT.has(pathname);
+      return isMemberAllowedPath(pathname);
     }
     if (
       !matchesAllowedRoute(

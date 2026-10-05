@@ -135,6 +135,43 @@ export const servicesNavSections: TeamsNavSection[] = [
 
 const allTeamsNavSections = [...teamsNavSections, ...servicesNavSections];
 
+export type TeamsNavCapabilities = {
+  hasTeamsWorkspaceAccess: boolean;
+  hasBroadTeamsReadAccess: boolean;
+  canViewServices: boolean;
+};
+
+/** One permission model for both navigation layouts and nested route guards. */
+export const getAvailableTeamsNavSections = ({
+  hasTeamsWorkspaceAccess,
+  hasBroadTeamsReadAccess,
+  canViewServices,
+}: TeamsNavCapabilities): TeamsNavSection[] => {
+  if (!hasTeamsWorkspaceAccess) return [];
+
+  return [
+    ...teamsNavSections.filter(
+      (section) =>
+        hasBroadTeamsReadAccess ||
+        (section.routePath !== "forms" && section.routePath !== "messages"),
+    ),
+    ...(canViewServices ? servicesNavSections : []),
+  ];
+};
+
+export const isTeamsNavPathAvailable = (
+  pathname: string,
+  availableSections: TeamsNavSection[],
+) =>
+  availableSections.some(
+    (section) =>
+      pathname === section.path || pathname.startsWith(`${section.path}/`),
+  );
+
+export const getFirstAvailableTeamsNavPath = (
+  availableSections: TeamsNavSection[],
+) => availableSections[0]?.path ?? teamsNavSections[0].path;
+
 export const getActiveTeamsNavSection = (pathname: string) =>
   allTeamsNavSections.find(
     (section) =>

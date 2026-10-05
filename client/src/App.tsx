@@ -407,7 +407,7 @@ const AppRoutes = () => {
                 path="/teams-and-services/*"
                 element={
                   <AuthGate allowedKinds={["human"]}>
-                    <TeamsAccessGuard>
+                    <TeamsAccessGuard allowMembershipDerivedAccess>
                       <TeamsAndServices />
                     </TeamsAccessGuard>
                   </AuthGate>

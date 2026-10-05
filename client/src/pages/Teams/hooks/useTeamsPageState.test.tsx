@@ -65,12 +65,13 @@ describe("useTeamsPageState bootstrap recovery", () => {
   const renderPageState = (
     onTemplateEvent?: Parameters<typeof useTeamsPageState>[0],
     onReconnect?: Parameters<typeof useTeamsPageState>[1],
+    contextOverrides: Record<string, unknown> = {},
   ) =>
     renderHook(() => useTeamsPageState(onTemplateEvent, onReconnect), {
       wrapper: ({ children }: PropsWithChildren) => (
         <GlobalInfoContext.Provider
           value={
-            createMockGlobalContext({ churchId, canUseTeamsLiveSync }) as React.ContextType<
+            createMockGlobalContext({ churchId, canUseTeamsLiveSync, ...contextOverrides }) as React.ContextType<
               typeof GlobalInfoContext
             >
           }
@@ -142,6 +143,49 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
     expect(MockEventSource.instances).toHaveLength(0);
+    unmount();
+  });
+
+  it("clears a previously authorized projection after a bootstrap 403 and stops retrying", async () => {
+    canUseTeamsLiveSync = false;
+    mockGetTeamsBootstrap.mockResolvedValueOnce({
+      ...emptyBootstrap,
+      editableMemberIds: [],
+      members: [{ memberId: "worship-member", firstName: "Sam" }],
+      teams: [{ teamId: "worship", name: "Worship" }],
+      schedules: [{ scheduleId: "worship-schedule", teamId: "worship" }],
+    } as never);
+    const { result, unmount } = renderPageState(undefined, undefined, {
+      access: "member",
+      role: "member",
+      permissions: { teams: "none", services: "none" },
+      canViewTeams: false,
+      canViewServices: false,
+      hasBroadTeamsReadAccess: false,
+      canEditTeams: false,
+    });
+    await flushMicrotasks();
+
+    expect(result.current.pageData.teams).toEqual([
+      expect.objectContaining({ teamId: "worship" }),
+    ]);
+    expect(result.current.hasTeamsWorkspaceAccess).toBe(true);
+    expect(result.current.editableMemberIds).toEqual(new Set());
+
+    mockGetTeamsBootstrap.mockRejectedValueOnce(
+      Object.assign(new Error("Forbidden"), { status: 403 }),
+    );
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+
+    expect(result.current.accessDenied).toBe(true);
+    expect(result.current.pageData.teams).toEqual([]);
+    expect(result.current.pageData.members).toEqual([]);
+    expect(result.current.pageData.schedules).toEqual([]);
+    expect(result.current.editableMemberIds).toEqual(new Set());
+    act(() => jest.advanceTimersByTime(10 * 60 * 1000));
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
     unmount();
   });
 

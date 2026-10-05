@@ -210,6 +210,42 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
+  it("gives member-tier users a My teams entry without operator or admin cards", () => {
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              access: "member",
+              role: "member",
+              permissions: { teams: "none", services: "none", teamScopes: {} },
+              canViewTeams: false,
+              canViewServices: false,
+              canEditTeams: false,
+              canEditServices: false,
+            }) as any
+          }
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: /My teams/ })).toHaveAttribute(
+      "href",
+      "/teams-and-services",
+    );
+    expect(screen.getByText("View your team rosters, positions, and schedules.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Resources/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Service Workspace/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Presentation/ })).not.toBeInTheDocument();
+  });
+
   it("shows a pending state on a home card before navigation completes", async () => {
     const user = userEvent.setup();
     render(

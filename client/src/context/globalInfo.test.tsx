@@ -315,6 +315,7 @@ const TeamsLiveProbe = () => {
   return <div>
     <div data-testid="teams-live-church">{context?.churchId}</div>
     <div data-testid="teams-live-capability">{String(context?.canUseTeamsLiveSync)}</div>
+      <div data-testid="teams-broad-capability">{String(context?.hasBroadTeamsReadAccess)}</div>
   </div>;
 };
 
@@ -571,8 +572,32 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       const { unmount } = renderProvider(<TeamsLiveProbe />);
       await waitFor(() => expect(screen.getByTestId("teams-live-church")).toHaveTextContent("church-1"));
       expect(screen.getByTestId("teams-live-capability")).toHaveTextContent(String(allowed));
+      expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent(String(allowed));
       expect(construct).toHaveBeenCalledTimes(allowed ? 1 : 0);
       unmount();
+    } finally {
+      global.EventSource = original;
+    }
+  });
+
+  it("keeps broad Teams read separate from transport eligibility", async () => {
+    const displayWithBroadPermission = {
+      ...loggedInDisplayBootstrap,
+      permissions: { teams: "view" },
+    };
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
+      displayWithBroadPermission,
+    );
+    const original = global.EventSource;
+    const construct = jest.fn(() => ({ close: jest.fn() }));
+    global.EventSource = construct as unknown as typeof EventSource;
+    try {
+      renderProvider(<TeamsLiveProbe />);
+      await waitFor(() =>
+        expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent("true"),
+      );
+      expect(screen.getByTestId("teams-live-capability")).toHaveTextContent("false");
+      expect(construct).not.toHaveBeenCalled();
     } finally {
       global.EventSource = original;
     }

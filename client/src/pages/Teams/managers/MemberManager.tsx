@@ -165,6 +165,7 @@ type MemberManagerProps = {
   positions: TeamPosition[];
   data: TeamsData;
   canEdit: boolean;
+  canEditMember?: (member: TeamRosterMember) => boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
   /** Applies rosters the server changed by joining this member to a team. */
   onTeamSaved: (team: TeamRecord) => void;
@@ -178,6 +179,7 @@ const MemberManager = ({
   positions,
   data,
   canEdit,
+  canEditMember: canEditMemberProp,
   onSaved,
   onTeamSaved,
   onArchived,
@@ -188,6 +190,11 @@ const MemberManager = ({
   const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const currentUserId = context?.userId || "";
+  const canEditMember = useCallback(
+    (member: TeamRosterMember) =>
+      canEdit && (canEditMemberProp ? canEditMemberProp(member) : true),
+    [canEdit, canEditMemberProp],
+  );
   /**
    * Inviting and listing church accounts both hit admin-only endpoints
    * (`createInvite`, `listChurchMembers` — both `requireAdminSession`). `canEdit`
@@ -201,6 +208,9 @@ const MemberManager = ({
   const [churchAccounts, setChurchAccounts] = useState<ChurchMemberRow[]>([]);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
   const [editing, setEditing] = useState<TeamRosterMember | null>(null);
+  const canEditActiveMember = editing
+    ? canEdit && canEditMember(editing)
+    : canEdit;
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -270,8 +280,9 @@ const MemberManager = ({
     const member = members.find((item) => item.memberId === editMemberId);
     if (!member) return;
     pendingEditMemberIdRef.current = null;
+    if (!canEditMember(member)) return;
     openMemberEditor(member);
-  }, [members, openMemberEditor]);
+  }, [canEditMember, members, openMemberEditor]);
 
   useEffect(() => {
     if (!showCreate) return;
@@ -379,7 +390,7 @@ const MemberManager = ({
   };
 
   const uploadProfileImage = async (file: File) => {
-    if (!canEdit || !file.type.startsWith("image/")) {
+    if (!canEditActiveMember || !file.type.startsWith("image/")) {
       showToast("Choose an image file.", "error");
       return;
     }
@@ -403,7 +414,7 @@ const MemberManager = ({
   };
 
   const confirmDelete = async () => {
-    if (!canEdit) return;
+    if (!canEdit || (deleting && !canEditMember(deleting))) return;
     if (!deleting) return;
     const member = deleting;
     if (member.memberId.startsWith("local-")) {
@@ -541,7 +552,7 @@ const MemberManager = ({
    * creates their account and links it here — no address matching involved.
    */
   const inviteMemberToAccount = async (member: TeamRosterMember) => {
-    if (!canEdit || isInviting || !member.email) return;
+    if (!canEdit || !canEditMember(member) || isInviting || !member.email) return;
     setIsInviting(true);
     try {
       await inviteTeamRosterMember(churchId, {
@@ -593,7 +604,7 @@ const MemberManager = ({
     action: "link" | "unlink",
     targetUserId?: string,
   ) => {
-    if (!canEdit || isUpdatingLink) return;
+    if (!canEdit || !canEditMember(member) || isUpdatingLink) return;
     setIsUpdatingLink(true);
     try {
       if (action === "link") {
@@ -635,7 +646,7 @@ const MemberManager = ({
   };
 
   const submit = async () => {
-    if (!canEdit) return;
+    if (!canEditActiveMember) return;
     const birthdayError = getBirthDateValidationError(draft.birthDate);
     if (birthdayError) {
       showToast(birthdayError, "neutral");
@@ -1037,7 +1048,7 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
-        listHeaderActions={<PortableDataActions type="members" onImported={onImported} />}
+        listHeaderActions={canEdit ? <PortableDataActions type="members" onImported={onImported} /> : null}
         keepCreateActionVisible
         scrollableList
         listToolbar={
@@ -1132,10 +1143,19 @@ const MemberManager = ({
                 // Surfaced in the list so an admin can see at a glance which
                 // roster records are missing contact information.
                 subtitle={
-                  hasMemberContactInfo(member) ? undefined : "No contact info"
+                  canEdit && canEditMember(member)
+                    ? hasMemberContactInfo(member)
+                      ? undefined
+                      : "No contact info"
+                    : member.positionIds
+                        ?.map((positionId) =>
+                          positions.find((position) => position.positionId === positionId)?.name,
+                        )
+                        .filter(Boolean)
+                        .join(" · ") || undefined
                 }
                 archived={Boolean(member.archivedAt)}
-                canEdit={canEdit}
+                canEdit={canEdit && canEditMember(member)}
                 onTitleClick={() => selectMember(member)}
               />
             ))}
@@ -1147,11 +1167,11 @@ const MemberManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditActiveMember}
                   archiveLabel="Archive member"
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
-                  additionalItems={[
+                  additionalItems={canEditActiveMember ? [
                     {
                       text: "Copy SMS opt-in link",
                       onClick: () => void copySmsOptInLink(),
@@ -1168,11 +1188,12 @@ const MemberManager = ({
                         );
                       },
                     },
-                  ] satisfies MenuItemType[]}
+                  ] satisfies MenuItemType[] : []}
                   onArchive={
                     editing.archivedAt
                       ? undefined
                       : async () => {
+                        if (!canEditActiveMember) return;
                         const archivedMember = {
                           ...editing,
                           archivedAt: new Date().toISOString(),
@@ -1194,6 +1215,7 @@ const MemberManager = ({
           ) : null
         }
         formFooter={
+          canEditActiveMember ? (
           <FormActionButtons
             pinFooter
             entityLabel="member"
@@ -1203,7 +1225,7 @@ const MemberManager = ({
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={
-              !canEdit ||
+              !canEditActiveMember ||
               !draft.firstName.trim() ||
               !draft.lastName.trim() ||
               // The server rejects a malformed address, so blocking here turns
@@ -1213,9 +1235,10 @@ const MemberManager = ({
               profileImageUploading
             }
           />
+          ) : null
         }
       >
-        <fieldset className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
           <legend className="px-1 text-sm font-semibold">Member details</legend>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,0.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <Input
@@ -1302,7 +1325,7 @@ const MemberManager = ({
                 {editing.userId ? (
                   <Button
                     variant="tertiary"
-                    disabled={!canEdit || isUpdatingLink}
+                    disabled={!canEditActiveMember || isUpdatingLink}
                     isLoading={isUpdatingLink}
                     onClick={() => void updateMemberLink(editing, "unlink")}
                   >
@@ -1318,7 +1341,7 @@ const MemberManager = ({
                   // it would be an action guaranteed to fail.
                   <Button
                     variant="tertiary"
-                    disabled={!canEdit || isUpdatingLink}
+                    disabled={!canEditActiveMember || isUpdatingLink}
                     isLoading={isUpdatingLink}
                     onClick={() => void updateMemberLink(editing, "link")}
                   >
@@ -1330,7 +1353,7 @@ const MemberManager = ({
                 refuses anything else, so showing more would only produce
                 errors. Accounts already linked to another member are excluded
                 rather than shown and rejected. */}
-              {!editing.userId && canEdit && isChurchAdmin ? (
+              {!editing.userId && canEditActiveMember && isChurchAdmin ? (
                 showAccountPicker ? (
                   <SearchableSelect
                     variant="dark"
@@ -1361,7 +1384,7 @@ const MemberManager = ({
                 the reason is discoverable; absent is not.
                 The invite sends to the *saved* address, so an unsaved edit
                 blocks it too — otherwise it would quietly mail the old one. */}
-              {!editing.userId && canEdit && isChurchAdmin ? (
+              {!editing.userId && canEditActiveMember && isChurchAdmin ? (
                 <div className="flex flex-col gap-1">
                   <Button
                     variant="textLink"
@@ -1406,7 +1429,7 @@ const MemberManager = ({
                   variant="tertiary"
                   svg={Camera}
                   isLoading={profileImageUploading}
-                  disabled={!canEdit || profileImageUploading}
+                  disabled={!canEditActiveMember || profileImageUploading}
                   onClick={() => profileImageInputRef.current?.click()}
                 >
                   {draft.profileImageUrl ? "Replace image" : "Choose image"}
@@ -1415,7 +1438,7 @@ const MemberManager = ({
                   <Button
                     type="button"
                     variant="textLink"
-                    disabled={!canEdit || profileImageUploading}
+                    disabled={!canEditActiveMember || profileImageUploading}
                   onClick={() => {
                     setPendingProfileImage(null);
                     setPendingProfileImagePreviewUrl("");
@@ -1473,7 +1496,7 @@ const MemberManager = ({
             }
           />
         </fieldset>
-        <fieldset className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
           <legend className="px-1 text-sm font-semibold">Scheduling preferences</legend>
           <div className="flex flex-col gap-1">
             <Select
@@ -1724,7 +1747,7 @@ const MemberManager = ({
             />
           ) : null}
         </div>
-        <fieldset className="space-y-2">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Team roles</legend>
           {roleTeams.length === 0 ? (
             <p className="text-sm text-gray-400">
@@ -1797,7 +1820,7 @@ const MemberManager = ({
             );
           })}
         </fieldset>
-        <fieldset className="space-y-2">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Qualifications</legend>
           {data.qualificationAreas.length === 0 ? (
             <p className="text-sm text-gray-400">

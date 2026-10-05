@@ -84,13 +84,20 @@ const currentServiceViewerLink: CardLink = {
   icon: ListChecks,
 };
 
-/** The only surface a `member` gets: their own assignments, nothing else. */
+/** A member's personal schedule and team-specific read-only workspace. */
 const mySchedulelink: CardLink = {
   title: "My schedule",
   description:
     "See the services and positions you are scheduled for, and when they start.",
   to: "/my-schedule",
   icon: CalendarClock,
+};
+
+const myTeamsLink: CardLink = {
+  title: "My teams",
+  description: "View your team rosters, positions, and schedules.",
+  to: "/teams-and-services",
+  icon: Users,
 };
 
 const secondaryControllers: CardLink[] = [
@@ -345,8 +352,11 @@ const Welcome = () => {
   const isGuest = loginState === "guest";
   const isHumanSession = sessionKind === "human";
   const isAdmin = role === "admin";
+  const isMemberAccess = isMemberOnlyAccess(access);
   const visibleAdminLinks = adminLinks.filter(
-    (link) => isAdmin || (link.to === "/teams-and-services" && canViewTeams),
+    (link) =>
+      !isMemberAccess &&
+      (isAdmin || (link.to === "/teams-and-services" && canViewTeams)),
   );
   const isMusicAccess = isLoggedIn && access === "music";
   /**
@@ -355,7 +365,6 @@ const Welcome = () => {
    * read-only, which is why this is a separate check rather than folding into
    * `isViewOnlyAccess`.
    */
-  const isMemberAccess = isMemberOnlyAccess(access);
   const primaryControllers = useMemo((): CardLink[] => {
     const presentation =
       findControllerProfile(controllerProfiles, PRESENTATION_CONTROLLER_ID);
@@ -405,6 +414,7 @@ const Welcome = () => {
   const showCurrentServiceViewer =
     !isMemberAccess && Boolean(canViewServices);
   const showMySchedule = isLoggedIn && isHumanSession;
+  const showMyTeams = isLoggedIn && isHumanSession && isMemberAccess;
   const visibleSecondaryControllers = isMemberAccess
     ? []
     : isMusicAccess
@@ -555,10 +565,11 @@ const Welcome = () => {
             neither belongs under Controllers (operator surfaces) nor Church
             administration. My schedule is human-session only; workstations
             still get Service Workspace when they can view teams. */}
-        {(showMySchedule || showServiceWorkspace || showCurrentServiceViewer) && (
+        {(showMySchedule || showMyTeams || showServiceWorkspace || showCurrentServiceViewer) && (
           <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="grid gap-4 md:grid-cols-2">
               {showMySchedule ? <HomeLinkCard {...mySchedulelink} /> : null}
+              {showMyTeams ? <HomeLinkCard {...myTeamsLink} /> : null}
               {showServiceWorkspace ? (
                 <HomeLinkCard {...currentPlanLink} />
               ) : null}

@@ -109,6 +109,8 @@ const renderManager = ({
   onTeamSaved = jest.fn(),
   userId = "",
   role = "admin",
+  canEdit = true,
+  canEditMember,
 }: {
   data?: TeamsData;
   onSaved?: jest.Mock;
@@ -116,6 +118,8 @@ const renderManager = ({
   userId?: string;
   /** Invite and the account picker call admin-only endpoints. */
   role?: string;
+  canEdit?: boolean;
+  canEditMember?: (member: TeamRosterMember) => boolean;
 } = {}) => {
   render(
     <MemoryRouter>
@@ -132,7 +136,8 @@ const renderManager = ({
               members={data.members}
               positions={data.positions}
               data={data}
-              canEdit
+              canEdit={canEdit}
+              canEditMember={canEditMember}
               onSaved={onSaved}
               onTeamSaved={onTeamSaved}
               onArchived={jest.fn()}
@@ -1007,6 +1012,30 @@ describe("MemberManager roster contact information", () => {
     );
     expect(screen.getByText("JL")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Edit/ })).toHaveLength(2);
+  });
+
+  it("keeps a read-only projected roster visible without write controls", () => {
+    renderManager({ data: rosterWithAndWithoutContactInfo(), canEdit: false });
+
+    expect(screen.getByText("Has Email")).toBeInTheDocument();
+    expect(screen.getByText("Phone Only")).toBeInTheDocument();
+    expect(screen.getByText("No Contact")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create member" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Has Email/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Import|Export/i })).not.toBeInTheDocument();
+  });
+
+  it("shows shared members while granting edit actions only to server-authorized ids", () => {
+    const data = rosterWithAndWithoutContactInfo();
+    renderManager({
+      data,
+      canEditMember: (member) => member.memberId === "member-reachable",
+    });
+
+    expect(screen.getByText("Has Email")).toBeInTheDocument();
+    expect(screen.getByText("Phone Only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Edit Has Email/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Phone Only/i })).not.toBeInTheDocument();
   });
 
   it("offers contextual SMS opt-in link actions for a saved member", async () => {
