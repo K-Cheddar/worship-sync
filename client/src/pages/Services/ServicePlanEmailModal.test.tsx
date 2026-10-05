@@ -56,14 +56,15 @@ describe("ServicePlanEmailModal", () => {
       "Here is the service plan for Easter Sunday on July 26, 2026.",
     );
 
+    const recipientInput = screen.getByRole("textbox", { name: "To" });
+    await user.type(recipientInput, "one@example.com");
+    await user.keyboard("{Enter}");
     await user.clear(screen.getByRole("textbox", { name: /^Subject:/ }));
     await user.type(screen.getByRole("textbox", { name: /^Subject:/ }), "Updated subject");
     await user.clear(screen.getByRole("textbox", { name: "Message" }));
     await user.type(screen.getByRole("textbox", { name: "Message" }), "Updated message");
-    await user.type(
-      screen.getByRole("textbox", { name: "To" }),
-      "one@example.com, two@example.com",
-    );
+    await user.type(recipientInput, "two@example.com");
+    await user.keyboard("{Enter}");
     await user.click(screen.getByRole("button", { name: "Send email" }));
 
     expect(onSend).toHaveBeenCalledTimes(1);
@@ -78,6 +79,7 @@ describe("ServicePlanEmailModal", () => {
     expect(
       await screen.findByRole("button", { name: "Sending…" }),
     ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove one@example.com" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Sending…" }));
     expect(onSend).toHaveBeenCalledTimes(1);
 

@@ -484,29 +484,29 @@ const ServicePlanAssigneeList = ({
                     && !(assignee.microphoneIds || []).includes(candidate.id),
                 );
                 const microphoneChip = (
-                  <ServicePlanMicrophoneChip microphone={microphone} className="gap-1 rounded-full px-2 py-1">
-                    {allowEdit ? (
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        iconSize="sm"
-                        padding="p-0"
-                        className="h-7 w-7 shrink-0 justify-center max-md:min-h-[2rem] max-md:min-w-8"
-                        svg={X}
-                        aria-label={`Remove ${microphone.name} from ${label}`}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          updateAssignee(assignee.id, {
-                            microphoneIds: (assignee.microphoneIds || []).filter(
-                              (id) => id !== microphone.id,
-                            ),
-                          });
-                        }}
-                      />
-                    ) : null}
-                  </ServicePlanMicrophoneChip>
+                  <ServicePlanMicrophoneChip
+                    microphone={microphone}
+                    className="gap-1 rounded-full px-2 py-1"
+                  />
                 );
+                const removeMicrophoneButton = allowEdit ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    iconSize="sm"
+                    padding="p-1"
+                    className="size-8 shrink-0 justify-center rounded-full"
+                    svg={X}
+                    aria-label={`Remove ${microphone.name} from ${label}`}
+                    onClick={() =>
+                      updateAssignee(assignee.id, {
+                        microphoneIds: (assignee.microphoneIds || []).filter(
+                          (id) => id !== microphone.id,
+                        ),
+                      })
+                    }
+                  />
+                ) : null;
                 return (
                   <span
                     key={microphone.id}
@@ -515,14 +515,14 @@ const ServicePlanAssigneeList = ({
                     {allowEdit && replaceableMicrophones.length > 0 ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <span
-                            className="inline-flex min-w-0 max-w-full cursor-pointer rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
+                          <Button
+                            type="button"
+                            variant="none"
+                            className="min-w-0 max-w-full rounded p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300"
                             aria-label={`Change ${microphone.name} for ${label}`}
-                            role="button"
-                            tabIndex={0}
                           >
                             {microphoneChip}
-                          </span>
+                          </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="min-w-52 overflow-hidden p-0">
                           {scheduleAvailabilityHint ? (
@@ -566,6 +566,7 @@ const ServicePlanAssigneeList = ({
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : microphoneChip}
+                    {removeMicrophoneButton}
                     {scheduledHolders.length ? (
                       <Popover>
                         <PopoverTrigger asChild>
