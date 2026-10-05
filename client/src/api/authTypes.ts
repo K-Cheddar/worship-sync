@@ -586,6 +586,7 @@ export const onlyHydratedSchedules = (
 ): TeamSchedule[] => schedules.filter(isHydratedSchedule);
 
 export type TeamsBootstrap = {
+  editableMemberIds?: string[];
   success: boolean;
   members: TeamRosterMember[];
   positions: TeamPosition[];

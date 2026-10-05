@@ -2853,9 +2853,8 @@ app.get(
       return;
     }
 
-    // Gate the stream behind the same Teams view permission getTeamsBootstrap
-    // requires — otherwise any app-session holder for the church (including
-    // users with no Teams access) could subscribe and receive schedule payloads.
+    // Retain the legacy administrative Teams read guard here. Membership-derived
+    // bootstrap readers are not admitted to this stream before its access audit.
     try {
       await requireTeamsViewSession(req, churchId);
     } catch {

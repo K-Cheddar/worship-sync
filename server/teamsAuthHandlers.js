@@ -1,4 +1,13 @@
 import crypto from "node:crypto";
+import {
+  resolveEffectiveTeamAccess,
+  canViewTeam,
+  canEditTeam,
+} from "./teamAccess.js";
+import {
+  projectTeamsBootstrapForAccess,
+  projectViewOnlySchedule,
+} from "./teamsBootstrapProjection.js";
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
 import { emitTeamsEvent } from "./teamsSse.js";
@@ -163,6 +172,7 @@ export const createTeamsAuthHandlers = ({
   requireTeamsEditForTeamSession,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  resolveRequestBootstrap,
   getSessionActorUid = (bootstrap) => bootstrap?.user?.uid || null,
   requireFirestore,
   saveNotificationEventIntents = async () => [],
@@ -3445,17 +3455,73 @@ export const createTeamsAuthHandlers = ({
     return scheduleStart <= endDate && scheduleEnd >= startDate;
   };
 
+  const loadCanonicalTeamRoster = async (churchId) => {
+    const truncatedCollections = [];
+    const [members, teams] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamRosterMembers,
+        "memberId",
+        churchId,
+        { truncatedCollections },
+      ),
+      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId, {
+        truncatedCollections,
+      }),
+    ]);
+    return { members, teams, truncatedCollections };
+  };
+
+  // Deliberately used only by bootstrap and schedule hydration. Do not admit
+  // membership-derived readers through the generic administrative read guard.
+  const resolveTeamsReadAccess = async (req, churchId) => {
+    const bootstrap = await resolveRequestBootstrap(req);
+    if (
+      !bootstrap ||
+      !["human", "workstation"].includes(bootstrap.sessionKind)
+    ) {
+      throw httpError(401, "Authentication required");
+    }
+    if (bootstrap.churchId !== churchId) {
+      throw httpError(403, "Teams access required");
+    }
+    // Retain the existing booth-only workstation restriction.
+    if (bootstrap.sessionKind === "workstation")
+      await requireTeamsView(req, churchId);
+    const canonical = await loadCanonicalTeamRoster(churchId);
+    const access = resolveEffectiveTeamAccess({
+      bootstrap,
+      churchId,
+      teams: canonical.teams,
+      // A capped roster cannot prove that the account has exactly one link.
+      members: canonical.truncatedCollections.includes(
+        COLLECTIONS.teamRosterMembers,
+      )
+        ? []
+        : canonical.members,
+    });
+    // Temporary legacy compatibility: human Services editors already receive
+    // broad Teams reads. Keep this at the endpoint boundary, not in the canonical
+    // Teams resolver, and do not grant editing or broaden other Services levels.
+    if (
+      bootstrap.sessionKind === "human" &&
+      bootstrap.permissions?.services === "edit"
+    ) {
+      access.viewAll = true;
+    }
+    if (!access.viewAll && access.viewTeamIds.size === 0) {
+      throw httpError(403, "Teams access required");
+    }
+    return { access, canonical };
+  };
+
   const buildTeamsBootstrap = async (
     churchId,
-    { scheduleMode = "full" } = {},
+    { scheduleMode = "full", canonical } = {},
   ) => {
-    // Collects any collection that hit the row cap so we can warn the admin their
-    // view is incomplete instead of silently showing a partial roster/schedule.
-    const truncatedCollections = [];
+    const { members, teams, truncatedCollections } =
+      canonical || (await loadCanonicalTeamRoster(churchId));
     const [
-      members,
       positions,
-      teams,
       teamRoles,
       qualificationAreas,
       qualificationLevels,
@@ -3465,20 +3531,11 @@ export const createTeamsAuthHandlers = ({
       intakeRecipients,
     ] = await Promise.all([
       listTeamCollectionForChurch(
-        COLLECTIONS.teamRosterMembers,
-        "memberId",
-        churchId,
-        { truncatedCollections },
-      ),
-      listTeamCollectionForChurch(
         COLLECTIONS.teamPositions,
         "positionId",
         churchId,
         { truncatedCollections },
       ),
-      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId, {
-        truncatedCollections,
-      }),
       listTeamCollectionForChurch(COLLECTIONS.teamRoles, "roleId", churchId, {
         truncatedCollections,
       }),
@@ -11273,7 +11330,10 @@ export const createTeamsAuthHandlers = ({
     },
     async getTeamsBootstrap(req, res) {
       try {
-        await requireTeamsView(req, req.params.churchId);
+        const { access, canonical } = await resolveTeamsReadAccess(
+          req,
+          req.params.churchId,
+        );
         // Opt-in: `?schedules=summary` trades full schedule docs for summaries
         // plus a hydrated window around today. Absent (older clients) keeps the
         // original full payload.
@@ -11281,7 +11341,13 @@ export const createTeamsAuthHandlers = ({
           req.query?.schedules === "summary" ? "summary" : "full";
         return res.json({
           success: true,
-          ...(await buildTeamsBootstrap(req.params.churchId, { scheduleMode })),
+          ...projectTeamsBootstrapForAccess({
+            data: await buildTeamsBootstrap(req.params.churchId, {
+              scheduleMode,
+              canonical,
+            }),
+            access,
+          }),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load teams.");
@@ -11362,7 +11428,10 @@ export const createTeamsAuthHandlers = ({
      */
     async getTeamScheduleDetail(req, res) {
       try {
-        await requireTeamsView(req, req.params.churchId);
+        const { access } = await resolveTeamsReadAccess(
+          req,
+          req.params.churchId,
+        );
         const schedule = await getDoc(
           COLLECTIONS.teamSchedules,
           req.params.scheduleId,
@@ -11370,6 +11439,14 @@ export const createTeamsAuthHandlers = ({
         if (!schedule || schedule.churchId !== req.params.churchId) {
           throw httpError(404, "Schedule not found.");
         }
+        if (!canViewTeam(access, schedule.teamId)) {
+          throw httpError(403, "Teams access required");
+        }
+        // Reuse bootstrap's safe shape for every schedule the caller only views.
+        const projectSchedule = (record) =>
+          canEditTeam(access, record.teamId)
+            ? record
+            : projectViewOnlySchedule(record);
         const hydrated = { scheduleId: req.params.scheduleId, ...schedule };
         const all = await listTeamCollectionForChurch(
           COLLECTIONS.teamSchedules,
@@ -11382,6 +11459,7 @@ export const createTeamsAuthHandlers = ({
           (other) =>
             other.scheduleId !== hydrated.scheduleId &&
             !other.archivedAt &&
+            canViewTeam(access, other.teamId) &&
             other.teamId !== hydrated.teamId &&
             (!startDate ||
               !endDate ||
@@ -11389,8 +11467,8 @@ export const createTeamsAuthHandlers = ({
         );
         return res.json({
           success: true,
-          schedule: hydrated,
-          relatedSchedules,
+          schedule: projectSchedule(hydrated),
+          relatedSchedules: relatedSchedules.map(projectSchedule),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load this schedule.");

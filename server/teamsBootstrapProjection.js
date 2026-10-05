@@ -61,7 +61,7 @@ const VIEW_ONLY_SCHEDULE_FIELDS = [
   "additionalPositionSlots",
 ];
 
-const projectViewOnlySchedule = (schedule) => {
+export const projectViewOnlySchedule = (schedule) => {
   const projected = copyDefinedFields(schedule, VIEW_ONLY_SCHEDULE_FIELDS);
   if (Array.isArray(schedule.guests)) {
     projected.guests = schedule.guests
@@ -163,6 +163,9 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
     );
     const relevantTeamIds = new Set(memberTeamIds);
     // Truncation means this projection cannot prove it considered every team.
+    // TODO: truncated currently covers any capped Teams collection, so even
+    // schedule/intake-only truncation suppresses scoped member editing. Keep
+    // failing closed until per-collection completeness is available.
     let hasUnresolvedOwnership = source.truncated === true;
     for (const teamId of Object.keys(member.teamMemberships || {})) {
       if (activeSourceTeamIds.has(teamId)) relevantTeamIds.add(teamId);

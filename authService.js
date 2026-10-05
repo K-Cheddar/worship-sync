@@ -6359,6 +6359,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   requireTeamsEditForTeamSession,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  resolveRequestBootstrap,
   getSessionActorUid,
   requireFirestore,
   saveNotificationEventIntents: (...args) =>
