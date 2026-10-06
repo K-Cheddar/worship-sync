@@ -737,6 +737,8 @@ type CreateNewItemInDbType = {
   db: PouchDB.Database | undefined;
 };
 
+type CreatedItemState = ItemState & Pick<DBItem, "_rev">;
+
 /** Share one in-flight custom-item retry across repeated local clicks. */
 export async function runCanvaCustomItemCreationOnce(
   inFlight: Map<string, Promise<string>>,
@@ -758,7 +760,7 @@ export async function runCanvaCustomItemCreationOnce(
 export const createNewItemInDb = async ({
   item,
   db,
-}: CreateNewItemInDbType): Promise<ItemState> => {
+}: CreateNewItemInDbType): Promise<CreatedItemState> => {
   if (!db) return item;
   try {
     const response = await loadItemWithSongHydration(db, item._id);
