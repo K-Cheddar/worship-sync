@@ -239,6 +239,7 @@
     "identity-obj-proxy": "^3.0.0",
     "jest": "^30.5.2",
     "jest-environment-jsdom": "^30.5.2",
+    "qrcode-generator": "^2.0.4",
     "ts-jest": "^29.4.14",
     "tsx": "^4.23.15",
     "wait-on": "^9.5.1"

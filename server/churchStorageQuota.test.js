@@ -463,13 +463,16 @@ test("provider upload lookup is deterministic and status transitions protect com
     mediaId: "media-a", assetId: "image-a", folderMode: "dynamic", temporary: false,
     status: "waiting", updatedAt: 1_000, createdAt: 1_000,
   });
-  await service.transitionProviderUpload({
+  const committed = await service.transitionProviderUpload({
     provider: "cloudinary", uploadId: "intent-a", fromStatuses: ["waiting"], status: "committed",
   });
+  assert.equal(committed.transitioned, true);
+  assert.equal(committed.upload.status, "committed");
   const unchanged = await service.transitionProviderUpload({
     provider: "cloudinary", uploadId: "intent-a", fromStatuses: ["waiting"], status: "cancelling",
   });
-  assert.equal(unchanged.status, "committed");
+  assert.equal(unchanged.transitioned, false);
+  assert.equal(unchanged.upload.status, "committed");
   assert.equal(await service.getProviderUpload({ provider: "cloudinary", uploadId: "intent-b" }).then((value) => value.churchId), "church-b");
 });
 

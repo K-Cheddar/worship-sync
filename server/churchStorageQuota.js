@@ -695,6 +695,7 @@ export const createChurchStorageQuotaService = ({
     if (!db) throw new Error("Church storage quota persistence is unavailable.");
     const ref = providerUploadRef(db, provider, uploadId);
     let result = null;
+    let transitioned = false;
     await db.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
       if (!snapshot.exists) return;
@@ -704,9 +705,10 @@ export const createChurchStorageQuotaService = ({
         return;
       }
       result = { ...current, ...fields, status, updatedAt: now() };
+      transitioned = true;
       transaction.set(ref, result, { merge: true });
     });
-    return result;
+    return result ? { upload: result, transitioned } : null;
   };
 
   const markProviderUsageReady = async ({ churchId }) => {

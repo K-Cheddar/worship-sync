@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Activity, ChevronDown } from "lucide-react";
+import { Activity, X } from "lucide-react";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
@@ -178,7 +178,7 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
       <aside aria-label="Activity" aria-hidden={isMinimized || undefined} data-testid="activity-panel" className={`fixed bottom-4 right-4 z-[80] origin-bottom-right transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl ${isMinimized ? "pointer-events-none scale-95 opacity-0" : "scale-100 opacity-100"}`}>
         <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
           <h2 className="flex items-center gap-2 text-sm font-semibold"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</h2>
-          <Button variant="tertiary" svg={ChevronDown} aria-label="Minimize activity" onClick={onMinimize} />
+          <Button variant="tertiary" svg={X} title="Close activity" aria-label="Close activity" onClick={onMinimize} />
         </div>
         <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
           {transfers.map((transfer) => <li key={transfer.id} className="rounded-md bg-gray-800 p-3">

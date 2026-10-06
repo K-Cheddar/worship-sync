@@ -316,7 +316,7 @@ test("signed Cloudinary commit requires the recorded church and exact intended p
         churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting",
       }),
       transitionProviderUpload: async ({ status }) => ({
-        churchId: "church-1", assetId: "image-1", status,
+        upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true,
       }),
     },
   });
@@ -329,6 +329,32 @@ test("signed Cloudinary commit requires the recorded church and exact intended p
     (error) => error.statusCode === 403,
   );
   assert.equal(resourceCalls, 0);
+});
+
+test("Cloudinary commit stops when cancellation wins the atomic claim", async () => {
+  let providerCalls = 0;
+  const service = createProviderStorageService({
+    cloudinaryClient: {
+      api: { resource: async () => { providerCalls += 1; } },
+      uploader: { add_context: async () => { providerCalls += 1; } },
+    },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({
+        churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting",
+      }),
+      transitionProviderUpload: async () => ({
+        upload: { churchId: "church-1", assetId: "image-1", status: "cancelling" },
+        transitioned: false,
+      }),
+    },
+  });
+
+  await assert.rejects(
+    service.commitCloudinaryImage({ churchId: "church-1", uploadId: "upload-1", publicId: "image-1" }),
+    (error) => error.statusCode === 409 && error.code === "CLOUDINARY_UPLOAD_NOT_COMMITTABLE",
+  );
+  assert.equal(providerCalls, 0);
 });
 
 test("signed Cloudinary commit treats misplaced provider results as integration errors", async () => {
@@ -345,7 +371,7 @@ test("signed Cloudinary commit treats misplaced provider results as integration 
         churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting",
       }),
       transitionProviderUpload: async ({ status }) => ({
-        churchId: "church-1", assetId: "image-1", status,
+        upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true,
       }),
     },
   });
@@ -372,7 +398,7 @@ test("signed Cloudinary commit validates the fixed-folder final public ID", asyn
         churchId: "church-1", assetId: expectedPublicId, folderMode: "fixed", status: "waiting",
       }),
       transitionProviderUpload: async ({ status }) => ({
-        churchId: "church-1", assetId: expectedPublicId, status,
+        upload: { churchId: "church-1", assetId: expectedPublicId, status }, transitioned: true,
       }),
     },
   });
@@ -397,7 +423,9 @@ test("signed Media commits reject Canva, profile, branding, and temporary-conver
       storageQuota: {
         ...createQuota(),
         getProviderUpload: async () => ({ churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting" }),
-        transitionProviderUpload: async ({ status }) => ({ churchId: "church-1", assetId: "image-1", status }),
+        transitionProviderUpload: async ({ status }) => ({
+          upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true,
+        }),
       },
     });
     await assert.rejects(
@@ -433,7 +461,7 @@ test("Cloudinary cancellation destroys only the exact uncommitted intent asset",
       getProviderUpload: async () => ({ churchId: "church-1", assetId: "image-1", status: ledgerStatus }),
       transitionProviderUpload: async ({ status }) => {
         ledgerStatus = status;
-        return { churchId: "church-1", assetId: "image-1", status };
+        return { upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true };
       },
     },
   });

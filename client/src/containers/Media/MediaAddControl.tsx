@@ -36,7 +36,7 @@ export const MediaAddControl = ({ children }: MediaAddControlProps) => {
   const activityIconMotion = summary.activeCount ? "animate-spin motion-reduce:animate-none" : "";
 
   return (
-    <div className="flex min-w-0 items-center gap-1">
+    <div className="flex min-w-0 items-center justify-end gap-1">
       {children}
       {showActivity ? (
         <Button
@@ -44,7 +44,7 @@ export const MediaAddControl = ({ children }: MediaAddControlProps) => {
           title={`Show ${summary.label}`}
           aria-label={`Show ${summary.label}`}
           onClick={transferContext?.restoreTransfers}
-          className="min-w-0 gap-1"
+          className="min-w-0 shrink gap-1"
           padding="px-1.5 py-1"
         >
           <ActivityIcon size={16} aria-hidden data-testid="activity-icon" className={`shrink-0 ${activityAccent} ${activityIconMotion}`} />
