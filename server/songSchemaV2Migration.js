@@ -13,6 +13,11 @@ export const SONG_MIGRATION_BATCH_SIZE = 50;
 const ARRANGEMENT_PREFIX = "song-v2:arrangement:";
 const SLIDE_PREFIX = "song-v2:slide:";
 const AUDIT_FIELDS = new Set(["_rev", "createdAt", "createdBy", "updatedAt", "updatedBy"]);
+const SUPPORTED_SLIDE_TYPES = new Set([
+  "Title", "Reprise", "Interlude", "Verse", "Chorus", "Refrain", "Bridge",
+  "Outro", "Ending", "Intro", "Pre-Chorus", "Pre-Bridge", "Blank",
+  "Section", "Timer", "Announcement", "Media",
+]);
 
 const encoded = (value) => encodeURIComponent(value);
 const isMissing = (error) => error?.response?.status === 404 || error?.status === 404;
@@ -133,13 +138,26 @@ const validateLegacySong = (song) => {
     throw Object.assign(new Error("Legacy song has no source revision to protect activation."), { code: "blocked_invalid_ids" });
   }
   if (song.arrangements !== undefined && !Array.isArray(song.arrangements)) {
-    throw Object.assign(new Error("Legacy arrangements must be an array."), { code: "blocked_invalid_ids" });
+    throw Object.assign(new Error("Legacy arrangements must be an array."), { code: "blocked_invalid_schema" });
   }
   const arrangements = song.arrangements || [];
+  const arrangementIds = new Set();
   for (const arrangement of arrangements) {
     if (typeof arrangement?.id !== "string" || !arrangement.id.trim()) {
       throw Object.assign(new Error("Legacy song contains an arrangement with a missing ID."), { code: "blocked_invalid_ids" });
     }
+    const invalidArrangementFields = [];
+    if (typeof arrangement.name !== "string") invalidArrangementFields.push("name must be a string");
+    if (!Array.isArray(arrangement.formattedLyrics)) invalidArrangementFields.push("formattedLyrics must be an array");
+    if (!Array.isArray(arrangement.songOrder)) invalidArrangementFields.push("songOrder must be an array");
+    if (!Array.isArray(arrangement.slides)) invalidArrangementFields.push("slides must be an array");
+    if (invalidArrangementFields.length) {
+      throw Object.assign(new Error(`Arrangement ${arrangement.id}: ${invalidArrangementFields.join("; ")}.`), { code: "blocked_invalid_schema" });
+    }
+    if (arrangementIds.has(arrangement.id)) {
+      throw Object.assign(new Error(`Legacy song contains duplicate arrangement ID ${arrangement.id}.`), { code: "blocked_invalid_ids" });
+    }
+    arrangementIds.add(arrangement.id);
   }
   if (!arrangements.length && (song.slides || []).length && !song._id.trim()) {
     throw Object.assign(new Error("Legacy root slides cannot be normalized without a song ID."), { code: "blocked_invalid_ids" });
@@ -149,25 +167,49 @@ const validateLegacySong = (song) => {
     throw Object.assign(new Error("Legacy selectedArrangement cannot be normalized safely."), { code: "blocked_invalid_ids" });
   }
   for (const arrangement of arrangements) {
-    if (arrangement.slides !== undefined && !Array.isArray(arrangement.slides)) {
-      throw Object.assign(new Error(`Arrangement ${arrangement.id} slides must be an array.`), { code: "blocked_invalid_ids" });
-    }
-    for (const slide of arrangement.slides || []) {
+    const slideIds = new Set();
+    for (const slide of arrangement.slides) {
       if (typeof slide?.id !== "string" || !slide.id.trim()) {
         throw Object.assign(new Error(`Arrangement ${arrangement.id} contains a slide with a missing ID.`), { code: "blocked_invalid_ids" });
       }
+      const invalidSlideFields = [];
+      if (!SUPPORTED_SLIDE_TYPES.has(slide.type)) invalidSlideFields.push("type must be a supported SlideType");
+      if (typeof slide.name !== "string") invalidSlideFields.push("name must be a string");
+      if (!Array.isArray(slide.boxes)) invalidSlideFields.push("boxes must be an array");
+      if (invalidSlideFields.length) {
+        throw Object.assign(new Error(`Arrangement ${arrangement.id} slide ${slide.id}: ${invalidSlideFields.join("; ")}.`), { code: "blocked_invalid_schema" });
+      }
+      if (slideIds.has(slide.id)) {
+        throw Object.assign(new Error(`Arrangement ${arrangement.id} contains duplicate slide ID ${slide.id}.`), { code: "blocked_invalid_ids" });
+      }
+      slideIds.add(slide.id);
     }
   }
+  if (song.slides !== undefined && !Array.isArray(song.slides)) {
+    throw Object.assign(new Error("Legacy root slides must be an array."), { code: "blocked_invalid_schema" });
+  }
+  const rootSlideIds = new Set();
   for (const slide of song.slides || []) {
     if (typeof slide?.id !== "string" || !slide.id.trim()) {
       throw Object.assign(new Error("Legacy root slides contain a slide with a missing ID."), { code: "blocked_invalid_ids" });
     }
+    const invalidSlideFields = [];
+    if (!SUPPORTED_SLIDE_TYPES.has(slide.type)) invalidSlideFields.push("type must be a supported SlideType");
+    if (typeof slide.name !== "string") invalidSlideFields.push("name must be a string");
+    if (!Array.isArray(slide.boxes)) invalidSlideFields.push("boxes must be an array");
+    if (invalidSlideFields.length) {
+      throw Object.assign(new Error(`Legacy root slide ${slide.id}: ${invalidSlideFields.join("; ")}.`), { code: "blocked_invalid_schema" });
+    }
+    if (rootSlideIds.has(slide.id)) {
+      throw Object.assign(new Error(`Legacy root slides contain duplicate slide ID ${slide.id}.`), { code: "blocked_invalid_ids" });
+    }
+    rootSlideIds.add(slide.id);
   }
   let docs;
   try {
     docs = serializeSongToV2Documents(song);
   } catch (error) {
-    throw Object.assign(new Error(error?.message || "Legacy song cannot be serialized to schema v2."), { code: "blocked_invalid_ids" });
+    throw Object.assign(new Error(error?.message || "Legacy song cannot be serialized to schema v2."), { code: "blocked_invalid_schema" });
   }
   const ids = [docs.root, ...docs.arrangements, ...docs.slides].map((doc) => doc._id);
   if (new Set(ids).size !== ids.length || docs.root._id !== getSongV2RootDocId(song._id) ||
@@ -250,6 +292,34 @@ const preflightV2Root = async (client, dbUrl, songId) => {
   }
 };
 
+/** Reads the exact winning CouchDB revision, including deleted root tombstones. */
+export async function getSongV2RootRevisionState(client, dbUrl, songId) {
+  const rootId = getSongV2RootDocId(songId);
+  try {
+    const response = await client.get(
+      `${dbUrl}/_all_docs?key=${encoded(JSON.stringify(rootId))}&include_docs=true`,
+    );
+    const rows = response.data?.rows;
+    if (!Array.isArray(rows)) return { state: "unknown", error: new Error("CouchDB returned no exact root revision rows.") };
+    const row = rows.find((entry) => entry?.id === rootId);
+    if (!row || row.error === "not_found") return { state: "missing" };
+    const rev = row.value?.rev;
+    if (row.value?.deleted === true) {
+      if (typeof rev !== "string" || !rev) return { state: "unknown", error: new Error("CouchDB returned a deleted root without its winning revision.") };
+      return { state: "deleted", rev };
+    }
+    if (!row.doc || typeof row.doc !== "object" || typeof rev !== "string" || !rev) {
+      return { state: "unknown", error: new Error("CouchDB returned an incomplete live root revision row.") };
+    }
+    return { state: "live", rev, doc: { ...row.doc, _rev: row.doc._rev || rev } };
+  } catch (error) {
+    return { state: "unknown", error };
+  }
+}
+
+const rootStateFailure = (state, message) =>
+  Object.assign(new Error(message), { code: state });
+
 const assertLegacyRevisionUnchanged = async (client, dbUrl, songId, sourceRevision) => {
   const current = await client.get(`${dbUrl}/${encoded(songId)}`).then((response) => response.data);
   if (current._rev !== sourceRevision) {
@@ -258,17 +328,64 @@ const assertLegacyRevisionUnchanged = async (client, dbUrl, songId, sourceRevisi
 };
 
 const assertRootAbsent = async (client, dbUrl, songId) => {
-  const root = await readOptionalDoc(client, `${dbUrl}/${encoded(getSongV2RootDocId(songId))}`);
-  if (!root) return;
+  const rootState = await getSongV2RootRevisionState(client, dbUrl, songId);
+  if (rootState.state === "missing" || rootState.state === "deleted") return;
+  if (rootState.state === "unknown") {
+    throw rootStateFailure("activation_uncertain", `Could not determine the Song v2 root revision state: ${rootState.error?.message || "unknown error"}`);
+  }
   const active = await preflightV2Root(client, dbUrl, songId);
   if (active.valid) {
     throw Object.assign(new Error("A v2 root became active during preparation; no more child changes were made."), { code: "already_v2" });
   }
-  throw new Error(`A v2 root appeared during preparation but is invalid; refusing to overwrite it: ${active.error.message}`);
+  throw rootStateFailure("verification_failed", `A v2 root appeared during preparation but is invalid; refusing to overwrite it: ${active.error.message}`);
 };
 
-const publishSongV2Root = async (client, dbUrl, root) => {
-  const response = await client.put(`${dbUrl}/${encoded(root._id)}`, root);
+const isAmbiguousPublicationFailure = (error) => {
+  const status = statusOf(error);
+  return status === undefined || status === 408 || status >= 500;
+};
+
+const sameRootRevisionState = (left, right) =>
+  left.state === "missing" && right.state === "missing" ||
+  left.state === "deleted" && right.state === "deleted" && left.rev === right.rev;
+
+const publishSongV2Root = async (client, dbUrl, root, report) => {
+  const rootState = await getSongV2RootRevisionState(client, dbUrl, root.songId);
+  if (rootState.state === "unknown") {
+    report.status = "activation_uncertain";
+    report.activationResult = "activation_uncertain";
+    throw rootStateFailure("activation_uncertain", `Could not determine whether the Song v2 root can be published: ${rootState.error?.message || "unknown error"}`);
+  }
+  if (rootState.state === "live") {
+    throw Object.assign(new Error("A Song v2 root became live before publication."), { response: { status: 409 } });
+  }
+  const publishDoc = rootState.state === "deleted" ? { ...root, _rev: rootState.rev } : root;
+  let response;
+  try {
+    response = await client.put(`${dbUrl}/${encoded(root._id)}`, publishDoc);
+  } catch (error) {
+    if (statusOf(error) === 409 || !isAmbiguousPublicationFailure(error)) throw error;
+    const actual = await getSongV2RootRevisionState(client, dbUrl, root.songId);
+    if (actual.state === "unknown") {
+      report.status = "activation_uncertain";
+      report.activationResult = "activation_uncertain";
+      throw rootStateFailure("activation_uncertain", `Root publication acknowledgement was lost and the root state is unknown: ${actual.error?.message || "unknown error"}`);
+    }
+    if (actual.state === "missing" || actual.state === "deleted") {
+      if (sameRootRevisionState(rootState, actual)) throw error;
+      report.status = "activation_uncertain";
+      report.activationResult = "activation_uncertain";
+      throw rootStateFailure("activation_uncertain", "Root publication acknowledgement was lost and the root revision state changed before it could be reconciled.");
+    }
+    if (sameAuthoredContent(actual.doc, root)) return actual.rev;
+    const concurrent = await preflightV2Root(client, dbUrl, root.songId);
+    if (concurrent.valid) {
+      throw Object.assign(new Error("A different valid Song v2 root was activated concurrently."), { response: { status: 409 } });
+    }
+    report.status = "verification_failed";
+    report.activationResult = "concurrent_root_invalid";
+    throw rootStateFailure("verification_failed", `A live Song v2 root appeared after an ambiguous publication, but it is invalid and was left untouched: ${concurrent.error.message}`);
+  }
   let publishedRoot = response.data;
   if (!publishedRoot?._rev && !publishedRoot?.rev) {
     try {
@@ -329,8 +446,13 @@ export async function migrateSongToV2({ client, database, legacySong, dryRun = f
     if (typeof songId !== "string" || !songId) throw new Error("Song ID is required.");
     report.sourceRevision = legacySong._rev || null;
     const rootId = getSongV2RootDocId(songId);
-    const existingRoot = await readOptionalDoc(client, `${dbUrl}/${encoded(rootId)}`);
-    if (existingRoot) {
+    const existingRootState = await getSongV2RootRevisionState(client, dbUrl, songId);
+    if (existingRootState.state === "unknown") {
+      report.status = "activation_uncertain";
+      report.activationResult = "activation_uncertain";
+      throw rootStateFailure("activation_uncertain", `Could not determine the existing root state: ${existingRootState.error?.message || "unknown error"}`);
+    }
+    if (existingRootState.state === "live") {
       const active = await preflightV2Root(client, dbUrl, songId);
       if (!active.valid) {
         report.status = "verification_failed";
@@ -440,7 +562,7 @@ export async function migrateSongToV2({ client, database, legacySong, dryRun = f
 
     let publishedRevision;
     try {
-      publishedRevision = await publishSongV2Root(client, dbUrl, expected.root);
+      publishedRevision = await publishSongV2Root(client, dbUrl, expected.root, report);
     } catch (error) {
       if (statusOf(error) === 409) {
         const active = await preflightV2Root(client, dbUrl, songId);
@@ -503,7 +625,9 @@ export async function migrateSongToV2({ client, database, legacySong, dryRun = f
     report.failures.push(error?.message || "Unknown Song v2 migration failure.");
     if (report.verificationResult === "not_run") report.verificationResult = "failed";
     if (report.activationResult === "not_run") {
-      report.activationResult = report.status === "activation_uncertain" ? "activation_uncertain" : "not_published";
+      if (report.status === "activation_uncertain") report.activationResult = "activation_uncertain";
+      else if (report.status === "verification_failed") report.activationResult = "concurrent_root_invalid";
+      else report.activationResult = "not_published";
     }
   }
   return report;

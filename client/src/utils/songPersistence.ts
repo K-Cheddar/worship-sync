@@ -3,6 +3,7 @@ import { applyPouchAudit } from "./pouchAudit";
 import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import {
   SongV2DocumentError,
+  SongV2BaselineRequiredError,
   SongV2WriteNotEnabledError,
   assertValidV2Root,
   buildSongV2LibraryProjection,
@@ -52,6 +53,9 @@ const getOptionalDocument = async <T,>(
     throw error;
   }
 };
+
+const isSongV2Root = (song: DBItem | undefined): boolean =>
+  (song?.docType as string | undefined) === "song-v2-root";
 
 const getReferencedDocuments = async <T,>(
   db: PouchDB.Database,
@@ -171,12 +175,24 @@ export async function saveSong(
   currentSong?: DBItem,
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
-  if (song.docType === "song-v2-root" || currentSong?.docType === "song-v2-root") {
-    throw new SongV2WriteNotEnabledError(song._id, "save");
+  if (song.docType === "song-v2-root" || isSongV2Root(currentSong)) {
+    if (
+      !currentSong ||
+      !isSongV2Root(currentSong) ||
+      currentSong._id !== song._id
+    ) {
+      throw new SongV2BaselineRequiredError(song._id);
+    }
+    const { saveSongV2FromBaseline } = await import("./songV2Writer");
+    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
   }
   const existing = currentSong ?? await loadSong(db, song._id);
-  if (existing.docType === "song-v2-root") {
-    throw new SongV2WriteNotEnabledError(song._id, "save");
+  if (isSongV2Root(existing)) {
+    if (!currentSong || !isSongV2Root(currentSong)) {
+      throw new SongV2BaselineRequiredError(song._id);
+    }
+    const { saveSongV2FromBaseline } = await import("./songV2Writer");
+    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
   }
   if (existing.type !== "song") {
     throw new Error(`Document ${song._id} is not a song`);

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  getSongV2RootRevisionState,
   migrateSongDatabaseToV2,
   migrateSongToV2,
 } from "./songSchemaV2Migration.js";
@@ -27,27 +28,39 @@ const baseSong = (id = "song-1") => ({
     formattedLyrics: [{ words: "Verse one" }],
     songOrder: ["verse"],
     monitorLayout: { currentFontSizePx: 26, nextFontSizePx: 24 },
-    slides: [{ id: "s1", boxes: [{ words: "Verse one" }], monitorCurrentBandBoxes: [{ fontSize: 20 }] }],
+    slides: [{ id: "s1", type: "Verse", name: "Verse 1", boxes: [{ words: "Verse one" }], monitorCurrentBandBoxes: [{ fontSize: 20 }] }],
   }],
 });
 
 const memoryClient = (legacySongs = []) => {
   const docs = new Map(legacySongs.map((song) => [song._id, structuredClone(song)]));
   const calls = [];
-  const behavior = { failChildren: false, failSecondBulk: false, failVerification: false, failActiveVerification: false, activeVerificationFailed: false, changeSourceAfterChild: false, changeSourceAfterRoot: false, changeRootRevisionAfterPublish: false, concurrentRootOnPut: null, omitRootRevision: false, failRootRevisionFetch: false, failRoot: false, rejectLargeBatch: false, rejectSingle: false };
+  const behavior = { failChildren: false, failSecondBulk: false, failVerification: false, failActiveVerification: false, activeVerificationFailed: false, changeSourceAfterChild: false, changeSourceAfterRoot: false, changeRootRevisionAfterPublish: false, concurrentRootOnPut: null, omitRootRevision: false, failRootRevisionFetch: false, failRoot: false, rejectAfterRootWrite: false, rejectLargeBatch: false, rejectSingle: false };
   const decodeUrl = (url) => decodeURIComponent(url.split("?")[0].split("/").at(-1));
   const client = {
     get: async (url) => {
       calls.push(["get", url]);
       if (url.includes("/_all_docs")) {
         const query = new URLSearchParams(url.split("?")[1]);
+        const exactKey = query.get("key");
+        if (exactKey) {
+          const id = JSON.parse(exactKey);
+          const doc = docs.get(id);
+          if (!doc) return { data: { rows: [] } };
+          return { data: { rows: [{
+            id,
+            key: id,
+            value: { rev: doc._rev, ...(doc._deleted ? { deleted: true } : {}) },
+            ...(!doc._deleted ? { doc: structuredClone(doc) } : {}),
+          }] } };
+        }
         const start = query.get("startkey");
         const end = query.get("endkey");
         const prefix = start ? JSON.parse(start) : "";
         const endKey = end ? JSON.parse(end) : "\uffff";
-        const rows = [...docs.entries()].sort(([a], [b]) => a.localeCompare(b))
+        const rows = [...docs.entries()].filter(([, doc]) => !doc._deleted).sort(([a], [b]) => a.localeCompare(b))
           .filter(([id]) => id >= prefix && id <= endKey)
-          .map(([id, doc]) => ({ id, doc: structuredClone(doc) }));
+          .map(([id, doc]) => ({ id, value: { rev: doc._rev }, doc: structuredClone(doc) }));
         if (behavior.failVerification && rows.some((row) => row.doc.docType === "song-v2-slide")) {
           const row = rows.find((entry) => entry.doc.docType === "song-v2-slide");
           row.doc.boxes = [];
@@ -55,6 +68,7 @@ const memoryClient = (legacySongs = []) => {
         return { data: { rows } };
       }
       const doc = docs.get(decodeUrl(url));
+      if (doc?._deleted) throw notFound();
       if (behavior.failRootRevisionFetch && doc?.docType === "song-v2-root") throw new Error("root revision fetch failed");
       if (!doc) throw notFound();
       if ((behavior.failVerification || (behavior.activeVerificationFailed && behavior.failActiveVerification)) && doc.docType === "song-v2-slide") return { data: { ...doc, boxes: [] } };
@@ -86,14 +100,19 @@ const memoryClient = (legacySongs = []) => {
       return { data: result };
     },
     put: async (url, doc) => {
-      calls.push(["root", decodeUrl(url)]);
+      calls.push(["root", decodeUrl(url), structuredClone(doc)]);
       if (behavior.failRoot) throw new Error("root PUT rejected");
       if (behavior.concurrentRootOnPut) {
         docs.set(decodeUrl(url), structuredClone(behavior.concurrentRootOnPut));
         throw Object.assign(new Error("conflict"), { response: { status: 409 } });
       }
-      if (docs.has(decodeUrl(url))) throw Object.assign(new Error("conflict"), { response: { status: 409 } });
-      docs.set(decodeUrl(url), { ...structuredClone(doc), _rev: "1-root" });
+      const rootId = decodeUrl(url);
+      const current = docs.get(rootId);
+      if (current && (!current._deleted || doc._rev !== current._rev)) {
+        throw Object.assign(new Error("conflict"), { response: { status: 409 } });
+      }
+      const revision = `${Number(current?._rev?.split("-")[0] || 0) + 1}-root`;
+      docs.set(rootId, { ...structuredClone(doc), _rev: revision });
       if (behavior.changeSourceAfterRoot) {
         const source = docs.get("song-1");
         docs.set("song-1", { ...source, name: "Changed after publication", _rev: "2-changed" });
@@ -103,7 +122,8 @@ const memoryClient = (legacySongs = []) => {
         docs.set(decodeUrl(url), { ...root, _rev: "2-root" });
       }
       behavior.activeVerificationFailed = true;
-      return { data: behavior.omitRootRevision ? { ok: true } : { ok: true, rev: "1-root" } };
+      if (behavior.rejectAfterRootWrite) throw new Error("socket hang up");
+      return { data: behavior.omitRootRevision ? { ok: true } : { ok: true, rev: revision } };
     },
     delete: async (url) => {
       calls.push(["delete", url]);
@@ -113,8 +133,9 @@ const memoryClient = (legacySongs = []) => {
       const rev = new URLSearchParams(query).get("rev");
       if (!current) throw notFound();
       if (current._rev !== rev) throw Object.assign(new Error("conflict"), { response: { status: 409 } });
-      docs.delete(id);
-      return { data: { ok: true } };
+      const nextRev = `${Number(current._rev.split("-")[0]) + 1}-deleted`;
+      docs.set(id, { _id: id, _rev: nextRev, _deleted: true });
+      return { data: { ok: true, rev: nextRev } };
     },
   };
   return { client, docs, calls, behavior };
@@ -139,6 +160,24 @@ test("the canonical serializer imports and runs in Node without DOM globals", ()
   assert.equal("monitorCurrentBandBoxes" in docs.slides[0], false);
 });
 
+test("exact root revision inspection distinguishes missing, live, deleted, and unknown", async () => {
+  const data = memoryClient([baseSong()]);
+  const rootId = getSongV2RootDocId("song-1");
+  assert.deepEqual(await getSongV2RootRevisionState(data.client, "/worship-sync-demo", "song-1"), { state: "missing" });
+  const root = serializeSongToV2Documents(baseSong()).root;
+  data.docs.set(rootId, { ...root, _rev: "1-root" });
+  assert.deepEqual(await getSongV2RootRevisionState(data.client, "/worship-sync-demo", "song-1"), {
+    state: "live", rev: "1-root", doc: { ...root, _rev: "1-root" },
+  });
+  data.docs.set(rootId, { _id: rootId, _rev: "2-deleted", _deleted: true });
+  assert.deepEqual(await getSongV2RootRevisionState(data.client, "/worship-sync-demo", "song-1"), { state: "deleted", rev: "2-deleted" });
+  const get = data.client.get;
+  data.client.get = async (url) => url.includes("/_all_docs") ? Promise.reject(new Error("offline")) : get(url);
+  const unknown = await getSongV2RootRevisionState(data.client, "/worship-sync-demo", "song-1");
+  assert.equal(unknown.state, "unknown");
+  assert.match(unknown.error.message, /offline/);
+});
+
 test("legacy root slides fill only the selected empty arrangement and preserve multi-arrangement order", async () => {
   const source = baseSong();
   source.arrangements.push({
@@ -149,7 +188,7 @@ test("legacy root slides fill only the selected empty arrangement and preserve m
     slides: [],
   });
   source.selectedArrangement = 1;
-  source.slides = [{ id: "legacy-slide", boxes: [{ words: "Legacy root" }], monitorNextBandBoxes: [{ fontSize: 22 }] }];
+  source.slides = [{ id: "legacy-slide", type: "Verse", name: "Legacy verse", boxes: [{ words: "Legacy root" }], monitorNextBandBoxes: [{ fontSize: 22 }] }];
   source.monitorLayout = { currentFontSizePx: 99, nextFontSizePx: 99 };
   source.monitorCurrentBandBoxes = [{ fontSize: 100 }];
   source.monitorNextBandBoxes = [{ fontSize: 101 }];
@@ -193,7 +232,7 @@ test("single-song targeting reads the exact logical ID and reports a missing tar
   });
   assert.equal(report.legacySongCount, 1);
   assert.equal(report.songs[0].songId, "song-1");
-  assert.equal(data.calls.some(([, url]) => url.includes("/_all_docs") && !url.includes("startkey=")), false);
+  assert.equal(data.calls.some(([, url]) => url.includes("/_all_docs?key=")), true, "exact root revision lookup must use the deterministic ID");
   await assert.rejects(
     migrateSongDatabaseToV2({ client: data.client, database: "worship-sync-demo", songId: "missing-song", dryRun: true }),
     /Song missing-song was not found/,
@@ -234,7 +273,7 @@ test("source changes after root publication roll back activation and rerun from 
   const failed = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: source });
   assert.equal(failed.status, "source_changed");
   assert.equal(failed.activationResult, "rolled_back_source_changed");
-  assert.equal(data.docs.has(getSongV2RootDocId("song-1")), false);
+  assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._deleted, true);
   assert.deepEqual(data.docs.get("song-1"), { ...source, _rev: "2-changed", name: "Changed after publication" });
   assert.ok(data.docs.has("song-v2:slide:song-1:modern:s1"));
 
@@ -246,6 +285,111 @@ test("source changes after root publication roll back activation and rerun from 
   assert.deepEqual(data.docs.get("song-1"), newest);
 });
 
+test("rollback tombstone is reused as the winning revision on rerun", async () => {
+  const original = baseSong();
+  const data = memoryClient([original]);
+  const source = structuredClone(data.docs.get("song-1"));
+  data.behavior.failActiveVerification = true;
+  const failed = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: source });
+  assert.equal(failed.status, "verification_failed");
+  data.behavior.failActiveVerification = false;
+  const tombstone = data.docs.get(getSongV2RootDocId("song-1"));
+  assert.deepEqual(tombstone, { _id: getSongV2RootDocId("song-1"), _rev: "2-deleted", _deleted: true });
+  const childrenBeforeRetry = [...data.docs.entries()].filter(([id]) => id.startsWith("song-v2:arrangement:") || id.startsWith("song-v2:slide:"));
+  const legacyBeforeRetry = structuredClone(data.docs.get("song-1"));
+  const rerun = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: legacyBeforeRetry });
+  assert.equal(rerun.status, "migrated");
+  assert.equal(data.docs.get("song-1")._rev, legacyBeforeRetry._rev);
+  assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._rev, "3-root");
+  assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._deleted, undefined);
+  assert.deepEqual([...data.docs.entries()].filter(([id]) => id.startsWith("song-v2:arrangement:") || id.startsWith("song-v2:slide:")), childrenBeforeRetry);
+  const retryPut = data.calls.filter(([kind]) => kind === "root").at(-1);
+  assert.equal(retryPut[2]._rev, "2-deleted");
+  assert.equal(data.calls.filter(([kind]) => kind === "bulk").length, 2, "matching child documents should be reused");
+});
+
+test("lost root PUT acknowledgement is reconciled and a later source change rolls back", async (t) => {
+  await t.test("expected root became live", async () => {
+    const data = memoryClient([baseSong()]);
+    data.behavior.rejectAfterRootWrite = true;
+    const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: data.docs.get("song-1") });
+    assert.equal(report.status, "migrated");
+    assert.equal(report.activationResult, "published");
+    assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._rev, "1-root");
+  });
+  await t.test("legacy changed after response loss", async () => {
+    const source = baseSong();
+    const data = memoryClient([source]);
+    data.behavior.rejectAfterRootWrite = true;
+    data.behavior.changeSourceAfterRoot = true;
+    const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: structuredClone(source) });
+    assert.equal(report.status, "source_changed");
+    assert.equal(report.activationResult, "rolled_back_source_changed");
+    assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._deleted, true);
+    assert.equal(data.docs.get("song-1")._rev, "2-changed");
+  });
+});
+
+test("an ambiguous root failure with a changed tombstone is activation-uncertain", async () => {
+  const data = memoryClient([baseSong()]);
+  data.client.put = async (url) => {
+    const id = decodeURIComponent(url.split("?")[0].split("/").at(-1));
+    data.docs.set(id, { _id: id, _rev: "1-deleted", _deleted: true });
+    throw new Error("timeout");
+  };
+  const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: data.docs.get("song-1") });
+  assert.equal(report.status, "activation_uncertain");
+  assert.equal(report.activationResult, "activation_uncertain");
+  assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._deleted, true);
+});
+
+test("a different valid root found after an ambiguous PUT is treated as concurrent activation", async () => {
+  const data = memoryClient([baseSong()]);
+  const rootId = getSongV2RootDocId("song-1");
+  data.client.put = async () => {
+    const root = serializeSongToV2Documents(baseSong()).root;
+    data.docs.set(rootId, { ...root, name: "Concurrent edit", _rev: "1-concurrent" });
+    throw new Error("ECONNRESET");
+  };
+  const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: data.docs.get("song-1") });
+  assert.equal(report.status, "already_v2");
+  assert.equal(report.activationResult, "activated_concurrently");
+  assert.equal(data.docs.get(rootId).name, "Concurrent edit");
+});
+
+test("ambiguous publication reconciliation reports invalid and unknown live state safely", async (t) => {
+  await t.test("invalid live root", async () => {
+    const data = memoryClient([baseSong()]);
+    const rootId = getSongV2RootDocId("song-1");
+    const invalid = { _id: rootId, docType: "song-v2-root", songId: "song-1", _rev: "1-invalid" };
+    data.client.put = async () => {
+      data.docs.set(rootId, invalid);
+      throw new Error("timeout");
+    };
+    const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: data.docs.get("song-1") });
+    assert.equal(report.status, "verification_failed");
+    assert.equal(report.activationResult, "concurrent_root_invalid");
+    assert.deepEqual(data.docs.get(rootId), invalid);
+  });
+  await t.test("unknown root state", async () => {
+    const data = memoryClient([baseSong()]);
+    const originalGet = data.client.get;
+    let putAttempted = false;
+    data.client.put = async () => {
+      putAttempted = true;
+      throw new Error("timeout");
+    };
+    data.client.get = async (url) => {
+      if (putAttempted && url.includes("/_all_docs?key=")) throw new Error("state lookup unavailable");
+      return originalGet(url);
+    };
+    const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: data.docs.get("song-1") });
+    assert.equal(report.status, "activation_uncertain");
+    assert.equal(report.activationResult, "activation_uncertain");
+    assert.match(report.failures.join(" "), /state lookup unavailable/);
+  });
+});
+
 test("post-publication verification failure deletes only the exact root revision", async () => {
   const data = memoryClient([baseSong()]);
   const source = structuredClone(data.docs.get("song-1"));
@@ -253,7 +397,7 @@ test("post-publication verification failure deletes only the exact root revision
   const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: source });
   assert.equal(report.status, "verification_failed");
   assert.equal(report.activationResult, "rolled_back_verification_failed");
-  assert.equal(data.docs.has(getSongV2RootDocId("song-1")), false);
+  assert.equal(data.docs.get(getSongV2RootDocId("song-1"))._deleted, true);
   assert.deepEqual(data.docs.get("song-1"), source);
   assert.ok(data.docs.has("song-v2:slide:song-1:modern:s1"));
 });
@@ -345,7 +489,7 @@ test("root failure leaves verified children and a rerun reconciles current legac
   assert.equal(data.docs.has(getSongV2RootDocId("song-1")), false);
   data.behavior.failRoot = false;
   const source = data.docs.get("song-1");
-  const changed = { ...source, _rev: "2-legacy", arrangements: [{ ...source.arrangements[0], slides: [{ id: "s2", boxes: [{ words: "Changed" }] }] }] };
+  const changed = { ...source, _rev: "2-legacy", arrangements: [{ ...source.arrangements[0], slides: [{ id: "s2", type: "Verse", name: "Verse 2", boxes: [{ words: "Changed" }] }] }] };
   data.docs.set("song-1", changed);
   const oldSlideId = "song-v2:slide:song-1:modern:s1";
   data.docs.set(oldSlideId, { ...(data.docs.get(oldSlideId)), _rev: "2-child", boxes: [{ words: "stale partial" }] });
@@ -399,7 +543,7 @@ test("already-v2 roots win over stale legacy and invalid active roots are not re
 test("413 batches split and a single oversized document blocks root publication", async (t) => {
   await t.test("batch split", async () => {
     const source = baseSong();
-    source.arrangements[0].slides.push({ id: "s2", boxes: [] });
+    source.arrangements[0].slides.push({ id: "s2", type: "Verse", name: "Verse 2", boxes: [] });
     const data = memoryClient([source]);
     data.behavior.rejectLargeBatch = true;
     const report = await migrateSongToV2({ client: data.client, database: "worship-sync-demo", legacySong: data.docs.get("song-1"), batchSize: 50 });
@@ -441,5 +585,42 @@ test("invalid arrangement and slide identities block only their own songs", asyn
     const report = await migrateSongDatabaseToV2({ client: data.client, database: "worship-sync-demo", dryRun: true });
     assert.equal(report.songs.find((song) => song.songId === id).status, "blocked_invalid_ids");
     assert.equal(report.songs.find((song) => song.songId === `${id}-valid`).status, "dry_run_ready");
+  }
+});
+
+test("Trust and Obey malformed Title slide is blocked before any write", async () => {
+  const malformed = baseSong("Trust and Obey");
+  malformed.name = "Trust and Obey";
+  malformed.arrangements[0].id = "1j11gnmu4r0ml0rulfk";
+  malformed.arrangements[0].slides = [{
+    id: "1j11gnmu4gk0og1gcs2g",
+    type: "Title",
+    boxes: [],
+  }];
+  const data = memoryClient([malformed]);
+  const report = await migrateSongDatabaseToV2({ client: data.client, database: "worship-sync-demo", dryRun: true });
+  const songReport = report.songs.find((song) => song.songId === "Trust and Obey");
+  assert.equal(songReport.status, "blocked_invalid_schema");
+  assert.match(songReport.failures.join(" "), /name must be a string/i);
+  assert.equal(data.calls.some(([kind]) => kind === "bulk" || kind === "root" || kind === "delete"), false);
+});
+
+test("arrangement and slide shape errors are schema blocks, not identity blocks", async () => {
+  const cases = [
+    ["arrangement-name", (song) => { delete song.arrangements[0].name; }],
+    ["formatted-lyrics", (song) => { delete song.arrangements[0].formattedLyrics; }],
+    ["song-order", (song) => { delete song.arrangements[0].songOrder; }],
+    ["arrangement-slides", (song) => { delete song.arrangements[0].slides; }],
+    ["slide-type", (song) => { song.arrangements[0].slides[0].type = "Unknown"; }],
+    ["slide-name", (song) => { delete song.arrangements[0].slides[0].name; }],
+    ["slide-boxes", (song) => { delete song.arrangements[0].slides[0].boxes; }],
+  ];
+  for (const [id, mutate] of cases) {
+    const malformed = baseSong(id);
+    mutate(malformed);
+    const data = memoryClient([malformed]);
+    const report = await migrateSongDatabaseToV2({ client: data.client, database: "worship-sync-demo", dryRun: true });
+    assert.equal(report.songs.find((entry) => entry.songId === id).status, "blocked_invalid_schema");
+    assert.equal(data.calls.some(([kind]) => kind === "bulk" || kind === "root"), false);
   }
 });
