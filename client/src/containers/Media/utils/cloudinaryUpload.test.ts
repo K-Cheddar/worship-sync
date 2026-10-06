@@ -328,6 +328,7 @@ describe("uploadImageToCloudinarySigned", () => {
         signature: "server-signature",
         public_id: "worship-sync-image-1",
         overwrite: "false",
+        allowed_formats: "avif,bmp,gif,heic,jpg,jxl,png,svg,tiff,webp,ico",
         asset_folder: "worship-sync/churches/church-1/media",
       },
     };

@@ -1,3 +1,4 @@
+import mediaImageFormats from "../shared/mediaImageFormats.json" with { type: "json" };
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ChurchStorageQuotaError } from "./churchStorageQuota.js";
@@ -236,8 +237,17 @@ for (const folderMode of ["dynamic", "fixed"]) {
       timestamp: Number(intent.fields.timestamp),
       public_id: intent.fields.public_id,
       overwrite: false,
+      allowed_formats: "avif,bmp,gif,heic,jpg,jxl,png,svg,tiff,webp,ico",
       ...(folderMode === "dynamic" ? { asset_folder: folder } : { folder }),
     });
+    assert.equal(intent.fields.allowed_formats, signedParams.allowed_formats);
+    assert.ok(signedParams.allowed_formats.split(",").includes("avif"));
+    for (const { cloudinaryFormat } of mediaImageFormats) {
+      assert.ok(signedParams.allowed_formats.split(",").includes(cloudinaryFormat));
+    }
+    for (const unsupported of ["pdf", "psd", "ai", "glb"]) {
+      assert.equal(signedParams.allowed_formats.split(",").includes(unsupported), false);
+    }
     assert.equal("api_secret" in intent.fields, false);
     assert.equal(intent.fields.api_key, "public-key");
     assert.equal("upload_preset" in intent.fields, false);

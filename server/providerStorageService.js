@@ -1,3 +1,4 @@
+import mediaImageFormats from "../shared/mediaImageFormats.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
 import {
   ChurchStorageQuotaError,
@@ -5,6 +6,11 @@ import {
   getCloudinaryAssetBytes,
   getMuxStoredMinutes,
 } from "./churchStorageQuota.js";
+
+// REST and signing must use the same comma-separated representation.
+const allowedImageFormats = [
+  ...new Set(mediaImageFormats.map(({ cloudinaryFormat }) => cloudinaryFormat)),
+].join(",");
 
 const requiredString = (value, label) => {
   if (typeof value !== "string" || !value.trim()) {
@@ -141,6 +147,7 @@ export const createProviderStorageService = ({
       timestamp,
       public_id: basePublicId,
       overwrite: false,
+      allowed_formats: allowedImageFormats,
       ...(folderMode === "dynamic" ? { asset_folder: folder } : { folder }),
     };
     const signature = cloudinaryClient.utils.api_sign_request(
@@ -162,6 +169,7 @@ export const createProviderStorageService = ({
       signature,
       public_id: basePublicId,
       overwrite: "false",
+      allowed_formats: allowedImageFormats,
       ...(folderMode === "dynamic" ? { asset_folder: folder } : { folder }),
     };
     return {
