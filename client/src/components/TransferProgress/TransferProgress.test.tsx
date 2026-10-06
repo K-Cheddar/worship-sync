@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { TransferProgress } from "./TransferProgress";
 import type { Transfer } from "../../context/transferModel";
@@ -94,5 +95,59 @@ describe("TransferProgress", () => {
     expect(screen.getByText("Cloud cleanup failed")).toBeInTheDocument();
     expect(screen.getByText("1 of 1 media items removed · 1 need attention")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Removed from Media; cloud storage still needs cleanup.");
+  });
+
+  it("renders per-file upload errors once and leaves scrolling to the Activity list", () => {
+    render(<TransferProgress transfer={{
+      ...base,
+      name: "Cloud upload · 2 items",
+      status: "failed",
+      progress: 0,
+      error: { message: "2 items failed to upload." },
+      files: [
+        { id: "one", name: "stone-mountain-logo.png", status: "failed", progress: null, error: "The image was not uploaded to this church's media folder." },
+        { id: "two", name: "Fruit of the Spirit.jpg", status: "failed", progress: null, error: "The image was not uploaded to this church's media folder." },
+      ],
+    }} variant="card" />);
+
+    expect(screen.getByText("2 items failed to upload.")).toBeInTheDocument();
+    expect(screen.getAllByText("The image was not uploaded to this church's media folder.")).toHaveLength(2);
+    const files = screen.getByRole("list", { name: "Cloud upload · 2 items files" });
+    expect(files).not.toHaveClass("overflow-y-auto");
+    expect(files).not.toHaveClass("max-h-36");
+  });
+
+  it("expands and collapses a large failed-file set inline", async () => {
+    const user = userEvent.setup();
+    render(<TransferProgress transfer={{
+      ...base,
+      name: "Cloud upload · 7 items",
+      status: "failed",
+      error: { message: "7 items failed to upload." },
+      files: Array.from({ length: 7 }, (_, index) => ({
+        id: `file-${index}`,
+        name: `A very long media filename ${index}.jpg`,
+        status: "failed" as const,
+        progress: null,
+        error: `File ${index} could not be uploaded.`,
+      })),
+    }} variant="card" />);
+
+    const disclosure = screen.getByRole("button", { name: "Show 7 failed files" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("File 0 could not be uploaded.")).not.toBeInTheDocument();
+    await user.click(disclosure);
+    expect(screen.getByRole("button", { name: "Hide failed files" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByRole("alert")).toHaveLength(8);
+    expect(screen.getByRole("list", { name: "Cloud upload · 7 items files" })).not.toHaveClass("overflow-y-auto");
+    await user.click(screen.getByRole("button", { name: "Hide failed files" }));
+    expect(screen.queryByText("File 0 could not be uploaded.")).not.toBeInTheDocument();
+  });
+
+  it("uses semantic status accents for failed and completed operations", () => {
+    const { rerender } = render(<TransferProgress transfer={{ ...base, status: "failed" }} variant="card" />);
+    expect(screen.getByTestId("transfer-status-icon")).toHaveClass("text-red-300");
+    rerender(<TransferProgress transfer={{ ...base, status: "complete" }} variant="card" />);
+    expect(screen.getByTestId("transfer-status-icon")).toHaveClass("text-green-300");
   });
 });

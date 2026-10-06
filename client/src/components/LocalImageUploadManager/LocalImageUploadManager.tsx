@@ -231,7 +231,7 @@ const LocalImageUploadManager = () => {
                   }).catch((error) => console.warn("Image upload progress could not be saved:", error));
                 },
               },
-              { folder: `worship-sync/churches/${encodeURIComponent(churchId)}/media` },
+              { assetFolder: `worship-sync/churches/${encodeURIComponent(churchId)}/media` },
             );
             await progressWrite;
             cloudMedia = {

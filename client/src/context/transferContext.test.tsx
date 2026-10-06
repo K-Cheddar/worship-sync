@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { getTransferOverview, TransferProvider, useTransfers } from "./transferContext";
 import { MediaAddControl } from "../containers/Media/MediaAddControl";
 import { CanvaMediaReconciliationRequiredError } from "../utils/canvaMediaReplacement";
@@ -55,6 +55,7 @@ test("keeps Canva jobs alive across route changes and shares the panel with medi
   expect(screen.getByText("Video.mp4")).toBeInTheDocument();
   expect(screen.getByText("42%", { exact: true })).toBeInTheDocument();
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  expect(within(screen.getByRole("complementary", { name: "Activity" })).getByTestId("activity-icon")).toHaveClass("text-cyan-300");
   await user.click(screen.getByRole("button", { name: "Navigate elsewhere" }));
   expect(screen.getByText("Route /elsewhere")).toBeInTheDocument();
   expect(await screen.findByText(/3 slides imported/)).toBeInTheDocument();
@@ -127,14 +128,80 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
   expect(await screen.findByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "Show Activity: 1 active" })[0]).toHaveTextContent("Activity · 1 active");
-  const showActivityButtons = screen.getAllByRole("button", { name: "Show Activity: 1 active" });
-  await user.click(showActivityButtons[showActivityButtons.length - 1]);
+  expect(screen.getAllByRole("button", { name: "Show Activity · 1 active" })).toHaveLength(1);
+  const localActivity = screen.getByRole("button", { name: "Show Activity · 1 active" });
+  expect(localActivity).toHaveTextContent("Activity · 1 active");
+  expect(screen.getByTestId("activity-icon")).toHaveClass("text-cyan-300");
+  await user.click(localActivity);
   expect(screen.getByRole("heading", { name: "Activity · 1 active" })).toBeInTheDocument();
   expect(screen.getByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   expect(screen.getByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   await act(async () => gate.resolve(result));
   expect(await screen.findByText(/2 slides imported/)).toBeInTheDocument();
+});
+
+test("uses attention counts and amber Activity state for failed work", async () => {
+  const user = userEvent.setup();
+  const FailedHarness = () => {
+    const { updateTransfer } = useTransfers();
+    return <button onClick={() => updateTransfer({
+      id: "failed-upload", type: "Media upload", name: "Cloud upload · 1 item", status: "failed", progress: 0,
+      phase: { key: "failed", label: "Upload failed" }, error: { message: "1 item failed to upload." },
+      actions: [{ key: "dismiss", label: "Dismiss" }],
+    })}>Finish failed upload</button>;
+  };
+  render(<MemoryRouter><TransferProvider><FailedHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Finish failed upload" }));
+  expect(await screen.findByRole("heading", { name: "Activity · 1 needs attention" })).toBeInTheDocument();
+  expect(screen.queryByText("Activity · 0 active")).not.toBeInTheDocument();
+  expect(screen.getByTestId("activity-icon")).toHaveClass("text-amber-300");
+  expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+});
+
+test("combines active and attention counts in the Activity header", async () => {
+  const user = userEvent.setup();
+  const MixedHarness = () => {
+    const { updateTransfer } = useTransfers();
+    return <>
+      <button onClick={() => updateTransfer({ id: "running", type: "Media upload", name: "Running.mp4", status: "active", progress: 25 })}>Start upload</button>
+      <button onClick={() => updateTransfer({ id: "failed", type: "Media deletion", name: "Delete photo.jpg", status: "partial", progress: null })}>Finish partial deletion</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><MixedHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start upload" }));
+  await user.click(screen.getByRole("button", { name: "Finish partial deletion" }));
+  expect(await screen.findByRole("heading", { name: "Activity · 1 active · 1 needs attention" })).toBeInTheDocument();
+  expect(screen.getByTestId("activity-icon")).toHaveClass("text-amber-300");
+});
+
+test("shows the minimized global fallback only when no local Activity host is mounted", async () => {
+  const user = userEvent.setup();
+  const HostHarness = () => {
+    const { updateTransfer } = useTransfers();
+    const [showLocalHost, setShowLocalHost] = useState(false);
+    return <>
+      <button onClick={() => updateTransfer({ id: "active", type: "Media upload", name: "Upload.mp4", status: "active", progress: 30 })}>Start upload</button>
+      <button onClick={() => setShowLocalHost((shown) => !shown)}>Toggle local Activity host</button>
+      {showLocalHost ? <MediaAddControl><button>Add media</button></MediaAddControl> : null}
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><HostHarness /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Start upload" }));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
+  expect(screen.getByTestId("global-activity-fallback")).toBeInTheDocument();
+
+  await user.click(screen.getByTestId("global-activity-fallback"));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
+  await user.click(screen.getByRole("button", { name: "Toggle local Activity host" }));
+  expect(screen.queryByTestId("global-activity-fallback")).not.toBeInTheDocument();
+  const localActivity = screen.getByRole("button", { name: "Show Activity · 1 active" });
+  await user.click(localActivity);
+  expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
+  expect(screen.queryByTestId("global-activity-fallback")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Toggle local Activity host" }));
+  expect(screen.getByTestId("global-activity-fallback")).toBeInTheDocument();
 });
 
 test("only offers View presentation when finalization returns a destination", async () => {
@@ -259,7 +326,7 @@ test("keeps Add available and summarizes the shared aggregate across active tran
   expect(await screen.findByRole("button", { name: "Add media" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Add media" }));
   expect(addAction).toHaveBeenCalledTimes(1);
-  const activityControl = screen.getByRole("button", { name: "Show Activity: 2 active" });
+  const activityControl = screen.getByRole("button", { name: "Show Activity · 2 active" });
   expect(activityControl).toHaveTextContent("Activity · 2 active");
   expect(activityControl).not.toHaveTextContent("%");
   await user.click(activityControl);

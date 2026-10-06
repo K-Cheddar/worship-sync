@@ -42,6 +42,24 @@ export type TransferOverviewItem = Pick<Transfer, "id" | "name" | "type" | "stat
 export const isActiveTransfer = (transfer: Transfer) =>
   transfer.status === "queued" || transfer.status === "active";
 
+export const needsTransferAttention = (transfer: Transfer) =>
+  transfer.status === "failed" || transfer.status === "partial" ||
+  Boolean(transfer.actions?.some((action) => action.key.startsWith("retry")));
+
+export const getActivitySummary = (transfers: Transfer[]) => {
+  const activeCount = transfers.filter(isActiveTransfer).length;
+  const attentionCount = transfers.filter(needsTransferAttention).length;
+  const labelParts = ["Activity"];
+  if (activeCount) labelParts.push(`${activeCount} active`);
+  if (attentionCount) labelParts.push(`${attentionCount} needs attention`);
+  return {
+    activeCount,
+    attentionCount,
+    label: labelParts.join(" · "),
+    accent: attentionCount ? "attention" as const : activeCount ? "active" as const : "idle" as const,
+  };
+};
+
 export const normalizeProgress = (progress: number | null) => {
   if (progress === null || !Number.isFinite(progress)) return null;
   return Math.max(0, Math.min(100, progress));

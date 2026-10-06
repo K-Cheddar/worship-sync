@@ -2,6 +2,6 @@
   "id": "2026-10-02-media-transfers",
   "date": "2026-10-02",
   "type": "improved",
-  "title": "Media transfers",
-  "description": "Media imports now provide clearer progress and more reliable transfers and syncing across devices."
+  "title": "Media progress",
+  "description": "Media imports show clearer progress and stay in sync across devices."
 }

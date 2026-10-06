@@ -215,7 +215,9 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       const failedFiles = batch.files.filter((file) => file.status === "error");
       const succeeded = batch.files.filter((file) => file.status === "ready").length;
       const status: Transfer["status"] = terminal ?? "active";
-      const errorMessage = failedFiles.map((file) => `${file.displayName}: ${file.error || "Upload failed."}`).join("\n");
+      const errorMessage = failedFiles.length
+        ? `${failedFiles.length} ${failedFiles.length === 1 ? "file" : "files"} failed to upload.`
+        : undefined;
       const transfer: Transfer = {
         id: batch.id,
         type: "Media upload",

@@ -69,6 +69,54 @@ describe("uploadImageToCloudinary", () => {
     jest.restoreAllMocks();
   });
 
+  it("sends dynamic asset folder placement without sending it as a legacy folder", async () => {
+    const file = new File(["x"], "welcome.png", { type: "image/png" });
+    const responseJson = JSON.stringify({
+      public_id: "welcome_123",
+      secure_url: "https://cdn.example/welcome_123.png",
+      width: 100,
+      height: 80,
+      format: "png",
+      created_at: "2026-01-01T00:00:00.000Z",
+      bytes: 10,
+    });
+    const xhr = mockXhrSuccess(responseJson);
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+
+    await uploadImageToCloudinary(file, "preset", "test-cloud", {}, {
+      assetFolder: "worship-sync/churches/church-1/media",
+    });
+
+    const formData = (xhr.send as jest.Mock).mock.calls[0][0] as FormData;
+    expect(formData.get("asset_folder")).toBe(
+      "worship-sync/churches/church-1/media",
+    );
+    expect(formData.get("folder")).toBeNull();
+  });
+
+  it("continues to send legacy folder for callers that explicitly request it", async () => {
+    const file = new File(["x"], "profile.png", { type: "image/png" });
+    const responseJson = JSON.stringify({
+      public_id: "profile_123",
+      secure_url: "https://cdn.example/profile_123.png",
+      width: 100,
+      height: 80,
+      format: "png",
+      created_at: "2026-01-01T00:00:00.000Z",
+      bytes: 10,
+    });
+    const xhr = mockXhrSuccess(responseJson);
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+
+    await uploadImageToCloudinary(file, "preset", "test-cloud", {}, {
+      folder: "member-profiles/church-1",
+    });
+
+    const formData = (xhr.send as jest.Mock).mock.calls[0][0] as FormData;
+    expect(formData.get("folder")).toBe("member-profiles/church-1");
+    expect(formData.get("asset_folder")).toBeNull();
+  });
+
   it("prefers local file.name over Cloudinary original_filename", async () => {
     const file = new File(["x"], "vacation.png", { type: "image/png" });
     const responseJson = JSON.stringify({

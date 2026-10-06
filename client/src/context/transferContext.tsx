@@ -8,13 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown } from "lucide-react";
+import { Activity, ChevronDown } from "lucide-react";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
 import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
 import { formatCanvaImportError } from "../utils/canvaImportError";
-import { getTransferOverview, type Transfer } from "./transferModel";
+import { getActivitySummary, getTransferOverview, type Transfer } from "./transferModel";
 
 type CanvaStatus = "queued" | "exporting" | "processing" | "finalizing" | "completed" | "partial" | "failed" | "cancelled";
 type CanvaPageState = {
@@ -55,6 +55,7 @@ type TransferContextValue = {
   isMinimized: boolean;
   minimizeTransfers: () => void;
   restoreTransfers: () => void;
+  registerActivityHost: () => () => void;
   startCanvaTransfer: (input: CanvaTransferInput) => string;
   updateTransfer: (transfer: Transfer) => void;
   removeTransfer: (id: string) => void;
@@ -62,7 +63,7 @@ type TransferContextValue = {
   runTransferAction: (id: string, key: string) => Promise<void>;
 };
 
-type TransferActionsValue = Omit<TransferContextValue, "transfers" | "isMinimized" | "minimizeTransfers" | "restoreTransfers"> & {
+type TransferActionsValue = Omit<TransferContextValue, "transfers" | "isMinimized" | "minimizeTransfers" | "restoreTransfers" | "registerActivityHost"> & {
   getTransfer: (id: string) => Transfer | undefined;
 };
 
@@ -156,22 +157,27 @@ const toCanvaTransfer = (job: CanvaTransferRuntime): Transfer => {
   };
 };
 
-const TransferPanel = ({ transfers, isMinimized, onMinimize, onRestore, runTransferAction }: {
+const activityAccentClass = (accent: ReturnType<typeof getActivitySummary>["accent"]) =>
+  accent === "attention" ? "text-amber-300" : accent === "active" ? "text-cyan-300" : "text-gray-400";
+
+const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimize, onRestore, runTransferAction }: {
   transfers: Transfer[];
   isMinimized: boolean;
+  hasLocalActivityHost: boolean;
   onMinimize: () => void;
   onRestore: () => void;
   runTransferAction: TransferContextValue["runTransferAction"];
 }) => {
   const [confirmation, setConfirmation] = useState<{ transfer: Transfer; action: NonNullable<Transfer["actions"]>[number] } | null>(null);
-  const activeCount = getTransferOverview(transfers).activeCount;
+  const summary = getActivitySummary(transfers);
   if (!transfers.length) return null;
-  if (isMinimized) return <button type="button" aria-label={`Show Activity: ${activeCount} active`} onClick={onRestore} className="fixed bottom-4 right-4 z-[80] rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-2xl">Activity · {activeCount} active</button>;
+  if (isMinimized && hasLocalActivityHost) return null;
+  if (isMinimized) return <button type="button" aria-label={`Show ${summary.label}`} data-testid="global-activity-fallback" onClick={onRestore} className="fixed bottom-4 right-4 z-[80] flex items-center gap-2 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-2xl"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</button>;
   return (
     <>
       <aside aria-label="Activity" className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
-          <h2 className="text-sm font-semibold">Activity · {activeCount} active</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</h2>
           <Button variant="tertiary" svg={ChevronDown} aria-label="Minimize activity" onClick={onMinimize} />
         </div>
         <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
@@ -204,6 +210,8 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const transfersRef = useRef(transfers);
   transfersRef.current = transfers;
   const [isMinimized, setIsMinimized] = useState(false);
+  const activityHosts = useRef(new Set<symbol>());
+  const [activityHostCount, setActivityHostCount] = useState(0);
   const canvaQueue = useRef(Promise.resolve());
   const jobs = useRef(new Map<string, CanvaTransferRuntime>());
   const dedupeJobs = useRef(new Map<string, string>());
@@ -382,7 +390,15 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   }, [transfers]);
   const minimizeTransfers = useCallback(() => setIsMinimized(true), []);
   const restoreTransfers = useCallback(() => setIsMinimized(false), []);
-  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
+  const registerActivityHost = useCallback(() => {
+    const hostId = Symbol("activity-host");
+    activityHosts.current.add(hostId);
+    setActivityHostCount(activityHosts.current.size);
+    return () => {
+      if (activityHosts.current.delete(hostId)) setActivityHostCount(activityHosts.current.size);
+    };
+  }, []);
+  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
   const actionValue = useMemo(() => ({
     startCanvaTransfer,
     updateTransfer,
@@ -391,7 +407,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     runTransferAction,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
   }), [startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
-  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
+  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 
 export { getTransferOverview };
