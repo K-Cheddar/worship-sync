@@ -65,22 +65,22 @@ const MemberAccessSheet = () => {
   const isInviteTarget = target?.kind === "invite";
   const member = isMemberTarget && target ? target.member : null;
   const invite = isInviteTarget && target ? target.invite : null;
+  const isExistingAdmin = isMemberTarget && member?.role === "admin";
   const inviteDraft = invite ? getInvitePendingAccessValue(invite) : inviteAccessDraft;
-  const selectedTeamScopeIds = member
+  const draftTeamScopeIds = member
     ? getMemberTeamScopeValue(member)
     : inviteDraft.teamScopeIds;
+  const selectedTeamScopeIds = isExistingAdmin ? [] : draftTeamScopeIds;
   const currentTeamScopeIds = member
     ? getEditableTeamScopeIds(member.permissions)
     : inviteDraft.teamScopeIds;
+  const effectiveCurrentTeamScopeIds = isExistingAdmin ? [] : currentTeamScopeIds;
   const inviteBaseline = invite ? inviteAccessDraftFromInvite(invite) : null;
 
-  const memberTeamScopesChanged = useMemo(
-    () =>
-      isMemberTarget &&
-      [...selectedTeamScopeIds].sort().join("|") !==
-      [...currentTeamScopeIds].sort().join("|"),
-    [isMemberTarget, selectedTeamScopeIds, currentTeamScopeIds],
-  );
+  const memberTeamScopesChanged =
+    isMemberTarget &&
+    [...selectedTeamScopeIds].sort().join("|") !==
+      [...effectiveCurrentTeamScopeIds].sort().join("|");
   const inviteAccessChanged = useMemo(
     () =>
       isInviteTarget &&
@@ -113,15 +113,15 @@ const MemberAccessSheet = () => {
   const memberLabel = memberUser?.displayName || memberEmail || "Unknown user";
   const targetUserId = memberUser?.uid || member?.userId || "";
 
-  const selectedMemberAccess = member ? getMemberAccessValue(member) : "full";
+  const selectedMemberAccess =
+    member && !isExistingAdmin ? getMemberAccessValue(member) : "full";
   const selectedInviteAccess = inviteDraft.access;
   const selectedAccess = isMemberTarget ? selectedMemberAccess : selectedInviteAccess;
   const isMemberTierSelected = selectedAccess === "member";
   const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
-  const isAdminAccess = member?.role === "admin" || isAdminInviteAccess;
-  const currentMemberAccess = member
-    ? toMemberAccessOption(member.appAccess)
-    : "full";
+  const isAdminAccess = isExistingAdmin || isAdminInviteAccess;
+  const currentMemberAccess =
+    member && !isExistingAdmin ? toMemberAccessOption(member.appAccess) : "full";
   const currentTeamsAccess = member
     ? toTeamsAccessOption(member.permissions, member.role)
     : inviteDraft.teamsAccess;
@@ -288,6 +288,10 @@ const MemberAccessSheet = () => {
   };
 
   const handleAppAccessChange = (value: string) => {
+    if (isExistingAdmin) {
+      return;
+    }
+
     if (isMemberTarget && member) {
       setMemberAccessDrafts((prev) => ({
         ...prev,
@@ -415,6 +419,7 @@ const MemberAccessSheet = () => {
                 isMemberTarget ? memberAccessOptions : inviteAccessSelectOptions
               }
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+              disabled={isExistingAdmin}
               onChange={handleAppAccessChange}
             />
             {isMemberTierSelected ? (

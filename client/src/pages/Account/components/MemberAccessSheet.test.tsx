@@ -210,8 +210,9 @@ const renderInviteSheet = (kind: "invite-draft" | "invite") => {
 };
 
 describe("MemberAccessSheet member tier", () => {
-  it("keeps existing admin Teams and Services access immutable", () => {
-    const { rerender, context } = renderMemberSheet();
+  it("keeps existing admins at immutable Full access despite stale drafts", () => {
+    jest.clearAllMocks();
+    const { rerender, context, setters } = renderMemberSheet();
     context.accessSheetTarget = {
       kind: "member",
       member: {
@@ -225,34 +226,36 @@ describe("MemberAccessSheet member tier", () => {
       },
     };
     context.toTeamsAccessOption.mockReturnValue("edit");
+    context.getMemberAccessValue.mockReturnValue("member");
     context.getMemberTeamsAccessValue.mockReturnValue("none");
     context.getMemberServicesAccessValue.mockReturnValue("none");
+    context.getMemberTeamScopeValue.mockReturnValue(["worship"]);
+    context.getEditableTeamScopeIds.mockReturnValue([]);
     rerender(<MemberAccessSheet />);
 
+    const accessSelect = screen.getByRole("combobox", { name: "Access level" });
     const teamsSelect = screen.getByRole("combobox", { name: "Global Teams access" });
     const servicesSelect = screen.getByRole("combobox", { name: "Service editing" });
+    expect(accessSelect).toHaveValue("full");
+    expect(screen.getByTestId("member-access-sheet-membership-1-selected-label")).toHaveTextContent("Full access");
+    expect(accessSelect).toBeDisabled();
     expect(teamsSelect).toHaveValue("edit");
+    expect(screen.getByTestId("member-teams-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit all teams");
     expect(teamsSelect).toBeDisabled();
     expect(servicesSelect).toHaveValue("edit");
+    expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit");
     expect(servicesSelect).toBeDisabled();
     expect(screen.queryByRole("group", { name: "Per-team edit access" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
+    fireEvent.change(accessSelect, {
       target: { value: "member" },
     });
     rerender(<MemberAccessSheet />);
-    expect(screen.getByRole("combobox", { name: "Global Teams access" })).toHaveValue("edit");
-    expect(screen.getByTestId("member-teams-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit all teams");
-    expect(screen.getByRole("combobox", { name: "Service editing" })).toHaveValue("edit");
-    expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit");
-    expect(screen.queryByRole("group", { name: "Per-team edit access" })).not.toBeInTheDocument();
+    expect(setters.setMemberAccessDrafts).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Access level" })).toHaveValue("full");
+    expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
-    expect(updateChurchMemberAccess).toHaveBeenCalledWith(
-      "church-1",
-      "user-1",
-      "member",
-      { teams: "edit", services: "edit", teamScopes: {} },
-    );
+    expect(updateChurchMemberAccess).not.toHaveBeenCalled();
   });
 
   it("shows global Teams and Services as disabled None while keeping team scopes usable", () => {

@@ -695,3 +695,74 @@ test("summary schedules and safe metadata survive only within projected team sco
   );
   assert.equal(projected.truncated, true);
 });
+
+test("hidden ownership metadata without canonical roster links blocks rich member projection", () => {
+  const hiddenOwnershipCases = [
+    {
+      name: "team membership metadata",
+      overrides: {
+        teamMemberships: {
+          worship: { teamId: "worship" },
+          youth: { teamId: "youth", roleId: "role-youth" },
+        },
+        positionIds: ["position-worship"],
+        qualifications: [],
+      },
+    },
+    {
+      name: "position ownership",
+      overrides: {
+        teamMemberships: { worship: { teamId: "worship" } },
+        positionIds: ["position-worship", "position-youth"],
+        qualifications: [],
+      },
+    },
+    {
+      name: "qualification area ownership",
+      overrides: {
+        teamMemberships: { worship: { teamId: "worship" } },
+        positionIds: ["position-worship"],
+        qualifications: [{ qualificationId: "hidden", areaId: "area-youth" }],
+      },
+    },
+  ];
+
+  for (const ownershipCase of hiddenOwnershipCases) {
+    const member = makeMember("metadata-shared", ownershipCase.overrides);
+    const data = {
+      ...source,
+      truncated: false,
+      members: [member],
+      teams: source.teams.map((team) =>
+        team.teamId === "worship"
+          ? { ...team, memberIds: [member.memberId] }
+          : team.teamId === "youth"
+            ? { ...team, memberIds: [] }
+            : team,
+      ),
+    };
+    const projected = projectTeamsBootstrapForAccess({
+      data,
+      access: {
+        viewAll: false,
+        viewTeamIds: new Set(["worship"]),
+        editTeamIds: new Set(["worship"]),
+      },
+    });
+    const [projectedMember] = projected.members;
+
+    assert.equal(projectedMember.email, undefined, ownershipCase.name);
+    assert.equal(projectedMember.teamMemberships, undefined, ownershipCase.name);
+    assert.equal(projectedMember.qualifications, undefined, ownershipCase.name);
+    assert.equal(
+      projected.editableMemberIds.includes(member.memberId),
+      false,
+      ownershipCase.name,
+    );
+    assert.equal(
+      JSON.stringify(projectedMember).includes("youth"),
+      false,
+      ownershipCase.name,
+    );
+  }
+});
