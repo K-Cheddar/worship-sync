@@ -254,13 +254,15 @@ describe("MediaUploadInput", () => {
       target: { files: [file] },
     });
     expect(screen.getByText("final-slide.png")).toBeInTheDocument();
+    expect(screen.queryByText("Source: final-slide.png")).not.toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Edit display name for final-slide.png" }),
+      screen.getByRole("button", { name: "Edit name for final-slide.png" }),
     );
     fireEvent.change(screen.getByRole("textbox", { name: "Display name for final-slide.png" }), {
       target: { value: "Welcome Slide" },
     });
+    expect(screen.getByText("Source: final-slide.png")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add (1 file)" }));
 
     await waitFor(() => {
@@ -283,11 +285,11 @@ describe("MediaUploadInput", () => {
     fireEvent.change(screen.getByLabelText(/Media Files/i), {
       target: { files: [first, second] },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Edit display name for one.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit name for one.png" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Display name for one.png" }), {
       target: { value: "First" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Edit display name for two.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit name for two.png" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Display name for two.png" }), {
       target: { value: "Second" },
     });
@@ -317,7 +319,7 @@ describe("MediaUploadInput", () => {
     fireEvent.change(screen.getByLabelText(/Media Files/i), {
       target: { files: [file] },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Edit display name for photo.png" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit name for photo.png" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Display name for photo.png" }), {
       target: { value: "   " },
     });
@@ -669,7 +671,9 @@ describe("MediaUploadInput", () => {
   it("shows the upload drop state only for native file drags", () => {
     renderUploadInput();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    const target = screen.getByRole("button", { name: "Choose Files" });
+    const target = screen.getByRole("button", { name: "Choose files" });
+    expect(screen.getByText("Drop media here or choose files")).toBeInTheDocument();
+    expect(screen.getByText("Images and videos")).toBeInTheDocument();
     const file = new File(["image"], "dropped.png", { type: "image/png" });
 
     fireEvent.dragEnter(target, {
@@ -692,7 +696,7 @@ describe("MediaUploadInput", () => {
     mockValidateFiles.mockReturnValue({ valid: [] as File[], invalid: [new File([], "notes.txt")] });
     renderUploadInput();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    const target = screen.getByRole("button", { name: "Choose Files" });
+    const target = screen.getByRole("button", { name: "Choose files" });
 
     fireEvent.drop(target, {
       dataTransfer: {

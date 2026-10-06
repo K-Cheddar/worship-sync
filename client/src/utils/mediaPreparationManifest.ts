@@ -198,6 +198,42 @@ export const buildMediaPreparationReadinessVideos = (
   return { videos: videos.slice(0, READINESS_VIDEO_LIMIT), videosTruncated: videos.length > READINESS_VIDEO_LIMIT };
 };
 
+type ReadinessVideoSource = {
+  mediaKey: string;
+  source?: string;
+  originalSource?: string;
+  itemId?: string;
+  itemName?: string;
+  status: "eligible" | "pending-cache" | "excluded";
+};
+
+/** Builds report rows from inventory plus the bounded selected pool, including protected media outside inventory. */
+export const buildMediaPreparationReadinessVideoInputs = (
+  inventory: ReadinessVideoSource[],
+  selectedCandidates: ReadinessVideoSource[],
+  surfaces: Array<{ mediaKey: string; phase: string; error?: string }>,
+): MediaPreparationReadinessVideoInput[] => {
+  const selectedKeys = new Set(selectedCandidates.map(({ mediaKey }) => mediaKey));
+  const surfaceByKey = new Map(surfaces.map((surface) => [surface.mediaKey, surface]));
+  const toInput = (video: ReadinessVideoSource, selected: boolean) => {
+    const surface = surfaceByKey.get(video.mediaKey);
+    return {
+      mediaKey: video.mediaKey,
+      name: getMediaReadinessFileName(video.originalSource ?? video.source),
+      itemId: video.itemId,
+      itemName: video.itemName,
+      status: video.status,
+      selected,
+      phase: surface?.phase,
+      error: surface?.error,
+    };
+  };
+  return [
+    ...inventory.map((video) => toInput(video, selectedKeys.has(video.mediaKey))),
+    ...selectedCandidates.map((video) => toInput(video, true)),
+  ];
+};
+
 export type ReadinessCandidateState = "eligible" | "pending-cache" | "excluded";
 export type ReadinessSurfacePhase = "ready-paused" | "active-playing" | "preparing" | "activation-requested" | "error" | string;
 
