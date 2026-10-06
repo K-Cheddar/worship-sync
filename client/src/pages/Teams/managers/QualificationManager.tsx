@@ -143,12 +143,17 @@ const QualificationManager = ({
       .sort((a, b) => a.rank - b.rank);
   }, [editing, levels]);
 
-  const levelCountByAreaId = useMemo(() => {
-    const counts = new Map<string, number>();
+  const levelsByAreaId = useMemo(() => {
+    const levelsByArea = new Map<string, TeamQualificationLevel[]>();
     levels.forEach((level) => {
-      counts.set(level.areaId, (counts.get(level.areaId) || 0) + 1);
+      const areaLevels = levelsByArea.get(level.areaId) || [];
+      areaLevels.push(level);
+      levelsByArea.set(level.areaId, areaLevels);
     });
-    return counts;
+    levelsByArea.forEach((areaLevels) => {
+      areaLevels.sort((a, b) => a.rank - b.rank);
+    });
+    return levelsByArea;
   }, [levels]);
 
   const resetLevelDrafts = (area: TeamQualificationArea) => {
@@ -235,11 +240,11 @@ const QualificationManager = ({
 
   const submitArea = async () => {
     const areaTeamId = editing?.teamId || creationTeamId;
-    if (!areaTeamId || !canEditTeam(areaTeamId)) return;
     if (!areaTeamId) {
       showToast("Create a team first, then add qualification areas.", "neutral");
       return;
     }
+    if (!canEditTeam(areaTeamId)) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.areaId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —
@@ -454,15 +459,32 @@ const QualificationManager = ({
                   <p className="text-sm text-gray-300">No matches.</p>
                 ) : null}
                 {filteredTeamAreas.map((area) => {
-                  const levelCount = levelCountByAreaId.get(area.areaId) || 0;
+                  const areaLevels = levelsByAreaId.get(area.areaId) || [];
                   return (
                     <EntityRow
                       key={area.areaId}
                       title={area.name}
                       icon={area.icon || "Award"}
-                      subtitle={
-                        area.description ||
-                        `${levelCount} level${levelCount === 1 ? "" : "s"}`
+                      details={
+                        <div className="mt-0.5 space-y-1">
+                          {area.description ? (
+                            <p className="text-xs text-gray-400">{area.description}</p>
+                          ) : null}
+                          <div className="text-xs">
+                            <p className="text-gray-500">Levels</p>
+                            {areaLevels.length > 0 ? (
+                              <ol className="flex flex-wrap gap-x-3 gap-y-0.5 text-gray-400">
+                                {areaLevels.map((level) => (
+                                  <li key={level.levelId}>
+                                    {level.rank} · {level.name}
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : (
+                              <p className="text-gray-500">No levels yet.</p>
+                            )}
+                          </div>
+                        </div>
                       }
                       archived={Boolean(area.archivedAt)}
                       compact

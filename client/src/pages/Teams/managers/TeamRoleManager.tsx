@@ -167,11 +167,11 @@ const TeamRoleManager = ({
 
   const submit = async () => {
     const roleTeamId = editing?.teamId || creationTeamId;
-    if (!roleTeamId || !canEditTeam(roleTeamId)) return;
     if (!roleTeamId) {
       showToast("Create a team first, then add its roles.", "neutral");
       return;
     }
+    if (!canEditTeam(roleTeamId)) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.roleId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —

@@ -298,11 +298,11 @@ const PositionManager = ({
 
   const submit = async () => {
     const positionTeamId = editing?.teamId || creationTeamId;
-    if (!positionTeamId || !canEditTeam(positionTeamId)) return;
     if (!positionTeamId) {
       showToast("Create a team first, then add its positions.", "neutral");
       return;
     }
+    if (!canEditTeam(positionTeamId)) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.positionId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —

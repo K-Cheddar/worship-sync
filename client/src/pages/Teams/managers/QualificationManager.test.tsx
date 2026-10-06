@@ -251,9 +251,20 @@ describe("QualificationManager navigation guard", () => {
 it("keeps AV qualifications read-only and creates Worship areas and levels under Worship", async () => {
   const user = userEvent.setup();
   const avTeam: TeamRecord = { churchId: "church-1", teamId: "team-av", name: "AV", memberIds: [] };
-  const avArea: TeamQualificationArea = { churchId: "church-1", areaId: "area-av", teamId: avTeam.teamId, name: "Camera skill" };
-  const worshipArea: TeamQualificationArea = { churchId: "church-1", areaId: "area-worship", teamId: activeTeam.teamId, name: "Vocal skill" };
-  const avLevel: TeamQualificationLevel = { churchId: "church-1", levelId: "level-av", areaId: avArea.areaId, name: "Experienced", rank: 1 };
+  const avArea: TeamQualificationArea = {
+    churchId: "church-1", areaId: "area-av", teamId: avTeam.teamId,
+    name: "Camera skill", description: "Camera operation basics",
+  };
+  const worshipArea: TeamQualificationArea = {
+    churchId: "church-1", areaId: "area-worship", teamId: activeTeam.teamId,
+    name: "Vocal skill", description: "Blend and pitch matching",
+  };
+  const levels: TeamQualificationLevel[] = [
+    { churchId: "church-1", levelId: "av-operator", areaId: avArea.areaId, name: "Camera Operator", rank: 2 },
+    { churchId: "church-1", levelId: "worship-advanced", areaId: worshipArea.areaId, name: "Advanced", rank: 2 },
+    { churchId: "church-1", levelId: "av-trainee", areaId: avArea.areaId, name: "Trainee", rank: 1 },
+    { churchId: "church-1", levelId: "worship-beginner", areaId: worshipArea.areaId, name: "Beginner", rank: 1 },
+  ];
   const createdArea = { ...worshipArea, areaId: "area-new", name: "New skill" };
   const createdLevel = { churchId: "church-1", levelId: "level-new", areaId: createdArea.areaId, name: "Starter", rank: 1 };
   jest.mocked(createTeamQualificationArea).mockClear();
@@ -265,7 +276,7 @@ it("keeps AV qualifications read-only and creates Worship areas and levels under
       <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
           <QualificationManager
-            areas={[avArea, worshipArea]} levels={[avLevel]} teams={[avTeam, activeTeam]}
+            areas={[avArea, worshipArea]} levels={levels} teams={[avTeam, activeTeam]}
             canEditTeam={(teamId) => teamId === activeTeam.teamId}
             onAreaSaved={jest.fn()} onLevelSaved={jest.fn()} onArchived={jest.fn()} onAreaRemoved={jest.fn()}
           />
@@ -276,6 +287,20 @@ it("keeps AV qualifications read-only and creates Worship areas and levels under
 
   expect(screen.getByRole("button", { name: "Edit Vocal skill" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Edit Camera skill" })).not.toBeInTheDocument();
+  const list = within(screen.getByTestId("teams-create-panel-list"));
+  expect(list.getByText("Blend and pitch matching")).toBeInTheDocument();
+  expect(list.getByText("Camera operation basics")).toBeInTheDocument();
+  expect(list.getByText("1 · Beginner")).toBeInTheDocument();
+  expect(list.getByText("2 · Advanced")).toBeInTheDocument();
+  expect(list.getByText("1 · Trainee")).toBeInTheDocument();
+  expect(list.getByText("2 · Camera Operator")).toBeInTheDocument();
+  const renderedLevels = list.getAllByRole("list");
+  expect(renderedLevels[0]).toHaveTextContent(/1 · Trainee.*2 · Camera Operator/);
+  expect(renderedLevels[1]).toHaveTextContent(/1 · Beginner.*2 · Advanced/);
+  await user.click(list.getByText("Camera skill"));
+  expect(screen.queryByRole("button", { name: "Add level" })).not.toBeInTheDocument();
+  expect(screen.queryByPlaceholderText("New level")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save Trainee" })).not.toBeInTheDocument();
   await user.click(screen.getAllByRole("button", { name: "Create area" })[0]);
   expect(screen.getAllByText("Worship", { exact: true })).not.toHaveLength(0);
   await user.type(screen.getByLabelText(/^Area name:?$/), "New skill");
@@ -287,13 +312,20 @@ it("keeps AV qualifications read-only and creates Worship areas and levels under
   await waitFor(() => expect(createTeamQualificationLevel).toHaveBeenCalledWith("church-1", expect.objectContaining({ areaId: createdArea.areaId })));
 });
 
-it("hides create and edit controls for a roster-only reader", () => {
-  const area: TeamQualificationArea = { churchId: "church-1", areaId: "area-read", teamId: activeTeam.teamId, name: "Vocal skill" };
+it("shows qualification definitions without mutation controls to a roster-only reader", () => {
+  const area: TeamQualificationArea = {
+    churchId: "church-1", areaId: "area-read", teamId: activeTeam.teamId,
+    name: "Vocal skill", description: "Blend and pitch matching",
+  };
+  const levels: TeamQualificationLevel[] = [
+    { churchId: "church-1", levelId: "advanced", areaId: area.areaId, name: "Advanced", rank: 2 },
+    { churchId: "church-1", levelId: "beginner", areaId: area.areaId, name: "Beginner", rank: 1 },
+  ];
   render(
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.qualifications]}>
       <ToastProvider><TeamsNavigationGuardProvider>
         <QualificationManager
-          areas={[area]} levels={[]} teams={[activeTeam]} canEditTeam={() => false}
+          areas={[area]} levels={levels} teams={[activeTeam]} canEditTeam={() => false}
           onAreaSaved={jest.fn()} onLevelSaved={jest.fn()} onArchived={jest.fn()} onAreaRemoved={jest.fn()}
         />
       </TeamsNavigationGuardProvider></ToastProvider>
@@ -303,8 +335,14 @@ it("hides create and edit controls for a roster-only reader", () => {
   const list = within(screen.getByTestId("teams-create-panel-list"));
   expect(list.queryByRole("button", { name: "Create area" })).not.toBeInTheDocument();
   expect(list.queryByRole("button", { name: "Edit Vocal skill" })).not.toBeInTheDocument();
+  expect(list.queryByRole("button", { name: "More actions for Vocal skill" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Add level" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save Beginner" })).not.toBeInTheDocument();
   expect(list.getByText("Vocal skill")).toBeInTheDocument();
+  expect(list.getByText("Blend and pitch matching")).toBeInTheDocument();
+  expect(list.getByText("1 · Beginner")).toBeInTheDocument();
+  expect(list.getByText("2 · Advanced")).toBeInTheDocument();
+  expect(list.getByRole("list")).toHaveTextContent(/1 · Beginner.*2 · Advanced/);
 });
 
 it("creates a qualification area with an icon and renders a fallback for legacy areas", async () => {

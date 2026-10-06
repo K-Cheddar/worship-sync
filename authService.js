@@ -4979,16 +4979,28 @@ const requireServicesEditSession = async (req, churchId) => {
   return bootstrap;
 };
 
-const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
+export const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
   const bootstrap = await requireHumanSession(req);
-  if (
-    bootstrap.churchId !== churchId ||
-    (bootstrap.role !== "admin" &&
-      bootstrap.permissions?.teams !== "edit" &&
-      !hasTeamScope(bootstrap.permissions, teamId, "edit"))
-  ) {
+  if (bootstrap.churchId !== churchId) {
     throw httpError(403, "Teams edit access required");
   }
+
+  if (
+    bootstrap.role === "admin" ||
+    bootstrap.permissions?.teams === "edit"
+  ) {
+    return bootstrap;
+  }
+
+  if (!hasTeamScope(bootstrap.permissions, teamId, "edit")) {
+    throw httpError(403, "Teams edit access required");
+  }
+
+  const team = await getDoc(COLLECTIONS.teams, teamId);
+  if (!team || team.churchId !== churchId || team.archivedAt) {
+    throw httpError(403, "Teams edit access required");
+  }
+
   return bootstrap;
 };
 

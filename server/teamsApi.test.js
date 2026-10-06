@@ -27,6 +27,7 @@ import {
 const {
   authHandlers,
   requireBroadTeamsViewSession,
+  requireTeamsEditForTeamSession,
   requireTeamsViewSession,
   COLLECTIONS,
   canSeedHumanBearerAuthForServerTests,
@@ -14828,6 +14829,67 @@ test("scoped and roster bootstrap skip intake and SMS consent reads while broad 
   }
 });
 
+test("team edit guard rejects stale scoped access and preserves archived cleanup for global editors", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_edit_guard");
+  const scoped = await createHumanContext("team_edit_guard_scoped", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const req = createReq(scoped);
+  assert.equal(
+    (await requireTeamsEditForTeamSession(req, fixture.churchId, fixture.ids.worship)).churchId,
+    fixture.churchId,
+  );
+  await assert.rejects(
+    requireTeamsEditForTeamSession(req, "another-church", fixture.ids.worship),
+    { statusCode: 403 },
+  );
+  await assert.rejects(
+    requireTeamsEditForTeamSession(req, fixture.churchId, "missing-team"),
+    { statusCode: 403 },
+  );
+  await assert.rejects(
+    requireTeamsEditForTeamSession(req, fixture.churchId, fixture.ids.av),
+    { statusCode: 403 },
+  );
+  const foreignTeamId = `${fixture.churchId}_foreign_team`;
+  await setDoc(COLLECTIONS.teams, foreignTeamId, {
+    teamId: foreignTeamId, churchId: "another-church", name: "Foreign",
+  }, { merge: false });
+  const foreignScoped = await createHumanContext("team_edit_guard_foreign_scope", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [foreignTeamId]: "edit" } },
+  });
+  await assert.rejects(
+    requireTeamsEditForTeamSession(createReq(foreignScoped), fixture.churchId, foreignTeamId),
+    { statusCode: 403 },
+  );
+  await setDoc(COLLECTIONS.teams, fixture.ids.worship, {
+    archivedAt: new Date().toISOString(),
+  }, { merge: true });
+  await assert.rejects(
+    requireTeamsEditForTeamSession(req, fixture.churchId, fixture.ids.worship),
+    { statusCode: 403 },
+  );
+
+  const globalEditor = await createHumanContext("team_edit_guard_global", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "edit", teamScopes: {} },
+  });
+  assert.equal(
+    (await requireTeamsEditForTeamSession(createReq(globalEditor), fixture.churchId, fixture.ids.worship)).churchId,
+    fixture.churchId,
+  );
+  assert.equal(
+    (await requireTeamsEditForTeamSession(createReq(fixture.owner), fixture.churchId, fixture.ids.worship)).role,
+    "admin",
+  );
+});
+
 test("team-owned entity mutations authorize source and target teams", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const owner = await createAdminContext("scoped_entity_mutations");
@@ -14994,4 +15056,103 @@ test("team-owned entity mutations authorize source and target teams", async (t) 
   assert.equal((await run(authHandlers.archiveTeamQualificationLevel, scoped, { levelId: malformedLevelId })).statusCode, 404);
   assert.equal((await run(authHandlers.deleteTeamQualificationLevel, scoped, { levelId: malformedLevelId })).statusCode, 404);
 
+});
+
+test("archived teams invalidate stale scoped writes but remain cleanable by global editors and admins", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("stale_scope_archive");
+  const createdTeam = await callHandler(authHandlers.createTeam, {
+    context: owner,
+    body: { name: "Worship", memberIds: [] },
+  });
+  assert.equal(createdTeam.statusCode, 200);
+  const worship = createdTeam.payload.team;
+  const create = async (handler, body) => {
+    const result = await callHandler(handler, { context: owner, body });
+    assert.equal(result.statusCode, 200);
+    return result.payload;
+  };
+  const positionToArchive = (await create(authHandlers.createTeamPosition, {
+    name: "Worship Position Archive", teamId: worship.teamId,
+  })).position;
+  const positionToDelete = (await create(authHandlers.createTeamPosition, {
+    name: "Worship Position Delete", teamId: worship.teamId,
+  })).position;
+  const roleToArchive = (await create(authHandlers.createTeamRole, {
+    name: "Worship Role Archive", teamId: worship.teamId,
+  })).role;
+  const roleToDelete = (await create(authHandlers.createTeamRole, {
+    name: "Worship Role Delete", teamId: worship.teamId,
+  })).role;
+  const areaToArchive = (await create(authHandlers.createTeamQualificationArea, {
+    name: "Worship Area Archive", teamId: worship.teamId,
+  })).area;
+  const areaToDelete = (await create(authHandlers.createTeamQualificationArea, {
+    name: "Worship Area Delete", teamId: worship.teamId,
+  })).area;
+  const levelToArchive = (await create(authHandlers.createTeamQualificationLevel, {
+    areaId: areaToDelete.areaId, name: "Worship Qualification Level Archive", rank: 1,
+  })).level;
+  const levelToDelete = (await create(authHandlers.createTeamQualificationLevel, {
+    areaId: areaToDelete.areaId, name: "Worship Qualification Level Delete", rank: 2,
+  })).level;
+
+  const scoped = await createHumanContext("stale_scope_manager", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [worship.teamId]: "edit" } },
+  });
+  const run = (handler, context, params = {}, body = {}) => callHandler(handler, {
+    context, params, body,
+  });
+  for (const [handler, body] of [
+    [authHandlers.createTeamPosition, { name: "Initial scoped position", teamId: worship.teamId }],
+    [authHandlers.createTeamRole, { name: "Initial scoped role", teamId: worship.teamId }],
+    [authHandlers.createTeamQualificationArea, { name: "Initial scoped area", teamId: worship.teamId }],
+  ]) {
+    assert.equal((await run(handler, scoped, {}, body)).statusCode, 200);
+  }
+  const initialLevelArea = (await run(authHandlers.createTeamQualificationArea, scoped, {}, {
+    name: "Initial level area", teamId: worship.teamId,
+  }));
+  assert.equal(initialLevelArea.statusCode, 200);
+  assert.equal((await run(authHandlers.createTeamQualificationLevel, scoped, {}, {
+    areaId: initialLevelArea.payload.area.areaId, name: "Initial scoped level", rank: 1,
+  })).statusCode, 200);
+
+  const archived = await run(authHandlers.archiveTeam, owner, { teamId: worship.teamId });
+  assert.equal(archived.statusCode, 200);
+  const bootstrap = await run(authHandlers.getTeamsBootstrap, scoped);
+  assert.ok([200, 403].includes(bootstrap.statusCode));
+  if (bootstrap.statusCode === 200) {
+    assert.equal(bootstrap.payload.teams.some((team) => team.teamId === worship.teamId), false);
+    assert.equal(bootstrap.payload.permissions?.teamScopes?.[worship.teamId], undefined);
+  }
+
+  assert.equal((await run(authHandlers.archiveTeamPosition, scoped, { positionId: positionToArchive.positionId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamPosition, scoped, { positionId: positionToDelete.positionId })).statusCode, 403);
+  assert.equal((await run(authHandlers.reorderTeamPositions, scoped, {}, {
+    teamId: worship.teamId,
+    positionIds: [positionToArchive.positionId, positionToDelete.positionId],
+  })).statusCode, 403);
+  assert.equal((await run(authHandlers.archiveTeamRole, scoped, { roleId: roleToArchive.roleId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamRole, scoped, { roleId: roleToDelete.roleId })).statusCode, 403);
+  assert.equal((await run(authHandlers.archiveTeamQualificationLevel, scoped, { levelId: levelToArchive.levelId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamQualificationLevel, scoped, { levelId: levelToDelete.levelId })).statusCode, 403);
+  assert.equal((await run(authHandlers.archiveTeamQualificationArea, scoped, { areaId: areaToArchive.areaId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamQualificationArea, scoped, { areaId: areaToDelete.areaId })).statusCode, 403);
+
+  const globalEditor = await createHumanContext("stale_scope_global_editor", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "edit", teamScopes: {} },
+  });
+  assert.equal((await run(authHandlers.archiveTeamPosition, globalEditor, { positionId: positionToArchive.positionId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamRole, globalEditor, { roleId: roleToArchive.roleId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamQualificationLevel, globalEditor, { levelId: levelToArchive.levelId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamQualificationArea, globalEditor, { areaId: areaToArchive.areaId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamPosition, owner, { positionId: positionToDelete.positionId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamRole, owner, { roleId: roleToDelete.roleId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamQualificationLevel, owner, { levelId: levelToDelete.levelId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamQualificationArea, owner, { areaId: areaToDelete.areaId })).statusCode, 200);
 });
