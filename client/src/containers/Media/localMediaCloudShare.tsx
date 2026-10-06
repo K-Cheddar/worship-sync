@@ -270,7 +270,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
           progress,
           phase: { key: status, label: status === "complete" ? "Upload complete" : status === "partial" ? "Upload completed with errors" : status === "failed" ? "Upload failed" : status === "cancelled" ? "Upload cancelled" : batch.files.find((file) => file.status === "active")?.phase || "Uploading media", current: complete, total: files.length },
           detail: `${complete} of ${files.length} uploaded${failed.length ? ` · ${failed.length} failed` : ""}${cancelled ? ` · ${cancelled} cancelled` : ""}${batch.skipped ? ` · Skipped: ${batch.skipped}` : ""}`,
-          ...(failed.length ? { error: { message: failed.map((file) => `${file.media.name}: ${file.error || "Upload failed."}`).join("\n") } } : {}),
+          ...(failed.length ? { error: { message: `${failed.length} ${failed.length === 1 ? "item" : "items"} failed to upload.` } } : {}),
           files: batch.files.map((file) => ({ id: file.media.id, name: file.media.name, status: file.status, progress: file.progress, phase: file.phase, ...(file.error ? { error: file.error } : {}) })),
           canCancel: status === "active" && !batch.stopping,
           blocksUnload: status === "active",

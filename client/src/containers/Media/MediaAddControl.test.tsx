@@ -2,35 +2,22 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MediaAddControl, ShowTransfersMenuItem } from "./MediaAddControl";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
-import { getTransferOverview, useOptionalTransfers } from "../../context/transferContext";
+import { useOptionalTransfers } from "../../context/transferContext";
 
 jest.mock("../../context/transferContext", () => ({
-  getTransferOverview: jest.fn(),
   useOptionalTransfers: jest.fn(),
 }));
 
 const mockUseOptionalTransfers = jest.mocked(useOptionalTransfers);
-const mockGetTransferOverview = jest.mocked(getTransferOverview);
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetTransferOverview.mockReturnValue({
-    activeCount: 1,
-    progress: 100,
-    transfers: [{
-      id: "canva-import",
-      name: "Slides",
-      type: "Canva",
-      status: "active",
-      progress: 100,
-      phase: { key: "saving", label: "Saving presentation slides" },
-    }],
-  });
   mockUseOptionalTransfers.mockReturnValue({
     transfers: [],
     isMinimized: false,
     minimizeTransfers: jest.fn(),
     restoreTransfers: jest.fn(),
+    registerActivityHost: jest.fn(() => jest.fn()),
     updateTransfer: jest.fn(),
     removeTransfer: jest.fn(),
     registerTransferAction: jest.fn(),
@@ -48,6 +35,7 @@ it("opens Activity without showing a global percentage", async () => {
     isMinimized: false,
     minimizeTransfers: jest.fn(),
     restoreTransfers: restore,
+    registerActivityHost: jest.fn(() => jest.fn()),
     updateTransfer: jest.fn(),
     removeTransfer: jest.fn(),
     registerTransferAction: jest.fn(),
@@ -60,11 +48,30 @@ it("opens Activity without showing a global percentage", async () => {
     </MediaAddControl>,
   );
 
-  const activity = screen.getByRole("button", { name: "Show Activity: 1 active" });
+  const activity = screen.getByRole("button", { name: "Show Activity · 1 active" });
   expect(activity).toHaveTextContent("Activity · 1 active");
   expect(activity).not.toHaveTextContent("%");
+  expect(screen.getByTestId("activity-icon")).toHaveClass("text-cyan-300");
   await user.click(activity);
   expect(restore).toHaveBeenCalledTimes(1);
+});
+
+it("uses amber for Sources Activity when an operation needs attention", () => {
+  mockUseOptionalTransfers.mockReturnValue({
+    transfers: [{ id: "failed", name: "Cloud upload", type: "Media upload", status: "partial", progress: 50 } as never],
+    isMinimized: false,
+    minimizeTransfers: jest.fn(),
+    restoreTransfers: jest.fn(),
+    registerActivityHost: jest.fn(() => jest.fn()),
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    registerTransferAction: jest.fn(),
+    runTransferAction: jest.fn(),
+    startCanvaTransfer: jest.fn(),
+  });
+  render(<MediaAddControl><button type="button">Add media</button></MediaAddControl>);
+  expect(screen.getByRole("button", { name: "Show Activity · 1 needs attention" })).toBeInTheDocument();
+  expect(screen.getByTestId("activity-icon")).toHaveClass("text-amber-300");
 });
 
 it("shows an Activity menu item when the panel is minimized", async () => {
@@ -73,6 +80,7 @@ it("shows an Activity menu item when the panel is minimized", async () => {
     isMinimized: true,
     minimizeTransfers: jest.fn(),
     restoreTransfers: jest.fn(),
+    registerActivityHost: jest.fn(() => jest.fn()),
     updateTransfer: jest.fn(),
     removeTransfer: jest.fn(),
     registerTransferAction: jest.fn(),
@@ -83,4 +91,5 @@ it("shows an Activity menu item when the panel is minimized", async () => {
   render(<DropdownMenu><DropdownMenuTrigger>Open menu</DropdownMenuTrigger><DropdownMenuContent><ShowTransfersMenuItem /></DropdownMenuContent></DropdownMenu>);
   await user.click(screen.getByRole("button", { name: "Open menu" }));
   expect(await screen.findByText("Show Activity")).toBeInTheDocument();
+  expect(screen.getByTestId("activity-menu-icon")).toHaveClass("text-gray-400");
 });

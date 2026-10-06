@@ -598,7 +598,7 @@ describe("MediaUploadInput", () => {
     await waitFor(() => expect(finishes).toHaveLength(1));
 
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show Activity: 1 active" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Activity · 1 active" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add media source" }));
     expect(addSource).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -607,7 +607,7 @@ describe("MediaUploadInput", () => {
     fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
 
     await waitFor(() => expect(finishes).toHaveLength(2));
-    expect(screen.getByRole("button", { name: "Show Activity: 2 active" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Activity · 2 active" })).toBeInTheDocument();
     const transfers = within(screen.getByRole("complementary", { name: "Activity" }));
     expect(transfers.getAllByText("clip-a.mp4")).toHaveLength(2);
     expect(transfers.getAllByText("clip-b.mp4")).toHaveLength(2);
@@ -641,7 +641,9 @@ describe("MediaUploadInput", () => {
     const retry = await screen.findByRole("button", { name: "Retry failed files" });
     const transferPanel = within(screen.getByRole("complementary", { name: "Activity" }));
     expect(transferPanel.getAllByText(/Completed with errors/).length).toBeGreaterThan(0);
-    expect(transferPanel.getAllByRole("alert").map((alert) => alert.textContent).join(" ")).toContain(`${failedPosition}.png: Cloud share failed.`);
+    expect(transferPanel.getByText("1 file failed to upload.")).toBeInTheDocument();
+    expect(transferPanel.getAllByText("Cloud share failed.")).toHaveLength(1);
+    expect(transferPanel.getByText(`${failedPosition}.png`)).toBeInTheDocument();
     expect(transferPanel.queryByRole("progressbar", { name: "2 media files progress" })).not.toBeInTheDocument();
 
     fireEvent.click(retry);

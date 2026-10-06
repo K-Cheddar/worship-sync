@@ -1,4 +1,4 @@
-import { getTransferOverview, type Transfer } from "./transferModel";
+import { getActivitySummary, getTransferOverview, type Transfer } from "./transferModel";
 
 const transfer = (id: string, progress: number | null): Transfer => ({
   id,
@@ -31,5 +31,32 @@ describe("getTransferOverview", () => {
   it("excludes terminal transfers from the aggregate", () => {
     expect(getTransferOverview([{ ...transfer("done", 100), status: "complete" }]).progress).toBeNull();
     expect(getTransferOverview([{ ...transfer("partial", 70), status: "partial" }]).progress).toBeNull();
+  });
+});
+
+describe("getActivitySummary", () => {
+  it("counts active and attention-needed operations without reporting zero active work", () => {
+    const active = { ...transfer("upload", 20), status: "active" as const };
+    const failed = { ...transfer("failed", 0), status: "failed" as const };
+    expect(getActivitySummary([failed])).toMatchObject({
+      activeCount: 0,
+      attentionCount: 1,
+      label: "Activity · 1 needs attention",
+      accent: "attention",
+    });
+    expect(getActivitySummary([active, failed])).toMatchObject({
+      activeCount: 1,
+      attentionCount: 1,
+      label: "Activity · 1 active · 1 needs attention",
+      accent: "attention",
+    });
+  });
+
+  it("counts a retry action as attention even when the operation is not failed", () => {
+    expect(getActivitySummary([{
+      ...transfer("cleanup", null),
+      status: "complete",
+      actions: [{ key: "retry-cleanup", label: "Retry cleanup" }],
+    }]).attentionCount).toBe(1);
   });
 });

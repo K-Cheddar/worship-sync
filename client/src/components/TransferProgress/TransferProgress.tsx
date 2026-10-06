@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CheckCircle2, CircleAlert, LoaderCircle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { normalizeProgress, type TransferOverviewItem } from "../../context/transferModel";
@@ -26,10 +27,16 @@ const percentLabel = (transfer: TransferOverviewItem) => {
 };
 
 export const TransferProgress = ({ transfer, variant }: TransferProgressProps) => {
+  const [showFailedFiles, setShowFailedFiles] = useState(false);
   const compact = variant === "compact";
   const summary = variant === "summary";
   const progress = normalizeProgress(transfer.progress);
   const showAggregateProgress = !transfer.files?.length;
+  const failedFiles = transfer.files?.filter((file) => file.status === "failed" || Boolean(file.error)) ?? [];
+  const hideFailedFilesUntilExpanded = !compact && !summary && failedFiles.length > 3;
+  const visibleFiles = hideFailedFilesUntilExpanded && !showFailedFiles
+    ? transfer.files?.filter((file) => file.status === "active").slice(0, 2)
+    : transfer.files;
   const label = statusLabel(transfer);
   const phaseText = `${transfer.type ? `${transfer.type} · ` : ""}${label}${transfer.phase?.current !== undefined && transfer.phase.total !== undefined ? ` · ${transfer.phase.current} of ${transfer.phase.total}` : ""}`;
   const StatusIcon = transfer.status === "complete"
@@ -39,12 +46,16 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
       : transfer.status === "cancelled"
         ? XCircle
         : LoaderCircle;
+  const statusAccent = transfer.status === "complete" ? "text-green-300"
+    : transfer.status === "partial" ? "text-amber-300"
+      : transfer.status === "failed" ? "text-red-300"
+        : transfer.status === "cancelled" ? "text-gray-400" : "text-cyan-300";
 
   return (
     <div className="min-w-0">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          {!summary ? <StatusIcon size={compact ? 14 : 18} aria-hidden className="shrink-0 text-cyan-200" /> : null}
+          {!summary ? <StatusIcon size={compact ? 14 : 18} aria-hidden data-testid="transfer-status-icon" className={`shrink-0 ${statusAccent}`} /> : null}
           <p className={compact ? "truncate text-xs font-medium" : "truncate text-sm font-medium"}>{transfer.name}</p>
         </div>
         <span className="shrink-0 text-xs text-gray-300" aria-label={`${label}${showAggregateProgress && (transfer.status === "active" || transfer.status === "partial") ? `, ${percentLabel(transfer)}` : ""}`}>
@@ -71,18 +82,28 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
         </div>
       ) : null}
       {transfer.error ? <p role="alert" className="mt-2 text-xs text-red-200">{transfer.error.message}</p> : null}
-      {!compact && !summary && transfer.files?.length ? (
-        <ul aria-label={`${transfer.name} files`} className="mt-2 max-h-36 space-y-1 overflow-y-auto border-t border-gray-700 pt-2">
-          {transfer.files.map((file) => (
+      {hideFailedFilesUntilExpanded ? (
+        <button
+          type="button"
+          aria-expanded={showFailedFiles}
+          onClick={() => setShowFailedFiles((expanded) => !expanded)}
+          className="mt-2 cursor-pointer rounded text-xs font-medium text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+        >
+          {showFailedFiles ? "Hide failed files" : `Show ${failedFiles.length} failed files`}
+        </button>
+      ) : null}
+      {!compact && !summary && visibleFiles?.length ? (
+        <ul aria-label={`${transfer.name} files`} className="mt-2 space-y-2 border-t border-gray-700 pt-2">
+          {visibleFiles.map((file) => (
             <li key={file.id} className="min-w-0">
               <div className="flex items-center justify-between gap-2 text-xs">
-                <span className="min-w-0 truncate text-gray-200">{file.name}</span>
+                <span className="min-w-0 truncate text-gray-200" title={file.name}>{file.name}</span>
                 <span className={file.status === "failed" || file.error ? "shrink-0 text-red-200" : "shrink-0 text-gray-400"}>
                   {file.status === "active" ? `${file.phase || "Working"}${file.progress === null ? "" : ` · ${Math.round(file.progress)}%`}` : file.status === "complete" ? file.error ? file.phase || "Complete" : "Complete" : file.status === "failed" ? "Failed" : file.status === "cancelled" ? "Cancelled" : "Queued"}
                 </span>
               </div>
               {file.status === "active" && file.progress !== null ? <div role="progressbar" aria-label={`${file.name} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(file.progress)} aria-valuetext={`${file.phase || "Working"}, ${Math.round(file.progress)}%`} className="mt-1 h-1 overflow-hidden rounded bg-gray-700"><div className="h-full rounded bg-cyan-500 transition-[width] duration-300" style={{ width: `${Math.max(0, Math.min(100, file.progress))}%` }} /></div> : null}
-              {file.error ? <p role="alert" className="truncate text-xs text-red-200">{file.error}</p> : null}
+              {file.error ? <p role="alert" className="break-words text-xs text-red-200">{file.error}</p> : null}
             </li>
           ))}
         </ul>

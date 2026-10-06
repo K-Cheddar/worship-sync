@@ -162,6 +162,15 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
     const batchFiles = files.map((file) => ({ ...file }));
     let completedFiles = batchFiles.filter((file) => file.status === "complete").length;
     const transferName = files.length === 1 ? files[0].name : `${files.length} resources`;
+    const activityFiles = () => batchFiles.map((file, index) => ({
+      id: `${transferId}-${index}`,
+      name: file.name,
+      status: file.status === "complete" ? "complete" as const
+        : file.status === "error" ? "failed" as const
+          : file.status === "uploading" ? "active" as const : "queued" as const,
+      progress: null,
+      ...(file.error ? { error: file.error } : {}),
+    }));
     publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: "active", progress: 0, phase: { key: "uploading", label: "Uploading resources", current: 0, total: files.length } });
 
     for (let index = 0; index < batchFiles.length; index += 1) {
@@ -169,6 +178,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
       if (pending.status === "complete") continue;
       batchFiles[index] = { ...pending, status: "uploading", error: undefined };
       updateFile(index, { status: "uploading", error: undefined });
+      publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: "active", progress: (completedFiles / files.length) * 100, phase: { key: "uploading", label: `Uploading ${index + 1} of ${files.length}`, current: index + 1, total: files.length }, detail: pending.name });
       const progressBase = completedFiles;
       try {
         const resource = await uploadChurchResource({
@@ -197,8 +207,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
       setUploadStatus("error");
       setError(`${failed} ${failed === 1 ? "file" : "files"} failed to upload. Retry to try again.`);
       const terminalStatus: Transfer["status"] = uploaded.length > 0 || completedFiles > 0 ? "partial" : "failed";
-      const failedDetails = batchFiles.filter((file) => file.status === "error").map((file) => `${file.name}: ${file.error || "Upload failed."}`).join("\n");
-      publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: terminalStatus, progress: (completedFiles / files.length) * 100, phase: { key: terminalStatus, label: terminalStatus === "partial" ? "Upload completed with errors" : "Upload failed" }, detail: `${completedFiles} of ${files.length} files uploaded`, error: { message: failedDetails || `${failed} ${failed === 1 ? "file" : "files"} failed to upload.` }, actions: [{ key: "retry-failed", label: "Retry failed files" }, { key: "dismiss", label: "Dismiss" }] });
+      publishTransfer({ id: transferId, type: "Resource upload", name: transferName, status: terminalStatus, progress: (completedFiles / files.length) * 100, phase: { key: terminalStatus, label: terminalStatus === "partial" ? "Upload completed with errors" : "Upload failed" }, detail: `${completedFiles} of ${files.length} files uploaded`, error: { message: `${failed} ${failed === 1 ? "file" : "files"} failed to upload.` }, files: activityFiles(), actions: [{ key: "retry-failed", label: "Retry failed files" }, { key: "dismiss", label: "Dismiss" }] });
     } else {
       unregisterTransferActionsRef.current[0]?.();
       unregisterTransferActionsRef.current = unregisterTransferActionsRef.current.slice(1);
