@@ -69,6 +69,10 @@ client/dist-electron/
 # Local HTML from `npm run email:preview`
 email-templates/.preview/
 
+# Generated Song v2 migration reports
+/song-schema-v2-*-dry-run.json
+/song-schema-v2-migration-report*.json
+
 #codex-generated-files
 .codex/
 
