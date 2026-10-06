@@ -3,5 +3,5 @@
   "date": "2026-10-05",
   "type": "improved",
   "title": "See video readiness at a glance",
-  "description": "The Video readiness panel now shows which selected videos are ready, playing, preparing, or deferred, with inventory and preparation counts kept clear."
+  "description": "Video preparation now starts when you open a selected service, before you choose an item. The Video readiness panel shows which selected videos are ready, playing, preparing, or deferred, with inventory and preparation counts kept clear."
 }

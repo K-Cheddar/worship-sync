@@ -52,6 +52,12 @@ export const getChurchMuxUpload = (churchId: string, uploadId: string) =>
     `${base(churchId)}/mux/uploads/${encodeURIComponent(uploadId)}`,
   );
 
+export const cancelChurchMuxUpload = (churchId: string, uploadId: string) =>
+  apiFetch<{ cancelled: boolean; assetId?: string }>(
+    `${base(churchId)}/mux/uploads/${encodeURIComponent(uploadId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
 export const getChurchMuxAsset = (churchId: string, assetId: string) =>
   apiFetch<MuxProviderAsset>(
     `${base(churchId)}/mux/assets/${encodeURIComponent(assetId)}`,

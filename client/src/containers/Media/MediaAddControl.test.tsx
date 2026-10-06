@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MediaAddControl } from "./MediaAddControl";
+import { MediaAddControl, ShowTransfersMenuItem } from "./MediaAddControl";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
 import { getTransferOverview, useOptionalTransfers } from "../../context/transferContext";
 
 jest.mock("../../context/transferContext", () => ({
@@ -38,46 +39,48 @@ beforeEach(() => {
   });
 });
 
-it("keeps the transfer summary available while an active import finalizes at 100%", () => {
+it("opens Activity without showing a global percentage", async () => {
+  const user = userEvent.setup();
+  const restore = jest.fn();
+  mockUseOptionalTransfers.mockReturnValue({
+    ...(mockUseOptionalTransfers.getMockImplementation?.() ? {} : {}),
+    transfers: [{ id: "canva-import", name: "Slides", type: "Canva", status: "active", progress: 100 } as never],
+    isMinimized: false,
+    minimizeTransfers: jest.fn(),
+    restoreTransfers: restore,
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    registerTransferAction: jest.fn(),
+    runTransferAction: jest.fn(),
+    startCanvaTransfer: jest.fn(),
+  });
   render(
     <MediaAddControl>
       <button type="button">Add media</button>
     </MediaAddControl>,
   );
 
-  expect(screen.getByRole("button", {
-    name: "Show transfer summary: 1 active transfers, 100% overall",
-  })).toBeInTheDocument();
+  const activity = screen.getByRole("button", { name: "Show Activity: 1 active" });
+  expect(activity).toHaveTextContent("Activity · 1 active");
+  expect(activity).not.toHaveTextContent("%");
+  await user.click(activity);
+  expect(restore).toHaveBeenCalledTimes(1);
 });
 
-it("labels unknown aggregate progress without exposing null percent text", async () => {
+it("shows an Activity menu item when the panel is minimized", async () => {
+  mockUseOptionalTransfers.mockReturnValue({
+    transfers: [{ id: "canva-import", name: "Slides", type: "Canva", status: "complete", progress: 100 } as never],
+    isMinimized: true,
+    minimizeTransfers: jest.fn(),
+    restoreTransfers: jest.fn(),
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    registerTransferAction: jest.fn(),
+    runTransferAction: jest.fn(),
+    startCanvaTransfer: jest.fn(),
+  });
   const user = userEvent.setup();
-  mockGetTransferOverview.mockReturnValue({
-    activeCount: 1,
-    progress: null,
-    transfers: [{
-      id: "canva-import",
-      name: "Slides",
-      type: "Canva",
-      status: "active",
-      progress: null,
-      phase: { key: "saving", label: "Saving presentation slides" },
-    }],
-  });
-  render(
-    <MediaAddControl>
-      <button type="button">Add media</button>
-    </MediaAddControl>,
-  );
-
-  const trigger = screen.getByRole("button", {
-    name: "Show transfer summary: 1 active transfers, progress unknown",
-  });
-  expect(trigger).toHaveTextContent("Working…");
-  expect(screen.queryByText(/null%/i)).not.toBeInTheDocument();
-  expect(screen.getByTestId("aggregate-progress-ring")).toHaveClass("motion-safe:animate-spin", "motion-reduce:animate-none");
-  expect(trigger).not.toHaveAttribute("aria-label", expect.stringContaining("null%"));
-  await user.click(trigger);
-  expect(screen.getByRole("heading", { name: "Transfers · 1 active · Working…" })).toBeInTheDocument();
-  expect(screen.queryByText(/null%/i)).not.toBeInTheDocument();
+  render(<DropdownMenu><DropdownMenuTrigger>Open menu</DropdownMenuTrigger><DropdownMenuContent><ShowTransfersMenuItem /></DropdownMenuContent></DropdownMenu>);
+  await user.click(screen.getByRole("button", { name: "Open menu" }));
+  expect(await screen.findByText("Show Activity")).toBeInTheDocument();
 });

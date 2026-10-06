@@ -81,10 +81,8 @@ export const uploadImageToCloudinary = async (
     });
 
     xhr.addEventListener("load", () => {
-      if (callbacks.isCancelled?.()) {
-        reject(new Error("Upload cancelled"));
-        return;
-      }
+      // A successful response can race cancellation. Parse its public ID so the
+      // caller can remove the provider asset before marking the job cancelled.
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {

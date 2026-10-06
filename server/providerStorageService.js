@@ -30,6 +30,19 @@ const mediaAssetId = (asset) =>
 const cloudinaryAssetBytes = (asset) => getCloudinaryAssetBytes(asset);
 const muxAssetMinutes = (asset) => getMuxStoredMinutes(asset);
 
+const normalizeCloudinaryPath = (value) =>
+  String(value || "")
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join("/");
+
+const cloudinaryPathIsInFolder = (value, expectedFolder) => {
+  const path = normalizeCloudinaryPath(value);
+  const folder = normalizeCloudinaryPath(expectedFolder);
+  return path === folder || path.startsWith(`${folder}/`);
+};
+
 export const createProviderStorageService = ({
   cloudinaryClient,
   getMuxClient,
@@ -39,24 +52,17 @@ export const createProviderStorageService = ({
     cloudinaryClient.api.resource(publicId, { resource_type: "image" });
 
   const cloudinaryBelongsToChurch = (asset, churchId) => {
-    const publicId = String(asset?.public_id || "");
-    const folder = String(asset?.folder || "");
-    return (
-      publicId.startsWith(`${churchFolder(churchId)}/`) ||
-      publicId.startsWith(`${canvaFolder(churchId)}/`) ||
-      publicId.startsWith(`${memberProfileFolder(churchId)}/`) ||
-      publicId.startsWith(`${brandingFolder(churchId)}/`) ||
-      publicId.startsWith(`${temporaryConversionFolder(churchId)}/`) ||
-      folder === churchFolder(churchId) ||
-      folder.startsWith(`${churchFolder(churchId)}/`) ||
-      folder === canvaFolder(churchId) ||
-      folder.startsWith(`${canvaFolder(churchId)}/`) ||
-      folder === memberProfileFolder(churchId) ||
-      folder.startsWith(`${memberProfileFolder(churchId)}/`) ||
-      folder === brandingFolder(churchId) ||
-      folder.startsWith(`${brandingFolder(churchId)}/`) ||
-      folder === temporaryConversionFolder(churchId) ||
-      folder.startsWith(`${temporaryConversionFolder(churchId)}/`)
+    const expectedFolders = [
+      churchFolder(churchId),
+      canvaFolder(churchId),
+      memberProfileFolder(churchId),
+      brandingFolder(churchId),
+      temporaryConversionFolder(churchId),
+    ];
+    return expectedFolders.some((folder) =>
+      [asset?.public_id, asset?.folder, asset?.asset_folder].some((path) =>
+        cloudinaryPathIsInFolder(path, folder),
+      ),
     );
   };
 
@@ -168,6 +174,34 @@ export const createProviderStorageService = ({
       throw error;
     }
     return { uploadId: upload.id, url: upload.url };
+  };
+
+  const cancelMuxUpload = async ({ churchId, uploadId }) => {
+    churchId = requiredString(churchId, "Church ID");
+    uploadId = requiredString(uploadId, "Upload ID");
+    const mux = getMuxClient?.();
+    if (!mux) throw new Error("Mux is not configured.");
+    const verifyOwnership = (upload) => {
+      if (upload.new_asset_settings?.meta?.creator_id !== churchId) {
+        const error = new Error("That upload does not belong to this church.");
+        error.statusCode = 403;
+        throw error;
+      }
+    };
+    let upload = await mux.video.uploads.retrieve(uploadId);
+    verifyOwnership(upload);
+    if (upload.asset_id) return { cancelled: false, assetId: upload.asset_id };
+    if (typeof mux.video.uploads.cancel !== "function") {
+      throw new Error("Mux could not confirm that the upload was cancelled.");
+    }
+    await mux.video.uploads.cancel(uploadId);
+    upload = await mux.video.uploads.retrieve(uploadId);
+    verifyOwnership(upload);
+    if (upload.asset_id) return { cancelled: false, assetId: upload.asset_id };
+    if (upload.status !== "cancelled" && upload.status !== "errored") {
+      throw new Error("Mux could not confirm that the upload was cancelled.");
+    }
+    return { cancelled: true };
   };
 
   const getMuxUpload = async ({ churchId, uploadId }) => {
@@ -343,6 +377,7 @@ export const createProviderStorageService = ({
   return {
     commitCloudinaryImage,
     createMuxUpload,
+    cancelMuxUpload,
     getMuxUpload,
     getMuxAsset,
     deleteCloudinaryImage,

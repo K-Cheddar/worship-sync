@@ -156,21 +156,23 @@ const toCanvaTransfer = (job: CanvaTransferRuntime): Transfer => {
   };
 };
 
-const TransferPanel = ({ transfers, isMinimized, onMinimize, runTransferAction }: {
+const TransferPanel = ({ transfers, isMinimized, onMinimize, onRestore, runTransferAction }: {
   transfers: Transfer[];
   isMinimized: boolean;
   onMinimize: () => void;
+  onRestore: () => void;
   runTransferAction: TransferContextValue["runTransferAction"];
 }) => {
   const [confirmation, setConfirmation] = useState<{ transfer: Transfer; action: NonNullable<Transfer["actions"]>[number] } | null>(null);
   const activeCount = getTransferOverview(transfers).activeCount;
-  if (!transfers.length || isMinimized) return null;
+  if (!transfers.length) return null;
+  if (isMinimized) return <button type="button" aria-label={`Show Activity: ${activeCount} active`} onClick={onRestore} className="fixed bottom-4 right-4 z-[80] rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-2xl">Activity · {activeCount} active</button>;
   return (
     <>
-      <aside aria-label="Transfers" className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl">
+      <aside aria-label="Activity" className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
-          <div className="flex items-center gap-2"><span className="text-sm font-semibold">Transfers</span><span className="rounded-full bg-gray-700 px-2 py-0.5 text-xs" aria-label={`${activeCount} active transfers`}>{activeCount} active</span></div>
-          <Button variant="tertiary" svg={ChevronDown} aria-label="Minimize transfers" onClick={onMinimize} />
+          <h2 className="text-sm font-semibold">Activity · {activeCount} active</h2>
+          <Button variant="tertiary" svg={ChevronDown} aria-label="Minimize activity" onClick={onMinimize} />
         </div>
         <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
           {transfers.map((transfer) => <li key={transfer.id} className="rounded-md bg-gray-800 p-3">
@@ -184,7 +186,7 @@ const TransferPanel = ({ transfers, isMinimized, onMinimize, runTransferAction }
           </li>)}
         </ul>
       </aside>
-      <Modal isOpen={Boolean(confirmation)} onClose={() => setConfirmation(null)} title={confirmation?.action.confirmation?.title || "Confirm transfer action"} description={confirmation?.action.confirmation?.description} size="sm">
+      <Modal isOpen={Boolean(confirmation)} onClose={() => setConfirmation(null)} title={confirmation?.action.confirmation?.title || "Confirm activity action"} description={confirmation?.action.confirmation?.description} size="sm">
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmation(null)}>Keep importing</Button>
           <Button onClick={() => {
@@ -389,7 +391,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     runTransferAction,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
   }), [startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
-  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} onMinimize={minimizeTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
+  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 
 export { getTransferOverview };

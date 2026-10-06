@@ -84,6 +84,32 @@ describe("QuickLink", () => {
     jest.clearAllMocks();
   });
 
+  it("keeps the standard Quick Link label sizing outside compact previews", () => {
+    const presentationInfo: Presentation = {
+      type: "slide",
+      name: "Standard Link",
+      timerId: undefined,
+      slide: null,
+      displayType: "projector",
+    };
+    render(
+      <QuickLink
+        {...quickLinkBase}
+        label="Standard Link"
+        displayType="projector"
+        presentationInfo={presentationInfo}
+        timers={[]}
+      />,
+    );
+
+    const label = screen.getByText("Standard Link");
+    expect(label).toHaveClass("max-h-10", "overflow-clip", "text-ellipsis");
+    expect(label).not.toHaveClass("line-clamp-2");
+    expect(label).toHaveStyle({
+      fontSize: "clamp(0.5rem, 0.6vw, 0.7rem)",
+    });
+  });
+
   it("sets monitor timerId when clicking a timer quick link", () => {
     const presentationInfo: Presentation = {
       type: "slide",

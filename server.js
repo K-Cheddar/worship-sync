@@ -3800,6 +3800,22 @@ app.post(
     }
   },
 );
+app.post(
+  "/api/churches/:churchId/mux/uploads/:uploadId/cancel",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.cancelMuxUpload({
+        churchId: req.params.churchId,
+        uploadId: req.params.uploadId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not cancel the video upload.",
+      });
+    }
+  },
+);
 app.get(
   "/api/churches/:churchId/mux/uploads/:uploadId",
   async (req, res) => {

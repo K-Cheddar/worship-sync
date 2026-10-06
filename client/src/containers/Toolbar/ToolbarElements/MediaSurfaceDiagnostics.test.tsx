@@ -255,6 +255,104 @@ describe("MediaSurfaceDiagnostics", () => {
     expect(screen.queryByText("Loading per-video readiness…")).not.toBeInTheDocument();
   });
 
+  it("distinguishes no selected service from loading and an empty readiness pool", () => {
+    const discovery = {
+      renderer: "editor" as const,
+      controllerProfileId: "presentation",
+      controllerProfileName: "Presentation",
+      itemCount: 0,
+      uniqueVideoInventoryCount: 0,
+      finitePlayableSourceCount: 0,
+      uniqueFiniteVideoCount: 0,
+      pendingHlsCacheCount: 0,
+      intentionallyExcludedVideoCount: 0,
+      items: [],
+    };
+    renderDiagnostics();
+    fireEvent.click(screen.getByTestId("media-surface-diagnostics-trigger"));
+
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        windowRole: "local-preparation",
+        preparationSource: "local-pouchdb",
+        candidateCount: 0,
+        discoveredCount: 0,
+        surfaceCount: 0,
+        readyCount: 0,
+        preparingCount: 0,
+        playingCount: 0,
+        resettingCount: 0,
+        errorCount: 0,
+        evictions: [],
+        candidateDetails: [],
+        surfaces: [],
+        discovery: {
+          ...discovery,
+          targetOutlineId: null,
+          outlineId: null,
+          outlineLoadState: "loaded",
+        },
+      },
+    })));
+    expect(screen.getByRole("heading", { name: "Local preparation · Presentation" })).toBeVisible();
+    expect(screen.getByText("No service selected for video preparation.")).toBeVisible();
+    expect(screen.getByTestId("media-surface-diagnostics-trigger")).toHaveTextContent("Videos");
+    expect(screen.getByTestId("media-surface-diagnostics-trigger")).not.toHaveTextContent("0/0");
+    expect(screen.queryByText("Loading per-video readiness…")).not.toBeInTheDocument();
+
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        windowRole: "local-preparation",
+        preparationSource: "local-pouchdb",
+        candidateCount: 0,
+        discoveredCount: 0,
+        surfaceCount: 0,
+        readyCount: 0,
+        preparingCount: 0,
+        playingCount: 0,
+        resettingCount: 0,
+        errorCount: 0,
+        evictions: [],
+        candidateDetails: [],
+        surfaces: [],
+        discovery: {
+          ...discovery,
+          targetOutlineId: "outline-a",
+          outlineId: "outline-a",
+          outlineLoadState: "loading",
+        },
+      },
+    })));
+    expect(screen.getByText("Loading per-video readiness…")).toBeVisible();
+    expect(screen.queryByText("No service selected for video preparation.")).not.toBeInTheDocument();
+
+    act(() => window.dispatchEvent(new CustomEvent("worship-sync-media-surface-diagnostics", {
+      detail: {
+        windowRole: "local-preparation",
+        preparationSource: "local-pouchdb",
+        candidateCount: 0,
+        discoveredCount: 0,
+        surfaceCount: 0,
+        readyCount: 0,
+        preparingCount: 0,
+        playingCount: 0,
+        resettingCount: 0,
+        errorCount: 0,
+        evictions: [],
+        candidateDetails: [],
+        surfaces: [],
+        discovery: {
+          ...discovery,
+          targetOutlineId: "outline-a",
+          outlineId: "outline-a",
+          outlineLoadState: "loaded",
+        },
+      },
+    })));
+    expect(screen.getByText("No videos in this readiness pool.")).toBeVisible();
+    expect(screen.queryByText("No service selected for video preparation.")).not.toBeInTheDocument();
+  });
+
   it("keeps inventory, selection, readiness and deferral populations separate for a bounded pool", () => {
     const now = Date.now();
     const videos = Array.from({ length: 30 }, (_, index) => ({

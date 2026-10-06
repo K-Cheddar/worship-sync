@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-05-upload-dialog-space",
+  "date": "2026-10-05",
+  "type": "improved",
+  "title": "Upload dialogs use screen space better",
+  "description": "Review more selected media and resources before scrolling, with upload actions kept close by."
+}

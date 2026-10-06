@@ -155,3 +155,17 @@ test("page dialogs own nested select portals above the floating-window dock", as
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await waitFor(() => expect(trigger).toHaveFocus());
 });
+
+test("supports contained scrolling while preserving the modal viewport cap", () => {
+  render(
+    <Modal isOpen onClose={jest.fn()} title="Upload files" contentClassName="flex flex-col overflow-hidden">
+      <div role="region" aria-label="Selected files" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
+        Selected files
+      </div>
+    </Modal>,
+  );
+  const content = screen.getByTestId("modal-content");
+  expect(content).toHaveClass("flex", "flex-col", "overflow-hidden");
+  expect(content).not.toHaveClass("overflow-y-auto");
+  expect(screen.getByRole("dialog", { name: "Upload files" })).toHaveClass("max-h-[90vh]");
+});

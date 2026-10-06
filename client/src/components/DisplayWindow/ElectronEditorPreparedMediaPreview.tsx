@@ -67,7 +67,7 @@ const ElectronEditorPreparedMediaPreview = ({
     outlineScope: preparedMediaContext?.outlineScope,
     outlineName: preparedMediaContext?.outlineName,
     contextSource: preparedMediaContext?.contextSource,
-    scope: "service",
+    scope: "current-item",
   });
   const resourcePolicy = useResourceGovernorPolicy();
   const candidates = useMemo(

@@ -14,6 +14,7 @@ import {
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import { usePublishMediaPreparationManifest } from "../../hooks/useMediaPreparationManifest";
+import ControllerLocalMediaPreparationHost from "./ControllerLocalMediaPreparationHost";
 import type { DisplayOutput } from "../../utils/displayOutputs";
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
@@ -55,8 +56,12 @@ const getFallbackSourceId = (output: DisplayOutput) => {
 
 const SourceGroupPublisher = ({
   group,
+  isLocalPreparationSource,
+  currentItemId,
 }: {
   group: SourceGroup;
+  isLocalPreparationSource: boolean;
+  currentItemId?: string;
 }) => {
   const { controllerProfile, outlineId, outlineName, destinations } = group;
   const { db } = useContext(ControllerInfoContext) || {};
@@ -97,6 +102,12 @@ const SourceGroupPublisher = ({
 
   return (
     <>
+      {isLocalPreparationSource && (
+        <ControllerLocalMediaPreparationHost
+          currentItemId={currentItemId}
+          discoveryResult={discoveryResult}
+        />
+      )}
       {destinations.map((output) => (
         <DestinationManifestPublisher
           key={output.id}
@@ -128,7 +139,11 @@ const DestinationManifestPublisher = ({
  * controller route, so publication does not depend on an output window,
  * preview role, editor, selected slide, or Electron being available.
  */
-const ControllerMediaPreparationPublisher = () => {
+const ControllerMediaPreparationPublisher = ({
+  currentItemId,
+}: {
+  currentItemId?: string;
+}) => {
   const controllerProfile = useActiveControllerProfile();
   const displayOutputs = useSelector(selectDisplayOutputs);
   const controllerProfiles = useSelector(selectControllerProfiles);
@@ -188,6 +203,31 @@ const ControllerMediaPreparationPublisher = () => {
       }
     });
 
+    // Local editor preparation follows this controller's own outline even
+    // when all of its displays mirror another controller or no display is
+    // currently assigned. If it is also a display source, reuse that group.
+    if (controllerProfile.enabled) {
+      const activeOutline = resolveOutlineForScope(
+        outlines,
+        controllerProfile.outlineScope,
+        selectedIdByScope[controllerProfile.outlineScope],
+      );
+      const activeIdentity = JSON.stringify([
+        controllerProfile.id,
+        controllerProfile.outlineScope,
+        activeOutline?._id ?? null,
+      ]);
+      if (!grouped.has(activeIdentity)) {
+        grouped.set(activeIdentity, {
+          identity: activeIdentity,
+          controllerProfile,
+          outlineId: activeOutline?._id ?? null,
+          outlineName: activeOutline?.name,
+          destinations: [],
+        });
+      }
+    }
+
     return [...grouped.values()];
   }, [
     controllerProfile,
@@ -218,7 +258,14 @@ const ControllerMediaPreparationPublisher = () => {
   return (
     <>
       {groups.map((group) => (
-        <SourceGroupPublisher key={group.identity} group={group} />
+        <SourceGroupPublisher
+          key={group.identity}
+          group={group}
+          isLocalPreparationSource={
+            group.controllerProfile.id === controllerProfile.id
+          }
+          currentItemId={currentItemId}
+        />
       ))}
     </>
   );

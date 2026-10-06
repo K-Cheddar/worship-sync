@@ -1,7 +1,10 @@
 import generateRandomId from "./generateRandomId";
 import {
-  deleteLocalImageUploadJob,
   enqueueLocalImageUploadJobAtomically,
+  finishLocalImageUploadCancellationAtomically,
+  getLocalImageUploadJob,
+  requestLocalImageUploadCancellationAtomically,
+  subscribeLocalImageUploadJobChanges,
   retryLocalImageUploadJobAtomically,
   type LocalImageUploadJob,
 } from "./localImageAssets";
@@ -17,12 +20,18 @@ jest.mock("./generateRandomId", () => jest.fn(() => "media-1"));
 jest.mock("./localImageAssets", () => ({
   enqueueLocalImageUploadJobAtomically: jest.fn(),
   retryLocalImageUploadJobAtomically: jest.fn(),
-  deleteLocalImageUploadJob: jest.fn(),
+  finishLocalImageUploadCancellationAtomically: jest.fn(),
+  getLocalImageUploadJob: jest.fn(),
+  requestLocalImageUploadCancellationAtomically: jest.fn(),
+  subscribeLocalImageUploadJobChanges: jest.fn(() => () => undefined),
 }));
 
 const mockEnqueueJob = jest.mocked(enqueueLocalImageUploadJobAtomically);
 const mockRetryJob = jest.mocked(retryLocalImageUploadJobAtomically);
-const mockDeleteJob = jest.mocked(deleteLocalImageUploadJob);
+const mockFinishCancellation = jest.mocked(finishLocalImageUploadCancellationAtomically);
+const mockGetJob = jest.mocked(getLocalImageUploadJob);
+const mockRequestCancellation = jest.mocked(requestLocalImageUploadCancellationAtomically);
+const mockSubscribe = jest.mocked(subscribeLocalImageUploadJobChanges);
 
 const existingJob = (): LocalImageUploadJob => ({
   id: "asset-1",
@@ -43,7 +52,9 @@ describe("localImageUploadQueue", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockEnqueueJob.mockImplementation(async (job) => job);
-    mockDeleteJob.mockResolvedValue();
+    mockFinishCancellation.mockResolvedValue(undefined);
+    mockRequestCancellation.mockResolvedValue(undefined);
+    mockSubscribe.mockReturnValue(() => undefined);
   });
 
   it("creates a durable job with a stable media identity", async () => {
@@ -87,16 +98,18 @@ describe("localImageUploadQueue", () => {
     expect(mockRetryJob).toHaveBeenCalledWith("asset-1", expect.any(Number));
   });
 
-  it("aborts an active request and removes its durable job", async () => {
+  it("aborts an active request and records durable cancellation", async () => {
     const abort = jest.fn();
-    registerLocalImageUploadRequest("asset-1", {
-      abort,
-    } as unknown as XMLHttpRequest);
+    const uploading = { ...existingJob(), status: "uploading" as const, leaseOwnerId: "worker-1", leaseExpiresAt: Date.now() + 30_000 };
+    const cancelled = { ...uploading, status: "cancelled" as const, cancelRequested: true };
+    mockGetJob.mockResolvedValueOnce(uploading).mockResolvedValueOnce(cancelled).mockResolvedValueOnce(cancelled);
+    registerLocalImageUploadRequest("asset-1", { abort } as unknown as XMLHttpRequest);
 
     await cancelLocalImageUpload("asset-1");
 
     expect(abort).toHaveBeenCalled();
-    expect(mockDeleteJob).toHaveBeenCalledWith("asset-1");
+    expect(mockRequestCancellation).toHaveBeenCalledWith("asset-1", expect.any(Number));
+    expect(mockFinishCancellation).not.toHaveBeenCalled();
     expect(consumeLocalImageUploadCancellation("asset-1")).toBe(true);
     expect(consumeLocalImageUploadCancellation("asset-1")).toBe(false);
   });
