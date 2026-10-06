@@ -112,6 +112,10 @@ describe("LocalImageUploadManager", () => {
     mockUpload.mockResolvedValue({
       secure_url: "https://res.cloudinary.com/example/welcome.png",
     } as any);
+    mockCommitCloudinary.mockResolvedValue({ asset: {
+      provider: "cloudinary", assetId: "provider-asset-1", publicId: "cloud-public-id",
+      churchId: "church-1", permanent: true, bytes: 5,
+    } });
     mockPersistCloudCopy.mockResolvedValue({} as any);
     mockDeleteJob.mockResolvedValue();
     mockUpdateJob.mockImplementation(
@@ -152,7 +156,7 @@ describe("LocalImageUploadManager", () => {
       "preset",
       "portable-media",
       expect.any(Object),
-      { folder: "worship-sync/churches/church-1/media" },
+      { assetFolder: "worship-sync/churches/church-1/media" },
     );
     expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
     expect(mockUpdateJob).toHaveBeenCalledWith(
@@ -264,6 +268,7 @@ describe("LocalImageUploadManager", () => {
     expect(mockDeleteJob).not.toHaveBeenCalled();
     expect(mockPersistCloudCopy).not.toHaveBeenCalled();
     expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "media/updateMediaItemFields",
@@ -283,6 +288,115 @@ describe("LocalImageUploadManager", () => {
         }),
       }),
     );
+    view.unmount();
+  });
+
+  it("retains the successful upload checkpoint when the ownership commit is denied", async () => {
+    const ownershipError = Object.assign(
+      new Error("The image was not uploaded to this church's media folder."),
+      { status: 403 },
+    );
+    mockCommitCloudinary.mockRejectedValue(ownershipError);
+
+    const view = render(
+      <ControllerInfoContext.Provider
+        value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: "asset-1",
+      patch: expect.objectContaining({
+        status: "failed",
+        cloudMedia: expect.objectContaining({ publicId: "cloud-public-id" }),
+        nextAttemptAt: 0,
+      }),
+    })));
+    expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: "asset-1",
+      patch: expect.objectContaining({
+        status: "uploaded",
+        cloudMedia: expect.objectContaining({ publicId: "cloud-public-id" }),
+      }),
+    }));
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+    expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("keeps a failed file isolated while another file completes", async () => {
+    const failedJob = {
+      ...interruptedJob,
+      assetId: "asset-failed",
+      itemId: "item-failed",
+      mediaId: "media-failed",
+    };
+    const successfulJob = {
+      ...interruptedJob,
+      assetId: "asset-successful",
+      itemId: "item-successful",
+      mediaId: "media-successful",
+    };
+    mockListJobs.mockReset().mockResolvedValueOnce([failedJob, successfulJob]).mockResolvedValue([]);
+    mockClaimJob.mockImplementation(async ({ assetId, leaseOwnerId }) => {
+      const job = assetId === failedJob.assetId ? failedJob : successfulJob;
+      return { ...job, leaseOwnerId, leaseExpiresAt: Date.now() + 300_000 };
+    });
+    mockGetLocalImage.mockImplementation(async (assetId) => ({
+      id: assetId,
+      workspaceId: "church-1",
+      blob: new Blob([assetId], { type: "image/png" }),
+      fileName: assetId === failedJob.assetId ? "Failed.png" : "Successful.png",
+      contentType: "image/png",
+      size: 5,
+      width: 1920,
+      height: 1080,
+      createdAt: "2026-08-12T00:00:00.000Z",
+    }));
+    mockUpload.mockImplementation(async (file) => {
+      if (file.name === "Failed.png") throw new Error("Upload failed");
+      return {
+        secure_url: "https://res.cloudinary.com/example/successful.png",
+      } as any;
+    });
+    mockUpdateJob.mockImplementation(
+      async ({ assetId, leaseOwnerId, leaseDurationMs, now, patch }) => {
+        const job = assetId === failedJob.assetId ? failedJob : successfulJob;
+        return {
+          ...job,
+          ...patch,
+          leaseOwnerId,
+          leaseExpiresAt: now + leaseDurationMs,
+          updatedAt: new Date(now).toISOString(),
+        } as LocalImageUploadJob;
+      },
+    );
+
+    const view = render(
+      <ControllerInfoContext.Provider
+        value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: successfulJob.assetId,
+      patch: expect.objectContaining({ status: "complete" }),
+    })));
+    expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: failedJob.assetId,
+      patch: expect.objectContaining({ status: "failed", nextAttemptAt: expect.any(Number) }),
+    }));
+    expect(mockUpload).toHaveBeenCalledTimes(2);
+    expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
     view.unmount();
   });
 

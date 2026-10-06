@@ -46,8 +46,9 @@ export type CloudinaryUploadCallbacks = {
   setXhr?: (xhr: XMLHttpRequest) => void;
 };
 
-type CloudinaryUploadOptions = {
+export type CloudinaryUploadOptions = {
   folder?: string;
+  assetFolder?: string;
 };
 
 export const uploadImageToCloudinary = async (
@@ -63,6 +64,7 @@ export const uploadImageToCloudinary = async (
   formData.append("upload_preset", uploadPreset);
   formData.append("resource_type", "image");
   if (options.folder) formData.append("folder", options.folder);
+  if (options.assetFolder) formData.append("asset_folder", options.assetFolder);
 
   // Upload to Cloudinary
   const xhr = new XMLHttpRequest();
