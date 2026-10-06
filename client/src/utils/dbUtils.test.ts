@@ -11,6 +11,7 @@ import {
   deleteUnusedBibleItems,
   deleteUnusedHeadings,
   ensureCreditsIndexDoc,
+  formatAllDocs,
   getAllCreditDocsForOutline,
   getAllCreditsHistory,
   getCreditUsageByList,
@@ -37,6 +38,7 @@ import {
 } from "./dbUtils";
 import { serializeSongToV2Documents } from "./songPersistence";
 import { allDocsSlice } from "../store/allDocsSlice";
+import type { Cloudinary } from "@cloudinary/url-gen";
 
 type MockDb = {
   get: jest.Mock;
@@ -134,6 +136,19 @@ describe("dbUtils", () => {
       [{ keys: [docs.root._id, docs.arrangements[0]._id], include_docs: true }],
     ]);
     expect(db.get).not.toHaveBeenCalled();
+  });
+
+  it("does not format v2 infrastructure as legacy item documents", async () => {
+    const db = createDb();
+    const docs = serializeSongToV2Documents({
+      _id: "song-v2", type: "song", name: "V2", selectedArrangement: 0,
+      arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [], slides: [{ id: "s", type: "Verse", name: "Verse", boxes: [] }] }],
+    } as unknown as import("../types").DBItem);
+    db.allDocs.mockResolvedValue({ rows: [docs.root, ...docs.arrangements, ...docs.slides].map((doc) => ({ doc })) });
+
+    await formatAllDocs(db as unknown as PouchDB.Database, {} as Cloudinary);
+
+    expect(db.put).not.toHaveBeenCalled();
   });
 
   it("does not classify v2 root or child documents as legacy items for font migration", async () => {

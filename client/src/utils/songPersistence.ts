@@ -2,7 +2,6 @@ import type { DBItem, SongV2ArrangementDocument, SongV2Documents, SongV2RootDocu
 import { applyPouchAudit } from "./pouchAudit";
 import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import {
-  SongV2BaselineRequiredError,
   SongV2DocumentError,
   SongV2WriteNotEnabledError,
   assertValidV2Root,
@@ -173,17 +172,11 @@ export async function saveSong(
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
   if (song.docType === "song-v2-root" || currentSong?.docType === "song-v2-root") {
-    if (!currentSong || currentSong.docType !== "song-v2-root") {
-      throw new SongV2BaselineRequiredError(song._id);
-    }
-    const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
+    throw new SongV2WriteNotEnabledError(song._id, "save");
   }
   const existing = currentSong ?? await loadSong(db, song._id);
   if (existing.docType === "song-v2-root") {
-    if (!currentSong) throw new SongV2BaselineRequiredError(song._id);
-    const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
+    throw new SongV2WriteNotEnabledError(song._id, "save");
   }
   if (existing.type !== "song") {
     throw new Error(`Document ${song._id} is not a song`);
