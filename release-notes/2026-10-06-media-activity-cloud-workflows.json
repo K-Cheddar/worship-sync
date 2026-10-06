@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-06-media-activity-cloud-workflows",
+  "date": "2026-10-06",
+  "type": "improved",
+  "title": "Track Media uploads and deletions in Activity",
+  "description": "Upload selected local media to the cloud together, follow each file as it progresses, and retry only files that fail. Media deletions now show their progress and any remaining cleanup in Activity."
+}

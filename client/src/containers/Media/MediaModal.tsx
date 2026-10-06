@@ -638,6 +638,7 @@ const MediaModal = ({
     const cloudShareAction = getLocalMediaCloudShareBarAction(
       modalSelectedMedia,
       modalSelectedMediaIds.size,
+      fullList.filter((media) => modalSelectedMediaIds.has(media.id)),
     );
     if (cloudShareAction) actions.push(cloudShareAction);
     return actions;
@@ -649,7 +650,8 @@ const MediaModal = ({
     selectedQuickLink,
     selectedOverlay,
     modalSelectedMedia,
-    modalSelectedMediaIds.size,
+    modalSelectedMediaIds,
+    fullList,
     dispatch,
     handleModalDeleteClick,
     handleModalDeleteMultipleClick,

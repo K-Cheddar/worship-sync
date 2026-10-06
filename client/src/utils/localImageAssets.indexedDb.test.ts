@@ -272,7 +272,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     );
   });
 
-  it("preserves uploaded cloud media across enqueue and retry", async () => {
+  it("preserves a terminal cloud checkpoint across explicit enqueue and retry", async () => {
     const uploaded: LocalImageUploadJob = {
       id: "uploaded-enqueue",
       assetId: "uploaded-enqueue",
@@ -280,9 +280,10 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       workspaceId: "church-1",
       uploadPreset: "preset",
       mediaId: "media-existing",
-      status: "uploaded",
+      status: "failed",
       attemptCount: 1,
-      nextAttemptAt: 50_000,
+      nextAttemptAt: 0,
+      lastError: "The image was not uploaded to this church's media folder.",
       cloudMedia: {
         id: "media-existing",
         type: "image",

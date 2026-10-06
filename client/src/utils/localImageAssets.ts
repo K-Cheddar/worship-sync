@@ -62,7 +62,9 @@ export type LocalImageUploadJobStatus =
   | "pending"
   | "uploading"
   | "failed"
-  | "uploaded";
+  | "uploaded"
+  | "complete"
+  | "cancelled";
 
 export type LocalImageUploadJob = {
   id: string;
@@ -72,6 +74,9 @@ export type LocalImageUploadJob = {
   uploadPreset: string;
   mediaId: string;
   status: LocalImageUploadJobStatus;
+  phase?: "queued" | "uploading" | "committing" | "finalizing" | "complete" | "failed" | "cancelled" | "stopping";
+  progress?: number | null;
+  cancelRequested?: boolean;
   attemptCount: number;
   nextAttemptAt: number;
   lastError?: string;
@@ -668,13 +673,17 @@ export const enqueueLocalImageUploadJobAtomically = async (
     if (current?.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) {
       return current;
     }
+    if (current?.status === "complete") return current;
     return {
       ...candidate,
-      mediaId: current?.mediaId ?? candidate.mediaId,
+      mediaId: current?.cloudMedia ? current.mediaId : candidate.mediaId,
       status: current?.cloudMedia ? "uploaded" : "pending",
+      phase: current?.cloudMedia ? "committing" : "queued",
+      progress: current?.cloudMedia ? 90 : 0,
       attemptCount: current?.attemptCount ?? candidate.attemptCount,
       nextAttemptAt: 0,
       lastError: undefined,
+      cancelRequested: false,
       cloudMedia: current?.cloudMedia,
       createdAt: current?.createdAt ?? candidate.createdAt,
     };
@@ -692,8 +701,11 @@ export const retryLocalImageUploadJobAtomically = async (
     const next: LocalImageUploadJob = {
       ...current,
       status: current.cloudMedia ? "uploaded" : "pending",
+      phase: current.cloudMedia ? "committing" : "queued",
+      progress: current.cloudMedia ? 90 : 0,
       nextAttemptAt: 0,
       lastError: undefined,
+      cancelRequested: false,
       updatedAt: new Date(now).toISOString(),
     };
     delete next.leaseOwnerId;
@@ -701,12 +713,45 @@ export const retryLocalImageUploadJobAtomically = async (
     return next;
   });
 
+export const requestLocalImageUploadCancellationAtomically = (
+  assetId: string,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(assetId, (current) => {
+    if (!current || current.status === "complete" || current.status === "cancelled") {
+      return current;
+    }
+    const leaseIsActive = Boolean(
+      current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now,
+    );
+    const next: LocalImageUploadJob = {
+      ...current,
+      ...(leaseIsActive ? {} : { status: "pending" as const }),
+      phase: "stopping",
+      progress: null,
+      cancelRequested: true,
+      nextAttemptAt: 0,
+      updatedAt: new Date(now).toISOString(),
+    };
+    if (!leaseIsActive) {
+      delete next.leaseOwnerId;
+      delete next.leaseExpiresAt;
+    }
+    return next;
+  });
+
 type LeasedLocalImageUploadJobPatch = Partial<
   Pick<
     LocalImageUploadJob,
-    "status" | "attemptCount" | "nextAttemptAt" | "lastError" | "cloudMedia"
+    | "status"
+    | "phase"
+    | "progress"
+    | "cancelRequested"
+    | "attemptCount"
+    | "nextAttemptAt"
+    | "lastError"
   >
->;
+> & { cloudMedia?: MediaType | null };
 
 export const updateLeasedLocalImageUploadJob = async ({
   assetId,
@@ -723,19 +768,46 @@ export const updateLeasedLocalImageUploadJob = async ({
 }) =>
   mutateLocalImageUploadJob(assetId, (current) => {
     if (!current || current.leaseOwnerId !== leaseOwnerId) return undefined;
-    return {
+    const { cloudMedia, ...fields } = patch;
+    const next: LocalImageUploadJob = {
       ...current,
-      ...patch,
+      ...fields,
       leaseOwnerId,
       leaseExpiresAt: now + leaseDurationMs,
       updatedAt: new Date(now).toISOString(),
     };
+    if (cloudMedia === null) delete next.cloudMedia;
+    else if (cloudMedia) next.cloudMedia = cloudMedia;
+    return next;
   });
 
 /**
  * Atomically claim a durable upload job. IndexedDB serializes read-write
  * transactions for this store, so concurrent controller tabs cannot both win.
  */
+export const finishLocalImageUploadCancellationAtomically = (
+  assetId: string,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(assetId, (current) => {
+    if (!current || !current.cancelRequested) return current;
+    if (current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) return current;
+    const next: LocalImageUploadJob = {
+      ...current,
+      status: "cancelled",
+      phase: "cancelled",
+      progress: null,
+      cancelRequested: true,
+      nextAttemptAt: 0,
+      lastError: undefined,
+      updatedAt: new Date(now).toISOString(),
+    };
+    delete next.cloudMedia;
+    delete next.leaseOwnerId;
+    delete next.leaseExpiresAt;
+    return next;
+  });
+
 export const claimLocalImageUploadJob = async ({
   assetId,
   leaseOwnerId,

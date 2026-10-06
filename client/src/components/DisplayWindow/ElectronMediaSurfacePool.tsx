@@ -96,7 +96,9 @@ const NOOP = () => undefined;
 const rendererForWindowRole = (
   windowRole: string | undefined,
 ): ElectronMediaDiscoveryRenderer =>
-  windowRole === "editor" ? "editor" : "projector";
+  windowRole === "editor" || windowRole === "local-preparation"
+    ? "editor"
+    : "projector";
 
 type SurfaceRect = { x: number; y: number; width: number; height: number };
 

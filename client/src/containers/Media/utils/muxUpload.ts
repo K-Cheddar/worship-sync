@@ -1,4 +1,5 @@
 import {
+  cancelChurchMuxUpload,
   createChurchMuxUpload,
   deleteChurchMuxAsset,
   getChurchMuxAsset,
@@ -16,6 +17,7 @@ type PollingCallbacks = {
 
 export type MuxUploadCallbacks = PollingCallbacks & {
   setXhr?: (xhr: XMLHttpRequest) => void;
+  setCancelUpload?: (cancel: () => Promise<void>) => void;
 };
 
 export type MuxUploadOptions = {
@@ -248,75 +250,66 @@ export const uploadVideoToMux = async (
     },
   );
 
-  // Step 2: Upload file directly to Mux
-  const xhr = new XMLHttpRequest();
-  callbacks.setXhr?.(xhr);
-
-  await new Promise<void>((resolve, reject) => {
-    if (callbacks.isCancelled?.()) {
-      xhr.abort();
-      reject(new Error("Upload cancelled"));
-      return;
-    }
-
-    xhr.upload.addEventListener("progress", (e) => {
-      if (callbacks.isCancelled?.()) {
-        xhr.abort();
-        return;
-      }
-      if (e.lengthComputable) {
-        const percentComplete = (e.loaded / e.total) * 100;
-        callbacks.onProgress?.(percentComplete);
-      }
+  let assetId: string | undefined;
+  let cancelPromise: Promise<void> | undefined;
+  const cancelAndCleanUpload = () => {
+    if (cancelPromise) return cancelPromise;
+    const attempt = (async () => {
+      const upload = await cancelChurchMuxUpload(options.churchId, uploadId);
+      assetId = upload.assetId || assetId;
+      if (assetId) await deleteMuxAsset(assetId, options.churchId);
+    })();
+    cancelPromise = attempt.catch((error) => {
+      cancelPromise = undefined;
+      throw error;
     });
-
-    xhr.addEventListener("load", () => {
-      if (callbacks.isCancelled?.()) {
-        reject(new Error("Upload cancelled"));
-        return;
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`Upload failed with status ${xhr.status}`));
-      }
-    });
-
-    xhr.addEventListener("error", () => {
-      if (callbacks.isCancelled?.()) {
-        reject(new Error("Upload cancelled"));
-      } else {
-        reject(new Error("Upload failed"));
-      }
-    });
-
-    xhr.addEventListener("abort", () => {
-      reject(new Error("Upload cancelled"));
-    });
-
-    xhr.open("PUT", uploadUrl);
-    xhr.send(file);
-  });
-
-  // Step 3: Wait for asset to be created
-  callbacks.onStatusUpdate?.("Processing upload...");
-  const assetId = await pollUploadStatus(uploadId, options.churchId, callbacks);
-
-  if (!assetId) {
-    throw new Error("Failed to get asset ID");
-  }
+    return cancelPromise;
+  };
+  callbacks.setCancelUpload?.(cancelAndCleanUpload);
 
   try {
-    // Step 4: Wait for asset to be ready
+    // Upload directly to Mux. Even when the browser aborts, ask Mux to cancel
+    // the upload and remove any asset created while the request was in flight.
+    const xhr = new XMLHttpRequest();
+    callbacks.setXhr?.(xhr);
+
+    await new Promise<void>((resolve, reject) => {
+      if (callbacks.isCancelled?.()) {
+        xhr.abort();
+        reject(new Error("Upload cancelled"));
+        return;
+      }
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (callbacks.isCancelled?.()) {
+          xhr.abort();
+          return;
+        }
+        if (e.lengthComputable) callbacks.onProgress?.((e.loaded / e.total) * 100);
+      });
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Upload failed with status ${xhr.status}`));
+      });
+      xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+      xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+      xhr.open("PUT", uploadUrl);
+      xhr.send(file);
+    });
+
+    callbacks.onStatusUpdate?.("Processing upload...");
+    const polledAssetId = await pollUploadStatus(uploadId, options.churchId, callbacks);
+    if (!polledAssetId) throw new Error("Failed to get asset ID");
+    assetId = polledAssetId;
+
     callbacks.onStatusUpdate?.("Processing video...");
     const { playbackId, assetId: finalAssetId, durationSeconds } =
       await pollAssetStatus(assetId, options.churchId, callbacks);
 
-    // Step 5: Generate URLs
     const playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
     const thumbnailUrl = `https://image.mux.com/${playbackId}/thumbnail.png?width=250&height=141&fit_mode=pad&time=1`;
     const name = file.name.replace(/\.[^/.]+$/, "");
-
     return {
       playbackId,
       assetId: finalAssetId,
@@ -328,9 +321,17 @@ export const uploadVideoToMux = async (
     };
   } catch (error) {
     try {
-      await deleteMuxAsset(assetId, options.churchId);
+      await cancelAndCleanUpload();
     } catch (cleanupError) {
-      console.error("Could not remove failed Mux asset:", cleanupError);
+      const failure = new Error(
+        `${error instanceof Error ? error.message : "Video upload failed."} Mux cleanup also failed: ${cleanupError instanceof Error ? cleanupError.message : "try cleanup again."}`,
+      );
+      Object.assign(failure, {
+        cleanupFailed: true,
+        ...(assetId ? { assetId } : {}),
+        retryCleanup: cancelAndCleanUpload,
+      });
+      throw failure;
     }
     throw error;
   }

@@ -58,6 +58,32 @@ test("unreconciled churches are rejected before a permanent Mux upload is create
   assert.equal(created, false);
 });
 
+test("cancels only a church-owned Mux upload and returns an asset created during the race", async () => {
+  let cancelled = 0;
+  let upload = {
+    id: "upload-1",
+    status: "waiting",
+    new_asset_settings: { meta: { creator_id: "church-a", external_id: "media-1" } },
+  };
+  const service = createProviderStorageService({
+    storageQuota: createQuota(),
+    getMuxClient: () => ({ video: { uploads: {
+      retrieve: async () => upload,
+      cancel: async () => {
+        cancelled += 1;
+        upload = { ...upload, status: "asset_created", asset_id: "asset-1" };
+      },
+    } } }),
+  });
+  const result = await service.cancelMuxUpload({ churchId: "church-a", uploadId: "upload-1" });
+  assert.deepEqual(result, { cancelled: false, assetId: "asset-1" });
+  assert.equal(cancelled, 1);
+  await assert.rejects(
+    service.cancelMuxUpload({ churchId: "church-b", uploadId: "upload-1" }),
+    (error) => error.statusCode === 403,
+  );
+});
+
 test("temporary Mux conversion uploads are identifiable and excluded from permanent quota", async () => {
   let settings;
   let records = 0;
@@ -113,6 +139,62 @@ test("Cloudinary permanent commit uses actual bytes and quota denial destroys th
   await assert.rejects(service.commitCloudinaryImage({ churchId: "church-a", publicId: "worship-sync/churches/church-a/media/image-1" }));
   assert.equal(recorded.amount, 1234);
   assert.equal(destroyed, 1);
+});
+
+const createCloudinaryCommitService = (asset) =>
+  createProviderStorageService({
+    cloudinaryClient: {
+      api: { resource: async () => asset },
+      uploader: { add_context: async () => {} },
+    },
+    storageQuota: createQuota(),
+  });
+
+test("Cloudinary commit accepts legacy public ID and folder ownership metadata", async () => {
+  const service = createCloudinaryCommitService({
+    public_id: "worship-sync/churches/church-1/media/image-1",
+    folder: "worship-sync/churches/church-1/media",
+    bytes: 123,
+  });
+  const result = await service.commitCloudinaryImage({
+    churchId: "church-1",
+    publicId: "worship-sync/churches/church-1/media/image-1",
+  });
+  assert.equal(result.churchId, "church-1");
+});
+
+test("Cloudinary commit accepts dynamic-folder asset_folder ownership metadata", async () => {
+  const service = createCloudinaryCommitService({
+    public_id: "image-1",
+    asset_folder: "worship-sync/churches/church-1/media",
+    bytes: 123,
+  });
+  const result = await service.commitCloudinaryImage({
+    churchId: "church-1",
+    publicId: "image-1",
+  });
+  assert.equal(result.churchId, "church-1");
+});
+
+test("Cloudinary ownership rejects another or similarly named church folder", async () => {
+  for (const asset of [
+    {
+      public_id: "image-1",
+      asset_folder: "worship-sync/churches/church-2/media",
+      bytes: 123,
+    },
+    {
+      public_id: "worship-sync/churches/church-10/media/image-1",
+      folder: "worship-sync/churches/church-10/media",
+      bytes: 123,
+    },
+  ]) {
+    const service = createCloudinaryCommitService(asset);
+    await assert.rejects(
+      service.commitCloudinaryImage({ churchId: "church-1", publicId: "image-1" }),
+      (error) => error.statusCode === 403,
+    );
+  }
 });
 
 test("provider deletion failure does not release quota", async () => {

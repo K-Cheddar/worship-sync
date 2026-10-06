@@ -24,6 +24,32 @@ describe("ResourceUploadDialog", () => {
     mockUploadChurchResource.mockReset();
   });
 
+  it("keeps an adaptive resource list and compact Add files target after selection", async () => {
+    const user = userEvent.setup();
+    render(<ResourceUploadDialog churchId="church-1" onResourcesUploaded={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Upload resources" });
+    expect(dialog).toHaveClass("max-w-2xl", "max-h-[90vh]");
+    const dropZone = within(dialog).getByRole("group", { name: "Resource file drop zone" });
+    expect(dropZone).toHaveClass("p-4");
+    expect(within(dropZone).getByText("Drop files here or choose files")).toBeInTheDocument();
+    expect(within(dropZone).getByText("Images, documents, and MP3 audio")).toBeInTheDocument();
+    expect(within(dropZone).getByRole("button", { name: "Choose files" })).toBeInTheDocument();
+
+    const files = ["one.pdf", "two.pdf", "three.pdf", "four.pdf", "five.pdf", "six.pdf", "seven.pdf", "eight.pdf"]
+      .map((name) => new File(["pdf"], name, { type: "application/pdf" }));
+    await user.upload(screen.getByLabelText("Select resource files"), files);
+
+    expect(dropZone).toHaveClass("p-2");
+    expect(within(dropZone).getByText("Drop more files here")).toBeInTheDocument();
+    expect(within(dropZone).getByRole("button", { name: "Add files" })).toBeInTheDocument();
+    const list = within(dialog).getByRole("region", { name: "Selected resource files" });
+    expect(list).toHaveClass("min-h-0", "flex-1", "overflow-y-auto", "max-h-[min(50vh,32rem)]");
+    files.forEach((file) => expect(within(list).getByText(file.name)).toBeInTheDocument());
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Upload (8 files)" })).toBeInTheDocument();
+  });
   it("limits the file picker to supported formats and accepts common image uploads", async () => {
     const user = userEvent.setup({ applyAccept: false });
     const onResourcesUploaded = jest.fn();
@@ -47,8 +73,8 @@ describe("ResourceUploadDialog", () => {
       new File(["svg"], "unsupported.svg", { type: "image/svg+xml" }),
     ]);
     expect(screen.getByText(/unsupported\.svg: Choose a JPEG, PNG, GIF, WebP, AVIF/)).toBeVisible();
-    expect(screen.getByText("Drop files here or choose files")).toBeInTheDocument();
-    expect(screen.getByText("Images, documents, and MP3 audio")).toBeInTheDocument();
+    expect(screen.getByText("Drop more files here")).toBeInTheDocument();
+    expect(screen.queryByText("Images, documents, and MP3 audio")).not.toBeInTheDocument();
     expect(screen.queryByText(/Choose JPEG, PNG/)).not.toBeInTheDocument();
     for (const fileName of ["profile.jpg", "slide.png", "banner.gif", "photo.webp", "cover.avif"]) {
       expect(screen.getByText(fileName)).toBeInTheDocument();

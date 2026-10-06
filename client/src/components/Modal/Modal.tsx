@@ -21,6 +21,7 @@ interface ModalProps {
   size?: "sm" | "md" | "lg" | "xl" | "2xl" | "fit" | "full";
   showCloseButton?: boolean;
   contentPadding?: string;
+  contentClassName?: string;
   headerAction?: React.ReactNode;
   zIndexLevel?: 1 | 2;
   /** Merged onto the backdrop layer (default: bg-black/50). */
@@ -64,6 +65,7 @@ const Modal = ({
   size = "md",
   showCloseButton = true,
   contentPadding = "p-4",
+  contentClassName,
   headerAction,
   zIndexLevel = 1,
   backdropClassName,
@@ -187,8 +189,10 @@ const Modal = ({
                       : size === "fit"
                         ? "max-h-[calc(100vh-8rem)] overflow-hidden"
                       : "max-h-[calc(90vh-120px)] overflow-y-auto scrollbar-variable max-md:max-h-[calc(100vh)]",
-                    contentPadding
+                    contentPadding,
+                    contentClassName
                   )}
+                  data-testid="modal-content"
                 >
                   {children}
                 </div>

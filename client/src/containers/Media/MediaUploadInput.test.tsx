@@ -5,7 +5,14 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import MediaUploadInput from "./MediaUploadInput";
 import type { MediaUploadInputRef } from "./MediaUploadInput.types";
 import { createLocalMediaFromFile } from "./localMediaImport";
-import { enqueueLocalImageUpload } from "../../utils/localImageUploadQueue";
+import {
+  cancelLocalImageUpload,
+  enqueueLocalImageUpload,
+  getLocalImageUploadJob,
+  retryLocalImageUpload,
+  retryLocalImageUploadCancellation,
+  waitForLocalImageUpload,
+} from "../../utils/localImageUploadQueue";
 import type { MediaType } from "../../types";
 import { convertMuxVideoToLocalMp4, uploadVideoToMux } from "./utils/muxUpload";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
@@ -26,14 +33,18 @@ jest.mock("../../components/Modal/Modal", () => ({
     title,
     children,
     headerAction,
+    size,
+    contentClassName,
   }: {
     isOpen: boolean;
     title?: string;
     children: React.ReactNode;
     headerAction?: React.ReactNode;
+    size?: string;
+    contentClassName?: string;
   }) =>
     isOpen ? (
-      <div role="dialog" aria-label={title || "modal"}>
+      <div role="dialog" aria-label={title || "modal"} data-size={size} data-content-class={contentClassName}>
         {headerAction}
         {children}
       </div>
@@ -50,7 +61,12 @@ jest.mock("./localMediaImport", () => ({
 }));
 
 jest.mock("../../utils/localImageUploadQueue", () => ({
+  cancelLocalImageUpload: jest.fn(),
   enqueueLocalImageUpload: jest.fn(),
+  getLocalImageUploadJob: jest.fn(),
+  retryLocalImageUpload: jest.fn(),
+  retryLocalImageUploadCancellation: jest.fn(),
+  waitForLocalImageUpload: jest.fn(),
 }));
 
 jest.mock("./utils/muxUpload", () => ({
@@ -63,7 +79,12 @@ jest.mock("./utils/cloudinaryUpload", () => ({
 }));
 
 const mockedCreateLocalMedia = jest.mocked(createLocalMediaFromFile);
+const mockedCancelUpload = jest.mocked(cancelLocalImageUpload);
 const mockedEnqueueUpload = jest.mocked(enqueueLocalImageUpload);
+const mockedGetUploadJob = jest.mocked(getLocalImageUploadJob);
+const mockedRetryUpload = jest.mocked(retryLocalImageUpload);
+const mockedRetryCancellation = jest.mocked(retryLocalImageUploadCancellation);
+const mockedWaitForUpload = jest.mocked(waitForLocalImageUpload);
 const mockedConvertMuxVideo = jest.mocked(convertMuxVideoToLocalMp4);
 const mockedUploadVideo = jest.mocked(uploadVideoToMux);
 const mockedConvertCloudinaryImage = jest.mocked(
@@ -126,7 +147,15 @@ describe("MediaUploadInput", () => {
     mockDetectFileType.mockImplementation(() => "image");
     localStorage.clear();
     mockedCreateLocalMedia.mockResolvedValue(localImage());
+    mockedCancelUpload.mockResolvedValue();
     mockedEnqueueUpload.mockResolvedValue({} as never);
+    mockedGetUploadJob.mockResolvedValue(undefined);
+    mockedRetryUpload.mockResolvedValue({} as never);
+    mockedRetryCancellation.mockResolvedValue();
+    mockedWaitForUpload.mockImplementation(async (_assetId, onState) => {
+      onState?.({ status: "complete", progress: 100, phase: "Upload complete" });
+      return {} as never;
+    });
     mockedConvertMuxVideo.mockResolvedValue(
       new File(["converted"], "photo.mp4", { type: "video/mp4" }),
     );
@@ -165,6 +194,7 @@ describe("MediaUploadInput", () => {
         itemId: "",
         workspaceId: "church-1",
         uploadPreset: "preset-1",
+        mediaId: "local_image_1",
       });
     });
     expect(onLocalMediaAdded).toHaveBeenCalled();
@@ -198,7 +228,7 @@ describe("MediaUploadInput", () => {
     fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
 
     await waitFor(() => {
-      expect(within(screen.getByRole("complementary", { name: "Transfers" })).getByRole("progressbar", { name: "clip.mp4 progress" })).toHaveAttribute("aria-valuenow", "78");
+      expect(within(screen.getByRole("complementary", { name: "Activity" })).getByRole("progressbar", { name: "clip.mp4 progress" })).toHaveAttribute("aria-valuenow", "78");
     });
 
     await act(async () => finishUpload({} as MuxUploadResult));
@@ -240,7 +270,7 @@ describe("MediaUploadInput", () => {
         expect.objectContaining({ id: "local_image_1" }),
       );
     });
-    expect(screen.getByRole("progressbar", { name: "photo.png progress" })).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "photo.png files" })).getByText("Complete")).toBeInTheDocument();
     expect(mockedEnqueueUpload).not.toHaveBeenCalled();
   });
 
@@ -444,6 +474,7 @@ describe("MediaUploadInput", () => {
       itemId: "",
       workspaceId: "church-1",
       uploadPreset: "preset-1",
+      mediaId: "local_image_1",
     });
     expect(onLocalMediaAdded).toHaveBeenCalledWith(
       expect.objectContaining({ id: "local_image_1" }),
@@ -539,7 +570,9 @@ describe("MediaUploadInput", () => {
     jest.useRealTimers();
   });
 
-  it("starts a second independent batch while the first is active and aggregates both", async () => {
+  it("starts a second independent batch while the first is active", async () => {
+    let createdMedia = 0;
+    mockedCreateLocalMedia.mockImplementation(async (_file, _churchId, _policy) => localImage(`local-video-${++createdMedia}`));
     mockDetectFileType.mockReturnValue("video");
     const finishes: Array<(result: MuxUploadResult) => void> = [];
     let uploadIndex = 0;
@@ -565,7 +598,7 @@ describe("MediaUploadInput", () => {
     await waitFor(() => expect(finishes).toHaveLength(1));
 
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show transfer summary: 1 active transfers, 52% overall" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Activity: 1 active" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add media source" }));
     expect(addSource).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -574,14 +607,14 @@ describe("MediaUploadInput", () => {
     fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
 
     await waitFor(() => expect(finishes).toHaveLength(2));
-    expect(screen.getByRole("button", { name: "Show transfer summary: 2 active transfers, 70% overall" })).toBeInTheDocument();
-    const transfers = within(screen.getByRole("complementary", { name: "Transfers" }));
-    expect(transfers.getByText("clip-a.mp4")).toBeInTheDocument();
-    expect(transfers.getByText("clip-b.mp4")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Activity: 2 active" })).toBeInTheDocument();
+    const transfers = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(transfers.getAllByText("clip-a.mp4")).toHaveLength(2);
+    expect(transfers.getAllByText("clip-b.mp4")).toHaveLength(2);
     expect(transfers.getAllByRole("progressbar")).toHaveLength(2);
 
     await act(async () => finishes.forEach((finish) => finish({} as MuxUploadResult)));
-    await waitFor(() => expect(transfers.getAllByText("Complete")).toHaveLength(2));
+    await waitFor(() => expect(transfers.getAllByText("Complete")).toHaveLength(4));
   });
 
   it.each(["first", "second"] as const)("reports partial success and retries only the failed %s file", async (failedPosition) => {
@@ -606,10 +639,10 @@ describe("MediaUploadInput", () => {
     fireEvent.click(screen.getByRole("button", { name: "Upload (2 files)" }));
 
     const retry = await screen.findByRole("button", { name: "Retry failed files" });
-    const transferPanel = within(screen.getByRole("complementary", { name: "Transfers" }));
-    expect(transferPanel.getByText("Completed with errors · 70%")).toBeInTheDocument();
-    expect(transferPanel.getByRole("alert")).toHaveTextContent(`${failedPosition}.png: Cloud share failed.`);
-    expect(transferPanel.getByRole("progressbar", { name: "2 media files progress" })).toHaveAttribute("aria-valuenow", "70");
+    const transferPanel = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(transferPanel.getAllByText(/Completed with errors/).length).toBeGreaterThan(0);
+    expect(transferPanel.getAllByRole("alert").map((alert) => alert.textContent).join(" ")).toContain(`${failedPosition}.png: Cloud share failed.`);
+    expect(transferPanel.queryByRole("progressbar", { name: "2 media files progress" })).not.toBeInTheDocument();
 
     fireEvent.click(retry);
     expect(await transferPanel.findByText("Complete")).toBeInTheDocument();
@@ -668,6 +701,31 @@ describe("MediaUploadInput", () => {
     expect(screen.getByRole("button", { name: "Upload (2 files)" })).toBeInTheDocument();
   });
 
+  it("uses an adaptive medium dialog and keeps Add files available", () => {
+    renderUploadInput();
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload Media" });
+    expect(dialog).toHaveAttribute("data-size", "md");
+    expect(dialog).toHaveAttribute("data-content-class", "flex flex-col overflow-hidden");
+    const dropZone = within(dialog).getByRole("group", { name: "Media file drop zone" });
+    expect(dropZone).toHaveClass("p-4");
+    expect(within(dropZone).getByText("Drop media here or choose files")).toBeInTheDocument();
+    expect(within(dropZone).getByRole("button", { name: "Choose files" })).toBeInTheDocument();
+
+    const files = ["one.png", "two.png", "three.png", "four.png", "five.png", "six.png", "seven.png", "eight.png"]
+      .map((name) => new File(["image"], name, { type: "image/png" }));
+    fireEvent.change(within(dialog).getByLabelText("Media Files"), { target: { files } });
+
+    expect(dropZone).toHaveClass("p-2");
+    expect(within(dropZone).getByText("Drop more files here")).toBeInTheDocument();
+    expect(within(dropZone).getByRole("button", { name: "Add files" })).toBeInTheDocument();
+    const list = within(dialog).getByRole("region", { name: "Selected media files" });
+    expect(list).toHaveClass("min-h-0", "flex-1", "overflow-y-auto", "max-h-[min(50vh,32rem)]");
+    files.forEach((file) => expect(within(list).getByText(file.name)).toBeInTheDocument());
+    expect(screen.getByRole("switch", { name: /Upload to cloud/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Upload (8 files)" })).toBeInTheDocument();
+  });
   it("shows the upload drop state only for native file drags", () => {
     renderUploadInput();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));

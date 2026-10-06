@@ -12,7 +12,7 @@ import Overlays from "../../containers/Overlays/Overlays";
 import Bible from "../../containers/Bible/Bible";
 import { useDispatch, useSelector } from "../../hooks";
 import Songs from "../../containers/Songs/Songs";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useMatch } from "react-router-dom";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import Item from "./Item";
 import CreateItem from "../../containers/CreateItem/CreateItem";
@@ -47,6 +47,16 @@ import ControllerMediaPreparationPublisher from "../../containers/Media/Controll
 const Controller = () => {
   const dispatch = useDispatch();
   const location = useLocation();
+  const itemRoute = useMatch("/controller/item/:itemId/:listId");
+  const encodedItemId = itemRoute?.params.itemId;
+  let currentItemId: string | undefined;
+  if (encodedItemId) {
+    try {
+      currentItemId = decodeURI(window.atob(encodedItemId));
+    } catch {
+      currentItemId = undefined;
+    }
+  }
   const { layoutRef } = useControllerPageLifecycle();
   useServicePlanningSyncRunner();
 
@@ -130,7 +140,7 @@ const Controller = () => {
       onRootClick={handleElementClick}
       layoutRef={layoutRef}
     >
-      <ControllerMediaPreparationPublisher />
+      <ControllerMediaPreparationPublisher currentItemId={currentItemId} />
       <ServicePlanningSyncFloatingWindow />
       {(access === "full" || access === "music") && <LyricsEditor />}
       <Button

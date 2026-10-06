@@ -50,9 +50,49 @@ describe("TransferProgress", () => {
     expect(screen.queryByRole("link", { name: "View presentation" })).not.toBeInTheDocument();
   });
 
-  it("shows partial completion alongside the actual batch progress", () => {
+  it("shows per-file progress without an averaged batch percentage", () => {
+    render(<TransferProgress transfer={{
+      ...base,
+      name: "2 media files",
+      progress: 50,
+      files: [
+        { id: "first", name: "First.mp4", status: "active", progress: 24, phase: "Uploading video" },
+        { id: "second", name: "Second.png", status: "queued", progress: 0, phase: "Queued" },
+      ],
+    }} variant="card" />);
+
+    expect(screen.getByText("Uploading")).toBeInTheDocument();
+    expect(screen.queryByText("50%")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: "2 media files progress" })).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "First.mp4 progress" })).toHaveAttribute("aria-valuenow", "24");
+  });
+
+  it("shows partial completion alongside the actual single transfer progress", () => {
     render(<TransferProgress transfer={{ ...base, status: "partial", progress: 70, phase: { key: "partial", label: "Upload completed with errors" } }} variant="card" />);
     expect(screen.getByText("Completed with errors · 70%")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "photo.png progress" })).toHaveAttribute("aria-valuenow", "70");
+  });
+
+  it("shows provider cleanup failures for media already removed from the library", () => {
+    render(<TransferProgress transfer={{
+      ...base,
+      type: "Media deletion",
+      status: "partial",
+      progress: null,
+      phase: { key: "partial", label: "Media removed; cloud cleanup needs attention", current: 1, total: 1 },
+      detail: "1 of 1 media items removed · 1 need attention",
+      files: [{
+        id: "media-1",
+        name: "Photo.jpg",
+        status: "complete",
+        progress: 100,
+        phase: "Cloud cleanup failed",
+        error: "Removed from Media; cloud storage still needs cleanup.",
+      }],
+    }} variant="card" />);
+
+    expect(screen.getByText("Cloud cleanup failed")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 media items removed · 1 need attention")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Removed from Media; cloud storage still needs cleanup.");
   });
 });

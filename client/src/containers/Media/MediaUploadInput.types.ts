@@ -15,6 +15,7 @@ export type FileUploadProgress = {
   fileType: FileType;
   status: UploadStatus;
   progress: number;
+  phase?: string;
   /** Local import succeeds before an optional cloud share. Keep its identity
    * so retrying a cloud failure does not create a second local media item. */
   localMedia?: MediaType;
