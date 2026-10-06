@@ -1,6 +1,7 @@
 import {
   buildPermissionsFromAccessDraft,
   getInviteAccessSummaryLabel,
+  inviteAccessOptions,
   inviteAccessDraftFromInvite,
   resolveInviteAccessPayload,
   scopedTeamsHelperText,
@@ -81,7 +82,15 @@ describe("accountInviteAccess", () => {
         servicesAccess: "edit",
         teamScopeIds: ["worship"],
       }),
-    ).toBe("Schedule only · Per-team edit only");
+    ).toBe("Member access · Per-team edit only");
+  });
+
+  it("labels the invite tier as Member access", () => {
+    expect(inviteAccessOptions.find((option) => option.value === "member")?.label)
+      .toBe("Member access");
+    expect(inviteAccessOptions.map((option) => option.label)).not.toContain(
+      "Schedule only",
+    );
   });
 
   it("resolves invite payloads with admin Teams access", () => {

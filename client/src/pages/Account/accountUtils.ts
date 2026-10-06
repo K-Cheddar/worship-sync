@@ -13,15 +13,14 @@ export const memberAccessOptions: {
   { value: "full", label: "Full access" },
   { value: "music", label: "Music access" },
   { value: "view", label: "View access" },
-  // Named for what it grants rather than matching the "<x> access" pattern:
-  // a volunteer who sees their own schedule and no operator surfaces.
-  { value: "member", label: "Schedule only" },
+  // Limited volunteer tier for personal schedule and team access.
+  { value: "member", label: "Member access" },
 ];
 
 /**
  * Human label for an app access value, from the same list the pickers use so a
  * new tier never shows as its raw key ("member") in one place and its label
- * ("Schedule only") in another.
+ * ("Member access") in another.
  */
 export const formatMemberAccessLabel = (value?: string): string =>
   memberAccessOptions.find((option) => option.value === value)?.label ||

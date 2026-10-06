@@ -19,9 +19,11 @@ describe("toMemberAccessOption", () => {
 });
 
 describe("memberAccessOptions", () => {
-  it("offers the schedule-only tier so an admin can narrow someone", () => {
-    expect(memberAccessOptions.map((option) => option.value)).toContain(
-      "member",
+  it("labels the existing-member tier as Member access", () => {
+    expect(memberAccessOptions.find((option) => option.value === "member"))
+      .toEqual({ value: "member", label: "Member access" });
+    expect(memberAccessOptions.map((option) => option.label)).not.toContain(
+      "Schedule only",
     );
   });
 });

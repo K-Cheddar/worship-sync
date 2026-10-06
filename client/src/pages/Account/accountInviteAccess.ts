@@ -30,7 +30,7 @@ export const inviteAccessOptions: {
   { value: "view", label: "View access", role: "member", appAccess: "view" },
   {
     value: "member",
-    label: "Schedule only",
+    label: "Member access",
     role: "member",
     appAccess: "member",
   },

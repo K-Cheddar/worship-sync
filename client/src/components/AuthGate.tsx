@@ -137,7 +137,7 @@ const AuthGate = ({
   // Enforced here rather than per route: hiding the links on Home is
   // presentation only, and every protected route already passes through this
   // gate. Doing it centrally means an operator page added later is closed to
-  // schedule-only members by default instead of open until someone remembers.
+  // member-tier users by default instead of open until someone remembers.
   if (
     sessionKind === "human" &&
     access === "member" &&

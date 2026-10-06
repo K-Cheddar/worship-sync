@@ -33,7 +33,7 @@ type RouteSessionContext = {
 
 // Auxiliary controllers are dynamic routes ("/aux-controller/<id>"), so they
 // are matched by prefix rather than listed. They sit at the same access level as
-// the overlay controller: an operator surface, closed to schedule-only members.
+// the overlay controller: an operator surface, closed to member-tier users.
 const GUEST_ALLOWED_PREFIXES = ["/controller", "/aux-controller"];
 const GUEST_ALLOWED_EXACT = new Set([
   "/home",
@@ -56,7 +56,7 @@ export const isTeamsWorkspacePath = (pathname: string): boolean =>
   pathname === "/teams-and-services" ||
   pathname.startsWith("/teams-and-services/");
 
-/** Whether a schedule-only member may open this path. Deny by default. */
+/** Whether a member-tier user may open this path. Deny by default. */
 export const isMemberAllowedPath = (pathname: string): boolean =>
   MEMBER_ALLOWED_EXACT.has(pathname);
 
@@ -64,7 +64,7 @@ const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account", "/aux-controller"];
 const HUMAN_ALLOWED_EXACT = new Set([
   "/home",
   "/resources",
-  // Reachable by everyone, not only schedule-only members: an admin who is also
+  // Reachable by everyone, not only member-tier users: an admin who is also
   // on a roster uses it, and omitting it made Electron route restore fall back
   // to /home.
   "/my-schedule",

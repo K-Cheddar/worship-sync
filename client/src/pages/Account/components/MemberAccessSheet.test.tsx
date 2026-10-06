@@ -1,8 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import MemberAccessSheet from "./MemberAccessSheet";
-import type { InviteAccessDraft } from "../accountTypes";
+import type { InviteAccessDraft, Member } from "../accountTypes";
 import { useAccountPage } from "../AccountPageContext";
-import { updateChurchMemberAccess } from "../../../api/auth";
+import {
+  updateChurchInviteAccess,
+  updateChurchMemberAccess,
+} from "../../../api/auth";
 
 jest.mock("../AccountPageContext", () => ({
   useAccountPage: jest.fn(),
@@ -86,7 +89,7 @@ jest.mock("../../../api/auth", () => ({
   updateChurchInviteAccess: jest.fn(),
 }));
 
-const member = {
+const member: Member = {
   membershipId: "membership-1",
   userId: "user-1",
   role: "member",
@@ -207,6 +210,51 @@ const renderInviteSheet = (kind: "invite-draft" | "invite") => {
 };
 
 describe("MemberAccessSheet member tier", () => {
+  it("keeps existing admin Teams and Services access immutable", () => {
+    const { rerender, context } = renderMemberSheet();
+    context.accessSheetTarget = {
+      kind: "member",
+      member: {
+        ...member,
+        role: "admin",
+        permissions: {
+          teams: "edit",
+          services: "edit",
+          teamScopes: {},
+        },
+      },
+    };
+    context.toTeamsAccessOption.mockReturnValue("edit");
+    context.getMemberTeamsAccessValue.mockReturnValue("none");
+    context.getMemberServicesAccessValue.mockReturnValue("none");
+    rerender(<MemberAccessSheet />);
+
+    const teamsSelect = screen.getByRole("combobox", { name: "Global Teams access" });
+    const servicesSelect = screen.getByRole("combobox", { name: "Service editing" });
+    expect(teamsSelect).toHaveValue("edit");
+    expect(teamsSelect).toBeDisabled();
+    expect(servicesSelect).toHaveValue("edit");
+    expect(servicesSelect).toBeDisabled();
+    expect(screen.queryByRole("group", { name: "Per-team edit access" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
+      target: { value: "member" },
+    });
+    rerender(<MemberAccessSheet />);
+    expect(screen.getByRole("combobox", { name: "Global Teams access" })).toHaveValue("edit");
+    expect(screen.getByTestId("member-teams-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit all teams");
+    expect(screen.getByRole("combobox", { name: "Service editing" })).toHaveValue("edit");
+    expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit");
+    expect(screen.queryByRole("group", { name: "Per-team edit access" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+    expect(updateChurchMemberAccess).toHaveBeenCalledWith(
+      "church-1",
+      "user-1",
+      "member",
+      { teams: "edit", services: "edit", teamScopes: {} },
+    );
+  });
+
   it("shows global Teams and Services as disabled None while keeping team scopes usable", () => {
     const { rerender, setters } = renderMemberSheet();
     fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
@@ -289,4 +337,29 @@ describe("MemberAccessSheet member tier", () => {
       expect(screen.getByRole("checkbox", { name: "Worship" })).toBeChecked();
     },
   );
+
+  it("serializes Member access when updating a pending invite", async () => {
+    const { rerender } = renderInviteSheet("invite");
+    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
+      target: { value: "member" },
+    });
+    rerender(<MemberAccessSheet />);
+    fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+
+    await waitFor(() =>
+      expect(updateChurchInviteAccess).toHaveBeenCalledWith(
+        "church-1",
+        "invite-1",
+        {
+          role: "member",
+          appAccess: "member",
+          permissions: {
+            teams: "none",
+            services: "none",
+            teamScopes: { worship: "edit" },
+          },
+        },
+      ),
+    );
+  });
 });
