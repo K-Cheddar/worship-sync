@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import TeamRoleManager from "./TeamRoleManager";
@@ -35,7 +35,7 @@ it("closes an individual role editor without leaving the Roles page", async () =
     <MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.roles, state: { teamsReturnTo: returnTo } }]}>
       <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
-          <TeamRoleManager roles={[role]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+          <TeamRoleManager roles={[role]} teams={[team]} canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
           <LocationProbe />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
@@ -57,7 +57,7 @@ it("keeps an edited role open after Save and navigates with restore state only o
     <MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.roles, state: { teamsReturnTo: returnTo } }]}>
       <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
-          <TeamRoleManager roles={[role]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+          <TeamRoleManager roles={[role]} teams={[team]} canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
           <LocationProbe />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
@@ -95,7 +95,7 @@ it("creates a role with its selected icon and renders icons with a fallback for 
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
       <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
-          <TeamRoleManager roles={[role, { ...role, roleId: "role-stored-icon", name: "Stored icon", icon: storedIcon }]} teams={[team]} canEdit onSaved={onSaved} onArchived={jest.fn()} onRemoved={jest.fn()} />
+          <TeamRoleManager roles={[role, { ...role, roleId: "role-stored-icon", name: "Stored icon", icon: storedIcon }]} teams={[team]} canEditTeam={() => true} onSaved={onSaved} onArchived={jest.fn()} onRemoved={jest.fn()} />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -127,7 +127,7 @@ it("removes a saved role icon through the shared picker", async () => {
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
       <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
-          <TeamRoleManager roles={[{ ...role, icon }]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+          <TeamRoleManager roles={[{ ...role, icon }]} teams={[team]} canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -149,7 +149,7 @@ it("changes a role icon and keeps its selected color", async () => {
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
       <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
-          <TeamRoleManager roles={[{ ...role, icon: previousIcon }]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+          <TeamRoleManager roles={[{ ...role, icon: previousIcon }]} teams={[team]} canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -160,4 +160,53 @@ it("changes a role icon and keeps its selected color", async () => {
   await user.click(screen.getByRole("button", { name: "Guitar" }));
   await user.click(screen.getByRole("button", { name: "Save role" }));
   await waitFor(() => expect(updateTeamRole).toHaveBeenCalledWith("church-1", role.roleId, expect.objectContaining({ icon })));
+});
+
+it("shows AV as read-only and creates roles for the editable Worship team", async () => {
+  const user = userEvent.setup();
+  const avTeam: TeamRecord = { churchId: "church-1", teamId: "team-av", name: "AV", memberIds: [] };
+  const avRole: TeamRole = { churchId: "church-1", teamId: avTeam.teamId, roleId: "role-av", name: "Operator" };
+  jest.mocked(createTeamRole).mockResolvedValue({
+    success: true,
+    role: { ...role, roleId: "role-new", name: "New role" },
+  } as never);
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[avRole, role]} teams={[avTeam, team]} canEditTeam={(teamId) => teamId === team.teamId} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("button", { name: "Edit Lead" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit Operator" })).not.toBeInTheDocument();
+  await user.click(screen.getAllByRole("button", { name: "Create role" })[0]);
+  expect(screen.getAllByText("Worship", { exact: true })).not.toHaveLength(0);
+  await user.type(screen.getByLabelText(/^Name:?$/), "New role");
+  await user.click(screen.getAllByRole("button", { name: "Create role" }).at(-1)!);
+
+  await waitFor(() => expect(createTeamRole).toHaveBeenCalledWith("church-1", expect.objectContaining({ teamId: team.teamId })));
+});
+
+it("hides create and edit controls for a roster-only reader", () => {
+  const avTeam: TeamRecord = { churchId: "church-1", teamId: "team-av", name: "AV", memberIds: [] };
+  const avRole: TeamRole = { churchId: "church-1", teamId: avTeam.teamId, roleId: "role-av", name: "Operator" };
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[avRole, role]} teams={[avTeam, team]} canEditTeam={() => false} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  const list = within(screen.getByTestId("teams-create-panel-list"));
+  expect(list.queryByRole("button", { name: "Create role" })).not.toBeInTheDocument();
+  expect(list.queryByRole("button", { name: "Edit Lead" })).not.toBeInTheDocument();
+  expect(list.queryByRole("button", { name: "Edit Operator" })).not.toBeInTheDocument();
+  expect(list.getByText("Lead")).toBeInTheDocument();
+  expect(list.getByText("Operator")).toBeInTheDocument();
 });

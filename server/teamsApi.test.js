@@ -14827,3 +14827,171 @@ test("scoped and roster bootstrap skip intake and SMS consent reads while broad 
     }
   }
 });
+
+test("team-owned entity mutations authorize source and target teams", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("scoped_entity_mutations");
+  const createTeam = async (name) => (await callHandler(authHandlers.createTeam, {
+    context: owner,
+    body: { name, memberIds: [] },
+  })).payload.team;
+  const [worship, av, youth] = await Promise.all([
+    createTeam("Worship"),
+    createTeam("AV"),
+    createTeam("Youth"),
+  ]);
+  const createPosition = async (team) => (await callHandler(authHandlers.createTeamPosition, {
+    context: owner,
+    body: { name: `${team.name} position`, teamId: team.teamId },
+  })).payload.position;
+  const createRole = async (team) => (await callHandler(authHandlers.createTeamRole, {
+    context: owner,
+    body: { name: `${team.name} role`, teamId: team.teamId },
+  })).payload.role;
+  const createArea = async (team) => (await callHandler(authHandlers.createTeamQualificationArea, {
+    context: owner,
+    body: { name: `${team.name} area`, teamId: team.teamId },
+  })).payload.area;
+  const [worshipPosition, secondWorshipPosition, movableWorshipPosition, avPosition] = await Promise.all([
+    createPosition(worship), createPosition(worship), createPosition(worship), createPosition(av),
+  ]);
+  const [worshipRole, secondWorshipRole, movableWorshipRole, avRole] = await Promise.all([
+    createRole(worship), createRole(worship), createRole(worship), createRole(av),
+  ]);
+  const [worshipArea, secondWorshipArea, movableWorshipArea, avArea] = await Promise.all([
+    createArea(worship), createArea(worship), createArea(worship), createArea(av),
+  ]);
+  const createLevel = async (area, name) => (await callHandler(authHandlers.createTeamQualificationLevel, {
+    context: owner,
+    body: { areaId: area.areaId, name, rank: 1 },
+  })).payload.level;
+  const [worshipLevel, secondWorshipLevel, movableWorshipLevel, avLevel] = await Promise.all([
+    createLevel(worshipArea, "Worship level"),
+    createLevel(secondWorshipArea, "Second Worship level"),
+    createLevel(movableWorshipArea, "Movable Worship level"),
+    createLevel(avArea, "AV level"),
+  ]);
+  const membershipPosition = await createPosition(worship);
+  const membershipRole = await createRole(worship);
+  const membershipArea = await createArea(worship);
+  const membershipLevel = await createLevel(membershipArea, "Membership reader level");
+  const scoped = await createHumanContext("scoped_entity_manager", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [worship.teamId]: "edit" } },
+  });
+  const bothTeams = await createHumanContext("both_entity_manager", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: {
+      teams: "none",
+      teamScopes: { [worship.teamId]: "edit", [av.teamId]: "edit" },
+    },
+  });
+  const readerId = `${owner.churchId}_membership_reader`;
+  await setDoc(COLLECTIONS.teamRosterMembers, readerId, {
+    memberId: readerId, churchId: owner.churchId, userId: readerId,
+    firstName: "Read", lastName: "Only", positionIds: [],
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teams, worship.teamId, { memberIds: [readerId] }, { merge: true });
+  const membershipReader = await createHumanContext("scoped_entity_reader", {
+    userId: readerId,
+    churchId: owner.churchId,
+    role: "member",
+    appAccess: "member",
+    permissions: { teams: "none", teamScopes: {} },
+  });
+  const run = (handler, context, params, body) => callHandler(handler, {
+    context, params, body,
+  });
+  const readerBootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: membershipReader,
+  });
+  assert.equal(readerBootstrap.statusCode, 200);
+  assert.deepEqual(readerBootstrap.payload.teams.map((item) => item.teamId), [worship.teamId]);
+  assert.ok(readerBootstrap.payload.positions.some((item) => item.positionId === membershipPosition.positionId));
+  assert.ok(readerBootstrap.payload.teamRoles.some((item) => item.roleId === membershipRole.roleId));
+  assert.ok(readerBootstrap.payload.qualificationAreas.some((item) => item.areaId === membershipArea.areaId));
+  assert.ok(readerBootstrap.payload.qualificationLevels.some((item) => item.levelId === membershipLevel.levelId));
+  assert.equal(readerBootstrap.payload.positions.some((item) => item.teamId === av.teamId || item.teamId === youth.teamId), false);
+
+  assert.equal((await run(authHandlers.createTeamPosition, scoped, {}, { name: "New Worship", teamId: worship.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.createTeamPosition, scoped, {}, { name: "New AV", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.createTeamPosition, scoped, {}, { name: "New Youth", teamId: youth.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamPosition, scoped, { positionId: worshipPosition.positionId }, { name: "Updated", teamId: worship.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.updateTeamPosition, scoped, { positionId: avPosition.positionId }, { name: "Blocked", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamPosition, scoped, { positionId: movableWorshipPosition.positionId }, { name: "Move denied", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamPosition, bothTeams, { positionId: movableWorshipPosition.positionId }, { name: "Move allowed", teamId: av.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.reorderTeamPositions, scoped, {}, { teamId: worship.teamId, positionIds: [worshipPosition.positionId] })).statusCode, 200);
+  assert.equal((await run(authHandlers.reorderTeamPositions, scoped, {}, { teamId: av.teamId, positionIds: [avPosition.positionId] })).statusCode, 403);
+  assert.equal((await run(authHandlers.archiveTeamPosition, scoped, { positionId: worshipPosition.positionId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamPosition, scoped, { positionId: avPosition.positionId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamPosition, scoped, { positionId: secondWorshipPosition.positionId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamPosition, scoped, { positionId: avPosition.positionId })).statusCode, 403);
+
+  assert.equal((await run(authHandlers.createTeamRole, scoped, {}, { name: "New Worship", teamId: worship.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.createTeamRole, scoped, {}, { name: "New AV", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.createTeamRole, scoped, {}, { name: "New Youth", teamId: youth.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamRole, scoped, { roleId: worshipRole.roleId }, { name: "Updated", teamId: worship.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.updateTeamRole, scoped, { roleId: avRole.roleId }, { name: "Blocked", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamRole, scoped, { roleId: movableWorshipRole.roleId }, { name: "Move denied", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamRole, bothTeams, { roleId: movableWorshipRole.roleId }, { name: "Move allowed", teamId: av.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamRole, scoped, { roleId: worshipRole.roleId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamRole, scoped, { roleId: avRole.roleId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamRole, scoped, { roleId: secondWorshipRole.roleId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamRole, scoped, { roleId: avRole.roleId })).statusCode, 403);
+
+  assert.equal((await run(authHandlers.createTeamQualificationArea, scoped, {}, { name: "New Worship", teamId: worship.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.createTeamQualificationArea, scoped, {}, { name: "New AV", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.createTeamQualificationArea, scoped, {}, { name: "New Youth", teamId: youth.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamQualificationArea, scoped, { areaId: worshipArea.areaId }, { name: "Updated", teamId: worship.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.updateTeamQualificationArea, scoped, { areaId: avArea.areaId }, { name: "Blocked", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamQualificationArea, scoped, { areaId: movableWorshipArea.areaId }, { name: "Move denied", teamId: av.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamQualificationArea, bothTeams, { areaId: movableWorshipArea.areaId }, { name: "Move allowed", teamId: av.teamId })).statusCode, 200);
+  assert.equal((await run(authHandlers.createTeamQualificationLevel, scoped, {}, { areaId: worshipArea.areaId, name: "New level", rank: 2 })).statusCode, 200);
+  assert.equal((await run(authHandlers.createTeamQualificationLevel, scoped, {}, { areaId: avArea.areaId, name: "Blocked", rank: 2 })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamQualificationLevel, scoped, { levelId: worshipLevel.levelId }, { areaId: worshipArea.areaId, name: "Updated", rank: 2 })).statusCode, 200);
+  assert.equal((await run(authHandlers.updateTeamQualificationLevel, scoped, { levelId: avLevel.levelId }, { areaId: avArea.areaId, name: "Blocked", rank: 2 })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamQualificationLevel, scoped, { levelId: secondWorshipLevel.levelId }, { areaId: avArea.areaId, name: "Move denied", rank: 2 })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeamQualificationLevel, bothTeams, { levelId: movableWorshipLevel.levelId }, { areaId: avArea.areaId, name: "Move allowed", rank: 2 })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamQualificationLevel, scoped, { levelId: worshipLevel.levelId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamQualificationLevel, scoped, { levelId: avLevel.levelId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamQualificationLevel, scoped, { levelId: secondWorshipLevel.levelId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamQualificationLevel, scoped, { levelId: avLevel.levelId })).statusCode, 403);
+
+  for (const [handler, params, body] of [
+    [authHandlers.createTeamPosition, {}, { name: "Read only", teamId: worship.teamId }],
+    [authHandlers.updateTeamPosition, { positionId: membershipPosition.positionId }, { name: "Read only", teamId: worship.teamId }],
+    [authHandlers.archiveTeamPosition, { positionId: membershipPosition.positionId }, {}],
+    [authHandlers.deleteTeamPosition, { positionId: membershipPosition.positionId }, {}],
+    [authHandlers.reorderTeamPositions, {}, { teamId: worship.teamId, positionIds: [worshipPosition.positionId] }],
+    [authHandlers.createTeamRole, {}, { name: "Read only", teamId: worship.teamId }],
+    [authHandlers.updateTeamRole, { roleId: membershipRole.roleId }, { name: "Read only", teamId: worship.teamId }],
+    [authHandlers.archiveTeamRole, { roleId: membershipRole.roleId }, {}],
+    [authHandlers.deleteTeamRole, { roleId: membershipRole.roleId }, {}],
+    [authHandlers.createTeamQualificationArea, {}, { name: "Read only", teamId: worship.teamId }],
+    [authHandlers.updateTeamQualificationArea, { areaId: membershipArea.areaId }, { name: "Read only", teamId: worship.teamId }],
+    [authHandlers.archiveTeamQualificationArea, { areaId: membershipArea.areaId }, {}],
+    [authHandlers.deleteTeamQualificationArea, { areaId: membershipArea.areaId }, {}],
+    [authHandlers.createTeamQualificationLevel, {}, { areaId: worshipArea.areaId, name: "Read only", rank: 1 }],
+    [authHandlers.updateTeamQualificationLevel, { levelId: membershipLevel.levelId }, { areaId: membershipArea.areaId, name: "Read only", rank: 2 }],
+    [authHandlers.archiveTeamQualificationLevel, { levelId: membershipLevel.levelId }, {}],
+    [authHandlers.deleteTeamQualificationLevel, { levelId: membershipLevel.levelId }, {}],
+  ]) {
+    assert.equal((await run(handler, membershipReader, params, body)).statusCode, 403);
+  }
+
+  assert.equal((await run(authHandlers.archiveTeamQualificationArea, scoped, { areaId: worshipArea.areaId })).statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeamQualificationArea, scoped, { areaId: avArea.areaId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeamQualificationArea, scoped, { areaId: secondWorshipArea.areaId })).statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeamQualificationArea, scoped, { areaId: avArea.areaId })).statusCode, 403);
+
+  const malformedLevelId = `${owner.churchId}_malformed_level`;
+  await setDoc(COLLECTIONS.teamQualificationLevels, malformedLevelId, {
+    levelId: malformedLevelId, churchId: owner.churchId, areaId: "missing-area",
+    name: "Malformed", rank: 1,
+  }, { merge: false });
+  assert.equal((await run(authHandlers.archiveTeamQualificationLevel, scoped, { levelId: malformedLevelId })).statusCode, 404);
+  assert.equal((await run(authHandlers.deleteTeamQualificationLevel, scoped, { levelId: malformedLevelId })).statusCode, 404);
+
+});

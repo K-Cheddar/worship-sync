@@ -4195,6 +4195,20 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const resolveQualificationLevelTeamId = async (level, churchId) => {
+    if (!level?.areaId) {
+      throw httpError(404, "Qualification area not found.");
+    }
+    const area = await assertTeamEntityInChurch(
+      "qualificationArea",
+      level.areaId,
+      churchId,
+      { active: false, label: "Qualification area" },
+    );
+    if (!area.teamId) throw httpError(404, "Qualification area not found.");
+    return area.teamId;
+  };
+
   const normalizeTeamScheduleOccurrences = (value, serviceIds) => {
     const occurrences = Array.isArray(value) ? value : [];
     if (occurrences.length === 0) {
@@ -12712,10 +12726,14 @@ export const createTeamsAuthHandlers = ({
     async createTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const payload = await validateTeamPositionPayload(
           req.body,
           req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          payload.teamId,
         );
         const position = await upsertTeamEntity({
           kind: "position",
@@ -13374,22 +13392,27 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
         const existing = await assertTeamEntityInChurch(
           "position",
           req.params.positionId,
           churchId,
           { active: false, label: "Position" },
         );
+        const payload = await validateTeamPositionPayload(
+          req.body,
+          churchId,
+          existing,
+        );
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existing.teamId, payload.teamId],
+        );
         const position = await upsertTeamEntity({
           kind: "position",
           churchId,
           id: req.params.positionId,
-          payload: await validateTeamPositionPayload(
-            req.body,
-            churchId,
-            existing,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13407,7 +13430,6 @@ export const createTeamsAuthHandlers = ({
     async reorderTeamPositions(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const churchId = req.params.churchId;
         // The team scopes the reorder so we never renumber another team's positions.
         const team = await assertTeamEntityInChurch(
@@ -13416,6 +13438,7 @@ export const createTeamsAuthHandlers = ({
           churchId,
           { label: "Team", active: false },
         );
+        const admin = await requireTeamsEditForTeam(req, churchId, team.teamId);
         const positionIds = normalizeIdArray(req.body?.positionIds);
         if (!positionIds.length) {
           throw httpError(400, "No positions to reorder.");
@@ -13470,7 +13493,17 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "position",
+          req.params.positionId,
+          req.params.churchId,
+          { active: false, label: "Position" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await archiveTeamEntity({
           kind: "position",
           churchId: req.params.churchId,
@@ -13496,11 +13529,16 @@ export const createTeamsAuthHandlers = ({
     async createTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = await validateTeamRolePayload(req.body, req.params.churchId);
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          payload.teamId,
+        );
         const role = await upsertTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
-          payload: await validateTeamRolePayload(req.body, req.params.churchId),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13518,18 +13556,24 @@ export const createTeamsAuthHandlers = ({
     async updateTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
         const existingRole = await assertTeamEntityInChurch(
           "role",
           req.params.roleId,
-          req.params.churchId,
+          churchId,
           { active: false, label: "Role" },
+        );
+        const payload = await validateTeamRolePayload(req.body, churchId, existingRole);
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existingRole.teamId, payload.teamId],
         );
         const role = await upsertTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
           id: req.params.roleId,
-          payload: await validateTeamRolePayload(req.body, req.params.churchId, existingRole),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13547,7 +13591,17 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "role",
+          req.params.roleId,
+          req.params.churchId,
+          { active: false, label: "Role" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await archiveTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
@@ -13569,7 +13623,17 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "role",
+          req.params.roleId,
+          req.params.churchId,
+          { active: false, label: "Role" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await deleteTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
@@ -13591,14 +13655,19 @@ export const createTeamsAuthHandlers = ({
     async createTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = await validateQualificationAreaPayload(
+          req.body,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          payload.teamId,
+        );
         const area = await upsertTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
-          payload: await validateQualificationAreaPayload(
-            req.body,
-            req.params.churchId,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13620,22 +13689,28 @@ export const createTeamsAuthHandlers = ({
     async updateTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
         const existingArea = await assertTeamEntityInChurch(
           "qualificationArea",
           req.params.areaId,
-          req.params.churchId,
+          churchId,
           { active: false, label: "Qualification area" },
+        );
+        const payload = await validateQualificationAreaPayload(
+          req.body,
+          churchId,
+          existingArea,
+        );
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existingArea.teamId, payload.teamId],
         );
         const area = await upsertTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
           id: req.params.areaId,
-          payload: await validateQualificationAreaPayload(
-            req.body,
-            req.params.churchId,
-            existingArea,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13657,7 +13732,17 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationArea",
+          req.params.areaId,
+          req.params.churchId,
+          { active: false, label: "Qualification area" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await archiveTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
@@ -13683,7 +13768,17 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationArea",
+          req.params.areaId,
+          req.params.churchId,
+          { active: false, label: "Qualification area" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await deleteTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
@@ -13709,14 +13804,23 @@ export const createTeamsAuthHandlers = ({
     async createTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = await validateQualificationLevelPayload(
+          req.body,
+          req.params.churchId,
+        );
+        const targetTeamId = await resolveQualificationLevelTeamId(
+          { areaId: payload.areaId },
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          targetTeamId,
+        );
         const level = await upsertTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
-          payload: await validateQualificationLevelPayload(
-            req.body,
-            req.params.churchId,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13738,15 +13842,28 @@ export const createTeamsAuthHandlers = ({
     async updateTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
+        const existing = await assertTeamEntityInChurch(
+          "qualificationLevel",
+          req.params.levelId,
+          churchId,
+          { active: false, label: "Qualification level" },
+        );
+        const payload = await validateQualificationLevelPayload(req.body, churchId);
+        const [existingTeamId, nextTeamId] = await Promise.all([
+          resolveQualificationLevelTeamId(existing, churchId),
+          resolveQualificationLevelTeamId({ areaId: payload.areaId }, churchId),
+        ]);
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existingTeamId, nextTeamId],
+        );
         const level = await upsertTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
           id: req.params.levelId,
-          payload: await validateQualificationLevelPayload(
-            req.body,
-            req.params.churchId,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -13768,7 +13885,21 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationLevel",
+          req.params.levelId,
+          req.params.churchId,
+          { active: false, label: "Qualification level" },
+        );
+        const teamId = await resolveQualificationLevelTeamId(
+          existing,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          teamId,
+        );
         await archiveTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
@@ -13794,7 +13925,21 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationLevel",
+          req.params.levelId,
+          req.params.churchId,
+          { active: false, label: "Qualification level" },
+        );
+        const teamId = await resolveQualificationLevelTeamId(
+          existing,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          teamId,
+        );
         await deleteTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
@@ -14565,7 +14710,17 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "position",
+          req.params.positionId,
+          req.params.churchId,
+          { active: false, label: "Position" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await deleteTeamEntity({
           kind: "position",
           churchId: req.params.churchId,

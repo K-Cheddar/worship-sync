@@ -3,7 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastContext } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
-import { getTeamScheduleDetail, getTeamsBootstrap } from "../../../api/auth";
+import { getTeamScheduleDetail, getTeamsBootstrap, reorderTeamPositions } from "../../../api/auth";
 import { useTeamsPageState } from "./useTeamsPageState";
 
 let mockState: unknown;
@@ -143,6 +143,39 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
     expect(MockEventSource.instances).toHaveLength(0);
+    unmount();
+  });
+
+  it("allows position reorder only for a team the scoped manager can edit", async () => {
+    mockGetTeamsBootstrap.mockResolvedValueOnce({
+      ...emptyBootstrap,
+      teams: [{ teamId: "worship", name: "Worship" }, { teamId: "av", name: "AV" }],
+      positions: [
+        { churchId: "church-1", positionId: "worship-position", teamId: "worship", name: "Keys" },
+        { churchId: "church-1", positionId: "av-position", teamId: "av", name: "Camera" },
+      ],
+    } as never);
+    jest.mocked(reorderTeamPositions).mockResolvedValue({ success: true, positions: [] } as never);
+    const { result, unmount } = renderPageState(undefined, undefined, {
+      role: "member",
+      canEditTeams: false,
+      permissions: { teams: "none", teamScopes: { worship: "edit" } },
+      canEditTeam: (teamId: string) => teamId === "worship",
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await result.current.reorderPositions("av", ["av-position"]);
+    });
+    expect(reorderTeamPositions).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.reorderPositions("worship", ["worship-position"]);
+    });
+    expect(reorderTeamPositions).toHaveBeenCalledWith("church-1", {
+      teamId: "worship",
+      positionIds: ["worship-position"],
+    });
     unmount();
   });
 

@@ -89,7 +89,7 @@ type PositionManagerProps = {
   positions: TeamPosition[];
   teams: TeamRecord[];
   data: TeamsData;
-  canEdit: boolean;
+  canEditTeam: (teamId: string) => boolean;
   onSaved: (position: TeamPosition, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (positionId: string) => void;
@@ -101,7 +101,7 @@ const PositionManager = ({
   positions,
   teams,
   data,
-  canEdit,
+  canEditTeam,
   onSaved,
   onArchived,
   onRemoved,
@@ -114,6 +114,10 @@ const PositionManager = ({
   const defaultMicrophoneLabelId = useId();
   const sensors = useSensors();
   const activeTeams = useMemo(() => teams.filter(isActive), [teams]);
+  const editableTeams = useMemo(
+    () => activeTeams.filter((team) => canEditTeam(team.teamId)),
+    [activeTeams, canEditTeam],
+  );
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [editing, setEditing] = useState<TeamPosition | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -157,7 +161,13 @@ const PositionManager = ({
 
   // Default the selected team to the first active team once teams load.
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
-  const positionTeamId = editing?.teamId || teamId;
+  const creationTeamId = canEditTeam(teamId)
+    ? teamId
+    : editableTeams[0]?.teamId || "";
+  const positionTeamId = editing?.teamId || creationTeamId;
+  const canEditCurrent = editing
+    ? canEditTeam(editing.teamId)
+    : Boolean(creationTeamId && canEditTeam(creationTeamId));
   const positionTeamUsesMicrophones = Boolean(
     activeTeams.find((team) => team.teamId === positionTeamId)
       ?.usesMicrophoneAssignments,
@@ -167,15 +177,21 @@ const PositionManager = ({
     (microphone) => microphone.id === draft.defaultMicrophoneId,
   );
   const selectedDefaultIem = iems.find((iem) => iem.id === draft.defaultIemId);
+  const storedMicrophoneOption = draft.defaultMicrophoneId && !selectedDefaultMicrophone
+    ? [{ value: draft.defaultMicrophoneId, textValue: "Saved microphone", label: "Saved microphone" }]
+    : [];
+  const storedIemOption = draft.defaultIemId && !selectedDefaultIem
+    ? [{ value: draft.defaultIemId, textValue: "Saved IEM", label: "Saved IEM" }]
+    : [];
   const teamQualificationAreaOptions = useMemo(
     () =>
-      data.qualificationAreas
-        .filter((area) => area.teamId === teamId && isActive(area))
+    data.qualificationAreas
+        .filter((area) => area.teamId === positionTeamId && isActive(area))
         .map((area) => ({
           label: <span className="inline-flex items-center gap-2"><EntityIconBadge icon={area.icon || "Award"} className="size-5 shrink-0" iconClassName="size-3" /><span>{area.name}</span></span>,
           value: area.areaId,
         })),
-    [data.qualificationAreas, teamId],
+    [data.qualificationAreas, positionTeamId],
   );
 
   const teamPositions = positions.filter((position) =>
@@ -190,25 +206,26 @@ const PositionManager = ({
 
   // Reordering acts on the full team list, so disable it while a search filter
   // is narrowing what's shown.
+  const reorderTeamId = listFilters.teamIds.length === 1
+    ? listFilters.teamIds[0]
+    : "";
   const canReorder =
-    canEdit &&
-    listFilters.teamIds.length === 1 &&
-    listFilters.teamIds[0] === teamId &&
+    Boolean(reorderTeamId && canEditTeam(reorderTeamId)) &&
     !listQuery.trim() &&
     teamPositions.length > 1;
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
-      if (!canEdit) return;
+      if (!reorderTeamId || !canEditTeam(reorderTeamId)) return;
       if (!over || active.id === over.id) return;
       const ids = teamPositions.map((position) => position.positionId);
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex === -1 || newIndex === -1) return;
-      onReordered(teamId, arrayMove(ids, oldIndex, newIndex));
+      onReordered(reorderTeamId, arrayMove(ids, oldIndex, newIndex));
     },
-    [canEdit, onReordered, teamId, teamPositions],
+    [canEditTeam, onReordered, reorderTeamId, teamPositions],
   );
 
   const reset = () => {
@@ -259,8 +276,7 @@ const PositionManager = ({
   };
 
   const confirmDelete = async () => {
-    if (!canEdit) return;
-    if (!deleting) return;
+    if (!deleting || !canEditTeam(deleting.teamId)) return;
     const position = deleting;
     if (position.positionId.startsWith("local-")) {
       onRemoved(position.positionId);
@@ -281,8 +297,8 @@ const PositionManager = ({
   };
 
   const submit = async () => {
-    if (!canEdit) return;
-    const positionTeamId = editing?.teamId || teamId;
+    const positionTeamId = editing?.teamId || creationTeamId;
+    if (!positionTeamId || !canEditTeam(positionTeamId)) return;
     if (!positionTeamId) {
       showToast("Create a team first, then add its positions.", "neutral");
       return;
@@ -387,6 +403,7 @@ const PositionManager = ({
   useTeamsUnsavedChanges(hasPendingChanges && !isSavingCurrent);
 
   const openPositionEditor = useCallback((position: TeamPosition) => {
+    if (!canEditTeam(position.teamId)) return;
     setShowFilters(false);
     setEditing(position);
     setSelectedTeamId(position.teamId);
@@ -399,22 +416,22 @@ const PositionManager = ({
       defaultMicrophoneId: position.defaultMicrophoneId || "",
       defaultIemId: position.defaultIemId || "",
     });
-  }, []);
+  }, [canEditTeam]);
 
   const selectPosition = useCallback((position: TeamPosition) => {
+    if (!canEditTeam(position.teamId)) return;
     if (editing?.positionId === position.positionId) return;
     requestDiscardAction(() => openPositionEditor(position));
-  }, [editing?.positionId, openPositionEditor, requestDiscardAction]);
+  }, [canEditTeam, editing?.positionId, openPositionEditor, requestDiscardAction]);
 
   useEffect(() => {
-    if (!canEdit) return;
     const editPositionId = searchParams.get(TEAMS_POSITION_EDIT_SEARCH_PARAM)?.trim();
     if (!editPositionId) return;
     pendingEditPositionIdRef.current = editPositionId;
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete(TEAMS_POSITION_EDIT_SEARCH_PARAM);
     setSearchParams(nextParams, { replace: true, state: location.state });
-  }, [canEdit, location.state, searchParams, setSearchParams]);
+  }, [location.state, searchParams, setSearchParams]);
 
   useEffect(() => {
     const editPositionId = pendingEditPositionIdRef.current;
@@ -422,8 +439,9 @@ const PositionManager = ({
     const position = positions.find((item) => item.positionId === editPositionId);
     if (!position) return;
     pendingEditPositionIdRef.current = null;
+    if (!canEditTeam(position.teamId)) return;
     openPositionEditor(position);
-  }, [openPositionEditor, positions]);
+  }, [canEditTeam, openPositionEditor, positions]);
 
   const positionRowProps = (position: TeamPosition) => ({
     title: position.name,
@@ -431,7 +449,7 @@ const PositionManager = ({
     icon: position.icon,
     archived: Boolean(position.archivedAt),
     compact: true,
-    canEdit,
+    canEdit: canEditTeam(position.teamId),
     onTitleClick: () => selectPosition(position),
   });
 
@@ -440,13 +458,15 @@ const PositionManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
+          if (!creationTeamId) return;
           requestDiscardAction(() => {
             setShowFilters(false);
+            setSelectedTeamId(creationTeamId);
             reset();
             setShowCreate(true);
           });
         }}
-        canEdit={canEdit}
+        canEdit={Boolean(editableTeams.length)}
         keepCreateActionVisible
         title={editing ? "Edit position" : "Create position"}
         sectionTitle="Positions"
@@ -535,7 +555,7 @@ const PositionManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditCurrent}
                   archiveLabel="Archive position"
                   deleteLabel="Delete position"
                   menuLabel="Position actions"
@@ -549,6 +569,7 @@ const PositionManager = ({
                         };
                         onSaved(archivedPosition);
                         try {
+                          if (!canEditTeam(editing.teamId)) return;
                           await archiveTeamPosition(churchId, editing.positionId);
                           finishEditing(reset);
                         } catch (error) {
@@ -572,14 +593,14 @@ const PositionManager = ({
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
-            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            disabled={!canEditCurrent || !draft.name.trim() || isSavingCurrent}
           />
         }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
           <span className="font-semibold text-gray-200">
-            {activeTeams.find((team) => team.teamId === (editing?.teamId || teamId))?.name ||
+            {activeTeams.find((team) => team.teamId === positionTeamId)?.name ||
               "a team"}
           </span>
           .
@@ -599,8 +620,8 @@ const PositionManager = ({
               value={draft.defaultMicrophoneId || ""}
               onChange={(value) => setDraft((current) => ({ ...current, defaultMicrophoneId: value }))}
               aria-labelledby={defaultMicrophoneLabelId} placeholder="No default microphone" selectClassName="w-full justify-between"
-              selectedValueLabel={selectedDefaultMicrophone ? <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={selectedDefaultMicrophone} color={selectedDefaultMicrophone.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultMicrophone.name}</span></span> : "No default microphone"}
-              options={[{ value: "", label: "No default microphone" }, ...microphones.map((microphone) => ({ value: microphone.id, textValue: microphone.name, label: <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={microphone} color={microphone.color} className="size-4 shrink-0" /><span className="truncate">{microphone.name}</span></span> }))]}
+              selectedValueLabel={selectedDefaultMicrophone ? <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={selectedDefaultMicrophone} color={selectedDefaultMicrophone.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultMicrophone.name}</span></span> : draft.defaultMicrophoneId ? "Saved microphone" : "No default microphone"}
+              options={[{ value: "", label: "No default microphone" }, ...storedMicrophoneOption, ...microphones.map((microphone) => ({ value: microphone.id, textValue: microphone.name, label: <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={microphone} color={microphone.color} className="size-4 shrink-0" /><span className="truncate">{microphone.name}</span></span> }))]}
             />
             <p className="mt-1 text-xs text-gray-400">
               Applied to this position&apos;s slots when a new schedule is created.
@@ -615,8 +636,8 @@ const PositionManager = ({
               value={draft.defaultIemId || ""}
               onChange={(value) => setDraft((current) => ({ ...current, defaultIemId: value }))}
               aria-label="Default IEM" placeholder="No default IEM" selectClassName="w-full justify-between"
-              selectedValueLabel={selectedDefaultIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedDefaultIem} color={selectedDefaultIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultIem.name}</span></span> : "No default IEM"}
-              options={[{ value: "", label: "No default IEM" }, ...iems.map((iem) => ({ value: iem.id, textValue: iem.name, label: <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" /><span className="truncate">{iem.name}</span><span className="ml-auto text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span></span> }))]}
+              selectedValueLabel={selectedDefaultIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedDefaultIem} color={selectedDefaultIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedDefaultIem.name}</span></span> : draft.defaultIemId ? "Saved IEM" : "No default IEM"}
+              options={[{ value: "", label: "No default IEM" }, ...storedIemOption, ...iems.map((iem) => ({ value: iem.id, textValue: iem.name, label: <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" /><span className="truncate">{iem.name}</span><span className="ml-auto text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span></span> }))]}
             />
             <p className="mt-1 text-xs text-gray-400">Applied to this position&apos;s slots when a new schedule is created.</p>
           </div>

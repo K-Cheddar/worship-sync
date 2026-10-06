@@ -2,7 +2,7 @@ import PositionManager from "../managers/PositionManager";
 import { useTeamsPage } from "../TeamsPageContext";
 
 const TeamsPositionsPage = () => {
-  const { pageData, upsertData, removeData, reorderPositions, refresh, canEditTeams } =
+  const { pageData, upsertData, removeData, reorderPositions, refresh, canEditTeam } =
     useTeamsPage();
 
   return (
@@ -10,7 +10,7 @@ const TeamsPositionsPage = () => {
       positions={pageData.positions}
       teams={pageData.teams}
       data={pageData}
-      canEdit={canEditTeams}
+      canEditTeam={canEditTeam}
       onSaved={(position, replaceId) =>
         upsertData("positions", "positionId", position, replaceId)
       }

@@ -1,12 +1,12 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import QualificationManager from "./QualificationManager";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastProvider } from "../../../context/toastContext";
 import { TeamsNavigationGuardProvider, useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
-import { createTeamQualificationArea, updateTeamQualificationArea, updateTeamQualificationLevel } from "../../../api/auth";
-import type { TeamQualificationArea, TeamRecord } from "../../../api/authTypes";
+import { createTeamQualificationArea, createTeamQualificationLevel, updateTeamQualificationArea, updateTeamQualificationLevel } from "../../../api/auth";
+import type { TeamQualificationArea, TeamQualificationLevel, TeamRecord } from "../../../api/authTypes";
 import {
   readPersistedTeamsReturnTo,
   TEAMS_SECTION_PATHS,
@@ -64,7 +64,7 @@ describe("QualificationManager navigation guard", () => {
               areas={[]}
               levels={[]}
               teams={[activeTeam]}
-              canEdit
+              canEditTeam={() => true}
               onAreaSaved={jest.fn()}
               onLevelSaved={jest.fn()}
               onArchived={jest.fn()}
@@ -95,7 +95,7 @@ describe("QualificationManager navigation guard", () => {
               areas={[]}
               levels={[]}
               teams={[activeTeam]}
-              canEdit
+              canEditTeam={() => true}
               onAreaSaved={jest.fn()}
               onLevelSaved={jest.fn()}
               onArchived={jest.fn()}
@@ -152,7 +152,7 @@ describe("QualificationManager navigation guard", () => {
               areas={[]}
               levels={[]}
               teams={[activeTeam]}
-              canEdit
+              canEditTeam={() => true}
               onAreaSaved={jest.fn()}
               onLevelSaved={jest.fn()}
               onArchived={jest.fn()}
@@ -221,7 +221,7 @@ describe("QualificationManager navigation guard", () => {
               areas={[]}
               levels={[]}
               teams={[activeTeam]}
-              canEdit
+              canEditTeam={() => true}
               onAreaSaved={jest.fn()}
               onLevelSaved={jest.fn()}
               onArchived={jest.fn()}
@@ -248,6 +248,65 @@ describe("QualificationManager navigation guard", () => {
   });
 });
 
+it("keeps AV qualifications read-only and creates Worship areas and levels under Worship", async () => {
+  const user = userEvent.setup();
+  const avTeam: TeamRecord = { churchId: "church-1", teamId: "team-av", name: "AV", memberIds: [] };
+  const avArea: TeamQualificationArea = { churchId: "church-1", areaId: "area-av", teamId: avTeam.teamId, name: "Camera skill" };
+  const worshipArea: TeamQualificationArea = { churchId: "church-1", areaId: "area-worship", teamId: activeTeam.teamId, name: "Vocal skill" };
+  const avLevel: TeamQualificationLevel = { churchId: "church-1", levelId: "level-av", areaId: avArea.areaId, name: "Experienced", rank: 1 };
+  const createdArea = { ...worshipArea, areaId: "area-new", name: "New skill" };
+  const createdLevel = { churchId: "church-1", levelId: "level-new", areaId: createdArea.areaId, name: "Starter", rank: 1 };
+  jest.mocked(createTeamQualificationArea).mockClear();
+  jest.mocked(createTeamQualificationLevel).mockClear();
+  jest.mocked(createTeamQualificationArea).mockResolvedValue({ success: true, area: createdArea } as never);
+  jest.mocked(createTeamQualificationLevel).mockResolvedValue({ success: true, level: createdLevel } as never);
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.qualifications]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <QualificationManager
+            areas={[avArea, worshipArea]} levels={[avLevel]} teams={[avTeam, activeTeam]}
+            canEditTeam={(teamId) => teamId === activeTeam.teamId}
+            onAreaSaved={jest.fn()} onLevelSaved={jest.fn()} onArchived={jest.fn()} onAreaRemoved={jest.fn()}
+          />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole("button", { name: "Edit Vocal skill" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit Camera skill" })).not.toBeInTheDocument();
+  await user.click(screen.getAllByRole("button", { name: "Create area" })[0]);
+  expect(screen.getAllByText("Worship", { exact: true })).not.toHaveLength(0);
+  await user.type(screen.getByLabelText(/^Area name:?$/), "New skill");
+  await user.click(screen.getByRole("button", { name: "Create qualification area" }));
+  await waitFor(() => expect(createTeamQualificationArea).toHaveBeenCalledWith("church-1", expect.objectContaining({ teamId: activeTeam.teamId })));
+
+  await user.type(screen.getByPlaceholderText("New level"), "Starter");
+  await user.click(screen.getByRole("button", { name: "Add level" }));
+  await waitFor(() => expect(createTeamQualificationLevel).toHaveBeenCalledWith("church-1", expect.objectContaining({ areaId: createdArea.areaId })));
+});
+
+it("hides create and edit controls for a roster-only reader", () => {
+  const area: TeamQualificationArea = { churchId: "church-1", areaId: "area-read", teamId: activeTeam.teamId, name: "Vocal skill" };
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.qualifications]}>
+      <ToastProvider><TeamsNavigationGuardProvider>
+        <QualificationManager
+          areas={[area]} levels={[]} teams={[activeTeam]} canEditTeam={() => false}
+          onAreaSaved={jest.fn()} onLevelSaved={jest.fn()} onArchived={jest.fn()} onAreaRemoved={jest.fn()}
+        />
+      </TeamsNavigationGuardProvider></ToastProvider>
+    </MemoryRouter>,
+  );
+
+  const list = within(screen.getByTestId("teams-create-panel-list"));
+  expect(list.queryByRole("button", { name: "Create area" })).not.toBeInTheDocument();
+  expect(list.queryByRole("button", { name: "Edit Vocal skill" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add level" })).not.toBeInTheDocument();
+  expect(list.getByText("Vocal skill")).toBeInTheDocument();
+});
+
 it("creates a qualification area with an icon and renders a fallback for legacy areas", async () => {
   const user = userEvent.setup();
   const onAreaSaved = jest.fn();
@@ -271,7 +330,7 @@ it("creates a qualification area with an icon and renders a fallback for legacy 
           ]}
           levels={[]}
           teams={[activeTeam]}
-          canEdit
+          canEditTeam={() => true}
           onAreaSaved={onAreaSaved}
           onLevelSaved={jest.fn()}
           onArchived={jest.fn()}
@@ -317,7 +376,7 @@ it("removes a saved qualification area icon without changing its levels", async 
           areas={[area]}
           levels={[]}
           teams={[activeTeam]}
-          canEdit
+          canEditTeam={() => true}
           onAreaSaved={jest.fn()}
           onLevelSaved={jest.fn()}
           onArchived={jest.fn()}
