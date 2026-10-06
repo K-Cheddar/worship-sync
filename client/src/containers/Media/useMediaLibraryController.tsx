@@ -23,7 +23,7 @@ import {
 import { mediaInfoType } from "./cloudinaryTypes";
 import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
-import { deleteLocalImage } from "../../utils/localImageAssets";
+import { deleteLocalImage, getLocalImageUploadJob } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import {
   isDesktopCaptureKind,
@@ -114,6 +114,9 @@ import { mediaLibraryFlushFailureMessage } from "./mediaLibraryFlushAlerts";
 import { fill } from "@cloudinary/url-gen/actions/resize";
 import { ActionCreators } from "redux-undo";
 import { useToast } from "../../context/toastContext";
+import { useOptionalTransferActions } from "../../context/transferContext";
+import type { Transfer, TransferFileActivity } from "../../context/transferModel";
+import { claimMediaDeletion, MediaOperationCleanupError } from "../../utils/mediaOperationClaims";
 import type { ToastVariant } from "../../components/Toast/Toast";
 import { type VirtualMediaGridHandle } from "./VirtualMediaGrid";
 import { getCanvaMediaSource, hasValidCanvaRefreshMetadata } from "./canvaMediaSource";
@@ -162,7 +165,8 @@ export function useMediaLibraryController({
   const location = useLocation();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
-  const { showToast, updateToast, removeToast } = useToast();
+  const { showToast, removeToast } = useToast();
+  const activityActions = useOptionalTransferActions();
   const isPanelVariant = variant === "panel";
 
   const notifyMediaAction = useCallback(
@@ -895,6 +899,7 @@ export function useMediaLibraryController({
     const cloudShareAction = getLocalMediaCloudShareBarAction(
       selectedMedia,
       selectedMediaIds.size,
+      list.filter((media) => selectedMediaIds.has(media.id)),
     );
     if (cloudShareAction) actions.push(cloudShareAction);
     return actions;
@@ -907,7 +912,8 @@ export function useMediaLibraryController({
     selectedQuickLink,
     selectedOverlay,
     selectedMedia,
-    selectedMediaIds.size,
+    selectedMediaIds,
+    list,
     dispatch,
     itemSlideContext,
     isProjectorTransmitting,
@@ -1043,6 +1049,15 @@ export function useMediaLibraryController({
             if (!churchId) throw new Error("Church session is unavailable.");
             await deleteChurchMuxAsset(churchId, muxAssetId);
             providerUsageChanged = true;
+          }
+          if (row.localImage) {
+            const imageJob = await getLocalImageUploadJob(row.localImage.id);
+            const queuedPublicId = imageJob?.cloudMedia?.publicId;
+            if (queuedPublicId && queuedPublicId !== cloudinaryPublicId) {
+              if (!churchId) throw new Error("Church session is unavailable.");
+              await deleteCloudinaryMediaAsset(churchId, queuedPublicId);
+              providerUsageChanged = true;
+            }
           }
           if (row.source === "local") {
             if (row.localImage) await deleteLocalImage(row.localImage.id);
@@ -1212,6 +1227,7 @@ export function useMediaLibraryController({
   const removeMediaRowsAfterSweep = useCallback(
     async (
       rows: MediaType[],
+      onProgress?: (event: { mediaId: string; phase: string; index: number; total: number }) => void,
     ): Promise<
       {
         phase: "sweep_failed" | "library_failed" | "ok";
@@ -1229,7 +1245,8 @@ export function useMediaLibraryController({
       const providerFailed: MediaType[] = [];
       let sweepFailed = false;
       const attemptedCanvaCleanupKeys = new Set<string>();
-      for (const requestedRow of rows) {
+      for (const [rowIndex, requestedRow] of rows.entries()) {
+        onProgress?.({ mediaId: requestedRow.id, phase: "Checking media references", index: rowIndex, total: rows.length });
         let completed = false;
         for (let attempt = 0; attempt < 3 && !completed; attempt += 1) {
           let authoritative: Awaited<ReturnType<typeof readMediaItemForDeletion>>;
@@ -1280,6 +1297,7 @@ export function useMediaLibraryController({
           }
 
           try {
+            onProgress?.({ mediaId: requestedRow.id, phase: "Saving Media removal", index: rowIndex, total: rows.length });
             const result = await deleteMediaItemAtRevisionFromPouch(db, authoritative.doc);
             // A concurrent tombstone is idempotent. The reference sweep is safe to
             // keep, but cleanup data is not ours to infer from the old row.
@@ -1291,6 +1309,7 @@ export function useMediaLibraryController({
             }
             dispatch(removeMediaItemFromRemote(requestedRow.id));
             deletedRows.push(authoritative.item);
+            onProgress?.({ mediaId: requestedRow.id, phase: "Cleaning up cloud copy", index: rowIndex, total: rows.length });
             if (getCanvaMediaSource(authoritative.item)) {
               const row = authoritative.item;
               const cleanupKey = getCanvaProviderCleanupKey(row);
@@ -1443,59 +1462,255 @@ export function useMediaLibraryController({
       const removedRows = list.filter((m) =>
         next.removedMediaIds.includes(m.id),
       );
-      const result = await removeMediaRowsAfterSweep(removedRows);
-      if (result.providerFailed.length > 0) {
-        setProviderRetryRows(result.providerFailed);
-        setShowProviderRetryModal(true);
-      }
-      if (result.phase === "sweep_failed") {
-        showToast("Could not clean up media references. The media was kept.", "error");
-        return false;
-      }
-      if (result.phase === "library_failed") {
-        showToast(
-          result.deletedRows.length > 0
-            ? `${result.deletedRows.length} ${result.deletedRows.length === 1 ? "item was" : "items were"} removed. ${result.failedRows.length} could not be removed from the library.`
-            : "Could not remove media from the library. The media was kept.",
-          "error",
-        );
-        return false;
-      }
+      const activityId = `media-folder-delete-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+      const fileStates: TransferFileActivity[] = removedRows.map((row) => ({
+        id: row.id,
+        name: row.name || "Untitled media",
+        status: "queued",
+        progress: null,
+        phase: "Waiting to delete",
+      }));
+      let providerFailedRows: MediaType[] = [];
+      let deleteFailedRows: MediaType[] = [];
+      let uploadCleanupRetry: (() => Promise<void>) | undefined;
+      let uploadCleanupRows: MediaType[] = [];
+      let folderFinalized = false;
+      const actionUnregisters: Array<() => void> = [];
 
-      dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
-      for (const key of Object.keys(repairs) as MediaRouteKey[]) {
-        const folderId = repairs[key];
-        if (folderId !== undefined) {
-          dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId }));
+      const publish = (status: Transfer["status"], phase: string, error?: string) => {
+        const complete = fileStates.filter((file) => file.status === "complete").length;
+        const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
+        activityActions?.updateTransfer({
+          id: activityId,
+          type: "Media deletion",
+          name: `Delete folder ${target?.name || "and contents"}`,
+          status,
+          progress: null,
+          phase: { key: status, label: phase, current: complete, total: fileStates.length },
+          detail: `${complete} of ${fileStates.length} media items removed${failed ? ` · ${failed} need attention` : ""}`,
+          ...(error ? { error: { message: error } } : {}),
+          files: fileStates.map((file) => ({ ...file })),
+          canCancel: false,
+          blocksUnload: status === "active",
+          actions: status === "active"
+            ? []
+            : [
+                ...(uploadCleanupRetry || providerFailedRows.length ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+                ...(deleteFailedRows.length ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
+                { key: "dismiss", label: "Dismiss" },
+              ],
+        });
+      };
+      const register = (key: string, handler: () => void | Promise<void>) => {
+        const unregister = activityActions?.registerTransferAction(activityId, key, handler);
+        if (unregister) actionUnregisters.push(unregister);
+      };
+      const finishFolderNavigation = () => {
+        setFolderDeleteOpen(false);
+        navigateToFolder(fallback);
+      };
+      const finalizeFolder = async () => {
+        if (folderFinalized) return;
+        dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
+        for (const key of Object.keys(repairs) as MediaRouteKey[]) {
+          const routeFolderId = repairs[key];
+          if (routeFolderId !== undefined) {
+            dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId: routeFolderId }));
+          }
         }
+        try {
+          if (!db) throw new Error("Media database is unavailable");
+          const docs = await repairPersistedMediaRouteFolders(db, subtree, fallback);
+          broadcastControllerMediaRouteFoldersUpdate(docs);
+        } catch (error) {
+          console.error("Could not repair saved media folder selections", error);
+          showToast("Could not update saved Media folders. Check your connection and try again.", "error");
+        }
+        dispatch(setMediaListAndFolders({ list: getCurrentMediaList(), folders: next.folders }));
+        const flushResult = await flushMediaLibraryDocToPouch(
+          db,
+          getCurrentMediaList(),
+          next.folders,
+          () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
+          { list: getCurrentMediaList(), folders },
+        );
+        if (!flushResult.ok) {
+          showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
+        }
+        clearSelection();
+        dispatch(ActionCreators.clearHistory());
+        folderFinalized = true;
+      };
+      const runDeletionAttempt = async (
+        targetRows: MediaType[],
+        deletionClaim: ReturnType<typeof claimMediaDeletion>,
+      ) => {
+        setPendingDeletionIds((current) => new Set([...current, ...targetRows.map((row) => row.id)]));
+        try {
+          publish("active", "Stopping cloud uploads for folder items");
+          try {
+            await deletionClaim.waitForUploads();
+            uploadCleanupRetry = undefined;
+            uploadCleanupRows = [];
+          } catch (error) {
+            const cleanupError = error instanceof MediaOperationCleanupError ? error : undefined;
+            uploadCleanupRetry = cleanupError?.retryCleanup;
+            uploadCleanupRows = targetRows;
+            const message = error instanceof Error ? error.message : "An upload could not be stopped safely.";
+            targetRows.forEach((row) => {
+              const file = fileStates.find((candidate) => candidate.id === row.id);
+              if (file) { file.status = "failed"; file.progress = null; file.phase = "Upload cleanup failed"; file.error = message; }
+            });
+            deleteFailedRows = uploadCleanupRetry ? [] : targetRows;
+            publish("failed", "Upload cleanup needs attention", message);
+            return false;
+          }
+
+          const result = await removeMediaRowsAfterSweep(targetRows, (event) => {
+            const file = fileStates.find((candidate) => candidate.id === event.mediaId);
+            if (file) { file.status = "active"; file.phase = event.phase; }
+            publish("active", `${event.phase} · ${event.index + 1} of ${event.total}`);
+          });
+          const attemptedIds = new Set(targetRows.map((row) => row.id));
+          const deletedIds = new Set(result.deletedRows.map((row) => row.id));
+          const failedIds = new Set(result.failedRows.map((row) => row.id));
+          const providerIds = new Set(result.providerFailed.map((row) => row.id));
+          for (const row of targetRows) {
+            const file = fileStates.find((candidate) => candidate.id === row.id);
+            if (!file) continue;
+            if (providerIds.has(row.id)) {
+              file.status = "complete";
+              file.progress = 100;
+              file.phase = "Cloud cleanup failed";
+              file.error = "Removed from Media; cloud storage still needs cleanup.";
+            } else if (failedIds.has(row.id)) {
+              file.status = "failed";
+              file.progress = null;
+              file.phase = result.phase === "sweep_failed" ? "References kept" : "Media removal failed";
+              file.error = result.phase === "sweep_failed" ? "Media was kept because reference cleanup failed." : "Media could not be removed from the library.";
+            } else if (deletedIds.has(row.id)) {
+              file.status = "complete";
+              file.progress = 100;
+              file.phase = "Removed from Media";
+              file.error = undefined;
+            }
+          }
+          providerFailedRows = [
+            ...providerFailedRows.filter((row) => !attemptedIds.has(row.id)),
+            ...result.providerFailed,
+          ];
+          deleteFailedRows = [
+            ...deleteFailedRows.filter((row) => !attemptedIds.has(row.id)),
+            ...result.failedRows,
+          ];
+
+          if (deleteFailedRows.length === 0) await finalizeFolder();
+          const completeCount = fileStates.filter((file) => file.status === "complete").length;
+          const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length
+            ? (completeCount ? "partial" : "failed")
+            : "complete";
+          const phase = providerFailedRows.length
+            ? "Folder removed; cloud cleanup needs attention"
+            : deleteFailedRows.length
+              ? result.phase === "sweep_failed" ? "Media kept because references could not be cleaned" : "Some media could not be removed"
+              : "Folder deletion complete";
+          const error = providerFailedRows.length
+            ? `${providerFailedRows.length} cloud ${providerFailedRows.length === 1 ? "asset needs" : "assets need"} cleanup.`
+            : deleteFailedRows.length
+              ? `${deleteFailedRows.length} ${deleteFailedRows.length === 1 ? "item could" : "items could"} not be removed.`
+              : undefined;
+          publish(status, phase, error);
+          return deleteFailedRows.length === 0;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Media could not be deleted.";
+          for (const row of targetRows) {
+            const file = fileStates.find((candidate) => candidate.id === row.id);
+            if (file && file.status !== "complete") { file.status = "failed"; file.error = message; file.phase = "Deletion failed"; }
+          }
+          const attemptedIds = new Set(targetRows.map((row) => row.id));
+          deleteFailedRows = [
+            ...deleteFailedRows.filter((row) => !attemptedIds.has(row.id)),
+            ...targetRows.filter((row) => fileStates.find((file) => file.id === row.id)?.status === "failed"),
+          ];
+          publish("failed", "Media could not be deleted", message);
+          return false;
+        } finally {
+          setPendingDeletionIds((current) => {
+            const pending = new Set(current);
+            targetRows.forEach((row) => pending.delete(row.id));
+            return pending;
+          });
+        }
+      };
+
+      register("retry-cleanup", async () => {
+        publish("active", "Retrying cloud cleanup");
+        if (uploadCleanupRetry) {
+          const retryRows = uploadCleanupRows;
+          try {
+            await uploadCleanupRetry();
+            uploadCleanupRetry = undefined;
+            uploadCleanupRows = [];
+            const retryClaim = claimMediaDeletion(retryRows.map((row) => row.id));
+            try {
+              if (await runDeletionAttempt(retryRows, retryClaim)) finishFolderNavigation();
+            }
+            finally { retryClaim.release(); }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Cloud cleanup failed. Try again.";
+            publish("failed", "Cloud cleanup failed", message);
+          }
+          return;
+        }
+        const retryRows = providerFailedRows;
+        const stillFailed = await deleteFromProviders(retryRows);
+        const stillFailedIds = new Set(stillFailed.map((row) => row.id));
+        for (const row of retryRows) {
+          const file = fileStates.find((candidate) => candidate.id === row.id);
+          if (!file) continue;
+          if (stillFailedIds.has(row.id)) {
+            file.status = "complete";
+            file.progress = 100;
+            file.phase = "Cloud cleanup failed";
+            file.error = "Removed from Media; cloud storage still needs cleanup.";
+          } else {
+            file.status = "complete";
+            file.progress = 100;
+            file.phase = "Cloud cleanup complete";
+            file.error = undefined;
+          }
+        }
+        providerFailedRows = stillFailed;
+        const hasFailure = stillFailed.length > 0 || deleteFailedRows.length > 0;
+        const completeCount = fileStates.filter((file) => file.status === "complete").length;
+        publish(hasFailure ? (completeCount ? "partial" : "failed") : "complete", stillFailed.length ? "Cloud cleanup still needs attention" : deleteFailedRows.length ? "Some media could not be removed" : "Folder deletion complete", stillFailed.length ? `${stillFailed.length} cloud assets still need cleanup.` : undefined);
+      });
+      register("retry-delete", async () => {
+        const retryRows = deleteFailedRows;
+        if (!retryRows.length) return;
+        const retryClaim = claimMediaDeletion(retryRows.map((row) => row.id));
+        try {
+          if (await runDeletionAttempt(retryRows, retryClaim)) finishFolderNavigation();
+        }
+        finally { retryClaim.release(); }
+      });
+      register("dismiss", () => {
+        if (fileStates.some((file) => file.status === "active")) return;
+        actionUnregisters.forEach((unregister) => unregister());
+        activityActions?.removeTransfer(activityId);
+      });
+
+      if (removedRows.length === 0) {
+        await finalizeFolder();
+        return true;
       }
+      const deletionClaim = claimMediaDeletion(removedRows.map((row) => row.id));
+      publish("active", "Stopping cloud uploads for folder items");
       try {
-        if (!db) throw new Error("Media database is unavailable");
-        const docs = await repairPersistedMediaRouteFolders(db, subtree, fallback);
-        broadcastControllerMediaRouteFoldersUpdate(docs);
-      } catch (error) {
-        console.error("Could not repair saved media folder selections", error);
-        showToast("Could not update saved Media folders. Check your connection and try again.", "error");
+        return await runDeletionAttempt(removedRows, deletionClaim);
+      } finally {
+        deletionClaim.release();
       }
-      dispatch(
-        setMediaListAndFolders({
-          list: getCurrentMediaList(),
-          folders: next.folders,
-        }),
-      );
-      const flushResult = await flushMediaLibraryDocToPouch(
-        db,
-        getCurrentMediaList(),
-        next.folders,
-        () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
-        { list: getCurrentMediaList(), folders },
-      );
-      if (!flushResult.ok) {
-        showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
-      }
-      clearSelection();
-      dispatch(ActionCreators.clearHistory());
-      return true;
     },
     [
       folders,
@@ -1509,6 +1724,11 @@ export function useMediaLibraryController({
       showToast,
       store,
       getCurrentMediaList,
+      activityActions,
+      setPendingDeletionIds,
+      deleteFromProviders,
+      setFolderDeleteOpen,
+      navigateToFolder,
     ],
   );
 
@@ -1517,94 +1737,6 @@ export function useMediaLibraryController({
     setMediaToDelete(null);
     setIsDeletingMultiple(false);
   }, []);
-
-  const finishOptimisticDeletion = useCallback(
-    async (
-      rows: MediaType[],
-      toastId: string,
-    ): Promise<{ succeeded: MediaType[]; failed: MediaType[] }> => {
-      if (!db || rows.length === 0) {
-        setPendingDeletionIds((current) => {
-          const next = new Set(current);
-          rows.forEach((row) => next.delete(row.id));
-          return next;
-        });
-        updateToast(toastId, {
-          message: "Could not save the media library. The media was kept.",
-          variant: "error",
-          persist: false,
-          duration: 7000,
-        });
-        return { succeeded: [], failed: rows };
-      }
-
-      try {
-        const result = await removeMediaRowsAfterSweep(rows);
-        if (result.phase !== "ok") {
-          setPendingDeletionIds((current) => {
-            const next = new Set(current);
-            rows.forEach((row) => next.delete(row.id));
-            return next;
-          });
-          updateToast(toastId, {
-            message: result.phase === "sweep_failed"
-              ? "Could not clean up media references. The media was kept."
-              : result.deletedRows.length > 0
-                ? `${result.deletedRows.length} ${result.deletedRows.length === 1 ? "item was" : "items were"} removed. ${result.failedRows.length} could not be removed from the library.`
-                : "Could not remove media from the library. The media was kept.",
-            variant: "error",
-            persist: false,
-            duration: 7000,
-          });
-          if (result.providerFailed.length > 0) {
-            setProviderRetryRows(result.providerFailed);
-            setShowProviderRetryModal(true);
-          }
-          return { succeeded: result.deletedRows, failed: result.failedRows };
-        }
-
-        const succeeded = result.deletedRows;
-        const failed = result.providerFailed;
-
-        setPendingDeletionIds((current) => {
-          const next = new Set(current);
-          rows.forEach((row) => next.delete(row.id));
-          return next;
-        });
-        if (failed.length > 0) {
-          setProviderRetryRows(failed);
-          setShowProviderRetryModal(true);
-        }
-
-        updateToast(toastId, {
-          message:
-            failed.length > 0
-              ? `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} removed. ${failed.length} provider ${failed.length === 1 ? "asset needs" : "assets need"} cleanup.`
-              : `${succeeded.length} ${succeeded.length === 1 ? "item" : "items"} deleted`,
-          variant: failed.length > 0 ? "warning" : "success",
-          persist: false,
-          duration: 7000,
-        });
-        if (succeeded.length > 0) dispatch(ActionCreators.clearHistory());
-        return { succeeded, failed };
-      } catch (error) {
-        console.error("Unexpected error during media deletion:", error);
-        setPendingDeletionIds((current) => {
-          const next = new Set(current);
-          rows.forEach((row) => next.delete(row.id));
-          return next;
-        });
-        updateToast(toastId, {
-          message: "Media could not be deleted.",
-          variant: "error",
-          persist: false,
-          duration: 7000,
-        });
-        return { succeeded: [], failed: rows };
-      }
-    },
-    [db, dispatch, removeMediaRowsAfterSweep, updateToast],
-  );
 
   const handleConfirmDelete = async () => {
     if (deleteConfirmLockRef.current) return;
@@ -1623,21 +1755,211 @@ export function useMediaLibraryController({
       dismissDeleteModal();
       return;
     }
-    const itemLabel = rows.length === 1 ? "item" : "items";
-    const toastId = showToast({
-      message: `Deleting ${rows.length} ${itemLabel}...`,
-      variant: "info",
-      persist: true,
+
+    const activityId = `media-delete-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    const fileStates: TransferFileActivity[] = rows.map((row) => ({
+      id: row.id,
+      name: row.name || "Untitled media",
+      status: "queued",
+      progress: null,
+      phase: "Waiting to delete",
+    }));
+    let providerFailedRows: MediaType[] = [];
+    let deleteFailedRows: MediaType[] = [];
+    let uploadCleanupRetry: (() => Promise<void>) | undefined;
+    let uploadCleanupRows: MediaType[] = [];
+    const actionUnregisters: Array<() => void> = [];
+
+    const publish = (status: Transfer["status"], phase: string, error?: string) => {
+      const complete = fileStates.filter((file) => file.status === "complete").length;
+          const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
+      const transfer: Transfer = {
+        id: activityId,
+        type: "Media deletion",
+        name: rows.length === 1 ? `Delete ${rows[0].name || "media"}` : `Delete ${rows.length} media items`,
+        status,
+        progress: null,
+        phase: { key: status, label: phase, current: complete, total: rows.length },
+        detail: `${complete} of ${rows.length} removed${failed ? ` · ${failed} need attention` : ""}`,
+        ...(error ? { error: { message: error } } : {}),
+        files: fileStates.map((file) => ({ ...file })),
+        canCancel: false,
+        blocksUnload: status === "active",
+        actions: status === "active"
+          ? []
+          : [
+              ...(uploadCleanupRetry || providerFailedRows.length ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+              ...(deleteFailedRows.length ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
+              { key: "dismiss", label: "Dismiss" },
+            ],
+      };
+      activityActions?.updateTransfer(transfer);
+    };
+    const register = (key: string, handler: () => void | Promise<void>) => {
+      const unregister = activityActions?.registerTransferAction(activityId, key, handler);
+      if (unregister) actionUnregisters.push(unregister);
+    };
+
+    const runDeletionAttempt = async (targetRows: MediaType[], deletionClaim: ReturnType<typeof claimMediaDeletion>) => {
+      setPendingDeletionIds((current) => new Set([...current, ...targetRows.map((row) => row.id)]));
+      try {
+        publish("active", "Stopping cloud uploads for selected items");
+        try {
+          await deletionClaim.waitForUploads();
+          uploadCleanupRetry = undefined;
+          uploadCleanupRows = [];
+        } catch (error) {
+          const cleanupError = error instanceof MediaOperationCleanupError ? error : undefined;
+          uploadCleanupRetry = cleanupError?.retryCleanup;
+          uploadCleanupRows = targetRows;
+          const message = error instanceof Error ? error.message : "An upload could not be stopped safely.";
+          targetRows.forEach((row) => {
+            const file = fileStates.find((candidate) => candidate.id === row.id);
+            if (file) { file.status = "failed"; file.progress = null; file.phase = "Upload cleanup failed"; file.error = message; }
+          });
+          deleteFailedRows = uploadCleanupRetry ? [] : targetRows;
+          publish("failed", "Upload cleanup needs attention", message);
+          return;
+        }
+
+        const result = await removeMediaRowsAfterSweep(targetRows, (event) => {
+          const file = fileStates.find((candidate) => candidate.id === event.mediaId);
+          if (file) {
+            file.status = "active";
+            file.phase = event.phase;
+          }
+          publish("active", `${event.phase} · ${event.index + 1} of ${event.total}`);
+        });
+        const deletedIds = new Set(result.deletedRows.map((row) => row.id));
+        const providerIds = new Set(result.providerFailed.map((row) => row.id));
+        const failedIds = new Set(result.failedRows.map((row) => row.id));
+        for (const row of targetRows) {
+          const file = fileStates.find((candidate) => candidate.id === row.id);
+          if (!file) continue;
+          if (providerIds.has(row.id)) {
+            file.status = "complete";
+            file.progress = 100;
+            file.phase = "Cloud cleanup failed";
+            file.error = "Removed from Media; cloud storage still needs cleanup.";
+          } else if (failedIds.has(row.id)) {
+            file.status = "failed";
+            file.progress = null;
+            file.phase = result.phase === "sweep_failed" ? "References kept" : "Media removal failed";
+            file.error = result.phase === "sweep_failed" ? "Media was kept because reference cleanup failed." : "Media could not be removed from the library.";
+          } else if (deletedIds.has(row.id)) {
+            file.status = "complete";
+            file.progress = 100;
+            file.phase = "Removed from Media";
+            file.error = undefined;
+          }
+        }
+        const attemptedIds = new Set(targetRows.map((row) => row.id));
+        providerFailedRows = [
+          ...providerFailedRows.filter((row) => !attemptedIds.has(row.id)),
+          ...result.providerFailed,
+        ];
+        deleteFailedRows = [
+          ...deleteFailedRows.filter((row) => !attemptedIds.has(row.id)),
+          ...result.failedRows,
+        ];
+        if (result.deletedRows.length > 0) dispatch(ActionCreators.clearHistory());
+        const completeCount = fileStates.filter((file) => file.status === "complete").length;
+        const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length
+          ? (completeCount ? "partial" : "failed")
+          : "complete";
+        const phase = providerFailedRows.length
+          ? "Media removed; cloud cleanup needs attention"
+          : deleteFailedRows.length
+            ? result.phase === "sweep_failed" ? "Media kept because references could not be cleaned" : "Some media could not be removed"
+            : "Deletion complete";
+        const error = providerFailedRows.length
+          ? `${providerFailedRows.length} cloud ${providerFailedRows.length === 1 ? "asset needs" : "assets need"} cleanup.`
+          : deleteFailedRows.length
+            ? `${deleteFailedRows.length} ${deleteFailedRows.length === 1 ? "item could" : "items could"} not be removed.`
+            : undefined;
+        publish(status, phase, error);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Media could not be deleted.";
+        for (const row of targetRows) {
+          const file = fileStates.find((candidate) => candidate.id === row.id);
+          if (file && file.status !== "complete") { file.status = "failed"; file.error = message; file.phase = "Deletion failed"; }
+        }
+        const attemptedIds = new Set(targetRows.map((row) => row.id));
+        deleteFailedRows = [
+          ...deleteFailedRows.filter((row) => !attemptedIds.has(row.id)),
+          ...targetRows.filter((row) => fileStates.find((file) => file.id === row.id)?.status === "failed"),
+        ];
+        publish("failed", "Media could not be deleted", message);
+      } finally {
+        setPendingDeletionIds((current) => {
+          const next = new Set(current);
+          targetRows.forEach((row) => next.delete(row.id));
+          return next;
+        });
+      }
+    };
+
+    register("retry-cleanup", async () => {
+      publish("active", "Retrying cloud cleanup");
+      if (uploadCleanupRetry) {
+        try {
+          await uploadCleanupRetry();
+          uploadCleanupRetry = undefined;
+          const nextClaim = claimMediaDeletion(uploadCleanupRows.map((row) => row.id));
+          try { await runDeletionAttempt(uploadCleanupRows, nextClaim); }
+          finally { nextClaim.release(); }
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Cloud cleanup failed. Try again.";
+          publish("failed", "Cloud cleanup failed", message);
+          return;
+        }
+      }
+      const retryRows = providerFailedRows;
+      const stillFailed = await deleteFromProviders(retryRows);
+      const stillFailedIds = new Set(stillFailed.map((row) => row.id));
+      for (const row of retryRows) {
+        const file = fileStates.find((candidate) => candidate.id === row.id);
+        if (!file) continue;
+        if (stillFailedIds.has(row.id)) {
+          file.status = "complete";
+          file.progress = 100;
+          file.phase = "Cloud cleanup failed";
+          file.error = "Removed from Media; cloud storage still needs cleanup.";
+        } else {
+          file.status = "complete";
+          file.progress = 100;
+          file.phase = "Cloud cleanup complete";
+          file.error = undefined;
+        }
+      }
+      providerFailedRows = stillFailed;
+      const hasFailure = stillFailed.length > 0 || deleteFailedRows.length > 0;
+      const completeCount = fileStates.filter((file) => file.status === "complete").length;
+      publish(hasFailure ? (completeCount ? "partial" : "failed") : "complete", stillFailed.length ? "Cloud cleanup still needs attention" : deleteFailedRows.length ? "Some media could not be removed" : "Deletion complete", stillFailed.length ? `${stillFailed.length} cloud assets still need cleanup.` : undefined);
     });
-    setPendingDeletionIds(
-      (current) => new Set([...current, ...rows.map((row) => row.id)]),
-    );
+    register("retry-delete", async () => {
+      const retryRows = deleteFailedRows;
+      if (!retryRows.length) return;
+      const nextClaim = claimMediaDeletion(retryRows.map((row) => row.id));
+      await runDeletionAttempt(retryRows, nextClaim);
+      nextClaim.release();
+    });
+    register("dismiss", () => {
+      if (fileStates.some((file) => file.status === "active")) return;
+      actionUnregisters.forEach((unregister) => unregister());
+      activityActions?.removeTransfer(activityId);
+    });
+
+    setPendingDeletionIds((current) => new Set([...current, ...rows.map((row) => row.id)]));
     clearSelection();
-    // Dismiss immediately so a long reference sweep cannot leave Confirm locked.
     dismissDeleteModal();
+    const deletionClaim = claimMediaDeletion(rows.map((row) => row.id));
+    publish("active", "Stopping cloud uploads for selected items");
     try {
-      await finishOptimisticDeletion(rows, toastId);
+      await runDeletionAttempt(rows, deletionClaim);
     } finally {
+      deletionClaim.release();
       deleteConfirmLockRef.current = false;
       setIsDeletingMultiple(false);
       setIsDeleteInProgress(false);

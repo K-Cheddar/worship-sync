@@ -167,6 +167,9 @@ const getOutputName = (
   entry: ReceivedDiagnostics,
   outputs: ReturnType<typeof selectDisplayOutputs>,
 ) => {
+  if (entry.windowRole === "local-preparation") {
+    return `Local preparation · ${entry.discovery?.controllerProfileName || "Presentation"}`;
+  }
   if (entry.windowRole === "editor") return "Editor Preview";
   const output = outputs.find((candidate) => candidate.id === entry.outputId);
   return output?.name ?? entry.outputId ?? entry.windowRole;
@@ -291,7 +294,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
         const selectedKeys = getSelectedFiniteKeys(entry);
         const preparedKeys = getPreparedKeys(entry);
         const ready = [...preparedKeys].filter((key) => selectedKeys.has(key)).length;
-        return entry.candidateDetails !== undefined
+        return entry.candidateDetails !== undefined && selectedKeys.size > 0
           ? `Videos · ${ready}/${selectedKeys.size} ready`
           : preparedKeys.size > 0 ? `Videos · ${preparedKeys.size} ready` : "Videos";
       })()
@@ -391,6 +394,12 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
               : undefined;
             const playingHealthy = Boolean(activeSurface?.phase === "playing" || entry.playingCount > 0);
             const loadState = entry.discovery?.outlineLoadState;
+            const isLocalPreparation = entry.windowRole === "local-preparation";
+            const noServiceSelected = Boolean(
+              isLocalPreparation &&
+                !entry.discovery?.targetOutlineId &&
+                loadState === "loaded",
+            );
             const inventoryIssue = loadState === "retrying" || loadState === "error";
             const actionIssues = getActionIssues(entry);
             const plan = entry.preparationSource === "server-manifest"
@@ -425,8 +434,15 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                   videos={readinessVideos.videos}
                   summary={`${finiteCount} finite inventory · ${selectedFiniteKeys.size} selected finite · ${selectedReadyCount} ready${deferredFiniteCount === undefined ? "" : ` · ${deferredFiniteCount} deferred`}`}
                   truncated={readinessVideos.videosTruncated}
-                  loading={entry.candidateDetails === undefined}
-                  emptyMessage="No videos in this readiness pool."
+                  loading={
+                    entry.candidateDetails === undefined ||
+                    (isLocalPreparation && loadState === "loading")
+                  }
+                  emptyMessage={
+                    noServiceSelected
+                      ? "No service selected for video preparation."
+                      : "No videos in this readiness pool."
+                  }
                 />
 
                 <p className="mt-3 text-xs text-gray-300">
@@ -512,8 +528,8 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
 
           {editorPreviewEntries.length > 0 && (
             <section className="rounded border border-gray-700 p-3">
-              <h3 className="font-semibold">Editor preview · separate preparation pool</h3>
-              <p className="text-xs text-gray-400">These counts describe editor preview surfaces only; they do not indicate projector or service-wide readiness.</p>
+              <h3 className="font-semibold">Editor preview</h3>
+              <p className="text-xs text-gray-400">These counts describe selected-item preview surfaces. Service inventory and preparation are listed under Local preparation.</p>
               <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm">
                 {editorPreviewEntries.map((entry) => (
                   <span key={entry.diagnosticId ?? entry.windowRole}>
@@ -522,7 +538,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                 ))}
               </div>
               <details className="mt-2">
-                <summary className="cursor-pointer text-xs">Editor preview diagnostics</summary>
+                <summary className="cursor-pointer text-xs">Editor preview details</summary>
                 <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px]">{JSON.stringify(sanitizeForCopy(editorPreviewEntries), null, 2)}</pre>
               </details>
             </section>

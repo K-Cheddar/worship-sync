@@ -239,38 +239,51 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
         onClose={reset}
         title="Upload resources"
         size="md"
+        contentClassName="flex flex-col overflow-hidden"
         busy={isUploading}
         headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => { setIsMinimized(true); setIsMinimizedToButton(false); setIsOpen(false); }} /> : undefined}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
           <input ref={inputRef} type="file" multiple accept={RESOURCE_UPLOAD_ACCEPT} aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />
-          <div {...fileDropHandlers} className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-4 transition-colors ${isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600"}`}>
+          <div
+            {...fileDropHandlers}
+            role="group"
+            aria-label="Resource file drop zone"
+            className={[
+              "relative flex shrink-0 rounded border border-dashed transition-colors",
+              files.length > 0 ? "flex-row flex-wrap items-center justify-between gap-2 p-2" : "flex-col items-center gap-2 p-4",
+              isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600",
+            ].join(" ")}
+          >
             {isFileDragOver ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-cyan-950/80 text-sm font-semibold text-cyan-100">Drop files to add resources</div> : null}
-            <Upload className="size-8 text-cyan-300" aria-hidden="true" />
-            <p className="text-sm text-gray-300">Drop files here or choose files</p>
-            <p className="text-xs text-gray-500">Images, documents, and MP3 audio</p>
-            <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>Choose files</Button>
+            {files.length > 0 ? <p className="text-sm text-gray-300">Drop more files here</p> : <>
+              <Upload className="size-8 text-cyan-300" aria-hidden="true" />
+              <p className="text-sm text-gray-300">Drop files here or choose files</p>
+              <p className="text-xs text-gray-500">Images, documents, and MP3 audio</p>
+            </>}
+            <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>{files.length > 0 ? "Add files" : "Choose files"}</Button>
           </div>
-          <div className="max-h-64 space-y-2 overflow-y-auto scrollbar-variable">
-            {files.length === 0 ? <p className="text-center text-sm text-gray-500">No files selected.</p> : null}
-            {files.map((pending, index) => (
-              <SelectedUploadFileRow
-                key={`${pending.file.name}-${index}`}
-                file={pending.file}
-                displayName={pending.name}
-                visualType={pending.file.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(pending.file.name) ? "image" : "file"}
-                editable={!isUploading}
-                onRename={(name) => updateName(index, name)}
-                onRemove={() => removeFile(index)}
-                error={pending.error}
-              />
-            ))}
-          </div>
-          {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
-          {uploadStatus !== "idle" ? <ResourceTransferProgress transferId={transferIdRef.current || "resource-upload"} variant="card" /> : null}
-          <div className="flex justify-end gap-2">
+          {files.length === 0 ? <p className="shrink-0 text-center text-sm text-gray-500">No files selected.</p> : (
+            <div role="region" aria-label="Selected resource files" tabIndex={0} className="min-h-0 max-h-[min(50vh,32rem)] flex-1 space-y-2 overflow-y-auto scrollbar-variable">
+              {files.map((pending, index) => (
+                <SelectedUploadFileRow
+                  key={pending.file.name + "-" + index}
+                  file={pending.file}
+                  displayName={pending.name}
+                  visualType={pending.file.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(pending.file.name) ? "image" : "file"}
+                  editable={!isUploading}
+                  onRename={(name) => updateName(index, name)}
+                  onRemove={() => removeFile(index)}
+                  error={pending.error}
+                />
+              ))}
+            </div>
+          )}
+          {error ? <p className="shrink-0 text-sm text-red-300" role="alert">{error}</p> : null}
+          {uploadStatus !== "idle" ? <div className="shrink-0"><ResourceTransferProgress transferId={transferIdRef.current || "resource-upload"} variant="card" /></div> : null}
+          <div className="flex shrink-0 justify-end gap-2">
             <Button type="button" variant="secondary" onClick={reset} disabled={isUploading}>{uploadStatus === "ready" || uploadStatus === "error" ? "Done" : "Cancel"}</Button>
-            <Button type="button" variant="cta" svg={Upload} onClick={() => void handleUpload()} disabled={confirmDisabled}>{hasFailedFiles ? "Retry failed" : `Upload${files.length > 1 ? ` (${files.length} files)` : ""}`}</Button>
+            <Button type="button" variant="cta" svg={Upload} onClick={() => void handleUpload()} disabled={confirmDisabled}>{hasFailedFiles ? "Retry failed" : files.length > 1 ? "Upload (" + files.length + " files)" : "Upload"}</Button>
           </div>
         </div>
       </Modal>

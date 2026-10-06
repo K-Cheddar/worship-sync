@@ -1,5 +1,14 @@
 export type TransferStatus = "queued" | "active" | "complete" | "partial" | "failed" | "cancelled";
 
+export type TransferFileActivity = {
+  id: string;
+  name: string;
+  status: "queued" | "active" | "complete" | "failed" | "cancelled";
+  progress: number | null;
+  phase?: string;
+  error?: string;
+};
+
 export type Transfer = {
   id: string;
   type: string;
@@ -16,6 +25,7 @@ export type Transfer = {
   detail?: string;
   result?: { label: string; to?: string };
   error?: { message: string };
+  files?: TransferFileActivity[];
   canCancel?: boolean;
   /** Warn before leaving while this producer has interruption-sensitive work. */
   blocksUnload?: boolean;
@@ -27,7 +37,7 @@ export type Transfer = {
   }>;
 };
 
-export type TransferOverviewItem = Pick<Transfer, "id" | "name" | "type" | "status" | "progress" | "phase" | "detail" | "error" | "result">;
+export type TransferOverviewItem = Pick<Transfer, "id" | "name" | "type" | "status" | "progress" | "phase" | "detail" | "error" | "result" | "files">;
 
 export const isActiveTransfer = (transfer: Transfer) =>
   transfer.status === "queued" || transfer.status === "active";

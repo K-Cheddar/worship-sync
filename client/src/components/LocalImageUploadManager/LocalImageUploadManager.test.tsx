@@ -31,6 +31,7 @@ jest.mock("../../utils/localImageAssets", () => ({
   cleanupOrphanedLocalImages: jest.fn(() => Promise.resolve(0)),
   deleteLocalImageUploadJob: jest.fn(),
   getLocalImage: jest.fn(),
+  getLocalImageUploadJob: jest.fn(() => Promise.resolve(undefined)),
   listLocalImageUploadJobs: jest.fn(),
   persistLocalImageCloudCopy: jest.fn(),
   releaseLocalImageUploadJobLease: jest.fn(),
@@ -47,6 +48,15 @@ jest.mock("../../api/providerStorage", () => ({
     churchId: "church-1", permanent: true, bytes: 5,
   } })),
   deleteCloudinaryMediaAsset: jest.fn(() => Promise.resolve({ success: true })),
+}));
+jest.mock("../../utils/localImageUploadQueue", () => ({
+  clearLocalImageUploadProcessing: jest.fn(),
+  clearLocalImageUploadRequest: jest.fn(),
+  consumeLocalImageUploadCancellation: jest.fn(),
+  isLocalImageUploadCancellationRequested: jest.fn(() => false),
+  registerLocalImageUploadProcessing: jest.fn(),
+  registerLocalImageUploadRequest: jest.fn(),
+  signalLocalImageUploadCancellation: jest.fn(),
 }));
 jest.mock("../../containers/Media/utils/cloudinaryMediaItem", () => ({
   createCloudinaryImageMediaItem: jest.fn(() => ({
@@ -111,7 +121,7 @@ describe("LocalImageUploadManager", () => {
         leaseOwnerId,
         leaseExpiresAt: now + leaseDurationMs,
         updatedAt: new Date(now).toISOString(),
-      }),
+      } as LocalImageUploadJob),
     );
     mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
       ...interruptedJob,
@@ -133,7 +143,10 @@ describe("LocalImageUploadManager", () => {
       </ControllerInfoContext.Provider>,
     );
 
-    await waitFor(() => expect(mockDeleteJob).toHaveBeenCalledWith("asset-1"));
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: expect.objectContaining({ status: "complete" }) }),
+    ));
+    expect(mockDeleteJob).not.toHaveBeenCalled();
     expect(mockUpload).toHaveBeenCalledWith(
       expect.any(File),
       "preset",
@@ -232,6 +245,72 @@ describe("LocalImageUploadManager", () => {
         leaseOwnerId,
         leaseExpiresAt: now + leaseDurationMs,
         updatedAt: new Date(now).toISOString(),
+      } as LocalImageUploadJob),
+    );
+
+    const view = render(
+      <ControllerInfoContext.Provider
+        value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: expect.objectContaining({ status: "complete" }) }),
+    ));
+    expect(mockDeleteJob).not.toHaveBeenCalled();
+    expect(mockPersistCloudCopy).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "media/updateMediaItemFields",
+        payload: expect.objectContaining({
+          id: "asset-1",
+          patch: expect.objectContaining({
+            providerStorage: expect.objectContaining({
+              provider: "cloudinary",
+              assetId: "provider-asset-1",
+              churchId: "church-1",
+            }),
+            localImage: expect.objectContaining({
+              cloudMediaId: "stable-media-id",
+              cloudUrl: "https://res.cloudinary.com/example/welcome.png",
+            }),
+          }),
+        }),
+      }),
+    );
+    view.unmount();
+  });
+
+  it.each([
+    ["transient", 503, undefined, true],
+    ["ownership", 403, undefined, false],
+    ["quota", 413, "CHURCH_STORAGE_QUOTA_EXCEEDED", false],
+    ["in-progress conflict", 409, "CHURCH_STORAGE_MUTATION_IN_PROGRESS", true],
+    ["untyped conflict", 409, undefined, false],
+  ])("classifies %s cloud commit failures", async (_label, status, code, retryable) => {
+    const cloudMedia = {
+      id: "stable-media-id",
+      name: "Welcome.png",
+      type: "image",
+      publicId: "cloud-public-id",
+      background: "https://res.cloudinary.com/example/welcome.png",
+    } as MediaType;
+    const checkpointJob = { ...interruptedJob, cloudMedia };
+    mockListJobs.mockReset().mockResolvedValueOnce([checkpointJob]).mockResolvedValue([]);
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
+      ...checkpointJob,
+      leaseOwnerId,
+      leaseExpiresAt: Date.now() + 300_000,
+    }));
+    mockCommitCloudinary.mockRejectedValue(
+      Object.assign(new Error("The image was not uploaded to this church's media folder."), {
+        status,
+        code,
       }),
     );
 
@@ -245,22 +324,25 @@ describe("LocalImageUploadManager", () => {
       </ControllerInfoContext.Provider>,
     );
 
-    await waitFor(() => expect(mockDeleteJob).toHaveBeenCalledWith("asset-1"));
-    expect(mockPersistCloudCopy).not.toHaveBeenCalled();
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
-    expect(mockDispatch).toHaveBeenCalledWith(
+    const expectedCheckpoint = status === 413 ? null : cloudMedia;
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "media/updateMediaItemFields",
-        payload: expect.objectContaining({
-          id: "asset-1",
-          patch: expect.objectContaining({
-            localImage: expect.objectContaining({
-              cloudUrl: "https://res.cloudinary.com/example/welcome.png",
-            }),
-          }),
-        }),
+        patch: expect.objectContaining({ status: "failed", cloudMedia: expectedCheckpoint }),
       }),
+    ));
+    const commitFailure = mockUpdateJob.mock.calls.find(([request]) =>
+      request.patch.status === "failed",
+    )?.[0];
+    expect(commitFailure?.patch.lastError).toBe(
+      "The image was not uploaded to this church's media folder.",
     );
+    expect(
+      retryable
+        ? (commitFailure?.patch.nextAttemptAt ?? 0) > Date.now()
+        : commitFailure?.patch.nextAttemptAt === 0,
+    ).toBe(true);
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 });

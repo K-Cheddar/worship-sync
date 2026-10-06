@@ -67,6 +67,7 @@ describe("ElectronEditorPreparedMediaPreview", () => {
   beforeEach(() => {
     latestPoolProps = undefined;
     mockedUseServiceVideoCandidates.mockReturnValue({
+      allCandidates: [currentMedia, warmedMedia],
       candidates: [currentMedia, warmedMedia],
       diagnostics: [],
       discovery: {
@@ -104,6 +105,13 @@ describe("ElectronEditorPreparedMediaPreview", () => {
       />,
     );
 
+    expect(mockedUseServiceVideoCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentItemId: "item-a",
+        outlineId: "outline-a",
+        scope: "current-item",
+      }),
+    );
     expect(screen.getByTestId("mock-editor-media-pool")).toBeInTheDocument();
     expect(latestPoolProps?.views[0]).toMatchObject({
       mediaKey: currentMedia.mediaKey,

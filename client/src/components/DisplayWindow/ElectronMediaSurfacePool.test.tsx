@@ -209,6 +209,7 @@ describe("ElectronMediaSurfacePool", () => {
     expect(
       screen.getByTestId("electron-media-surface-remote:clip"),
     ).toHaveAttribute("data-prepared-state", "ready");
+    const preparedSurface = screen.getByTestId("electron-media-surface-remote:clip");
     expect(
       screen.getByTestId("electron-media-surface-video-remote:clip"),
     ).not.toHaveStyle({ visibility: "hidden" });
@@ -239,13 +240,14 @@ describe("ElectronMediaSurfacePool", () => {
         enabled
         outputId="projector"
         windowRole="projector"
-        candidates={[{ ...candidate }]}
+        candidates={[{ ...candidate, priority: 12 }]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toBe(preparedSurface);
     expect(
       (
         window as Window & {
@@ -886,6 +888,7 @@ describe("ElectronMediaSurfacePool", () => {
         enabled
         candidates={[candidate]}
         views={[]}
+        windowRole="local-preparation"
         onReadyChange={jest.fn()}
         onGeometryReadyChange={onGeometryReadyChange}
         onFirstAdvancingFrameChange={jest.fn()}
@@ -903,6 +906,7 @@ describe("ElectronMediaSurfacePool", () => {
     await waitFor(() => expect(onGeometryReadyChange).toHaveBeenCalledWith(candidate.mediaKey, true));
     expect(diagnostics.at(-1)).toEqual(
       expect.objectContaining({
+        renderer: "editor",
         geometryReady: true,
         framePresentedReady: true,
         canonicalSourceMatch: true,

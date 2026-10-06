@@ -74,6 +74,9 @@ const MAX_CACHE_ATTEMPTS = CACHE_RETRY_DELAYS_MS.length;
 const INVENTORY_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 
 export type ServiceVideoCandidateResult = {
+  /** Every finite service candidate, before the caller's bounded selection. */
+  allCandidates: ElectronMediaSurfaceCandidate[];
+  /** Candidates selected by this hook's current-item and surface-budget hints. */
   candidates: ElectronMediaSurfaceCandidate[];
   diagnostics: ElectronMediaSurfaceCandidateDiagnostic[];
   discovery: ElectronMediaDiscovery;
@@ -590,6 +593,8 @@ export const useServiceVideoCandidates = ({
     missingItemIds?: string[];
     invalidItemIds?: string[];
   }>({ state: "loading", retryAttempt: 0 });
+  const currentItemTargetId =
+    scope === "current-item" ? currentItemId : undefined;
 
   useEffect(() => {
     let active = true;
@@ -670,16 +675,16 @@ export const useServiceVideoCandidates = ({
 
     try {
       if (scope === "current-item") {
-        if (!currentItemId) {
+        if (!currentItemTargetId) {
           activeListIdRef.current = undefined;
           serviceItemIdsRef.current = new Set();
           apply([]);
           return;
         }
-        const currentDoc = await loadItemWithSongHydration(db, currentItemId);
+        const currentDoc = await loadItemWithSongHydration(db, currentItemTargetId);
         if (generation !== loadGenerationRef.current) return;
         activeListIdRef.current = undefined;
-        serviceItemIdsRef.current = new Set([currentItemId]);
+        serviceItemIdsRef.current = new Set([currentItemTargetId]);
         if (!isSlideBearingDocument(currentDoc)) {
           apply([]);
           return;
@@ -961,7 +966,7 @@ export const useServiceVideoCandidates = ({
         }));
       }
     }
-  }, [churchId, currentItemId, db, enabled, outlineId, scope]);
+  }, [churchId, currentItemTargetId, db, enabled, outlineId, scope]);
 
   loadServiceMediaRef.current = loadServiceMedia;
 
@@ -1424,6 +1429,7 @@ export const useServiceVideoCandidates = ({
       items: discoveryItems,
     };
     return {
+      allCandidates: candidates,
       candidates: selected,
       diagnostics: [...diagnosticsByKey.values()],
       discovery,

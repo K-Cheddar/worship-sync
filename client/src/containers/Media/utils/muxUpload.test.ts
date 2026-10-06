@@ -1,4 +1,5 @@
 import {
+  cancelChurchMuxUpload,
   createChurchMuxUpload,
   deleteChurchMuxAsset,
   getChurchMuxAsset,
@@ -10,6 +11,7 @@ import {
 } from "./muxUpload";
 
 jest.mock("../../../api/providerStorage", () => ({
+  cancelChurchMuxUpload: jest.fn(),
   createChurchMuxUpload: jest.fn(),
   deleteChurchMuxAsset: jest.fn(),
   getChurchMuxAsset: jest.fn(),
@@ -47,6 +49,7 @@ class TestXmlHttpRequest {
   abort = jest.fn(() => this.listeners.abort?.forEach((listener) => listener({})));
 }
 
+const mockCancelUpload = jest.mocked(cancelChurchMuxUpload);
 const mockCreateUpload = jest.mocked(createChurchMuxUpload);
 const mockGetUpload = jest.mocked(getChurchMuxUpload);
 const mockGetAsset = jest.mocked(getChurchMuxAsset);
@@ -57,6 +60,7 @@ describe("church-scoped Mux upload and temporary conversion", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCancelUpload.mockResolvedValue({ cancelled: true });
     mockCreateUpload.mockResolvedValue({ uploadId: "upload-1", url: "https://upload" });
     mockGetUpload.mockResolvedValue({ status: "asset_created", assetId: "asset-1" });
     mockGetAsset.mockResolvedValue({

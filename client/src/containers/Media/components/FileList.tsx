@@ -14,7 +14,12 @@ export const FileList = ({ files, isUploading, onRemoveFile, onDisplayNameChange
   if (files.length === 0) return null;
 
   return (
-    <div className="flex max-h-48 w-full flex-col gap-2 overflow-y-auto scrollbar-variable">
+    <div
+      role="region"
+      aria-label="Selected media files"
+      tabIndex={0}
+      className="flex min-h-0 max-h-[min(50vh,32rem)] w-full flex-1 flex-col gap-2 overflow-y-auto scrollbar-variable"
+    >
       {files.map((fileProgress, index) => (
         <SelectedUploadFileRow
           key={`${fileProgress.file.name}-${index}`}
