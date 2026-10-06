@@ -1,4 +1,4 @@
-import type { DBItem, ItemSlideType, ItemState, MonitorLayout } from "../types";
+import type { Arrangment, DBItem, ItemSlideType, ItemState, MonitorLayout } from "../types";
 import { getMonitorLayoutForSlides } from "./monitorSlideFormatter";
 import {
   getMonitorLayoutFromLegacySlides,

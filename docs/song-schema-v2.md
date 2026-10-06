@@ -15,11 +15,13 @@ use that field to identify complete v1 song documents. Hydrating a v2 root
 creates an application-facing song with `type: "song"` while retaining the
 root `docType` as its storage-version marker.
 
-Presence of a v2 root currently enables v2 reads. Interactive saves of an
-already-v2-backed song now use the targeted writer and require the editor's
-authored baseline. Normal whole-song v2 deletion remains guarded. No normal
-application flow creates v2 documents; migration, shadow roots, and dual writes
-are not enabled.
+Presence of a v2 root currently enables v2 reads. Hydration returns the runtime
+song model with `type: "song"` and the root's v2 `docType` marker. V2 mutation
+remains intentionally disabled at the normal persistence boundary: `saveSong`
+and `deleteSong` reject v2-backed songs, while `createSong` continues to write
+only v1. Lower-level writer helpers are not enabled by ordinary application
+flows. No real v2 documents should be created until write support is reviewed
+and enabled; migration, shadow roots, and dual writes are not enabled.
 
 The legacy song `_rev` and v2 root `_rev` belong to different physical
 documents. They must never be mixed: in particular, a v2 root revision cannot
@@ -41,18 +43,22 @@ Boxes remain together inside their slide document. There is no automatic
 conflict resolution in the writer.
 
 Songs without a v2 root continue to be read from their legacy single document,
-and continue to use the v1 save path. Already-v2-backed songs use targeted
-interactive saves. This document does not enable migration, v2 creation for
-legacy songs, or legacy cleanup.
+and continue to use the v1 save path. V2-backed songs are read-only through
+normal persistence: `saveSong` fails with `SongV2WriteNotEnabledError` before
+any v1 PUT can reuse a v2 root revision. `deleteSong` fails with the same
+internal repository error before removing a same-ID legacy document. This
+document does not enable migration, v2 creation for legacy songs, or legacy
+cleanup.
 
 
 ## Targeted write engine
 
 > A normal edit must touch only the physical documents whose durable content changed.
 
-Normal `createSong` remains v1 and `deleteSong` retains its v2 guard. Normal
-`saveSong` supports v1 and already-v2-backed songs; v2 saves require an authored
-baseline. Migration, root publication, and legacy cleanup remain out of scope.
+Normal `createSong` and `saveSong` remain v1-only, and `deleteSong` rejects
+v2-backed songs. The targeted writer details below describe isolated lower-level
+utilities; normal persistence does not route v2 songs into them. Migration,
+root publication for existing songs, and legacy cleanup remain out of scope.
 A root is still absent from legacy `type === "song"` scans.
 
 - `loadSongV2Snapshot(db, songId)` returns `{ root, arrangements, slides,
@@ -75,9 +81,9 @@ A root is still absent from legacy `type === "song"` scans.
   only intended physical documents against their serialized baseline content,
   then rebases those writes onto current documents and their `_rev` values.
   Intended creates also check deterministic IDs for existing or orphaned docs.
-- Normal `saveSong(db, desired, baseline)` routes already-v2-backed songs
-  through that path. A missing authored baseline fails safely; a fresh database
-  read is never substituted for the user's baseline.
+- Normal `saveSong(db, desired, baseline)` rejects v2-backed songs with
+  `SongV2WriteNotEnabledError`; the targeted baseline writer is not activated
+  from ordinary application persistence.
 - `createSongV2(db, song)` writes slides, then arrangements, then the root
   **last**. Root publication is the activation marker. Before it exists,
   exact-song reads still use v1 (or return not found for a v2-only song).
@@ -106,8 +112,9 @@ For song `song-1`, arrangements `a/b/c`, and slides `a1/a2/a3` in `a`:
 
 Stable IDs do not change on rename/reorder. Existing slides, arrangements,
 and roots use their individual `_rev` values, never a parent/hydrated revision.
-Normal saves issue individual PUTs for changed documents; there is no
-whole-song `bulkDocs` operation.
+The isolated writer issues individual PUTs for changed documents; there is no
+whole-song `bulkDocs` operation. It is not enabled for normal application
+mutation in this foundation stage.
 
 ### Manifest authority and failure ordering
 
@@ -231,40 +238,28 @@ library state. Active-controller refresh also exact-loads before applying or buf
 remote slide content, including slide-only changes. Resource, audio, matching, and
 lyrics viewing paths use projection metadata and formatted lyrics directly.
 
-Normal `createSong` remains v1 and whole-song v2 deletion remains guarded by
-`SongV2WriteNotEnabledError`. Audio replacement writes the new root pointer
-before deleting the previous object. V2 removal clears the pointer before
-external cleanup so a root conflict preserves the previous object. This phase
-does not migrate songs, publish roots, dual-write, or delete predecessors.
+Normal `createSong` and `saveSong` remain v1-only; v2 save and delete operations
+fail with `SongV2WriteNotEnabledError`. Any lower-level writer/audio mutation
+helpers remain outside normal application persistence and must not be used to
+create real v2 documents in this stage. This phase does not migrate songs,
+publish roots, dual-write, or delete predecessors.
 
-## Interactive editing and conflict isolation
+## Interactive reads and deferred write activation
 
-The active controller's `baseItem` is the authored editing baseline. A
-successful save advances it to the acknowledged hydrated song, and accepting a
-buffered remote update makes that accepted song the next baseline. Child
+The active controller's `baseItem` remains the authored editing baseline, and
+the library lyrics editor retains the exact hydrated song used to open a draft.
+Normal persistence currently rejects a v2 save, so it cannot advance that
+baseline or acknowledge a write. The active draft remains pending. Child
 physical `_rev` values stay in the freshly loaded `SongV2Snapshot`, never in the
-hydrated editor song. The library lyrics editor retains the exact hydrated song
-used to open its draft and passes it back as `baselineSong` when saving.
+hydrated editor song.
 
-The baseline and desired editor song define intent. Only after that intent is
-known does the repository load the current authoritative v2 documents. It
-validates each intended root, arrangement, or slide against the corresponding
-serialized baseline document, then rebases the intended payload onto current
-revisions and uses the existing ordered executor. Changes to the same document
-conflict; changes to different physical documents preserve each other. A slide
-being deleted is checked against its baseline too, so a concurrent slide edit
-conflicts before logical deletion.
+The isolated writer helpers contain baseline comparison and per-document
+conflict logic, but ordinary application persistence does not call them. They
+do not enable v2 editing, creation, migration, or deletion.
 
-This prevents stale whole-song overwrites. If the editor changed Slide A while
-the database independently changed Slide B, only Slide A is in the intent plan.
-The current Slide B is preserved and its stale editor value is never treated as
-authored intent. The fresh snapshot supplies current revisions and untouched
-state, but it is never used to infer what the editor intended to change.
-
-After a v2 save, library Redux receives a lightweight projection with empty
-slide arrays. Cross-window `broadcastItemUpdate` also sends the projection;
-receivers use it with their existing refresh path instead of receiving a
-hydrated slide payload as a whole-song document.
+Exact reads still hydrate referenced arrangements and slides. Library Redux
+continues to receive lightweight projections, and cross-window
+`broadcastItemUpdate` sends the projection rather than a hydrated slide payload.
 
 ### Consumer audit
 
@@ -272,8 +267,8 @@ hydrated slide payload as a whole-song document.
 | --- | --- |
 | FilteredItems, song selectors, index repair | Projection metadata and formatted lyrics; incomplete IDs suppress stale index rows. |
 | Service Plan matching, reference resolution, Service Planning import | Logical IDs, names, metadata, and formatted lyrics; no authored slide dependency. |
-| ViewSongSectionsDrawer, ServicePlanSongDetailsPanel | Viewing uses formatted lyrics; shared LyricsEditor exact-loads before initializing a v2 draft and returns that exact baseline on save. Metadata and audio pointer edits use baseline-aware targeted writes. |
-| Resources and song-audio viewing | Root metadata/audio pointers; v2 attachment removal clears the pointer before external object cleanup. |
+| ViewSongSectionsDrawer, ServicePlanSongDetailsPanel | Viewing uses formatted lyrics; shared LyricsEditor exact-loads before initializing a v2 draft. Normal v2 saves and metadata edits are rejected by the persistence boundary. |
+| Resources and song-audio viewing | Root metadata/audio pointers are readable; v2 audio mutations are rejected before changing the root or cleaning up external objects. |
 | AddSongSectionsDrawer | Imports formatted sections only, without reading slide boxes. |
 | Controller opening, outline attachment, Service Plan outline push | Attachments remain lightweight ServiceItems; Controller Item and createNewItemInDb already use loadItemWithSongHydration. |
 | Active controller replication refresh | Exact-loads before applying/buffering v2 content; keeps dirty drafts and discards obsolete owner/database/projection loads. |
