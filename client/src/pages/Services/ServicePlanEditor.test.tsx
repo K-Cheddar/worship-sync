@@ -2,6 +2,7 @@ import { act, render, screen, fireEvent, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import type { ContextType, ReactNode } from "react";
+import type PouchDB from "pouchdb-browser";
 import ServicePlanEditor from "./ServicePlanEditor";
 import {
   collectServicePlanRoleNoteOptions,
@@ -11,7 +12,10 @@ import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { RehearsalPlaybackProvider } from "../../components/RehearsalPlayer/RehearsalPlaybackContext";
-import { createMockGlobalContext } from "../../test/mocks";
+import {
+  createMockControllerContext,
+  createMockGlobalContext,
+} from "../../test/mocks";
 import {
   listServicePlanTemplates,
   saveServicePlanTemplate,
@@ -277,9 +281,9 @@ const editorTree = ({
 
 const renderEditor = (props: RenderEditorProps = {}) => render(editorTree(props));
 
-const renderEditorWithDb = (db: unknown, props: RenderEditorProps = {}) =>
+const renderEditorWithDb = (db: PouchDB.Database, props: RenderEditorProps = {}) =>
   render(
-    <ControllerInfoContext.Provider value={{ db }}>
+    <ControllerInfoContext.Provider value={createMockControllerContext({ db })}>
       {editorTree(props)}
     </ControllerInfoContext.Provider>,
   );
@@ -861,7 +865,7 @@ describe("ServicePlanEditor", () => {
         throw missing();
       }),
       put,
-    };
+    } as unknown as PouchDB.Database;
     mockAllSongDocs = [legacySong];
     mockGetServicePlan.mockResolvedValue({
       success: true,
