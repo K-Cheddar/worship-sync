@@ -386,6 +386,7 @@ describe("route ownership with independent Controller access", () => {
       isRouteAllowedForSession("/teams-and-services/schedules", noController),
     ).toBe(true);
     expect(isRouteAllowedForSession("/teams", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/resources", noController)).toBe(false);
   });
 
   it("refuses Controller and operator surfaces", () => {
@@ -418,12 +419,16 @@ describe("route ownership with independent Controller access", () => {
     ).toBe(true);
     expect(isRouteAllowedForSession("/current-service", servicePlanner)).toBe(true);
     expect(isRouteAllowedForSession("/controller", servicePlanner)).toBe(false);
+    expect(isRouteAllowedForSession("/resources", servicePlanner)).toBe(false);
   });
 
   it("keeps view, music, and full Controller behavior", () => {
     expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "view" })).toBe(true);
+    expect(isRouteAllowedForSession("/resources", { ...noController, controllerAccess: "view" })).toBe(true);
     expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "music" })).toBe(true);
+    expect(isRouteAllowedForSession("/resources", { ...noController, controllerAccess: "music" })).toBe(true);
     expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "full" })).toBe(true);
+    expect(isRouteAllowedForSession("/resources", { ...noController, controllerAccess: "full" })).toBe(true);
   });
 
   it("keeps future routes closed", () => {

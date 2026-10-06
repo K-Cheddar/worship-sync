@@ -40,7 +40,7 @@ const loadStoreWithPresentationSync = (
     firebaseDb?: string;
     firebaseReady?: boolean;
     realtimeConnected?: boolean;
-    canWriteSharedData?: boolean;
+    writeCapabilities?: Partial<{ presentation: boolean; timers: boolean; serviceTimes: boolean }>;
   } = {},
 ) => {
   let storeModule: any;
@@ -71,7 +71,7 @@ const loadStoreWithPresentationSync = (
       options.firebaseReady === false
         ? false
         : options.realtimeConnected !== false,
-    canWriteSharedData: options.canWriteSharedData ?? true,
+    writeCapabilities: { presentation: true, timers: true, serviceTimes: true, ...options.writeCapabilities },
   };
 
   jest.isolateModules(() => {
@@ -2725,7 +2725,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
-      canWriteSharedData: true,
+      writeCapabilities: { presentation: true, timers: true, serviceTimes: true },
     };
 
     jest.isolateModules(() => {
@@ -2821,7 +2821,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
-      canWriteSharedData: true,
+      writeCapabilities: { presentation: true, timers: true, serviceTimes: true },
     };
 
     jest.isolateModules(() => {
@@ -2930,7 +2930,7 @@ describe("store module", () => {
           db: "firebase-db",
           database: "main",
           churchId: "church-main",
-          canWriteSharedData: true,
+          writeCapabilities: { presentation: true, timers: true, serviceTimes: true },
         },
         globalHostId: "host-123",
       }));
@@ -3051,7 +3051,7 @@ describe("store module", () => {
       timersSlice,
       setMock,
       runTransactionMock,
-    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ writeCapabilities: { presentation: false, timers: false, serviceTimes: false } });
 
     store.dispatch(
       serviceTimesSlice.actions.initiateServices([
@@ -3095,6 +3095,41 @@ describe("store module", () => {
     expect(runTransactionMock).not.toHaveBeenCalled();
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
     expect(localStorage.getItem("timerInfo")).toContain("Display Timer");
+  });
+
+  it("lets a Controller-None Services editor persist service times without operator writes", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, timersSlice, presentationSlice, writePresentationSnapshotToFirebase, setMock, updateMock, runTransactionMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: { presentation: false, timers: false, serviceTimes: true },
+      });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([]));
+    store.dispatch(serviceTimesSlice.actions.addService({
+      id: "service-plan",
+      name: "Planner edit",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:30:00.000Z",
+    }));
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "timer-1", hostId: "host-123", name: "Operator timer",
+      timerType: "timer", status: "stopped", isActive: false,
+      countdownTime: "00:05", duration: 5, remainingTime: 5,
+      showMinutesOnly: false, time: 100,
+    }));
+    store.dispatch(presentationSlice.actions.updateParticipantOverlayInfo({
+      id: "operator-overlay", name: "Operator overlay", duration: 10,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1600);
+    await writePresentationSnapshotToFirebase(store.getState());
+
+    expect(runTransactionMock).toHaveBeenCalledWith(
+      "churches/church-main/data/services", expect.any(Function), { applyLocally: false },
+    );
+    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it("merges a service-time update into Firebase without replacing other services", async () => {
@@ -3562,7 +3597,7 @@ describe("store module", () => {
       writePresentationSnapshotToFirebase,
       presentationSlice,
       updateMock,
-    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ writeCapabilities: { presentation: false, timers: false, serviceTimes: false } });
 
     store.dispatch(
       presentationSlice.actions.updateParticipantOverlayInfo({

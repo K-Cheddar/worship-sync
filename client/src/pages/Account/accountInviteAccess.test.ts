@@ -12,7 +12,6 @@ describe("accountInviteAccess", () => {
     expect(
       buildPermissionsFromAccessDraft({
         role: "member",
-        controllerAccess: "full",
         teamsAccess: "none",
         servicesAccess: "none",
         teamScopeIds: ["team-a", "team-b"],
@@ -31,7 +30,6 @@ describe("accountInviteAccess", () => {
     expect(
       buildPermissionsFromAccessDraft({
         role: "member",
-        controllerAccess: "full",
         teamsAccess: "edit",
         servicesAccess: "none",
         teamScopeIds: ["team-a"],
@@ -47,7 +45,6 @@ describe("accountInviteAccess", () => {
     expect(
       buildPermissionsFromAccessDraft({
         role: "member",
-        controllerAccess: "none",
         teamsAccess: "none",
         servicesAccess: "view",
         teamScopeIds: ["worship"],

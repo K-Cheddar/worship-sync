@@ -177,7 +177,7 @@ const writePendingTimersToStorageAndFirebase = async (
     return false;
   }
 
-  if (!globalFireDbInfo.canWriteSharedData) {
+  if (!globalFireDbInfo.writeCapabilities.timers) {
     return true;
   }
 
@@ -658,6 +658,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
 
 /** Clear a removed output's synced presentation state. */
 export const clearRemoteOutputState = async (outputId: string) => {
+  if (!globalFireDbInfo.writeCapabilities.presentation) return;
   if (!globalFireDbInfo.db || !globalFireDbInfo.churchId || !outputId) return;
   await set(
     ref(
@@ -685,7 +686,7 @@ export const writePresentationSnapshotToFirebase = async (
     state.presentation,
   );
   const churchId = globalFireDbInfo.churchId;
-  if (!globalFireDbInfo.canWriteSharedData) return true;
+  if (!globalFireDbInfo.writeCapabilities.presentation) return true;
   if (
     !globalFireDbInfo.db ||
     globalFireDbInfo.isConnected === false ||
@@ -2545,8 +2546,8 @@ listenerMiddleware.startListening({
       .undoable.present.serviceTimes.list;
     const localServices = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes.list;
-    const { db: firebaseDb, churchId, canWriteSharedData } = globalFireDbInfo;
-    if (!canWriteSharedData) return;
+    const { db: firebaseDb, churchId, writeCapabilities } = globalFireDbInfo;
+    if (!writeCapabilities.serviceTimes) return;
     if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       notifyPresentationSyncError(

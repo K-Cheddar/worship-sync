@@ -16,11 +16,11 @@ export const normalizeControllerAccess = (value: unknown): ControllerAccess => {
 };
 
 /** True for controller sessions that may look but not modify. */
-export const isControllerViewOnly = (access?: ControllerAccess | null): boolean =>
-  access === "view" || access === "none";
+export const isControllerViewOnly = (access?: ControllerAccess | "member" | null): boolean =>
+  access === "view" || access === "none" || access === "member";
 
 /** True when the user has any Controller/operator access. */
-export const hasControllerAccess = (access?: ControllerAccess | null): boolean =>
+export const hasControllerAccess = (access?: ControllerAccess | "member" | null): boolean =>
   access === "view" || access === "music" || access === "full";
 
 export const hasFullControllerAccess = (access?: ControllerAccess | null): boolean =>

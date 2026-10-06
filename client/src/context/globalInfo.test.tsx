@@ -320,6 +320,7 @@ const TeamsLiveProbe = () => {
       <div data-testid="can-edit-worship">{String(context?.canEditTeam?.("worship"))}</div>
       <div data-testid="can-edit-av">{String(context?.canEditTeam?.("av"))}</div>
       <div data-testid="can-view-teams">{String(context?.canViewTeams)}</div>
+      <div data-testid="can-edit-services">{String(context?.canEditServices)}</div>
       <div data-testid="broad-teams-read">{String(context?.hasBroadTeamsReadAccess)}</div>
   </div>;
 };
@@ -650,6 +651,27 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     await waitFor(() => expect(signOutMock).toHaveBeenCalledTimes(1));
   });
 
+  it("grants only service-time writes to a Controller-None Services editor", async () => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      role: "member",
+      appAccess: "member",
+      controllerAccess: "none",
+      permissions: { teams: "none", services: "edit", teamScopes: {} },
+    });
+
+    renderProvider(<TeamsLiveProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("can-edit-services")).toHaveTextContent("true"),
+    );
+    expect(globalFireDbInfo.writeCapabilities).toEqual({
+      presentation: false,
+      timers: false,
+      serviceTimes: true,
+    });
+  });
+
   it("marks display sessions as read-only for shared realtime data", async () => {
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
       loggedInDisplayBootstrap,
@@ -660,7 +682,11 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     await waitFor(() =>
       expect(firebaseApps.getSharedDataDatabase).toHaveBeenCalled(),
     );
-    expect(globalFireDbInfo.canWriteSharedData).toBe(false);
+    expect(globalFireDbInfo.writeCapabilities).toEqual({
+      presentation: false,
+      timers: false,
+      serviceTimes: false,
+    });
     expect(
       onValueCallbacks.has("churches/church-1/data/currentServiceWorkspace"),
     ).toBe(false);

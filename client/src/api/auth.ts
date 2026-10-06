@@ -16,7 +16,6 @@ import {
 import { logAuthDiagnostic } from "../utils/authDiagnostics";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
-  ControllerAccess,
   ServicePlan,
   ServicePlanPayload,
   ServicePlanSummary,
@@ -28,6 +27,7 @@ import type {
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
+  ControllerAccess,
   AuthBootstrap,
   ChurchBranding,
   ChurchStorageQuotaUsage,

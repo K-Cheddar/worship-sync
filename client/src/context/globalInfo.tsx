@@ -497,7 +497,11 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
 type globalFireBaseInfoType = {
   db: Database | undefined;
   isConnected: boolean;
-  canWriteSharedData: boolean;
+  writeCapabilities: {
+    presentation: boolean;
+    timers: boolean;
+    serviceTimes: boolean;
+  };
   user: string;
   database: string;
   churchId: string;
@@ -506,7 +510,7 @@ type globalFireBaseInfoType = {
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   isConnected: false,
-  canWriteSharedData: false,
+  writeCapabilities: { presentation: false, timers: false, serviceTimes: false },
   user: "Demo",
   database: "demo",
   churchId: "",
@@ -914,7 +918,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "";
       globalFireDbInfo.database = "";
       globalFireDbInfo.churchId = "";
-      globalFireDbInfo.canWriteSharedData = false;
+      globalFireDbInfo.writeCapabilities = { presentation: false, timers: false, serviceTimes: false };
       return;
     }
 
@@ -979,11 +983,21 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
-    globalFireDbInfo.canWriteSharedData =
-      (bootstrap.sessionKind === "human" ||
-        bootstrap.sessionKind === "workstation") &&
+    const hasSharedWriteSession =
+      bootstrap.sessionKind === "human" || bootstrap.sessionKind === "workstation";
+    const canWriteControllerData =
+      hasSharedWriteSession &&
       normalizedControllerAccess !== "view" &&
       normalizedControllerAccess !== "none";
+    globalFireDbInfo.writeCapabilities = {
+      presentation: canWriteControllerData,
+      timers: canWriteControllerData,
+      serviceTimes:
+        hasSharedWriteSession &&
+        (bootstrap.role === "admin" ||
+          bootstrap.permissions?.teams === "edit" ||
+          bootstrap.permissions?.services === "edit"),
+    };
     if (bootstrap.sessionKind === "human") {
       const humanUser = getHumanAuth().currentUser;
       if (humanUser) {
@@ -1500,7 +1514,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "Demo";
       globalFireDbInfo.database = "demo";
       globalFireDbInfo.churchId = "";
-      globalFireDbInfo.canWriteSharedData = false;
+      globalFireDbInfo.writeCapabilities = { presentation: false, timers: false, serviceTimes: false };
       dispatch({ type: "RESET" });
       navigate(nextPath, { replace: true });
     },

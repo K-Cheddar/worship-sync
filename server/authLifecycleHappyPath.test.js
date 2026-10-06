@@ -347,6 +347,72 @@ test("Controller None invite preserves independent permissions through acceptanc
   }
 });
 
+test("pending invite access updates race safely with acceptance", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("invite_access_race");
+  const email = "invite-access-race@example.com";
+  const token = "invite-access-race-token";
+  const { inviteId } = await seedPendingInviteForServerTests({
+    churchId: context.churchId,
+    email,
+    token,
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: {} },
+  });
+  setVerifyIdTokenForServerTests(async () => ({
+    uid: "invite_access_race_user",
+    email,
+    name: "Race Recipient",
+  }));
+  const sentEmails = [];
+  setSendEmailForServerTests(async (message) => {
+    sentEmails.push(message);
+  });
+
+  const updatePromise = callHandler(authHandlers.updateInviteAccess, {
+    context,
+    params: { inviteId },
+    body: {
+      role: "member",
+      controllerAccess: "none",
+      permissions: { teams: "none", services: "edit", teamScopes: {} },
+    },
+  });
+  const acceptResponse = createRes();
+  const acceptPromise = authHandlers.acceptInvite(
+    createReq({ body: { token, idToken: "race-id-token" } }),
+    acceptResponse,
+  );
+  const [updateResponse] = await Promise.all([updatePromise, acceptPromise]);
+
+  assert.equal(acceptResponse.statusCode, 200);
+  const acceptedInvite = await getDoc(COLLECTIONS.invites, inviteId);
+  const acceptedMembership = await getDoc(
+    COLLECTIONS.memberships,
+    `${context.churchId}_invite_access_race_user`,
+  );
+  assert.equal(acceptedInvite?.status, "accepted");
+  assert.equal(acceptedMembership?.controllerAccess, "none");
+  assert.equal(acceptedMembership?.appAccess, "member");
+  assert.deepEqual(acceptedMembership?.permissions, acceptedInvite?.permissions);
+  if (updateResponse.statusCode === 200) {
+    assert.equal(acceptedMembership?.permissions?.services, "edit");
+  } else {
+    assert.equal(updateResponse.statusCode, 400);
+    assert.equal(acceptedMembership?.permissions?.services, "none");
+  }
+
+  const notification = sentEmails.find((message) =>
+    String(message.subject || "").includes("accepted a WorshipSync invite"),
+  );
+  assert.ok(notification, "acceptance should notify the church admin");
+  const acceptedServicesLine =
+    acceptedMembership?.permissions?.services === "edit"
+      ? "Services: Edit services and plans"
+      : "Services: No service access";
+  assert.ok(String(notification.textBody).includes(acceptedServicesLine));
+});
+
 test("acceptInvite rejects when idToken email does not match the invite", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
 

@@ -163,8 +163,7 @@ const MemberAccessSheet = () => {
   const showPerTeamSection =
     selectedTeamsAccess !== "edit" &&
     teams.length > 0 &&
-    !isAdminAccess &&
-    (isMemberTarget || selectedInviteAccess !== "admin");
+    !isAdminAccess;
   const servicesEditingIncluded = isAdminAccess || selectedTeamsAccess === "edit";
 
   const headerTitle = isMemberTarget

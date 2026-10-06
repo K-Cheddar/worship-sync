@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { serializeAuthError } from "./server/authErrorResponse.js";
+import { buildSharedDataWriteClaims } from "./server/sharedDataAuthClaims.js";
 import crypto from "node:crypto";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
@@ -697,6 +698,7 @@ const collectionMap = {
 
 const rateLimits = new Map();
 const smsConsentMutationQueues = new Map();
+const inviteMutationQueues = new Map();
 const RATE_LIMIT_SWEEP_INTERVAL = 200;
 let rateLimitEnforcementCount = 0;
 
@@ -725,6 +727,25 @@ const withSmsConsentMutationLock = async (consentId, operation) => {
     release();
     if (smsConsentMutationQueues.get(consentId) === current) {
       smsConsentMutationQueues.delete(consentId);
+    }
+  }
+};
+
+const withInviteMutationLock = async (inviteId, operation) => {
+  const previous = inviteMutationQueues.get(inviteId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const current = previous.then(() => gate);
+  inviteMutationQueues.set(inviteId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (inviteMutationQueues.get(inviteId) === current) {
+      inviteMutationQueues.delete(inviteId);
     }
   }
 };
@@ -4005,6 +4026,9 @@ const acceptInviteMembership = async ({ invite, user }) => {
         throw httpError(404, "Invite not found");
       }
       const inviteData = inviteSnap.data();
+      if (inviteData.churchId !== churchId) {
+        throw httpError(404, "Invite not found");
+      }
       if (inviteData.status !== "pending") {
         if (inviteData.status === "revoked") {
           throw httpError(400, "This invite was revoked.");
@@ -4015,6 +4039,26 @@ const acceptInviteMembership = async ({ invite, user }) => {
         transaction.update(inviteRef, { status: "expired" });
         return { expired: true };
       }
+
+      const acceptedControllerAccess = normalizeControllerAccess(
+        inviteData.controllerAccess ?? inviteData.appAccess,
+        "view",
+      );
+      const acceptedInvite = {
+        ...invite,
+        ...inviteData,
+        inviteId: invite.inviteId,
+        churchId,
+        role: inviteData.role,
+        controllerAccess: acceptedControllerAccess,
+        appAccess: legacyAppAccessForController(acceptedControllerAccess),
+        permissions: normalizeMembershipPermissions(
+          inviteData.permissions,
+          inviteData.role,
+        ),
+        createdAt: inviteData.createdAt || nowIso(),
+        createdByUid: inviteData.createdByUid,
+      };
 
       const userActiveMembershipsSnap = await transaction.get(
         db
@@ -4052,28 +4096,20 @@ const acceptInviteMembership = async ({ invite, user }) => {
           membershipId,
           churchId,
           userId: user.uid,
-          role: invite.role,
-          controllerAccess: normalizeControllerAccess(
-            invite.controllerAccess ?? invite.appAccess,
-            "view",
-          ),
-          appAccess: legacyAppAccessForController(
-            normalizeControllerAccess(invite.controllerAccess ?? invite.appAccess, "view"),
-          ),
-          permissions: normalizeMembershipPermissions(
-            invite.permissions,
-            invite.role,
-          ),
+          role: acceptedInvite.role,
+          controllerAccess: acceptedInvite.controllerAccess,
+          appAccess: acceptedInvite.appAccess,
+          permissions: acceptedInvite.permissions,
           status: "active",
-          createdAt: invite.createdAt || nowIso(),
-          createdByUid: invite.createdByUid,
+          createdAt: acceptedInvite.createdAt,
+          createdByUid: acceptedInvite.createdByUid,
         },
         { merge: true },
       );
 
       const nextAdminCount =
         adminSnapshot.docs.some((doc) => doc.id === membershipId) ||
-        invite.role !== "admin"
+        acceptedInvite.role !== "admin"
           ? adminSnapshot.size
           : adminSnapshot.size + 1;
       transaction.update(churchRef, {
@@ -4085,15 +4121,27 @@ const acceptInviteMembership = async ({ invite, user }) => {
         status: "accepted",
         acceptedAt: nowIso(),
       });
-      return { expired: false };
+      return { expired: false, acceptedInvite };
     });
 
     if (transactionResult?.expired) {
       throw httpError(400, "This invite has expired");
     }
-  } else {
+    const acceptedInvite = transactionResult?.acceptedInvite;
+    if (!acceptedInvite) {
+      throw httpError(400, "This invite is not active");
+    }
+    await linkInvitedRosterMember({ invite: acceptedInvite, user });
+    return acceptedInvite;
+  }
+
+  const acceptedInvite = await withInviteMutationLock(invite.inviteId, async () => {
     const latestInvite = await getDoc(COLLECTIONS.invites, invite.inviteId);
-    if (!latestInvite || latestInvite.status !== "pending") {
+    if (
+      !latestInvite ||
+      latestInvite.churchId !== churchId ||
+      latestInvite.status !== "pending"
+    ) {
       if (latestInvite?.status === "revoked") {
         throw httpError(400, "This invite was revoked.");
       }
@@ -4108,6 +4156,27 @@ const acceptInviteMembership = async ({ invite, user }) => {
       );
       throw httpError(400, "This invite has expired");
     }
+
+    const acceptedControllerAccess = normalizeControllerAccess(
+      latestInvite.controllerAccess ?? latestInvite.appAccess,
+      "view",
+    );
+    const acceptedInvite = {
+      ...invite,
+      ...latestInvite,
+      inviteId: invite.inviteId,
+      churchId,
+      role: latestInvite.role,
+      controllerAccess: acceptedControllerAccess,
+      appAccess: legacyAppAccessForController(acceptedControllerAccess),
+      permissions: normalizeMembershipPermissions(
+        latestInvite.permissions,
+        latestInvite.role,
+      ),
+      createdAt: latestInvite.createdAt || nowIso(),
+      createdByUid: latestInvite.createdByUid,
+    };
+
     const activeRows = await queryDocs(
       COLLECTIONS.memberships,
       [
@@ -4127,6 +4196,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
         inviteMembershipConflict.message,
       );
     }
+
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
@@ -4134,21 +4204,13 @@ const acceptInviteMembership = async ({ invite, user }) => {
         membershipId,
         churchId,
         userId: user.uid,
-        role: invite.role,
-        controllerAccess: normalizeControllerAccess(
-          latestInvite.controllerAccess ?? latestInvite.appAccess,
-          "view",
-        ),
-        appAccess: legacyAppAccessForController(
-          normalizeControllerAccess(latestInvite.controllerAccess ?? latestInvite.appAccess, "view"),
-        ),
-        permissions: normalizeMembershipPermissions(
-          latestInvite.permissions,
-          latestInvite.role,
-        ),
+        role: acceptedInvite.role,
+        controllerAccess: acceptedInvite.controllerAccess,
+        appAccess: acceptedInvite.appAccess,
+        permissions: acceptedInvite.permissions,
         status: "active",
-        createdAt: invite.createdAt || nowIso(),
-        createdByUid: invite.createdByUid,
+        createdAt: acceptedInvite.createdAt,
+        createdByUid: acceptedInvite.createdByUid,
       },
       { merge: true },
     );
@@ -4172,9 +4234,11 @@ const acceptInviteMembership = async ({ invite, user }) => {
       { status: "accepted", acceptedAt: nowIso() },
       { merge: true },
     );
-  }
+    return acceptedInvite;
+  });
 
-  await linkInvitedRosterMember({ invite, user });
+  await linkInvitedRosterMember({ invite: acceptedInvite, user });
+  return acceptedInvite;
 };
 
 /**
@@ -4304,6 +4368,10 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
         throw httpError(404, "Membership not found");
       }
       const membershipData = membershipSnap.data();
+      const controllerAccess = normalizeControllerAccess(
+        membershipData.controllerAccess ?? membershipData.appAccess,
+        "full",
+      );
       const adminSnapshot = await transaction.get(
         db
           .collection(COLLECTIONS.memberships)
@@ -4317,11 +4385,8 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
       );
       transaction.update(membershipRef, {
         role: "member",
-        controllerAccess: normalizeControllerAccess(
-          membershipData.controllerAccess ?? membershipData.appAccess,
-          "full",
-        ),
-        appAccess: normalizeAppAccess(membershipData.appAccess, "full"),
+        controllerAccess,
+        appAccess: legacyAppAccessForController(controllerAccess),
         permissions: normalizeMembershipPermissions(null, "member"),
       });
       transaction.update(churchRef, {
@@ -4335,16 +4400,17 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
     if (!membership) {
       throw httpError(404, "Membership not found");
     }
+    const controllerAccess = normalizeControllerAccess(
+      membership.controllerAccess ?? membership.appAccess,
+      "full",
+    );
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
       {
         role: "member",
-        controllerAccess: normalizeControllerAccess(
-          membership.controllerAccess ?? membership.appAccess,
-          "full",
-        ),
-        appAccess: normalizeAppAccess(membership.appAccess, "full"),
+        controllerAccess,
+        appAccess: legacyAppAccessForController(controllerAccess),
         permissions: normalizeMembershipPermissions(null, "member"),
       },
       { merge: true },
@@ -6678,6 +6744,7 @@ export const authHandlers = {
         churchId: bootstrap.churchId || null,
         database: bootstrap.database,
         appAccess: bootstrap.appAccess || "view",
+        ...buildSharedDataWriteClaims(bootstrap),
         role: bootstrap.role || null,
         deviceId: bootstrap.device?.deviceId || null,
         outputId: bootstrap.device?.outputId || null,
@@ -8484,46 +8551,61 @@ export const authHandlers = {
       if (!inviteId) {
         throw httpError(400, "Invite id is required.");
       }
-      const invite = await getDoc(COLLECTIONS.invites, inviteId);
-      if (!invite || invite.churchId !== req.params.churchId) {
-        throw httpError(404, "Invite not found.");
-      }
-      if (
-        invite.status !== "pending" &&
-        !(invite.status === "expired" || isInviteExpired(invite))
-      ) {
-        throw httpError(400, "Only pending invites can be updated.");
-      }
-      const { role, controllerAccess, appAccess, permissions } =
+      const { role, controllerAccess, permissions } =
         validateUpdateInviteAccessPayload(req.body);
-      const normalizedPermissions =
-        await normalizeMembershipPermissionsForChurch({
+      const buildAccessUpdate = async () => ({
+        role,
+        controllerAccess,
+        appAccess: legacyAppAccessForController(controllerAccess),
+        permissions: await normalizeMembershipPermissionsForChurch({
           permissions,
           role,
           churchId: req.params.churchId,
+        }),
+      });
+      const db = requireFirestore();
+      let updatedInvite;
+      if (db) {
+        updatedInvite = await db.runTransaction(async (transaction) => {
+          const inviteRef = db.collection(COLLECTIONS.invites).doc(inviteId);
+          const inviteSnapshot = await transaction.get(inviteRef);
+          if (!inviteSnapshot.exists) {
+            throw httpError(404, "Invite not found.");
+          }
+          const currentInvite = inviteSnapshot.data();
+          if (currentInvite.churchId !== req.params.churchId) {
+            throw httpError(404, "Invite not found.");
+          }
+          if (currentInvite.status !== "pending") {
+            throw httpError(400, "Only pending invites can be updated.");
+          }
+          const accessUpdate = await buildAccessUpdate();
+          transaction.update(inviteRef, accessUpdate);
+          return { ...currentInvite, inviteId, ...accessUpdate };
         });
-      const updatedInvite = {
-        ...invite,
-        role,
-        controllerAccess,
-        appAccess,
-        permissions: normalizedPermissions,
-      };
-      await setDoc(
-        COLLECTIONS.invites,
-        inviteId,
-        { role, controllerAccess, appAccess, permissions: normalizedPermissions },
-        { merge: true },
-      );
+      } else {
+        updatedInvite = await withInviteMutationLock(inviteId, async () => {
+          const currentInvite = await getDoc(COLLECTIONS.invites, inviteId);
+          if (!currentInvite || currentInvite.churchId !== req.params.churchId) {
+            throw httpError(404, "Invite not found.");
+          }
+          if (currentInvite.status !== "pending") {
+            throw httpError(400, "Only pending invites can be updated.");
+          }
+          const accessUpdate = await buildAccessUpdate();
+          await setDoc(COLLECTIONS.invites, inviteId, accessUpdate, { merge: true });
+          return { ...currentInvite, inviteId, ...accessUpdate };
+        });
+      }
       await addSecurityEvent({
         type: "invite_access_updated",
         churchId: req.params.churchId,
         userId: admin.user.uid,
         inviteId,
-        email: invite.email || null,
-        controllerAccess,
-        appAccess,
-        permissions: normalizedPermissions,
+        email: updatedInvite.email || null,
+        controllerAccess: updatedInvite.controllerAccess,
+        appAccess: updatedInvite.appAccess,
+        permissions: updatedInvite.permissions,
       });
       return res.json({
         success: true,
@@ -8687,14 +8769,18 @@ export const authHandlers = {
       }
       const user = await upsertProfileFromVerifiedToken(verified);
 
-      await acceptInviteMembership({ invite, user });
+      const acceptedInvite = await acceptInviteMembership({ invite, user });
       await addSecurityEvent({
         type: "invite_accepted",
-        churchId: invite.churchId,
+        churchId: acceptedInvite.churchId,
         userId: user.uid,
-        inviteId: invite.inviteId,
+        inviteId: acceptedInvite.inviteId,
+        role: acceptedInvite.role,
+        controllerAccess: acceptedInvite.controllerAccess,
+        appAccess: acceptedInvite.appAccess,
+        permissions: acceptedInvite.permissions,
       });
-      await sendInviteAcceptedAdminNotifications({ invite, user }).catch(
+      await sendInviteAcceptedAdminNotifications({ invite: acceptedInvite, user }).catch(
         (error) =>
           logAuthEvent("warn", "invite.accepted.notify.error", {
             churchId: invite.churchId,

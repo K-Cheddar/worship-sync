@@ -192,6 +192,9 @@ export const isRouteAllowedForSession = (
     if (isControllerSurfacePath(pathname) && !hasControllerAccess(controllerAccess)) {
       return false;
     }
+    if (pathname === "/resources" && !hasControllerAccess(controllerAccess)) {
+      return false;
+    }
     if (
       !matchesAllowedRoute(
         pathname,

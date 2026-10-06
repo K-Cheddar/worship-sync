@@ -162,6 +162,12 @@ export function createMockGlobalContext(
     setNotificationPreference: jest.fn(() => Promise.resolve(true)),
     endWorkstationOperatorSession: jest.fn(),
     ...overrides,
+    controllerAccess:
+      (overrides.controllerAccess as "none" | "view" | "music" | "full" | undefined) ??
+      (overrides.access === "member"
+        ? "none"
+        : (overrides.access as "none" | "view" | "music" | "full" | undefined)) ??
+      "full",
   };
 }
 
@@ -247,6 +253,12 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     setUser: jest.fn(),
     setDatabase: jest.fn(),
     ...overrides,
+    controllerAccess:
+      (overrides.controllerAccess as "none" | "view" | "music" | "full" | undefined) ??
+      (overrides.access === "member"
+        ? "none"
+        : (overrides.access as "none" | "view" | "music" | "full" | undefined)) ??
+      "full",
   };
 }
 
