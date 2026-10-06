@@ -159,7 +159,7 @@ test("manager may manage a team they do not belong to", () => {
   assertTeamAccess(access, "av", { view: true, edit: false });
 });
 
-test("member-tier scoped manager keeps edit on one team and roster read on another", () => {
+test("legacy appAccess member still allows scoped edit and roster read", () => {
   const access = resolve(
     bootstrap({
       appAccess: "member",

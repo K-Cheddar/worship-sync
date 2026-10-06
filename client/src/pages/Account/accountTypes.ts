@@ -1,5 +1,6 @@
 import type {
   MemberPermissions,
+  ControllerAccess,
   ServicesPermission,
   TeamsPermission,
 } from "../../api/authTypes";
@@ -8,6 +9,7 @@ export type Member = {
   membershipId: string;
   userId: string;
   role: string;
+  controllerAccess?: string;
   appAccess: string;
   permissions?: MemberPermissions;
   user?: {
@@ -57,12 +59,13 @@ export type DisplayDevice = {
   revokedAt?: string | null;
 };
 
-export type MemberAccessOption = "full" | "music" | "view" | "member";
+export type MemberAccessOption = ControllerAccess;
 
-export type InviteAccessOption = "admin" | MemberAccessOption;
+export type InviteAccessOption = ControllerAccess;
 
 export type InviteAccessDraft = {
-  access: InviteAccessOption;
+  role: "admin" | "member";
+  controllerAccess: ControllerAccess;
   teamsAccess: TeamsPermission;
   servicesAccess: ServicesPermission;
   teamScopeIds: string[];
@@ -77,6 +80,7 @@ export type InviteRecord = {
   inviteId: string;
   email: string;
   role: string;
+  controllerAccess?: string;
   appAccess: string;
   permissions?: MemberPermissions;
   status: string;

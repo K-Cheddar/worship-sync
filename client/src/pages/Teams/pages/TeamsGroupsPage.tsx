@@ -2,7 +2,7 @@ import TeamManager from "../managers/TeamManager";
 import { useTeamsPage } from "../TeamsPageContext";
 
 const TeamsGroupsPage = () => {
-  const { pageData, upsertData, removeData, refresh, canEditTeams } =
+  const { pageData, upsertData, removeData, refresh, canEditTeams, canEditTeam } =
     useTeamsPage();
 
   return (
@@ -13,7 +13,8 @@ const TeamsGroupsPage = () => {
       qualificationAreas={pageData.qualificationAreas}
       members={pageData.members}
       data={pageData}
-      canEdit={canEditTeams}
+      canEditTeams={canEditTeams}
+      canEditTeam={canEditTeam}
       onSaved={(team, replaceId) =>
         upsertData("teams", "teamId", team, replaceId)
       }

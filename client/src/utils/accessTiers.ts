@@ -1,30 +1,31 @@
-import type { AccessType } from "../context/globalInfo";
+import type { ControllerAccess } from "../api/authTypes";
 
 /**
- * App access tiers, widest to narrowest: `full` → `music` → `view` → `member`.
- *
- * `member` is for a volunteer who exists only to see their own schedule. It is
- * strictly narrower than `view`, and that relationship is the whole point of
- * this module.
- *
- * Most access checks were written as `access !== "view"` — "not view, therefore
- * allowed". Adding a narrower tier to that shape silently *grants* it
- * everything view is denied, which is the opposite of the intent. Routing every
- * such check through {@link isViewOnlyAccess} makes a new tier inherit view's
- * restrictions by construction instead of by remembering to update each site.
- *
- * Allowlist checks (`access: ["full", "view"]`) are already safe — an
- * unmentioned tier is excluded — and need no change.
+ * Controller permissions only. The legacy `appAccess: "member"` value is
+ * normalized at the auth boundary to Controller access `none`.
  */
 
-/** True for tiers that may look but not modify. Deny-side of every mutation check. */
-export const isViewOnlyAccess = (access?: AccessType | null): boolean =>
-  access === "view" || access === "member";
+export type { ControllerAccess };
 
-/**
- * True for a volunteer with no operator surface at all. Narrower than
- * {@link isViewOnlyAccess}: a `view` user still gets read-only controllers,
- * a `member` gets none.
- */
-export const isMemberOnlyAccess = (access?: AccessType | null): boolean =>
-  access === "member";
+export const normalizeControllerAccess = (value: unknown): ControllerAccess => {
+  if (value === "member") return "none";
+  if (value === "none" || value === "view" || value === "music" || value === "full") {
+    return value;
+  }
+  return "none";
+};
+
+/** True for controller sessions that may look but not modify. */
+export const isControllerViewOnly = (access?: ControllerAccess | null): boolean =>
+  access === "view" || access === "none";
+
+/** True when the user has any Controller/operator access. */
+export const hasControllerAccess = (access?: ControllerAccess | null): boolean =>
+  access === "view" || access === "music" || access === "full";
+
+export const hasFullControllerAccess = (access?: ControllerAccess | null): boolean =>
+  access === "full";
+
+// Temporary alias for workstation and older call sites. New auth code uses the
+// explicitly named Controller helpers above.
+export const isViewOnlyAccess = isControllerViewOnly;

@@ -33,7 +33,7 @@ import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useAppInstallChrome } from "../hooks/useAppInstallChrome";
-import { isMemberOnlyAccess, isViewOnlyAccess } from "../utils/accessTiers";
+import { hasControllerAccess, isViewOnlyAccess } from "../utils/accessTiers";
 import { useSelector } from "../hooks";
 import { selectControllerProfiles } from "../store/controllerProfilesSlice";
 import { selectDisplayOutputs } from "../store/displayOutputsSlice";
@@ -352,18 +352,14 @@ const Welcome = () => {
   const isGuest = loginState === "guest";
   const isHumanSession = sessionKind === "human";
   const isAdmin = role === "admin";
-  const isMemberAccess = isMemberOnlyAccess(access);
   const visibleAdminLinks = adminLinks.filter(
     (link) =>
-      !isMemberAccess &&
       (isAdmin || (link.to === "/teams-and-services" && canViewTeams)),
   );
   const isMusicAccess = isLoggedIn && access === "music";
   /**
-   * A `member` is a volunteer, not an operator: they get their own schedule and
-   * no presentation surfaces at all. `view` still sees the controllers
-   * read-only, which is why this is a separate check rather than folding into
-   * `isViewOnlyAccess`.
+   * Controller access only controls operator navigation. Personal and Teams
+   * navigation below is derived from authentication and Teams capability.
    */
   const primaryControllers = useMemo((): CardLink[] => {
     const presentation =
@@ -389,7 +385,7 @@ const Welcome = () => {
     }
     return links;
   }, [controllerProfiles]);
-  const visiblePrimaryControllers = isMemberAccess
+  const visiblePrimaryControllers = !hasControllerAccess(access)
     ? []
     : isMusicAccess
       ? primaryControllers.filter((link) => link.to === "/controller")
@@ -405,17 +401,16 @@ const Welcome = () => {
     [controllerProfiles],
   );
   const visibleAuxControllers =
-    isMemberAccess || isMusicAccess ? [] : auxControllerLinks;
-  const visibleControllerLinks = isMemberAccess
+    !hasControllerAccess(access) || isMusicAccess ? [] : auxControllerLinks;
+  const visibleControllerLinks = !hasControllerAccess(access)
     ? []
     : [...visiblePrimaryControllers, ...visibleAuxControllers];
   /** Live service plan workspace — not a controller surface; sits with My schedule. */
-  const showServiceWorkspace = !isMemberAccess && Boolean(canViewTeams);
-  const showCurrentServiceViewer =
-    !isMemberAccess && Boolean(canViewServices);
+  const showServiceWorkspace = Boolean(canViewTeams);
+  const showCurrentServiceViewer = Boolean(canViewServices);
   const showMySchedule = isLoggedIn && isHumanSession;
   const showMyTeams = isLoggedIn && isHumanSession && !canViewTeams;
-  const visibleSecondaryControllers = isMemberAccess
+  const visibleSecondaryControllers = !hasControllerAccess(access)
     ? []
     : isMusicAccess
       ? []

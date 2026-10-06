@@ -9946,7 +9946,7 @@ test("my blockout dates prunes history past the retention window", async (t) => 
   );
 });
 
-test("member-tier access retains scoped Teams grants while forcing global permissions off", async (t) => {
+test("Controller None preserves independently granted global Teams and Services permissions", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createHumanContext("member_tier_perms", {
     userId: "member_tier_target",
@@ -9967,6 +9967,7 @@ test("member-tier access retains scoped Teams grants while forcing global permis
   const narrowed = await createHumanContext("member_tier_perms_narrow", {
     userId: "member_tier_narrow",
     role: "member",
+    controllerAccess: "none",
     appAccess: "member",
     permissions: {
       teams: "edit",
@@ -9978,11 +9979,12 @@ test("member-tier access retains scoped Teams grants while forcing global permis
     context: narrowed,
   });
 
-  // Member-tier access may use the Teams workspace, but global Teams and
-  // Services permissions remain disabled even if a direct write submits them.
+  // Legacy appAccess member is compatibility data only. Controller None must
+  // leave the independent Teams and Services grants intact.
   assert.equal(narrowedBootstrap.statusCode, 200);
-  assert.equal(narrowedBootstrap.payload.permissions.teams, "none");
-  assert.equal(narrowedBootstrap.payload.permissions.services, "none");
+  assert.equal(narrowedBootstrap.payload.controllerAccess, "none");
+  assert.equal(narrowedBootstrap.payload.permissions.teams, "edit");
+  assert.equal(narrowedBootstrap.payload.permissions.services, "edit");
   assert.deepEqual(narrowedBootstrap.payload.permissions.teamScopes, {
     worship: "edit",
   });
@@ -15155,4 +15157,92 @@ test("archived teams invalidate stale scoped writes but remain cleanable by glob
   assert.equal((await run(authHandlers.deleteTeamRole, owner, { roleId: roleToDelete.roleId })).statusCode, 200);
   assert.equal((await run(authHandlers.deleteTeamQualificationLevel, owner, { levelId: levelToDelete.levelId })).statusCode, 200);
   assert.equal((await run(authHandlers.deleteTeamQualificationArea, owner, { areaId: areaToDelete.areaId })).statusCode, 200);
+});
+
+test("scoped Team managers can change settings but cannot change the roster or Team lifecycle", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("team_settings_scoped_matrix");
+  const churchId = owner.churchId;
+  for (const [memberId, firstName] of [["member-a", "Avery"], ["member-b", "Blake"]]) {
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+      memberId, churchId, firstName, lastName: "Member", positionIds: [],
+    }, { merge: false });
+  }
+  const create = (context, body) => callHandler(authHandlers.createTeam, { context, body });
+  const worshipResult = await create(owner, {
+    name: "Worship", description: "Original", icon: "Music", memberIds: ["member-a"],
+    usesMicrophoneAssignments: false, usesIemAssignments: false,
+  });
+  const avResult = await create(owner, { name: "AV", memberIds: ["member-a"] });
+  assert.equal(worshipResult.statusCode, 200);
+  assert.equal(avResult.statusCode, 200);
+  const worship = worshipResult.payload.team;
+  const av = avResult.payload.team;
+  const scoped = await createHumanContext("team_settings_worship_manager", {
+    churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [worship.teamId]: "edit", [av.teamId]: "view" } },
+  });
+  const run = (handler, context, params = {}, body = {}) => callHandler(handler, {
+    context, params, body,
+  });
+
+  const settings = {
+    name: "Worship and Music", description: "Updated description", icon: "Guitar",
+    usesMicrophoneAssignments: true, usesIemAssignments: true,
+    memberIds: ["member-a"],
+  };
+  const allowed = await run(authHandlers.updateTeam, scoped, { teamId: worship.teamId }, settings);
+  assert.equal(allowed.statusCode, 200);
+  assert.deepEqual({
+    name: allowed.payload.team.name,
+    description: allowed.payload.team.description,
+    icon: allowed.payload.team.icon,
+    usesMicrophoneAssignments: allowed.payload.team.usesMicrophoneAssignments,
+    usesIemAssignments: allowed.payload.team.usesIemAssignments,
+    memberIds: allowed.payload.team.memberIds,
+  }, { ...settings, memberIds: ["member-a"] });
+
+  assert.equal((await run(authHandlers.updateTeam, scoped, { teamId: av.teamId }, {
+    name: "Changed AV", memberIds: [],
+  })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeam, scoped, { teamId: worship.teamId }, {
+    ...settings, memberIds: ["member-a", "member-b"],
+  })).statusCode, 403);
+  assert.equal((await run(authHandlers.updateTeam, scoped, { teamId: worship.teamId }, {
+    ...settings, memberIds: [],
+  })).statusCode, 403);
+
+  await setDoc(COLLECTIONS.teams, worship.teamId, { memberIds: ["member-a", "member-b"] }, { merge: true });
+  const reordered = await run(authHandlers.updateTeam, scoped, { teamId: worship.teamId }, {
+    ...settings, memberIds: ["member-b", "member-a"],
+  });
+  assert.equal(reordered.statusCode, 200);
+  assert.deepEqual(reordered.payload.team.memberIds, ["member-a", "member-b"]);
+
+  assert.equal((await create(scoped, { name: "New Team", memberIds: [] })).statusCode, 403);
+  assert.equal((await run(authHandlers.archiveTeam, scoped, { teamId: worship.teamId })).statusCode, 403);
+  assert.equal((await run(authHandlers.deleteTeam, scoped, { teamId: worship.teamId })).statusCode, 403);
+
+  const rosterReader = await createHumanContext("team_settings_roster_reader", {
+    churchId, userId: "member-a", role: "member", appAccess: "member",
+    permissions: { teams: "none", teamScopes: {} },
+  });
+  assert.equal((await run(authHandlers.updateTeam, rosterReader, { teamId: worship.teamId }, {
+    ...settings, name: "Reader change", memberIds: ["member-a", "member-b"],
+  })).statusCode, 403);
+
+  const globalEditor = await createHumanContext("team_settings_global_editor", {
+    churchId, role: "member", permissions: { teams: "edit", teamScopes: {} },
+  });
+  const globalUpdate = await run(authHandlers.updateTeam, globalEditor, { teamId: worship.teamId }, {
+    ...settings, name: "Global update", memberIds: ["member-b"],
+  });
+  assert.equal(globalUpdate.statusCode, 200);
+  assert.deepEqual(globalUpdate.payload.team.memberIds, ["member-b"]);
+  const globalCreated = await create(globalEditor, { name: "Global team", memberIds: [] });
+  assert.equal(globalCreated.statusCode, 200);
+  assert.equal((await run(authHandlers.archiveTeam, globalEditor, { teamId: globalCreated.payload.team.teamId })).statusCode, 200);
+  const deletable = await create(globalEditor, { name: "Delete candidate", memberIds: [] });
+  assert.equal(deletable.statusCode, 200);
+  assert.equal((await run(authHandlers.deleteTeam, globalEditor, { teamId: deletable.payload.team.teamId })).statusCode, 200);
 });

@@ -67,6 +67,7 @@ import type {
   EmailCodeChallengeFields,
   MemberNotifications,
   MemberPermissions,
+  ControllerAccess,
   NotificationCategory,
   NotificationPreference,
 } from "../api/authTypes";
@@ -77,6 +78,7 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
+import { normalizeControllerAccess } from "../utils/accessTiers";
 import {
   AUTH_SIGN_IN_AGAIN_MESSAGE,
   AUTH_VERIFY_DEVICE_MESSAGE,
@@ -324,7 +326,7 @@ type ChurchIntegrationsStatus = "loading" | "ready";
 type CurrentServiceWorkspaceStatus = "loading" | "ready";
 export type HumanAuthMethod = "password" | "google" | "microsoft";
 
-export type AccessType = "full" | "music" | "view" | "member";
+export type AccessType = ControllerAccess;
 type GlobalInfoContextType = {
   authenticateHumanWithFirebase: ({
     method,
@@ -425,7 +427,9 @@ type GlobalInfoContextType = {
   contentHiddenByOutput?: Record<string, { hidden: boolean; confirmed: boolean }>;
   hostId: string;
   activeInstances: Instance[];
+  /** @deprecated Controller compatibility alias. New authorization uses controllerAccess. */
   access: AccessType;
+  controllerAccess: ControllerAccess;
   permissions: MemberPermissions;
   canViewTeams: boolean;
   /** Broad Teams read boundary for sections that include church-wide data. */
@@ -939,7 +943,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setUser(toolbarDisplayName);
     setDatabase(bootstrap.database || "demo");
     setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
-    setAccess((bootstrap.appAccess as AccessType) || "view");
+    const normalizedControllerAccess = normalizeControllerAccess(
+      bootstrap.controllerAccess ?? bootstrap.appAccess,
+    );
+    setAccess(normalizedControllerAccess);
     setPermissions(bootstrap.permissions || { teams: "none" });
     setChurchId(bootstrap.churchId || "");
     setChurchName(bootstrap.churchName?.trim() || "");
@@ -967,15 +974,16 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.setItem("user", toolbarDisplayName);
     localStorage.setItem("database", bootstrap.database || "demo");
     localStorage.setItem("upload_preset", bootstrap.uploadPreset || "bpqu4ma5");
-    localStorage.setItem("access", (bootstrap.appAccess as AccessType) || "view");
+    localStorage.setItem("access", normalizedControllerAccess);
+    localStorage.setItem("controllerAccess", normalizedControllerAccess);
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
     globalFireDbInfo.canWriteSharedData =
       (bootstrap.sessionKind === "human" ||
         bootstrap.sessionKind === "workstation") &&
-      (bootstrap.appAccess || "view") !== "view" &&
-      (bootstrap.appAccess || "view") !== "member";
+      normalizedControllerAccess !== "view" &&
+      normalizedControllerAccess !== "none";
     if (bootstrap.sessionKind === "human") {
       const humanUser = getHumanAuth().currentUser;
       if (humanUser) {
@@ -3238,6 +3246,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       hostId,
       activeInstances,
       access,
+      controllerAccess: access,
       permissions,
       canViewTeams,
       hasBroadTeamsReadAccess,

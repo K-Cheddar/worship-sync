@@ -371,69 +371,64 @@ describe("sessionRouteAccess", () => {
   });
 });
 
-describe("schedule-only member routing", () => {
-  const member = {
+describe("route ownership with independent Controller access", () => {
+  const noController = {
     loginState: "success",
     sessionKind: "human",
-    access: "member",
+    controllerAccess: "none",
   } as const;
 
-  it("allows only the member surfaces", () => {
-    expect(isRouteAllowedForSession("/my-schedule", member)).toBe(true);
-    expect(isRouteAllowedForSession("/home", member)).toBe(true);
-    expect(isRouteAllowedForSession("/teams-and-services", member)).toBe(true);
+  it("allows personal routes and a server-authorized Teams attempt", () => {
+    expect(isRouteAllowedForSession("/my-schedule", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/home", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/teams-and-services", noController)).toBe(true);
     expect(
-      isRouteAllowedForSession("/teams-and-services/schedules", member),
+      isRouteAllowedForSession("/teams-and-services/schedules", noController),
     ).toBe(true);
+    expect(isRouteAllowedForSession("/teams", noController)).toBe(true);
   });
 
-  it("refuses operator surfaces a hidden link would otherwise leave reachable", () => {
-    // Hiding the cards on Home is presentation only; typing the URL must not
-    // open a read-only controller.
-    expect(isRouteAllowedForSession("/controller", member)).toBe(false);
-    expect(isRouteAllowedForSession("/overlay-controller", member)).toBe(false);
-    expect(isRouteAllowedForSession("/boards/controller", member)).toBe(false);
-    expect(isRouteAllowedForSession("/credits-editor", member)).toBe(false);
-    expect(isRouteAllowedForSession("/account", member)).toBe(false);
-    expect(isRouteAllowedForSession("/current-service", member)).toBe(false);
-    expect(isRouteAllowedForSession("/resources", member)).toBe(false);
+  it("refuses Controller and operator surfaces", () => {
+    for (const path of [
+      "/controller",
+      "/aux-controller/abc",
+      "/overlay-controller",
+      "/boards/controller",
+      "/credits-editor",
+    ]) {
+      expect(isRouteAllowedForSession(path, noController)).toBe(false);
+    }
   });
 
-  it("keeps scoped managers on member-tier routes", () => {
+  it("does not let Controller None suppress explicit Teams or Services access", () => {
     const scopedManager = {
-      ...member,
+      ...noController,
       permissions: {
         teams: "none" as const,
         services: "none" as const,
         teamScopes: { worship: "edit" as const },
       },
     };
+    const servicePlanner = {
+      ...noController,
+      permissions: { teams: "none" as const, services: "edit" as const, teamScopes: {} },
+    };
     expect(
       isRouteAllowedForSession("/teams-and-services/schedules", scopedManager),
     ).toBe(true);
-    for (const path of [
-      "/current-service",
-      "/controller",
-      "/account",
-      "/resources",
-      "/boards/controller",
-    ]) {
-      expect(isRouteAllowedForSession(path, scopedManager)).toBe(false);
-    }
+    expect(isRouteAllowedForSession("/current-service", servicePlanner)).toBe(true);
+    expect(isRouteAllowedForSession("/controller", servicePlanner)).toBe(false);
   });
 
-  it("is deny-by-default, so a route added later stays closed", () => {
-    expect(isRouteAllowedForSession("/some-future-operator-page", member)).toBe(
+  it("keeps view, music, and full Controller behavior", () => {
+    expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "view" })).toBe(true);
+    expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "music" })).toBe(true);
+    expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "full" })).toBe(true);
+  });
+
+  it("keeps future routes closed", () => {
+    expect(isRouteAllowedForSession("/some-future-operator-page", noController)).toBe(
       false,
     );
-  });
-
-  it("leaves view access unchanged", () => {
-    const viewer = {
-      loginState: "success",
-      sessionKind: "human",
-      access: "view",
-    } as const;
-    expect(isRouteAllowedForSession("/controller", viewer)).toBe(true);
   });
 });

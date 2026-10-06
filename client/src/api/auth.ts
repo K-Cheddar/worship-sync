@@ -16,6 +16,7 @@ import {
 import { logAuthDiagnostic } from "../utils/authDiagnostics";
 import type { ChurchIntegrations } from "../types/integrations";
 import type {
+  ControllerAccess,
   ServicePlan,
   ServicePlanPayload,
   ServicePlanSummary,
@@ -2735,7 +2736,8 @@ export const inviteTeamRosterMember = async (
     email,
     memberId,
     role: "member",
-    // The narrowest tier: their own schedule, no operator surfaces.
+    // No Controller access; roster-derived Teams reads remain independent.
+    controllerAccess: "none",
     appAccess: "member",
     permissions: { teams: "none", services: "none" },
   });
@@ -2827,14 +2829,18 @@ export const removeChurchMember = async (churchId: string, userId: string) =>
 export const updateChurchMemberAccess = async (
   churchId: string,
   userId: string,
-  appAccess: "full" | "music" | "view" | "member",
+  controllerAccess: ControllerAccess,
   permissions: MemberPermissions,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
     {
       method: "POST",
-      body: JSON.stringify({ appAccess, permissions }),
+      body: JSON.stringify({
+        controllerAccess,
+        appAccess: controllerAccess === "none" ? "member" : controllerAccess,
+        permissions,
+      }),
     },
   );
 

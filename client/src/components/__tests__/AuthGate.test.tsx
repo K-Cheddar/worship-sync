@@ -34,6 +34,7 @@ const renderWithGate = (
               </AuthGate>
             }
           />
+          <Route path="/home" element={<div data-testid="home-page">Home</div>} />
           <Route
             path="/projector"
             element={
@@ -71,19 +72,29 @@ describe("AuthGate", () => {
 
   it("renders children when session kind is allowed", () => {
     renderWithGate(
-      { sessionKind: "human", operatorName: "" },
+      { sessionKind: "human", controllerAccess: "full", operatorName: "" },
       ["human", "workstation"]
     );
     expect(screen.getByTestId("protected")).toBeInTheDocument();
   });
 
-  it("lets member-tier humans attempt the Teams workspace", () => {
+  it("lets Controller None humans attempt the Teams workspace", () => {
     renderWithGate(
-      { sessionKind: "human", access: "member" },
+      { sessionKind: "human", controllerAccess: "none", access: "none" },
       ["human"],
       "/teams-and-services/schedules",
     );
     expect(screen.getByTestId("teams-workspace")).toBeInTheDocument();
+  });
+
+  it("blocks Controller None humans from operator surfaces", () => {
+    renderWithGate(
+      { sessionKind: "human", controllerAccess: "none", access: "none" },
+      ["human"],
+      "/controller",
+    );
+    expect(screen.queryByTestId("protected")).not.toBeInTheDocument();
+    expect(screen.getByTestId("home-page")).toBeInTheDocument();
   });
 
   it("sends workstation sessions without an operator name to the operator prompt", async () => {

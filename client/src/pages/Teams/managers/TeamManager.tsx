@@ -31,6 +31,7 @@ import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityIconPicker from "../EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
+import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
 import {
   buildGroupsReturnTo,
@@ -54,7 +55,8 @@ type TeamManagerProps = {
   qualificationAreas: TeamQualificationArea[];
   members: TeamRosterMember[];
   data: TeamsData;
-  canEdit: boolean;
+  canEditTeams: boolean;
+  canEditTeam: (teamId: string) => boolean;
   onSaved: (team: TeamRecord, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (teamId: string) => void;
@@ -68,7 +70,8 @@ const TeamManager = ({
   qualificationAreas,
   members,
   data,
-  canEdit,
+  canEditTeams,
+  canEditTeam,
   onSaved,
   onArchived,
   onRemoved,
@@ -99,6 +102,12 @@ const TeamManager = ({
   const pendingEditTeamIdRef = useRef<string | null>(null);
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
+  const currentEditingTeam = editing
+    ? teams.find((team) => team.teamId === editing.teamId) || editing
+    : null;
+  const canEditCurrentTeam = editing
+    ? canEditTeam(editing.teamId)
+    : canEditTeams;
 
   const editingTeamPositions = useMemo(() => {
     if (!editing) return [];
@@ -172,11 +181,12 @@ const TeamManager = ({
     const team = teams.find((item) => item.teamId === editTeamId);
     if (!team) return;
     pendingEditTeamIdRef.current = null;
+    if (!canEditTeam(team.teamId)) return;
     startEditingTeam(team);
-  }, [startEditingTeam, teams]);
+  }, [canEditTeam, startEditingTeam, teams]);
 
   const confirmDelete = async () => {
-    if (!canEdit) return;
+    if (!canEditTeams) return;
     if (!deleting) return;
     const team = deleting;
     if (team.teamId.startsWith("local-")) {
@@ -198,7 +208,7 @@ const TeamManager = ({
   };
 
   const submit = async () => {
-    if (!canEdit) return;
+    if (!canEditCurrentTeam) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.teamId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —
@@ -206,13 +216,15 @@ const TeamManager = ({
     if (savingIds.has(savingKey)) return;
     setSavingIds((prev) => new Set(prev).add(savingKey));
     const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
+    const authoritativeTeam = wasEditing ? currentEditingTeam : null;
+    const savedMemberIds = authoritativeTeam?.memberIds || [];
     const optimisticTeam: TeamRecord = {
       churchId,
       teamId: localTeamId,
       name: draft.name.trim(),
       description: draft.description || "",
       icon: draft.icon || "",
-      memberIds: draft.memberIds,
+      memberIds: wasEditing && !canEditTeams ? savedMemberIds : draft.memberIds,
       usesMicrophoneAssignments: Boolean(draft.usesMicrophoneAssignments),
       usesIemAssignments: Boolean(draft.usesIemAssignments),
       archivedAt: wasEditing?.archivedAt || null,
@@ -223,7 +235,10 @@ const TeamManager = ({
     onSaved(savedRecord);
     try {
       const response = wasEditing
-        ? await updateTeam(churchId, wasEditing.teamId, draft)
+        ? await updateTeam(churchId, wasEditing.teamId, {
+          ...draft,
+          memberIds: canEditTeams ? draft.memberIds : savedMemberIds,
+        })
         : await createTeam(churchId, draft);
       if (!wasEditing) {
         onSaved(response.team, localTeamId);
@@ -294,13 +309,13 @@ const TeamManager = ({
             setShowCreate(true);
           });
         }}
-        canEdit={canEdit}
+        canEdit={canEditTeams}
         keepCreateActionVisible
         title={editing ? "Edit team" : "Create team"}
         sectionTitle="Teams"
         description="Organize members into scheduling teams."
         createLabel="Create team"
-        listHeaderActions={<PortableDataActions type="teams" onImported={onImported} />}
+        listHeaderActions={canEditTeams ? <PortableDataActions type="teams" onImported={onImported} /> : undefined}
         listToolbar={
           <div className="space-y-3">
             {returnTo && !showCreate ? (
@@ -332,8 +347,8 @@ const TeamManager = ({
                 subtitle={`${team.memberIds.length} members | ${positions.filter((position) => position.teamId === team.teamId).length} positions`}
                 icon={team.icon}
                 archived={Boolean(team.archivedAt)}
-                canEdit={canEdit}
-                onTitleClick={() => selectTeam(team)}
+                canEdit={canEditTeam(team.teamId)}
+                onTitleClick={canEditTeam(team.teamId) ? () => selectTeam(team) : undefined}
               />
             ))}
           </>
@@ -344,7 +359,7 @@ const TeamManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditTeams}
                   archiveLabel="Archive team"
                   deleteLabel="Delete team"
                   menuLabel="Team actions"
@@ -381,19 +396,44 @@ const TeamManager = ({
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
-            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            disabled={!canEditCurrentTeam || !draft.name.trim() || isSavingCurrent}
           />
         }
       >
-        <Input label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
-        <EntityIconPicker context="team" value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
-        <TextArea label="Description" value={draft.description || ""} textareaClassName="min-h-20" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
-        <EntityMultiSelect
-          label="Members"
-          options={members.map((member) => ({ id: member.memberId, label: memberName(member), archived: Boolean(member.archivedAt) }))}
-          value={draft.memberIds}
-          onChange={(memberIds) => setDraft((d) => ({ ...d, memberIds }))}
-        />
+        <Input disabled={!canEditCurrentTeam} label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name: String(name) }))} />
+        {canEditCurrentTeam ? (
+          <EntityIconPicker context="team" value={draft.icon || ""} onChange={(icon) => setDraft((d) => ({ ...d, icon }))} />
+        ) : (
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-gray-200">Icon</p>
+            <EntityIconBadge icon={draft.icon} className="h-7 w-7" />
+          </div>
+        )}
+        <TextArea disabled={!canEditCurrentTeam} label="Description" value={draft.description || ""} textareaClassName="min-h-20" onChange={(description) => setDraft((d) => ({ ...d, description }))} />
+        {canEditTeams ? (
+          <EntityMultiSelect
+            label="Members"
+            options={members.map((member) => ({ id: member.memberId, label: memberName(member), archived: Boolean(member.archivedAt) }))}
+            value={draft.memberIds}
+            onChange={(memberIds) => setDraft((d) => ({ ...d, memberIds }))}
+          />
+        ) : editing ? (
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-gray-200">Members</p>
+            <p className="text-sm text-gray-300">
+              {(currentEditingTeam?.memberIds || []).length} {currentEditingTeam?.memberIds.length === 1 ? "member" : "members"}
+            </p>
+            <p className="text-sm text-gray-300">
+              {formatNameList(
+                (currentEditingTeam?.memberIds || []).map((memberId) => {
+                  const member = members.find((item) => item.memberId === memberId);
+                  return member ? memberName(member) : "";
+                }).filter(Boolean),
+              )}
+            </p>
+            <p className="text-xs text-gray-400">Roster changes are managed separately.</p>
+          </div>
+        ) : null}
         <Checkbox
           label={(
             <span className="flex flex-col gap-0.5">
@@ -404,6 +444,7 @@ const TeamManager = ({
             </span>
           )}
           checked={Boolean(draft.usesMicrophoneAssignments)}
+          disabled={!canEditCurrentTeam}
           onCheckedChange={(usesMicrophoneAssignments) => setDraft((current) => ({
             ...current,
             usesMicrophoneAssignments,
@@ -417,6 +458,7 @@ const TeamManager = ({
             </span>
           )}
           checked={Boolean(draft.usesIemAssignments)}
+          disabled={!canEditCurrentTeam}
           onCheckedChange={(usesIemAssignments) => setDraft((current) => ({ ...current, usesIemAssignments }))}
         />
         {editing ? (

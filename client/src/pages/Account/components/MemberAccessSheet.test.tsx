@@ -127,7 +127,8 @@ const renderMemberSheet = () => {
     memberActionLoading: {},
     accessSheetTarget: { kind: "member" as const, member },
     inviteAccessDraft: {
-      access: "full",
+      role: "member",
+      controllerAccess: "full",
       teamsAccess: "none",
       servicesAccess: "none",
       teamScopeIds: [],
@@ -156,7 +157,8 @@ const renderMemberSheet = () => {
 
 const renderInviteSheet = (kind: "invite-draft" | "invite") => {
   let draft: InviteAccessDraft = {
-    access: "full",
+    role: "member",
+    controllerAccess: "full",
     teamsAccess: "view",
     servicesAccess: "edit",
     teamScopeIds: ["worship"],
@@ -209,7 +211,7 @@ const renderInviteSheet = (kind: "invite-draft" | "invite") => {
   return { ...view, context, getDraft: () => draft };
 };
 
-describe("MemberAccessSheet member tier", () => {
+describe("MemberAccessSheet independent access axes", () => {
   it("keeps existing admins at immutable Full access despite stale drafts", () => {
     jest.clearAllMocks();
     const { rerender, context, setters } = renderMemberSheet();
@@ -226,18 +228,18 @@ describe("MemberAccessSheet member tier", () => {
       },
     };
     context.toTeamsAccessOption.mockReturnValue("edit");
-    context.getMemberAccessValue.mockReturnValue("member");
+    context.getMemberAccessValue.mockReturnValue("full");
     context.getMemberTeamsAccessValue.mockReturnValue("none");
     context.getMemberServicesAccessValue.mockReturnValue("none");
     context.getMemberTeamScopeValue.mockReturnValue(["worship"]);
     context.getEditableTeamScopeIds.mockReturnValue([]);
     rerender(<MemberAccessSheet />);
 
-    const accessSelect = screen.getByRole("combobox", { name: "Access level" });
+    const accessSelect = screen.getByRole("combobox", { name: "Controller access" });
     const teamsSelect = screen.getByRole("combobox", { name: "Global Teams access" });
-    const servicesSelect = screen.getByRole("combobox", { name: "Service editing" });
+    const servicesSelect = screen.getByRole("combobox", { name: "Service access" });
     expect(accessSelect).toHaveValue("full");
-    expect(screen.getByTestId("member-access-sheet-membership-1-selected-label")).toHaveTextContent("Full access");
+    expect(screen.getByTestId("member-access-sheet-membership-1-selected-label")).toHaveTextContent("Full");
     expect(accessSelect).toBeDisabled();
     expect(teamsSelect).toHaveValue("edit");
     expect(screen.getByTestId("member-teams-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit all teams");
@@ -245,61 +247,88 @@ describe("MemberAccessSheet member tier", () => {
     expect(servicesSelect).toHaveValue("edit");
     expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("Edit");
     expect(servicesSelect).toBeDisabled();
-    expect(screen.queryByRole("group", { name: "Per-team edit access" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Manage selected teams" })).not.toBeInTheDocument();
 
     fireEvent.change(accessSelect, {
-      target: { value: "member" },
+      target: { value: "none" },
     });
     rerender(<MemberAccessSheet />);
     expect(setters.setMemberAccessDrafts).not.toHaveBeenCalled();
-    expect(screen.getByRole("combobox", { name: "Access level" })).toHaveValue("full");
+    expect(screen.getByRole("combobox", { name: "Controller access" })).toHaveValue("full");
     expect(screen.getByRole("button", { name: "Save access" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
     expect(updateChurchMemberAccess).not.toHaveBeenCalled();
   });
 
-  it("shows global Teams and Services as disabled None while keeping team scopes usable", () => {
+  it("keeps Teams and Services configurable when Controller access is None", () => {
     const { rerender, setters } = renderMemberSheet();
-    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
-      target: { value: "member" },
+    fireEvent.change(screen.getByRole("combobox", { name: "Controller access" }), {
+      target: { value: "none" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Global Teams access" }), {
+      target: { value: "none" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Service access" }), {
+      target: { value: "none" },
     });
     rerender(<MemberAccessSheet />);
 
     expect(setters.setMemberTeamsAccessDrafts).toHaveBeenCalled();
     expect(setters.setMemberServicesAccessDrafts).toHaveBeenCalled();
-    expect(screen.getByRole("combobox", { name: "Global Teams access" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Global Teams access" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Global Teams access" })).toHaveValue("none");
-    expect(screen.getByTestId("member-teams-access-sheet-membership-1-selected-label")).toHaveTextContent("None");
-    expect(screen.getByRole("combobox", { name: "Service editing" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Service editing" })).toHaveValue("none");
-    expect(screen.getByTestId("member-services-access-sheet-membership-1-selected-label")).toHaveTextContent("None");
+    expect(screen.getByRole("combobox", { name: "Service access" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Service access" })).toHaveValue("none");
     expect(screen.getByRole("checkbox", { name: "Worship" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "Worship" })).toBeChecked();
     expect(setters.setMemberTeamScopeDrafts).not.toHaveBeenCalled();
   });
 
-  it("does not restore broad grants after switching from Full to Member and back", () => {
+  it("does not change Teams or Services when Controller access changes", () => {
     const { rerender, getDrafts } = renderMemberSheet();
-    const accessLevel = screen.getByRole("combobox", { name: "Access level" });
-    fireEvent.change(accessLevel, { target: { value: "member" } });
+    const accessLevel = screen.getByRole("combobox", { name: "Controller access" });
+    fireEvent.change(accessLevel, { target: { value: "none" } });
     rerender(<MemberAccessSheet />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
+    expect(getDrafts()).toEqual({ access: "none", teamsAccess: "view", servicesAccess: "edit", teamScopeIds: ["worship"] });
+    fireEvent.change(screen.getByRole("combobox", { name: "Controller access" }), {
       target: { value: "full" },
     });
     rerender(<MemberAccessSheet />);
 
     expect(getDrafts()).toEqual({
       access: "full",
-      teamsAccess: "none",
-      servicesAccess: "none",
+      teamsAccess: "view",
+      servicesAccess: "edit",
       teamScopeIds: ["worship"],
     });
   });
 
-  it("saves Member access with None broad permissions and preserves the selected team scope", async () => {
+  it("saves Controller None with only selected-team edit access", async () => {
     const { rerender } = renderMemberSheet();
-    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
-      target: { value: "member" },
+    fireEvent.change(screen.getByRole("combobox", { name: "Controller access" }), {
+      target: { value: "none" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Global Teams access" }), {
+      target: { value: "none" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Service access" }), {
+      target: { value: "none" },
+    });
+    rerender(<MemberAccessSheet />);
+    fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+
+    await waitFor(() => expect(updateChurchMemberAccess).toHaveBeenCalledWith(
+      "church-1",
+      "user-1",
+      "none",
+      { teams: "none", services: "none", teamScopes: { worship: "edit" } },
+    ));
+  });
+
+  it("saves Controller None with the member's independent Teams and Services values", async () => {
+    const { rerender } = renderMemberSheet();
+    fireEvent.change(screen.getByRole("combobox", { name: "Controller access" }), {
+      target: { value: "none" },
     });
     rerender(<MemberAccessSheet />);
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
@@ -308,21 +337,21 @@ describe("MemberAccessSheet member tier", () => {
     expect(updateChurchMemberAccess).toHaveBeenCalledWith(
       "church-1",
       "user-1",
-      "member",
+      "none",
       {
-        teams: "none",
-        services: "none",
+        teams: "view",
+        services: "edit",
         teamScopes: { worship: "edit" },
       },
     );
   });
 
   it.each(["invite-draft", "invite"] as const)(
-    "normalizes %s broad permissions and preserves its team scope when switched to Member",
+    "preserves %s Teams and Services permissions when Controller becomes None",
     (kind) => {
       const { rerender, getDraft } = renderInviteSheet(kind);
-      fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
-        target: { value: "member" },
+      fireEvent.change(screen.getByRole("combobox", { name: "Controller access" }), {
+        target: { value: "none" },
       });
       const accountContext = (useAccountPage as jest.Mock).mock.results.at(-1)
         ?.value;
@@ -330,21 +359,22 @@ describe("MemberAccessSheet member tier", () => {
       rerender(<MemberAccessSheet />);
 
       expect(getDraft()).toEqual({
-        access: "member",
-        teamsAccess: "none",
-        servicesAccess: "none",
+        role: "member",
+        controllerAccess: "none",
+        teamsAccess: "view",
+        servicesAccess: "edit",
         teamScopeIds: ["worship"],
       });
-      expect(screen.getByRole("combobox", { name: "Global Teams access" })).toBeDisabled();
-      expect(screen.getByRole("combobox", { name: "Service editing" })).toBeDisabled();
+      expect(screen.getByRole("combobox", { name: "Global Teams access" })).toBeEnabled();
+      expect(screen.getByRole("combobox", { name: "Service access" })).toBeEnabled();
       expect(screen.getByRole("checkbox", { name: "Worship" })).toBeChecked();
     },
   );
 
-  it("serializes Member access when updating a pending invite", async () => {
+  it("serializes Controller None when updating a pending invite", async () => {
     const { rerender } = renderInviteSheet("invite");
-    fireEvent.change(screen.getByRole("combobox", { name: "Access level" }), {
-      target: { value: "member" },
+    fireEvent.change(screen.getByRole("combobox", { name: "Controller access" }), {
+      target: { value: "none" },
     });
     rerender(<MemberAccessSheet />);
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
@@ -355,10 +385,11 @@ describe("MemberAccessSheet member tier", () => {
         "invite-1",
         {
           role: "member",
+          controllerAccess: "none",
           appAccess: "member",
           permissions: {
-            teams: "none",
-            services: "none",
+            teams: "view",
+            services: "edit",
             teamScopes: { worship: "edit" },
           },
         },

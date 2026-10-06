@@ -585,7 +585,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     }
   });
 
-  it("derives scoped edit after member-tier bootstrap without broad Teams access", async () => {
+  it("derives scoped edit from legacy appAccess member bootstrap", async () => {
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
       ...loggedInHumanBootstrap,
       role: "member",

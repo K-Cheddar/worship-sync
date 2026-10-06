@@ -115,13 +115,14 @@ const MemberAccessSheet = () => {
 
   const selectedMemberAccess =
     member && !isExistingAdmin ? getMemberAccessValue(member) : "full";
-  const selectedInviteAccess = inviteDraft.access;
+  const selectedInviteAccess = inviteDraft.controllerAccess;
   const selectedAccess = isMemberTarget ? selectedMemberAccess : selectedInviteAccess;
-  const isMemberTierSelected = selectedAccess === "member";
-  const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
+  const isAdminInviteAccess = !isMemberTarget && inviteDraft.role === "admin";
   const isAdminAccess = isExistingAdmin || isAdminInviteAccess;
   const currentMemberAccess =
-    member && !isExistingAdmin ? toMemberAccessOption(member.appAccess) : "full";
+    member && !isExistingAdmin
+      ? toMemberAccessOption(member.controllerAccess ?? member.appAccess)
+      : "full";
   const currentTeamsAccess = member
     ? toTeamsAccessOption(member.permissions, member.role)
     : inviteDraft.teamsAccess;
@@ -131,16 +132,8 @@ const MemberAccessSheet = () => {
   const draftServicesAccess = member
     ? getMemberServicesAccessValue(member)
     : inviteDraft.servicesAccess;
-  const selectedTeamsAccess = isAdminAccess
-    ? "edit"
-    : isMemberTierSelected
-      ? "none"
-      : draftTeamsAccess;
-  const selectedServicesAccess = isAdminAccess
-    ? "edit"
-    : isMemberTierSelected
-      ? "none"
-      : draftServicesAccess;
+  const selectedTeamsAccess = isAdminAccess ? "edit" : draftTeamsAccess;
+  const selectedServicesAccess = isAdminAccess ? "edit" : draftServicesAccess;
   const currentServicesAccess = member
     ? toServicesAccessOption(member.permissions, member.role)
     : inviteDraft.servicesAccess;
@@ -172,9 +165,7 @@ const MemberAccessSheet = () => {
     teams.length > 0 &&
     !isAdminAccess &&
     (isMemberTarget || selectedInviteAccess !== "admin");
-  const servicesEditingIncluded =
-    isAdminAccess ||
-    (!isMemberTierSelected && selectedTeamsAccess === "edit");
+  const servicesEditingIncluded = isAdminAccess || selectedTeamsAccess === "edit";
 
   const headerTitle = isMemberTarget
     ? memberLabel
@@ -183,10 +174,10 @@ const MemberAccessSheet = () => {
       : "New invite";
   const headerEmail = isMemberTarget ? memberEmail : "";
   const headerDescription = isMemberTarget
-    ? "Set WorshipSync app access and Teams permissions for this member."
+    ? "Set Controller, Teams, and Services access for this member."
     : isInviteTarget
       ? "Update access before this invite is accepted."
-      : "Choose app access and Teams permissions for the new invite.";
+      : "Choose Controller, Teams, and Services access for the new invite.";
 
   const clearMemberDrafts = (membershipId: string) => {
     setMemberAccessDrafts((prev) => {
@@ -287,7 +278,7 @@ const MemberAccessSheet = () => {
     }
   };
 
-  const handleAppAccessChange = (value: string) => {
+  const handleControllerAccessChange = (value: string) => {
     if (isExistingAdmin) {
       return;
     }
@@ -297,28 +288,28 @@ const MemberAccessSheet = () => {
         ...prev,
         [member.membershipId]: value as MemberAccessOption,
       }));
-      if (value === "member") {
-        setMemberTeamsAccessDrafts((prev) => ({
-          ...prev,
-          [member.membershipId]: "none",
-        }));
-        setMemberServicesAccessDrafts((prev) => ({
-          ...prev,
-          [member.membershipId]: "none",
-        }));
-      }
       return;
     }
 
-    const nextAccess = value as InviteAccessOption;
-    updateInviteDraft({
-      access: nextAccess,
-      ...(nextAccess === "member"
-        ? { teamsAccess: "none", servicesAccess: "none" }
-        : nextAccess === "admin"
-          ? { teamsAccess: "edit" as TeamsPermission, teamScopeIds: [] }
-          : {}),
-    });
+    updateInviteDraft({ controllerAccess: value as InviteAccessOption });
+  };
+
+  const handleRoleChange = (value: "admin" | "member") => {
+    updateInviteDraft(value === "admin"
+      ? {
+          role: "admin",
+          controllerAccess: "full",
+          teamsAccess: "edit",
+          servicesAccess: "edit",
+          teamScopeIds: [],
+        }
+      : {
+          role: "member",
+          controllerAccess: "full",
+          teamsAccess: "none",
+          servicesAccess: "none",
+          teamScopeIds: [],
+        });
   };
 
   const handleTeamsAccessChange = (value: TeamsPermission) => {
@@ -380,7 +371,7 @@ const MemberAccessSheet = () => {
     });
   };
 
-  const appAccessFieldId = getAppAccessFieldId(target);
+  const controllerAccessFieldId = getAppAccessFieldId(target);
   const teamsAccessFieldId = getTeamsAccessFieldId(target);
 
   return (
@@ -404,29 +395,43 @@ const MemberAccessSheet = () => {
         </div>
 
         <div className="scrollbar-variable min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
+          {!isMemberTarget ? (
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Role</h3>
+                <p className="mt-1 text-xs text-gray-400">
+                  Controls church administration privileges.
+                </p>
+              </div>
+              <Select
+                id={getRoleFieldId(target)}
+                label="Role"
+                value={inviteDraft.role}
+                options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]}
+                selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+                onChange={(value) => handleRoleChange(value as "admin" | "member")}
+              />
+            </section>
+          ) : null}
+
           <section className="space-y-3">
             <div>
-              <h3 className="text-sm font-semibold text-white">App access</h3>
+              <h3 className="text-sm font-semibold text-white">Controller &amp; presentation</h3>
               <p className="mt-1 text-xs text-gray-400">
-                Controls access to the controller and other WorshipSync surfaces.
+                Controls presentation and operator surfaces.
               </p>
             </div>
             <Select
-              id={appAccessFieldId}
-              label="Access level"
+              id={controllerAccessFieldId}
+              label="Controller access"
               value={selectedAccess}
               options={
                 isMemberTarget ? memberAccessOptions : inviteAccessSelectOptions
               }
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isExistingAdmin}
-              onChange={handleAppAccessChange}
+              disabled={isAdminAccess}
+              onChange={handleControllerAccessChange}
             />
-            {isMemberTierSelected ? (
-              <p className="text-xs text-gray-400">
-                Member access includes a personal schedule and team access, without controller or church administration access.
-              </p>
-            ) : null}
           </section>
 
           <section className="space-y-3 border-t border-gray-700/70 pt-5">
@@ -443,29 +448,15 @@ const MemberAccessSheet = () => {
               id={teamsAccessFieldId}
               label="Global Teams access"
               value={
-                isAdminAccess
-                  ? "edit"
-                  : isMemberTierSelected
-                    ? "none"
-                    : selectedTeamsAccess
+                isAdminAccess ? "edit" : selectedTeamsAccess
               }
               options={teamsPageAccessOptions}
-              selectedValueLabel={
-                isMemberTierSelected && !isAdminAccess ? "None" : undefined
-              }
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isMemberTierSelected || isAdminAccess}
+              disabled={isAdminAccess}
               onChange={(value) =>
                 handleTeamsAccessChange(value as TeamsPermission)
               }
             />
-            {isMemberTierSelected ? (
-              <p className="text-xs text-gray-400">
-                Member access does not include church-wide Teams access. Use the
-                team checkboxes below to let this person manage specific teams.
-              </p>
-            ) : null}
-
             {selectedTeamsAccess === "edit" || isAdminAccess ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
                 Edit all teams includes every team plus service plans and service settings. Per-team rules are not used.
@@ -475,7 +466,7 @@ const MemberAccessSheet = () => {
             {showPerTeamSection ? (
               <fieldset className="space-y-3 rounded-lg border border-gray-700 px-4 py-3">
                 <legend className="px-1 text-sm font-medium text-gray-200">
-                  Per-team edit access
+                  Manage selected teams
                 </legend>
                 <p className="text-xs text-gray-400">
                   {scopedTeamsHelperText(
@@ -515,29 +506,15 @@ const MemberAccessSheet = () => {
             </div>
             <Select
               id={getServicesAccessFieldId(target)}
-              label="Service editing"
-              value={
-                servicesEditingIncluded
-                    ? "edit"
-                    : isMemberTierSelected
-                      ? "none"
-                      : selectedServicesAccess
-              }
+              label="Service access"
+              value={servicesEditingIncluded ? "edit" : selectedServicesAccess}
               options={serviceEditingAccessOptions}
-              selectedValueLabel={
-                isMemberTierSelected && !isAdminAccess ? "None" : undefined
-              }
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isMemberTierSelected || servicesEditingIncluded}
+              disabled={isAdminAccess || servicesEditingIncluded}
               onChange={(value) =>
                 handleServicesAccessChange(value as ServicesPermission)
               }
             />
-            {isMemberTierSelected ? (
-              <p className="text-xs text-gray-400">
-                Member access does not include Services editing.
-              </p>
-            ) : null}
             {servicesEditingIncluded ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
                 {isAdminAccess
@@ -577,6 +554,11 @@ const getAppAccessFieldId = (target: AccessSheetTarget) => {
     return `invite-access-sheet-${target.invite.inviteId}`;
   }
   return "invite-draft-access-sheet";
+};
+
+const getRoleFieldId = (target: AccessSheetTarget) => {
+  if (target.kind === "invite") return `invite-role-access-sheet-${target.invite.inviteId}`;
+  return "invite-draft-role-access-sheet";
 };
 
 const getTeamsAccessFieldId = (target: AccessSheetTarget) => {

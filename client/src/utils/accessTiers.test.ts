@@ -1,39 +1,24 @@
-import { isMemberOnlyAccess, isViewOnlyAccess } from "./accessTiers";
+import { hasControllerAccess, isControllerViewOnly, normalizeControllerAccess } from "./accessTiers";
 
 describe("accessTiers", () => {
-  describe("isViewOnlyAccess", () => {
-    it("covers both look-but-not-touch tiers", () => {
-      expect(isViewOnlyAccess("view")).toBe(true);
-      // The load-bearing case: checks were written as `access !== "view"`, so a
-      // narrower tier missing from here would be *granted* what view is denied.
-      expect(isViewOnlyAccess("member")).toBe(true);
+  describe("Controller access helpers", () => {
+    it("treats no access and view as unable to mutate Controller surfaces", () => {
+      expect(isControllerViewOnly("none")).toBe(true);
+      expect(isControllerViewOnly("view")).toBe(true);
     });
 
-    it("does not restrict the editing tiers", () => {
-      expect(isViewOnlyAccess("full")).toBe(false);
-      expect(isViewOnlyAccess("music")).toBe(false);
+    it("preserves Music and Full operator access", () => {
+      expect(isControllerViewOnly("full")).toBe(false);
+      expect(isControllerViewOnly("music")).toBe(false);
+      expect(hasControllerAccess("none")).toBe(false);
+      expect(hasControllerAccess("view")).toBe(true);
+      expect(hasControllerAccess("music")).toBe(true);
+      expect(hasControllerAccess("full")).toBe(true);
     });
 
-    it("treats a missing access as restricted", () => {
-      expect(isViewOnlyAccess(undefined)).toBe(false);
-      expect(isViewOnlyAccess(null)).toBe(false);
+    it("maps legacy Member to no Controller access", () => {
+      expect(normalizeControllerAccess("member")).toBe("none");
+      expect(isControllerViewOnly(normalizeControllerAccess("member"))).toBe(true);
     });
-  });
-
-  describe("isMemberOnlyAccess", () => {
-    it("is narrower than view", () => {
-      expect(isMemberOnlyAccess("member")).toBe(true);
-      // `view` keeps read-only controllers; `member` gets none, which is why
-      // this is a separate predicate rather than folded into the one above.
-      expect(isMemberOnlyAccess("view")).toBe(false);
-      expect(isMemberOnlyAccess("full")).toBe(false);
-      expect(isMemberOnlyAccess("music")).toBe(false);
-    });
-  });
-
-  it("keeps member strictly inside view", () => {
-    // Every restriction that applies to view must apply to member. If this ever
-    // fails, a volunteer has been granted something an observer cannot do.
-    expect(isViewOnlyAccess("member")).toBe(isViewOnlyAccess("view"));
   });
 });

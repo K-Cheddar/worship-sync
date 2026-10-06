@@ -5,7 +5,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 
 describe("TeamsAccessGuard", () => {
-  it.each(["member", "view", "music", "full"] as const)(
+  it.each(["none", "view", "music", "full"] as const)(
     "allows a human %s session to attempt the membership-authorized Teams workspace",
     (access) => {
       render(
@@ -34,7 +34,7 @@ describe("TeamsAccessGuard", () => {
     },
   );
 
-  it.each(["member", "view", "music", "full"] as const)(
+  it.each(["none", "view", "music", "full"] as const)(
     "still requires normal Teams permission for human %s sessions without the override",
     (access) => {
       render(
@@ -99,7 +99,7 @@ describe("TeamsAccessGuard", () => {
         <GlobalInfoContext.Provider
           value={
             createMockGlobalContext({
-              access: "member",
+              access: "none",
               role: "member",
               canViewTeams: false,
             }) as never

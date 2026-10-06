@@ -4105,27 +4105,36 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamPayload = async (body, churchId, existingTeam = null) => {
+  const validateTeamSettingsPayload = (body, existingTeam = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Team name is required.");
     }
-    const memberIds = await assertTeamEntityIdsInChurch(
-      "member",
-      body?.memberIds,
-      churchId,
-      { label: "Member" },
-    );
     // Positions are owned by the team (position.teamId), not selected onto it, so
     // a team's positions are derived.
     return {
       name,
       description: normalizeLongText(body?.description),
       icon: validateEntityIcon(body?.icon, existingTeam?.icon, "Team") || "",
-      memberIds,
       usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
       usesIemAssignments: body?.usesIemAssignments === true,
     };
+  };
+
+  const validateTeamMemberIds = (memberIds, churchId) =>
+    assertTeamEntityIdsInChurch("member", memberIds, churchId, {
+      label: "Member",
+    });
+
+  const validateTeamPayload = async (body, churchId, existingTeam = null) => ({
+    ...validateTeamSettingsPayload(body, existingTeam),
+    memberIds: await validateTeamMemberIds(body?.memberIds, churchId),
+  });
+
+  const sameIdSet = (left, right) => {
+    const leftIds = new Set(normalizeIdArray(left));
+    const rightIds = new Set(normalizeIdArray(right));
+    return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
   };
 
   const validateTeamRolePayload = async (body, churchId, existingRole = null) => {
@@ -13987,18 +13996,35 @@ export const createTeamsAuthHandlers = ({
     async updateTeam(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const existingTeam = await assertTeamEntityInChurch(
           "team",
           req.params.teamId,
           req.params.churchId,
           { label: "Team", active: false },
         );
+        let admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existingTeam.teamId,
+        );
+        const payload = validateTeamSettingsPayload(req.body, existingTeam);
+        if (Object.prototype.hasOwnProperty.call(req.body || {}, "memberIds")) {
+          const memberIds = await validateTeamMemberIds(
+            req.body.memberIds,
+            req.params.churchId,
+          );
+          if (!sameIdSet(existingTeam.memberIds, memberIds)) {
+            // The canonical roster grants automatic Team read access, so it has
+            // a separate authorization boundary from Team-owned settings.
+            admin = await requireTeamsEdit(req, req.params.churchId);
+            payload.memberIds = memberIds;
+          }
+        }
         const team = await upsertTeamEntity({
           kind: "team",
           churchId: req.params.churchId,
           id: req.params.teamId,
-          payload: await validateTeamPayload(req.body, req.params.churchId, existingTeam),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({

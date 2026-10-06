@@ -210,8 +210,8 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
-  it.each(["member", "view", "music", "full"] as const)(
-    "gives a %s human without normal Teams access a My teams entry",
+  it.each(["none", "view", "music", "full"] as const)(
+    "gives a %s Controller human without normal Teams access a My teams entry",
     (access) => {
       render(
         <MemoryRouter initialEntries={["/home"]}>
@@ -219,7 +219,7 @@ describe("Home", () => {
             value={
               createMockGlobalContext({
                 access,
-                role: access === "member" ? "member" : "volunteer",
+                role: "member",
                 permissions: {
                   teams: "none",
                   services: "none",
@@ -254,13 +254,13 @@ describe("Home", () => {
     },
   );
 
-  it("keeps member-tier Home free of admin and operator cards", () => {
+  it("keeps Controller None Home free of operator cards", () => {
     render(
       <MemoryRouter initialEntries={["/home"]}>
         <GlobalInfoContext.Provider
           value={
             createMockGlobalContext({
-              access: "member",
+              access: "none",
               role: "member",
               permissions: { teams: "none", services: "none", teamScopes: {} },
               canViewTeams: false,

@@ -215,15 +215,21 @@ const isInviteExpired = (invite, now = Date.now()) =>
 const sanitizeInviteWithEffectiveStatus = (invite, now = Date.now()) =>
   sanitizeInviteForClient({
     ...invite,
+    controllerAccess: normalizeControllerAccess(
+      invite.controllerAccess ?? invite.appAccess,
+      "view",
+    ),
+    appAccess: legacyAppAccessForController(
+      normalizeControllerAccess(invite.controllerAccess ?? invite.appAccess, "view"),
+    ),
     ...(invite.status === "pending" && isInviteExpired(invite, now)
       ? { status: "expired" }
       : {}),
   });
-// "member" is the narrowest tier: a volunteer who can see their own schedule
-// and nothing else. Strictly narrower than "view" — see client accessTiers.ts.
+// The persisted "member" value remains accepted as legacy appAccess data.
 const APP_ACCESS_VALUES = new Set(["full", "music", "view", "member"]);
 const TEAM_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
-const SERVICES_PERMISSION_VALUES = new Set(["none", "edit"]);
+const SERVICES_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
 const DESKTOP_AUTH_PROVIDER_VALUES = new Set(["google", "microsoft"]);
 const DESKTOP_AUTH_STATUS_PENDING = "pending";
 const DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE = "awaiting_exchange";
@@ -237,6 +243,19 @@ const normalizeAppAccess = (value, fallback = "view") => {
     .toLowerCase();
   return APP_ACCESS_VALUES.has(normalized) ? normalized : fallback;
 };
+// Legacy appAccess compatibility: older clients still read this field, so
+// membership writes mirror controllerAccess to full/music/view/member.
+const normalizeControllerAccess = (value, fallback = "view") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "member") return "none";
+  return ["none", "full", "music", "view"].includes(normalized)
+    ? normalized
+    : fallback;
+};
+const legacyAppAccessForController = (controllerAccess) =>
+  controllerAccess === "none" ? "member" : controllerAccess;
 const normalizeTeamPermission = (value, fallback = "none") => {
   const normalized = String(value || "")
     .trim()
@@ -270,24 +289,12 @@ const normalizeTeamScopes = (teamScopes) => {
       .filter(([teamId, permission]) => teamId && permission),
   );
 };
-/**
- * Member-tier accounts may retain selected-team scopes because Teams is an
- * allowed member surface. Global Teams and Services permissions remain off.
- */
 const normalizeMembershipPermissions = (
   permissions,
   role = "member",
-  appAccess,
 ) => {
   if (role === "admin") {
     return { teams: "edit", services: "edit", teamScopes: {} };
-  }
-  if (appAccess === "member") {
-    return {
-      teams: "none",
-      services: "none",
-      teamScopes: normalizeTeamScopes(permissions?.teamScopes),
-    };
   }
   return {
     teams: normalizeTeamPermission(permissions?.teams, "none"),
@@ -298,14 +305,9 @@ const normalizeMembershipPermissions = (
 const normalizeMembershipPermissionsForChurch = async ({
   permissions,
   role,
-  appAccess,
   churchId,
 }) => {
-  const normalized = normalizeMembershipPermissions(
-    permissions,
-    role,
-    appAccess,
-  );
+  const normalized = normalizeMembershipPermissions(permissions, role);
   const validScopes = await Promise.all(
     Object.entries(normalized.teamScopes).map(async ([teamId, scope]) => {
       const team = await getDoc(COLLECTIONS.teams, teamId);
@@ -390,11 +392,15 @@ const validateUpdateInviteAccessPayload = (body) => {
   if (!role) {
     throw httpError(400, "Choose a valid role.");
   }
-  const appAccess = normalizeAppAccess(body.appAccess, "");
-  if (!appAccess) {
+  const hasControllerAccess = Object.prototype.hasOwnProperty.call(body, "controllerAccess");
+  const controllerAccess = normalizeControllerAccess(
+    hasControllerAccess ? body.controllerAccess : body.appAccess,
+    "",
+  );
+  if (!controllerAccess) {
     throw httpError(400, "Choose a valid access level.");
   }
-  if (role === "admin" && appAccess !== "full") {
+  if (role === "admin" && controllerAccess !== "full") {
     throw httpError(400, "Admins must keep full access.");
   }
   const permissions = body.permissions;
@@ -408,8 +414,9 @@ const validateUpdateInviteAccessPayload = (body) => {
   }
   return {
     role,
-    appAccess,
-      permissions: normalizeMembershipPermissions(permissions, role, appAccess),
+    controllerAccess,
+    appAccess: legacyAppAccessForController(controllerAccess),
+    permissions: normalizeMembershipPermissions(permissions, role),
   };
 };
 
@@ -2573,7 +2580,6 @@ const membershipCanEditTeams = (membership, formTeamIds) => {
   const permissions = normalizeMembershipPermissions(
     membership.permissions,
     membership.role,
-    membership.appAccess,
   );
   return isTeamEditorForForm({
     role: membership.role,
@@ -2605,7 +2611,6 @@ const resolveScopedTeamNamesForInvite = async (invite) => {
   const permissions = normalizeMembershipPermissions(
     invite.permissions,
     invite.role || "member",
-    invite.appAccess,
   );
   const scopedTeamIds = listEditableTeamScopeIds(permissions);
   if (scopedTeamIds.length === 0) {
@@ -2637,11 +2642,14 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
   const permissions = normalizeMembershipPermissions(
     invite.permissions,
     role,
-    invite.appAccess || "view",
   );
   const scopedTeamNames = await resolveScopedTeamNamesForInvite(invite);
   const accessLines = buildInviteAcceptedAccessLines({
     role,
+    controllerAccess: normalizeControllerAccess(
+      invite.controllerAccess ?? invite.appAccess,
+      "view",
+    ),
     appAccess: invite.appAccess || "view",
     permissions,
     scopedTeamNames,
@@ -2689,9 +2697,8 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
  * parameter through which one could arrive — and the address it lands on is the
  * same inbox that received the link being redeemed.
  *
- * Grants the narrowest tier there is: `appAccess: "member"` forces
- * `teams: "none"` / `services: "none"`, so accepting produces an account that
- * can see its own schedule and nothing else. Self-service is only defensible
+ * Grants no Controller access. Teams and Services are normalized
+ * independently, so accepting does not mutate those permissions. Self-service is defensible
  * because of that ceiling — an owner already put this person on the roster with
  * this address, and the invite adds no access they were not already implicitly
  * given.
@@ -2723,8 +2730,9 @@ const sendRosterMemberInvite = async ({ churchId, member }) => {
     churchId,
     email,
     role: "member",
+    controllerAccess: "none",
     appAccess: "member",
-    permissions: normalizeMembershipPermissions(null, "member", "member"),
+    permissions: normalizeMembershipPermissions(null, "member"),
     memberId: member.memberId,
     status: "pending",
     tokenHash: hashValue(rawToken),
@@ -3392,11 +3400,19 @@ const buildHumanBootstrap = ({
   database: church.contentDatabaseKey,
   uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
   role: membership.role,
-  appAccess: membership.appAccess || "view",
+  controllerAccess: normalizeControllerAccess(
+    membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
+    "view",
+  ),
+  appAccess: legacyAppAccessForController(
+    normalizeControllerAccess(
+      membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
+      "view",
+    ),
+  ),
   permissions: normalizeMembershipPermissions(
     membership.permissions,
     membership.role,
-    membership.appAccess || "view",
   ),
   notifications: normalizeMembershipNotifications(membership.notifications),
   // Which switches to render. Sent rather than derived client-side so the
@@ -3902,6 +3918,7 @@ const createChurchWithRootAdmin = async ({
     churchId,
     userId: uid,
     role: "admin",
+    controllerAccess: "full",
     appAccess: "full",
     permissions: normalizeMembershipPermissions(null, "admin"),
     status: "active",
@@ -4036,11 +4053,16 @@ const acceptInviteMembership = async ({ invite, user }) => {
           churchId,
           userId: user.uid,
           role: invite.role,
-          appAccess: invite.appAccess,
+          controllerAccess: normalizeControllerAccess(
+            invite.controllerAccess ?? invite.appAccess,
+            "view",
+          ),
+          appAccess: legacyAppAccessForController(
+            normalizeControllerAccess(invite.controllerAccess ?? invite.appAccess, "view"),
+          ),
           permissions: normalizeMembershipPermissions(
             invite.permissions,
             invite.role,
-            invite.appAccess,
           ),
           status: "active",
           createdAt: invite.createdAt || nowIso(),
@@ -4113,11 +4135,16 @@ const acceptInviteMembership = async ({ invite, user }) => {
         churchId,
         userId: user.uid,
         role: invite.role,
-        appAccess: invite.appAccess,
+        controllerAccess: normalizeControllerAccess(
+          latestInvite.controllerAccess ?? latestInvite.appAccess,
+          "view",
+        ),
+        appAccess: legacyAppAccessForController(
+          normalizeControllerAccess(latestInvite.controllerAccess ?? latestInvite.appAccess, "view"),
+        ),
         permissions: normalizeMembershipPermissions(
           latestInvite.permissions,
           latestInvite.role,
-          latestInvite.appAccess,
         ),
         status: "active",
         createdAt: invite.createdAt || nowIso(),
@@ -4290,6 +4317,10 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
       );
       transaction.update(membershipRef, {
         role: "member",
+        controllerAccess: normalizeControllerAccess(
+          membershipData.controllerAccess ?? membershipData.appAccess,
+          "full",
+        ),
         appAccess: normalizeAppAccess(membershipData.appAccess, "full"),
         permissions: normalizeMembershipPermissions(null, "member"),
       });
@@ -4309,6 +4340,10 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
       membershipId,
       {
         role: "member",
+        controllerAccess: normalizeControllerAccess(
+          membership.controllerAccess ?? membership.appAccess,
+          "full",
+        ),
         appAccess: normalizeAppAccess(membership.appAccess, "full"),
         permissions: normalizeMembershipPermissions(null, "member"),
       },
@@ -4365,6 +4400,7 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
         : adminSnapshot.size + 1;
       transaction.update(membershipRef, {
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
       });
@@ -4389,6 +4425,7 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
       membershipId,
       {
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
       },
@@ -4413,9 +4450,10 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
 const updateMemberAccessSettings = async ({
   churchId,
   userId,
-  appAccess,
+  controllerAccess,
   permissions,
 }) => {
+  const appAccess = legacyAppAccessForController(controllerAccess);
   const membershipId = membershipIdFor({ churchId, userId });
   const db = requireFirestore();
   if (db) {
@@ -4431,7 +4469,7 @@ const updateMemberAccessSettings = async ({
       if (membershipData.status !== "active") {
         throw httpError(400, "Only active members can be updated.");
       }
-      transaction.update(membershipRef, { appAccess, permissions });
+      transaction.update(membershipRef, { controllerAccess, appAccess, permissions });
     });
   } else {
     const membership = await getDoc(COLLECTIONS.memberships, membershipId);
@@ -4444,7 +4482,7 @@ const updateMemberAccessSettings = async ({
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
-      { appAccess, permissions },
+      { controllerAccess, appAccess, permissions },
       { merge: true },
     );
   }
@@ -4495,6 +4533,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
           churchId: recoveryRequest.churchId,
           userId: recoveryRequest.requesterUid,
           role: "admin",
+          controllerAccess: "full",
           appAccess: "full",
           permissions: normalizeMembershipPermissions(null, "admin"),
           status: "active",
@@ -4533,6 +4572,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
         churchId: recoveryRequest.churchId,
         userId: recoveryRequest.requesterUid,
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
         status: "active",
@@ -4589,6 +4629,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
           churchId,
           userId,
           role: "admin",
+          controllerAccess: "full",
           appAccess: "full",
           permissions: normalizeMembershipPermissions(null, "admin"),
           status: "active",
@@ -4616,6 +4657,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
         churchId,
         userId,
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
         status: "active",
@@ -5085,6 +5127,7 @@ export const seedActiveHumanBearerForServerTests = async ({
   churchName = "Human bearer test church",
   role = "admin",
   appAccess = "full",
+  controllerAccess,
   permissions,
 }) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
@@ -5120,8 +5163,9 @@ export const seedActiveHumanBearerForServerTests = async ({
       churchId,
       userId,
       role,
-      appAccess,
-      permissions: normalizeMembershipPermissions(permissions, role, appAccess),
+      controllerAccess: normalizeControllerAccess(controllerAccess ?? appAccess),
+      appAccess: legacyAppAccessForController(normalizeControllerAccess(controllerAccess ?? appAccess)),
+      permissions: normalizeMembershipPermissions(permissions, role),
       status: "active",
       createdAt: nowIso(),
       createdByUid: userId,
@@ -5195,6 +5239,7 @@ export const seedPendingInviteForServerTests = async ({
   token = `invite-seed-${crypto.randomUUID()}`,
   role = "member",
   appAccess = "view",
+  controllerAccess,
   inviteId = createId("invite"),
   expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString(),
   createdByUid = "user_invite_seed",
@@ -5238,8 +5283,9 @@ export const seedPendingInviteForServerTests = async ({
     churchId,
     email: normalizedEmail,
     role,
-    appAccess,
-    permissions: normalizeMembershipPermissions(permissions, role, appAccess),
+    controllerAccess: normalizeControllerAccess(controllerAccess ?? appAccess),
+    appAccess: legacyAppAccessForController(normalizeControllerAccess(controllerAccess ?? appAccess)),
+    permissions: normalizeMembershipPermissions(permissions, role),
     status,
     tokenHash: hashValue(token),
     expiresAt,
@@ -8028,10 +8074,24 @@ export const authHandlers = {
           }
           return {
             ...membership,
+            controllerAccess:
+              membership.role === "admin"
+                ? "full"
+                : normalizeControllerAccess(
+                    membership.controllerAccess ?? membership.appAccess,
+                    "view",
+                  ),
+            appAccess: legacyAppAccessForController(
+              membership.role === "admin"
+                ? "full"
+                : normalizeControllerAccess(
+                    membership.controllerAccess ?? membership.appAccess,
+                    "view",
+                  ),
+            ),
             permissions: normalizeMembershipPermissions(
               membership.permissions,
               membership.role,
-              membership.appAccess,
             ),
             user: user
               ? {
@@ -8233,11 +8293,23 @@ export const authHandlers = {
         throw httpError(400, "Email is required.");
       }
       const role = req.body?.role || "admin";
-      const appAccess = req.body?.appAccess || "full";
+      if (role !== "admin" && role !== "member") {
+        throw httpError(400, "Choose a valid role.");
+      }
+      const controllerAccess = normalizeControllerAccess(
+        req.body?.controllerAccess ?? req.body?.appAccess ?? "full",
+        "",
+      );
+      if (!controllerAccess) {
+        throw httpError(400, "Choose a valid Controller access level.");
+      }
+      if (role === "admin" && controllerAccess !== "full") {
+        throw httpError(400, "Admins must keep full access.");
+      }
+      const appAccess = legacyAppAccessForController(controllerAccess);
       const permissions = await normalizeMembershipPermissionsForChurch({
         permissions: req.body?.permissions,
         role,
-        appAccess,
         churchId: req.params.churchId,
       });
       // Optional binding to a roster member. When present, accepting this
@@ -8310,6 +8382,7 @@ export const authHandlers = {
         churchId: req.params.churchId,
         email,
         role,
+        controllerAccess,
         appAccess,
         permissions,
         ...(memberId ? { memberId } : {}),
@@ -8421,25 +8494,25 @@ export const authHandlers = {
       ) {
         throw httpError(400, "Only pending invites can be updated.");
       }
-      const { role, appAccess, permissions } =
+      const { role, controllerAccess, appAccess, permissions } =
         validateUpdateInviteAccessPayload(req.body);
       const normalizedPermissions =
         await normalizeMembershipPermissionsForChurch({
           permissions,
           role,
-          appAccess,
           churchId: req.params.churchId,
         });
       const updatedInvite = {
         ...invite,
         role,
+        controllerAccess,
         appAccess,
         permissions: normalizedPermissions,
       };
       await setDoc(
         COLLECTIONS.invites,
         inviteId,
-        { role, appAccess, permissions: normalizedPermissions },
+        { role, controllerAccess, appAccess, permissions: normalizedPermissions },
         { merge: true },
       );
       await addSecurityEvent({
@@ -8448,6 +8521,7 @@ export const authHandlers = {
         userId: admin.user.uid,
         inviteId,
         email: invite.email || null,
+        controllerAccess,
         appAccess,
         permissions: normalizedPermissions,
       });
@@ -8788,10 +8862,16 @@ export const authHandlers = {
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
-      const appAccess = normalizeAppAccess(req.body?.appAccess, "");
-      if (!appAccess) {
+      const controllerAccess = normalizeControllerAccess(
+        Object.prototype.hasOwnProperty.call(req.body || {}, "controllerAccess")
+          ? req.body.controllerAccess
+          : req.body?.appAccess,
+        "",
+      );
+      if (!controllerAccess) {
         throw httpError(400, "Choose a valid access level.");
       }
+      const appAccess = legacyAppAccessForController(controllerAccess);
       const memberships = await listMembershipsForChurch(req.params.churchId);
       const targetMembership = memberships.find(
         (membership) =>
@@ -8801,19 +8881,18 @@ export const authHandlers = {
       if (!targetMembership) {
         throw httpError(404, "Membership not found");
       }
-      if (targetMembership.role === "admin" && appAccess !== "full") {
+      if (targetMembership.role === "admin" && controllerAccess !== "full") {
         throw httpError(400, "Admins must keep full access.");
       }
       const permissions = await normalizeMembershipPermissionsForChurch({
         permissions: req.body?.permissions,
         role: targetMembership.role,
-        appAccess,
         churchId: req.params.churchId,
       });
       await updateMemberAccessSettings({
         churchId: req.params.churchId,
         userId: req.params.userId,
-        appAccess,
+        controllerAccess,
         permissions,
       });
       await addSecurityEvent({
@@ -8821,6 +8900,7 @@ export const authHandlers = {
         churchId: req.params.churchId,
         userId: admin.user.uid,
         targetUserId: req.params.userId,
+        controllerAccess,
         appAccess,
         permissions,
       });

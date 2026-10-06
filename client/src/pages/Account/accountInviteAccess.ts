@@ -13,7 +13,8 @@ import { toMemberAccessOption } from "./accountUtils";
 import { toServicesAccessOption } from "./accountServicesAccess";
 
 export const DEFAULT_INVITE_ACCESS_DRAFT: InviteAccessDraft = {
-  access: "full",
+  role: "member",
+  controllerAccess: "full",
   teamsAccess: "none",
   servicesAccess: "none",
   teamScopeIds: [],
@@ -22,39 +23,25 @@ export const DEFAULT_INVITE_ACCESS_DRAFT: InviteAccessDraft = {
 export const inviteAccessOptions: {
   value: InviteAccessOption;
   label: string;
-  role: string;
-  appAccess: string;
 }[] = [
-  { value: "full", label: "Full access", role: "member", appAccess: "full" },
-  { value: "music", label: "Music access", role: "member", appAccess: "music" },
-  { value: "view", label: "View access", role: "member", appAccess: "view" },
-  {
-    value: "member",
-    label: "Member access",
-    role: "member",
-    appAccess: "member",
-  },
-  { value: "admin", label: "Admin", role: "admin", appAccess: "full" },
+  { value: "none", label: "None" },
+  { value: "view", label: "View" },
+  { value: "music", label: "Music" },
+  { value: "full", label: "Full" },
 ];
 
 export const inviteAccessSelectOptions = inviteAccessOptions.map(
   ({ value, label }) => ({ value, label }),
 );
 
-export const toInviteAccessOption = (
-  role?: string,
-  appAccess?: string,
-): InviteAccessOption => {
-  if (role === "admin") {
-    return "admin";
-  }
-  return toMemberAccessOption(appAccess);
-};
-
 export const inviteAccessDraftFromInvite = (
-  invite: Pick<InviteRecord, "role" | "appAccess" | "permissions">,
+  invite: Pick<InviteRecord, "role" | "controllerAccess" | "appAccess" | "permissions">,
 ): InviteAccessDraft => ({
-  access: toInviteAccessOption(invite.role, invite.appAccess),
+  role: invite.role === "admin" ? "admin" : "member",
+  controllerAccess:
+    invite.role === "admin"
+      ? "full"
+      : toMemberAccessOption(invite.controllerAccess ?? invite.appAccess),
   teamsAccess: toTeamsAccessOption(invite.permissions, invite.role),
   servicesAccess: toServicesAccessOption(invite.permissions, invite.role),
   teamScopeIds: getEditableTeamScopeIds(invite.permissions),
@@ -63,22 +50,14 @@ export const inviteAccessDraftFromInvite = (
 export const buildPermissionsFromAccessDraft = (
   draft: Pick<
     InviteAccessDraft,
-    "access" | "teamsAccess" | "servicesAccess" | "teamScopeIds"
+    "role" | "teamsAccess" | "servicesAccess" | "teamScopeIds"
   >,
 ): MemberPermissions => {
-  if (draft.access === "member") {
-    return {
-      teams: "none",
-      services: "none",
-      teamScopes: buildTeamScopesPermissions(draft.teamScopeIds),
-    };
-  }
-
   return {
-    teams: draft.access === "admin" ? "edit" : draft.teamsAccess,
-    services: draft.access === "admin" ? "edit" : draft.servicesAccess,
+    teams: draft.role === "admin" ? "edit" : draft.teamsAccess,
+    services: draft.role === "admin" ? "edit" : draft.servicesAccess,
     teamScopes:
-      draft.access === "admin" || draft.teamsAccess === "edit"
+      draft.role === "admin" || draft.teamsAccess === "edit"
         ? {}
         : buildTeamScopesPermissions(draft.teamScopeIds),
   };
@@ -88,44 +67,33 @@ export const resolveInviteAccessPayload = (
   draft: InviteAccessDraft,
 ): {
   role: string;
+  controllerAccess: string;
   appAccess: string;
   permissions: MemberPermissions;
 } => {
-  const selectedInviteOption =
-    inviteAccessOptions.find((option) => option.value === draft.access) ||
-    inviteAccessOptions[0];
+  const controllerAccess = draft.role === "admin" ? "full" : draft.controllerAccess;
   return {
-    role: selectedInviteOption.role,
-    appAccess: selectedInviteOption.appAccess,
+    role: draft.role,
+    controllerAccess,
+    // Keep the old value aligned during rollout for older clients.
+    appAccess: controllerAccess === "none" ? "member" : controllerAccess,
     permissions: buildPermissionsFromAccessDraft(draft),
   };
 };
 
 export const getInviteAccessSummaryLabel = (draft: InviteAccessDraft) => {
-  const accessLabel =
-    inviteAccessOptions.find((option) => option.value === draft.access)
-      ?.label || "Full access";
-  const servicesSuffix =
-    draft.servicesAccess === "edit" ? " · Edit services and plans" : "";
-  if (draft.access === "admin") {
-    return `${accessLabel} · Edit all teams and services`;
+  if (draft.role === "admin") {
+    return "Admin";
   }
-  if (draft.access === "member") {
-    return `${accessLabel} · ${draft.teamScopeIds.length > 0 ? "Per-team edit only" : "No global Teams access"}`;
-  }
-  if (draft.teamsAccess === "edit") {
-    return `${accessLabel} · Edit all teams and services`;
-  }
-  if (draft.teamsAccess === "view") {
-    if (draft.teamScopeIds.length > 0) {
-      return `${accessLabel} · View all teams + per-team edit${servicesSuffix}`;
-    }
-    return `${accessLabel} · View all teams${servicesSuffix}`;
-  }
-  if (draft.teamScopeIds.length > 0) {
-    return `${accessLabel} · Per-team edit only${servicesSuffix}`;
-  }
-  return `${accessLabel} · No Teams access${servicesSuffix}`;
+  const parts = [
+    draft.controllerAccess === "none" ? "No controller access" : `${draft.controllerAccess[0].toUpperCase()}${draft.controllerAccess.slice(1)} controller`,
+  ];
+  if (draft.teamsAccess === "edit") parts.push("Edit all teams");
+  else if (draft.teamsAccess === "view") parts.push("View all teams");
+  else if (draft.teamScopeIds.length > 0) parts.push("Selected team manager");
+  if (draft.servicesAccess === "edit") parts.push("Edit services");
+  else if (draft.servicesAccess === "view") parts.push("View services");
+  return parts.join(" · ");
 };
 
 export const scopedTeamsHelperText = (

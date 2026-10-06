@@ -13,7 +13,7 @@ test("buildInviteAcceptedAccessLines labels admin access", () => {
       permissions: { teams: "none", teamScopes: { "team-1": "edit" } },
     }),
     [
-      "Access: Admin",
+      "Role: Admin",
       "Teams: Edit all teams",
       "Services: Edit services and plans",
     ],
@@ -28,9 +28,9 @@ test("buildInviteAcceptedAccessLines labels member app and teams access", () => 
       permissions: { teams: "view", teamScopes: {} },
     }),
     [
-      "Access: Music access",
+      "Controller: Music access",
       "Teams: View all teams",
-      "Services: No service editing",
+      "Services: No service access",
     ],
   );
 });
@@ -47,9 +47,28 @@ test("buildInviteAcceptedAccessLines includes named per-team edit scopes", () =>
       scopedTeamNames: ["Choir", "Worship Team"],
     }),
     [
-      "Access: Full access",
+      "Controller: Full access",
       "Teams: Can edit Choir, Worship Team only",
-      "Services: No service editing",
+      "Services: No service access",
+    ],
+  );
+});
+
+test("legacy appAccess member summarizes as Controller None and keeps Services view", () => {
+  assert.deepEqual(
+    buildInviteAcceptedAccessLines({
+      role: "member",
+      appAccess: "member",
+      permissions: {
+        teams: "none",
+        services: "view",
+        teamScopes: { worship: "edit" },
+      },
+    }),
+    [
+      "Controller: None",
+      "Teams: Per-team edit only",
+      "Services: View services",
     ],
   );
 });
@@ -65,9 +84,9 @@ test("buildInviteAcceptedAccessLines falls back when scoped names are missing", 
       },
     }),
     [
-      "Access: View access",
+      "Controller: View access",
       "Teams: View all teams + per-team edit",
-      "Services: No service editing",
+      "Services: No service access",
     ],
   );
 });
