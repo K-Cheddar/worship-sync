@@ -251,7 +251,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       >
         <div
           className={cn(
-            "mx-2 flex items-center border-b border-gray-500 bg-black/60 text-sm relative z-10 transition-all px-2",
+            "@container/sources-actions mx-2 flex items-center border-b border-gray-500 bg-black/60 text-sm relative z-10 transition-all px-2",
             c.isMediaExpanded ? "py-1 rounded-t-md" : "rounded-b-md py-0.5",
             "rounded-t-md mt-2",
           )}

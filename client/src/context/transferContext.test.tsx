@@ -128,12 +128,16 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
   expect(await screen.findByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
+  expect(screen.getByTestId("activity-panel")).toHaveClass("transition-[opacity,transform]", "scale-95", "opacity-0");
+  expect(screen.getByTestId("activity-panel")).toHaveAttribute("aria-hidden", "true");
   expect(screen.getAllByRole("button", { name: "Show Activity · 1 active" })).toHaveLength(1);
   const localActivity = screen.getByRole("button", { name: "Show Activity · 1 active" });
   expect(localActivity).toHaveTextContent("Activity · 1 active");
-  expect(screen.getByTestId("activity-icon")).toHaveClass("text-cyan-300");
+  expect(within(localActivity).getByTestId("activity-icon")).toHaveClass("text-cyan-300");
   await user.click(localActivity);
   expect(screen.getByRole("heading", { name: "Activity · 1 active" })).toBeInTheDocument();
+  expect(screen.getByTestId("activity-panel")).toHaveClass("scale-100", "opacity-100");
+  expect(screen.getByTestId("activity-panel")).not.toHaveAttribute("aria-hidden");
   expect(screen.getByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   expect(screen.getByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
   await act(async () => gate.resolve(result));
@@ -189,6 +193,8 @@ test("shows the minimized global fallback only when no local Activity host is mo
   await user.click(screen.getByRole("button", { name: "Start upload" }));
   await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   expect(screen.getByTestId("global-activity-fallback")).toBeInTheDocument();
+  expect(screen.getByTestId("activity-panel")).toHaveClass("scale-95", "opacity-0");
+  expect(screen.getByTestId("activity-panel")).toHaveAttribute("aria-hidden", "true");
 
   await user.click(screen.getByTestId("global-activity-fallback"));
   await user.click(screen.getByRole("button", { name: "Minimize activity" }));

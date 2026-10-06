@@ -1,8 +1,12 @@
 import { render, waitFor } from "@testing-library/react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
-import { commitCloudinaryMediaAsset } from "../../api/providerStorage";
+import { uploadImageToCloudinarySigned } from "../../containers/Media/utils/cloudinaryUpload";
+import {
+  cancelCloudinaryMediaUpload,
+  commitCloudinaryMediaAsset,
+  createCloudinaryMediaUpload,
+} from "../../api/providerStorage";
 import {
   claimLocalImageUploadJob,
   deleteLocalImageUploadJob,
@@ -40,9 +44,16 @@ jest.mock("../../utils/localImageAssets", () => ({
   updateLeasedLocalImageUploadJob: jest.fn(),
 }));
 jest.mock("../../containers/Media/utils/cloudinaryUpload", () => ({
-  uploadImageToCloudinary: jest.fn(),
+  uploadImageToCloudinarySigned: jest.fn(),
 }));
 jest.mock("../../api/providerStorage", () => ({
+  createCloudinaryMediaUpload: jest.fn(() => Promise.resolve({
+    uploadId: "intent-1",
+    uploadUrl: "https://api.cloudinary.com/v1_1/portable-media/image/upload",
+    publicId: "cloud-public-id",
+    fields: { api_key: "key", timestamp: "1", signature: "sig", public_id: "cloud-public-id" },
+  })),
+  cancelCloudinaryMediaUpload: jest.fn(() => Promise.resolve({ cancelled: true })),
   commitCloudinaryMediaAsset: jest.fn(() => Promise.resolve({ asset: {
     provider: "cloudinary", assetId: "provider-asset-1", publicId: "cloud-public-id",
     churchId: "church-1", permanent: true, bytes: 5,
@@ -71,8 +82,10 @@ jest.mock("../../containers/Media/utils/cloudinaryMediaItem", () => ({
 const mockListJobs = jest.mocked(listLocalImageUploadJobs);
 const mockClaimJob = jest.mocked(claimLocalImageUploadJob);
 const mockGetLocalImage = jest.mocked(getLocalImage);
-const mockUpload = jest.mocked(uploadImageToCloudinary);
+const mockUpload = jest.mocked(uploadImageToCloudinarySigned);
 const mockCommitCloudinary = jest.mocked(commitCloudinaryMediaAsset);
+const mockCancelCloudinaryUpload = jest.mocked(cancelCloudinaryMediaUpload);
+const mockCreateCloudinaryUpload = jest.mocked(createCloudinaryMediaUpload);
 const mockPersistCloudCopy = jest.mocked(persistLocalImageCloudCopy);
 const mockDeleteJob = jest.mocked(deleteLocalImageUploadJob);
 const mockReleaseLease = jest.mocked(releaseLocalImageUploadJobLease);
@@ -110,6 +123,7 @@ describe("LocalImageUploadManager", () => {
       createdAt: "2026-08-12T00:00:00.000Z",
     });
     mockUpload.mockResolvedValue({
+      public_id: "cloud-public-id",
       secure_url: "https://res.cloudinary.com/example/welcome.png",
     } as any);
     mockCommitCloudinary.mockResolvedValue({ asset: {
@@ -153,12 +167,16 @@ describe("LocalImageUploadManager", () => {
     expect(mockDeleteJob).not.toHaveBeenCalled();
     expect(mockUpload).toHaveBeenCalledWith(
       expect.any(File),
-      "preset",
-      "portable-media",
+      expect.objectContaining({ uploadId: "intent-1", publicId: "cloud-public-id" }),
       expect.any(Object),
-      { assetFolder: "worship-sync/churches/church-1/media" },
     );
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "intent-1", "cloud-public-id");
+    expect(mockCreateCloudinaryUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpload.mock.invocationCallOrder[0],
+    );
+    expect(mockUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCommitCloudinary.mock.invocationCallOrder[0],
+    );
     expect(mockUpdateJob).toHaveBeenCalledWith(
       expect.objectContaining({
         assetId: "asset-1",
@@ -188,6 +206,37 @@ describe("LocalImageUploadManager", () => {
         url: "https://res.cloudinary.com/example/welcome.png",
       },
     });
+    view.unmount();
+  });
+
+  it("cleans an ambiguous provider intent before creating a replacement upload", async () => {
+    const ambiguousJob = { ...interruptedJob, providerUploadId: "old-intent" };
+    mockListJobs.mockReset().mockResolvedValueOnce([ambiguousJob]).mockResolvedValue([]);
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
+      ...ambiguousJob,
+      leaseOwnerId,
+      leaseExpiresAt: Date.now() + 300_000,
+    }));
+
+    const view = render(
+      <ControllerInfoContext.Provider
+        value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}
+      >
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: expect.objectContaining({ status: "complete" }) }),
+    ));
+    expect(mockCancelCloudinaryUpload).toHaveBeenCalledWith("church-1", "old-intent");
+    expect(mockCreateCloudinaryUpload).toHaveBeenCalledWith("church-1", "stable-media-id");
+    expect(mockCancelCloudinaryUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateCloudinaryUpload.mock.invocationCallOrder[0],
+    );
+    expect(mockUpload).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
@@ -267,7 +316,7 @@ describe("LocalImageUploadManager", () => {
     ));
     expect(mockDeleteJob).not.toHaveBeenCalled();
     expect(mockPersistCloudCopy).not.toHaveBeenCalled();
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "intent-1", "cloud-public-id");
     expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -396,7 +445,7 @@ describe("LocalImageUploadManager", () => {
     }));
     expect(mockUpload).toHaveBeenCalledTimes(2);
     expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "intent-1", "cloud-public-id");
     view.unmount();
   });
 
@@ -414,7 +463,7 @@ describe("LocalImageUploadManager", () => {
       publicId: "cloud-public-id",
       background: "https://res.cloudinary.com/example/welcome.png",
     } as MediaType;
-    const checkpointJob = { ...interruptedJob, cloudMedia };
+    const checkpointJob = { ...interruptedJob, cloudMedia, providerUploadId: "intent-1" };
     mockListJobs.mockReset().mockResolvedValueOnce([checkpointJob]).mockResolvedValue([]);
     mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
       ...checkpointJob,

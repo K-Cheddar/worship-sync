@@ -637,6 +637,7 @@ export const createChurchStorageQuotaService = ({
     provider,
     uploadId,
     mediaId,
+    folderMode,
     temporary = false,
     status = "waiting",
     assetId,
@@ -657,6 +658,7 @@ export const createChurchStorageQuotaService = ({
         provider,
         uploadId,
         ...(mediaId ? { mediaId } : {}),
+        ...(folderMode ? { folderMode } : {}),
         temporary: Boolean(temporary),
         status,
         ...(assetId ? { assetId } : {}),
@@ -673,6 +675,38 @@ export const createChurchStorageQuotaService = ({
     const snapshot = await db.collection(providerUploadCollection)
       .where("churchId", "==", churchId).get();
     return snapshot.docs.map((doc) => doc.data());
+  };
+
+  const getProviderUpload = async ({ provider, uploadId }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const snapshot = await providerUploadRef(db, provider, uploadId).get();
+    return snapshot.exists ? snapshot.data() : null;
+  };
+
+  const transitionProviderUpload = async ({
+    provider,
+    uploadId,
+    fromStatuses,
+    status,
+    ...fields
+  }) => {
+    const db = getFirestore?.();
+    if (!db) throw new Error("Church storage quota persistence is unavailable.");
+    const ref = providerUploadRef(db, provider, uploadId);
+    let result = null;
+    await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return;
+      const current = snapshot.data();
+      if (!fromStatuses.includes(current.status)) {
+        result = current;
+        return;
+      }
+      result = { ...current, ...fields, status, updatedAt: now() };
+      transaction.set(ref, result, { merge: true });
+    });
+    return result;
   };
 
   const markProviderUsageReady = async ({ churchId }) => {
@@ -730,6 +764,8 @@ export const createChurchStorageQuotaService = ({
     getProviderAssetOwner,
     listProviderAssets,
     recordProviderUpload,
+    getProviderUpload,
+    transitionProviderUpload,
     listProviderUploads,
     markProviderUsageReady,
     markProviderUsageNotReady,

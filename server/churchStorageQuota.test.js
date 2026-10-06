@@ -447,6 +447,32 @@ test("Mux direct uploads retain durable completion tracking for reconciliation",
   }]);
 });
 
+test("provider upload lookup is deterministic and status transitions protect completed intents", async () => {
+  const { service } = createQuota();
+  await service.recordProviderUpload({
+    churchId: "church-a", provider: "cloudinary", uploadId: "intent-a",
+    mediaId: "media-a", assetId: "image-a", folderMode: "dynamic", status: "waiting",
+  });
+  await service.recordProviderUpload({
+    churchId: "church-b", provider: "cloudinary", uploadId: "intent-b",
+    mediaId: "media-b", assetId: "image-b", folderMode: "fixed", status: "waiting",
+  });
+  const intent = await service.getProviderUpload({ provider: "cloudinary", uploadId: "intent-a" });
+  assert.deepEqual(intent, {
+    churchId: "church-a", provider: "cloudinary", uploadId: "intent-a",
+    mediaId: "media-a", assetId: "image-a", folderMode: "dynamic", temporary: false,
+    status: "waiting", updatedAt: 1_000, createdAt: 1_000,
+  });
+  await service.transitionProviderUpload({
+    provider: "cloudinary", uploadId: "intent-a", fromStatuses: ["waiting"], status: "committed",
+  });
+  const unchanged = await service.transitionProviderUpload({
+    provider: "cloudinary", uploadId: "intent-a", fromStatuses: ["waiting"], status: "cancelling",
+  });
+  assert.equal(unchanged.status, "committed");
+  assert.equal(await service.getProviderUpload({ provider: "cloudinary", uploadId: "intent-b" }).then((value) => value.churchId), "church-b");
+});
+
 test("provider replacement admission uses the old asset as credit and deletion releases it after commit", async () => {
   const { service } = createQuota();
   await service.markProviderUsageReady({ churchId: "church-a" });

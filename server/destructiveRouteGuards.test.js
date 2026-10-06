@@ -65,3 +65,26 @@ test("cloudinary delete and mux upload routes remain registered", () => {
     /app\.post\(\s*["']\/api\/churches\/:churchId\/mux\/assets\/:assetId\/delete["']/,
   );
 });
+
+test("permanent Cloudinary upload intents and commits use the secured church mount and CSRF", () => {
+  assert.match(
+    serverSource,
+    /app\.use\(\s*["']\/api\/churches\/:churchId\/media-storage["']\s*,\s*requireAppSession\s*,\s*requireFullAppAccess/,
+  );
+  assert.match(
+    serverSource,
+    /app\.post\(\s*["']\/api\/churches\/:churchId\/media-storage\/cloudinary\/uploads["']\s*,\s*requireMutationCsrf/,
+  );
+  assert.match(
+    serverSource,
+    /providerStorageService\.createCloudinaryImageUpload\(\{\s*churchId:\s*req\.params\.churchId,\s*mediaId:\s*req\.body\?\.mediaId/,
+  );
+  assert.match(
+    serverSource,
+    /providerStorageService\.commitCloudinaryImage\(\{\s*churchId:\s*req\.params\.churchId,\s*uploadId:\s*req\.body\?\.uploadId,\s*publicId:\s*req\.body\?\.publicId/,
+  );
+  assert.match(
+    serverSource,
+    /providerStorageService\.cancelCloudinaryUpload\(\{\s*churchId:\s*req\.params\.churchId,\s*uploadId:\s*req\.params\.uploadId/,
+  );
+});

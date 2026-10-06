@@ -80,6 +80,9 @@ export type LocalImageUploadJob = {
   attemptCount: number;
   nextAttemptAt: number;
   lastError?: string;
+  lastErrorCode?: string;
+  providerUploadId?: string;
+  providerExpectedPublicId?: string;
   cloudMedia?: MediaType;
   /** Cross-tab owner of the current processing attempt. */
   leaseOwnerId?: string;
@@ -88,6 +91,14 @@ export type LocalImageUploadJob = {
   createdAt: string;
   updatedAt: string;
 };
+
+const isLegacyUnsignedCloudinaryOwnershipFailure = (
+  job: LocalImageUploadJob,
+) =>
+  !job.providerUploadId &&
+  Boolean(job.cloudMedia) &&
+  (job.lastErrorCode === "CLOUDINARY_MEDIA_OWNERSHIP_MISMATCH" ||
+    job.lastError === "The image was not uploaded to this church's media folder.");
 
 export type LocalImageReferencePatch = {
   reference?: Partial<
@@ -674,9 +685,16 @@ export const enqueueLocalImageUploadJobAtomically = async (
       return current;
     }
     if (current?.status === "complete") return current;
+    if (current?.status === "failed" && isLegacyUnsignedCloudinaryOwnershipFailure(current)) {
+      return current;
+    }
     return {
       ...candidate,
       mediaId: current?.cloudMedia ? current.mediaId : candidate.mediaId,
+      ...(current?.providerUploadId ? { providerUploadId: current.providerUploadId } : {}),
+      ...(current?.providerExpectedPublicId
+        ? { providerExpectedPublicId: current.providerExpectedPublicId }
+        : {}),
       status: current?.cloudMedia ? "uploaded" : "pending",
       phase: current?.cloudMedia ? "committing" : "queued",
       progress: current?.cloudMedia ? 90 : 0,
@@ -698,16 +716,21 @@ export const retryLocalImageUploadJobAtomically = async (
     if (current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) {
       return current;
     }
+    const isLegacyOwnershipMismatch =
+      isLegacyUnsignedCloudinaryOwnershipFailure(current);
     const next: LocalImageUploadJob = {
       ...current,
-      status: current.cloudMedia ? "uploaded" : "pending",
-      phase: current.cloudMedia ? "committing" : "queued",
-      progress: current.cloudMedia ? 90 : 0,
+      status: current.cloudMedia && !isLegacyOwnershipMismatch ? "uploaded" : "pending",
+      phase: current.cloudMedia && !isLegacyOwnershipMismatch ? "committing" : "queued",
+      progress: current.cloudMedia && !isLegacyOwnershipMismatch ? 90 : 0,
       nextAttemptAt: 0,
       lastError: undefined,
+      lastErrorCode: undefined,
       cancelRequested: false,
       updatedAt: new Date(now).toISOString(),
     };
+    if (isLegacyOwnershipMismatch) delete next.cloudMedia;
+    if (isLegacyOwnershipMismatch) delete next.providerExpectedPublicId;
     delete next.leaseOwnerId;
     delete next.leaseExpiresAt;
     return next;
@@ -750,8 +773,12 @@ type LeasedLocalImageUploadJobPatch = Partial<
     | "attemptCount"
     | "nextAttemptAt"
     | "lastError"
-  >
-> & { cloudMedia?: MediaType | null };
+    | "lastErrorCode"
+  > & {
+    cloudMedia?: MediaType | null;
+    providerUploadId?: string | null;
+    providerExpectedPublicId?: string | null;
+  }>;
 
 export const updateLeasedLocalImageUploadJob = async ({
   assetId,
@@ -768,7 +795,12 @@ export const updateLeasedLocalImageUploadJob = async ({
 }) =>
   mutateLocalImageUploadJob(assetId, (current) => {
     if (!current || current.leaseOwnerId !== leaseOwnerId) return undefined;
-    const { cloudMedia, ...fields } = patch;
+    const {
+      cloudMedia,
+      providerUploadId,
+      providerExpectedPublicId,
+      ...fields
+    } = patch;
     const next: LocalImageUploadJob = {
       ...current,
       ...fields,
@@ -778,6 +810,10 @@ export const updateLeasedLocalImageUploadJob = async ({
     };
     if (cloudMedia === null) delete next.cloudMedia;
     else if (cloudMedia) next.cloudMedia = cloudMedia;
+    if (providerUploadId === null) delete next.providerUploadId;
+    else if (providerUploadId) next.providerUploadId = providerUploadId;
+    if (providerExpectedPublicId === null) delete next.providerExpectedPublicId;
+    else if (providerExpectedPublicId) next.providerExpectedPublicId = providerExpectedPublicId;
     return next;
   });
 
@@ -803,6 +839,8 @@ export const finishLocalImageUploadCancellationAtomically = (
       updatedAt: new Date(now).toISOString(),
     };
     delete next.cloudMedia;
+    delete next.providerUploadId;
+    delete next.providerExpectedPublicId;
     delete next.leaseOwnerId;
     delete next.leaseExpiresAt;
     return next;
