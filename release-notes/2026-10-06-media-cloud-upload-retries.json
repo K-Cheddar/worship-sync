@@ -1,0 +1,7 @@
+{
+  "id": "media-cloud-upload-retries-2026-10-06",
+  "date": "2026-10-06",
+  "type": "fixed",
+  "title": "Retry local image cloud uploads",
+  "description": "Local Media images now upload to the right church folder, and failed uploads can resume or retry without creating duplicate cloud copies."
+}

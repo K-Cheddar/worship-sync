@@ -171,11 +171,11 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
   const [confirmation, setConfirmation] = useState<{ transfer: Transfer; action: NonNullable<Transfer["actions"]>[number] } | null>(null);
   const summary = getActivitySummary(transfers);
   if (!transfers.length) return null;
-  if (isMinimized && hasLocalActivityHost) return null;
-  if (isMinimized) return <button type="button" aria-label={`Show ${summary.label}`} data-testid="global-activity-fallback" onClick={onRestore} className="fixed bottom-4 right-4 z-[80] flex items-center gap-2 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-2xl"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</button>;
+  const showFallback = isMinimized && !hasLocalActivityHost;
   return (
     <>
-      <aside aria-label="Activity" className="fixed bottom-4 right-4 z-[80] w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl">
+      {showFallback ? <button type="button" aria-label={`Show ${summary.label}`} data-testid="global-activity-fallback" onClick={onRestore} className="fixed bottom-4 right-4 z-[80] flex cursor-pointer items-center gap-2 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-2xl shadow-black/50 transition-colors duration-150 hover:bg-gray-800 motion-reduce:transition-none"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</button> : null}
+      <aside aria-label="Activity" aria-hidden={isMinimized || undefined} data-testid="activity-panel" className={`fixed bottom-4 right-4 z-[80] origin-bottom-right transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl ${isMinimized ? "pointer-events-none scale-95 opacity-0" : "scale-100 opacity-100"}`}>
         <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
           <h2 className="flex items-center gap-2 text-sm font-semibold"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</h2>
           <Button variant="tertiary" svg={ChevronDown} aria-label="Minimize activity" onClick={onMinimize} />
@@ -192,7 +192,7 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
           </li>)}
         </ul>
       </aside>
-      <Modal isOpen={Boolean(confirmation)} onClose={() => setConfirmation(null)} title={confirmation?.action.confirmation?.title || "Confirm activity action"} description={confirmation?.action.confirmation?.description} size="sm">
+      <Modal isOpen={Boolean(confirmation) && !isMinimized} onClose={() => setConfirmation(null)} title={confirmation?.action.confirmation?.title || "Confirm activity action"} description={confirmation?.action.confirmation?.description} size="sm">
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmation(null)}>Keep importing</Button>
           <Button onClick={() => {

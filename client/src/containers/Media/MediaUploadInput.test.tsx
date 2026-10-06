@@ -652,6 +652,37 @@ describe("MediaUploadInput", () => {
     expect(onLocalMediaAdded).toHaveBeenCalledTimes(2);
   });
 
+  it("repairs an existing unsigned ownership failure only after Retry failed files is chosen", async () => {
+    const media = localImage("old-cloud-failure", "welcome.png");
+    mockedCreateLocalMedia.mockResolvedValue(media);
+    mockedGetUploadJob
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({
+        status: "failed",
+        lastError: "The image was not uploaded to this church's media folder.",
+        cloudMedia: { id: "old-cloud-copy", publicId: "misplaced-image" },
+      } as never);
+    mockedWaitForUpload
+      .mockRejectedValueOnce(new Error("The image was not uploaded to this church's media folder."))
+      .mockImplementationOnce(async (_assetId, onState) => {
+        onState?.({ status: "complete", progress: 100, phase: "Upload complete" });
+        return {} as never;
+      });
+    renderUploadInput();
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["image"], "welcome.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+
+    const retry = await screen.findByRole("button", { name: "Retry failed files" });
+    expect(mockedRetryUpload).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(mockedRetryUpload).toHaveBeenCalledWith(media.id));
+    expect(mockedEnqueueUpload).toHaveBeenCalledTimes(2);
+  });
+
   it("opens and populates the upload modal from a native file drop", () => {
     const ref = { current: null as null | MediaUploadInputRef };
     render(

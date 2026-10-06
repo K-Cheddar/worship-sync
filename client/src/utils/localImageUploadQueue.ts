@@ -1,5 +1,8 @@
 import generateRandomId from "./generateRandomId";
-import { deleteCloudinaryMediaAsset } from "../api/providerStorage";
+import {
+  cancelCloudinaryMediaUpload,
+  deleteCloudinaryMediaAsset,
+} from "../api/providerStorage";
 import {
   enqueueLocalImageUploadJobAtomically,
   finishLocalImageUploadCancellationAtomically,
@@ -191,7 +194,12 @@ export const retryLocalImageUploadCancellation = async (
   if (job.leaseOwnerId && (job.leaseExpiresAt ?? 0) > Date.now()) {
     throw new Error("The upload is still stopping. Try cleanup again in a moment.");
   }
-  if (job.cloudMedia?.publicId) {
+  if (job.providerUploadId) {
+    const cleanup = await cancelCloudinaryMediaUpload(churchId, job.providerUploadId);
+    if (cleanup.committed) {
+      throw new Error("The image was saved before cancellation completed. Retry to finish the Media update.");
+    }
+  } else if (job.cloudMedia?.publicId) {
     await deleteCloudinaryMediaAsset(churchId, job.cloudMedia.publicId);
   }
   const finished = await finishLocalImageUploadCancellationAtomically(assetId, Date.now());

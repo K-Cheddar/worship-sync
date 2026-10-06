@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MediaAddControl, ShowTransfersMenuItem } from "./MediaAddControl";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
@@ -51,7 +51,8 @@ it("opens Activity without showing a global percentage", async () => {
   const activity = screen.getByRole("button", { name: "Show Activity · 1 active" });
   expect(activity).toHaveTextContent("Activity · 1 active");
   expect(activity).not.toHaveTextContent("%");
-  expect(screen.getByTestId("activity-icon")).toHaveClass("text-cyan-300");
+  expect(screen.getByTestId("activity-icon")).toHaveClass("lucide-loader-circle", "text-cyan-300", "animate-spin");
+  expect(within(activity).getByText("Activity · 1 active")).toHaveClass("truncate", "@max-[240px]/sources-actions:hidden");
   await user.click(activity);
   expect(restore).toHaveBeenCalledTimes(1);
 });
@@ -71,7 +72,25 @@ it("uses amber for Sources Activity when an operation needs attention", () => {
   });
   render(<MediaAddControl><button type="button">Add media</button></MediaAddControl>);
   expect(screen.getByRole("button", { name: "Show Activity · 1 needs attention" })).toBeInTheDocument();
-  expect(screen.getByTestId("activity-icon")).toHaveClass("text-amber-300");
+  expect(screen.getByTestId("activity-icon")).toHaveClass("lucide-circle-alert", "text-amber-300");
+});
+
+it("uses a completion icon for finished work while retaining its accessible summary", () => {
+  mockUseOptionalTransfers.mockReturnValue({
+    transfers: [{ id: "complete", name: "Slides", type: "Canva", status: "complete", progress: 100 } as never],
+    isMinimized: false,
+    minimizeTransfers: jest.fn(),
+    restoreTransfers: jest.fn(),
+    registerActivityHost: jest.fn(() => jest.fn()),
+    updateTransfer: jest.fn(),
+    removeTransfer: jest.fn(),
+    registerTransferAction: jest.fn(),
+    runTransferAction: jest.fn(),
+    startCanvaTransfer: jest.fn(),
+  });
+  render(<MediaAddControl><button type="button">Add media</button></MediaAddControl>);
+  expect(screen.getByRole("button", { name: "Show Activity" })).toBeInTheDocument();
+  expect(screen.getByTestId("activity-icon")).toHaveClass("lucide-circle-check", "text-gray-400");
 });
 
 it("shows an Activity menu item when the panel is minimized", async () => {

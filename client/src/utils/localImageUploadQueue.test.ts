@@ -1,4 +1,5 @@
 import generateRandomId from "./generateRandomId";
+import { cancelCloudinaryMediaUpload } from "../api/providerStorage";
 import {
   enqueueLocalImageUploadJobAtomically,
   finishLocalImageUploadCancellationAtomically,
@@ -14,6 +15,7 @@ import {
   enqueueLocalImageUpload,
   registerLocalImageUploadRequest,
   retryLocalImageUpload,
+  retryLocalImageUploadCancellation,
 } from "./localImageUploadQueue";
 
 jest.mock("./generateRandomId", () => jest.fn(() => "media-1"));
@@ -25,6 +27,10 @@ jest.mock("./localImageAssets", () => ({
   requestLocalImageUploadCancellationAtomically: jest.fn(),
   subscribeLocalImageUploadJobChanges: jest.fn(() => () => undefined),
 }));
+jest.mock("../api/providerStorage", () => ({
+  cancelCloudinaryMediaUpload: jest.fn(() => Promise.resolve({ cancelled: true })),
+  deleteCloudinaryMediaAsset: jest.fn(() => Promise.resolve({ success: true })),
+}));
 
 const mockEnqueueJob = jest.mocked(enqueueLocalImageUploadJobAtomically);
 const mockRetryJob = jest.mocked(retryLocalImageUploadJobAtomically);
@@ -32,6 +38,7 @@ const mockFinishCancellation = jest.mocked(finishLocalImageUploadCancellationAto
 const mockGetJob = jest.mocked(getLocalImageUploadJob);
 const mockRequestCancellation = jest.mocked(requestLocalImageUploadCancellationAtomically);
 const mockSubscribe = jest.mocked(subscribeLocalImageUploadJobChanges);
+const mockCancelProviderUpload = jest.mocked(cancelCloudinaryMediaUpload);
 
 const existingJob = (): LocalImageUploadJob => ({
   id: "asset-1",
@@ -112,5 +119,19 @@ describe("localImageUploadQueue", () => {
     expect(mockFinishCancellation).not.toHaveBeenCalled();
     expect(consumeLocalImageUploadCancellation("asset-1")).toBe(true);
     expect(consumeLocalImageUploadCancellation("asset-1")).toBe(false);
+  });
+
+  it("cleans the server-created intent before finishing a pending cancellation", async () => {
+    mockGetJob.mockResolvedValue({
+      ...existingJob(),
+      providerUploadId: "intent-1",
+      cancelRequested: true,
+    });
+    mockFinishCancellation.mockResolvedValue({ ...existingJob(), status: "cancelled" });
+
+    await retryLocalImageUploadCancellation("asset-1", "church-1");
+
+    expect(mockCancelProviderUpload).toHaveBeenCalledWith("church-1", "intent-1");
+    expect(mockFinishCancellation).toHaveBeenCalledWith("asset-1", expect.any(Number));
   });
 });
