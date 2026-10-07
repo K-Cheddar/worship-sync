@@ -289,6 +289,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   const worshipRole = { roleId: "worship-captain", churchId: "church-1", teamId: worship.teamId, name: "Worship Captain" };
   const avRole = { roleId: "av-operator", churchId: "church-1", teamId: av.teamId, name: "AV Operator" };
   const worshipArea = { areaId: "worship-safety", churchId: "church-1", teamId: worship.teamId, name: "Worship Safety" };
+  const worshipLevel = { levelId: "worship-level", churchId: "church-1", areaId: worshipArea.areaId, name: "Experienced", rank: 1 };
   const avArea = { areaId: "av-safety", churchId: "church-1", teamId: av.teamId, name: "AV Safety" };
   jest.mocked(getTeamRosterMemberProfile).mockResolvedValue({
     member: { memberId: member.memberId, firstName: "Avery", lastName: "Singer" },
@@ -297,7 +298,9 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
       membership: { roleId: worshipRole.roleId, isTeamLead: false },
-      qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, teamId: worship.teamId, status: "completed" }],
+      qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, levelId: worshipLevel.levelId,
+        teamId: worship.teamId, status: "completed", completedAt: "2026-09-15", expiresAt: "2027-09-15",
+        notes: "Initial notes", internalMetadata: "keep me" }],
     },
   } as never);
   jest.mocked(updateTeamRosterMemberProfile).mockResolvedValue({
@@ -308,19 +311,21 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
       membership: { roleId: worshipRole.roleId, isTeamLead: true },
-      qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, teamId: worship.teamId, status: "completed" }],
+      qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, levelId: worshipLevel.levelId,
+        teamId: worship.teamId, status: "completed", completedAt: "2026-09-15", expiresAt: "2027-09-15", notes: "Updated notes" }],
     },
   } as never);
   renderManager(TEAMS_SECTION_PATHS.groups, {}, {
     positions: [worshipPosition, worshipDesired, avPosition],
     roles: [worshipRole, avRole],
     qualificationAreas: [worshipArea, avArea],
+    qualificationLevels: [worshipLevel],
     onRosterMutationReconcile,
   });
 
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   await user.click(screen.getByRole("button", { name: "Manage" }));
-  expect(await screen.findByRole("dialog", { name: "Manage Avery Singer" })).toBeInTheDocument();
+  const dialog = await screen.findByRole("dialog", { name: "Manage Avery Singer" });
   expect(getTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId);
   expect(screen.getAllByText("Worship Singer")).toHaveLength(2);
   expect(screen.getAllByText("Worship Leader")).toHaveLength(2);
@@ -328,6 +333,24 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   expect(screen.queryByText("avery-private@example.test")).not.toBeInTheDocument();
   expect(screen.queryByText("private notes")).not.toBeInTheDocument();
   expect(screen.queryByText("AV Safety")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Eligible positions")).toBeInTheDocument();
+  expect(within(dialog).getByText("Desired positions")).toBeInTheDocument();
+  expect(within(dialog).getByRole("combobox", { name: "Worship role:" })).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Avery Singer is a Worship team lead")).toBeInTheDocument();
+  expect(within(dialog).getByRole("heading", { name: "Worship qualifications" })).toBeInTheDocument();
+  expect(within(dialog).getByRole("combobox", { name: "Area:" })).toBeInTheDocument();
+  expect(within(dialog).getByRole("combobox", { name: "Level:" })).toBeInTheDocument();
+  expect(within(dialog).getByRole("combobox", { name: "Status:" })).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Completed")).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Expires")).toBeInTheDocument();
+  expect(within(dialog).getByRole("textbox", { name: /Notes/ })).toBeInTheDocument();
+  expect(within(dialog).queryByText("admin-123")).not.toBeInTheDocument();
+  for (const privateField of ["email", "phone", "birth date", "member notes", "availability", "SMS", "archive", "delete"]) {
+    expect(within(dialog).queryByText(new RegExp(privateField, "i"))).not.toBeInTheDocument();
+  }
+
+  await user.clear(within(dialog).getByRole("textbox", { name: /Notes/ }));
+  await user.type(within(dialog).getByRole("textbox", { name: /Notes/ }), "Updated notes");
 
   await user.click(screen.getByRole("checkbox", { name: "Avery Singer is a Worship team lead" }));
   await user.click(screen.getByRole("button", { name: "Save Worship profile" }));
@@ -339,7 +362,15 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
       membership: { roleId: worshipRole.roleId, isTeamLead: true },
-      qualifications: [expect.objectContaining({ areaId: worshipArea.areaId })],
+      qualifications: [expect.objectContaining({
+        areaId: worshipArea.areaId,
+        levelId: worshipLevel.levelId,
+        teamId: worship.teamId,
+        status: "completed",
+        completedAt: "2026-09-15",
+        expiresAt: "2027-09-15",
+        notes: "Updated notes",
+      })],
     }),
   ));
   expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);

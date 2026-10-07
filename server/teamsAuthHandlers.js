@@ -3273,6 +3273,73 @@ export const createTeamsAuthHandlers = ({
     ...(qualification.notes ? { notes: qualification.notes } : {}),
   });
 
+  const resolveMemberTeamSlices = async ({ churchId, teamId, member, read }) => {
+    if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+        (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
+        (member.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+        (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
+      throw httpError(409, "Member team data is invalid.");
+    }
+
+    const positionOwnerById = new Map();
+    const positionIds = [...new Set([...(member.positionIds || []), ...(member.desiredPositionIds || [])])];
+    for (const positionId of positionIds) {
+      if (typeof positionId !== "string" || !positionId.trim()) throw httpError(409, "Position ownership is invalid.");
+      const position = await read(COLLECTIONS.teamPositions, positionId);
+      if (!position || (position.positionId !== undefined && position.positionId !== positionId) || position.churchId !== churchId || !position.teamId) {
+        throw httpError(409, "Position ownership is invalid.");
+      }
+      const owner = await read(COLLECTIONS.teams, position.teamId);
+      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
+        throw httpError(409, "Position ownership is invalid.");
+      }
+      positionOwnerById.set(positionId, position.teamId);
+    }
+
+    const qualificationOwnerById = new Map();
+    const qualificationIds = new Set();
+    for (const qualification of member.qualifications || []) {
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      const qualificationId = typeof qualification.qualificationId === "string"
+        ? normalizeShortText(qualification.qualificationId, { max: 160 })
+        : "";
+      const areaId = typeof qualification.areaId === "string"
+        ? normalizeShortText(qualification.areaId, { max: 160 })
+        : "";
+      if (!qualificationId || qualification.qualificationId !== qualificationId ||
+          qualificationIds.has(qualificationId) || !areaId || qualification.areaId !== areaId) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      qualificationIds.add(qualificationId);
+      const area = await read(COLLECTIONS.teamQualificationAreas, areaId);
+      if (!area || (area.areaId !== undefined && area.areaId !== areaId) || area.churchId !== churchId || !area.teamId ||
+          (Object.hasOwn(qualification, "teamId") && qualification.teamId !== area.teamId)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      const owner = await read(COLLECTIONS.teams, area.teamId);
+      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== area.teamId)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      qualificationOwnerById.set(qualificationId, area.teamId);
+    }
+
+    const membership = member.teamMemberships?.[teamId];
+    if (membership !== undefined && (!membership || typeof membership !== "object" || Array.isArray(membership) ||
+        (membership.teamId !== undefined && membership.teamId !== teamId))) {
+      throw httpError(409, "Member team ownership is invalid.");
+    }
+    return {
+      targetPositionIds: (ids) => (ids || []).filter((id) => positionOwnerById.get(id) === teamId),
+      targetQualifications: (member.qualifications || []).filter((qualification) =>
+        qualificationOwnerById.get(qualification.qualificationId) === teamId),
+      membership: membership || {},
+      positionOwnerById,
+      qualificationOwnerById,
+    };
+  };
+
   const getTeamProfile = async ({ churchId, teamId, memberId }) => {
     const team = await assertTeamEntityInChurch("team", teamId, churchId, {
       label: "Team",
@@ -3289,39 +3356,20 @@ export const createTeamsAuthHandlers = ({
     if ((team.teamId && team.teamId !== teamId) || (member.memberId && member.memberId !== memberId)) {
       throw httpError(409, "Team profile ownership is invalid.");
     }
-    if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
-        (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
-        (member.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
-        (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
-      throw httpError(409, "Member team data is invalid.");
-    }
-    const positionIds = Array.isArray(member.positionIds) ? member.positionIds : [];
-    const desiredPositionIds = Array.isArray(member.desiredPositionIds)
-      ? member.desiredPositionIds
-      : [];
-    const allPositionIds = [...new Set([...positionIds, ...desiredPositionIds])];
-    const positions = await Promise.all(allPositionIds.map((id) => getTeamEntity("position", id)));
-    const positionById = new Map(positions.filter(Boolean).map((position) => [position.positionId, position]));
-    const targetPositions = (ids) => ids.filter((id) => {
-      const position = positionById.get(id);
-      return position?.positionId === id && position.churchId === churchId && position.teamId === teamId;
+    const slices = await resolveMemberTeamSlices({
+      churchId,
+      teamId,
+      member,
+      read: getDoc,
     });
-    const qualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
-    const areaIds = [...new Set(qualifications.map((item) => item?.areaId).filter(Boolean))];
-    const areas = await Promise.all(areaIds.map((id) => getTeamEntity("qualificationArea", id)));
-    const areaById = new Map(areas.filter(Boolean).map((area) => [area.areaId, area]));
-    const teamQualifications = qualifications
-      .filter((item) => item && typeof item === "object" &&
-        (!item.teamId || item.teamId === teamId) &&
-        areaById.get(item.areaId)?.areaId === item.areaId &&
-        areaById.get(item.areaId)?.churchId === churchId &&
-        areaById.get(item.areaId)?.teamId === teamId)
-      .map(teamProfileQualificationView);
-    const membership = member.teamMemberships?.[teamId];
-    const role = membership?.roleId ? await getTeamEntity("role", membership.roleId) : null;
-    const roleId = role && role.roleId === membership?.roleId && role.churchId === churchId && role.teamId === teamId
-      ? membership.roleId
-      : undefined;
+    const membership = slices.membership;
+    if (membership.roleId) {
+      const role = await getDoc(COLLECTIONS.teamRoles, membership.roleId);
+      if (!role || role.churchId !== churchId || role.teamId !== teamId ||
+          (role.roleId !== undefined && role.roleId !== membership.roleId)) {
+        throw httpError(409, "Member team ownership is invalid.");
+      }
+    }
     return {
       member: {
         memberId,
@@ -3332,13 +3380,13 @@ export const createTeamsAuthHandlers = ({
       },
       teamProfile: {
         teamId,
-        positionIds: targetPositions(positionIds),
-        desiredPositionIds: targetPositions(desiredPositionIds),
+        positionIds: slices.targetPositionIds(member.positionIds),
+        desiredPositionIds: slices.targetPositionIds(member.desiredPositionIds),
         membership: {
-          ...(roleId ? { roleId } : {}),
+          ...(membership.roleId ? { roleId: membership.roleId } : {}),
           isTeamLead: membership?.isTeamLead === true,
         },
-        qualifications: teamQualifications,
+        qualifications: slices.targetQualifications.map(teamProfileQualificationView),
       },
     };
   };
@@ -3400,18 +3448,6 @@ export const createTeamsAuthHandlers = ({
         const snapshot = await transaction.get(db.collection(collectionName).doc(id));
         return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : null;
       };
-      const listOwnedAreas = async () => {
-        if (!transaction) {
-          return (await listTeamCollectionForChurch(COLLECTIONS.teamQualificationAreas, "areaId", churchId))
-            .filter((area) => area.teamId === teamId);
-        }
-        const snapshot = await transaction.get(
-          db.collection(COLLECTIONS.teamQualificationAreas).where("teamId", "==", teamId),
-        );
-        return snapshot.docs
-          .map((doc) => ({ areaId: doc.id, ...doc.data() }))
-          .filter((area) => area.churchId === churchId);
-      };
       const team = await read(COLLECTIONS.teams, teamId);
       const member = await read(COLLECTIONS.teamRosterMembers, memberId);
       if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
@@ -3429,6 +3465,7 @@ export const createTeamsAuthHandlers = ({
           (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
         throw httpError(409, "Member team data is invalid.");
       }
+      const slices = await resolveMemberTeamSlices({ churchId, teamId, member, read });
       const existingPositions = new Set([
         ...(member.positionIds || []),
         ...(member.desiredPositionIds || []),
@@ -3439,57 +3476,74 @@ export const createTeamsAuthHandlers = ({
       ]);
       const positionDocs = new Map();
       for (const id of new Set([...existingPositions, ...requestedPositionIds])) {
-        const position = await read(COLLECTIONS.teamPositions, id);
-        positionDocs.set(id, position);
+        if (!positionDocs.has(id)) positionDocs.set(id, await read(COLLECTIONS.teamPositions, id));
       }
-      const validatePositionIds = (ids, existingIds) => {
+      const validatePositionIds = async (ids, existingIds) => {
         if (!ids) return undefined;
         for (const id of ids) {
           const position = positionDocs.get(id);
-          if (!position || position.churchId !== churchId || position.teamId !== teamId) {
+          if (!position || position.churchId !== churchId || !position.teamId) {
             throw httpError(400, "Position must belong to this team.");
           }
+          let ownerTeamId = slices.positionOwnerById.get(id);
+          if (!ownerTeamId) {
+            const owner = await read(COLLECTIONS.teams, position.teamId);
+            if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
+              throw httpError(409, "Position ownership is invalid.");
+            }
+            ownerTeamId = position.teamId;
+          }
+          if (ownerTeamId !== teamId) throw httpError(400, "Position must belong to this team.");
           if (position.archivedAt && !existingIds.has(id)) {
             throw httpError(400, "Archived positions cannot be added.");
           }
         }
         return ids;
       };
-      const nextPositions = validatePositionIds(requested.positionIds, new Set(member.positionIds || []));
-      const nextDesired = validatePositionIds(requested.desiredPositionIds, new Set(member.desiredPositionIds || []));
+      const nextPositions = await validatePositionIds(requested.positionIds, new Set(member.positionIds || []));
+      const nextDesired = await validatePositionIds(requested.desiredPositionIds, new Set(member.desiredPositionIds || []));
       const replacePositionSlice = (previous, replacement) => replacement === undefined
         ? undefined
         : [...new Set([
-            ...previous.filter((id) => positionDocs.get(id)?.teamId !== teamId),
+            ...previous.filter((id) => slices.positionOwnerById.get(id) !== teamId),
             ...replacement,
           ])];
 
       let nextMembership;
       if (requested.membership) {
-        const prior = member.teamMemberships?.[teamId] || {};
+        const prior = slices.membership;
         const roleId = Object.hasOwn(requested.membership, "roleId")
           ? requested.membership.roleId
           : prior.roleId;
+        let role;
         if (roleId) {
-          const role = await read(COLLECTIONS.teamRoles, roleId);
-          if (!role || role.churchId !== churchId || role.teamId !== teamId) {
+          role = await read(COLLECTIONS.teamRoles, roleId);
+          if (!role || role.churchId !== churchId || role.teamId !== teamId ||
+              (role.roleId !== undefined && role.roleId !== roleId)) {
             throw httpError(400, "Team role must belong to this team.");
           }
+          if (role.archivedAt && roleId !== prior.roleId) {
+            throw httpError(400, "Archived roles cannot be added.");
+          }
         }
-        nextMembership = {
-          teamId,
-          ...(roleId ? { roleId } : {}),
-          isTeamLead: Object.hasOwn(requested.membership, "isTeamLead")
-            ? requested.membership.isTeamLead === true
-            : prior.isTeamLead === true,
-        };
+        nextMembership = { ...prior, teamId };
+        if (roleId) {
+          nextMembership.roleId = role.roleId || roleId;
+          nextMembership.roleLabel = role.name;
+        } else {
+          delete nextMembership.roleId;
+          delete nextMembership.roleLabel;
+        }
+        nextMembership.isTeamLead = Object.hasOwn(requested.membership, "isTeamLead")
+          ? requested.membership.isTeamLead === true
+          : prior.isTeamLead === true;
       }
 
       let nextQualifications;
       if (requested.qualifications) {
         const priorQualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
-        const ownedAreas = await listOwnedAreas();
-        const ownedAreaIds = new Set(ownedAreas.map((area) => area.areaId || area.id));
+        const ownedQualifications = slices.targetQualifications;
+        const ownedQualificationIds = new Set(ownedQualifications.map((item) => item.qualificationId));
         const areasById = new Map();
         const levelById = new Map();
         const requestedIds = new Set();
@@ -3509,18 +3563,22 @@ export const createTeamsAuthHandlers = ({
           if (!area || area.churchId !== churchId || area.teamId !== teamId) {
             throw httpError(400, "Qualification area must belong to this team.");
           }
-          const qualificationId = normalizeShortText(qualification.qualificationId, { max: 160 });
-          const priorWithId = priorQualifications.find((item) => item?.qualificationId === qualificationId);
-          if (priorWithId && !ownedAreaIds.has(priorWithId.areaId)) {
+          const qualificationId = typeof qualification.qualificationId === "string"
+            ? normalizeShortText(qualification.qualificationId, { max: 160 })
+            : "";
+          const priorWithId = priorQualifications.find((item) => item.qualificationId === qualificationId);
+          if (qualificationId && priorWithId && !ownedQualificationIds.has(qualificationId)) {
             throw httpError(400, "Qualification belongs to another team.");
           }
-          const wasOnTeam = priorQualifications.some((priorQualification) => priorQualification?.qualificationId === qualificationId && priorQualification?.areaId === areaId);
+          const wasOnTeam = Boolean(qualificationId && ownedQualificationIds.has(qualificationId) && priorWithId.areaId === areaId);
           if (area.archivedAt && !wasOnTeam) throw httpError(400, "Archived qualifications cannot be added.");
           const levelId = normalizeShortText(qualification.levelId, { max: 160 });
           if (levelId) {
             if (!levelById.has(levelId)) levelById.set(levelId, await read(COLLECTIONS.teamQualificationLevels, levelId));
             const level = levelById.get(levelId);
-            if (!level || level.churchId !== churchId || level.areaId !== areaId || (level.archivedAt && !wasOnTeam)) {
+            const priorLevelId = qualificationId && ownedQualificationIds.has(qualificationId) ? priorWithId.levelId : undefined;
+            if (!level || level.churchId !== churchId || level.areaId !== areaId ||
+                (level.archivedAt && levelId !== priorLevelId)) {
               throw httpError(400, "Qualification level must belong to this team's area.");
             }
           }
@@ -3533,6 +3591,7 @@ export const createTeamsAuthHandlers = ({
           }
           const status = statusValues.has(qualification.status) ? qualification.status : "in_training";
           const normalized = {
+            ...(priorWithId || {}),
             qualificationId: qualificationId || createId("memberQualification"),
             areaId,
             ...(levelId ? { levelId } : {}),
@@ -3542,11 +3601,12 @@ export const createTeamsAuthHandlers = ({
             expiresAt: normalizeOptionalPlainDate(qualification.expiresAt, "Qualification expiration date"),
             notes: normalizeLongText(qualification.notes, { max: 500 }),
           };
+          if (!levelId) delete normalized.levelId;
           if (requestedIds.has(normalized.qualificationId)) throw httpError(400, "Duplicate qualification.");
           requestedIds.add(normalized.qualificationId);
           replacements.push(normalized);
         }
-        const unrelated = priorQualifications.filter((item) => !ownedAreaIds.has(item?.areaId));
+        const unrelated = priorQualifications.filter((item) => !ownedQualificationIds.has(item.qualificationId));
         nextQualifications = [...unrelated, ...replacements];
       }
 

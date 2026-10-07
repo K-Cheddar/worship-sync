@@ -4,6 +4,8 @@ import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Modal from "../../../components/Modal/Modal";
 import Select from "../../../components/Select/Select";
+import DatePicker from "../../../components/ui/DatePicker";
+import TextArea from "../../../components/TextArea/TextArea";
 import { useToast } from "../../../context/toastContext";
 import {
   getTeamRosterMemberProfile,
@@ -154,6 +156,9 @@ const TeamMemberProfileEditor = ({
         if (key === "areaId") return { ...row, areaId: value, levelId: undefined };
         if (key === "levelId") return { ...row, levelId: value || undefined };
         if (key === "status") return { ...row, status: value as typeof row.status };
+        if (key === "completedAt") return { ...row, completedAt: value };
+        if (key === "expiresAt") return { ...row, expiresAt: value };
+        if (key === "notes") return { ...row, notes: value };
         return row;
       });
       return { ...current, qualifications };
@@ -170,7 +175,16 @@ const TeamMemberProfileEditor = ({
         positionIds: profile.positionIds,
         desiredPositionIds: profile.desiredPositionIds,
         membership: profile.membership,
-        qualifications: profile.qualifications,
+        qualifications: profile.qualifications.map((qualification) => ({
+          qualificationId: qualification.qualificationId,
+          areaId: qualification.areaId,
+          levelId: qualification.levelId,
+          teamId: qualification.teamId,
+          status: qualification.status,
+          completedAt: qualification.completedAt,
+          expiresAt: qualification.expiresAt,
+          notes: qualification.notes,
+        })),
       });
       onSaved(member.memberId);
       if (mountedRef.current && identityRef.current === saveIdentity) {
@@ -273,7 +287,8 @@ const TeamMemberProfileEditor = ({
             {profile.qualifications.map((qualification, index) => {
               const levels = qualificationLevels.filter((level) => level.areaId === qualification.areaId && !level.archivedAt);
               return (
-                <div key={`${qualification.qualificationId}-${index}`} className="grid gap-3 rounded-md border border-gray-700 p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                <div key={`${qualification.qualificationId}-${index}`} className="space-y-3 rounded-md border border-gray-700 p-3">
+                  <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
                   <Select
                     label="Area"
                     value={qualification.areaId}
@@ -316,6 +331,28 @@ const TeamMemberProfileEditor = ({
                       ...current,
                       qualifications: current.qualifications.filter((_, rowIndex) => rowIndex !== index),
                     } : current)}
+                  />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <DatePicker
+                      label="Completed"
+                      value={qualification.completedAt || ""}
+                      disabled={saving}
+                      onChange={(value) => setQualification(index, "completedAt", value)}
+                    />
+                    <DatePicker
+                      label="Expires"
+                      value={qualification.expiresAt || ""}
+                      disabled={saving}
+                      onChange={(value) => setQualification(index, "expiresAt", value)}
+                    />
+                  </div>
+                  <TextArea
+                    label="Notes"
+                    value={qualification.notes || ""}
+                    disabled={saving}
+                    textareaClassName="min-h-16 max-h-28"
+                    onChange={(value) => setQualification(index, "notes", value)}
                   />
                 </div>
               );

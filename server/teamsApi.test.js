@@ -15589,6 +15589,9 @@ test("team profile reads expose only the authorized shared-member slice", async 
   await setDoc(COLLECTIONS.teamRoles, "worship-captain", {
     roleId: "worship-captain", churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship Captain",
   }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, "worship-leader", {
+    roleId: "worship-leader", churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship Leader",
+  }, { merge: false });
   await setDoc(COLLECTIONS.teamRoles, "av-operator", {
     roleId: "av-operator", churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV Operator",
   }, { merge: false });
@@ -15601,7 +15604,8 @@ test("team profile reads expose only the authorized shared-member slice", async 
       [fixture.ids.av]: { teamId: fixture.ids.av, roleId: "av-operator", isTeamLead: false },
     },
     qualifications: [
-      { qualificationId: "worship-skill", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "completed" },
+      { qualificationId: "worship-skill", areaId: worshipAreaId, teamId: fixture.ids.worship,
+        status: "completed", verifiedByUid: "admin-123" },
       { qualificationId: "av-skill", areaId: avAreaId, teamId: fixture.ids.av, status: "in_training" },
     ],
   }, { merge: true });
@@ -15620,6 +15624,7 @@ test("team profile reads expose only the authorized shared-member slice", async 
     qualifications: [{ qualificationId: "worship-skill", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "completed" }],
   });
   assert.equal(JSON.stringify(worship.payload).includes("private@example.test"), false);
+  assert.equal(JSON.stringify(worship.payload).includes("admin-123"), false);
   assert.equal(JSON.stringify(worship.payload).includes("av-operator"), false);
   assert.equal(JSON.stringify(worship.payload).includes(`${fixture.ids.av}_position`), false);
 
@@ -15670,6 +15675,9 @@ test("team profile patches replace one team slice and reject cross-team fields",
   await setDoc(COLLECTIONS.teamRoles, "worship-captain", {
     roleId: "worship-captain", churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship Captain",
   }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, "worship-leader", {
+    roleId: "worship-leader", churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship Leader",
+  }, { merge: false });
   await setDoc(COLLECTIONS.teamRoles, "av-operator", {
     roleId: "av-operator", churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV Operator",
   }, { merge: false });
@@ -15678,11 +15686,15 @@ test("team profile patches replace one team slice and reject cross-team fields",
     positionIds: [`${fixture.ids.worship}_position`, `${fixture.ids.av}_position`],
     desiredPositionIds: [`${fixture.ids.worship}_position`, `${fixture.ids.av}_position`],
     teamMemberships: {
-      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: "worship-captain", roleLabel: "Legacy Captain", isTeamLead: false },
+      [fixture.ids.worship]: {
+        teamId: fixture.ids.worship, roleId: "worship-captain", roleLabel: "Old label",
+        isTeamLead: false, notes: "Only schedule on platform weeks",
+      },
       [fixture.ids.av]: { teamId: fixture.ids.av, roleId: "av-operator", isTeamLead: true },
     },
     qualifications: [
-      { qualificationId: "worship-old", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "in_training" },
+      { qualificationId: "worship-old", areaId: worshipAreaId, teamId: fixture.ids.worship,
+        status: "in_training", verifiedByUid: "admin-123", notes: "Needs mic technique review" },
       { qualificationId: "av-keep", areaId: avAreaId, teamId: fixture.ids.av, status: "completed" },
     ],
   };
@@ -15690,9 +15702,13 @@ test("team profile patches replace one team slice and reject cross-team fields",
   const body = {
     positionIds: [`${fixture.ids.worship}_position`],
     desiredPositionIds: [],
-    membership: { roleId: "worship-captain", isTeamLead: true },
-    qualifications: [{ qualificationId: "worship-new", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "completed" }],
+    membership: { roleId: "worship-leader", isTeamLead: true },
+    qualifications: [{ qualificationId: "worship-old", areaId: worshipAreaId, teamId: fixture.ids.worship,
+      status: "completed", levelId: "worship-level", notes: "Ready for the next review" }],
   };
+  await setDoc(COLLECTIONS.teamQualificationLevels, "worship-level", {
+    levelId: "worship-level", churchId: fixture.churchId, areaId: worshipAreaId, name: "Experienced",
+  }, { merge: false });
   const saved = await callHandler(authHandlers.updateTeamRosterMemberProfile, {
     context: worshipManager,
     params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
@@ -15704,7 +15720,15 @@ test("team profile patches replace one team slice and reject cross-team fields",
   assert.deepEqual(after.desiredPositionIds, [`${fixture.ids.av}_position`]);
   assert.deepEqual(after.teamMemberships[fixture.ids.av], original.teamMemberships[fixture.ids.av]);
   assert.equal(after.teamMemberships[fixture.ids.worship].isTeamLead, true);
-  assert.deepEqual(after.qualifications.map(({ qualificationId }) => qualificationId).sort(), ["av-keep", "worship-new"]);
+  assert.equal(after.teamMemberships[fixture.ids.worship].roleId, "worship-leader");
+  assert.equal(after.teamMemberships[fixture.ids.worship].roleLabel, "Worship Leader");
+  assert.equal(after.teamMemberships[fixture.ids.worship].notes, "Only schedule on platform weeks");
+  assert.deepEqual(after.qualifications.find(({ qualificationId }) => qualificationId === "av-keep"), original.qualifications[1]);
+  assert.equal(after.qualifications.find(({ qualificationId }) => qualificationId === "worship-old").verifiedByUid, "admin-123");
+  assert.equal(after.qualifications.find(({ qualificationId }) => qualificationId === "worship-old").status, "completed");
+  assert.equal(after.qualifications.find(({ qualificationId }) => qualificationId === "worship-old").levelId, "worship-level");
+  assert.equal(after.qualifications.find(({ qualificationId }) => qualificationId === "worship-old").notes, "Ready for the next review");
+  assert.deepEqual(after.qualifications.map(({ qualificationId }) => qualificationId).sort(), ["av-keep", "worship-old"]);
   assert.equal(after.email, original.email);
   assert.equal(after.phoneNumber, original.phoneNumber);
   assert.equal(after.notes, original.notes);
@@ -15718,9 +15742,13 @@ test("team profile patches replace one team slice and reject cross-team fields",
   const afterRoleClear = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   assert.equal(afterRoleClear.teamMemberships[fixture.ids.worship].roleId, undefined);
   assert.equal(afterRoleClear.teamMemberships[fixture.ids.worship].roleLabel, undefined);
+  assert.equal(afterRoleClear.teamMemberships[fixture.ids.worship].notes, "Only schedule on platform weeks");
   assert.equal((await reject({ desiredPositionIds: [`${fixture.ids.av}_position`] })).statusCode, 400);
   assert.equal((await reject({ membership: { roleId: "av-operator" } })).statusCode, 400);
+  assert.equal((await reject({ membership: { roleLabel: "attacker" } })).statusCode, 400);
   assert.equal((await reject({ qualifications: [{ qualificationId: "inject", areaId: avAreaId, teamId: fixture.ids.av }] })).statusCode, 400);
+  assert.equal((await reject({ qualifications: [{ qualificationId: "worship-old", areaId: worshipAreaId,
+    teamId: fixture.ids.worship, status: "completed", verifiedByUid: "attacker" }] })).statusCode, 400);
   const privateField = await reject({ email: "attacker@example.test" });
   assert.equal(privateField.statusCode, 400);
   assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId)).email, original.email);
@@ -15740,6 +15768,115 @@ test("team profile patches replace one team slice and reject cross-team fields",
   assert.equal(removeArchived.statusCode, 200, JSON.stringify(removeArchived.payload));
   const readdArchived = await reject({ positionIds: [archivedPositionId] });
   assert.equal(readdArchived.statusCode, 400);
+
+  const archivedRoleId = "worship-archived-role";
+  const otherArchivedRoleId = "worship-other-archived-role";
+  for (const [roleId, name] of [[archivedRoleId, "Old worship role"], [otherArchivedRoleId, "Other old role"]]) {
+    await setDoc(COLLECTIONS.teamRoles, roleId, {
+      roleId, churchId: fixture.churchId, teamId: fixture.ids.worship, name, archivedAt: "2026-10-01",
+    }, { merge: false });
+  }
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: archivedRoleId } },
+  }, { merge: true });
+  assert.equal((await reject({ membership: { roleId: archivedRoleId } })).statusCode, 200);
+  assert.equal((await reject({ membership: { roleId: otherArchivedRoleId } })).statusCode, 400);
+  assert.equal((await reject({ membership: { roleId: null } })).statusCode, 200);
+
+  const archivedAreaId = "worship-archived-area";
+  const otherArchivedAreaId = "worship-other-archived-area";
+  await setDoc(COLLECTIONS.teamQualificationAreas, archivedAreaId, {
+    areaId: archivedAreaId, churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Old area", archivedAt: "2026-10-01",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, otherArchivedAreaId, {
+    areaId: otherArchivedAreaId, churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Other old area", archivedAt: "2026-10-01",
+  }, { merge: false });
+  const archivedAreaQualification = { qualificationId: "worship-archived-qualification", areaId: archivedAreaId,
+    teamId: fixture.ids.worship, status: "completed" };
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    qualifications: [original.qualifications[1], archivedAreaQualification],
+  }, { merge: true });
+  assert.equal((await reject({ qualifications: [archivedAreaQualification] })).statusCode, 200);
+  assert.equal((await reject({ qualifications: [] })).statusCode, 200);
+  assert.equal((await reject({ qualifications: [{ qualificationId: "new-archived-area", areaId: otherArchivedAreaId }] })).statusCode, 400);
+
+  const archivedLevelId = "worship-archived-level";
+  const otherArchivedLevelId = "worship-other-archived-level";
+  for (const levelId of [archivedLevelId, otherArchivedLevelId]) {
+    await setDoc(COLLECTIONS.teamQualificationLevels, levelId, {
+      levelId, churchId: fixture.churchId, areaId: worshipAreaId, name: levelId, archivedAt: "2026-10-01",
+    }, { merge: false });
+  }
+  const archivedLevelQualification = { qualificationId: "worship-archived-level-qualification", areaId: worshipAreaId,
+    levelId: archivedLevelId, teamId: fixture.ids.worship, status: "completed" };
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    qualifications: [original.qualifications[1], archivedLevelQualification],
+  }, { merge: true });
+  assert.equal((await reject({ qualifications: [archivedLevelQualification] })).statusCode, 200);
+  assert.equal((await reject({ qualifications: [{ ...archivedLevelQualification, levelId: otherArchivedLevelId }] })).statusCode, 400);
+  assert.equal((await reject({ qualifications: [{ ...archivedLevelQualification, levelId: undefined }] })).statusCode, 200);
+});
+
+test("team profile GET and PATCH fail closed on malformed stored ownership", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_malformed_ownership");
+  const manager = await createHumanContext("team_profile_malformed_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const memberId = fixture.sharedId;
+  const worshipAreaId = `${fixture.ids.worship}_area`;
+  const cases = [
+    ["missing position", { positionIds: ["missing-position"] }],
+    ["foreign position", { positionIds: ["foreign-position"] }],
+    ["position with missing owner", { positionIds: ["position-missing-owner"] }],
+    ["position with foreign owner", { positionIds: ["position-foreign-owner"] }],
+    ["missing qualification area", { qualifications: [{ qualificationId: "bad-q", areaId: "missing-area", teamId: fixture.ids.worship }] }],
+    ["foreign qualification area", { qualifications: [{ qualificationId: "bad-q", areaId: "foreign-area", teamId: fixture.ids.worship }] }],
+    ["qualification area with missing owner", { qualifications: [{ qualificationId: "bad-q", areaId: "area-missing-owner" }] }],
+    ["qualification area with foreign owner", { qualifications: [{ qualificationId: "bad-q", areaId: "area-foreign-owner" }] }],
+    ["contradictory qualification team", { qualifications: [{ qualificationId: "bad-q", areaId: worshipAreaId, teamId: fixture.ids.av }] }],
+    ["missing qualification ID", { qualifications: [{ areaId: worshipAreaId, teamId: fixture.ids.worship }] }],
+    ["non-object qualification", { qualifications: ["bad row"] }],
+    ["mismatched target membership", { teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.av } } }],
+    ["malformed target membership", { teamMemberships: { [fixture.ids.worship]: [] } }],
+  ];
+  await setDoc(COLLECTIONS.teams, "foreign-owner", {
+    teamId: "foreign-owner", churchId: "another-church", name: "Foreign team",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamPositions, "foreign-position", {
+    positionId: "foreign-position", churchId: "another-church", teamId: fixture.ids.worship,
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamPositions, "position-missing-owner", {
+    positionId: "position-missing-owner", churchId: fixture.churchId, teamId: "missing-owner",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamPositions, "position-foreign-owner", {
+    positionId: "position-foreign-owner", churchId: fixture.churchId, teamId: "foreign-owner",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, "foreign-area", {
+    areaId: "foreign-area", churchId: "another-church", teamId: fixture.ids.worship,
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, "area-missing-owner", {
+    areaId: "area-missing-owner", churchId: fixture.churchId, teamId: "missing-owner",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, "area-foreign-owner", {
+    areaId: "area-foreign-owner", churchId: fixture.churchId, teamId: "foreign-owner",
+  }, { merge: false });
+  for (const [label, corruption] of cases) {
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+      positionIds: [], desiredPositionIds: [], qualifications: [], teamMemberships: {}, ...corruption,
+    }, { merge: true });
+    const before = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    const get = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+      context: manager, params: { teamId: fixture.ids.worship, memberId },
+    });
+    const patch = await callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: manager, params: { teamId: fixture.ids.worship, memberId }, body: { membership: { isTeamLead: true } },
+    });
+    assert.equal(get.statusCode, 409, `${label} GET: ${JSON.stringify(get.payload)}`);
+    assert.equal(patch.statusCode, 409, `${label} PATCH: ${JSON.stringify(patch.payload)}`);
+    assert.deepEqual(await getDoc(COLLECTIONS.teamRosterMembers, memberId), before, `${label} mutated member`);
+  }
 });
 
 test("concurrent team profile saves preserve each team slice and removal blocks stale saves", async (t) => {
