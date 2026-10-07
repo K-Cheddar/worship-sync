@@ -15645,6 +15645,8 @@ test("team profile reads expose only the authorized shared-member slice", async 
   const anonymousPatch = createRes();
   await authHandlers.updateTeamRosterMemberProfile(createReq({
     params: { churchId: fixture.churchId, teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    session: { ...createSession(), csrfToken: "valid-csrf" },
+    headers: { "x-csrf-token": "valid-csrf" },
     body: { positionIds: [] },
   }), anonymousPatch);
   assert.equal(anonymousPatch.statusCode, 401);

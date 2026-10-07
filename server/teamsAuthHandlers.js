@@ -12283,8 +12283,8 @@ export const createTeamsAuthHandlers = ({
 
     async updateTeamRosterMemberProfile(req, res) {
       try {
-        await requireHumanSession(req);
         await assertCsrf(req);
+        await requireHumanSession(req);
         const { churchId, teamId, memberId } = req.params;
         const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team" });
         if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
