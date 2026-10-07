@@ -232,17 +232,21 @@ const blockedHostname = (hostname) => {
 
 const defaultLookup = (hostname, options) => dns.lookup(hostname, options);
 
-const lookupAddresses = async (lookup, hostname) => {
+const lookupRecords = async (lookup, hostname) => {
   const result = await lookup(hostname, { all: true, verbatim: true });
   const records = Array.isArray(result) ? result : [result];
-  const addresses = records.map((record) => typeof record === "string" ? record : record?.address).filter(Boolean);
-  if (!addresses.length || addresses.some(isBlockedIp)) {
+  const validatedRecords = records.map((record) => {
+    const address = typeof record === "string" ? record : record?.address;
+    const family = net.isIP(address);
+    return address ? { address, family } : null;
+  }).filter(Boolean);
+  if (!validatedRecords.length || validatedRecords.some(({ address }) => isBlockedIp(address))) {
     throw new ExternalResourceError("That resource host is not publicly reachable.", {
       statusCode: 400,
       code: "blocked_host",
     });
   }
-  return addresses;
+  return validatedRecords;
 };
 
 export const validateExternalResourceUrl = async (value, { lookup = defaultLookup } = {}) => {
@@ -269,15 +273,32 @@ export const validateExternalResourceUrl = async (value, { lookup = defaultLooku
       code: "blocked_host",
     });
   }
-  await lookupAddresses(lookup, hostname);
+  await lookupRecords(lookup, hostname);
   return parsed.toString();
 };
 
-const createSafeLookup = (lookup) => async (hostname, options, callback) => {
+const createLookupFamilyError = (hostname, family) => {
+  const error = new Error(`getaddrinfo ENOTFOUND ${hostname}${family ? ` (IPv${family})` : ""}`);
+  error.code = "ENOTFOUND";
+  error.hostname = hostname;
+  return error;
+};
+
+export const createSafeLookup = (lookup) => async (hostname, options = {}, callback) => {
   try {
-    const addresses = await lookupAddresses(lookup, hostname);
-    const address = addresses[0];
-    callback(null, address, net.isIP(address));
+    const records = await lookupRecords(lookup, hostname);
+    const matchingRecords = options.family
+      ? records.filter(({ family }) => family === options.family)
+      : records;
+    if (!matchingRecords.length) throw createLookupFamilyError(hostname, options.family);
+
+    if (options.all === true) {
+      callback(null, matchingRecords);
+      return;
+    }
+
+    const { address, family } = matchingRecords[0];
+    callback(null, address, family);
   } catch (error) {
     callback(error);
   }
