@@ -32,9 +32,7 @@ Repository-authored skills under `.agents/skills/` are canonical and versioned. 
 
 ## CI follow-up
 
-At the time of this assessment, `.github/workflows/checks.yml` invokes root `npm run checks`. That path runs server tests, client coverage, and client lint, but it does not invoke client `type-check` or `build:strict`.
-
-Recommended follow-up: once the current tree is verified clean, add an explicit client TypeScript check and client build gate (for example, `type-check` plus `build:strict`, or an equivalent non-duplicative combination) to the required CI path. Do not treat `build:strict` as TypeScript checking; its current script runs lint plus a Vite build.
+`.github/workflows/checks.yml` currently has separate required client lint/type-check, Heroku build, and Electron build jobs. The TypeScript check is explicit; do not treat a build as a substitute for it. Reassess this guidance if the workflow changes rather than adding duplicate gates.
 
 ## Future work
 

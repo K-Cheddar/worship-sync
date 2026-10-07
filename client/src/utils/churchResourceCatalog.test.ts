@@ -3,6 +3,10 @@ import {
   resourceEntryDeleteActionLabel,
   resourceEntryDeleteConfirmation,
   resourceEntryName,
+  resourceEntryContentType,
+  resourceEntryKind,
+  resourceEntrySize,
+  resourceEntrySource,
 } from "./churchResourceCatalog";
 import type { DBItem } from "../types";
 
@@ -48,6 +52,55 @@ describe("church resource catalog", () => {
     expect(resourceEntryDeleteConfirmation(entries[1])).toContain("rehearsal.mp3");
     expect(resourceEntryDeleteConfirmation(entries[1])).toContain("Trust and Obey");
     expect(resourceEntryDeleteConfirmation(entries[1])).toMatch(/removes the audio attachment/i);
+    expect(resourceEntryKind(entries[1])).toBe("audio");
     expect(resource).not.toHaveProperty("songAudio");
+  });
+
+  it("represents an external ChurchResource without inventing a byte size", () => {
+    const external = {
+      id: "external-1",
+      churchId: "church-1",
+      name: "Guide",
+      kind: "document" as const,
+      sourceType: "external" as const,
+      external: {
+        url: "https://docs.google.com/document/d/example/edit",
+        provider: "google-drive",
+        mimeType: "application/pdf",
+        fileName: "guide.pdf",
+        mediaType: "document",
+      },
+      createdAt: "2026-09-21T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const [entry] = buildChurchResourceLibraryEntries({ resources: [external], songs: [] });
+    expect(resourceEntryContentType(entry)).toBe("application/pdf");
+    expect(resourceEntrySize(entry)).toBeNull();
+    expect(resourceEntrySource(entry)).toBe("Google Drive");
+    expect(resourceEntryKind(entry)).toBe("document");
+  });
+
+  it("preserves image classification for uploaded and external image resources", () => {
+    const external = {
+      id: "external-image-1",
+      churchId: "church-1",
+      name: "Service slide",
+      kind: "image" as const,
+      sourceType: "external" as const,
+      external: { url: "https://example.test/slide.png", mediaType: "image" },
+      createdAt: "2026-09-21T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    const [entry] = buildChurchResourceLibraryEntries({ resources: [external], songs: [] });
+    expect(resourceEntryKind(entry)).toBe("image");
+    const uploaded = { ...external, id: "uploaded-image", sourceType: undefined, external: undefined, kind: "image" as const, storage: {
+      key: "images/photo.png", fileName: "photo.png", contentType: "image/png", sizeBytes: 10, uploadedAt: "2026-09-21T00:00:00.000Z",
+    } } as never;
+    const [uploadedEntry] = buildChurchResourceLibraryEntries({ resources: [uploaded], songs: [] });
+    expect(resourceEntryKind(uploadedEntry)).toBe("image");
   });
 });

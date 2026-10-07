@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import {
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  isControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
@@ -263,6 +264,8 @@ export type MediaReferenceSweepResult = {
   ok: boolean;
   failedDocIds: string[];
   message?: string;
+  rollbackStatus?: "not_needed" | "complete" | "uncertain";
+  rollback?: () => Promise<"complete" | "uncertain">;
 };
 
 export type MediaReferenceReplacementResult = MediaReferenceSweepResult & {
@@ -315,7 +318,7 @@ export async function hasSupersededMediaReferences(
 
   const allDocs = (await db.allDocs({ include_docs: true })) as allDocsType;
   return allDocs.rows.some(({ id, doc }) =>
-    id !== "media" && Boolean(doc) && containsOldReference(doc),
+    Boolean(doc) && !isMediaLibraryStorageDoc(doc as Record<string, unknown>, id) && containsOldReference(doc),
   );
 }
 
@@ -338,10 +341,25 @@ function buildDeletedVideoSourceIdSet(rows: MediaType[]): Set<string> {
   return s;
 }
 
-/**
- * Before removing media rows from the library: reset references in preferences, items, overlays, quick links.
- * Aborts without partial writes if any `put` fails (caller should not proceed to delete assets).
- */
+/** Media-library documents are storage records, never saved presentation items. */
+function isMediaLibraryStorageDoc(
+  doc: Record<string, unknown>,
+  id: string,
+): boolean {
+  return (
+    id === "media" ||
+    id === "media-folders" ||
+    id === "media-library-meta" ||
+    id.startsWith("media-item:") ||
+    isControllerMediaRouteFoldersDocId(id) ||
+    doc.docType === "mediaRouteFolders" ||
+    doc.docType === "mediaItem" ||
+    doc.docType === "mediaFolders" ||
+    doc.docType === "mediaLibraryMeta"
+  );
+}
+
+/** Prepare, apply, and retain a rollback for reference changes before item deletion. */
 export async function sweepMediaReferencesBeforeDelete(
   db: PouchDB.Database,
   deletedIds: Set<string>,
@@ -351,7 +369,18 @@ export async function sweepMediaReferencesBeforeDelete(
 
   const deletedUrls = buildDeletedUrlSet(deletedRows);
   const deletedVideoSourceIds = buildDeletedVideoSourceIdSet(deletedRows);
-  const failedDocIds: string[] = [];
+  const pending = new Map<
+    string,
+    { previous: Record<string, unknown>; next: Record<string, unknown> }
+  >();
+  const addIfChanged = (
+    previous: Record<string, unknown>,
+    next: Record<string, unknown>,
+  ) => {
+    if (JSON.stringify(previous) === JSON.stringify(next)) return;
+    const id = typeof previous._id === "string" ? previous._id : "";
+    if (id) pending.set(id, { previous, next });
+  };
 
   let prefsRaw: Record<string, unknown>;
   try {
@@ -359,11 +388,12 @@ export async function sweepMediaReferencesBeforeDelete(
       string,
       unknown
     >;
-  } catch {
+  } catch (error) {
     return {
       ok: false,
-      failedDocIds: [],
+      failedDocIds: [PREFERENCES_POUCH_ID],
       message: "Could not load preferences for reference cleanup.",
+      rollbackStatus: "not_needed",
     };
   }
 
@@ -402,14 +432,23 @@ export async function sweepMediaReferencesBeforeDelete(
 
   const legacy = isLegacyPreferencesDoc(prefsRaw);
   let quickLinksSource: QuickLinkType[] = [];
+  let quickLinksRaw: Record<string, unknown> | undefined;
   if (legacy) {
     quickLinksSource = (prefsRaw.quickLinks as QuickLinkType[]) ?? [];
   } else {
     try {
       const ql = (await db.get(QUICK_LINKS_POUCH_ID)) as DBQuickLinksDoc;
+      quickLinksRaw = ql as unknown as Record<string, unknown>;
       quickLinksSource = ql.quickLinks ?? [];
-    } catch {
-      quickLinksSource = [];
+    } catch (error) {
+      if ((error as { status?: number }).status !== 404) {
+        return {
+          ok: false,
+          failedDocIds: [QUICK_LINKS_POUCH_ID],
+          message: "Could not load quick links for reference cleanup.",
+          rollbackStatus: "not_needed",
+        };
+      }
     }
   }
 
@@ -427,65 +466,44 @@ export async function sweepMediaReferencesBeforeDelete(
   const quickLinksDirty =
     JSON.stringify(nextQuickLinks) !== JSON.stringify(quickLinksSource);
 
-  const now = new Date().toISOString();
-
   if (legacy && (prefsDirty || quickLinksDirty)) {
     const toPut = {
       ...prefsRaw,
       preferences: prefs,
       quickLinks: quickLinksDirty ? nextQuickLinks : quickLinksSource,
-      updatedAt: now,
+      updatedAt: new Date().toISOString(),
     };
-    try {
-      await db.put(toPut);
-    } catch (e) {
-      console.error(e);
-      return {
-        ok: false,
-        failedDocIds: [PREFERENCES_POUCH_ID],
-        message: "Failed to save preferences after reference cleanup.",
-      };
-    }
+    addIfChanged(prefsRaw, toPut);
   } else if (!legacy) {
     if (prefsDirty) {
       const slim = {
         ...prefsRaw,
         preferences: prefs,
-        updatedAt: now,
+        updatedAt: new Date().toISOString(),
       } as DBPreferences;
-      try {
-        await db.put(slim);
-      } catch (e) {
-        console.error(e);
-        return {
-          ok: false,
-          failedDocIds: [PREFERENCES_POUCH_ID],
-          message: "Failed to save preferences after reference cleanup.",
-        };
-      }
+      addIfChanged(prefsRaw, slim);
     }
-    if (quickLinksDirty) {
-      try {
-        const qlDoc = (await db.get(QUICK_LINKS_POUCH_ID)) as DBQuickLinksDoc;
-        await db.put({
-          ...qlDoc,
-          quickLinks: nextQuickLinks,
-          updatedAt: now,
-        });
-      } catch (e) {
-        console.error(e);
-        return {
-          ok: false,
-          failedDocIds: [QUICK_LINKS_POUCH_ID],
-          message: "Failed to save quick links after reference cleanup.",
-        };
-      }
+    if (quickLinksDirty && quickLinksRaw) {
+      const qlDoc = quickLinksRaw as DBQuickLinksDoc;
+      addIfChanged(quickLinksRaw, {
+        ...qlDoc,
+        quickLinks: nextQuickLinks,
+        updatedAt: new Date().toISOString(),
+      });
     }
   }
 
-  const allDocs = (await db.allDocs({
-    include_docs: true,
-  })) as allDocsType;
+  let allDocs: allDocsType;
+  try {
+    allDocs = (await db.allDocs({ include_docs: true })) as allDocsType;
+  } catch (error) {
+    return {
+      ok: false,
+      failedDocIds: [],
+      message: "Could not inspect saved media references.",
+      rollbackStatus: "not_needed",
+    };
+  }
 
   for (const row of allDocs.rows) {
     const doc = row.doc as Record<string, unknown> | undefined;
@@ -497,7 +515,8 @@ export async function sweepMediaReferencesBeforeDelete(
       id === QUICK_LINKS_POUCH_ID ||
       id === MONITOR_SETTINGS_POUCH_ID ||
       id === MEDIA_ROUTE_FOLDERS_POUCH_ID ||
-      id === "media"
+      isControllerMediaRouteFoldersDocId(id) ||
+      isMediaLibraryStorageDoc(doc, id)
     )
       continue;
 
@@ -549,17 +568,10 @@ export async function sweepMediaReferencesBeforeDelete(
         dirty = true;
       }
 
-      if (dirty) {
-        try {
-          await db.put({
-            ...nextItem,
-            updatedAt: new Date().toISOString(),
-          } as DBItem);
-        } catch (e) {
-          console.error(e);
-          failedDocIds.push(id);
-        }
-      }
+      if (dirty) addIfChanged(item, {
+        ...nextItem,
+        updatedAt: new Date().toISOString(),
+      } as DBItem as unknown as Record<string, unknown>);
       continue;
     }
 
@@ -576,28 +588,59 @@ export async function sweepMediaReferencesBeforeDelete(
       ) {
         continue;
       }
-      try {
-        await db.put({
-          ...ov,
-          imageUrl: "",
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (e) {
-        console.error(e);
-        failedDocIds.push(id);
-      }
+      addIfChanged(ov as unknown as Record<string, unknown>, {
+        ...ov,
+        imageUrl: "",
+        updatedAt: new Date().toISOString(),
+      });
     }
   }
 
-  if (failedDocIds.length > 0) {
+  const applied: Array<{ previous: Record<string, unknown>; savedRevision?: string }> = [];
+  const rollback = async (): Promise<"complete" | "uncertain"> => {
+    let status: "complete" | "uncertain" = "complete";
+    for (let index = applied.length - 1; index >= 0; index -= 1) {
+      const saved = applied[index];
+      try {
+        await db.put({
+          ...saved.previous,
+          ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
+        });
+      } catch (error) {
+        status = "uncertain";
+        console.error("Failed to roll back media deletion reference cleanup:", {
+          docId: saved.previous._id,
+          error,
+        });
+      }
+    }
+    applied.length = 0;
+    return status;
+  };
+  try {
+    for (const { previous, next } of pending.values()) {
+      const result = (await db.put(next)) as { rev?: string };
+      applied.push({ previous, savedRevision: result.rev });
+    }
+  } catch (error) {
+    const rollbackStatus = await rollback();
+    const failedDocId = error && typeof error === "object" && "id" in error
+      ? String((error as { id: unknown }).id)
+      : "unknown";
     return {
       ok: false,
-      failedDocIds,
-      message: `Reference cleanup failed for: ${failedDocIds.join(", ")}`,
+      failedDocIds: [failedDocId],
+      message: "Could not save media reference cleanup.",
+      rollbackStatus,
     };
   }
 
-  return { ok: true, failedDocIds: [] };
+  return {
+    ok: true,
+    failedDocIds: [],
+    rollbackStatus: "not_needed",
+    rollback,
+  };
 }
 
 /**
@@ -715,7 +758,8 @@ export async function replaceMediaReferencesForReplacement(
       id === QUICK_LINKS_POUCH_ID ||
       id === MONITOR_SETTINGS_POUCH_ID ||
       id === MEDIA_ROUTE_FOLDERS_POUCH_ID ||
-      id === "media"
+      isControllerMediaRouteFoldersDocId(id) ||
+      isMediaLibraryStorageDoc(doc, id)
     ) {
       continue;
     }

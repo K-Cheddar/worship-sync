@@ -28,6 +28,7 @@ const SmsConfirmationModal = ({
     title="Send this SMS?"
     description={`Review the SMS for ${recipientName} before sending.`}
     size="sm"
+    busy={busy}
   >
     <div className="space-y-4 text-sm text-gray-200">
       <dl className="space-y-2">

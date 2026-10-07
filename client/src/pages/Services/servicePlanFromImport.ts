@@ -198,7 +198,7 @@ const buildElementFromRow = <
   const sourceLedByRaw =
     row.sourceLedByRaw?.trim() ||
     ledBy ||
-    (resolvedAssigneeNames.length ? resolvedAssigneeNames.join(", ") : "");
+    "";
 
   const sourceLedByAssignments = row.ledByAssignments?.length
     ? row.ledByAssignments.map((assignment) => ({

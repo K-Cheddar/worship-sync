@@ -1,7 +1,7 @@
-import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useCallback } from "react";
+import { useRef, useState } from "react";
 import {
   Dialog,
+  DialogContent,
   DialogDescription,
   DialogOverlay,
   DialogPortal,
@@ -10,7 +10,8 @@ import {
 import Button from "../Button/Button";
 import { X } from "lucide-react";
 import { cn } from "@/utils/cnHelper";
-import { useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
+import { OverlayPortalProvider, useOverlayPortalContainer } from "@/components/FloatingWindow/FloatingWindowPortalContext";
+import { FLOATING_WINDOW_DOCK_Z } from "@/components/FloatingWindow/FloatingWindowZIndexContext";
 
 interface ModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ interface ModalProps {
   size?: "sm" | "md" | "lg" | "xl" | "2xl" | "fit" | "full";
   showCloseButton?: boolean;
   contentPadding?: string;
+  contentClassName?: string;
   headerAction?: React.ReactNode;
   zIndexLevel?: 1 | 2;
   /** Merged onto the backdrop layer (default: bg-black/50). */
@@ -32,6 +34,12 @@ interface ModalProps {
   titleClassName?: string;
   /** Accessible description for screen readers; hidden visually by default. */
   description?: string;
+  /** IDs of visible explanatory content, instead of a duplicate hidden description. */
+  descriptionId?: string;
+  ariaLabel?: string;
+  /** Blocks close controls, outside interaction and Escape during an action. */
+  busy?: boolean;
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>["onCloseAutoFocus"];
 }
 
 const sizeClasses = {
@@ -57,6 +65,7 @@ const Modal = ({
   size = "md",
   showCloseButton = true,
   contentPadding = "p-4",
+  contentClassName,
   headerAction,
   zIndexLevel = 1,
   backdropClassName,
@@ -64,101 +73,133 @@ const Modal = ({
   headerClassName,
   titleClassName,
   description,
+  descriptionId,
+  ariaLabel,
+  busy = false,
+  onCloseAutoFocus,
 }: ModalProps) => {
   const overlayPortalContainer = useOverlayPortalContainer();
   const ownerDocument = overlayPortalContainer?.ownerDocument ?? document;
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) onClose();
-    },
-    [onClose]
-  );
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  // Nested portals share this stacking layer without the surface's clipping/transform.
+  const [dialogHost, setDialogHost] = useState<HTMLDivElement | null>(null);
+  const handleClose = () => { if (!busy) onClose(); };
 
   const zIndexClass = zIndexLevel === 2 ? "z-[55]" : "z-50";
 
   return (
-    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); }}>
       <DialogPortal
         container={
           overlayPortalContainer ??
           getControllerElement(ownerDocument)
         }
       >
-        <DialogOverlay className={cn(zIndexClass, backdropClassName)} />
-        <DialogPrimitive.Content
-          style={{ pointerEvents: "auto" }}
-          className={cn(
-            "fixed left-1/2 top-1/2 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none",
-            "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-200",
-            zIndexClass,
-            sizeClasses[size],
-            size !== "full" && "max-h-[90vh]"
-          )}
+        <div
+          ref={setDialogHost}
+          data-testid="modal-overlay-host"
+          data-state={isOpen ? "open" : "closed"}
+          className="pointer-events-none fixed inset-0 isolate data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-200"
+          style={{ zIndex: overlayPortalContainer ? (zIndexLevel === 2 ? 55 : 50) : FLOATING_WINDOW_DOCK_Z + zIndexLevel }}
         >
-          {!(title || showCloseButton || headerAction) && (
-            <DialogTitle className="sr-only">Dialog</DialogTitle>
-          )}
-          <DialogDescription className="sr-only">
-            {description || "Dialog content"}
-          </DialogDescription>
-          <div
-            className={cn(
-              "relative flex w-full min-h-0 flex-1 flex-col overflow-hidden shadow-2xl",
-              surfaceClassName
-                ? surfaceClassName
-                : cn(
-                  "bg-gray-800",
-                  size === "full"
-                    ? "h-full rounded-none"
-                    : "rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
-                )
-            )}
-          >
-            {(title || showCloseButton || headerAction) && (
-              <div
-                className={cn(
-                  "flex shrink-0 items-center justify-between p-4",
-                  headerClassName
-                )}
-              >
-                <DialogTitle
-                  className={cn(
-                    !title && "sr-only",
-                    title && cn("text-xl font-semibold text-white", titleClassName)
-                  )}
-                >
-                  {title ?? "Dialog"}
-                </DialogTitle>
-                <div className="ml-auto flex items-center gap-2">
-                  {headerAction}
-                  {showCloseButton && (
-                    <Button
-                      variant="tertiary"
-                      svg={X}
-                      onClick={onClose}
-                      iconSize="lg"
-                      aria-label="Close modal"
-                    />
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div
+          <OverlayPortalProvider container={dialogHost ?? overlayPortalContainer}>
+            <DialogOverlay className={cn(zIndexClass, backdropClassName)} />
+            <DialogContent
+              aria-label={ariaLabel}
+              {...(descriptionId ? { "aria-describedby": descriptionId } : {})}
+              aria-busy={busy || undefined}
+              onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
+              onInteractOutside={(event) => { if (busy) event.preventDefault(); }}
+              onOpenAutoFocus={() => {
+                returnFocusRef.current = ownerDocument.activeElement as HTMLElement | null;
+              }}
+              onCloseAutoFocus={(event) => {
+                onCloseAutoFocus?.(event);
+                if (event.defaultPrevented) return;
+                if (returnFocusRef.current?.isConnected) {
+                  event.preventDefault();
+                  returnFocusRef.current.focus();
+                }
+              }}
+              style={{ pointerEvents: "auto" }}
               className={cn(
-                "min-h-0 flex-1",
-                size === "full"
-                  ? "flex max-h-none flex-col overflow-hidden"
-                  : size === "fit"
-                    ? "max-h-[calc(100vh-8rem)] overflow-hidden"
-                  : "max-h-[calc(90vh-120px)] overflow-y-auto scrollbar-variable max-md:max-h-[calc(100vh)]",
-                contentPadding
+                "fixed left-1/2 top-1/2 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none",
+                "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 duration-200",
+                zIndexClass,
+                sizeClasses[size],
+                size !== "full" && "max-h-[90vh]"
               )}
             >
-              {children}
-            </div>
-          </div>
-        </DialogPrimitive.Content>
+              {!(title || showCloseButton || headerAction) && (
+                <DialogTitle className="sr-only">{ariaLabel ?? "Dialog"}</DialogTitle>
+              )}
+              {!descriptionId && <DialogDescription className="sr-only">
+                {description || "Dialog content"}
+              </DialogDescription>}
+              <div
+                className={cn(
+                  "relative flex w-full min-h-0 flex-1 flex-col overflow-hidden shadow-2xl",
+                  surfaceClassName
+                    ? surfaceClassName
+                    : cn(
+                      "bg-gray-800",
+                      size === "full"
+                        ? "h-full rounded-none"
+                        : "rounded-lg max-md:max-h-[95vh] max-md:rounded-none"
+                    )
+                )}
+              >
+                {(title || showCloseButton || headerAction) && (
+                  <div
+                    className={cn(
+                      "flex shrink-0 items-center justify-between p-4",
+                      headerClassName
+                    )}
+                  >
+                    <DialogTitle
+                      aria-label={ariaLabel}
+                      className={cn(
+                        !title && "sr-only",
+                        title && cn("text-xl font-semibold text-white", titleClassName)
+                      )}
+                    >
+                      {title ?? "Dialog"}
+                    </DialogTitle>
+                    <div className="ml-auto flex items-center gap-2">
+                      {headerAction}
+                      {showCloseButton && (
+                        <Button
+                          variant="tertiary"
+                          svg={X}
+                          onClick={handleClose}
+                          disabled={busy}
+                          iconSize="lg"
+                          aria-label="Close modal"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div
+                  className={cn(
+                    "min-h-0 flex-1",
+                    size === "full"
+                      ? "flex max-h-none flex-col overflow-hidden"
+                      : size === "fit"
+                        ? "max-h-[calc(100vh-8rem)] overflow-hidden"
+                      : "max-h-[calc(90vh-120px)] overflow-y-auto scrollbar-variable max-md:max-h-[calc(100vh)]",
+                    contentPadding,
+                    contentClassName
+                  )}
+                  data-testid="modal-content"
+                >
+                  {children}
+                </div>
+              </div>
+            </DialogContent>
+          </OverlayPortalProvider>
+        </div>
       </DialogPortal>
     </Dialog>
   );

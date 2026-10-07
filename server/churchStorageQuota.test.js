@@ -324,10 +324,11 @@ test("committed reservation records receive a bounded retention TTL", async () =
   assert.equal(committed.ttlExpireAt.getTime(), 1_000 + CHURCH_STORAGE_QUOTA_RESERVATION_RETENTION_MS);
 });
 
-test("R2 reconciliation sums persisted resource and song metadata", async () => {
+test("R2 reconciliation sums uploaded resource and song metadata, excluding external resources", async () => {
   const resources = [
     { storage: { sizeBytes: 5 } },
     { storage: { sizeBytes: 7 } },
+    { sourceType: "external", external: { url: "https://example.com/guide" } },
   ];
   const songs = [{ songAudio: { sizeBytes: 11 } }, { songAudio: { sizeBytes: 13 } }];
   assert.equal(sumR2ChurchMetadataUsage({ resources, songs }), 36);
@@ -444,6 +445,35 @@ test("Mux direct uploads retain durable completion tracking for reconciliation",
     updatedAt: 1_000,
     createdAt: 1_000,
   }]);
+});
+
+test("provider upload lookup is deterministic and status transitions protect completed intents", async () => {
+  const { service } = createQuota();
+  await service.recordProviderUpload({
+    churchId: "church-a", provider: "cloudinary", uploadId: "intent-a",
+    mediaId: "media-a", assetId: "image-a", folderMode: "dynamic", status: "waiting",
+  });
+  await service.recordProviderUpload({
+    churchId: "church-b", provider: "cloudinary", uploadId: "intent-b",
+    mediaId: "media-b", assetId: "image-b", folderMode: "fixed", status: "waiting",
+  });
+  const intent = await service.getProviderUpload({ provider: "cloudinary", uploadId: "intent-a" });
+  assert.deepEqual(intent, {
+    churchId: "church-a", provider: "cloudinary", uploadId: "intent-a",
+    mediaId: "media-a", assetId: "image-a", folderMode: "dynamic", temporary: false,
+    status: "waiting", updatedAt: 1_000, createdAt: 1_000,
+  });
+  const committed = await service.transitionProviderUpload({
+    provider: "cloudinary", uploadId: "intent-a", fromStatuses: ["waiting"], status: "committed",
+  });
+  assert.equal(committed.transitioned, true);
+  assert.equal(committed.upload.status, "committed");
+  const unchanged = await service.transitionProviderUpload({
+    provider: "cloudinary", uploadId: "intent-a", fromStatuses: ["waiting"], status: "cancelling",
+  });
+  assert.equal(unchanged.transitioned, false);
+  assert.equal(unchanged.upload.status, "committed");
+  assert.equal(await service.getProviderUpload({ provider: "cloudinary", uploadId: "intent-b" }).then((value) => value.churchId), "church-b");
 });
 
 test("provider replacement admission uses the old asset as credit and deletion releases it after commit", async () => {

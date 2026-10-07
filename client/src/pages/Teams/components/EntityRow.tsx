@@ -163,7 +163,7 @@ const EntityRow = ({
   const rowContent = (
     <>
       {icon ? (
-        <EntityIconBadge icon={icon} className="h-7 w-7" />
+        <EntityIconBadge icon={icon} className="h-7 w-7" data-testid="entity-icon-badge" />
       ) : null}
       {leadingVisual}
       <div className="min-w-0 flex-1">
@@ -182,7 +182,7 @@ const EntityRow = ({
   const stackedCardBody = (
     <>
       {icon ? (
-        <EntityIconBadge icon={icon} className="h-7 w-7" />
+        <EntityIconBadge icon={icon} className="h-7 w-7" data-testid="entity-icon-badge" />
       ) : null}
       {leadingVisual}
       <div className="min-w-0 flex-1">

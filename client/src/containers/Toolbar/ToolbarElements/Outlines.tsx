@@ -10,7 +10,7 @@ import {
   updateItemListsFromRemote,
   setActiveItemList,
 } from "../../../store/itemListsSlice";
-import PopOver from "../../../components/PopOver/PopOver";
+import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import Button from "../../../components/Button/Button";
 import Outline from "./Outline";
 import { DBItemListDetails, ItemLists, ItemList } from "../../../types";
@@ -321,7 +321,7 @@ const Services = ({
           className,
         )}
       >
-        <PopOver
+        <PopoverPanel
           open={outlinePopoverOpen}
           onOpenChange={setOutlinePopoverOpen}
           TriggeringButton={
@@ -445,7 +445,7 @@ const Services = ({
               </Button>
             )}
           </div>
-        </PopOver>
+        </PopoverPanel>
       </div>
     </DndContext>
   );

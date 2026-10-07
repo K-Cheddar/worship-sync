@@ -1,6 +1,5 @@
-import React from "react";
-import Modal from "./Modal";
-import Button from "../Button/Button";
+import React, { useId } from "react";
+import ConfirmDialog from "./ConfirmDialog";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 
 interface DeleteModalProps {
@@ -16,6 +15,7 @@ interface DeleteModalProps {
   confirmText?: string;
   cancelText?: string;
   imageUrl?: string;
+  imagePreview?: React.ReactNode;
   /** When true, confirm shows a spinner, both actions are disabled, and close (backdrop/Escape) is ignored. */
   isConfirming?: boolean;
   /** Label on the confirm button while `isConfirming` is true (default: "Deleting..."). */
@@ -34,10 +34,12 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   confirmText = "Delete Forever",
   cancelText = "Cancel",
   imageUrl,
+  imagePreview,
   isConfirming = false,
   confirmingLabel = "Deleting...",
 }) => {
   const resolvedImageUrl = useCachedMediaUrl(imageUrl);
+  const descriptionId = useId();
 
   const handleClose = () => {
     if (isConfirming) return;
@@ -47,27 +49,35 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   const resolvedConfirmLabel = isConfirming ? confirmingLabel : confirmText;
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={handleClose}
+    <ConfirmDialog
+      open={isOpen}
+      onCancel={handleClose}
+      onConfirm={onConfirm}
+      confirmLabel={resolvedConfirmLabel}
+      cancelLabel={cancelText}
+      destructive
+      busy={isConfirming}
+      cancelVariant="primary"
+      actionsClassName="flex gap-6 w-full"
       title={title}
+      descriptionId={`${descriptionId} ${descriptionId}-warning`}
       size="sm"
       showCloseButton={false}
       contentPadding="p-4"
       zIndexLevel={2}
     >
-      {imageUrl && (
+      {(imagePreview || imageUrl) && (
         <div className="flex justify-center mb-4">
           <div className="w-32 h-20 border-2 border-gray-600 rounded overflow-hidden">
-            <img
+            {imagePreview ?? <img
               src={resolvedImageUrl ?? imageUrl}
               alt={itemName || "Media preview"}
               className="w-full h-full object-cover"
-            />
+            />}
           </div>
         </div>
       )}
-      <p className="text-xl mb-4 wrap-break-word text-white">
+      <p id={descriptionId} className="text-xl mb-4 wrap-break-word text-white">
         {message}{" "}
         {itemName && <span className="font-semibold">"{itemName}"</span>}?
       </p>
@@ -83,26 +93,8 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
           </ul>
         </div>
       )}
-      <p className="text-lg text-amber-400 mb-6">{warningMessage}</p>
-      <div className="flex gap-6 w-full">
-        <Button
-          className="flex-1 justify-center"
-          onClick={handleClose}
-          disabled={isConfirming}
-        >
-          {cancelText}
-        </Button>
-        <Button
-          className="flex-1 justify-center"
-          variant="destructive"
-          onClick={onConfirm}
-          disabled={isConfirming}
-          isLoading={isConfirming}
-        >
-          {resolvedConfirmLabel}
-        </Button>
-      </div>
-    </Modal>
+      <p id={`${descriptionId}-warning`} className="text-lg text-amber-400 mb-6">{warningMessage}</p>
+    </ConfirmDialog>
   );
 };
 

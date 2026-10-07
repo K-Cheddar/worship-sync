@@ -1,3 +1,4 @@
+import Spinner from "@/components/Spinner/Spinner";
 import { useContext, useState, useEffect, useMemo } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -5,7 +6,6 @@ import {
   Users,
   Save,
   LogOut,
-  Loader2,
   ChevronDown,
   ChevronRight,
   MonitorSmartphone,
@@ -16,9 +16,9 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import Icon from "../../../components/Icon/Icon";
 import Button from "../../../components/Button/Button";
-import PopOver from "../../../components/PopOver/PopOver";
+import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import Input from "../../../components/Input/Input";
-import { Switch } from "../../../components/ui/Switch";
+import Toggle from "../../../components/Toggle/Toggle";
 import {
   NOTIFICATION_CATEGORY_COPY,
   orderNotificationCategories,
@@ -230,7 +230,7 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
   })();
 
   const accountBlock = (
-    <PopOver
+    <PopoverPanel
       open={isAccountPopoverOpen}
       onOpenChange={handleAccountPopoverOpenChange}
       TriggeringButton={
@@ -247,7 +247,7 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
           {variant === "compact" ? (
             <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
               {anyAutosavePending ? (
-                <Loader2 className="size-3.5 animate-spin text-gray-400" aria-label="Syncing" />
+                <Spinner size="xs" aria-label="Syncing" className="shrink-0 text-gray-400" />
               ) : (
                 <Cloud className="size-3.5 text-emerald-400" aria-label="Synced" />
               )}
@@ -285,7 +285,7 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
                     aria-hidden
                   >
                     {anyAutosavePending ? (
-                      <Loader2 className="size-3.5 animate-spin text-gray-400" />
+                      <Spinner size="xs" className="shrink-0 text-gray-400" />
                     ) : (
                       <Cloud className="size-3.5 shrink-0 text-emerald-400" />
                     )}
@@ -599,11 +599,11 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
                             {copy.description}
                           </span>
                         </span>
-                        <Switch
-                          checked={enabled}
+                        <Toggle
+                          value={enabled}
                           disabled={savingCategory === category}
                           aria-label={copy.ariaLabel}
-                          onCheckedChange={(checked) => {
+                          onChange={(checked) => {
                             void (async () => {
                               setSavingCategory(category);
                               try {
@@ -670,7 +670,7 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
           </div>
         ) : null}
       </div>
-    </PopOver>
+    </PopoverPanel>
   );
 
   return <div className="flex min-w-0 items-center text-white">{accountBlock}</div>;

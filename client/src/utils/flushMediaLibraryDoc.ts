@@ -7,7 +7,14 @@ import { setMediaCacheMap } from "../store/mediaCacheMapSlice";
 import store from "../store/store";
 import type { MediaFolder, MediaType } from "../types";
 import { extractMediaUrlsFromBackgrounds } from "./mediaCacheUtils";
-import { persistMediaLibraryChanges, persistMediaLibrarySnapshot } from "./mediaDocUtils";
+import {
+  mediaItemDocId,
+  removeMediaItemAtRevision,
+  persistMediaLibraryChanges,
+  persistMediaLibrarySnapshot,
+  removeMediaItem,
+} from "./mediaDocUtils";
+import type { MediaItemDoc } from "./mediaDocUtils";
 
 const safePostMessage = (message: unknown) => {
   if (globalBroadcastRef) {
@@ -15,11 +22,67 @@ const safePostMessage = (message: unknown) => {
   }
 };
 
+/** Tombstone and broadcast only the exact persisted revision prepared for deletion. */
+export async function deleteMediaItemAtRevisionFromPouch(
+  db: PouchDB.Database,
+  doc: MediaItemDoc,
+): Promise<"deleted" | "missing"> {
+  if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
+  const result = await removeMediaItemAtRevision(db, doc);
+  if (!result) return "missing";
+  if (activeDb === db) {
+    safePostMessage({
+      type: "update",
+      data: {
+        docs: [{ _id: doc._id, id: doc.id, _deleted: true }],
+        hostId: globalHostId,
+      },
+    });
+  }
+  return "deleted";
+}
+
 /** `error.message` when {@link flushMediaLibraryDocToPouch} could not run because `db` is unset. */
 export const FLUSH_MEDIA_NO_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: no database instance";
 export const FLUSH_MEDIA_STALE_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: database is no longer active";
+
+/** Tombstone known v2 rows directly and publish those tombstones to other local controllers. */
+export async function deleteMediaItemsFromPouch(
+  db: PouchDB.Database,
+  ids: string[],
+): Promise<{ deletedIds: string[]; failed: Array<{ id: string; error: unknown }> }> {
+  const deletedIds: string[] = [];
+  const failed: Array<{ id: string; error: unknown }> = [];
+  for (const id of [...new Set(ids)]) {
+    if (activeDb !== db) {
+      failed.push({ id, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) });
+      continue;
+    }
+    try {
+      const result = await removeMediaItem(db, id, () => activeDb === db);
+      if (activeDb !== db && !result) {
+        failed.push({ id, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) });
+        continue;
+      }
+      deletedIds.push(id);
+    } catch (error) {
+      console.error("Failed to tombstone media library item:", { id, error });
+      failed.push({ id, error });
+    }
+  }
+  if (deletedIds.length > 0 && activeDb === db) {
+    safePostMessage({
+      type: "update",
+      data: {
+        docs: deletedIds.map((id) => ({ _id: mediaItemDocId(id), id, _deleted: true })),
+        hostId: globalHostId,
+      },
+    });
+  }
+  return { deletedIds, failed };
+}
 
 /** Reconcile a list-shaped workflow to the active schema using item-level writes in v2. */
 export async function flushMediaLibraryDocToPouch(

@@ -249,6 +249,44 @@ describe("buildServicePlanSectionsFromImport", () => {
     ]));
   });
 
+  it("keeps a title-only person out of Led By source provenance", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Reading", rows: [{
+        elementType: "Reading",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "",
+      }] }],
+    }, songs, { classifyExternalTitle: true, knownPeople: ["Jasmine Williams"] });
+
+    expect(section.elements[0].sourceLedByRaw).toBeUndefined();
+    expect(section.elements[0].assignees).toEqual([
+      expect.objectContaining({ name: "Jasmine Williams" }),
+    ]);
+    expect(section.elements[0].servicePlanningImport?.managedAssignees).toEqual([
+      expect.objectContaining({ id: section.elements[0].assignees?.[0].id, fields: ["title"] }),
+    ]);
+  });
+
+  it("records both source fields when the same person appears in Title and Led By", () => {
+    const [section] = buildServicePlanSectionsFromImport({
+      ...data,
+      sections: [{ sectionName: "Reading", rows: [{
+        elementType: "Reading",
+        title: "Psalms 97 (NLT) Jasmine Williams",
+        ledBy: "Jasmine Williams",
+      }] }],
+    }, songs, { classifyExternalTitle: true, knownPeople: ["Jasmine Williams"] });
+
+    expect(section.elements[0].sourceLedByRaw).toBe("Jasmine Williams");
+    expect(section.elements[0].assignees).toEqual([
+      expect.objectContaining({ name: "Jasmine Williams" }),
+    ]);
+    expect(section.elements[0].servicePlanningImport?.managedAssignees).toEqual([
+      expect.objectContaining({ id: section.elements[0].assignees?.[0].id, fields: ["title", "ledBy"] }),
+    ]);
+  });
+
   it("keeps uncertain descriptive title text visible as content and reviewable", () => {
     const [section] = buildServicePlanSectionsFromImport({
       ...data,

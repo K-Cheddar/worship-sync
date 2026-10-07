@@ -52,13 +52,14 @@ const fetchChatJson = async <T>(
     });
     const data = (await response.json().catch(() => ({}))) as T & {
       error?: string;
+      code?: string;
     };
     if (!response.ok) {
       if (
         allowCsrfRecovery &&
         method !== "GET" &&
         response.status === 403 &&
-        data.error === "Could not verify this request."
+        data.code === "AUTH_CSRF_MISMATCH"
       ) {
         const recovered = await requestAuthRecovery();
         if (recovered) {

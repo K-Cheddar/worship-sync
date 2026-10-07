@@ -2159,14 +2159,16 @@ const ServicePlanEditor = ({
           <span className="text-gray-300">{respondedRows.length}/{filledScheduledRows.length} responses</span>
         ) : null}
         {hasSummaryDetails ? (
-          <button
+          <Button
             type="button"
-            className="ml-auto cursor-pointer rounded px-1.5 py-0.5 text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
+            variant="none"
+            padding="px-1.5 py-0.5"
+            className="ml-auto min-h-0 rounded font-normal text-cyan-300 hover:bg-gray-800 hover:text-cyan-100"
             aria-expanded={summaryExpanded}
             onClick={() => setSummaryExpanded((expanded) => !expanded)}
           >
             {summaryExpanded ? "Hide details" : "Details"}
-          </button>
+          </Button>
         ) : null}
       </div>
       {summaryExpanded && hasSummaryDetails ? (
@@ -2487,7 +2489,7 @@ const ServicePlanEditor = ({
           svg={Copy}
           color="#22d3ee"
           disabled={shareActionsDisabled}
-          className="max-md:min-h-0"
+          className="max-md:min-h-0 max-md:min-w-0"
           aria-label={`Copy ${label.toLowerCase()} link`}
           onClick={() => {
             closeShareMenus();
@@ -2503,7 +2505,7 @@ const ServicePlanEditor = ({
           svg={ExternalLink}
           color="#22d3ee"
           disabled={shareActionsDisabled}
-          className="max-md:min-h-0"
+          className="max-md:min-h-0 max-md:min-w-0"
           aria-label={`View ${label.toLowerCase()}`}
           onClick={() => {
             closeShareMenus();
@@ -2519,7 +2521,7 @@ const ServicePlanEditor = ({
           svg={Mail}
           color="#22d3ee"
           disabled={shareActionsDisabled}
-          className="max-md:min-h-0"
+          className="max-md:min-h-0 max-md:min-w-0"
           aria-label={`Email ${label.toLowerCase()}`}
           onClick={() => openServicePlanEmailModal(kind)}
         >
@@ -2638,8 +2640,8 @@ const ServicePlanEditor = ({
           align="end"
           className={cn(
             planActionsView === "roleNotes" || planActionsView === "switchService"
-              ? "w-72"
-              : "w-64",
+              ? "w-72 max-w-[calc(100vw-1rem)]"
+              : "w-80 max-w-[calc(100vw-1rem)] md:w-64",
             // Role notes already scrolls its own team-filter and role list
             // internally (see ServicePlanRolePickerContent); capping the
             // outer menu too nests a second scrollbar inside the first.
@@ -3350,9 +3352,9 @@ const ServicePlanEditor = ({
             <TabsTrigger
               value="setlist"
               className={lineTabsTriggerSmClassName}
-              aria-label="Setlist"
+              aria-label="Rehearse"
             >
-              Setlist
+              Rehearse
             </TabsTrigger>
             {showEquipmentTab ? (
               <TabsTrigger
@@ -3387,6 +3389,7 @@ const ServicePlanEditor = ({
             className="flex min-h-0 flex-1 flex-col overflow-hidden"
           >
             <ServicePlanSetlist
+              planKey={planKey}
               sections={sections}
               songs={allSongDocs}
               resolvedSongRefs={resolvedSongRefs}

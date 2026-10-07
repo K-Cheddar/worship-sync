@@ -1,15 +1,18 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext as AppGlobalInfoContext } from "../context/globalInfo";
+import { TransferProvider } from "../context/transferContext";
 import ResourcesPage, { ResourceTableSkeleton } from "./Resources";
 import type { DBItem } from "../types";
 import type { ChurchResource } from "../types/churchResource";
 import {
   deleteChurchResource,
+  createExternalChurchResource,
   deleteSongAudioWithRetry,
   getChurchResourceUrl,
+  getExternalResourceResolution,
   getChurchStorageQuota,
   getSongAudioUrl,
   listChurchResources,
@@ -18,24 +21,23 @@ import {
 } from "../api/auth";
 import { updateAllDocs } from "../utils/dbUtils";
 
-let mockUploadedResources: ChurchResource[] = [];
+// Renderer behavior and binary fetching are covered by the shared preview tests.
+jest.mock("../components/ContentPreview/DocxPreview", () => ({
+  __esModule: true,
+  default: () => <div role="document" aria-label="Word document preview" />,
+}));
 
 jest.mock("../components/AppPageShell/AppWorkspaceShell", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-jest.mock("./ResourceUploadDialog", () => ({
-  __esModule: true,
-  default: ({ onResourcesUploaded }: { onResourcesUploaded: (resources: ChurchResource[]) => void }) => (
-    <button type="button" onClick={() => onResourcesUploaded(mockUploadedResources)}>Complete resource upload</button>
-  ),
-}));
-
 jest.mock("../api/auth", () => ({
+  createExternalChurchResource: jest.fn(),
   deleteChurchResource: jest.fn(),
   deleteSongAudioWithRetry: jest.fn(),
   getChurchResourceUrl: jest.fn(),
+  getExternalResourceResolution: jest.fn(),
   getChurchStorageQuota: jest.fn(),
   getSongAudioUrl: jest.fn(),
   listChurchResources: jest.fn(),
@@ -71,10 +73,13 @@ jest.mock("../hooks", () => ({
 }));
 
 const mockUpdateAllDocs = jest.mocked(updateAllDocs);
+const mockDeleteChurchResource = jest.mocked(deleteChurchResource);
 const mockListChurchResources = jest.mocked(listChurchResources);
 const mockGetSongAudioUrl = jest.mocked(getSongAudioUrl);
+const mockGetExternalResourceResolution = jest.mocked(getExternalResourceResolution);
 const mockGetChurchStorageQuota = jest.mocked(getChurchStorageQuota);
 const mockUploadChurchResource = jest.mocked(uploadChurchResource);
+const mockCreateExternalChurchResource = jest.mocked(createExternalChurchResource);
 
 const song = (withAudio = true): DBItem => ({
   _id: "song-1",
@@ -112,13 +117,43 @@ const resource = {
   updatedBy: "user-1",
 } satisfies ChurchResource;
 
+const imageResource = {
+  ...resource,
+  id: "image-resource-1",
+  name: "Profile.jpg",
+  kind: "image" as const,
+  storage: { ...resource.storage, key: "churches/church-1/files/image-resource-1/original", fileName: "Profile.jpg", contentType: "image/jpeg" },
+} satisfies ChurchResource;
+
+const externalResource = (
+  id: string,
+  name: string,
+  kind: ChurchResource["kind"],
+  url: string,
+  mediaType: string,
+  metadata: { mimeType?: string; fileName?: string; provider?: string } = {},
+): ChurchResource => ({
+  id,
+  churchId: "church-1",
+  name,
+  kind,
+  sourceType: "external",
+  external: { url, provider: metadata.provider || "direct", mediaType, mimeType: metadata.mimeType, fileName: metadata.fileName },
+  createdAt: "2026-09-21T00:00:00.000Z",
+  createdBy: "user-1",
+  updatedAt: "2026-09-21T00:00:00.000Z",
+  updatedBy: "user-1",
+});
+
 const renderPage = (access: "full" | "music" | "view" | "member" = "full") =>
   render(
-    <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access } as never}>
-      <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
-        <ResourcesPage />
-      </ControllerInfoContext.Provider>
-    </AppGlobalInfoContext.Provider>,
+    <TransferProvider>
+      <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access } as never}>
+        <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
+          <ResourcesPage />
+        </ControllerInfoContext.Provider>
+      </AppGlobalInfoContext.Provider>
+    </TransferProvider>,
   );
 
 const deferred = <T,>() => {
@@ -130,9 +165,102 @@ const deferred = <T,>() => {
 };
 
 describe("Resources page", () => {
+  it.each(["asc", "desc"])("navigates the searched, filtered %s order and prepares only immediate neighbors", async (direction) => {
+    mockSongDocs = [];
+    const files = ["D", "A", "C", "B"].map((letter) => ({
+      ...resource, id: letter, name: `${letter} Guide.pdf`, storage: { ...resource.storage, key: letter },
+    }));
+    mockListChurchResources.mockResolvedValue({ success: true, resources: [...files, { ...resource, id: "other", name: "Other.pdf" }, { ...imageResource, name: "Image Guide.jpg" }] });
+    const getUrl = jest.mocked(getChurchResourceUrl);
+    getUrl.mockImplementation(async ({ resourceId }) => ({ url: `https://files.test/${resourceId}.pdf`, expiresAt: new Date(Date.now() + 900_000).toISOString() }));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("button", { name: "Preview A Guide.pdf" });
+    await user.click(screen.getByRole("button", { name: "Documents" }));
+    await user.type(screen.getByPlaceholderText("Search..."), "Guide");
+    await user.click(screen.getByRole("button", { name: "Name" }));
+    if (direction === "desc") await user.click(screen.getByRole("button", { name: "Name" }));
+    const order = direction === "asc" ? ["A", "B", "C", "D"] : ["D", "C", "B", "A"];
+    await user.click(screen.getByRole("button", { name: `Preview ${order[1]} Guide.pdf` }));
+    const dialog = screen.getByRole("dialog", { name: `${order[1]} Guide.pdf` });
+    expect(within(dialog).getByText("2 of 4")).toBeInTheDocument();
+    await waitFor(() => expect(getUrl).toHaveBeenCalledTimes(3));
+    expect(getUrl.mock.calls.map(([args]) => args.resourceId).sort()).toEqual(order.slice(0, 3).sort());
+    await user.click(within(dialog).getByRole("button", { name: "Expand preview" }));
+    within(dialog).getByRole("button", { name: "Next resource" }).focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: `${order[2]} Guide.pdf` })).toBe(dialog);
+    expect(within(dialog).getByText("3 of 4")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Exit expanded preview" })).toBeInTheDocument();
+    await waitFor(() => expect(getUrl).toHaveBeenCalledTimes(4));
+    expect(getUrl.mock.calls.filter(([args]) => args.resourceId === order[2])).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "Next resource" }));
+    expect(within(dialog).getByRole("button", { name: "Next resource" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Previous resource" }));
+    await user.click(within(dialog).getByRole("button", { name: "Previous resource" }));
+    await user.click(within(dialog).getByRole("button", { name: "Previous resource" }));
+    expect(within(dialog).getByText("1 of 4")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Previous resource" })).toBeDisabled();
+    expect(getUrl).toHaveBeenCalledTimes(4);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: "Select A Guide.pdf" })).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: /Delete selected/ })).not.toBeInTheDocument();
+  });
+
+  it.each(["uploaded PDF", "uploaded DOCX", "Google Doc", "SharePoint"])("reopens %s without resolving its valid source again", async (kind) => {
+    mockSongDocs = [];
+    const entry = kind === "Google Doc" || kind === "SharePoint"
+      ? externalResource("cached", "Cached guide", "document", kind === "Google Doc" ? "https://docs.google.com/document/d/cached/edit" : "https://church.sharepoint.com/:b:/s/team/Ecached?e=token", "document")
+      : { ...resource, name: "Cached guide", storage: { ...resource.storage, fileName: kind === "uploaded DOCX" ? "guide.docx" : "guide.pdf", contentType: kind === "uploaded DOCX" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf" } };
+    mockListChurchResources.mockResolvedValue({ success: true, resources: [entry] });
+    const expiry = new Date(Date.now() + 900_000).toISOString();
+    jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://files.test/cached", expiresAt: expiry });
+    mockGetExternalResourceResolution.mockResolvedValue({ originalUrl: entry.sourceType === "external" ? entry.external.url : "", provider: kind === "Google Doc" ? "google-drive" : "sharepoint", sourceKind: "file", mimeType: "application/pdf", previewUrl: "https://worshipsync.test/api/resources/proxy?token=cached", expiresAt: expiry });
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Preview Cached guide" }));
+    await waitFor(() => expect(screen.queryByText(/Preparing preview/)).not.toBeInTheDocument());
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Preview Cached guide" }));
+    await waitFor(() => expect(screen.queryByText(/Preparing preview/)).not.toBeInTheDocument());
+    expect(jest.mocked(getChurchResourceUrl).mock.calls.length + mockGetExternalResourceResolution.mock.calls.length).toBe(1);
+  });
+
+  it("refreshes an expiring upload source on reopen", async () => {
+    mockSongDocs = [];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: [resource] });
+    const getUrl = jest.mocked(getChurchResourceUrl);
+    getUrl.mockResolvedValueOnce({ url: "https://files.test/old.pdf", expiresAt: new Date(Date.now() + 30_000).toISOString() })
+      .mockResolvedValue({ url: "https://files.test/fresh.pdf", expiresAt: new Date(Date.now() + 900_000).toISOString() });
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Preview Guidelines.pdf" }));
+    expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute("src", "https://files.test/old.pdf");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Preview Guidelines.pdf" }));
+    expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute("src", "https://files.test/fresh.pdf");
+    expect(getUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps navigation disabled while a resource name is being edited", async () => {
+    mockSongDocs = [];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: [resource, { ...resource, id: "other", name: "Other.pdf" }] });
+    jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://files.test/guide.pdf", expiresAt: new Date(Date.now() + 900_000).toISOString() });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Preview Guidelines.pdf" }));
+    await user.click(screen.getByRole("button", { name: "More preview actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(screen.getByRole("button", { name: "Next resource" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel rename" }));
+    expect(screen.getByRole("button", { name: "Next resource" })).toBeEnabled();
+  });
+
   beforeEach(() => {
     mockGetChurchStorageQuota.mockClear();
-    mockUploadedResources = [resource];
     mockSongDocs = [song()];
     mockResources = [];
     mockState = {
@@ -155,6 +283,7 @@ describe("Resources page", () => {
       },
     });
     mockUploadChurchResource.mockResolvedValue(resource);
+    mockCreateExternalChurchResource.mockReset();
     mockGetSongAudioUrl.mockResolvedValue({ url: "https://audio.test/rehearsal.mp3", expiresAt: "2026-09-22T00:00:00.000Z" });
     mockUpdateAllDocs.mockImplementation(async (dispatch, _db, shouldApply) => {
       if (shouldApply && !shouldApply()) return false;
@@ -165,6 +294,7 @@ describe("Resources page", () => {
     jest.mocked(deleteChurchResource).mockReset();
     jest.mocked(deleteSongAudioWithRetry).mockReset();
     jest.mocked(getChurchResourceUrl).mockReset();
+    mockGetExternalResourceResolution.mockReset();
     jest.mocked(updateChurchResource).mockReset();
     jest.mocked(uploadChurchResource).mockReset();
   });
@@ -188,6 +318,98 @@ describe("Resources page", () => {
     await waitFor(() => expect(mockGetSongAudioUrl).toHaveBeenCalledWith(expect.objectContaining({ songId: "song-1" })));
   });
 
+  it("adds and displays an external resource with its provider and external size", async () => {
+    const externalResource: ChurchResource = {
+      id: "external-1",
+      churchId: "church-1",
+      name: "Team guide",
+      kind: "document",
+      sourceType: "external",
+      external: {
+        url: "https://docs.google.com/document/d/guide/edit",
+        provider: "google-drive",
+        mimeType: "application/pdf",
+        fileName: "team-guide.pdf",
+        mediaType: "document",
+      },
+      createdAt: "2026-09-21T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    mockCreateExternalChurchResource.mockResolvedValue(externalResource);
+    renderPage();
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Add resource" }));
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: "Add external link" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add external link" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await userEvent.setup().type(screen.getByPlaceholderText("https://"), externalResource.external.url);
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: "Add resource" }));
+
+    expect(await screen.findByText("Team guide")).toBeInTheDocument();
+    expect(screen.getByText("Google Drive")).toBeInTheDocument();
+    expect(screen.getByText("External")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Size" }));
+    expect(screen.getByText("Team guide")).toBeInTheDocument();
+    expect(mockCreateExternalChurchResource).toHaveBeenCalledWith(expect.objectContaining({
+      churchId: "church-1",
+      url: externalResource.external.url,
+    }));
+    mockGetExternalResourceResolution.mockResolvedValue({
+      originalUrl: externalResource.external.url,
+      externalUrl: externalResource.external.url,
+      provider: "google-drive",
+      sourceKind: "file",
+      title: "Team guide",
+      filename: "team-guide.pdf",
+      mimeType: "application/pdf",
+      mediaType: "document",
+      previewType: "document",
+      previewUrl: "https://preview.test/guide.pdf",
+      requiresProxy: true,
+      canPreview: true,
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Preview Team guide" }));
+    expect(await screen.findByRole("dialog", { name: "Team guide" })).toBeInTheDocument();
+    expect(mockGetExternalResourceResolution).toHaveBeenCalledWith(externalResource.external.url);
+    expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Download" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an external resource visible when the server blocks deletion due to plan references", async () => {
+    const externalResource: ChurchResource = {
+      id: "external-2",
+      churchId: "church-1",
+      name: "Plan guide",
+      kind: "document",
+      sourceType: "external",
+      external: { url: "https://example.com/guide", provider: "direct" },
+      createdAt: "2026-09-21T00:00:00.000Z",
+      createdBy: "user-1",
+      updatedAt: "2026-09-21T00:00:00.000Z",
+      updatedBy: "user-1",
+    };
+    mockResources = [externalResource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    mockDeleteChurchResource.mockRejectedValue(Object.assign(
+      new Error("This resource is used by 1 Service Plan. Remove it from the plan before deleting it."),
+      { status: 409 },
+    ));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("Select Plan guide"));
+    await user.click(screen.getByRole("button", { name: "Delete selected (1)" }));
+    const confirmation = await screen.findByRole("dialog", { name: /Delete resource/ });
+    await user.click(within(confirmation).getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByRole("button", { name: "Preview Plan guide" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/used by 1 Service Plan/i);
+  });
+
   it("shows the church R2 quota independently of the visible resources", async () => {
     mockListChurchResources.mockResolvedValue({ success: true, resources: [] });
     renderPage();
@@ -200,9 +422,48 @@ describe("Resources page", () => {
 
   it("refreshes R2 usage after a successful Resources upload", async () => {
     const user = userEvent.setup();
+    mockUploadChurchResource.mockResolvedValue(resource);
     renderPage();
-    await user.click(await screen.findByRole("button", { name: "Complete resource upload" }));
+    const trigger = await screen.findByRole("button", { name: "Add resource" });
+    expect(trigger).toHaveAttribute("data-slot", "dropdown-menu-trigger");
+    expect(trigger).toHaveAttribute("data-variant", "presentCta");
+    await user.click(trigger);
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "Add external link" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("button")).not.toBeInTheDocument();
+    await user.click(within(menu).getByRole("menuitem", { name: "Upload file" }));
+    const dialog = await screen.findByRole("dialog", { name: "Upload resources" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await user.upload(screen.getByLabelText("Select resource files"), new File(["guide"], "guide.pdf", { type: "application/pdf" }));
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await waitFor(() => expect(mockGetChurchStorageQuota).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
+    await screen.findByRole("dialog", { name: "Upload resources" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("restores an active minimized upload from Add resource without starting another upload", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<ChurchResource>();
+    mockUploadChurchResource.mockReturnValue(pending.promise);
+    renderPage();
+    const trigger = await screen.findByRole("button", { name: "Add resource" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
+    await screen.findByRole("dialog", { name: "Upload resources" });
+    await user.upload(screen.getByLabelText("Select resource files"), new File(["guide"], "guide.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+    await user.click(screen.getByRole("button", { name: "Minimize resource upload to button" }));
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Upload file" }));
+    expect(await screen.findByRole("dialog", { name: "Upload resources" })).toHaveAttribute("aria-busy", "true");
+    expect(mockUploadChurchResource).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(resource));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Uploading..." })).not.toBeInTheDocument();
   });
 
   it("combines ChurchResources and song audio, and applies both filters", async () => {
@@ -220,6 +481,70 @@ describe("Resources page", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Documents" }));
     expect(screen.queryByText("rehearsal.mp3")).not.toBeInTheDocument();
     expect(screen.getByText("Guidelines.pdf")).toBeInTheDocument();
+  });
+
+  it("shows uploaded JPEG resources in the Images filter", async () => {
+    mockResources = [resource, imageResource];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    renderPage();
+    expect(await screen.findByText("Profile.jpg")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Images" }));
+    expect(screen.getByText("Profile.jpg")).toBeInTheDocument();
+    expect(screen.queryByText("Guidelines.pdf")).not.toBeInTheDocument();
+  });
+
+  it("filters only documents and audio while keeping other external resources under All", async () => {
+    const externalDocument = externalResource("external-doc", "Volunteer guide", "document", "https://docs.example.test/guide", "document");
+    const externalAudio = externalResource("external-audio", "Rehearsal MP3", "audio", "https://files.example.test/rehearsal.mp3", "audio");
+    const externalImage = externalResource("external-image", "Service image", "other", "https://files.example.test/slide.png", "image");
+    const externalVideo = externalResource("external-video", "Service video", "other", "https://files.example.test/clip.mp4", "video");
+    const externalWeb = externalResource("external-web", "Reference site", "other", "https://example.test/page", "web");
+    mockResources = [resource, externalDocument, externalAudio, externalImage, externalVideo, externalWeb];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText("Service image")).toBeInTheDocument();
+    expect(screen.getByText("Service video")).toBeInTheDocument();
+    expect(screen.getByText("Reference site")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Documents" }));
+    expect(screen.getByText("Guidelines.pdf")).toBeInTheDocument();
+    expect(screen.getByText("Volunteer guide")).toBeInTheDocument();
+    expect(screen.queryByText("Service image")).not.toBeInTheDocument();
+    expect(screen.queryByText("Service video")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reference site")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Audio" }));
+    expect(screen.getByText("Rehearsal MP3")).toBeInTheDocument();
+    expect(screen.getByText("rehearsal.mp3")).toBeInTheDocument();
+    expect(screen.queryByText("Volunteer guide")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("Service image")).toBeInTheDocument();
+    expect(screen.getByText("Service video")).toBeInTheDocument();
+    expect(screen.getByText("Reference site")).toBeInTheDocument();
+  });
+
+  it.each([
+    [externalResource("external-web-label", "Reference site", "other", "https://example.test/page", "web"), "Web"],
+    [externalResource("external-video-label", "Service video", "other", "https://example.test/clip", "video"), "Video"],
+    [externalResource("external-image-label", "Service image", "other", "https://example.test/slide", "image"), "Image"],
+    [externalResource("external-unknown-label", "Unsupported link", "other", "https://example.test/unknown", "unknown"), "Link"],
+    [externalResource("external-pdf-label", "Guide PDF", "document", "https://example.test/guide.pdf", "document", { mimeType: "application/pdf", fileName: "guide.pdf" }), "PDF"],
+    [externalResource("external-docx-label", "Guide DOCX", "document", "https://example.test/guide.docx", "document", { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName: "guide.docx" }), "DOCX"],
+  ] as const)("labels %s as %s", async (external, expectedLabel) => {
+    const fetchMock = expectedLabel === "DOCX"
+      ? jest.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false } as Response)
+      : undefined;
+    mockResources = [external];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: new RegExp(`Preview ${external.name}`) }));
+    expect(await screen.findByText(new RegExp(`${expectedLabel} · External · Updated`))).toBeInTheDocument();
+    fetchMock?.mockRestore();
   });
 
   it("sorts resources by the selected column and toggles direction", async () => {
@@ -290,11 +615,13 @@ describe("Resources page", () => {
 
     mockState.allDocs.allSongDocs = [song(false)];
     view.rerender(
-      <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access: "full" } as never}>
-        <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
-          <ResourcesPage />
-        </ControllerInfoContext.Provider>
-      </AppGlobalInfoContext.Provider>,
+      <TransferProvider>
+        <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access: "full" } as never}>
+          <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
+            <ResourcesPage />
+          </ControllerInfoContext.Provider>
+        </AppGlobalInfoContext.Provider>
+      </TransferProvider>,
     );
 
     await waitFor(() => expect(screen.queryByText("rehearsal.mp3")).not.toBeInTheDocument());
@@ -312,6 +639,10 @@ describe("Resources page", () => {
 
     await userEvent.setup().click(await screen.findByRole("button", { name: /guidelines\.pdf/i }));
 
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getByText("WorshipSync • PDF")).toBeVisible();
+    expect(screen.getByText(/PDF · 100 B · Updated/)).toBeVisible();
     expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute(
       "src",
       "https://abc.r2.cloudflarestorage.com/worshipsync-resources/guide.pdf",
@@ -319,6 +650,23 @@ describe("Resources page", () => {
     expect(getChurchResourceUrl).toHaveBeenCalledWith(
       expect.objectContaining({ churchId: "church-1", resourceId: "resource-1" }),
     );
+  });
+
+  it("previews an uploaded DOCX as a document and keeps download available", async () => {
+    mockResources = [{ ...resource, name: "Guidelines.docx", storage: {
+      ...resource.storage, fileName: "Guidelines.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    } }];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://r2.example.test/opaque?signature=secret", expiresAt: "2026-09-22T00:00:00.000Z" });
+    renderPage();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Preview Guidelines.docx" }));
+    expect(await screen.findByRole("document", { hidden: true })).toBeInTheDocument();
+    expect(screen.getByText("WorshipSync • Document")).toBeVisible();
+    expect(screen.getByText(/DOCX · 100 B · Updated/)).toBeVisible();
+    expect(screen.queryByTitle("Guidelines.docx")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(screen.getByRole("menuitem", { name: "Download" })).toBeInTheDocument();
   });
 
   it("keeps song-audio removal and uploads restricted to full access", async () => {
@@ -334,16 +682,40 @@ describe("Resources page", () => {
   it("uses the styled confirmation modal before deleting a church resource", async () => {
     mockResources = [resource];
     mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
-    jest.mocked(deleteChurchResource).mockResolvedValue({ success: true });
+    let resolveDelete!: (result: { success: true }) => void;
+    jest.mocked(deleteChurchResource).mockImplementation(() => new Promise((resolve) => {
+      resolveDelete = resolve;
+    }));
     renderPage();
 
     await userEvent.setup().click(await screen.findByRole("button", { name: /Preview Guidelines\.pdf/i }));
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Delete" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "More preview actions" }));
+    const deleteAction = await screen.findByRole("menuitem", { name: "Delete" });
+    expect(deleteAction).toHaveAttribute("data-variant", "destructive");
+    expect(screen.getByRole("menuitem", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual([
+      "Download",
+      "Rename",
+      "Delete",
+    ]);
+    await userEvent.setup().click(deleteAction);
 
     const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
     expect(confirmation).toHaveTextContent("Guidelines.pdf");
     await userEvent.setup().click(within(confirmation).getByRole("button", { name: "Delete" }));
+    expect(within(confirmation).getByRole("button", { name: "Delete" })).toHaveAttribute("data-variant", "presentDestructive");
+    expect(confirmation).toHaveAttribute("aria-busy", "true");
+    expect(within(confirmation).getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(within(confirmation).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await userEvent.setup().click(within(confirmation).getByRole("button", { name: "Delete" }));
+    expect(deleteChurchResource).toHaveBeenCalledTimes(1);
+    await userEvent.setup().keyboard("{Escape}");
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByRole("dialog", { name: "Delete resource?" })).toBeInTheDocument();
+    resolveDelete({ success: true });
     await waitFor(() => expect(deleteChurchResource).toHaveBeenCalledWith({ churchId: "church-1", resourceId: "resource-1" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete resource?" })).not.toBeInTheDocument());
     await waitFor(() => expect(mockGetChurchStorageQuota).toHaveBeenCalledTimes(2));
   });
 
@@ -361,6 +733,7 @@ describe("Resources page", () => {
     await user.click(screen.getByRole("button", { name: "Delete selected (2)" }));
 
     const confirmation = await screen.findByRole("dialog", { name: "Delete resource?" });
+    expect(within(confirmation).getByRole("button", { name: "Delete" })).toHaveAttribute("data-variant", "presentDestructive");
     expect(within(confirmation).getByText("Guidelines.pdf")).toBeInTheDocument();
     expect(within(confirmation).getByText("Second guide.pdf")).toBeInTheDocument();
   });

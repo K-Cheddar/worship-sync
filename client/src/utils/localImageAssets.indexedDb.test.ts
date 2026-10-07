@@ -1,6 +1,7 @@
 import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import type { DBItem } from "../types";
+import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import {
   claimLocalImageUploadJob,
   cleanupLocalImagesForDeletedItem,
@@ -272,7 +273,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     );
   });
 
-  it("preserves uploaded cloud media across enqueue and retry", async () => {
+  it("repairs a legacy unsigned ownership failure only on explicit retry", async () => {
     const uploaded: LocalImageUploadJob = {
       id: "uploaded-enqueue",
       assetId: "uploaded-enqueue",
@@ -280,9 +281,10 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       workspaceId: "church-1",
       uploadPreset: "preset",
       mediaId: "media-existing",
-      status: "uploaded",
+      status: "failed",
       attemptCount: 1,
-      nextAttemptAt: 50_000,
+      nextAttemptAt: 0,
+      lastError: "The image was not uploaded to this church's media folder.",
       cloudMedia: {
         id: "media-existing",
         type: "image",
@@ -292,6 +294,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       updatedAt: "2026-08-13T00:00:00.000Z",
     };
     await putLocalImageUploadJob(uploaded);
+    expect(isLocalImageUploadJobRunnable(uploaded, 20_000)).toBe(false);
 
     const enqueued = await enqueueLocalImageUploadJobAtomically(
       {
@@ -311,18 +314,74 @@ describe("localImageAssets IndexedDB lifecycle", () => {
 
     expect(enqueued).toEqual(
       expect.objectContaining({
-        itemId: "item-2",
+        itemId: "item-1",
         mediaId: "media-existing",
-        status: "uploaded",
+        status: "failed",
+        lastError: "The image was not uploaded to this church's media folder.",
         cloudMedia: uploaded.cloudMedia,
       }),
     );
     expect(retried).toEqual(
       expect.objectContaining({
-        status: "uploaded",
-        cloudMedia: uploaded.cloudMedia,
+        status: "pending",
+        phase: "queued",
       }),
     );
+    expect(retried).not.toHaveProperty("cloudMedia");
+  });
+
+  it("uses the stable ownership code for legacy upload repair", async () => {
+    const uploaded: LocalImageUploadJob = {
+      id: "coded-legacy-upload",
+      assetId: "coded-legacy-upload",
+      itemId: "item-1",
+      workspaceId: "church-1",
+      uploadPreset: "preset",
+      mediaId: "media-existing",
+      status: "failed",
+      attemptCount: 1,
+      nextAttemptAt: 0,
+      lastErrorCode: "CLOUDINARY_MEDIA_OWNERSHIP_MISMATCH",
+      cloudMedia: { id: "media-existing", type: "image" } as LocalImageUploadJob["cloudMedia"],
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    };
+    await putLocalImageUploadJob(uploaded);
+
+    const retried = await retryLocalImageUploadJobAtomically(uploaded.assetId, 11_000);
+    expect(retried).toEqual(expect.objectContaining({ status: "pending" }));
+    expect(retried).not.toHaveProperty("cloudMedia");
+  });
+
+  it("preserves the signed intent when an uploaded checkpoint is explicitly re-enqueued", async () => {
+    const uploaded: LocalImageUploadJob = {
+      id: "signed-retry",
+      assetId: "signed-retry",
+      itemId: "item-1",
+      workspaceId: "church-1",
+      uploadPreset: "legacy-preset",
+      mediaId: "media-1",
+      status: "failed",
+      attemptCount: 1,
+      nextAttemptAt: 0,
+      providerUploadId: "intent-1",
+      providerExpectedPublicId: "image-1",
+      cloudMedia: { id: "media-1", publicId: "image-1", type: "image" } as LocalImageUploadJob["cloudMedia"],
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    };
+    await putLocalImageUploadJob(uploaded);
+    await retryLocalImageUploadJobAtomically(uploaded.assetId, 10_000);
+    const enqueued = await enqueueLocalImageUploadJobAtomically(
+      { ...uploaded, status: "pending", cloudMedia: undefined },
+      11_000,
+    );
+    expect(enqueued).toEqual(expect.objectContaining({
+      providerUploadId: "intent-1",
+      providerExpectedPublicId: "image-1",
+      cloudMedia: uploaded.cloudMedia,
+      status: "uploaded",
+    }));
   });
 
   it("updates status without rolling back the latest owned lease", async () => {
@@ -389,6 +448,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       createdAt: "2020-01-01T00:00:00.000Z",
     });
     const db = {
+      get: jest.fn().mockResolvedValue({ _id: "media-library-meta", schemaVersion: 2 }),
       allDocs: jest.fn().mockResolvedValue({
         rows: [{ doc: itemWithAsset("item-1", "referenced") }],
       }),
@@ -405,6 +465,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
   it("does not treat the retained legacy media snapshot as a v2 local-image reference", async () => {
     await saveLocalImage(storedImage("legacy-only-reference"));
     const db = {
+      get: jest.fn().mockResolvedValue({ _id: "media-library-meta", schemaVersion: 2 }),
       allDocs: jest.fn().mockResolvedValue({
         rows: [
           {
@@ -422,6 +483,27 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       cleanupOrphanedLocalImages({ db, workspaceId: "church-1", minimumAgeMs: 0 }),
     ).resolves.toBe(1);
     await expect(getLocalImage("legacy-only-reference")).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["missing marker", Object.assign(new Error("missing"), { status: 404, name: "not_found" })],
+    ["schema v1", { _id: "media-library-meta", schemaVersion: 1 }],
+    ["malformed marker", { _id: "media-library-meta", schemaVersion: "2" }],
+    ["marker read failure", new Error("database unavailable")],
+  ])("does not delete a legacy-only referenced asset with %s", async (_case, marker) => {
+    await saveLocalImage(storedImage("legacy-only-reference"));
+    const db = {
+      get: marker instanceof Error
+        ? jest.fn().mockRejectedValue(marker)
+        : jest.fn().mockResolvedValue(marker),
+      allDocs: jest.fn().mockResolvedValue({ rows: [{ doc: {
+        _id: "media",
+        list: [{ id: "old", localImage: { id: "legacy-only-reference" } }],
+      } }] }),
+    } as unknown as PouchDB.Database;
+
+    await expect(cleanupOrphanedLocalImages({ db, workspaceId: "church-1", minimumAgeMs: 0 })).resolves.toBeNull();
+    await expect(getLocalImage("legacy-only-reference")).resolves.toBeDefined();
   });
 
   it("keeps shared bytes when deleting one referencing item", async () => {

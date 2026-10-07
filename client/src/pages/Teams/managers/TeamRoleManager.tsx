@@ -2,6 +2,7 @@ import { useCallback, useContext, useMemo, useState } from "react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
+import EntityIconPicker from "../EntityIconPicker";
 import DeleteModal from "../../../components/Modal/DeleteModal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -68,6 +69,7 @@ const TeamRoleManager = ({
     teamId: "",
     name: "",
     description: "",
+    icon: "",
   });
   // Roles with a save currently in flight, keyed by roleId (or CREATE_SAVING_KEY
   // for a new role). Tracking per-editor keeps the Save spinner on the role
@@ -101,7 +103,7 @@ const TeamRoleManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ teamId: teamId, name: "", description: "" });
+    setDraft({ teamId: teamId, name: "", description: "", icon: "" });
   };
 
   const cancelEditing = () => {
@@ -121,6 +123,7 @@ const TeamRoleManager = ({
       teamId: role.teamId,
       name: role.name,
       description: role.description || "",
+      icon: role.icon || "",
     });
   };
 
@@ -168,6 +171,7 @@ const TeamRoleManager = ({
       teamId: roleTeamId,
       name: draft.name.trim(),
       description: draft.description || "",
+      icon: draft.icon || "",
     };
     const optimisticRole: TeamRole = {
       churchId,
@@ -175,6 +179,7 @@ const TeamRoleManager = ({
       teamId: roleTeamId,
       name: payload.name,
       description: payload.description,
+      icon: payload.icon,
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -230,9 +235,10 @@ const TeamRoleManager = ({
         teamId: editing.teamId,
         name: editing.name,
         description: editing.description || "",
+        icon: editing.icon || "",
       })
       : JSON.stringify(draft) !==
-      JSON.stringify({ teamId, name: "", description: "" });
+      JSON.stringify({ teamId, name: "", description: "", icon: "" });
   useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
@@ -292,6 +298,7 @@ const TeamRoleManager = ({
                     key={role.roleId}
                     title={role.name}
                     subtitle={role.description || undefined}
+                    icon={role.icon || "ShieldCheck"}
                     archived={Boolean(role.archivedAt)}
                     compact
                     canEdit={canEdit}
@@ -362,6 +369,7 @@ const TeamRoleManager = ({
           value={draft.name}
           onChange={(name) => setDraft((current) => ({ ...current, name: String(name) }))}
         />
+        <EntityIconPicker context="team" value={draft.icon || ""} fallbackIcon="ShieldCheck" onChange={(icon) => setDraft((current) => ({ ...current, icon }))} />
         <TextArea
           label="Description"
           value={draft.description || ""}

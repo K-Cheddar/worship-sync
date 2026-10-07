@@ -15,6 +15,7 @@ export type FileUploadProgress = {
   fileType: FileType;
   status: UploadStatus;
   progress: number;
+  phase?: string;
   /** Local import succeeds before an optional cloud share. Keep its identity
    * so retrying a cloud failure does not create a second local media item. */
   localMedia?: MediaType;
@@ -27,8 +28,6 @@ export type MediaUploadInputProps = {
   onLocalMediaPatched?: (id: string, patch: Partial<MediaType>) => void;
   showButton?: boolean;
   uploadPreset?: string;
-  /** Called when upload starts (true) or ends (false). Use to start/stop external progress polling. */
-  onUploadActiveChange?: (active: boolean) => void;
   /** Called once a batch has successfully added at least one cloud asset. */
   onUploadComplete?: () => void;
   /** When true, the upload modal cannot be opened and file upload is disabled. */
@@ -38,11 +37,6 @@ export type MediaUploadInputProps = {
 export type MediaUploadInputRef = {
   openModal: () => void;
   openModalWithFiles: (files: File[]) => void;
-  getUploadStatus: () => {
-    isUploading: boolean;
-    progress: number;
-    status: UploadStatus;
-  };
 };
 
 export type MuxUploadResult = {

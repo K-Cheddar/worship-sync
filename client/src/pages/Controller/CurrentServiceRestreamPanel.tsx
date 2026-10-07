@@ -1,5 +1,5 @@
+import Spinner from "@/components/Spinner/Spinner";
 import { useEffect, useMemo, useRef } from "react";
-import { LoaderCircle } from "lucide-react";
 import Button from "../../components/Button/Button";
 import {
   filterRestreamMessagesForDisplay,
@@ -385,7 +385,7 @@ const CurrentServiceRestreamPanel = ({
 
           {restream.isLoading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-300">
-              <LoaderCircle className="animate-spin" size={18} aria-hidden="true" />
+              <Spinner size="sm" width="18px" className="shrink-0" />
               Loading Restream chat…
             </div>
           ) : null}

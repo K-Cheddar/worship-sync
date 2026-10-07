@@ -50,7 +50,7 @@ import {
 } from "../../utils/canvaImportCleanup";
 import { formatCanvaImportError } from "../../utils/canvaImportError";
 import { CanvaMediaReconciliationRequiredError } from "../../utils/canvaMediaReplacement";
-import { useTransfers } from "../../context/transferContext";
+import { useTransferActions } from "../../context/transferContext";
 
 type Props = {
   open: boolean;
@@ -97,7 +97,7 @@ const CanvaImportSheet = ({
 }: Props) => {
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
   const { showToast } = useToast();
-  const { startCanvaTransfer } = useTransfers();
+  const { startCanvaTransfer } = useTransferActions();
   const navigate = useNavigate();
   const [connected, setConnected] = useState<boolean | null>(null);
   const [designs, setDesigns] = useState<CanvaDesign[]>([]);

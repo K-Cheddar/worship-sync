@@ -4,17 +4,13 @@ import type {
   ItemSlideType,
   Arrangment,
   DBItem,
-  DBMedia,
   MediaType,
 } from "../types";
 import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import { isRecognizedImageFile } from "./mediaFileTypes";
-import {
-  MEDIA_LIBRARY_META_ID,
-  MEDIA_LIBRARY_SCHEMA_VERSION,
-} from "./mediaDocUtils";
+import { isMediaLibraryV2 } from "./mediaDocUtils";
 
 const DB_NAME = "worshipsync-local-assets";
 const DB_VERSION = 4;
@@ -67,7 +63,9 @@ export type LocalImageUploadJobStatus =
   | "pending"
   | "uploading"
   | "failed"
-  | "uploaded";
+  | "uploaded"
+  | "complete"
+  | "cancelled";
 
 export type LocalImageUploadJob = {
   id: string;
@@ -77,9 +75,15 @@ export type LocalImageUploadJob = {
   uploadPreset: string;
   mediaId: string;
   status: LocalImageUploadJobStatus;
+  phase?: "queued" | "uploading" | "committing" | "finalizing" | "complete" | "failed" | "cancelled" | "stopping";
+  progress?: number | null;
+  cancelRequested?: boolean;
   attemptCount: number;
   nextAttemptAt: number;
   lastError?: string;
+  lastErrorCode?: string;
+  providerUploadId?: string;
+  providerExpectedPublicId?: string;
   cloudMedia?: MediaType;
   /** Cross-tab owner of the current processing attempt. */
   leaseOwnerId?: string;
@@ -88,6 +92,14 @@ export type LocalImageUploadJob = {
   createdAt: string;
   updatedAt: string;
 };
+
+const isLegacyUnsignedCloudinaryOwnershipFailure = (
+  job: LocalImageUploadJob,
+) =>
+  !job.providerUploadId &&
+  Boolean(job.cloudMedia) &&
+  (job.lastErrorCode === "CLOUDINARY_MEDIA_OWNERSHIP_MISMATCH" ||
+    job.lastError === "The image was not uploaded to this church's media folder.");
 
 export type LocalImageReferencePatch = {
   reference?: Partial<
@@ -673,13 +685,24 @@ export const enqueueLocalImageUploadJobAtomically = async (
     if (current?.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) {
       return current;
     }
+    if (current?.status === "complete") return current;
+    if (current?.status === "failed" && isLegacyUnsignedCloudinaryOwnershipFailure(current)) {
+      return current;
+    }
     return {
       ...candidate,
-      mediaId: current?.mediaId ?? candidate.mediaId,
+      mediaId: current?.cloudMedia ? current.mediaId : candidate.mediaId,
+      ...(current?.providerUploadId ? { providerUploadId: current.providerUploadId } : {}),
+      ...(current?.providerExpectedPublicId
+        ? { providerExpectedPublicId: current.providerExpectedPublicId }
+        : {}),
       status: current?.cloudMedia ? "uploaded" : "pending",
+      phase: current?.cloudMedia ? "committing" : "queued",
+      progress: current?.cloudMedia ? 90 : 0,
       attemptCount: current?.attemptCount ?? candidate.attemptCount,
       nextAttemptAt: 0,
       lastError: undefined,
+      cancelRequested: false,
       cloudMedia: current?.cloudMedia,
       createdAt: current?.createdAt ?? candidate.createdAt,
     };
@@ -694,24 +717,69 @@ export const retryLocalImageUploadJobAtomically = async (
     if (current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) {
       return current;
     }
+    const isLegacyOwnershipMismatch =
+      isLegacyUnsignedCloudinaryOwnershipFailure(current);
     const next: LocalImageUploadJob = {
       ...current,
-      status: current.cloudMedia ? "uploaded" : "pending",
+      status: current.cloudMedia && !isLegacyOwnershipMismatch ? "uploaded" : "pending",
+      phase: current.cloudMedia && !isLegacyOwnershipMismatch ? "committing" : "queued",
+      progress: current.cloudMedia && !isLegacyOwnershipMismatch ? 90 : 0,
       nextAttemptAt: 0,
       lastError: undefined,
+      lastErrorCode: undefined,
+      cancelRequested: false,
       updatedAt: new Date(now).toISOString(),
     };
+    if (isLegacyOwnershipMismatch) delete next.cloudMedia;
+    if (isLegacyOwnershipMismatch) delete next.providerExpectedPublicId;
     delete next.leaseOwnerId;
     delete next.leaseExpiresAt;
+    return next;
+  });
+
+export const requestLocalImageUploadCancellationAtomically = (
+  assetId: string,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(assetId, (current) => {
+    if (!current || current.status === "complete" || current.status === "cancelled") {
+      return current;
+    }
+    const leaseIsActive = Boolean(
+      current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now,
+    );
+    const next: LocalImageUploadJob = {
+      ...current,
+      ...(leaseIsActive ? {} : { status: "pending" as const }),
+      phase: "stopping",
+      progress: null,
+      cancelRequested: true,
+      nextAttemptAt: 0,
+      updatedAt: new Date(now).toISOString(),
+    };
+    if (!leaseIsActive) {
+      delete next.leaseOwnerId;
+      delete next.leaseExpiresAt;
+    }
     return next;
   });
 
 type LeasedLocalImageUploadJobPatch = Partial<
   Pick<
     LocalImageUploadJob,
-    "status" | "attemptCount" | "nextAttemptAt" | "lastError" | "cloudMedia"
-  >
->;
+    | "status"
+    | "phase"
+    | "progress"
+    | "cancelRequested"
+    | "attemptCount"
+    | "nextAttemptAt"
+    | "lastError"
+    | "lastErrorCode"
+  > & {
+    cloudMedia?: MediaType | null;
+    providerUploadId?: string | null;
+    providerExpectedPublicId?: string | null;
+  }>;
 
 export const updateLeasedLocalImageUploadJob = async ({
   assetId,
@@ -728,19 +796,57 @@ export const updateLeasedLocalImageUploadJob = async ({
 }) =>
   mutateLocalImageUploadJob(assetId, (current) => {
     if (!current || current.leaseOwnerId !== leaseOwnerId) return undefined;
-    return {
+    const {
+      cloudMedia,
+      providerUploadId,
+      providerExpectedPublicId,
+      ...fields
+    } = patch;
+    const next: LocalImageUploadJob = {
       ...current,
-      ...patch,
+      ...fields,
       leaseOwnerId,
       leaseExpiresAt: now + leaseDurationMs,
       updatedAt: new Date(now).toISOString(),
     };
+    if (cloudMedia === null) delete next.cloudMedia;
+    else if (cloudMedia) next.cloudMedia = cloudMedia;
+    if (providerUploadId === null) delete next.providerUploadId;
+    else if (providerUploadId) next.providerUploadId = providerUploadId;
+    if (providerExpectedPublicId === null) delete next.providerExpectedPublicId;
+    else if (providerExpectedPublicId) next.providerExpectedPublicId = providerExpectedPublicId;
+    return next;
   });
 
 /**
  * Atomically claim a durable upload job. IndexedDB serializes read-write
  * transactions for this store, so concurrent controller tabs cannot both win.
  */
+export const finishLocalImageUploadCancellationAtomically = (
+  assetId: string,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(assetId, (current) => {
+    if (!current || !current.cancelRequested) return current;
+    if (current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) return current;
+    const next: LocalImageUploadJob = {
+      ...current,
+      status: "cancelled",
+      phase: "cancelled",
+      progress: null,
+      cancelRequested: true,
+      nextAttemptAt: 0,
+      lastError: undefined,
+      updatedAt: new Date(now).toISOString(),
+    };
+    delete next.cloudMedia;
+    delete next.providerUploadId;
+    delete next.providerExpectedPublicId;
+    delete next.leaseOwnerId;
+    delete next.leaseExpiresAt;
+    return next;
+  });
+
 export const claimLocalImageUploadJob = async ({
   assetId,
   leaseOwnerId,
@@ -1139,24 +1245,17 @@ export const cleanupOrphanedLocalImages = async ({
   minimumAgeMs?: number;
 }) => {
   if (!workspaceId) return 0;
+  try {
+    if (!(await isMediaLibraryV2(db))) return null;
+  } catch {
+    return null;
+  }
   const [storedImages, allDocs] = await Promise.all([
     listLocalImagesForWorkspace(workspaceId),
     db.allDocs({ include_docs: true }),
   ]);
-  const schemaV2Active = allDocs.rows.some((row) => {
-    const doc = row.doc as { _id?: string; schemaVersion?: number } | undefined;
-    return doc?._id === MEDIA_LIBRARY_META_ID &&
-      Number(doc.schemaVersion) >= MEDIA_LIBRARY_SCHEMA_VERSION;
-  });
   const referenced = new Set<string>();
   allDocs.rows.forEach((row) => {
-    const mediaDoc = row.doc as Partial<DBMedia> | undefined;
-    if (!schemaV2Active && mediaDoc?._id === "media" && Array.isArray(mediaDoc.list)) {
-      mediaDoc.list.forEach((media) => {
-        const id = media.localImage?.id;
-        if (id) referenced.add(id);
-      });
-    }
     const mediaItem = row.doc as (MediaType & { docType?: string }) | undefined;
     if (mediaItem?.docType === "mediaItem" && mediaItem.localImage?.id) {
       referenced.add(mediaItem.localImage.id);

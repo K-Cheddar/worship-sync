@@ -7,6 +7,7 @@ import type { ControllerProfile } from "../../utils/controllerProfiles";
 
 const publishManifest = jest.fn();
 const discoverMedia = jest.fn();
+const mockLocalPool = jest.fn();
 const mockPublishPreparedContext = jest.fn((context: PreparedMediaContext) => undefined);
 const mockSubscribePreparedContextRequests = jest.fn(
   (getContexts: () => PreparedMediaContext[]) => jest.fn(),
@@ -17,6 +18,14 @@ jest.mock("../../utils/preparedMediaContext", () => ({
     mockPublishPreparedContext(context),
   subscribePreparedMediaContextRequests: (getContexts: () => PreparedMediaContext[]) =>
     mockSubscribePreparedContextRequests(getContexts),
+}));
+
+jest.mock("../../components/DisplayWindow/ElectronMediaSurfacePool", () => ({
+  __esModule: true,
+  default: (props: unknown) => {
+    mockLocalPool(props);
+    return null;
+  },
 }));
 
 const profile: ControllerProfile = {
@@ -86,17 +95,23 @@ jest.mock("../../hooks/useServiceVideoCandidates", () => ({
   useServiceVideoCandidates: (options: Record<string, unknown>) => {
     discoverMedia(options);
     return {
+      allCandidates: [],
+      candidates: [],
+      diagnostics: [],
       posterUrls: ["https://cdn.example.com/opening.jpg"],
       discovery: {
         renderer: "projector",
         controllerProfileId: options.controllerProfileId,
         outlineScope: options.outlineScope,
         outlineId: options.outlineId,
+        targetOutlineId: options.outlineId,
         outlineLoadState: "loaded",
         items: [],
         itemCount: 0,
         uniqueFiniteVideoCount: 0,
       },
+      poolCapacity: 14,
+      performanceClass: "normal",
     };
   },
 }));
@@ -107,16 +122,20 @@ jest.mock("../../hooks/useMediaPreparationManifest", () => ({
   },
 }));
 
-const renderPublisher = (db?: object) =>
+const renderPublisher = (db?: object, currentItemId?: string) =>
   render(
     <GlobalInfoContext.Provider value={{ sessionKind: "human" } as never}>
       <ControllerInfoContext.Provider value={{ db } as never}>
-        <ControllerMediaPreparationPublisher />
+        <ControllerMediaPreparationPublisher currentItemId={currentItemId} />
       </ControllerInfoContext.Provider>
     </GlobalInfoContext.Provider>,
   );
 
 describe("ControllerMediaPreparationPublisher", () => {
+  afterEach(() => {
+    delete (window as { electronAPI?: unknown }).electronAPI;
+  });
+
   beforeEach(() => {
     activeProfile = profile;
     state = {
@@ -138,6 +157,7 @@ describe("ControllerMediaPreparationPublisher", () => {
     };
     publishManifest.mockClear();
     discoverMedia.mockClear();
+    mockLocalPool.mockClear();
     mockPublishPreparedContext.mockClear();
     mockSubscribePreparedContextRequests.mockClear();
   });
@@ -174,6 +194,39 @@ describe("ControllerMediaPreparationPublisher", () => {
     expect(getCurrentContexts()).toEqual([
       expect.objectContaining({ controllerProfileId: "presentation", outlineId: "outline-1" }),
     ]);
+  });
+
+  it("starts the local pool from the selected outline before an item is selected", async () => {
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {},
+    });
+
+    renderPublisher();
+
+    await waitFor(() => expect(mockLocalPool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        candidates: [],
+        windowRole: "local-preparation",
+        discovery: expect.objectContaining({
+          outlineId: "outline-1",
+          targetOutlineId: "outline-1",
+          currentItemId: undefined,
+        }),
+      }),
+    ));
+    expect(discoverMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        cacheMedia: false,
+        outlineId: "outline-1",
+      }),
+    );
+    expect(discoverMedia.mock.calls[0]?.[0]).not.toHaveProperty("currentItemId");
+    expect(publishManifest).toHaveBeenCalledWith(
+      expect.objectContaining({ outputId: "projector", enabled: true }),
+    );
   });
 
   it("publishes selected outline changes and name updates without picker interaction", async () => {
@@ -284,12 +337,18 @@ describe("ControllerMediaPreparationPublisher", () => {
     renderPublisher();
 
     await waitFor(() => expect(publishManifest).toHaveBeenCalledTimes(1));
-    expect(discoverMedia).toHaveBeenCalledTimes(1);
+    expect(discoverMedia).toHaveBeenCalledTimes(2);
     expect(discoverMedia).toHaveBeenCalledWith(
       expect.objectContaining({
         outlineId: "outline-1",
         outlineScope: "presentation",
         controllerProfileId: "presentation",
+      }),
+    );
+    expect(discoverMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outlineId: "outline-aux",
+        controllerProfileId: "aux",
       }),
     );
     expect(publishManifest).toHaveBeenCalledWith(

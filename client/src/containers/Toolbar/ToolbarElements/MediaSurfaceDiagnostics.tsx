@@ -82,22 +82,27 @@ const readinessStatusIcons = {
 
 const ReadinessVideos = ({
   videos,
-  preparedCount,
-  finiteCount,
+  summary,
   unavailable,
   truncated,
+  loading,
+  emptyMessage,
 }: {
   videos?: MediaPreparationReadinessVideo[];
-  preparedCount: number;
-  finiteCount: number;
+  summary?: string;
   unavailable?: boolean;
   truncated?: boolean;
+  loading?: boolean;
+  emptyMessage?: string;
 }) => {
   if (unavailable) return <p className="mt-2 text-xs text-gray-400">Per-video details unavailable from this device version.</p>;
-  if (!videos?.length) return null;
+  if (loading) return <p className="mt-3 border-t border-gray-700 pt-2 text-xs text-gray-400" role="status">Loading per-video readiness…</p>;
+  if (!videos?.length) return emptyMessage
+    ? <p className="mt-3 border-t border-gray-700 pt-2 text-xs text-gray-400">{emptyMessage}</p>
+    : null;
   return (
-    <details className="mt-3 border-t border-gray-700 pt-2">
-      <summary className="cursor-pointer text-xs font-medium text-gray-300">Videos {preparedCount}/{finiteCount} prepared</summary>
+    <section className="mt-3 border-t border-gray-700 pt-2" aria-label="Video readiness list">
+      <h3 className="text-xs font-medium text-gray-300">Video readiness{summary ? ` · ${summary}` : ""}</h3>
       <ul className="mt-2 space-y-1.5 text-xs">
         {videos.map((video) => (
           <li key={video.mediaKey} className="min-w-0">
@@ -112,7 +117,7 @@ const ReadinessVideos = ({
         ))}
       </ul>
       {truncated && <p className="mt-2 text-gray-500">Showing the first 64 videos by readiness status.</p>}
-    </details>
+    </section>
   );
 };
 
@@ -162,6 +167,9 @@ const getOutputName = (
   entry: ReceivedDiagnostics,
   outputs: ReturnType<typeof selectDisplayOutputs>,
 ) => {
+  if (entry.windowRole === "local-preparation") {
+    return `Local preparation · ${entry.discovery?.controllerProfileName || "Presentation"}`;
+  }
   if (entry.windowRole === "editor") return "Editor Preview";
   const output = outputs.find((candidate) => candidate.id === entry.outputId);
   return output?.name ?? entry.outputId ?? entry.windowRole;
@@ -185,6 +193,11 @@ const getPreparedKeys = (entry: ReceivedDiagnostics) =>
       .filter((surface) => surface.phase === "ready" || surface.phase === "playing")
       .map((surface) => surface.mediaKey),
   );
+
+const getSelectedFiniteKeys = (entry: ReceivedDiagnostics) =>
+  new Set((entry.candidateDetails ?? [])
+    .filter((candidate) => candidate.selected && candidate.status === "eligible")
+    .map((candidate) => candidate.mediaKey));
 
 const getLocalReadinessVideos = (entry: ReceivedDiagnostics) => {
   const surfaceByKey = new Map(entry.surfaces.map((surface) => [surface.mediaKey, surface]));
@@ -276,7 +289,15 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
   const editorPreviewEntries = entries.filter((entry) => entry.windowRole === "editor" || entry.windowRole.endsWith("preview"));
   const issues = outputEntries.reduce((count, entry) => count + getActionIssues(entry).length, 0);
   const toolbarSummary = outputEntries.length === 1
-    ? `Videos · ${getPreparedKeys(outputEntries[0]).size}/${getInventoryCount(outputEntries[0])}`
+    ? (() => {
+        const entry = outputEntries[0];
+        const selectedKeys = getSelectedFiniteKeys(entry);
+        const preparedKeys = getPreparedKeys(entry);
+        const ready = [...preparedKeys].filter((key) => selectedKeys.has(key)).length;
+        return entry.candidateDetails !== undefined && selectedKeys.size > 0
+          ? `Videos · ${ready}/${selectedKeys.size} ready`
+          : preparedKeys.size > 0 ? `Videos · ${preparedKeys.size} ready` : "Videos";
+      })()
     : issues > 0
       ? `Videos · ${issues} issue${issues === 1 ? "" : "s"}`
       : "Videos";
@@ -358,6 +379,13 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
             const inventoryCount = getInventoryCount(entry);
             const finiteCount = getFiniteCount(entry);
             const preparedCount = getPreparedKeys(entry).size;
+            const selectedFiniteKeys = getSelectedFiniteKeys(entry);
+            const selectedReadyCount = [...selectedFiniteKeys].filter((key) => getPreparedKeys(entry).has(key)).length;
+            const inventoryFiniteKeys = new Set((entry.discovery?.items ?? []).flatMap((item) => item.videos.filter((video) => video.status === "eligible").map((video) => video.mediaKey)));
+            const selectedFiniteInventoryCount = [...selectedFiniteKeys].filter((key) => inventoryFiniteKeys.has(key)).length;
+            const deferredFiniteCount = entry.discovery?.finitePlayableSourceCount == null
+              ? undefined
+              : Math.max(0, entry.discovery.finitePlayableSourceCount - selectedFiniteInventoryCount);
             const readinessVideos = getLocalReadinessVideos(entry);
             const pendingCount = entry.discovery?.pendingHlsCacheCount ?? entry.pendingCacheCount;
             const excludedCount = entry.discovery?.intentionallyExcludedVideoCount ?? 0;
@@ -366,6 +394,12 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
               : undefined;
             const playingHealthy = Boolean(activeSurface?.phase === "playing" || entry.playingCount > 0);
             const loadState = entry.discovery?.outlineLoadState;
+            const isLocalPreparation = entry.windowRole === "local-preparation";
+            const noServiceSelected = Boolean(
+              isLocalPreparation &&
+                !entry.discovery?.targetOutlineId &&
+                loadState === "loaded",
+            );
             const inventoryIssue = loadState === "retrying" || loadState === "error";
             const actionIssues = getActionIssues(entry);
             const plan = entry.preparationSource === "server-manifest"
@@ -396,7 +430,20 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                   <Count label="Selected surfaces" value={entry.surfaceCount} help="Surfaces mounted in this output's bounded preparation pool; this is not the plan's video count." />
                 </dl>
 
-                <ReadinessVideos videos={readinessVideos.videos} preparedCount={preparedCount} finiteCount={finiteCount} truncated={readinessVideos.videosTruncated} />
+                <ReadinessVideos
+                  videos={readinessVideos.videos}
+                  summary={`${finiteCount} finite inventory · ${selectedFiniteKeys.size} selected finite · ${selectedReadyCount} ready${deferredFiniteCount === undefined ? "" : ` · ${deferredFiniteCount} deferred`}`}
+                  truncated={readinessVideos.videosTruncated}
+                  loading={
+                    entry.candidateDetails === undefined ||
+                    (isLocalPreparation && loadState === "loading")
+                  }
+                  emptyMessage={
+                    noServiceSelected
+                      ? "No service selected for video preparation."
+                      : "No videos in this readiness pool."
+                  }
+                />
 
                 <p className="mt-3 text-xs text-gray-300">
                   Playing video: <Status good={playingHealthy}>{playingHealthy ? "Frames advancing" : activeSurface?.phase === "error" ? "Needs attention" : "No video playing"}</Status>
@@ -481,8 +528,8 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
 
           {editorPreviewEntries.length > 0 && (
             <section className="rounded border border-gray-700 p-3">
-              <h3 className="font-semibold">Editor preview · separate preparation pool</h3>
-              <p className="text-xs text-gray-400">These counts describe editor preview surfaces only; they do not indicate projector or service-wide readiness.</p>
+              <h3 className="font-semibold">Editor preview</h3>
+              <p className="text-xs text-gray-400">These counts describe selected-item preview surfaces. Service inventory and preparation are listed under Local preparation.</p>
               <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm">
                 {editorPreviewEntries.map((entry) => (
                   <span key={entry.diagnosticId ?? entry.windowRole}>
@@ -491,7 +538,7 @@ const MediaSurfaceDiagnostics = ({ className }: { className?: string }) => {
                 ))}
               </div>
               <details className="mt-2">
-                <summary className="cursor-pointer text-xs">Editor preview diagnostics</summary>
+                <summary className="cursor-pointer text-xs">Editor preview details</summary>
                 <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px]">{JSON.stringify(sanitizeForCopy(editorPreviewEntries), null, 2)}</pre>
               </details>
             </section>
@@ -640,7 +687,14 @@ const RemoteReadiness = ({
               <div className="flex items-center justify-between gap-2"><strong className="text-white">Device {deviceNumber}{concurrentCount > 1 ? ` · window ${concurrentIndex}` : ""}</strong><Status good={ready}>{ready ? "Ready" : connection}</Status></div>
               <p className="mt-1">Manifest: {device.manifestRevision == null ? "none received" : `r${device.manifestRevision}${revisionReceived ? " · matches desired revision" : desiredRevision != null ? ` · desired r${desiredRevision} not confirmed` : " · controller publication unknown"}`}{device.manifestReceivedAt ? ` · received ${new Date(device.manifestReceivedAt).toLocaleTimeString()}` : ""}</p>
               <p title="Inventory is unique media in the received manifest. Selected counts describe the actual bounded preparation pool, including protected transition media; deferred finite videos are outside that pool.">{device.source === "remote-manifest" ? "Using received manifest" : device.source === "cached-manifest" ? "Using cached manifest; live receipt pending" : device.source === "browser-poster" ? "Browser poster fallback" : "Local fallback; manifest not confirmed"} · inventory {device.candidateCount} ({device.finiteCandidateCount} finite, {device.pendingCacheCount} pending cache, {device.excludedCount ?? 0} excluded) · {hasSelectedCounts ? `selected ${device.readyCount}/${selectedFiniteCount} finite ready · ${device.preparingCount} preparing · ${device.failedCount} failed · ${selectedPendingCount} pending cache · ${device.deferredFiniteCount ?? 0} deferred · ${device.mountedSurfaceCount ?? 0} mounted` : "selected preparation counts unavailable (older report)"}{(device.pendingCacheFailedCount ?? 0) > 0 ? ` · ${device.pendingCacheFailedCount} pending-cache failed` : ""}{(device.excludedFailedCount ?? 0) > 0 ? ` · ${device.excludedFailedCount} excluded failed` : ""}</p>
-              <ReadinessVideos videos={device.videos} preparedCount={device.readyCount} finiteCount={device.selectedFiniteCandidateCount ?? device.finiteCandidateCount} unavailable={!device.videos} truncated={device.videosTruncated} />
+              <ReadinessVideos
+                videos={device.videos}
+                summary={hasSelectedCounts
+                  ? `${device.finiteCandidateCount} finite inventory · ${selectedFiniteCount} selected finite · ${device.readyCount} ready · ${device.deferredFiniteCount ?? 0} deferred`
+                  : "Selected-pool details unavailable from this device version"}
+                unavailable={!device.videos}
+                truncated={device.videosTruncated}
+              />
               {device.errors.length > 0 && <p className="mt-1 break-words text-red-200">{sanitizeMediaPreparationReadinessText(device.errors[0], 180)}</p>}
               <p className="mt-1 text-gray-400">Last report {Math.floor(age / 1000)}s ago · {connection}</p>
               {superseded.length > 0 && <details className="mt-1"><summary className="cursor-pointer text-gray-400">{superseded.length} superseded session(s)</summary><ul className="mt-1 space-y-1">{superseded.map((old) => <li key={old.sessionId}>Previous window · r{old.manifestRevision ?? "—"} · report {new Date(old.reportedAt).toLocaleString()} · {old.readyCount} ready / {old.failedCount} failed</li>)}</ul></details>}

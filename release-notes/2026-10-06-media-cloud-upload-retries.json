@@ -1,0 +1,7 @@
+{
+  "id": "media-cloud-upload-retries-2026-10-06",
+  "date": "2026-10-07",
+  "type": "fixed",
+  "title": "Cloud Media uploads",
+  "description": "Upload supported images to cloud Media and retry failed uploads without creating duplicate copies."
+}

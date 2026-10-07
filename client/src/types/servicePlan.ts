@@ -242,6 +242,7 @@ export type ServicePlanContentResourceType =
   | "scripture"
   | "youtube"
   | "audio"
+  | "image"
   | "document"
   | "custom-document"
   | "url"
@@ -362,6 +363,9 @@ export type ServicePlanElement = {
    * and overlay matching without recreating the dismissed song chip.
    */
   sourceSongReferenceDismissed?: boolean;
+  /** Song meaning and source occurrence to which the operator's dismissal applies. */
+  sourceSongReferenceDismissedFingerprint?: string;
+  sourceSongReferenceDismissedOccurrenceId?: string;
   /** Set once this element has been pushed into the live outline, so a re-push
    * can detect it's already present instead of duplicating it. */
   pushedOutlineListId?: string;

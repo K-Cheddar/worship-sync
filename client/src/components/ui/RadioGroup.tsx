@@ -18,4 +18,7 @@ const RadioGroup = ({
   );
 };
 
-export { RadioGroup };
+const RadioGroupItem = RadioGroupPrimitive.Item;
+const RadioGroupIndicator = RadioGroupPrimitive.Indicator;
+
+export { RadioGroup, RadioGroupItem, RadioGroupIndicator };

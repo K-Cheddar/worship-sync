@@ -337,7 +337,7 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
-  it("reuses a populated schedule after all service identities are replaced", () => {
+  it("does not reuse a populated schedule when replacement services add dates or change timing", () => {
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => ({
       ...occurrence,
       occurrenceId: `old-service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
@@ -365,9 +365,32 @@ describe("findReusablePeriodSchedule", () => {
       visibleEndDate: "2026-10-31",
     });
 
-    expect(result).toEqual({ schedule: custom, ambiguous: false });
-    expect(result.schedule?.occurrences).toEqual(savedOccurrences);
-    expect((result.schedule as TeamSchedule).assignments).toEqual(custom.assignments);
+    expect(result).toEqual({ schedule: null, ambiguous: false });
+    expect(custom.occurrences).toEqual(savedOccurrences);
+    expect(custom.assignments?.[savedOccurrences[0].occurrenceId]).toEqual({ "position::0": { primaryMemberId: "member" } });
+  });
+
+  it("reuses equivalent occurrences after service IDs change", () => {
+    const saved = schedule({ occurrences: [{ ...occurrence, serviceId: "old", occurrenceId: "old@date" }] });
+    expect(findReusablePeriodSchedule({ schedules: [saved], ...target }).schedule).toBe(saved);
+  });
+
+  it("rejects a schedule missing a newly relevant service at the same time", () => {
+    const saved = schedule();
+    const added = { ...occurrence, serviceId: "second", occurrenceId: "second@date", name: "Second service" };
+    expect(findReusablePeriodSchedule({
+      schedules: [saved], ...target, occurrences: [occurrence, added], preferredScheduleId: saved.scheduleId,
+    }).schedule).toBeNull();
+  });
+
+  it("does not use one saved row to cover two identically named services", () => {
+    const saved = schedule();
+    const added = { ...occurrence, serviceId: "second", occurrenceId: "second@date" };
+    expect(findReusablePeriodSchedule({ schedules: [saved], ...target, occurrences: [occurrence, added] }).schedule).toBeNull();
+  });
+
+  it("rejects empty occurrence snapshots for a period with current services", () => {
+    expect(findReusablePeriodSchedule({ schedules: [schedule({ occurrences: [] })], ...target }).schedule).toBeNull();
   });
 
   it("reuses a saved period when current Setup has no occurrences", () => {

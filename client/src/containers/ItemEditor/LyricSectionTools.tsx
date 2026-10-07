@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from "react";
 import { BookCopy, ChevronDown, Layers, Plus } from "lucide-react";
 import Button from "../../components/Button/Button";
-import { Switch } from "../../components/ui/Switch";
+import Toggle from "../../components/Toggle/Toggle";
 import { itemSectionBgColorMap, sectionTypes } from "../../utils/slideColorMap";
 import { sortList } from "../../utils/sort";
 import cn from "classnames";
@@ -82,10 +82,10 @@ const LyricSectionTools = ({
           >
             Add to Song Order
           </label>
-          <Switch
+          <Toggle
             id={songOrderToggleId}
-            checked={addNewSectionsToSongOrder}
-            onCheckedChange={onAddNewSectionsToSongOrderChange}
+            value={addNewSectionsToSongOrder}
+            onChange={onAddNewSectionsToSongOrderChange}
             aria-describedby={songOrderDescriptionId}
           />
         </div>

@@ -29,6 +29,8 @@ import type { DBItem, ServiceItem } from "../../types";
 import { createBibleItemFromParsedReference } from "../../utils/servicePlanningBibleImport";
 import { parseBibleReference } from "../../integrations/servicePlanning/parseBibleReference";
 import { richTextToPlainText } from "../../types/richText";
+import type { ServicePlanningSectionRule } from "../../types/integrations";
+import { resolveServicePlanningSection } from "../../integrations/servicePlanning/servicePlanningSectionResolution";
 import type {
   ServicePlan,
   ServicePlanElement,
@@ -40,11 +42,18 @@ import {
 } from "../../types/servicePlan";
 
 export type ServicePlanOutlinePushResult = {
-  /** New actionable content items to append to the live list, in order. */
+  /** New actionable content items to insert into resolved outline sections. */
   items: ServiceItem[];
   insertedCount: number;
   /** Titles of elements carrying an attachment that still can't be pushed. */
   skippedTitles: string[];
+  placementIssues: ServicePlanOutlinePlacementIssue[];
+};
+
+export type ServicePlanOutlinePlacementIssue = {
+  sectionName: string;
+  headingName?: string;
+  reason: "mapped-heading-missing" | "no-matching-heading" | "heading-removed";
 };
 
 const findExistingListId = (
@@ -116,11 +125,39 @@ type ElementOutlinePlan = {
 export type ServicePlanOutlineStep = {
   planned: PlannedOutlineItem;
   element: ElementOutlinePlan;
+  sectionName: string;
+  targetHeading: { listId: string; name: string };
 };
 
 export type ServicePlanOutlinePlan = {
   steps: ServicePlanOutlineStep[];
   skippedTitles: string[];
+  placementIssues: ServicePlanOutlinePlacementIssue[];
+};
+
+/** Insert immediately before the next heading, or at the list end. */
+export const insertServicePlanOutlineItem = (
+  list: ServiceItem[],
+  item: ServiceItem,
+  targetHeading: ServicePlanOutlineStep["targetHeading"],
+): ServiceItem[] | null => {
+  const headingIndex = list.findIndex(
+    (candidate) =>
+      candidate.type === "heading" && candidate.listId === targetHeading.listId,
+  );
+  if (headingIndex === -1) return null;
+  let sectionEndIndex = list.length;
+  for (let index = headingIndex + 1; index < list.length; index += 1) {
+    if (list[index].type === "heading") {
+      sectionEndIndex = index;
+      break;
+    }
+  }
+  return [
+    ...list.slice(0, sectionEndIndex),
+    item,
+    ...list.slice(sectionEndIndex),
+  ];
 };
 
 /**
@@ -276,6 +313,7 @@ export const planServicePlanOutlineItems = ({
   currentList,
   songs,
   customDocuments = [],
+  sectionRules = [],
 }: {
   plan: ServicePlan;
   currentList: ServiceItem[];
@@ -284,12 +322,19 @@ export const planServicePlanOutlineItems = ({
   songs: ServiceItem[];
   /** Current church free-form library, used to resolve custom-document refs. */
   customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
+  sectionRules?: ServicePlanningSectionRule[];
 }): ServicePlanOutlinePlan => {
   const steps: ServicePlanOutlineStep[] = [];
   const skippedTitles: string[] = [];
-  let workingList = currentList;
+  const placementIssues: ServicePlanOutlinePlacementIssue[] = [];
+  let workingList = [...currentList];
 
   for (const section of plan.sections) {
+    const placement = resolveServicePlanningSection({
+      sectionName: section.name,
+      sectionRules,
+      outline: workingList,
+    });
     const elementPlans = section.elements.map((element) =>
       planElementOutlineItems(element, songs, customDocuments),
     );
@@ -302,21 +347,57 @@ export const planServicePlanOutlineItems = ({
       }
     }
 
+    const sectionSteps: ServicePlanOutlineStep[] = [];
+    const unresolvedForSection: PlannedOutlineItem[] = [];
     for (const elementPlan of elementPlans) {
       const additions = missingPlannedItems(workingList, elementPlan);
-      for (const planned of additions) {
-        steps.push({ planned, element: elementPlan });
-        workingList = [...workingList, {
-          _id: planned.kind === "song" ? planned.song._id : planned.kind === "custom-document" ? planned.document._id : `planned:${planned.listId}`,
-          name: planned.kind === "song" ? planned.song.name : planned.kind === "custom-document" ? planned.document.name : elementPlan.title,
-          type: planned.kind === "song" ? "song" : planned.kind === "custom-document" ? "free" : "bible",
-          listId: planned.listId,
-        }];
+      if (!placement.heading) {
+        unresolvedForSection.push(...additions);
+        continue;
       }
+      for (const planned of additions) {
+        const step = {
+          planned,
+          element: elementPlan,
+          sectionName: section.name,
+          targetHeading: {
+            listId: placement.heading.listId,
+            name: placement.heading.name,
+          },
+        } satisfies ServicePlanOutlineStep;
+        sectionSteps.push(step);
+        const simulatedItem: ServiceItem = {
+          _id:
+            planned.kind === "song"
+              ? planned.song._id
+              : planned.kind === "custom-document"
+                ? planned.document._id
+                : `planned:${planned.listId}`,
+          name:
+            planned.kind === "song"
+              ? planned.song.name
+              : planned.kind === "custom-document"
+                ? planned.document.name
+                : elementPlan.title,
+          type:
+            planned.kind === "song"
+              ? "song"
+              : planned.kind === "custom-document"
+                ? "free"
+                : "bible",
+          listId: planned.listId,
+        };
+        const inserted = insertServicePlanOutlineItem(workingList, simulatedItem, step.targetHeading);
+        if (inserted) workingList = inserted;
+      }
+    }
+    if (sectionSteps.length) steps.push(...sectionSteps);
+    else if (placement.issue && unresolvedForSection.length) {
+      placementIssues.push(placement.issue);
     }
   }
 
-  return { steps, skippedTitles };
+  return { steps, skippedTitles, placementIssues };
 };
 
 export const buildServicePlanOutlineItems = async ({
@@ -326,6 +407,7 @@ export const buildServicePlanOutlineItems = async ({
   bibleDb,
   songs,
   customDocuments = [],
+  sectionRules = [],
   isContextCurrent = () => true,
 }: {
   plan: ServicePlan;
@@ -334,6 +416,7 @@ export const buildServicePlanOutlineItems = async ({
   bibleDb?: PouchDB.Database | undefined;
   songs: ServiceItem[];
   customDocuments?: Pick<DBItem, "_id" | "name" | "type">[];
+  sectionRules?: ServicePlanningSectionRule[];
   isContextCurrent?: () => boolean;
 }): Promise<ServicePlanOutlinePushResult> => {
   const assertCurrentContext = () => {
@@ -341,16 +424,25 @@ export const buildServicePlanOutlineItems = async ({
       throw new Error("The selected outline changed before the service plan could be imported.");
     }
   };
-  const planned = planServicePlanOutlineItems({ plan, currentList, songs, customDocuments });
+  const planned = planServicePlanOutlineItems({ plan, currentList, songs, customDocuments, sectionRules });
   const items: ServiceItem[] = [];
   let workingList = currentList;
   for (const step of planned.steps) {
     assertCurrentContext();
     // eslint-disable-next-line no-await-in-loop -- build and append in content order
     const item = await buildServicePlanOutlineItem({ step, list: workingList, db, bibleDb });
+    const inserted = insertServicePlanOutlineItem(workingList, item, step.targetHeading);
+    if (!inserted) {
+      planned.placementIssues.push({
+        sectionName: step.sectionName,
+        headingName: step.targetHeading.name,
+        reason: "heading-removed",
+      });
+      continue;
+    }
     items.push(item);
-    workingList = [...workingList, item];
+    workingList = inserted;
   }
   assertCurrentContext();
-  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles };
+  return { items, insertedCount: items.length, skippedTitles: planned.skippedTitles, placementIssues: planned.placementIssues };
 };

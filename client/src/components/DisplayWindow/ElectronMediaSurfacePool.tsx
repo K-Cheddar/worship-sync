@@ -96,7 +96,9 @@ const NOOP = () => undefined;
 const rendererForWindowRole = (
   windowRole: string | undefined,
 ): ElectronMediaDiscoveryRenderer =>
-  windowRole === "editor" ? "editor" : "projector";
+  windowRole === "editor" || windowRole === "local-preparation"
+    ? "editor"
+    : "projector";
 
 type SurfaceRect = { x: number; y: number; width: number; height: number };
 
@@ -1859,27 +1861,30 @@ const ElectronMediaSurfacePool = ({
       };
     }
     const currentCandidates = candidatesRef.current;
-    const details =
-      candidateDiagnostics ??
-      currentCandidates.map((candidate) => ({
+    const detailsByKey = new Map(
+      (candidateDiagnostics ?? []).map((detail) => [detail.mediaKey, detail]),
+    );
+    currentCandidates.forEach((candidate) => {
+      const discovered = detailsByKey.get(candidate.mediaKey);
+      const pendingCache = isHLSVideoSource(candidate.source);
+      const eligible = isPlayableMediaSource(candidate.source) && !pendingCache;
+      detailsByKey.set(candidate.mediaKey, {
+        ...discovered,
         mediaKey: candidate.mediaKey,
-        originalSource: candidate.originalSource ?? candidate.source,
-        resolvedSource: candidate.source,
-        sourceKind: candidate.sourceKind ?? ("unknown" as const),
-        status: "eligible" as const,
-        cacheStatus:
-          candidate.sourceKind === "cache"
-            ? ("cached" as const)
-            : ("not-required" as const),
-        eligible: true,
-        reason: candidate.reason ?? "selected for preparation",
-        itemId: candidate.itemId,
-        itemName: candidate.itemName,
-        itemIndex: candidate.itemIndex,
-        isCurrentItem:
-          candidate.itemId != null &&
-          candidate.itemId === discovery?.currentItemId,
-        }));
+        originalSource: discovered?.originalSource ?? candidate.originalSource ?? candidate.source,
+        resolvedSource: discovered?.resolvedSource ?? candidate.source,
+        sourceKind: discovered?.sourceKind ?? candidate.sourceKind ?? ("unknown" as const),
+        status: discovered?.status ?? (eligible ? ("eligible" as const) : pendingCache ? ("pending-cache" as const) : ("excluded" as const)),
+        cacheStatus: discovered?.cacheStatus ?? (pendingCache ? ("pending" as const) : eligible && candidate.sourceKind === "cache" ? ("cached" as const) : eligible ? ("not-required" as const) : ("not-cacheable" as const)),
+        eligible: discovered?.eligible ?? eligible,
+        reason: discovered?.reason ?? candidate.reason ?? "selected for preparation",
+        itemId: discovered?.itemId ?? candidate.itemId,
+        itemName: discovered?.itemName ?? candidate.itemName,
+        itemIndex: discovered?.itemIndex ?? candidate.itemIndex,
+        isCurrentItem: discovered?.isCurrentItem ?? (candidate.itemId != null && candidate.itemId === discovery?.currentItemId),
+      });
+    });
+    const details = [...detailsByKey.values()];
     const candidateByKey = new Map(
       currentCandidates.map((candidate) => [candidate.mediaKey, candidate]),
     );

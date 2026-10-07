@@ -1,63 +1,141 @@
-import { useCallback, useRef, useState } from "react";
-import { FileText, Minimize2, Trash2, Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Minimize2, Upload } from "lucide-react";
 import { createPortal } from "react-dom";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
 import { useOverlayPortalContainer } from "../components/FloatingWindow/FloatingWindowPortalContext";
-import { uploadChurchResource } from "../api/auth";
 import { useNativeFileDrop } from "../containers/Media/useNativeFileDrop";
-import { ProgressPopup } from "../containers/Media/components/ProgressPopup";
+import { TransferProgress } from "../components/TransferProgress/TransferProgress";
+import { useOptionalTransferActions, useOptionalTransfers } from "../context/transferContext";
 import type { ChurchResource } from "../types/churchResource";
+import SelectedUploadFileRow from "../components/SelectedUploadFileRow";
 
 type ResourceUploadStatus = "queued" | "uploading" | "complete" | "error";
-type UploadStatus = "idle" | "uploading" | "ready" | "error";
 
 type PendingResource = {
   file: File;
   name: string;
   status: ResourceUploadStatus;
-  progress: number;
   error?: string;
 };
 
 type ResourceUploadDialogProps = {
   churchId: string;
   onResourcesUploaded: (resources: ChurchResource[]) => void;
+  triggerLabel?: string;
+  /** Expanded dialog visibility; minimized uploads continue while closed. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showTrigger?: boolean;
 };
 
 const controllerElement = () => document.getElementById("controller-main") || document.body;
 
-const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadDialogProps) => {
+const RESOURCE_UPLOAD_ACCEPT = [
+  ".pdf", ".txt", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".mp3", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif",
+  "application/pdf", "text/plain", "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "audio/mpeg", "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+].join(",");
+const RESOURCE_UPLOAD_EXTENSIONS = new Set([
+  "pdf", "txt", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "mp3", "jpg", "jpeg", "png", "gif", "webp", "avif",
+]);
+const RESOURCE_UPLOAD_TYPES = new Set([
+  "application/pdf", "text/plain", "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "audio/mpeg", "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+]);
+
+const isSupportedResourceFile = (file: File) => {
+  const extension = file.name.toLowerCase().split(".").pop() || "";
+  const contentType = file.type.toLowerCase();
+  return RESOURCE_UPLOAD_TYPES.has(contentType) || (
+    (!contentType || contentType === "application/octet-stream") && RESOURCE_UPLOAD_EXTENSIONS.has(extension)
+  );
+};
+
+const ResourceTransferProgress = ({ transferId, variant }: { transferId: string; variant: "card" | "compact" }) => {
+  const transferContext = useOptionalTransfers();
+  const transfer = transferContext?.transfers.find((item) => item.id === transferId);
+  return transfer ? <TransferProgress transfer={transfer} variant={variant} /> : null;
+};
+
+const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "Upload", open, onOpenChange, showTrigger = true }: ResourceUploadDialogProps) => {
   const overlayPortalContainer = useOverlayPortalContainer();
+  const transferContext = useOptionalTransferActions();
+  const transfersContext = useOptionalTransfers();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [isOpen, setIsOpen] = useState(false);
+  const [transferId, setTransferId] = useState<string | null>(null);
+  const listenerCleanupRef = useRef<(() => void) | null>(null);
+  const onResourcesUploadedRef = useRef(onResourcesUploaded);
+  onResourcesUploadedRef.current = onResourcesUploaded;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isOpen = open ?? internalOpen;
+  const setIsOpen = useCallback((nextOpen: boolean) => {
+    if (open === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  }, [open, onOpenChange]);
   const [isMinimized, setIsMinimized] = useState(false);
   const [isMinimizedToButton, setIsMinimizedToButton] = useState(false);
   const [files, setFiles] = useState<PendingResource[]>([]);
-  const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
-  const [overallProgress, setOverallProgress] = useState(0);
-  const [currentFileIndex, setCurrentFileIndex] = useState(0);
-  const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState("");
 
-  const isUploading = uploadStatus === "uploading";
-  const hasFailedFiles = files.some((file) => file.status === "error");
+  const transfer = transfersContext?.transfers.find((item) => item.id === transferId);
+  const isUploading = transfer?.status === "active";
+  const isRetryingExistingBatch = Boolean(
+    transferId && (transfer?.status === "failed" || transfer?.status === "partial"),
+  );
+  const isBatchLocked = isUploading || isRetryingExistingBatch;
+  const displayFiles = files.map((file, index) => {
+    const status = transfer?.files?.[index]?.status;
+    return {
+      ...file,
+      status: status === "complete" ? "complete" as const : status === "failed" ? "error" as const : status === "active" ? "uploading" as const : file.status,
+      error: transfer?.files?.[index]?.error || file.error,
+    };
+  });
+  const hasFailedFiles = displayFiles.some((file) => file.status === "error");
+  const uploadError = error || (hasFailedFiles ? transfer?.error?.message || "Some files failed to upload." : "");
+
+  useEffect(() => () => listenerCleanupRef.current?.(), []);
+  useEffect(() => {
+    if (!transferId || transfer?.status !== "complete") return;
+    setFiles([]);
+    setError("");
+    setIsMinimized(false);
+    setIsMinimizedToButton(false);
+    setIsOpen(false);
+    setTransferId(null);
+    listenerCleanupRef.current?.();
+    listenerCleanupRef.current = null;
+  }, [setIsOpen, transferId, transfer?.status]);
 
   const updateFile = useCallback((index: number, update: Partial<PendingResource>) => {
     setFiles((current) => current.map((file, fileIndex) => fileIndex === index ? { ...file, ...update } : file));
   }, []);
 
   const addFiles = useCallback((newFiles: File[]) => {
-    if (isUploading || newFiles.length === 0) return;
+    if (isBatchLocked || newFiles.length === 0) return;
+    const supportedFiles = newFiles.filter(isSupportedResourceFile);
+    const unsupportedFiles = newFiles.filter((file) => !isSupportedResourceFile(file));
+    if (unsupportedFiles.length) {
+      setError(`${unsupportedFiles.map((file) => file.name).join(", ")}: Choose a JPEG, PNG, GIF, WebP, AVIF, PDF, text, Office, or MP3 file.`);
+    } else {
+      setError("");
+    }
+    if (!supportedFiles.length) return;
     setFiles((current) => [
       ...current,
-      ...newFiles.map((file) => ({ file, name: file.name, status: "queued" as const, progress: 0 })),
+      ...supportedFiles.map((file) => ({ file, name: file.name, status: "queued" as const })),
     ]);
-    setError("");
-  }, [isUploading]);
+  }, [isBatchLocked]);
 
   const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
-    disabled: isUploading,
+    disabled: isBatchLocked,
     onFiles: addFiles,
   });
 
@@ -65,69 +143,37 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadD
     if (isUploading) return;
     setFiles([]);
     setError("");
-    setStatusMessage("");
-    setOverallProgress(0);
-    setUploadStatus("idle");
-    setCurrentFileIndex(0);
     setIsMinimized(false);
     setIsMinimizedToButton(false);
     setIsOpen(false);
+    listenerCleanupRef.current?.();
+    listenerCleanupRef.current = null;
+    setTransferId(null);
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  const handleUpload = async () => {
-    if (isUploading || files.length === 0) return;
-    setUploadStatus("uploading");
+  const handleUpload = () => {
+    if (isUploading) return;
+    if (hasFailedFiles && transferId) {
+      void transferContext?.runTransferAction(transferId, "retry-failed");
+      return;
+    }
+    if (files.length === 0 || !transferContext?.startResourceUpload) return;
+    const nextTransferId = `resource-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setTransferId(nextTransferId);
+    listenerCleanupRef.current?.();
+    listenerCleanupRef.current = transferContext.registerResourceUploadListener(
+      nextTransferId,
+      (resources) => onResourcesUploadedRef.current(resources),
+    );
     setError("");
     setIsMinimized(true);
-    const uploaded: ChurchResource[] = [];
-    let failed = 0;
-    let completedFiles = files.filter((file) => file.status === "complete").length;
-
-    for (let index = 0; index < files.length; index += 1) {
-      const pending = files[index];
-      if (pending.status === "complete") continue;
-      setCurrentFileIndex(index);
-      updateFile(index, { status: "uploading", progress: 0, error: undefined });
-      setStatusMessage(`Uploading ${index + 1}/${files.length}: ${pending.name}`);
-      const progressBase = completedFiles;
-      try {
-        const resource = await uploadChurchResource({
-          churchId,
-          file: pending.file,
-          name: pending.name,
-          onProgress: (progress) => {
-            updateFile(index, { progress });
-            setOverallProgress(((progressBase + progress / 100) / files.length) * 100);
-          },
-        });
-        uploaded.push(resource);
-        updateFile(index, { status: "complete", progress: 100 });
-        completedFiles += 1;
-        setOverallProgress((completedFiles / files.length) * 100);
-      } catch (uploadError) {
-        failed += 1;
-        updateFile(index, { status: "error", error: uploadError instanceof Error ? uploadError.message : "Upload failed" });
-      }
-    }
-
-    if (uploaded.length) onResourcesUploaded(uploaded);
-    if (failed) {
-      setUploadStatus("error");
-      setError(`${failed} ${failed === 1 ? "file" : "files"} failed to upload. Retry to try again.`);
-      setStatusMessage(`Upload complete. ${files.length - failed} succeeded, ${failed} failed.`);
-    } else {
-      setUploadStatus("ready");
-      setOverallProgress(100);
-      setStatusMessage(`All ${files.length} ${files.length === 1 ? "file" : "files"} uploaded.`);
-      setFiles([]);
-      setStatusMessage("");
-      setOverallProgress(0);
-      setUploadStatus("idle");
-      setIsMinimized(false);
-      setIsMinimizedToButton(false);
-      setIsOpen(false);
-    }
+    setIsOpen(false);
+    transferContext.startResourceUpload({
+      id: nextTransferId,
+      churchId,
+      files: files.map(({ file, name }) => ({ file, name })),
+    });
   };
 
   const updateName = (index: number, name: string) => updateFile(index, { name });
@@ -136,59 +182,71 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded }: ResourceUploadD
 
   return (
     <>
-      {isMinimized && !isMinimizedToButton ? createPortal(
-        <ProgressPopup
-          uploadStatus={uploadStatus}
-          overallProgress={overallProgress}
-          statusMessage={statusMessage}
-          currentFileIndex={currentFileIndex}
-          totalFiles={files.length}
-          onRestore={() => setIsMinimized(false)}
-          onMinimize={() => setIsMinimizedToButton(true)}
-        />,
+      {!isOpen && isMinimized && !isMinimizedToButton ? createPortal(
+        <div className="pointer-events-auto fixed bottom-1 right-4 z-10 min-w-[320px] max-w-[400px] rounded-lg border border-gray-600 bg-gray-800 p-4 shadow-2xl">
+          <div className="flex items-center justify-between gap-2">
+            <ResourceTransferProgress transferId={transferId || "resource-upload"} variant="compact" />
+            <div className="flex shrink-0 gap-1">
+              <Button variant="tertiary" onClick={() => { setIsMinimized(false); setIsOpen(true); }} aria-label="Restore resource upload">Restore</Button>
+              <Button variant="tertiary" onClick={() => setIsMinimizedToButton(true)} aria-label="Minimize resource upload to button">Minimize</Button>
+            </div>
+          </div>
+        </div>,
         overlayPortalContainer ?? controllerElement(),
       ) : null}
-      <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
-        {isUploading ? "Uploading..." : "Upload"}
-      </Button>
+      {showTrigger || (!isOpen && isMinimizedToButton) ? <Button type="button" variant="cta" svg={Upload} onClick={() => { setIsOpen(true); setIsMinimized(false); setIsMinimizedToButton(false); }}>
+        {isUploading ? "Uploading..." : triggerLabel}
+      </Button> : null}
       <Modal
-        isOpen={isOpen && !isMinimized && !isMinimizedToButton}
+        isOpen={isOpen}
         onClose={reset}
         title="Upload resources"
         size="md"
-        showCloseButton={!isUploading}
-        headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => setIsMinimized(true)} /> : undefined}
+        contentClassName="flex flex-col overflow-hidden"
+        busy={isUploading}
+        headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => { setIsMinimized(true); setIsMinimizedToButton(false); setIsOpen(false); }} /> : undefined}
       >
-        <div className="flex flex-col gap-4">
-          <input ref={inputRef} type="file" multiple aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />
-          <div {...fileDropHandlers} className={`relative flex flex-col items-center gap-2 rounded border border-dashed p-4 ${isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600"}`}>
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
+          <input ref={inputRef} type="file" multiple accept={RESOURCE_UPLOAD_ACCEPT} aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isBatchLocked} />
+          <div
+            {...fileDropHandlers}
+            role="group"
+            aria-label="Resource file drop zone"
+            className={[
+              "relative flex shrink-0 rounded border border-dashed transition-colors",
+              files.length > 0 ? "flex-row flex-wrap items-center justify-between gap-2 p-2" : "flex-col items-center gap-2 p-4",
+              isFileDragOver ? "border-cyan-400 bg-cyan-500/10" : "border-gray-600",
+            ].join(" ")}
+          >
             {isFileDragOver ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-cyan-950/80 text-sm font-semibold text-cyan-100">Drop files to add resources</div> : null}
-            <FileText className="size-8 text-cyan-300" aria-hidden />
-            <p className="text-sm text-gray-300">Choose one or more files, or drag them here.</p>
-            <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>Choose files</Button>
+            {files.length > 0 ? <p className="text-sm text-gray-300">{isRetryingExistingBatch ? "Retry uses this batch’s original files and names." : "Drop more files here"}</p> : <>
+              <Upload className="size-8 text-cyan-300" aria-hidden="true" />
+              <p className="text-sm text-gray-300">Drop files here or choose files</p>
+              <p className="text-xs text-gray-500">Images, documents, and MP3 audio</p>
+            </>}
+            <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isBatchLocked}>{files.length > 0 ? "Add files" : "Choose files"}</Button>
           </div>
-          <div className="max-h-64 space-y-2 overflow-y-auto">
-            {files.length === 0 ? <p className="text-center text-sm text-gray-500">No files selected.</p> : null}
-            {files.map((pending, index) => (
-              <div key={`${pending.file.name}-${index}`} className="rounded border border-gray-700 bg-gray-950/40 p-3">
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    {!isUploading ? <input aria-label={`Resource name for ${pending.file.name}`} value={pending.name} onChange={(event) => updateName(index, event.target.value)} className="w-full truncate rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-gray-100" /> : <p className="truncate text-sm text-gray-100">{pending.name}</p>}
-                    <p className="truncate text-xs text-gray-500">Source: {pending.file.name} - {(pending.file.size / 1024 / 1024).toFixed(2)} MB</p>
-                  </div>
-                  {!isUploading ? <div className="flex shrink-0 gap-1"><Button type="button" variant="tertiary" svg={Trash2} aria-label={`Remove ${pending.file.name}`} onClick={() => removeFile(index)} /></div> : null}
-                </div>
-                {pending.status === "uploading" ? <div className="mt-2 h-1.5 rounded bg-gray-700"><div className="h-1.5 rounded bg-cyan-500" style={{ width: `${pending.progress}%` }} /></div> : null}
-                {pending.status === "complete" ? <p className="mt-1 text-xs text-green-300">Complete</p> : null}
-                {pending.status === "error" ? <p className="mt-1 text-xs text-red-300">{pending.error || "Upload failed"}</p> : null}
-              </div>
-            ))}
-          </div>
-          {error ? <p className="text-sm text-red-300" role="alert">{error}</p> : null}
-          {uploadStatus !== "idle" ? <p className="text-sm text-gray-300" role="status">{statusMessage} ({Math.round(overallProgress)}%)</p> : null}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={reset} disabled={isUploading}>{uploadStatus === "ready" || uploadStatus === "error" ? "Done" : "Cancel"}</Button>
-            <Button type="button" variant="cta" svg={Upload} onClick={() => void handleUpload()} disabled={confirmDisabled}>{hasFailedFiles ? "Retry failed" : `Upload${files.length > 1 ? ` (${files.length} files)` : ""}`}</Button>
+          {displayFiles.length === 0 ? <p className="shrink-0 text-center text-sm text-gray-500">No files selected.</p> : (
+            <div role="region" aria-label="Selected resource files" tabIndex={0} className="min-h-0 max-h-[min(50vh,32rem)] flex-1 space-y-2 overflow-y-auto scrollbar-variable">
+              {displayFiles.map((pending, index) => (
+                <SelectedUploadFileRow
+                  key={pending.file.name + "-" + index}
+                  file={pending.file}
+                  displayName={pending.name}
+                  visualType={pending.file.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(pending.file.name) ? "image" : "file"}
+                  editable={!isBatchLocked}
+                  onRename={(name) => updateName(index, name)}
+                  onRemove={() => removeFile(index)}
+                  error={pending.error}
+                />
+              ))}
+            </div>
+          )}
+          {uploadError ? <p className="shrink-0 text-sm text-red-300" role="alert">{uploadError}</p> : null}
+          {transfer?.status === "active" ? <div className="shrink-0"><ResourceTransferProgress transferId={transferId || "resource-upload"} variant="card" /></div> : null}
+          <div className="flex shrink-0 justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={reset} disabled={isUploading}>{hasFailedFiles ? "Done" : "Cancel"}</Button>
+            <Button type="button" variant="cta" svg={Upload} onClick={handleUpload} disabled={confirmDisabled}>{hasFailedFiles ? "Retry failed" : files.length > 1 ? "Upload (" + files.length + " files)" : "Upload"}</Button>
           </div>
         </div>
       </Modal>

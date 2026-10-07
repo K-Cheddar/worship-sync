@@ -177,7 +177,7 @@ const ServicePlanRolePickerContent = (props: ServicePlanRolePickerContentProps) 
         placeholder="Search roles"
         aria-label="Search roles"
         className="w-full"
-        inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
+        inputClassName="h-8 min-h-0 max-md:min-h-0 bg-gray-950 text-sm"
         onKeyDown={(event) => event.stopPropagation()}
       />
       {!lockedTeamName ? (

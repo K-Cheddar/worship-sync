@@ -11,6 +11,10 @@ const microphones: ServicePlanMicrophone[] = [
 ];
 
 describe("ScheduleMicrophoneSelect", () => {
+  it("preserves the no-microphone label after a selected microphone leaves the catalog", () => {
+    render(<ScheduleMicrophoneSelect microphones={microphones} microphoneIds={["removed-mic"]} holdersByMicrophone={new Map()} slotKey="pos-lead::0" ariaLabel="Microphone for Lead" canEdit onChange={jest.fn()} />);
+    expect(screen.getByRole("combobox", { name: "Microphone for Lead" })).toHaveTextContent("No microphone");
+  });
   it("supports an IEM-only team without rendering a microphone picker", async () => {
     const onIemChange = jest.fn();
     const iems: ServiceEquipment[] = [{ id: "same-id", category: "iem", name: "IEM 3" }];
@@ -75,5 +79,8 @@ describe("ScheduleMicrophoneSelect", () => {
     expect(
       screen.getByRole("combobox", { name: /Microphone for Lead/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: /Microphone for Lead/i }),
+    ).toHaveClass("max-md:min-h-[2rem]", "max-md:text-sm");
   });
 });

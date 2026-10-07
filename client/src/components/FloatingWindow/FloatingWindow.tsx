@@ -56,6 +56,7 @@ interface FloatingWindowProps {
   label?: string;
   children: React.ReactNode;
   onClose: () => void;
+  onCloseRequested?: () => void;
   defaultPosition?: { x: number; y: number };
   defaultWidth?: number;
   defaultHeight?: number;
@@ -66,6 +67,8 @@ interface FloatingWindowProps {
   contentClassName?: string;
   className?: string;
   initiallyMinimized?: boolean;
+  /** Compact actions displayed beside restore/close while minimized. */
+  minimizedActions?: React.ReactNode;
 }
 
 /**
@@ -94,6 +97,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       label,
       children,
       onClose,
+      onCloseRequested,
       defaultPosition,
       defaultWidth = 400,
       defaultHeight = 300,
@@ -102,6 +106,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       contentClassName,
       className,
       initiallyMinimized = false,
+      minimizedActions,
     },
     ref,
   ) {
@@ -273,9 +278,10 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
 
     const handleClose = useCallback(() => {
       clearAnimTimer();
+      onCloseRequested?.();
       setPhase("closing");
       animTimerRef.current = setTimeout(() => onClose(), ANIM_MS);
-    }, [onClose]);
+    }, [onClose, onCloseRequested]);
 
     useEffect(() => () => clearAnimTimer(), []);
 
@@ -685,7 +691,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
       position: "fixed",
       left: position.x,
       top: resolvedTop,
-      width: isMinimized ? Math.min(228, window.innerWidth) : size.width,
+      width: isMinimized ? Math.min(minimizedActions ? 300 : 228, window.innerWidth) : size.width,
       maxWidth: "100vw",
       // Cap content growth and fixed heights to the viewport; autoHeight also
       // keeps its content max when that is smaller than the viewport.
@@ -734,10 +740,22 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           <div
             onMouseDown={handleTitleMouseDown}
             onTouchStart={handleTitleTouchStart}
-            className="relative z-20 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing"
+            className={cn(
+              "relative z-20 flex shrink-0 cursor-grab items-center justify-between gap-2 bg-gray-700 px-3 py-2 select-none active:cursor-grabbing",
+              isMinimized && minimizedActions && "h-10 py-1",
+            )}
           >
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{title}</span>
             <div className="flex shrink-0 items-center gap-1">
+              {isMinimized && minimizedActions ? (
+                <div
+                  className="flex items-center gap-1"
+                  onMouseDown={stopTitleControlGesture}
+                  onTouchStart={stopTitleControlGesture}
+                >
+                  {minimizedActions}
+                </div>
+              ) : null}
               <Button
                 variant="tertiary"
                 svg={isMinimized ? Maximize2 : Minus}
@@ -762,7 +780,7 @@ const FloatingWindow = forwardRef<FloatingWindowHandle, FloatingWindowProps>(
           </div>
 
           {/* Content — animates in/out independently for minimize/restore */}
-          <div style={contentStyle} className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", contentHidden && "pointer-events-none")}>
+          <div style={contentStyle} aria-hidden={contentHidden} inert={contentHidden} className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", contentHidden && "pointer-events-none")}>
             <div
               className={cn(
                 "min-h-0 flex-1 overflow-y-auto p-3 scrollbar-variable",

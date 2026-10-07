@@ -225,7 +225,7 @@ test("team and name filters compose, and selection survives filter changes", asy
   expect(screen.getByRole("checkbox", { name: "Terry Taylor" })).toBeDisabled();
 });
 
-test("changing recipients closes confirmation and invalidates the reviewed batch", async () => {
+test("changing recipients after cancelling confirmation invalidates the reviewed batch", async () => {
   const user = userEvent.setup();
   mockPrepare.mockResolvedValue({ success: true, batch });
   render(<TeamsMessagesPage />);
@@ -236,6 +236,7 @@ test("changing recipients closes confirmation and invalidates the reviewed batch
   expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Send 1 message" }));
   expect(screen.getByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
   expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();

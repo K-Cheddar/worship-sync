@@ -16,7 +16,6 @@ import Button from "../Button/Button";
 import DisplayWindow from "../DisplayWindow/DisplayWindow";
 import { useMemo } from "react";
 import { mergeStoredPresentationWithLiveOverlay } from "../../utils/quickLinkOverlayPresentation";
-import cn from "classnames";
 
 type QuickLinkProps = QuickLinkType & {
   /** Display this link acts on; the tile that renders it supplies this. */
@@ -27,6 +26,18 @@ type QuickLinkProps = QuickLinkType & {
   onAction?: () => void;
   compact?: boolean;
 };
+
+const QUICK_LINK_TILE_BASE_CLASS =
+  "flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 h-fit";
+export const COMPACT_QUICK_LINK_TILE_CLASS =
+  `${QUICK_LINK_TILE_BASE_CLASS} border border-gray-500`;
+const STANDARD_QUICK_LINK_TILE_CLASS =
+  `${QUICK_LINK_TILE_BASE_CLASS} border-2 border-gray-500`;
+
+export const COMPACT_QUICK_LINK_LABEL_CLASS =
+  "text-center font-semibold whitespace-break-spaces w-full line-clamp-2 px-0.5 leading-tight";
+export const COMPACT_QUICK_LINK_LABEL_FONT_SIZE =
+  "clamp(0.45rem, 0.55vw, 0.65rem)";
 
 const QuickLink = ({
   label,
@@ -130,10 +141,9 @@ const QuickLink = ({
   return (
     <li
       data-quick-link-tile={compact ? "true" : undefined}
-      className={cn(
-        "flex flex-col hover:bg-gray-500 cursor-pointer rounded items-center p-0 border-2 border-gray-500 h-fit",
-        compact && "border border-gray-500",
-      )}
+      className={
+        compact ? COMPACT_QUICK_LINK_TILE_CLASS : STANDARD_QUICK_LINK_TILE_CLASS
+      }
     >
       <Button
         onClick={handleClick}
@@ -159,11 +169,16 @@ const QuickLink = ({
           />
         )}
         <p
-          className={cn(
-            "text-center font-semibold whitespace-break-spaces w-full overflow-clip text-ellipsis max-h-10",
-            compact && "px-0.5 leading-tight",
-          )}
-          style={{ fontSize: compact ? "clamp(0.45rem, 0.55vw, 0.65rem)" : "clamp(0.5rem, 0.6vw, 0.7rem)" }}
+          className={
+            compact
+              ? COMPACT_QUICK_LINK_LABEL_CLASS
+              : "text-center font-semibold whitespace-break-spaces w-full max-h-10 overflow-clip text-ellipsis"
+          }
+          style={{
+            fontSize: compact
+              ? COMPACT_QUICK_LINK_LABEL_FONT_SIZE
+              : "clamp(0.5rem, 0.6vw, 0.7rem)",
+          }}
         >
           {label}
         </p>

@@ -1,6 +1,6 @@
 import { Option } from "../../types";
 import cn from "classnames";
-import { Fragment, useId, useMemo } from "react";
+import { Fragment, useId, useMemo, type AriaAttributes, type ReactNode } from "react";
 import Label from "@/components/ui/Label";
 import {
   Select as RadixSelect,
@@ -46,7 +46,7 @@ const toOptionSections = (options: Option[]): OptionSection[] =>
   }, []);
 
 const renderOption = (option: Option) => (
-  <SelectItem key={option.value} value={toRadixValue(option.value)}>
+  <SelectItem key={option.value} value={toRadixValue(option.value)} textValue={option.textValue} disabled={option.disabled}>
     {option.className ? (
       <span className={option.className}>{option.label}</span>
     ) : (
@@ -55,13 +55,15 @@ const renderOption = (option: Option) => (
   </SelectItem>
 );
 
-export type SelectProps = {
+export type SelectProps = Pick<AriaAttributes, "aria-label" | "aria-labelledby" | "aria-describedby"> & {
   options: Option[];
   className?: string;
   value: string;
   onChange: (value: string) => void;
   /** Optional text to show in the trigger for the selected option. */
-  selectedValueLabel?: string;
+  selectedValueLabel?: ReactNode;
+  placeholder?: string;
+  size?: "sm" | "default";
   label?: string;
   /** `stacked`: label above the field (default). `inline`: label to the left of the field. */
   labelLayout?: SelectLabelLayout;
@@ -92,6 +94,8 @@ const Select = ({
   value,
   onChange,
   selectedValueLabel,
+  placeholder = "Select...",
+  size = "default",
   label,
   labelLayout = "stacked",
   hideLabel = false,
@@ -112,6 +116,9 @@ const Select = ({
   onOpenChange,
   required = false,
   ariaInvalid = false,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
+  "aria-describedby": ariaDescribedBy,
   ...rest
 }: SelectProps) => {
   const generatedId = useId();
@@ -161,12 +168,16 @@ const Select = ({
       >
         <SelectTrigger
           id={id}
+          size={size}
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledBy}
+          aria-describedby={ariaDescribedBy}
           aria-required={required}
           aria-invalid={ariaInvalid}
           className={cn(backgroundColor, selectClassName, textColor)}
           chevronColor={chevronColor}
         >
-          <SelectValue placeholder="Select...">{selectedValueLabel}</SelectValue>
+          <SelectValue placeholder={placeholder}>{selectedValueLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent
           className={contentClassName}

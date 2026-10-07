@@ -32,6 +32,8 @@ import { ChatProvider } from "./chat/ChatContext";
 import ChatWindowHost from "./chat/ChatWindowHost";
 import { useDocumentPageTitle } from "./hooks/useDocumentPageTitle";
 import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
+import { RehearsalPlaybackProvider } from "./components/RehearsalPlayer/RehearsalPlaybackContext";
+import RehearsalPlayerHost from "./components/RehearsalPlayer/RehearsalPlayerHost";
 
 /**
  * Route-level code splitting.
@@ -565,16 +567,19 @@ const App: React.FC = () => {
             </Suspense>
           ) : (
             <FloatingWindowZIndexProvider>
-              <ToastProvider>
-                <ChatProvider>
-                  <RoutePersistence />
-                  <DisplayOutputsSync />
-                  <ControllerProfilesSync />
-                  <TimerManager />
-                  <AppRoutes />
-                  <ChatWindowHost />
-                </ChatProvider>
-              </ToastProvider>
+              <RehearsalPlaybackProvider>
+                <ToastProvider>
+                  <ChatProvider>
+                    <RoutePersistence />
+                    <DisplayOutputsSync />
+                    <ControllerProfilesSync />
+                    <TimerManager />
+                    <AppRoutes />
+                    <ChatWindowHost />
+                    <RehearsalPlayerHost />
+                  </ChatProvider>
+                </ToastProvider>
+              </RehearsalPlaybackProvider>
             </FloatingWindowZIndexProvider>
           )}
         </GlobalInfoProvider>

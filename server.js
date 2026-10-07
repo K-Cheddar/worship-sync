@@ -114,6 +114,7 @@ import {
   createChatImageUploadGuard,
 } from "./server/chatImageUploadGuard.js";
 import { resolveMinimumSupportedWebVersion } from "./server/webUpdatePolicy.js";
+import { readReleaseNotes } from "./server/releaseNotes.js";
 
 const packageJson = JSON.parse(readFileSync("./package.json", "utf8"));
 
@@ -408,6 +409,7 @@ const getChurchResourceHandlers = () => {
       setDoc,
       storageFactory: () => createChurchResourceStorage(),
       quota: churchStorageQuota,
+      externalResourceService,
     });
   }
   return churchResourceHandlers;
@@ -935,6 +937,7 @@ canvaService = createCanvaService({
 
 const providerStorageService = createProviderStorageService({
   cloudinaryClient: cloudinary,
+  cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET,
   getMuxClient: () => mux,
   storageQuota: churchStorageQuota,
 });
@@ -1352,6 +1355,12 @@ app.get(
   (req, res) => getChurchResourceHandlers().get(req, res),
 );
 app.post(
+  "/api/churches/:churchId/resources/external",
+  requireChurchResourceEditAccess,
+  requireMutationCsrf,
+  (req, res) => getChurchResourceHandlers().createExternal(req, res),
+);
+app.post(
   "/api/churches/:churchId/resources/upload",
   requireChurchResourceEditAccess,
   requireMutationCsrf,
@@ -1655,6 +1664,14 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/assignments",
   authHandlers.updateTeamScheduleAssignment,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/guests/update",
+  authHandlers.updateTeamScheduleGuest,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/guests/remove",
+  authHandlers.removeTeamScheduleGuest,
 );
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/assignments/batch",
@@ -3703,6 +3720,16 @@ app.get("/api/changelog", async (req, res) => {
   }
 });
 
+app.get("/api/release-notes", async (req, res) => {
+  try {
+    const notes = await readReleaseNotes(path.join(dirname, "release-notes"));
+    res.json({ notes });
+  } catch (error) {
+    console.error("Error reading release notes:", error);
+    res.status(500).json({ error: "Failed to load release notes" });
+  }
+});
+
 app.use(
   "/api/churches/:churchId/media-storage",
   requireAppSession,
@@ -3713,12 +3740,49 @@ app.use(
       : res.status(403).json({ error: "That church is not available." }),
 );
 app.post(
+  "/api/churches/:churchId/media-storage/cloudinary/uploads",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.createCloudinaryImageUpload({
+        churchId: req.params.churchId,
+        mediaId: req.body?.mediaId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not create the image upload.",
+        ...(error?.code ? { code: error.code } : {}),
+        ...(error?.provider ? { provider: error.provider } : {}),
+      });
+    }
+  },
+);
+app.post(
+  "/api/churches/:churchId/media-storage/cloudinary/uploads/:uploadId/cancel",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.cancelCloudinaryUpload({
+        churchId: req.params.churchId,
+        uploadId: req.params.uploadId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not clean up the image upload.",
+        ...(error?.code ? { code: error.code } : {}),
+        ...(error?.provider ? { provider: error.provider } : {}),
+      });
+    }
+  },
+);
+app.post(
   "/api/churches/:churchId/media-storage/cloudinary/commit",
   requireMutationCsrf,
   async (req, res) => {
     try {
       const asset = await providerStorageService.commitCloudinaryImage({
         churchId: req.params.churchId,
+        uploadId: req.body?.uploadId,
         publicId: req.body?.publicId,
       });
       res.json({ asset });
@@ -3772,6 +3836,22 @@ app.post(
     } catch (error) {
       res.status(error?.statusCode || 500).json({
         error: error?.message || "Could not create the video upload.",
+      });
+    }
+  },
+);
+app.post(
+  "/api/churches/:churchId/mux/uploads/:uploadId/cancel",
+  requireMutationCsrf,
+  async (req, res) => {
+    try {
+      res.json(await providerStorageService.cancelMuxUpload({
+        churchId: req.params.churchId,
+        uploadId: req.params.uploadId,
+      }));
+    } catch (error) {
+      res.status(error?.statusCode || 500).json({
+        error: error?.message || "Could not cancel the video upload.",
       });
     }
   },

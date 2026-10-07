@@ -1,3 +1,4 @@
+import Checkbox from "../../components/Checkbox/Checkbox";
 import {
   useRef,
   useContext,
@@ -849,13 +850,12 @@ const Bible = () => {
                   key={row.id}
                   className="flex flex-wrap items-start gap-3 px-3 py-3"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     aria-label={`Select ${row.book} ${row.chapter}:${row.verseRange}`}
                     className="mt-1 h-4 w-4 shrink-0 accent-cyan-400"
                     checked={selectedBulkRowIds.has(row.id)}
                     disabled={!isReady || isAdded || isAddingBulkRows}
-                    onChange={() => toggleBulkRowSelection(row.id)}
+                    onCheckedChange={() => toggleBulkRowSelection(row.id)}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">

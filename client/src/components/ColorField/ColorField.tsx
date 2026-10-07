@@ -1,7 +1,7 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ChurchBrandColor } from "../../api/authTypes";
 import { OverlayFormatting } from "../../types";
-import PopOver from "../PopOver/PopOver";
+import PopoverPanel from "../PopOver/PopoverPanel";
 import Button from "../Button/Button";
 import { HexAlphaColorPicker, HexColorInput, HexColorPicker } from "react-colorful";
 import cn from "classnames";
@@ -141,6 +141,7 @@ type BrandAwareColorPickerProps = {
   colors: ChurchBrandColor[];
   alpha?: boolean;
   hexInputLabel?: string;
+  onHexInputBlur?: () => void;
 };
 
 export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
@@ -149,6 +150,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
   colors,
   alpha = false,
   hexInputLabel,
+  onHexInputBlur,
 }) => {
   const PickerComponent = alpha ? HexAlphaColorPicker : HexColorPicker;
   const inputProps = alpha ? { alpha: true } : {};
@@ -220,6 +222,7 @@ export const BrandAwareColorPicker: React.FC<BrandAwareColorPickerProps> = ({
             color={color}
             prefixed
             onChange={handlePickerChange}
+            onBlur={onHexInputBlur}
             className="mt-3 h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-2 text-sm font-medium text-neutral-100 placeholder:text-neutral-400"
             {...inputProps}
             aria-label={hexInputLabel}
@@ -328,11 +331,19 @@ export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
     }, debounceParentCommitMs);
   };
 
+  const commitPendingColor = () => {
+    const pendingColor = pendingColorRef.current;
+    if (pendingColor === null) return;
+    clearCommitTimer();
+    pendingColorRef.current = null;
+    onChangeRef.current(pendingColor);
+  };
+
   const effectiveColor = debounceParentCommitMs ? draftColor : value;
   const contrastColor = getContrastingTextColor(effectiveColor);
 
   return (
-    <PopOver
+    <PopoverPanel
       align="start"
       contentClassName="w-[min(28rem,calc(100vw-2rem))]"
       bodyClassName="px-3 pb-3"
@@ -359,11 +370,12 @@ export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
       <BrandAwareColorPicker
         color={effectiveColor}
         onChange={handleColorChange}
+        onHexInputBlur={commitPendingColor}
         colors={brandColors}
         alpha={alpha}
         hexInputLabel={`${label} hex`}
       />
-    </PopOver>
+    </PopoverPanel>
   );
 };
 
@@ -435,7 +447,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           : label}
         :
       </label>
-      <PopOver
+      <PopoverPanel
         onOpenChange={onPopoverOpenChange}
         TriggeringButton={
           <Button
@@ -457,7 +469,7 @@ const ColorField: React.FC<ColorFieldProps> = ({
           colors={brandColors}
           alpha={alpha}
         />
-      </PopOver>
+      </PopoverPanel>
     </div>
   );
 };

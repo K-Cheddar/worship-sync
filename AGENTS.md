@@ -169,4 +169,6 @@ A change is ready only when it is correct, low-regression, understandable, respo
 
 ## Brand voice
 
-For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-visible copy, use `$brand-voice`.
+For labels, buttons, toasts, errors, empty states, onboarding, help text, and other user-facing copy, use `$brand-voice`.
+
+For meaningful user-visible changes, add or update a fragment under `release-notes/` following `release-notes/README.md` and use `$brand-voice`. Internal-only changes do not need release notes. Do not use `CHANGELOG.md` for product copy.

@@ -15,6 +15,39 @@ const parseCspDirectives = (csp: string) =>
   );
 
 describe("buildAppCspHeader", () => {
+  it.each([false, true])(
+    "allows Google Docs previews without widening other resource permissions (packaged: %s)",
+    (isPackaged) => {
+      const directives = parseCspDirectives(buildAppCspHeader(isPackaged));
+
+      expect(directives.get("frame-src")).toContain("https://docs.google.com");
+      expect(directives.get("frame-src")).not.toContain("https://*.google.com");
+      expect(directives.get("frame-src")).not.toContain("https:");
+      expect(directives.get("frame-src")).not.toContain("*");
+      const nonFrameSources = [...directives]
+        .filter(([name]) => name !== "frame-src")
+        .flatMap(([, sources]) => sources);
+      expect(nonFrameSources).not.toContain("https://docs.google.com");
+      expect(directives.get("default-src")).toEqual(["'self'"]);
+    },
+  );
+
+  it.each([false, true])(
+    "allows SharePoint frames without widening other resource permissions (packaged: %s)",
+    (isPackaged) => {
+      const directives = parseCspDirectives(buildAppCspHeader(isPackaged));
+
+      expect(directives.get("frame-src")).toContain("https://*.sharepoint.com");
+      expect(directives.get("frame-src")).not.toContain("https:");
+      expect(directives.get("frame-src")).not.toContain("*");
+      const nonFrameSources = [...directives]
+        .filter(([name]) => name !== "frame-src")
+        .flatMap(([, sources]) => sources);
+      expect(nonFrameSources).not.toContain("https://*.sharepoint.com");
+      expect(directives.get("default-src")).toEqual(["'self'"]);
+    },
+  );
+
   it("allows Canva-hosted images without allowing Canva scripts or connections", () => {
     const directives = parseCspDirectives(buildAppCspHeader(true));
 
@@ -50,6 +83,17 @@ describe("buildAppCspHeader", () => {
 });
 
 describe("index.html meta CSP", () => {
+  it("permits HTTPS SharePoint and Google Docs frames through the header and meta policy intersection", () => {
+    const html = readFileSync(join(__dirname, "../index.html"), "utf8");
+    const metaMatch = html.match(
+      /http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/,
+    );
+
+    expect(metaMatch).not.toBeNull();
+    const directives = parseCspDirectives(metaMatch?.[1] ?? "");
+    expect(directives.get("frame-src")).toContain("https:");
+  });
+
   it("allows Electron local media schemes so they are not blocked by CSP intersection", () => {
     const html = readFileSync(join(__dirname, "../index.html"), "utf8");
     const metaMatch = html.match(
@@ -102,6 +146,16 @@ describe("shouldAttachAppCsp", () => {
   });
 
   it.each([
+    {
+      url: "https://eliathahsdachurch-my.sharepoint.com/",
+      resourceType: "subFrame",
+      isPackaged: false,
+    },
+    {
+      url: "https://eliathahsdachurch-my.sharepoint.com/",
+      resourceType: "subFrame",
+      isPackaged: true,
+    },
     {
       url: "https://www.youtube-nocookie.com/embed/M7lc1UVf-VE",
       resourceType: "subFrame",

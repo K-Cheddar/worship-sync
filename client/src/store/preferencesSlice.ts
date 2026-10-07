@@ -6,7 +6,8 @@ import {
   ScrollbarWidth,
   Presentation,
   QuickLinkType,
-  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  isControllerMediaRouteFoldersDocId,
+  getControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   PreferencesClusterRemoteDoc,
@@ -82,6 +83,8 @@ type PreferencesState = {
   overlayCreditsSettingsDrawerOpen: boolean;
   /** Last-selected media library folder per controller route; `null` = All media */
   mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>>;
+  mediaRouteFoldersControllerProfileId: string | null;
+  pendingMediaRouteFolderKeys: Partial<Record<MediaRouteKey, boolean>>;
   /** Controller toolbar: last configuration sub-page visited (local only; not persisted). */
   lastControllerConfigurationRoute: ControllerConfigurationRoute;
   /** Media item to scroll to and select in the media panel (local only; not persisted). */
@@ -155,6 +158,8 @@ const initialState: PreferencesState = {
   overlayControllerPanel: "overlays",
   overlayCreditsSettingsDrawerOpen: false,
   mediaRouteFolders: {},
+  mediaRouteFoldersControllerProfileId: null,
+  pendingMediaRouteFolderKeys: {},
   lastControllerConfigurationRoute: "/controller/preferences",
   focusMediaId: null,
   requestOpenMediaPanel: false,
@@ -317,23 +322,67 @@ export const preferencesSlice = createSlice({
 
     setMediaRouteFolder: (
       state,
-      action: PayloadAction<{ key: MediaRouteKey; folderId: string | null }>,
+      action: PayloadAction<{ controllerProfileId: string; key: MediaRouteKey; folderId: string | null }>,
     ) => {
+      if (state.mediaRouteFoldersControllerProfileId !== action.payload.controllerProfileId) return;
       state.mediaRouteFolders = {
         ...state.mediaRouteFolders,
         [action.payload.key]: action.payload.folderId,
       };
+      state.pendingMediaRouteFolderKeys[action.payload.key] = true;
+    },
+
+    initiateMediaRouteFolders: (
+      state,
+      action: PayloadAction<{ controllerProfileId: string; mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>> }>,
+    ) => {
+      const sameController = state.mediaRouteFoldersControllerProfileId === action.payload.controllerProfileId;
+      state.mediaRouteFoldersControllerProfileId = action.payload.controllerProfileId;
+      if (!sameController) state.pendingMediaRouteFolderKeys = {};
+      const incoming = migrateLegacyMediaRouteFolders(action.payload.mediaRouteFolders ?? {});
+      state.mediaRouteFolders = sameController
+        ? { ...incoming, ...state.mediaRouteFolders }
+        : incoming;
+    },
+
+    updateControllerMediaRouteFoldersFromRemote: (
+      state,
+      action: PayloadAction<{ controllerProfileId: string; mediaRouteFolders: Partial<Record<MediaRouteKey, string | null>> }>,
+    ) => {
+      if (state.mediaRouteFoldersControllerProfileId !== action.payload.controllerProfileId) return;
+      const incoming = migrateLegacyMediaRouteFolders(action.payload.mediaRouteFolders ?? {});
+      for (const [key, pending] of Object.entries(state.pendingMediaRouteFolderKeys)) {
+        if (pending) incoming[key as MediaRouteKey] = state.mediaRouteFolders[key as MediaRouteKey];
+      }
+      state.mediaRouteFolders = incoming;
+    },
+
+    markMediaRouteFolderPersisted: (
+      state,
+      action: PayloadAction<{ controllerProfileId: string; key: MediaRouteKey; folderId: string | null }>,
+    ) => {
+      if (state.mediaRouteFoldersControllerProfileId !== action.payload.controllerProfileId) return;
+      if (state.mediaRouteFolders[action.payload.key] === action.payload.folderId) {
+        delete state.pendingMediaRouteFolderKeys[action.payload.key];
+      }
+    },
+
+    repairActiveMediaRouteFolders: (
+      state,
+      action: PayloadAction<{ controllerProfileId: string; repairs: Partial<Record<MediaRouteKey, string | null>> }>,
+    ) => {
+      if (state.mediaRouteFoldersControllerProfileId !== action.payload.controllerProfileId) return;
+      state.mediaRouteFolders = { ...state.mediaRouteFolders, ...action.payload.repairs };
     },
 
     initiatePreferences: (
       state,
       action: PayloadAction<{
-        preferences: PreferencesType;
-        isMusic: boolean;
-        mediaRouteFolders?: Partial<Record<MediaRouteKey, string | null>>;
+      preferences: PreferencesType;
+      isMusic: boolean;
       }>,
     ) => {
-      const { preferences, isMusic, mediaRouteFolders } = action.payload;
+      const { preferences, isMusic } = action.payload;
 
       state.preferences = {
         defaultSongBackground: {
@@ -427,9 +476,6 @@ export const preferencesSlice = createSlice({
       state.shouldShowItemEditor = preferences.defaultShouldShowItemEditor;
       state.isMediaExpanded = preferences.defaultIsMediaExpanded;
       state.bibleFontMode = preferences.defaultBibleFontMode;
-      state.mediaRouteFolders = migrateLegacyMediaRouteFolders(
-        mediaRouteFolders ?? {},
-      );
     },
 
     updatePreferencesFromRemote: (
@@ -437,14 +483,14 @@ export const preferencesSlice = createSlice({
       action: PayloadAction<PreferencesClusterRemoteDoc>,
     ) => {
       const d = action.payload;
-      if (d._id === PREFERENCES_POUCH_ID) {
+      if (d._id === PREFERENCES_POUCH_ID && "preferences" in d) {
         state.preferences = {
           ...state.preferences,
           ...d.preferences,
         };
-      } else if (d._id === QUICK_LINKS_POUCH_ID) {
+      } else if (d._id === QUICK_LINKS_POUCH_ID && "quickLinks" in d) {
         state.quickLinks = d.quickLinks;
-      } else if (d._id === MONITOR_SETTINGS_POUCH_ID) {
+      } else if (d._id === MONITOR_SETTINGS_POUCH_ID && "monitorSettings" in d) {
         state.monitorSettings = {
           showClock:
             d.monitorSettings.showClock ??
@@ -464,10 +510,10 @@ export const preferencesSlice = createSlice({
           timerId:
             d.monitorSettings.timerId ?? initialState.monitorSettings.timerId,
         };
-      } else if (d._id === MEDIA_ROUTE_FOLDERS_POUCH_ID) {
-        state.mediaRouteFolders = migrateLegacyMediaRouteFolders(
-          d.mediaRouteFolders,
-        );
+      } else if (isControllerMediaRouteFoldersDocId(d._id) && "controllerProfileId" in d) {
+        if (d._id !== getControllerMediaRouteFoldersDocId(d.controllerProfileId)) return;
+        if (state.mediaRouteFoldersControllerProfileId !== d.controllerProfileId) return;
+        state.mediaRouteFolders = migrateLegacyMediaRouteFolders(d.mediaRouteFolders);
       }
     },
     replaceMediaReferencesInPreferences: (
@@ -703,6 +749,10 @@ export const {
   setMediaItems,
   setIsLoading,
   setSelectedPreference,
+  initiateMediaRouteFolders,
+  updateControllerMediaRouteFoldersFromRemote,
+  markMediaRouteFolderPersisted,
+  repairActiveMediaRouteFolders,
   setBibleFontMode,
   setScrollbarWidth,
   initiateMonitorSettings,

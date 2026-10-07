@@ -1,5 +1,6 @@
 import { mediaInfoType } from "../cloudinaryTypes";
 import { deleteCloudinaryAsset } from "../../../utils/cloudinaryUtils";
+import type { CloudinaryImageUploadIntent } from "../../../api/providerStorage";
 
 function requireNonEmptyString(value: unknown, fieldLabel: string): string {
   if (typeof value !== "string" || !value.trim()) {
@@ -46,24 +47,18 @@ export type CloudinaryUploadCallbacks = {
   setXhr?: (xhr: XMLHttpRequest) => void;
 };
 
-type CloudinaryUploadOptions = {
+export type CloudinaryUploadOptions = {
   folder?: string;
+  assetFolder?: string;
 };
 
-export const uploadImageToCloudinary = async (
+const uploadImageWithFormData = async (
   file: File,
-  uploadPreset: string,
-  cloudName: string,
+  formData: FormData,
+  uploadUrl: string,
   callbacks: CloudinaryUploadCallbacks = {},
-  options: CloudinaryUploadOptions = {},
+  expectedPublicId?: string,
 ): Promise<mediaInfoType> => {
-  // Create FormData for Cloudinary unsigned upload
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("upload_preset", uploadPreset);
-  formData.append("resource_type", "image");
-  if (options.folder) formData.append("folder", options.folder);
-
   // Upload to Cloudinary
   const xhr = new XMLHttpRequest();
   callbacks.setXhr?.(xhr);
@@ -81,23 +76,25 @@ export const uploadImageToCloudinary = async (
     });
 
     xhr.addEventListener("load", () => {
-      if (callbacks.isCancelled?.()) {
-        reject(new Error("Upload cancelled"));
-        return;
-      }
+      // A successful response can race cancellation. Parse its public ID so the
+      // caller can remove the provider asset before marking the job cancelled.
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
         try {
           const errorData = JSON.parse(xhr.responseText);
-          reject(
-            new Error(
-              errorData.error?.message ||
-                `Upload failed with status ${xhr.status}`,
-            ),
-          );
+          const error = new Error(
+            errorData.error?.message || `Upload failed with status ${xhr.status}`,
+          ) as Error & { status?: number; code?: string };
+          error.status = xhr.status;
+          if (typeof errorData.error?.code === "string") {
+            error.code = errorData.error.code;
+          }
+          reject(error);
         } catch {
-          reject(new Error(`Upload failed with status ${xhr.status}`));
+          const error = new Error(`Upload failed with status ${xhr.status}`) as Error & { status?: number };
+          error.status = xhr.status;
+          reject(error);
         }
       }
     });
@@ -114,10 +111,7 @@ export const uploadImageToCloudinary = async (
       reject(new Error("Upload cancelled"));
     });
 
-    xhr.open(
-      "POST",
-      `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-    );
+    xhr.open("POST", uploadUrl);
     xhr.send(formData);
   });
 
@@ -137,6 +131,9 @@ export const uploadImageToCloudinary = async (
   const body = response as Record<string, unknown>;
   const secureUrl = requireNonEmptyString(body.secure_url, "secure_url");
   const publicId = requireNonEmptyString(body.public_id, "public_id");
+  if (expectedPublicId && publicId !== expectedPublicId) {
+    throw new Error("Cloudinary returned an unexpected image ID.");
+  }
   const width = requirePositiveFiniteNumber(body.width, "width");
   const height = requirePositiveFiniteNumber(body.height, "height");
   const format = requireNonEmptyString(body.format, "format");
@@ -228,6 +225,46 @@ export const uploadImageToCloudinary = async (
   };
 
   return mediaInfo;
+};
+
+export const uploadImageToCloudinary = (
+  file: File,
+  uploadPreset: string,
+  cloudName: string,
+  callbacks: CloudinaryUploadCallbacks = {},
+  options: CloudinaryUploadOptions = {},
+): Promise<mediaInfoType> => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", uploadPreset);
+  formData.append("resource_type", "image");
+  if (options.folder) formData.append("folder", options.folder);
+  if (options.assetFolder) formData.append("asset_folder", options.assetFolder);
+  return uploadImageWithFormData(
+    file,
+    formData,
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+    callbacks,
+  );
+};
+
+export const uploadImageToCloudinarySigned = (
+  file: File,
+  intent: CloudinaryImageUploadIntent,
+  callbacks: CloudinaryUploadCallbacks = {},
+): Promise<mediaInfoType> => {
+  const formData = new FormData();
+  formData.append("file", file);
+  Object.entries(intent.fields).forEach(([key, value]) => {
+    formData.append(key, value);
+  });
+  return uploadImageWithFormData(
+    file,
+    formData,
+    intent.uploadUrl,
+    callbacks,
+    intent.publicId,
+  );
 };
 
 const CLOUDINARY_CLOUD_NAME = "portable-media";

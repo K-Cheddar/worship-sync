@@ -37,23 +37,26 @@ const ServicePlanConflictDialog = ({ conflicts, choices, onChoose, onApply, appl
             <h3 className="mb-2 text-sm font-semibold text-white">{conflict.label}</h3>
             <div className="grid gap-2 sm:grid-cols-2">
               {(["local", "remote"] as const).map((side) => (
-                <button
+                <Button
+                  variant="none"
+                  wrap
+                  disabled={applying}
                   key={side}
                   type="button"
                   aria-pressed={choices[conflict.path] === side}
                   onClick={() => onChoose(conflict.path, side)}
-                  className={`rounded-md border p-2 text-left ${choices[conflict.path] === side ? "border-cyan-500 bg-cyan-950/40" : "border-gray-700 bg-gray-900"}`}
+                  className={`block w-full rounded-md border p-2 text-left ${choices[conflict.path] === side ? "border-cyan-500 bg-cyan-950/40" : "border-gray-700 bg-gray-900"}`}
                 >
                   <span className="text-xs font-semibold uppercase text-gray-300">{side === "local" ? "Local" : "Remote"}</span>
                   <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words text-xs text-gray-100">{displayValue(side === "local" ? conflict.localValue : conflict.remoteValue)}</pre>
-                </button>
+                </Button>
               ))}
             </div>
           </section>
         ))}
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-700 pt-3">
-        <Button variant="tertiary" disabled={applying} onClick={onCancel}>Cancel</Button>
+        <Button variant="tertiary" onClick={onCancel}>Cancel</Button>
         <Button variant="tertiary" disabled={applying} onClick={onUseLatest}>Use latest and discard local changes</Button>
         <Button variant="cta" disabled={applying || conflicts.some(({ path }) => !choices[path])} onClick={onApply}>
           {applying ? "Checking latest…" : "Apply merged plan"}

@@ -6,11 +6,13 @@ import IntakeManager from "../managers/IntakeManager";
 import { useTeamsPage } from "../TeamsPageContext";
 import { isActive } from "../teamsUtils";
 import { getUpcomingServiceRange } from "../servicePeriodRange";
+import { serverDate } from "../../../utils/serverTime";
 
 const TeamsFormsPage = () => {
   const { pageData, upsertData, canEditTeams } = useTeamsPage();
-  const resolveUpcomingRange = useCallback(() => {
-    return getUpcomingServiceRange(pageData.services.filter(isActive));
+  const now = serverDate();
+  const resolveUpcomingRange = useCallback((referenceTime: Date) => {
+    return getUpcomingServiceRange(pageData.services.filter(isActive), referenceTime);
   }, [pageData.services]);
   const {
     preset: periodPreset,
@@ -18,8 +20,9 @@ const TeamsFormsPage = () => {
     selectPreset: selectPeriodPreset,
     selectCustomRange,
   } = useRangeSelection({
+    now,
     resolveUpcomingRange,
-    resolvePresetRange: (preset) => resolveRangePreset(preset),
+    resolvePresetRange: (preset, referenceTime) => resolveRangePreset(preset, referenceTime),
   });
   const visibleForms = useMemo(
     () => filterFormsByDateRange(pageData.intakeForms, {

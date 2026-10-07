@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import Modal from "../../components/Modal/Modal";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { getChurchResource, getChurchResourceUrl, listChurchResources } from "../../api/auth";
@@ -53,8 +54,8 @@ jest.mock("../../components/YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => 
 
 jest.mock("../../components/ContentPreview/ContentPreviewDialog", () => ({
   __esModule: true,
-  default: ({ resource }: { resource: { title?: string; url?: string } | null }) => resource ? (
-    <div role="dialog" aria-label="Content preview">{resource.title || resource.url}</div>
+  default: ({ resource, onClose }: { resource: { title?: string; url?: string } | null; onClose: () => void }) => resource ? (
+    <Modal isOpen onClose={onClose} title="Content preview" description="Preview resource" zIndexLevel={2}><div data-preview-url={resource.url}>{resource.title || resource.url}</div></Modal>
   ) : null,
 }));
 
@@ -431,6 +432,7 @@ describe("ServicePlanContentPanel resources", () => {
     await user.click(screen.getByRole("button", { name: "Preview file Service guide" }));
     expect(screen.getByRole("dialog", { name: "Content preview" })).toHaveTextContent("Service guide");
     expect(onUpdate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
 
     await user.click(screen.getByRole("button", { name: /^Service guide/ }));
     expect(onUpdate).toHaveBeenCalledWith({
@@ -439,6 +441,49 @@ describe("ServicePlanContentPanel resources", () => {
         data: { resourceId: "file-1" },
       })],
     });
+  });
+
+  it("previews an external ChurchResource through its original URL and stores only its ID", async () => {
+    const externalUrl = "https://docs.google.com/document/d/guide/edit";
+    mockListChurchResources.mockResolvedValue({
+      success: true,
+      resources: [{
+        id: "churchResource_external",
+        churchId: "church-1",
+        name: "External guide",
+        kind: "document",
+        sourceType: "external",
+        external: { url: externalUrl, provider: "google-drive", mediaType: "document" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "user-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "user-1",
+      }],
+    });
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+
+    render(
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ServicePlanContentPanel element={element()} allowEdit onUpdate={onUpdate} />
+      </GlobalInfoContext.Provider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add resource" }));
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    await user.click(await screen.findByRole("button", { name: "Preview file External guide" }));
+    expect(within(screen.getByRole("dialog", { name: "Content preview" })).getByText("External guide")).toHaveAttribute("data-preview-url", externalUrl);
+    expect(onUpdate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
+
+    await user.click(screen.getByRole("button", { name: /^External guide/ }));
+    expect(onUpdate).toHaveBeenCalledWith({
+      resources: [expect.objectContaining({
+        type: "document",
+        data: { resourceId: "churchResource_external" },
+      })],
+    });
+    expect(JSON.stringify(onUpdate.mock.calls.at(-1)?.[0])).not.toContain(externalUrl);
   });
 
   it("fetches only referenced ChurchResources and renders a referenced MP3 as audio", async () => {
@@ -493,6 +538,45 @@ describe("ServicePlanContentPanel resources", () => {
     });
   });
 
+  it("uses resolved external video metadata for the service-plan resource card and shared preview", async () => {
+    const externalUrl = "https://video.example.test/clip";
+    mockGetChurchResource.mockResolvedValue({
+      success: true,
+      resource: {
+        id: "churchResource_video",
+        churchId: "church-1",
+        name: "Service clip",
+        kind: "other",
+        sourceType: "external",
+        external: { url: externalUrl, provider: "direct", mediaType: "video" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "user-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        updatedBy: "user-1",
+      },
+    });
+    render(
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ServicePlanContentPanel
+          element={element({
+            resources: [{
+              id: "resource-ref-video",
+              type: "document",
+              title: "Church resource",
+              data: { resourceId: "churchResource_video" },
+            }],
+          })}
+          allowEdit={false}
+          onUpdate={jest.fn()}
+        />
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(await screen.findByText("Video")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getAllByRole("button", { name: "Preview Service clip" })[0]);
+    expect(within(screen.getByRole("dialog", { name: "Content preview" })).getByText("Service clip")).toHaveAttribute("data-preview-url", externalUrl);
+  });
+
   it("keeps legacy song and scripture attachments visible and detachable", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
@@ -519,6 +603,39 @@ describe("ServicePlanContentPanel resources", () => {
     expect(onUpdate).toHaveBeenCalledWith({ songRef: undefined, songRefs: [] });
     await user.click(screen.getByRole("button", { name: "Remove scripture John 3:16 (NIV)" }));
     expect(onUpdate).toHaveBeenCalledWith({ scriptureRef: undefined, scriptureRefs: [] });
+  });
+
+  it("dismisses the final imported pending song and stays empty after rerender", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    const importedElement = element({
+      type: "song",
+      sourceOccurrenceId: "source-occurrence-1",
+      sourceElementTypeRaw: "Song",
+      sourceContentTitleRaw: "Unmatched Song",
+      songRef: { kind: "pending", title: "Unmatched Song", lyricsText: "" },
+    });
+    const { rerender } = render(
+      <ServicePlanContentPanel element={importedElement} allowEdit onUpdate={onUpdate} />,
+    );
+
+    expect(screen.getByText("Not in library")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove song Unmatched Song" }));
+
+    const update = onUpdate.mock.calls[0][0];
+    expect(update).toMatchObject({
+      songRef: undefined,
+      songRefs: [],
+      sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedOccurrenceId: "source-occurrence-1",
+    });
+    expect(update.sourceSongReferenceDismissedFingerprint).toBeTruthy();
+    rerender(
+      <ServicePlanContentPanel element={{ ...importedElement, ...update }} allowEdit onUpdate={onUpdate} />,
+    );
+
+    expect(screen.queryByText("Not in library")).not.toBeInTheDocument();
+    expect(screen.getByText("No song attached.")).toBeInTheDocument();
   });
 
   it("attaches multiple custom documents by ordered id references and removes one", async () => {

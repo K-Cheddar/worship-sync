@@ -1306,6 +1306,59 @@ describe("HLSVideoPlayer", () => {
     expect(video.playbackRate).toBe(1);
   });
 
+  it("keeps the editor playhead when a live cue is removed and re-enables local transport", () => {
+    let currentTime = 0;
+    const setCurrentTime = jest.fn((value: number) => {
+      currentTime = value;
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: setCurrentTime,
+    });
+    const playback = {
+      mediaKey: "remote:video-1",
+      positionSeconds: 12,
+      paused: false,
+      atServerMs: 1_000_000,
+      generation: 4,
+      applySeek: true,
+    };
+    const { rerender } = render(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        playbackRole="preview"
+        transportRole="editor"
+        mediaKey="remote:video-1"
+        playback={playback}
+      />,
+    );
+    const video = screen.getByTestId("hls-video-player") as HTMLVideoElement;
+    fireEvent.loadedMetadata(video);
+    currentTime = 15;
+    setCurrentTime.mockClear();
+    const load = HTMLMediaElement.prototype.load as jest.Mock;
+    load.mockClear();
+
+    rerender(
+      <HLSPlayer
+        src="https://cdn.example.com/video.mp4"
+        playbackRole="preview"
+        transportRole="editor"
+        mediaKey="remote:video-1"
+        playback={undefined}
+      />,
+    );
+
+    expect(video.currentTime).toBe(15);
+    expect(setCurrentTime).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+
+    seekVideoPreview("remote:video-1", 18);
+    expect(video.currentTime).toBe(18);
+    expect(setCurrentTime).toHaveBeenCalledWith(18);
+  });
+
   it("keeps preview buffering/playback separate from editor transport commands", () => {
     render(
       <HLSPlayer
