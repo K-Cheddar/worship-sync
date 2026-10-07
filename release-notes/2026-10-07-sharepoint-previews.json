@@ -1,7 +1,0 @@
-{
-  "id": "2026-10-07-sharepoint-previews",
-  "date": "2026-10-07",
-  "type": "fixed",
-  "title": "SharePoint resource previews",
-  "description": "Public SharePoint files that allow downloads can preview in WorshipSync. Links that only allow viewing now show a clear message and remain available to open in SharePoint."
-}

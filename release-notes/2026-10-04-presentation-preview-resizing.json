@@ -1,7 +1,0 @@
-{
-  "id": "2026-10-04-presentation-preview-resizing",
-  "date": "2026-10-05",
-  "type": "fixed",
-  "title": "Quick Links stay compact as previews resize",
-  "description": "Presentation previews show more Quick Links in limited space and stay stable as you resize the controller."
-}

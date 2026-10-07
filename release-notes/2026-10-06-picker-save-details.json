@@ -1,7 +1,0 @@
-{
-  "id": "2026-10-06-picker-save-details",
-  "date": "2026-10-06",
-  "type": "fixed",
-  "title": "Keep selected share names and icon colors",
-  "description": "Saved screen and window inputs now keep the selected share name. Team icon colors also keep the value you set when you save."
-}
