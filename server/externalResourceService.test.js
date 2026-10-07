@@ -3,6 +3,7 @@ import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import {
   ExternalResourceError,
+  createSafeLookup,
   createExternalResourceProxyToken,
   createExternalResourceService,
   validateExternalResourceUrl,
@@ -10,6 +11,13 @@ import {
 } from "./externalResourceService.js";
 
 const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }];
+
+const callLookup = (lookup, hostname, options) => new Promise((resolve, reject) => {
+  lookup(hostname, options, (...args) => {
+    if (args[0]) reject(args[0]);
+    else resolve(args.slice(1));
+  });
+});
 
 const response = (status, headers = {}, data = null) => ({ status, headers, data });
 
@@ -441,6 +449,50 @@ test("rejects unsafe schemes, local hosts, private addresses, and unsafe redirec
     : response(200, { "content-type": "video/mp4" }));
   const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
   await assert.rejects(() => service.resolve("https://public.example.test/file"), ExternalResourceError);
+});
+
+test("safe DNS lookup follows Node's all and single-address callback contracts", async () => {
+  const safeLookup = createSafeLookup(async () => [
+    { address: "93.184.216.34", family: 4 },
+    { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+  ]);
+
+  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { all: true }), [[
+    { address: "93.184.216.34", family: 4 },
+    { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+  ]]);
+  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { all: false }), ["93.184.216.34", 4]);
+  assert.deepEqual(await callLookup(safeLookup, "public.example.test", {}), ["93.184.216.34", 4]);
+});
+
+test("safe DNS lookup selects only the requested address family", async () => {
+  const safeLookup = createSafeLookup(async () => [
+    { address: "93.184.216.34", family: 4 },
+    { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+  ]);
+
+  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { family: 4 }), ["93.184.216.34", 4]);
+  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { family: 6 }), ["2606:2800:220:1:248:1893:25c8:1946", 6]);
+  await assert.rejects(
+    () => callLookup(safeLookup, "public.example.test", { family: 5 }),
+    (error) => error.code === "ENOTFOUND" && error.hostname === "public.example.test",
+  );
+});
+
+test("safe DNS lookup rejects blocked records, including mixed public and blocked results", async () => {
+  for (const records of [
+    [{ address: "127.0.0.1", family: 4 }],
+    [
+      { address: "93.184.216.34", family: 4 },
+      { address: "169.254.169.254", family: 4 },
+    ],
+  ]) {
+    const safeLookup = createSafeLookup(async () => records);
+    await assert.rejects(
+      () => callLookup(safeLookup, "public.example.test", { all: true }),
+      (error) => error.code === "blocked_host",
+    );
+  }
 });
 
 test("proxy tokens are target-bound, signed, and expire", () => {
