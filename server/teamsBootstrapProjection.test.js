@@ -775,6 +775,15 @@ test("hidden ownership metadata without canonical roster links blocks rich membe
       },
     },
     {
+      name: "desired Position ownership",
+      overrides: {
+        teamMemberships: { worship: { teamId: "worship" } },
+        positionIds: ["position-worship"],
+        desiredPositionIds: ["position-av"],
+        qualifications: [],
+      },
+    },
+    {
       name: "qualification area ownership",
       overrides: {
         teamMemberships: { worship: { teamId: "worship" } },
@@ -821,5 +830,134 @@ test("hidden ownership metadata without canonical roster links blocks rich membe
       false,
       ownershipCase.name,
     );
+  }
+});
+
+test("desired Positions require their Team edit scope and stay hidden from read-only members", () => {
+  const member = makeMember("worship-av-interest", {
+    positionIds: ["position-worship"],
+    desiredPositionIds: ["position-av"],
+    teamMemberships: { worship: { teamId: "worship" } },
+    qualifications: [],
+    notes: "private member note",
+  });
+  const data = {
+    ...fullData(),
+    truncated: false,
+    members: [member],
+    teams: fullData().teams.map((team) =>
+      team.teamId === "worship"
+        ? { ...team, memberIds: [member.memberId] }
+        : team.teamId === "av"
+          ? { ...team, memberIds: [] }
+          : team,
+    ),
+  };
+  const worshipOnly = projectTeamsBootstrapForAccess({
+    data,
+    access: {
+      viewAll: false,
+      viewTeamIds: new Set(["worship"]),
+      editTeamIds: new Set(["worship"]),
+    },
+  });
+  const [safeMember] = worshipOnly.members;
+  assert.equal(safeMember.email, undefined);
+  assert.equal(safeMember.phoneNumber, undefined);
+  assert.equal(safeMember.notes, undefined);
+  assert.equal(safeMember.desiredPositionIds, undefined);
+  assert.deepEqual(safeMember.positionIds, ["position-worship"]);
+  assert.equal(worshipOnly.editableMemberIds.includes(member.memberId), false);
+
+  const bothTeams = projectTeamsBootstrapForAccess({
+    data,
+    access: {
+      viewAll: false,
+      viewTeamIds: new Set(["worship", "av"]),
+      editTeamIds: new Set(["worship", "av"]),
+    },
+  });
+  const [richMember] = bothTeams.members;
+  assert.ok(bothTeams.editableMemberIds.includes(member.memberId));
+  assert.deepEqual(richMember.desiredPositionIds, ["position-av"]);
+});
+
+test("malformed ownership containers and membership entries block rich projection", () => {
+  const malformedCases = [
+    { name: "positionIds", overrides: { positionIds: "bad" } },
+    { name: "desiredPositionIds", overrides: { desiredPositionIds: {} } },
+    { name: "qualifications", overrides: { qualifications: "bad" } },
+    { name: "teamMemberships array", overrides: { teamMemberships: [] } },
+    { name: "membership entry array", overrides: { teamMemberships: { worship: [] } } },
+    { name: "membership entry string", overrides: { teamMemberships: { worship: "bad" } } },
+  ];
+
+  for (const malformedCase of malformedCases) {
+    const member = makeWorshipOnlyMember(`malformed-${malformedCase.name}`);
+    Object.assign(member, malformedCase.overrides);
+    const projected = projectTeamsBootstrapForAccess({
+      data: {
+        ...source,
+        truncated: false,
+        members: [member],
+        teams: source.teams.map((team) =>
+          team.teamId === "worship"
+            ? { ...team, memberIds: [member.memberId] }
+            : team.teamId === "youth"
+              ? { ...team, memberIds: [] }
+              : team,
+        ),
+      },
+      access: {
+        viewAll: false,
+        viewTeamIds: new Set(["worship"]),
+        editTeamIds: new Set(["worship"]),
+      },
+    });
+    const [safeMember] = projected.members;
+    assert.equal(safeMember.email, undefined, malformedCase.name);
+    assert.equal(projected.editableMemberIds.includes(member.memberId), false, malformedCase.name);
+  }
+});
+
+test("foreign Position or Team records block rich member projection", () => {
+  for (const foreignOwner of ["position", "team"]) {
+    const member = makeWorshipOnlyMember(`foreign-${foreignOwner}`);
+    member.desiredPositionIds = ["foreign-position"];
+    const foreignTeam = {
+      teamId: "foreign-team",
+      churchId: "other-church",
+      memberIds: [],
+    };
+    const projected = projectTeamsBootstrapForAccess({
+      data: {
+        ...source,
+        truncated: false,
+        members: [member],
+        teams: [
+          ...source.teams.map((team) =>
+            team.teamId === "worship"
+              ? { ...team, memberIds: [member.memberId] }
+              : team,
+          ),
+          foreignTeam,
+        ],
+        positions: [
+          ...source.positions,
+          {
+            positionId: "foreign-position",
+            teamId: "foreign-team",
+            ...(foreignOwner === "position" ? { churchId: "other-church" } : {}),
+          },
+        ],
+      },
+      access: {
+        viewAll: false,
+        viewTeamIds: new Set(["worship"]),
+        editTeamIds: new Set(["worship", "foreign-team"]),
+      },
+    });
+    assert.equal(projected.editableMemberIds.includes(member.memberId), false, foreignOwner);
+    assert.equal(projected.members[0].email, undefined, foreignOwner);
   }
 });

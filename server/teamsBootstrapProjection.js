@@ -103,6 +103,11 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       .map((team) => team?.teamId || team?.id)
       .filter(Boolean),
   );
+  const sourceTeamById = new Map(
+    (Array.isArray(source.teams) ? source.teams : [])
+      .map((team) => [team?.teamId || team?.id, team])
+      .filter(([teamId]) => teamId),
+  );
   const allPositions = Array.isArray(source.positions) ? source.positions : [];
   const allPositionById = new Map(
     allPositions
@@ -167,8 +172,26 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
     // schedule/intake-only truncation suppresses scoped member editing. Keep
     // failing closed until per-collection completeness is available.
     let hasUnresolvedOwnership = source.truncated === true;
+    for (const field of [
+      "positionIds",
+      "desiredPositionIds",
+      "qualifications",
+    ]) {
+      if (member[field] !== undefined && !Array.isArray(member[field])) {
+        hasUnresolvedOwnership = true;
+      }
+    }
     const addKnownTeamOwnership = (teamId) => {
       if (!teamId || !sourceTeamIds.has(teamId)) {
+        hasUnresolvedOwnership = true;
+        return;
+      }
+      const ownerTeam = sourceTeamById.get(teamId);
+      if (
+        ownerTeam?.churchId !== undefined &&
+        member.churchId !== undefined &&
+        ownerTeam.churchId !== member.churchId
+      ) {
         hasUnresolvedOwnership = true;
         return;
       }
@@ -182,16 +205,31 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       hasUnresolvedOwnership = true;
     }
     for (const [teamId, membership] of Object.entries(member.teamMemberships || {})) {
+      if (!membership || typeof membership !== "object" || Array.isArray(membership)) {
+        hasUnresolvedOwnership = true;
+      }
       if (membership?.teamId && membership.teamId !== teamId) {
         hasUnresolvedOwnership = true;
       }
       addKnownTeamOwnership(teamId);
     }
-    for (const positionId of Array.isArray(member.positionIds)
-      ? member.positionIds
-      : []) {
+    const positionIds = new Set([
+      ...(Array.isArray(member.positionIds) ? member.positionIds : []),
+      ...(Array.isArray(member.desiredPositionIds)
+        ? member.desiredPositionIds
+        : []),
+    ]);
+    for (const positionId of positionIds) {
       const position = allPositionById.get(positionId);
       if (!position) {
+        hasUnresolvedOwnership = true;
+        continue;
+      }
+      if (
+        position.churchId !== undefined &&
+        member.churchId !== undefined &&
+        position.churchId !== member.churchId
+      ) {
         hasUnresolvedOwnership = true;
         continue;
       }

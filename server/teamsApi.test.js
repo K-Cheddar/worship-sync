@@ -15367,6 +15367,78 @@ test("scoped managers can mutate one Team roster without editing shared member r
   });
   assert.equal(allowedFullUpdate.statusCode, 200);
 
+  const desiredInterestId = `${fixture.churchId}_desired_av_interest`;
+  await setDoc(COLLECTIONS.teamRosterMembers, desiredInterestId, {
+    memberId: desiredInterestId, churchId: fixture.churchId,
+    firstName: "Kevin", lastName: "Interest", email: "kevin@example.test",
+    phoneNumber: "+15555550199", notes: "private note",
+    positionIds: [`${fixture.ids.worship}_position`],
+    desiredPositionIds: [avPositionId],
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
+    qualifications: [], blockoutDates: [],
+  }, { merge: false });
+  const worshipTeam = await getDoc(COLLECTIONS.teams, fixture.ids.worship);
+  await setDoc(COLLECTIONS.teams, fixture.ids.worship, {
+    memberIds: [...new Set([...(worshipTeam.memberIds || []), desiredInterestId])],
+  }, { merge: true });
+  const desiredInterestBody = {
+    firstName: "Kevin", lastName: "Interest", email: "kevin@example.test",
+    phoneNumber: "+15555550199", notes: "private note",
+    positionIds: [`${fixture.ids.worship}_position`],
+    desiredPositionIds: [avPositionId], blockoutDates: [],
+    teamIds: [fixture.ids.worship],
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
+    qualifications: [],
+  };
+  const worshipBootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context: manager });
+  const projectedInterest = worshipBootstrap.payload.members.find(
+    ({ memberId }) => memberId === desiredInterestId,
+  );
+  assert.ok(projectedInterest);
+  assert.equal(projectedInterest.email, undefined);
+  assert.equal(projectedInterest.phoneNumber, undefined);
+  assert.equal(projectedInterest.notes, undefined);
+  assert.equal(projectedInterest.desiredPositionIds, undefined);
+  assert.equal(worshipBootstrap.payload.editableMemberIds.includes(desiredInterestId), false);
+
+  const deniedDesiredEdit = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager, params: { memberId: desiredInterestId }, body: desiredInterestBody,
+  });
+  assert.equal(deniedDesiredEdit.statusCode, 403, JSON.stringify(deniedDesiredEdit.payload));
+
+  const injectionId = `${fixture.churchId}_desired_av_injection`;
+  await setDoc(COLLECTIONS.teamRosterMembers, injectionId, {
+    memberId: injectionId, churchId: fixture.churchId,
+    firstName: "Taylor", lastName: "Injection",
+    positionIds: [`${fixture.ids.worship}_position`], desiredPositionIds: [],
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
+    qualifications: [], blockoutDates: [],
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teams, fixture.ids.worship, {
+    memberIds: [...new Set([...(worshipTeam.memberIds || []), desiredInterestId, injectionId])],
+  }, { merge: true });
+  const deniedInjection = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager,
+    params: { memberId: injectionId },
+    body: { ...desiredInterestBody, firstName: "Taylor", lastName: "Injection" },
+  });
+  assert.equal(deniedInjection.statusCode, 403, JSON.stringify(deniedInjection.payload));
+
+  const allowedDesiredEdit = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: bothTeamManager,
+    params: { memberId: desiredInterestId },
+    body: desiredInterestBody,
+  });
+  assert.equal(allowedDesiredEdit.statusCode, 200, JSON.stringify(allowedDesiredEdit.payload));
+  const bothTeamsBootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: bothTeamManager,
+  });
+  const richInterest = bothTeamsBootstrap.payload.members.find(
+    ({ memberId }) => memberId === desiredInterestId,
+  );
+  assert.ok(bothTeamsBootstrap.payload.editableMemberIds.includes(desiredInterestId));
+  assert.deepEqual(richInterest.desiredPositionIds, [avPositionId]);
+
   const worshipAreaId = `${fixture.ids.worship}_area`;
   const avAreaId = `${fixture.ids.av}_area`;
   await setDoc(COLLECTIONS.teamQualificationAreas, worshipAreaId, {
@@ -15472,4 +15544,21 @@ test("archived member ownership is ignored, while unknown ownership fails closed
     context: manager, params: { memberId }, body,
   });
   assert.equal(malformed.statusCode, 409, JSON.stringify(malformed.payload));
+
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+    teamMemberships: { [fixture.ids.worship]: "malformed membership" },
+  }, { merge: true });
+  const malformedMembership = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager, params: { memberId }, body,
+  });
+  assert.equal(malformedMembership.statusCode, 409, JSON.stringify(malformedMembership.payload));
+
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
+    desiredPositionIds: {},
+  }, { merge: true });
+  const malformedDesiredPositions = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager, params: { memberId }, body,
+  });
+  assert.equal(malformedDesiredPositions.statusCode, 409, JSON.stringify(malformedDesiredPositions.payload));
 });

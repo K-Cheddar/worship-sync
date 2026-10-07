@@ -2968,12 +2968,16 @@ export const createTeamsAuthHandlers = ({
       (member?.teamMemberships !== undefined &&
         (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships))) ||
       (member?.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
-      (member?.positionIds !== undefined && !Array.isArray(member.positionIds))
+      (member?.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+      (member?.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds))
     ) {
       throw httpError(409, "Member team data is invalid.");
     }
     for (const [teamId, membership] of Object.entries(member?.teamMemberships || {})) {
       requireKnownTeam(teamId);
+      if (!membership || typeof membership !== "object" || Array.isArray(membership)) {
+        throw httpError(409, "Member team ownership is invalid.");
+      }
       if (membership?.teamId && membership.teamId !== teamId) {
         throw httpError(409, "Member team ownership is invalid.");
       }
@@ -3012,7 +3016,11 @@ export const createTeamsAuthHandlers = ({
       if (activeTeamIds.has(ownerTeamId)) teamIds.add(ownerTeamId);
     }
 
-    await Promise.all((member?.positionIds || []).map(async (positionId) => {
+    const positionIds = new Set([
+      ...(member?.positionIds || []),
+      ...(member?.desiredPositionIds || []),
+    ]);
+    await Promise.all([...positionIds].map(async (positionId) => {
       const position = await assertTeamEntityInChurch(
         "position",
         positionId,
