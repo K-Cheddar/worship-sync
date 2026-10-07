@@ -7761,30 +7761,20 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     viewerPayload.payload.snapshot.service.shareId,
     `current-service-viewer:${viewerPlanKey}`,
   );
-  assert.deepEqual(viewerPayload.payload.snapshot.roles, [{
-    positionId: "viewer-lead",
-    label: "Lead vocal",
-    teamId: "viewer-worship",
-    teamName: "Worship Team",
-  }]);
-  assert.deepEqual(viewerPayload.payload.snapshot.servingTeams[0].members[0], {
-    positionId: "viewer-lead",
-    positionName: "Lead vocal",
-    memberName: "Avery Stone",
-    profileImageUrl: "https://example.com/avery.jpg",
-    microphones: [{
-      id: "viewer-mic",
-      name: "Blue",
-      type: "Headset",
-      color: "#2563eb",
-    }],
-    equipment: [{
-      id: "viewer-iem",
-      name: "Red IEM",
-      category: "iem",
-      subtype: "wireless-beltpack",
-    }],
-  });
+  const serializedPlanOnlyViewer = JSON.stringify(viewerPayload.payload.snapshot);
+  for (const rosterValue of [
+    "Avery Stone",
+    "https://example.com/avery.jpg",
+    "viewer-member",
+    "viewer-mic",
+    "Blue",
+    "viewer-iem",
+    "Red IEM",
+  ]) {
+    assert.equal(serializedPlanOnlyViewer.includes(rosterValue), false, rosterValue);
+  }
+  assert.deepEqual(viewerPayload.payload.snapshot.roles ?? [], []);
+  assert.deepEqual(viewerPayload.payload.snapshot.servingTeams ?? [], []);
   const viewerItem = viewerPayload.payload.snapshot.service.sections[0].items[0];
   assert.deepEqual(viewerItem.teamNotes, [
     { label: "Worship Team", notes: richText("Team cue") },
@@ -7800,9 +7790,9 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     plan: viewerPayload.payload.plan.sections[0].elements[0],
     item: viewerItem,
   }));
-  assert.equal(viewerItem.creditName, "Avery Stone");
-  assert.equal(viewerItem.microphoneAssignments[0].microphone.name, "Blue");
-  assert.equal(viewerItem.equipmentAssignments[0].equipment.name, "Red IEM");
+  assert.equal(viewerItem.creditName, undefined);
+  assert.deepEqual(viewerItem.microphoneAssignments ?? [], []);
+  assert.deepEqual(viewerItem.equipmentAssignments ?? [], []);
   assert.deepEqual(viewerItem.resources, [{
     type: "url",
     title: "Service notes",
@@ -7821,6 +7811,17 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   ]) {
     assert.equal(serializedViewer.includes(privateValue), false);
   }
+  const teamsAuthorizedViewerPayload = await callHandler(
+    authHandlers.getServicePlanViewer,
+    { context: viewerContext, params: { planKey: viewerPlanKey } },
+  );
+  assert.equal(teamsAuthorizedViewerPayload.statusCode, 200);
+  const teamsAuthorizedSnapshot = teamsAuthorizedViewerPayload.payload.snapshot;
+  assert.equal(teamsAuthorizedSnapshot.servingTeams[0].members[0].memberName, "Avery Stone");
+  assert.equal(teamsAuthorizedSnapshot.servingTeams[0].members[0].profileImageUrl, "https://example.com/avery.jpg");
+  const teamsAuthorizedItem = teamsAuthorizedSnapshot.service.sections[0].items[0];
+  assert.equal(teamsAuthorizedItem.microphoneAssignments[0].microphone.name, "Blue");
+  assert.equal(teamsAuthorizedItem.equipmentAssignments[0].equipment.name, "Red IEM");
   const publishedViewerPlan = await callHandler(authHandlers.publishServicePlan, {
     context,
     params: { planKey: viewerPlanKey },
@@ -7836,16 +7837,12 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   );
   assert.equal(viewerPublicSnapshot.statusCode, 200);
   assert.deepEqual(
-    viewerPayload.payload.snapshot.roles,
+    teamsAuthorizedSnapshot.roles,
     viewerPublicSnapshot.payload.roles,
   );
   assert.deepEqual(
-    viewerPayload.payload.snapshot.servingTeams,
+    teamsAuthorizedSnapshot.servingTeams,
     viewerPublicSnapshot.payload.servingTeams,
-  );
-  assert.deepEqual(
-    viewerPayload.payload.snapshot.service.sections[0].items[0],
-    viewerPublicSnapshot.payload.service.sections[0].items[0],
   );
   assert.equal(
     viewerPublicSnapshot.payload.service.shareId,

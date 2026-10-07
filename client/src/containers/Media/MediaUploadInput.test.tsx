@@ -533,6 +533,40 @@ describe("MediaUploadInput", () => {
     expect(within(screen.getByRole("complementary", { name: "Activity" })).getAllByText("Cancelled").length).toBeGreaterThan(0);
   });
 
+  it("keeps terminal cleanup recovery registered after the upload owner unmounts", async () => {
+    const retryCleanup = jest.fn().mockResolvedValue(undefined);
+    mockedCreateLocalMedia.mockRejectedValueOnce(Object.assign(new Error("Import failed"), {
+      cleanupFailed: true,
+      retryCleanup,
+    }));
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={jest.fn()} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await screen.findByRole("button", { name: "Retry cleanup" });
+
+    view.rerender(surface(false));
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    const detachedRetryButton = await activity.findByRole("button", { name: "Retry cleanup" });
+    expect(detachedRetryButton).toBeInTheDocument();
+
+    fireEvent.click(detachedRetryButton);
+    await waitFor(() => expect(retryCleanup).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(activity.queryByRole("button", { name: "Retry cleanup" })).not.toBeInTheDocument());
+    expect(activity.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  });
+
   it("keeps a pre-existing local video checkpoint when its cloud retry is cancelled", async () => {
     const media = localVideo("existing_local_video");
     let finishUpload!: (result: MuxUploadResult) => void;

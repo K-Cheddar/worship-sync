@@ -14701,14 +14701,12 @@ export const createTeamsAuthHandlers = ({
         }
 
         const plan = withoutServicePlanAssignments(servicePlan, reader);
+        const includeTeamDetails = hasTeamsPlanAccess(reader);
         const snapshot = await buildPublicServicePlan({
-          // The display projection is intentionally richer than the ordinary
-          // permission-aware plan response. buildPublicServicePlan applies the
-          // same allowlisted sanitizer used by public detailed team links.
-          plan: servicePlan,
+          plan: includeTeamDetails ? servicePlan : plan,
           viewMode: "team",
           token: `current-service-viewer:${servicePlan.planKey}`,
-          includeTeamDetails: true,
+          includeTeamDetails,
           allowUnpublished: true,
         });
         return res.json({ success: true, plan, snapshot });

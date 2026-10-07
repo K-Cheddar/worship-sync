@@ -1,10 +1,12 @@
 import {
   FLUSH_MEDIA_NO_DB_MESSAGE,
   FLUSH_MEDIA_STALE_DB_MESSAGE,
+  deleteMediaItemAtRevisionFromPouch,
   deleteMediaItemsFromPouch,
   flushMediaLibraryDocToPouch,
 } from "./flushMediaLibraryDoc";
 import { loadMediaLibrary } from "./mediaDocUtils";
+import type { MediaItemDoc } from "./mediaDocUtils";
 import { deleteFolderAndSubtree } from "./mediaFolderMutations";
 import type { MediaType } from "../types";
 
@@ -130,6 +132,77 @@ describe("flushMediaLibraryDocToPouch", () => {
         docs: [{ _id: row._id, id: "delete-me", _deleted: true }],
       }),
     }));
+  });
+
+  it("keeps a bulk tombstone successful when its remove commits before a scope switch", async () => {
+    const removeStarted = deferred<void>();
+    const finishRemove = deferred<PouchDB.Core.Response>();
+    const row = {
+      _id: "media-item:delete-me",
+      _rev: "2-latest",
+      docType: "mediaItem",
+      id: "delete-me",
+    };
+    const dbA = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        return row;
+      }),
+      remove: jest.fn(() => {
+        removeStarted.resolve();
+        return finishRemove.promise;
+      }),
+    } as unknown as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    const churchABroadcast = { postMessage: jest.fn() };
+    const churchBBroadcast = { postMessage: jest.fn() };
+    mockGlobalDb = dbA;
+    mockBroadcastRef = churchABroadcast;
+
+    const deletion = deleteMediaItemsFromPouch(dbA, [row.id]);
+    await removeStarted.promise;
+    expect(dbA.remove).toHaveBeenCalledWith(row);
+    mockGlobalDb = dbB;
+    mockBroadcastRef = churchBBroadcast;
+    finishRemove.resolve({ ok: true, id: row._id, rev: "3-deleted" });
+
+    await expect(deletion).resolves.toEqual({ deletedIds: [row.id], failed: [] });
+    expect(dbA.remove).toHaveBeenCalledTimes(1);
+    expect(churchABroadcast.postMessage).not.toHaveBeenCalled();
+    expect(churchBBroadcast.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a committed tombstone successful after the active database changes", async () => {
+    const removeStarted = deferred<void>();
+    const finishRemove = deferred<PouchDB.Core.Response>();
+    const doc = {
+      _id: "media-item:delete-me",
+      _rev: "2-latest",
+      docType: "mediaItem",
+      id: "delete-me",
+    };
+    const dbA = {
+      remove: jest.fn(() => {
+        removeStarted.resolve();
+        return finishRemove.promise;
+      }),
+    } as unknown as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    const churchABroadcast = { postMessage: jest.fn() };
+    const churchBBroadcast = { postMessage: jest.fn() };
+    mockGlobalDb = dbA;
+    mockBroadcastRef = churchABroadcast;
+
+    const deletion = deleteMediaItemAtRevisionFromPouch(dbA, doc as MediaItemDoc);
+    await removeStarted.promise;
+    mockGlobalDb = dbB;
+    mockBroadcastRef = churchBBroadcast;
+    finishRemove.resolve({ ok: true, id: doc._id, rev: "3-deleted" });
+
+    await expect(deletion).resolves.toBe("deleted");
+    expect(dbA.remove).toHaveBeenCalledWith(doc);
+    expect(churchABroadcast.postMessage).not.toHaveBeenCalled();
+    expect(churchBBroadcast.postMessage).not.toHaveBeenCalled();
   });
 
   it("uses item tombstones for every media row in a deleted folder subtree", async () => {

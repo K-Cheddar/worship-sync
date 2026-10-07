@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { useNativeFileDrop } from "../containers/Media/useNativeFileDrop";
 import { TransferProvider } from "../context/transferContext";
 import ResourceUploadDialog from "./ResourceUploadDialog";
 import { uploadChurchResource } from "../api/auth";
@@ -11,10 +12,10 @@ jest.mock("../api/auth", () => ({
 }));
 
 jest.mock("../containers/Media/useNativeFileDrop", () => ({
-  useNativeFileDrop: () => ({
+  useNativeFileDrop: jest.fn(() => ({
     isFileDragOver: false,
     fileDropHandlers: {},
-  }),
+  })),
 }));
 
 const mockUploadChurchResource = jest.mocked(uploadChurchResource);
@@ -205,13 +206,31 @@ describe("ResourceUploadDialog", () => {
       new File(["one"], "one.pdf", { type: "application/pdf" }),
       new File(["two"], "two.txt", { type: "text/plain" }),
     ]);
+    await user.click(screen.getByRole("button", { name: "Edit name for two.txt" }));
+    const retryName = screen.getByRole("textbox", { name: "Display name for two.txt" });
+    await user.clear(retryName);
+    await user.type(retryName, "service handout");
+    await user.keyboard("{Enter}");
     await user.click(screen.getByRole("button", { name: "Upload (2 files)" }));
 
+    await screen.findByRole("button", { name: "Restore resource upload" });
     await user.click(screen.getByRole("button", { name: "Restore resource upload" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry failed" }));
+    const dialog = screen.getByRole("dialog", { name: "Upload resources" });
+    expect(within(dialog).getByText("Retry uses this batch’s original files and names.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add files" })).toBeDisabled();
+    expect(within(dialog).getByLabelText("Select resource files")).toBeDisabled();
+    expect(jest.mocked(useNativeFileDrop)).toHaveBeenLastCalledWith(expect.objectContaining({ disabled: true }));
+    expect(within(dialog).queryByRole("button", { name: "Edit name for two.txt" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Remove two.txt" })).not.toBeInTheDocument();
+    expect(within(dialog).getByText("service handout")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Retry failed" }));
     await screen.findAllByText("Complete");
     expect(mockUploadChurchResource).toHaveBeenCalledTimes(3);
-    expect(mockUploadChurchResource.mock.calls.map(([input]) => input.file.name)).toEqual(["one.pdf", "two.txt", "two.txt"]);
+    expect(mockUploadChurchResource.mock.calls.map(([input]) => [input.file.name, input.name])).toEqual([
+      ["one.pdf", "one.pdf"],
+      ["two.txt", "service handout"],
+      ["two.txt", "service handout"],
+    ]);
     expect(onResourcesUploaded).toHaveBeenCalledTimes(2);
   });
 

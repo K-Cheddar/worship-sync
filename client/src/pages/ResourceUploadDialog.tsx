@@ -86,6 +86,10 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
 
   const transfer = transfersContext?.transfers.find((item) => item.id === transferId);
   const isUploading = transfer?.status === "active";
+  const isRetryingExistingBatch = Boolean(
+    transferId && (transfer?.status === "failed" || transfer?.status === "partial"),
+  );
+  const isBatchLocked = isUploading || isRetryingExistingBatch;
   const displayFiles = files.map((file, index) => {
     const status = transfer?.files?.[index]?.status;
     return {
@@ -115,7 +119,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
   }, []);
 
   const addFiles = useCallback((newFiles: File[]) => {
-    if (isUploading || newFiles.length === 0) return;
+    if (isBatchLocked || newFiles.length === 0) return;
     const supportedFiles = newFiles.filter(isSupportedResourceFile);
     const unsupportedFiles = newFiles.filter((file) => !isSupportedResourceFile(file));
     if (unsupportedFiles.length) {
@@ -128,10 +132,10 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
       ...current,
       ...supportedFiles.map((file) => ({ file, name: file.name, status: "queued" as const })),
     ]);
-  }, [isUploading]);
+  }, [isBatchLocked]);
 
   const { isFileDragOver, fileDropHandlers } = useNativeFileDrop({
-    disabled: isUploading,
+    disabled: isBatchLocked,
     onFiles: addFiles,
   });
 
@@ -203,7 +207,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
         headerAction={isUploading ? <Button type="button" variant="tertiary" svg={Minimize2} aria-label="Minimize upload" onClick={() => { setIsMinimized(true); setIsMinimizedToButton(false); setIsOpen(false); }} /> : undefined}
       >
         <div className="flex min-h-0 flex-1 flex-col gap-4">
-          <input ref={inputRef} type="file" multiple accept={RESOURCE_UPLOAD_ACCEPT} aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isUploading} />
+          <input ref={inputRef} type="file" multiple accept={RESOURCE_UPLOAD_ACCEPT} aria-label="Select resource files" className="hidden" onChange={(event) => addFiles(Array.from(event.target.files || []))} disabled={isBatchLocked} />
           <div
             {...fileDropHandlers}
             role="group"
@@ -215,12 +219,12 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
             ].join(" ")}
           >
             {isFileDragOver ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-cyan-950/80 text-sm font-semibold text-cyan-100">Drop files to add resources</div> : null}
-            {files.length > 0 ? <p className="text-sm text-gray-300">Drop more files here</p> : <>
+            {files.length > 0 ? <p className="text-sm text-gray-300">{isRetryingExistingBatch ? "Retry uses this batch’s original files and names." : "Drop more files here"}</p> : <>
               <Upload className="size-8 text-cyan-300" aria-hidden="true" />
               <p className="text-sm text-gray-300">Drop files here or choose files</p>
               <p className="text-xs text-gray-500">Images, documents, and MP3 audio</p>
             </>}
-            <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isUploading}>{files.length > 0 ? "Add files" : "Choose files"}</Button>
+            <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={isBatchLocked}>{files.length > 0 ? "Add files" : "Choose files"}</Button>
           </div>
           {displayFiles.length === 0 ? <p className="shrink-0 text-center text-sm text-gray-500">No files selected.</p> : (
             <div role="region" aria-label="Selected resource files" tabIndex={0} className="min-h-0 max-h-[min(50vh,32rem)] flex-1 space-y-2 overflow-y-auto scrollbar-variable">
@@ -230,7 +234,7 @@ const ResourceUploadDialog = ({ churchId, onResourcesUploaded, triggerLabel = "U
                   file={pending.file}
                   displayName={pending.name}
                   visualType={pending.file.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|avif)$/i.test(pending.file.name) ? "image" : "file"}
-                  editable={!isUploading}
+                  editable={!isBatchLocked}
                   onRename={(name) => updateName(index, name)}
                   onRemove={() => removeFile(index)}
                   error={pending.error}
