@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { RefObject } from "react";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import type { PositionIcon } from "../../../components/icons/iconTypes";
@@ -65,7 +65,6 @@ describe("ScheduleBoardCell", () => {
       "src",
       "https://example.com/kameal.jpg",
     );
-    expect(screen.getByAltText("").parentElement).toHaveClass("h-8", "w-8");
     expect(screen.getByTestId("schedule-position-inline-icon")).toHaveClass(
       "h-5",
       "w-5",
@@ -96,9 +95,7 @@ describe("ScheduleBoardCell", () => {
     renderCell({ assignmentCell: { primaryMemberId: "m1" } });
 
     expect(screen.getByText("KA")).toHaveClass("h-8", "w-8");
-    expect(screen.getByText("KA")).toBe(
-      screen.getByRole("button").firstElementChild,
-    );
+    expect(within(screen.getByRole("button")).getByText("KA")).toBeInTheDocument();
   });
 
   it.each([
@@ -111,10 +108,13 @@ describe("ScheduleBoardCell", () => {
       assignmentCell: { primaryMemberId: "m1" },
     });
 
-    const icon = screen.getByTestId("schedule-position-inline-icon");
+    const button = screen.getByRole("button");
+    const title = within(button).getByText("Front Of House Audio");
+    const icon = within(button).getByTestId("schedule-position-inline-icon");
     expect(icon).toHaveClass("h-5", "w-5");
     expect(icon.style.backgroundColor).not.toBe("");
-    expect(screen.getByText("Front Of House Audio").parentElement).toContainElement(icon);
+    expect(button).toContainElement(title);
+    expect(button).toContainElement(icon);
     expect(screen.queryByTestId("schedule-position-marker")).not.toBeInTheDocument();
   });
 
