@@ -291,6 +291,48 @@ describe("MediaUploadInput", () => {
     expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
   });
 
+  it("cancels an active local-image upload on unmount and keeps late job updates terminal", async () => {
+    let reportJobState!: (state: { status: "uploading" | "cancelled"; progress: number; phase: string }) => void;
+    let finishJob!: (value: never) => void;
+    mockedWaitForUpload.mockImplementation(async (_assetId, onState) => new Promise((resolve) => {
+      reportJobState = onState as typeof reportJobState;
+      finishJob = resolve;
+      onState?.({ status: "uploading", progress: 52, phase: "Uploading image" } as never);
+    }));
+    mockedCancelUpload.mockImplementation(async () => {
+      reportJobState({ status: "cancelled", progress: 0, phase: "Upload cancelled" });
+      finishJob({} as never);
+    });
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={jest.fn()} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(mockedWaitForUpload).toHaveBeenCalledWith(
+      "local_image_1",
+      expect.any(Function),
+    ));
+
+    view.rerender(surface(false));
+    await waitFor(() => expect(mockedCancelUpload).toHaveBeenCalledWith("local_image_1"));
+    await act(async () => { await Promise.resolve(); });
+
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText(/Uploading image/)).not.toBeInTheDocument();
+    expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
+  });
+
   it("remembers the upload preference per device when the toggle changes", () => {
     localStorage.setItem("worshipsync_device_id", "device-a");
     renderUploadInput();

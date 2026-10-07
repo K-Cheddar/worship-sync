@@ -35,6 +35,12 @@ pendingWork = {
 
 Treat identity changes as lifecycle boundaries. Ignore stale display results where appropriate, but deliberately complete, preserve, or cancel pending unsaved work. A cancellation or stale-result guard alone does not make a shared write safe; use the relevant persisted or schedule mutation guidance. Include realistic identity resets in tests, including counters or versions returning to zero.
 
+Guard commits using the full ownership scope, not only the entity ID. If the same ID can exist under two churches or tenants, a matching ID does not make a result current.
+
+### Long-lived action ownership
+
+If a long-lived provider/store exposes retry, cancel, or dismiss actions, the runtime backing those actions must also live in that long-lived owner or be deliberately retired when the original owner unmounts. Do not leave globally visible actions backed by closures into dead route/component state. Test the exposed action after the creating route has unmounted.
+
 ## Identify durable commit points
 
 Break multi-stage mutations into meaningful steps and mark which steps are durable:
@@ -47,6 +53,10 @@ Break multi-stage mutations into meaningful steps and mark which steps are durab
 ```
 
 Ask: if step 3 fails and the user retries, which earlier steps are safe to repeat? A retry should normally resume after the last durable commit point. Do not repeat a completed mutation merely because a later step failed; distinguish durable completion from a lost response, an unknown outcome, and an operation that never ran. Apply this reasoning to autosave, media import/upload, scheduling, publishing, invitations/email, session reset or rotation, local/remote synchronization, and drag preview followed by commit.
+
+For persisted/resumable jobs, account for shapes written by older app versions and compare current client assumptions with server/storage compatibility behavior. Do not restart or duplicate a durable side effect merely because a newer optional field is absent.
+
+If an external provider operation succeeds after its owner becomes stale, suppress the stale UI/Redux commit but still perform necessary cleanup against the original provider/church. Never redirect cleanup to the newly active church.
 
 ## Review interruption boundaries
 

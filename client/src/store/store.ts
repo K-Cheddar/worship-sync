@@ -1674,17 +1674,25 @@ listenerMiddleware.startListening({
     const { monitorInfo } = toLegacyPresentationShape(state.presentation);
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return;
+    const dbAtStart = db;
+    const fireDbAtStart = globalFireDbInfo.db;
+    const churchIdAtStart = globalFireDbInfo.churchId;
     const currentItem = state.undoable.present.item;
     let item: DBItem | null = null;
     if (currentItem._id === itemId && currentItem.slides?.length > 1) {
       item = currentItem as unknown as DBItem;
-    } else if (db) {
+    } else if (dbAtStart) {
       try {
-        item = (await db.get(itemId)) as DBItem;
+        item = (await dbAtStart.get(itemId)) as DBItem;
       } catch {
         return;
       }
     }
+    if (
+      db !== dbAtStart ||
+      globalFireDbInfo.db !== fireDbAtStart ||
+      globalFireDbInfo.churchId !== churchIdAtStart
+    ) return;
     if (!item?.slides?.length || item.slides.length < 2) return;
     const wrapUpSlide = item.slides[1];
     const presentationType = item.type === "timer" ? "timer" : monitorInfo.type;
@@ -1879,12 +1887,15 @@ listenerMiddleware.startListening({
   effect: async (_action, listenerApi) => {
     const stateBefore = listenerApi.getState() as RootState;
     const outlineId = stateBefore.undoable.present.itemLists.activeList?._id;
+    const dbAtStart = db;
+    const fireDbAtStart = globalFireDbInfo.db;
+    const churchIdAtStart = globalFireDbInfo.churchId;
 
-    if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
+    if (!fireDbAtStart || !churchIdAtStart) return;
 
     const publishedRef = ref(
-      globalFireDbInfo.db,
-      getChurchDataPath(globalFireDbInfo.churchId, "credits", "publishedList"),
+      fireDbAtStart,
+      getChurchDataPath(churchIdAtStart, "credits", "publishedList"),
     );
 
     if (!outlineId) {
@@ -1892,21 +1903,29 @@ listenerMiddleware.startListening({
       return;
     }
 
-    if (!db) return;
+    if (!dbAtStart) return;
+    const isCurrentScope = () =>
+      db === dbAtStart &&
+      globalFireDbInfo.db === fireDbAtStart &&
+      globalFireDbInfo.churchId === churchIdAtStart;
 
     try {
-      await migrateLegacyCreditsToActiveOutlineIfNeeded(db, outlineId);
-      await ensureCreditsIndexDoc(db, outlineId);
-      const creditsDoc = (await db.get(
+      await migrateLegacyCreditsToActiveOutlineIfNeeded(dbAtStart, outlineId);
+      if (!isCurrentScope()) return;
+      await ensureCreditsIndexDoc(dbAtStart, outlineId);
+      if (!isCurrentScope()) return;
+      const creditsDoc = (await dbAtStart.get(
         getCreditsDocId(outlineId),
       )) as DBCredits;
+      if (!isCurrentScope()) return;
       const creditIds = creditsDoc.creditIds ?? [];
-      const credits = await getCreditsByIds(db, outlineId, creditIds);
+      const credits = await getCreditsByIds(dbAtStart, outlineId, creditIds);
+      if (!isCurrentScope()) return;
       const visible = credits.filter((c) => !c.hidden).map((c) => ({ ...c }));
 
       const stillActive = (listenerApi.getState() as RootState).undoable.present
         .itemLists.activeList?._id;
-      if (stillActive !== outlineId) return;
+      if (!isCurrentScope() || stillActive !== outlineId) return;
 
       set(publishedRef, cleanObject(visible as unknown as object));
     } catch (e) {
@@ -3308,6 +3327,7 @@ listenerMiddleware.startListening({
     );
   },
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
     const currentSelectedOverlayId =
@@ -3422,10 +3442,10 @@ listenerMiddleware.startListening({
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
     }
 
-    if (db && changedOverlayDocs.length > 0) {
+    if (dbAtStart && changedOverlayDocs.length > 0) {
       for (const overlay of changedOverlayDocs) {
         try {
-          await listenerApi.pause(persistExistingOverlayDoc(db, overlay));
+          await listenerApi.pause(persistExistingOverlayDoc(dbAtStart, overlay));
         } catch (e) {
           if (isListenerCancelledTaskError(e)) {
             return;

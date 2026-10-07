@@ -84,6 +84,7 @@ type MediaUploadBatch = {
   timeouts: UploadTimeout[];
   currentFileIndex: number;
   active: boolean;
+  ownerActive: boolean;
   statusMessage: string;
   unregisterActions: Array<() => void>;
   registeredActions: Map<string, () => void>;
@@ -211,7 +212,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       updateFileStatus(fileIndex, { displayName });
     };
 
-    const publishBatch = useCallback((batch: MediaUploadBatch, terminal?: "complete" | "partial" | "failed" | "cancelled") => {
+    const publishBatch = useCallback((batch: MediaUploadBatch, terminal?: "complete" | "partial" | "failed" | "cancelled", allowRetiredOwner = false) => {
       const progress = getMediaBatchProgress(batch.files);
       const failedFiles = batch.files.filter((file) => file.status === "error" && !batch.cancelled);
       const succeeded = batch.files.filter((file) => file.status === "ready").length;
@@ -266,7 +267,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                 { key: "dismiss", label: "Dismiss" },
               ],
       };
-      updateTransfer?.(transfer);
+      if (batch.ownerActive || allowRetiredOwner) updateTransfer?.(transfer);
       return transfer;
     }, [updateTransfer]);
 
@@ -290,7 +291,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           ...(fileProgress.displayName !== fileProgress.file.name ? { displayName: fileProgress.displayName } : {}),
         }));
         if (!fileProgress.localMedia) {
-          if (globalDb === batch.database) onLocalMediaAdded(media);
+          if (batch.ownerActive && globalDb === batch.database) onLocalMediaAdded(media);
           updateBatchFile(batch, fileIndex, { localMedia: media, progress: 40, phase: "Saved on this device" });
         }
         if (storagePolicy !== "local-and-cloud") {
@@ -700,6 +701,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         timeouts: [],
         currentFileIndex: 0,
         active: true,
+        ownerActive: true,
         statusMessage: "Starting uploads...",
         unregisterActions: [],
         registeredActions: new Map(),
@@ -730,7 +732,21 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               batch.files[index].error = error instanceof Error ? error.message : "Cleanup failed. Try again.";
             }
           }
-          publishBatch(batch, batch.files.some((file) => file.status === "ready") ? "partial" : "failed");
+          if (batch.ownerActive) {
+            publishBatch(batch, batch.files.some((file) => file.status === "ready") ? "partial" : "failed");
+          } else {
+            const cancelled = publishBatch(batch, "cancelled", true);
+            const cleanupPending = batch.cleanupRetries.size > 0;
+            updateTransfer?.({
+              ...cancelled,
+              ...(cleanupPending ? { error: { message: "Cloud cleanup still needs attention." } } : { error: undefined }),
+              actions: [
+                ...(cleanupPending ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+                { key: "dismiss", label: "Dismiss" },
+              ],
+            });
+            if (!cleanupPending) unregisterBatchAction(batch, "retry-cleanup");
+          }
         });
         registerBatchAction(batch, "retry-failed", async () => {
           if (!batch.files.some((file) => file.status === "error" && !batch.cancelledMediaIds.has(file.localMedia?.id || ""))) return;
@@ -816,14 +832,46 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         if (batch.active) {
           batch.cancelled = true;
           batch.active = false;
+          batch.ownerActive = false;
           cancelBatchResources(batch);
-          const cancelled = publishBatch(batch, "cancelled");
+          const cancelled = publishBatch(batch, "cancelled", true);
           updateTransfer?.({ ...cancelled, actions: [{ key: "dismiss", label: "Dismiss" }] });
+          for (const key of [...batch.registeredActions.keys()]) {
+            if (key !== "retry-cleanup" && key !== "dismiss") unregisterBatchAction(batch, key);
+          }
+          void (async () => {
+            let cancellationError: unknown;
+            try {
+              await batch.cancelActive?.();
+            } catch (error) {
+              cancellationError = error;
+            }
+            try {
+              await batch.completion;
+            } catch {
+              // The detached transfer below records cleanup work if cancellation failed.
+            }
+            const cleanupPending = batch.cleanupRetries.size > 0;
+            if (!cleanupPending) unregisterBatchAction(batch, "retry-cleanup");
+            const terminal = publishBatch(batch, "cancelled", true);
+            updateTransfer?.({
+              ...terminal,
+              ...(cleanupPending
+                ? { error: { message: cancellationError instanceof Error ? cancellationError.message : "Cloud cleanup still needs attention." } }
+                : { error: undefined }),
+              actions: [
+                ...(cleanupPending ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+                { key: "dismiss", label: "Dismiss" },
+              ],
+            });
+          })();
         } else if (batch.files.some((file) => file.status === "error")) {
           const terminal = publishBatch(batch, batch.files.some((file) => file.status === "ready") ? "partial" : "failed");
           updateTransfer?.({ ...terminal, actions: [{ key: "dismiss", label: "Dismiss" }] });
+          batch.unregisterActions.forEach((unregister) => unregister());
+        } else {
+          batch.unregisterActions.forEach((unregister) => unregister());
         }
-        batch.unregisterActions.forEach((unregister) => unregister());
       });
       batchesRef.current.clear();
     }, [cancelBatchResources, publishBatch, updateTransfer]);

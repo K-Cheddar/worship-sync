@@ -681,6 +681,62 @@ describe("store module", () => {
     expect(clearedPublishedList).toBe(false);
   });
 
+  it("keeps active-outline credits reads on Church A when the church changes mid-migration", async () => {
+    let storeModule: any;
+    let itemListsSliceModule: any;
+    let resolveMigration!: () => void;
+    const migrationGate = new Promise<void>((resolve) => { resolveMigration = resolve; });
+    const migrate = jest.fn(() => migrationGate);
+    const ensure = jest.fn().mockResolvedValue(undefined);
+    const getCredits = jest.fn().mockResolvedValue([]);
+    const activeA = { get: jest.fn(), put: jest.fn() };
+    const activeB = { get: jest.fn(), put: jest.fn() };
+    const firebaseA = { church: "a" };
+    const firebaseB = { church: "b" };
+    const fireInfo: any = { db: firebaseA, churchId: "church-a", canWriteSharedData: true };
+    let activeDb: any = activeA;
+    const refMock = jest.fn((_firebase: unknown, path: string) => ({ path }));
+    const setMock = jest.fn();
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        get globalDb() { return activeDb; },
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
+      jest.doMock("../utils/dbUtils", () => ({
+        migrateLegacyCreditsToActiveOutlineIfNeeded: migrate,
+        ensureCreditsIndexDoc: ensure,
+        getCreditsByIds: getCredits,
+      }));
+      jest.doMock("firebase/database", () => ({ ref: refMock, set: setMock, get: jest.fn() }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemListsSliceModule = require("./itemListsSlice");
+    });
+
+    const store = storeModule.default;
+    store.dispatch(itemListsSliceModule.updateItemListsFromRemote({
+      itemLists: [{ _id: "same-outline", name: "Church A outline" }],
+      activeListId: "same-outline",
+    }));
+    for (let attempt = 0; attempt < 20 && migrate.mock.calls.length === 0; attempt += 1) await Promise.resolve();
+    expect(migrate).toHaveBeenCalledWith(activeA, "same-outline");
+
+    activeDb = activeB;
+    fireInfo.db = firebaseB;
+    fireInfo.churchId = "church-b";
+    resolveMigration();
+    await flushListenerEffects();
+
+    expect(ensure).not.toHaveBeenCalled();
+    expect(activeA.get).not.toHaveBeenCalled();
+    expect(activeB.get).not.toHaveBeenCalled();
+    expect(getCredits).not.toHaveBeenCalled();
+    expect(setMock).not.toHaveBeenCalled();
+  });
+
   it("keeps controller and display registries across RESET_CONTROLLER_SESSION", () => {
     jest.isolateModules(() => {
       jest.doMock("../context/controllerInfo", () => ({
@@ -2207,7 +2263,7 @@ describe("store module", () => {
     ).not.toBe("#123456");
   });
 
-  it("persists non-selected overlay docs when undo reverts a multi-overlay change", async () => {
+  it("keeps every undo overlay write on its original database during a church switch", async () => {
     jest.useFakeTimers();
 
     let storeModule: any;
@@ -2222,26 +2278,30 @@ describe("store module", () => {
           ...createOverlay("overlay-a", "Alpha"),
         });
       }
-      if (id === "overlay-overlay-b") {
+      if (id === "overlay-overlay-c") {
         return Promise.resolve({
           _id: id,
-          _rev: "1-b",
+          _rev: "1-c",
           docType: "overlay",
-          ...createOverlay("overlay-b", "Beta"),
+          ...createOverlay("overlay-c", "Gamma"),
         });
       }
       return Promise.reject(new Error(`Unexpected get ${id}`));
     });
-    const putMock = jest.fn((doc: any) =>
-      Promise.resolve({ rev: `${doc._rev || "1"}-next` }),
-    );
+    let releaseFirstPut!: (value: { rev: string }) => void;
+    const firstPut = new Promise<{ rev: string }>((resolve) => { releaseFirstPut = resolve; });
+    let putCount = 0;
+    const putMock = jest.fn((doc: any) => {
+      putCount += 1;
+      return putCount === 1 ? firstPut : Promise.resolve({ rev: `${doc._rev || "1"}-next` });
+    });
+    const dbA = { get: getMock, put: putMock };
+    const dbB = { get: jest.fn(), put: jest.fn() };
+    let activeDb: any = dbA;
 
     jest.isolateModules(() => {
       jest.doMock("../context/controllerInfo", () => ({
-        globalDb: {
-          get: getMock,
-          put: putMock,
-        },
+        get globalDb() { return activeDb; },
         globalBroadcastRef: undefined,
       }));
       jest.doMock("../context/globalInfo", () => ({
@@ -2268,53 +2328,65 @@ describe("store module", () => {
 
     const overlayA = createOverlay("overlay-a", "Alpha");
     const overlayB = createOverlay("overlay-b", "Beta");
+    const overlayC = createOverlay("overlay-c", "Gamma");
 
     store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
     jest.runAllTimers();
 
     store.dispatch(
-      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB, overlayC]),
     );
     store.dispatch({ type: "@@redux-undo/CLEAR_HISTORY" });
     store.dispatch(overlaySlice.actions.selectOverlay(overlayB));
-
-    const selectedBeforeUpdate =
-      store.getState().undoable.present.overlay.selectedOverlay;
+    const selectedBeforeUpdate = store.getState().undoable.present.overlay.selectedOverlay;
     const updatedFormatting = {
       ...selectedBeforeUpdate.formatting,
       backgroundColor: "#123456",
     };
-
-    store.dispatch(
-      overlaySlice.actions.updateOverlay({
-        ...selectedBeforeUpdate,
-        formatting: updatedFormatting,
-      }),
-    );
-    store.dispatch(
-      overlaysSlice.actions.updateOverlayInList({
-        id: "overlay-a",
-        formatting: updatedFormatting,
-      }),
-    );
-    store.dispatch(
-      overlaysSlice.actions.updateOverlayInList({
-        id: "overlay-b",
-        formatting: updatedFormatting,
-      }),
-    );
+    store.dispatch(overlaySlice.actions.updateOverlay({
+      ...selectedBeforeUpdate,
+      formatting: updatedFormatting,
+    }));
+    store.dispatch(overlaysSlice.actions.updateOverlayList([
+      { ...overlayA, formatting: { ...overlayA.formatting, backgroundColor: "#123456" } },
+      overlayB,
+      { ...overlayC, formatting: { ...overlayC.formatting, backgroundColor: "#123456" } },
+    ]));
 
     store.dispatch({ type: "@@redux-undo/UNDO" });
     jest.runAllTimers();
-    await flushListenerEffects();
+    for (let attempt = 0; attempt < 20 && putCount === 0; attempt += 1) await Promise.resolve();
+    expect(putCount).toBeGreaterThan(0);
+    activeDb = dbB;
+    releaseFirstPut({ rev: "2-first" });
+    for (let attempt = 0; attempt < 100 && putCount < 2; attempt += 1) {
+      await Promise.resolve();
+    }
 
     expect(getMock).toHaveBeenCalledWith("overlay-overlay-a");
+    expect(getMock).toHaveBeenCalledWith("overlay-overlay-c");
     expect(putMock).toHaveBeenCalledWith(
       expect.objectContaining({
         _id: "overlay-overlay-a",
         id: "overlay-a",
       }),
     );
+    expect(putMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "overlay-overlay-c",
+        id: "overlay-c",
+      }),
+    );
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+
+    const state = store.getState().undoable.present;
+    expect(state.overlay.selectedOverlay).toEqual(
+      expect.objectContaining({ id: "overlay-b" }),
+    );
+    expect(state.overlay.selectedOverlay?.formatting?.backgroundColor).not.toBe("#123456");
+    expect(state.overlays.list.find((overlay: any) => overlay.id === "overlay-a")?.formatting?.backgroundColor).not.toBe("#123456");
+    expect(state.overlays.list.find((overlay: any) => overlay.id === "overlay-c")?.formatting?.backgroundColor).not.toBe("#123456");
   });
 
   it("buffers remote item docs instead of applying them while the active item is being edited", async () => {
@@ -2604,6 +2676,101 @@ describe("store module", () => {
     expect(monitorInfo.type).toBe("timer");
     expect(monitorInfo.timerId).toBe("timer-1");
     expect(monitorInfo.itemId).toBe("timer-item");
+  });
+
+  it("does not apply a Church A timer wrap-up slide after the active church changes", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let storeModule: any;
+    let itemSliceModule: any;
+    let timersSliceModule: any;
+    let presentationSliceModule: any;
+    let resolveItem!: (item: any) => void;
+    const dbA = { get: jest.fn(() => new Promise((resolve) => { resolveItem = resolve; })), put: jest.fn() };
+    const dbB = { get: jest.fn(), put: jest.fn() };
+    const firebaseA = { church: "a" };
+    const firebaseB = { church: "b" };
+    const fireInfo: any = { db: firebaseA, churchId: "church-a", canWriteSharedData: false, database: "main" };
+    let activeDb: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        get globalDb() { return activeDb; },
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
+      jest.doMock("firebase/database", () => ({ ref: jest.fn((_db: unknown, path: string) => path), set: jest.fn(), get: jest.fn() }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      presentationSliceModule = require("./presentationSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { timersSlice } = timersSliceModule;
+    const { presentationSlice } = presentationSliceModule;
+    const activeItem = createTimerItem({ _id: "church-b-active-item", timerInfo: undefined });
+    const timerItem = createTimerItem({ _id: "church-a-timer-item", timerInfo: undefined });
+    store.dispatch(itemSlice.actions.setActiveItem(activeItem));
+    activeDb = dbA;
+    store.dispatch(presentationSlice.actions.toggleMonitorTransmitting());
+    const churchASlide = timerItem.slides[0];
+    store.dispatch(presentationSlice.actions.updateMonitor({
+      slide: churchASlide,
+      name: "Church A timer",
+      type: "slide",
+      timerId: "timer-1",
+      itemId: "church-a-wrap-up-item",
+      skipTransmissionCheck: true,
+    }));
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "timer-1",
+      hostId: "host-123",
+      name: "Church A timer",
+      timerType: "timer",
+      status: "running",
+      isActive: true,
+      countdownTime: "00:05",
+      duration: 5,
+      remainingTime: 5,
+      endTime: new Date("2026-01-01T00:00:01.000Z").toISOString(),
+      showMinutesOnly: false,
+    }));
+
+    jest.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+    store.dispatch(timersSlice.actions.tickTimers());
+    expect(store.getState().timers.timers.find((timer: any) => timer.id === "timer-1")).toEqual(
+      expect.objectContaining({ remainingTime: 0, status: "stopped" }),
+    );
+    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.itemId).toBe("church-a-wrap-up-item");
+    for (let attempt = 0; attempt < 20 && dbA.get.mock.calls.length === 0; attempt += 1) await Promise.resolve();
+    expect(dbA.get).toHaveBeenCalledWith("church-a-wrap-up-item");
+
+    activeDb = dbB;
+    fireInfo.db = firebaseB;
+    fireInfo.churchId = "church-b";
+    const churchBSlide = createScreenSlide("church-b-current", "Church B current");
+    store.dispatch(presentationSlice.actions.updateMonitor({
+      slide: churchBSlide,
+      name: "Church B presentation",
+      type: "slide",
+      timerId: "timer-b",
+      itemId: "church-b-item",
+      skipTransmissionCheck: true,
+    }));
+    resolveItem(createSongDoc({ _id: "church-a-wrap-up-item", slides: [churchASlide, createScreenSlide("church-a-wrap-up", "A wrap-up")] }));
+    await flushListenerEffects();
+
+    const monitorInfo = toLegacyPresentationShape(store.getState().presentation).monitorInfo;
+    expect(monitorInfo.slide).toEqual(churchBSlide);
+    expect(monitorInfo.itemId).toBe("church-b-item");
+    expect(dbB.get).not.toHaveBeenCalled();
+    jest.useRealTimers();
   });
 
   it("persists finalized timer runtime onto the active timer item after starting", async () => {
