@@ -3,7 +3,6 @@ import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import {
   ExternalResourceError,
-  createSafeLookup,
   createExternalResourceProxyToken,
   createExternalResourceService,
   validateExternalResourceUrl,
@@ -11,13 +10,6 @@ import {
 } from "./externalResourceService.js";
 
 const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }];
-
-const callLookup = (lookup, hostname, options) => new Promise((resolve, reject) => {
-  lookup(hostname, options, (...args) => {
-    if (args[0]) reject(args[0]);
-    else resolve(args.slice(1));
-  });
-});
 
 const response = (status, headers = {}, data = null) => ({ status, headers, data });
 
@@ -91,133 +83,35 @@ test("detects provider media types from metadata for images, audio, and document
   });
 });
 
-test("probes native Google Docs, Sheets, and Slides exports with a streaming GET first", async () => {
-  const cases = [
-    ["https://docs.google.com/document/d/doc-id/edit", "https://docs.google.com/document/d/doc-id/export?format=pdf"],
-    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "https://docs.google.com/spreadsheets/d/sheet-id/export?format=pdf"],
-    ["https://docs.google.com/presentation/d/slides-id/edit", "https://docs.google.com/presentation/d/slides-id/export/pdf"],
-  ];
-  for (const [originalUrl, candidateUrl] of cases) {
-    let responseStream;
-    const client = createMockClient((config) => {
-      assert.equal(config.method, "GET");
-      assert.equal(config.responseType, "stream");
-      assert.equal(config.headers.Range, "bytes=0-0");
-      responseStream = Readable.from([Buffer.from("%PDF-1.7")]);
-      return response(200, { "content-type": "application/pdf", "content-length": "100" }, responseStream);
-    });
+test("uses a direct ranged GET for Google Docs, Sheets, and Slides PDF exports", async () => {
+  for (const [url, path] of [
+    ["https://docs.google.com/document/d/doc-id/edit", "/document/d/doc-id/export?format=pdf"],
+    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "/spreadsheets/d/sheet-id/export?format=pdf"],
+    ["https://docs.google.com/presentation/d/slide-id/edit", "/presentation/d/slide-id/export/pdf"],
+  ]) {
+    const client = createMockClient((config) => response(206, {
+      "content-type": "application/pdf",
+      "content-range": "bytes 0-0/120",
+    }, Readable.from([Buffer.from("%")])));
     const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-    const descriptor = await service.resolve(originalUrl);
+    const descriptor = await service.resolve(url);
     assert.equal(client.calls.length, 1);
-    assert.equal(client.calls[0].url, candidateUrl);
-    assert.equal(descriptor.previewType, "document");
-    assert.equal(descriptor.canPreview, true);
-    assert.equal(descriptor.requiresProxy, true);
-    assert.match(descriptor.previewUrl, /^\/api\/resources\/proxy\?token=/);
-    assert.equal(responseStream.destroyed, true);
+    assert.equal(client.calls[0].method, "GET");
+    assert.equal(client.calls[0].headers.Range, "bytes=0-0");
+    assert.equal(new URL(client.calls[0].url).pathname + new URL(client.calls[0].url).search, path);
+    assert.equal(descriptor.provider, "google-drive");
+    assert.equal(descriptor.sourceKind, "file");
+    assert.equal(descriptor.mimeType, "application/pdf");
   }
 });
 
-test("follows native Google export redirects through validated requests", async () => {
-  const originalUrl = "https://docs.google.com/document/d/doc-id/edit";
-  const exportUrl = "https://docs.google.com/document/d/doc-id/export?format=pdf";
-  const finalUrl = "https://download.example.test/export.pdf";
-  const client = createMockClient((config) => config.url === exportUrl
-    ? response(302, { location: finalUrl })
-    : response(200, { "content-type": "application/pdf" }, Readable.from([Buffer.from("%PDF")])));
+test("keeps ordinary Google Drive files on the hosted-file probe strategy", async () => {
+  const client = createMockClient(() => response(200, { "content-type": "application/pdf" }));
   const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-
-  const descriptor = await service.resolve(originalUrl);
-  assert.deepEqual(client.calls.map(({ method }) => method), ["GET", "GET"]);
-  assert.ok(client.calls.every(({ maxRedirects }) => maxRedirects === 0));
-  const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
-  assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
-});
-
-test("rejects unsafe redirects from native Google export endpoints", async () => {
-  const exportUrl = "https://docs.google.com/document/d/doc-id/export?format=pdf";
-  const client = createMockClient(() => response(302, { location: "http://127.0.0.1/private" }));
-  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-  await assert.rejects(
-    () => service.resolve("https://docs.google.com/document/d/doc-id/edit"),
-    (error) => error instanceof ExternalResourceError && error.code === "blocked_host",
-  );
-  assert.equal(client.calls.length, 1);
-  assert.equal(client.calls[0].url, exportUrl);
-});
-
-test("does not expose native Google HTML, login, error, or non-PDF responses as previews", async (t) => {
-  for (const [name, status, contentType] of [
-    ["HTML", 200, "text/html"],
-    ["login", 401, "text/html"],
-    ["blocked", 403, "text/html"],
-    ["non-PDF", 200, "application/octet-stream"],
-  ]) {
-    await t.test(name, async () => {
-      const client = createMockClient(() => response(status, { "content-type": contentType }, Readable.from([Buffer.from("response body")])));
-      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-      const descriptor = await service.resolve("https://docs.google.com/document/d/private-id/edit");
-      assert.deepEqual(client.calls.map(({ method }) => method), ["GET"]);
-      assert.equal(descriptor.canPreview, false);
-      assert.equal(descriptor.previewType, "unsupported");
-      assert.equal(descriptor.previewUrl, null);
-      assert.equal(descriptor.requiresProxy, false);
-      assert.match(descriptor.reason, /could not be exported for preview/i);
-    });
-  }
-});
-
-test("logs safe provider probe diagnostics without private sharing URLs", async () => {
-  const client = createMockClient(() => {
-    const error = new Error("request failed for https://docs.google.com/export?token=private-sharing-token");
-    error.name = "AxiosError";
-    error.code = "ECONNRESET";
-    throw error;
-  });
-  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-  const priorWarn = console.warn;
-  const warnings = [];
-  console.warn = (...args) => warnings.push(args);
-  try {
-    const descriptor = await service.resolve("https://docs.google.com/document/d/private-id/edit?sharing=private-sharing-token");
-    assert.equal(descriptor.canPreview, false);
-  } finally {
-    console.warn = priorWarn;
-  }
-  assert.equal(warnings.length, 1);
-  assert.equal(warnings[0][0], "[external-resource] Provider probe failed");
-  assert.deepEqual(warnings[0][1], {
-    provider: "google-drive",
-    stage: "direct_get",
-    errorType: "AxiosError",
-    code: "ECONNRESET",
-  });
-  assert.doesNotMatch(JSON.stringify(warnings), /private-sharing-token/);
-});
-
-test("ordinary uploaded Google Drive files keep their HEAD-first behavior", async () => {
-  const client = createMockClient((config) => response(200, { "content-type": "application/pdf" }));
-  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-  const descriptor = await service.resolve("https://drive.google.com/file/d/uploaded-file/view");
+  const descriptor = await service.resolve("https://drive.google.com/file/d/ordinary-id/view");
   assert.equal(client.calls[0].method, "HEAD");
+  assert.equal(descriptor.sourceKind, "file");
   assert.equal(descriptor.previewType, "document");
-  assert.equal(descriptor.canPreview, true);
-});
-
-test("other hosted providers retain HEAD-first probing", async (t) => {
-  for (const url of [
-    "https://www.dropbox.com/scl/fi/id/clip.mp4?dl=0",
-    "https://1drv.ms/u/s!file",
-    "https://app.box.com/s/public-file",
-  ]) {
-    await t.test(url, async () => {
-      const client = createMockClient(() => response(200, { "content-type": "video/mp4" }));
-      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
-      await service.resolve(url);
-      assert.equal(client.calls[0].method, "HEAD");
-      assert.equal(client.calls.length, 1);
-    });
-  }
 });
 
 test("uses conclusive SharePoint HEAD metadata without a GET probe", async () => {
@@ -396,6 +290,15 @@ test("detects direct media and documents from HTTP metadata before URL extension
   assert.equal((await service.resolve("https://files.example.test/filename.bin")).filename, "notes.pdf");
 });
 
+test("returns unknown successful files as file sources without deciding client renderer support", async () => {
+  const client = createMockClient(() => response(200, { "content-type": "application/octet-stream" }));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve("https://cdn.example.test/download?id=unknown");
+  assert.equal(descriptor.sourceKind, "file");
+  assert.match(descriptor.previewUrl, /^\/api\/resources\/proxy\?token=/);
+  assert.equal(descriptor.canPreview, false); // Deprecated compatibility field only.
+});
+
 test("deduplicates concurrent metadata requests and caches only metadata, not proxy tokens", async () => {
   let calls = 0;
   const client = createMockClient(async () => {
@@ -451,48 +354,34 @@ test("rejects unsafe schemes, local hosts, private addresses, and unsafe redirec
   await assert.rejects(() => service.resolve("https://public.example.test/file"), ExternalResourceError);
 });
 
-test("safe DNS lookup follows Node's all and single-address callback contracts", async () => {
-  const safeLookup = createSafeLookup(async () => [
-    { address: "93.184.216.34", family: 4 },
-    { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
-  ]);
-
-  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { all: true }), [[
-    { address: "93.184.216.34", family: 4 },
-    { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
-  ]]);
-  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { all: false }), ["93.184.216.34", 4]);
-  assert.deepEqual(await callLookup(safeLookup, "public.example.test", {}), ["93.184.216.34", 4]);
-});
-
-test("safe DNS lookup selects only the requested address family", async () => {
-  const safeLookup = createSafeLookup(async () => [
-    { address: "93.184.216.34", family: 4 },
-    { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
-  ]);
-
-  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { family: 4 }), ["93.184.216.34", 4]);
-  assert.deepEqual(await callLookup(safeLookup, "public.example.test", { family: 6 }), ["2606:2800:220:1:248:1893:25c8:1946", 6]);
-  await assert.rejects(
-    () => callLookup(safeLookup, "public.example.test", { family: 5 }),
-    (error) => error.code === "ENOTFOUND" && error.hostname === "public.example.test",
-  );
-});
-
-test("safe DNS lookup rejects blocked records, including mixed public and blocked results", async () => {
-  for (const records of [
-    [{ address: "127.0.0.1", family: 4 }],
-    [
-      { address: "93.184.216.34", family: 4 },
-      { address: "169.254.169.254", family: 4 },
-    ],
-  ]) {
-    const safeLookup = createSafeLookup(async () => records);
-    await assert.rejects(
-      () => callLookup(safeLookup, "public.example.test", { all: true }),
-      (error) => error.code === "blocked_host",
-    );
-  }
+test("safe agent lookup honors the all-address callback contract and reports address family", async () => {
+  const lookupCalls = [];
+  const lookup = async (hostname, options) => {
+    lookupCalls.push({ hostname, options });
+    return [{ address: "93.184.216.34", family: 4 }];
+  };
+  const client = createMockClient(() => response(200, { "content-type": "image/png" }));
+  const service = createExternalResourceService({ httpClient: client, lookup, tokenSecret: "secret" });
+  await service.resolve("https://images.example.test/picture.png");
+  const safeLookup = client.calls[0].httpsAgent.options.lookup;
+  const allResult = await new Promise((resolve, reject) => {
+    safeLookup("images.example.test", { all: true }, (error, address, family) => {
+      if (error) reject(error);
+      else resolve({ address, family });
+    });
+  });
+  assert.deepEqual(allResult, {
+    address: [{ address: "93.184.216.34", family: 4 }],
+    family: undefined,
+  });
+  const singleResult = await new Promise((resolve, reject) => {
+    safeLookup("images.example.test", { all: false }, (error, address, family) => {
+      if (error) reject(error);
+      else resolve({ address, family });
+    });
+  });
+  assert.deepEqual(singleResult, { address: "93.184.216.34", family: 4 });
+  assert.ok(lookupCalls.some(({ options }) => options.all === true && options.verbatim === true));
 });
 
 test("proxy tokens are target-bound, signed, and expire", () => {

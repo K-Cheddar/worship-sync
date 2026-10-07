@@ -29,6 +29,12 @@ jest.mock("../YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => ({
   },
 }));
 
+jest.mock("docx-preview", () => ({
+  renderAsync: jest.fn(async (_blob: Blob, content: HTMLElement) => {
+    content.textContent = "DOCX preview content";
+  }),
+}));
+
 const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["resource"]) =>
   render(<ContentPreviewDialog resource={resource} onClose={jest.fn()} />);
 
@@ -57,21 +63,17 @@ describe("ContentPreviewDialog", () => {
             : /\.(png|jpe?g)(?:$|\?)/i.test(url)
               ? "image"
               : "video";
-      const previewType = mediaType === "web" ? "web" : mediaType;
       return {
         originalUrl: url,
         externalUrl: url,
+        sourceKind: isYouTube ? "youtube" : isWeb ? "web" : "file",
         provider: isYouTube ? "youtube" : isDropbox ? "dropbox" : isWeb ? "web" : "direct",
         title: isYouTube ? "YouTube video" : filename,
         filename,
         mimeType: mediaType === "document" ? "application/pdf" : undefined,
-        mediaType,
-        previewType: isYouTube ? "youtube" : previewType,
         previewUrl: isWeb || isYouTube
           ? url
           : `https://worshipsync.test/api/resources/proxy?token=${encodeURIComponent(filename)}`,
-        requiresProxy: !isWeb && !isYouTube,
-        canPreview: true,
         ...(isYouTube ? { mediaId: "dQw4w9WgXcQ" } : {}),
       };
     });
@@ -83,6 +85,36 @@ describe("ContentPreviewDialog", () => {
       "src",
       "https://worshipsync.test/api/resources/proxy?token=slide.png",
     );
+  });
+
+  it("waits for the server safe URL before attaching an external source", async () => {
+    let resolveResolution: (value: Awaited<ReturnType<typeof getExternalResourceResolution>>) => void = () => undefined;
+    mockGetExternalResourceResolution.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveResolution = resolve;
+    }));
+    renderPreview({ id: "pending-pdf", url: "https://example.test/guide.pdf" });
+
+    expect(screen.queryByTestId("document-preview-container")).not.toBeInTheDocument();
+    await act(async () => resolveResolution({
+      originalUrl: "https://example.test/guide.pdf",
+      provider: "direct",
+      sourceKind: "file",
+      mimeType: "application/pdf",
+      filename: "guide.pdf",
+      previewUrl: "https://worshipsync.test/api/resources/proxy?token=guide",
+    }));
+    expect(await screen.findByTestId("document-preview-container")).toBeInTheDocument();
+  });
+
+  it("renders DOCX files through docx-preview", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["docx"]) });
+    try {
+      renderPreview({ id: "docx-1", title: "Guide", url: "https://example.test/guide.docx" });
+      expect(await screen.findByText("DOCX preview content")).toBeInTheDocument();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("uses video and audio renderers", async () => {
@@ -422,11 +454,8 @@ describe("ContentPreviewDialog", () => {
       externalUrl: originalUrl,
       provider: "sharepoint",
       title: "SharePoint",
-      mediaType: "unknown",
-      previewType: "unsupported",
+      sourceKind: "unavailable",
       previewUrl: null,
-      requiresProxy: false,
-      canPreview: false,
       reason: "This SharePoint link requires sign-in.",
     });
 

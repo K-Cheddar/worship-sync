@@ -1,68 +1,40 @@
 # External resource previews
 
-External URLs enter the shared preview path from either a Service Plan resource
-normalizer or an external ChurchResource. The Resources page and Service Plans
-both render through `ContentPreviewDialog`, which consumes a normalized descriptor; it
-does not contain provider-specific URL rules. Public URLs are resolved by
-`server/externalResourceProviders.js` and `server/externalResourceService.js`:
+Preview resolution separates retrieval decisions from UI rendering:
 
 ```text
-ServicePlanContentResource or ChurchResource.external.url
-  -> normalizeServicePlanResourceForPreview
-  -> ContentPreviewDialog
-  -> GET /api/resources/resolve?url=...
-  -> provider candidate + metadata probe
-  -> signed same-origin proxy for media/documents
-  -> shared image/audio/video/document renderer
+source/resource
+  → provider strategy
+  → secure network retrieval
+  → source descriptor
+  → client renderer selection
+  → renderer
 ```
 
-Creating an external ChurchResource calls the same authenticated resolver and
-persists only the canonical original URL plus provider-neutral metadata. A
-ChurchResource reference in a Service Plan remains its stable ID; external URLs
-are not copied into plan records.
+## Server responsibilities
 
-The resolver registry handles YouTube, Dropbox, Google Drive/Docs,
-OneDrive, SharePoint, and Box before falling back to direct URL metadata
-detection. Provider strategies only normalize public share links; they do not
-forward credentials or decide previewability. HTTP metadata, Content-Disposition,
-and URL extensions then determine the media type. HTML is never proxied; generic
-web pages may be shown in the existing sandboxed iframe path, while SharePoint
-HTML responses are treated as unresolved sharing pages.
+`externalResourceProviders.js` recognizes known providers and returns a candidate URL plus a small retrieval strategy. Strategies include `get` for native Google Docs, Sheets, and Slides PDF exports, `head-then-get` for hosted share files, `metadata-probe` for unknown/direct HTTPS resources, and `none` for YouTube IDs. The Google export strategy declares its expected PDF MIME type and a useful failure reason.
 
-SharePoint anonymous/“Anyone with the link” URLs are supported when they resolve
-to publicly accessible file bytes. The resolver preserves the original sharing
-URL for external opening, probes the normalized download candidate, and follows
-only validated public redirects. Authenticated or private SharePoint resources
-are not supported; adding provider-specific authentication would be a separate
-future feature.
+`externalResourceNetwork.js` owns public URL validation, all-address DNS resolution, blocked hostname and IP checks, safe HTTP agents, request timeouts, redirect-by-redirect validation, bounded metadata reads, and response draining. Provider adapters do not create network agents or weaken these checks.
 
-`GET /api/resources/resolve?url=` requires an authenticated app session. It
-returns a provider-neutral descriptor. Previewable images, audio, video, and
-documents are served through `GET /api/resources/proxy?token=` using a
-short-lived, target-bound HMAC capability minted by that authenticated
-request. The capability is necessary because media elements cannot attach the
-workstation or bearer headers used by the resolver request; it is not an
-unrestricted URL proxy. HTML remains external and is only attempted in the
-sandboxed iframe preview path; the UI provides an external-open fallback when
-embedding fails.
+`externalResourceService.js` orchestrates retrieval and metadata caching, mints expiring target-bound proxy tokens for files, and streams only bounded file responses. It returns a source descriptor with `originalUrl`, `provider`, `sourceKind` (`file`, `web`, `youtube`, or `unavailable`), upstream title/filename/MIME metadata, a safe `previewUrl`, and an optional reason. Webpages are never proxied. The proxy validates every redirect and rejects HTML, invalid ranges, oversized bodies, and expired or invalid tokens.
 
-Production deployments must set `AUTH_EXTERNAL_RESOURCE_TOKEN_SECRET` to a
-dedicated high-entropy secret. Development falls back to a domain-separated
-derivation from `AUTH_SESSION_SECRET`. Metadata is cached in process for ten
-minutes; proxy tokens expire after fifteen minutes and are minted per resolve.
+The older `mediaType`, `previewType`, `canPreview`, and `requiresProxy` response properties remain temporarily for API compatibility. Client code ignores them; `sourceKind` and resolved file metadata are the runtime contract. Remove the compatibility fields after external consumers have migrated.
 
-The resolver only makes public HTTP(S) requests, validates every redirect and
-DNS result, rejects credentials/private/link-local/metadata hosts, does not
-forward cookies or authorization, and applies bounded streaming, range,
-timeout, and in-process rate limits. Media is streamed without buffering the
-whole response, and safe range headers are preserved for seeking. The rate
-limits and metadata cache are process-local, so multi-instance deployments
-should add a shared limiter/cache if external-resource traffic becomes a
-scaling concern.
+## Client responsibilities
 
-The app CSP intentionally does not add arbitrary provider domains to
-`media-src`; media/document previews use the same-origin proxy. Existing
-trusted media/CDN hosts remain explicitly documented in the Electron CSP.
-Generic webpage framing is limited by the host's own embedding policy and
-falls back to opening the original URL; arbitrary HTML is not proxied to
-bypass `X-Frame-Options` or CSP.
+`client/src/components/ContentPreview/contentPreview.ts` contains the sole preview renderer selector. It maps resolved source kind, actual MIME type, filename, provider, and media ID to `image`, `audio`, `video`, `pdf`, `docx`, `text`, `youtube`, `web`, or `unsupported`. MIME and filename metadata take precedence over a generic webpage classification. DOC, XLS, XLSX, PPT, and PPTX remain unsupported.
+
+`ContentPreviewDialog` consumes the resulting descriptor and renders by its `renderer`. It owns bounded loading, slow-loading, and failure states. DOCX files render through `docx-preview`; PDF and webpage sources use an iframe, with webpages sandboxed.
+
+Resources and Service Plans use `createChurchResourcePreview` for ChurchResource metadata. Signed source URLs are supplied by the owning caller while renderer selection remains shared. Song audio uses `createSongAudioPreview`. Service Plan persistence continues to store the existing resource reference and resource ID.
+
+## Security invariants
+
+- Only HTTP and HTTPS URLs without embedded credentials are accepted, on supported ports.
+- DNS is resolved using `{ all: true, verbatim: true }`; all returned addresses must be public. The safe lookup callback provides the resolved address family to Node's HTTP agent.
+- Every redirect target receives the same URL and DNS/IP validation as the initial source.
+- Provider requests omit user credentials and cookies.
+- Proxy tokens are signed, bound to the exact target, and expire.
+- Proxy responses enforce byte, range, request-time, redirect-count, and rate limits. HTML and script responses are never proxied.
+- The client renderer selector is the only source of truth for WorshipSync preview capability. Secure retrieval reports source facts and does not choose a UI renderer.

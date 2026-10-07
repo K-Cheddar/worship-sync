@@ -30,6 +30,7 @@ import type {
   ContentPreviewResource,
   ContentPreviewResolvedSource,
 } from "../../components/ContentPreview/contentPreview";
+import { createChurchResourcePreview } from "../../components/ContentPreview/contentPreview";
 
 export type ServicePlanResourceDefinition = {
   label: string;
@@ -181,21 +182,25 @@ type ContentPreviewNormalizerOptions = {
 export const normalizeServicePlanResourceForPreview = (
   resource: ServicePlanContentResource,
   options: ContentPreviewNormalizerOptions = {},
-): ContentPreviewResource => ({
+): ContentPreviewResource => options.churchResource
+  ? {
+      ...createChurchResourcePreview(options.churchResource, options.resolveSource),
+      id: resource.id,
+    }
+  : ({
   id: resource.id,
-  title: options.churchResource?.name?.trim() || getExplicitServicePlanResourceTitle(resource) || undefined,
-  url: resource.url || options.churchResource?.external?.url,
+  title: getExplicitServicePlanResourceTitle(resource) || undefined,
+  url: resource.url,
   type: resource.type,
-  provider: resource.provider || options.churchResource?.external?.provider,
+  provider: resource.provider,
   mediaId: resource.mediaId,
-  mimeType: resource.metadata?.mimeType || options.churchResource?.external?.mimeType || options.churchResource?.storage?.contentType,
-  fileName: options.churchResource?.external?.fileName || options.churchResource?.storage?.fileName,
+  mimeType: resource.metadata?.mimeType,
   textContent: richTextToFormattedPlainText(getServicePlanResourceText(resource)) || undefined,
   ...(resource.type === "text"
     ? { richTextContent: getServicePlanResourceText(resource) }
     : {}),
   ...(options.resolveSource ? { resolveSource: options.resolveSource } : {}),
-});
+  });
 
 /**
  * ChurchResource references retain the historical `document` wire type for
