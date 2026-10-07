@@ -166,6 +166,11 @@ export function useMediaLibraryController({
   const controllerBasePath = useControllerBasePath();
   const { showToast, removeToast } = useToast();
   const activityActions = useOptionalTransferActions();
+  const routeOwnedTransferDisposersRef = useRef(new Map<string, () => void>());
+  useEffect(() => () => {
+    routeOwnedTransferDisposersRef.current.forEach((dispose) => dispose());
+    routeOwnedTransferDisposersRef.current.clear();
+  }, []);
   const isPanelVariant = variant === "panel";
 
   const notifyMediaAction = useCallback(
@@ -209,6 +214,17 @@ export function useMediaLibraryController({
     isGuestSession = false,
   } = useContext(ControllerInfoContext) || {};
   const { access, churchId = "" } = useContext(GlobalInfoContext) || {};
+  const activeScopeRef = useRef({ db, churchId, active: true });
+  activeScopeRef.current = { db, churchId, active: true };
+  useEffect(() => {
+    activeScopeRef.current.active = true;
+    return () => { activeScopeRef.current.active = false; };
+  }, []);
+  const isActiveMediaScope = useCallback(() =>
+    activeScopeRef.current.active &&
+    activeScopeRef.current.db === db &&
+    activeScopeRef.current.churchId === churchId,
+  [churchId, db]);
 
   const {
     list,
@@ -1158,6 +1174,7 @@ export function useMediaLibraryController({
 
   const commitCanvaReplacement = useCallback(
     async (oldMedia: MediaType, newMedia: MediaType) => {
+      if (!isActiveMediaScope()) throw new Error("Media changed while Canva import was running.");
       if (!db) throw new Error("Could not save Canva media replacement.");
       const folders = store.getState().media.folders;
       const currentList = getCurrentMediaList();
@@ -1178,12 +1195,14 @@ export function useMediaLibraryController({
         hasSupersededReferences: async (from, to) =>
           hasSupersededMediaReferences(db, from, to),
         flushMedia: (nextList, nextFolders) =>
-          flushMediaLibraryDocToPouch(db, nextList, nextFolders, () => ({
-            list: store.getState().media.list,
-            folders: store.getState().media.folders,
-          })),
+          flushMediaLibraryDocToPouch(db, nextList, nextFolders, () =>
+            isActiveMediaScope()
+              ? { list: store.getState().media.list, folders: store.getState().media.folders }
+              : { list: currentList, folders },
+          ),
         deleteProvider: deleteCanvaProvider,
         applyList: (nextList, nextFolders) => {
+          if (!isActiveMediaScope()) return;
           currentMediaListRef.current = nextList;
           dispatch(setMediaListAndFolders({
             list: nextList,
@@ -1191,12 +1210,14 @@ export function useMediaLibraryController({
           }));
         },
         applyLiveReferences: (replacement) => {
+          if (!isActiveMediaScope()) return;
           dispatch(replaceMediaReferencesInActiveItem(replacement));
           dispatch(replacePresentationMediaReferences(replacement));
           dispatch(replaceMediaReferencesInPreferences(replacement));
         },
         onCleanupFailure: showProviderCleanupRetry,
         canCommit: () => {
+          if (!isActiveMediaScope()) return false;
           const latest = getCurrentMediaList().find((mediaItem) => mediaItem.id === latestOldMedia.id);
           const latestSource = latest && getCanvaMediaSource(latest);
           return Boolean(latest && latest.updatedAt === latestOldMedia.updatedAt &&
@@ -1216,6 +1237,7 @@ export function useMediaLibraryController({
       deleteCanvaProvider,
       dispatch,
       getCurrentMediaList,
+      isActiveMediaScope,
       showProviderCleanupRetry,
       store,
     ],
@@ -1237,6 +1259,9 @@ export function useMediaLibraryController({
       if (!db) {
         return { phase: "library_failed", deletedRows: [], failedRows: rows, providerFailed: [] };
       }
+      const databaseAtStart = db;
+      const churchIdAtStart = churchId;
+      const isCurrentScope = () => activeScopeRef.current.db === databaseAtStart && activeScopeRef.current.churchId === churchIdAtStart;
       const deletedRows: MediaType[] = [];
       const failedRows: MediaType[] = [];
       const providerFailed: MediaType[] = [];
@@ -1261,7 +1286,7 @@ export function useMediaLibraryController({
           if (!authoritative) {
             // Another controller already removed this row. Never clean up a provider
             // asset using only the stale UI snapshot.
-            dispatch(removeMediaItemFromRemote(requestedRow.id));
+            if (isCurrentScope()) dispatch(removeMediaItemFromRemote(requestedRow.id));
             deletedRows.push(requestedRow);
             completed = true;
             break;
@@ -1299,12 +1324,12 @@ export function useMediaLibraryController({
             // A concurrent tombstone is idempotent. The reference sweep is safe to
             // keep, but cleanup data is not ours to infer from the old row.
             if (result === "missing") {
-              dispatch(removeMediaItemFromRemote(requestedRow.id));
+              if (isCurrentScope()) dispatch(removeMediaItemFromRemote(requestedRow.id));
               deletedRows.push(requestedRow);
               completed = true;
               break;
             }
-            dispatch(removeMediaItemFromRemote(requestedRow.id));
+            if (isCurrentScope()) dispatch(removeMediaItemFromRemote(requestedRow.id));
             deletedRows.push(authoritative.item);
             onProgress?.({ mediaId: requestedRow.id, phase: "Cleaning up cloud copy", index: rowIndex, total: rows.length });
             if (getCanvaMediaSource(authoritative.item)) {
@@ -1372,7 +1397,7 @@ export function useMediaLibraryController({
         providerFailed,
       };
     },
-    [db, deleteCanvaProvider, deleteFromProviders, dispatch, getCurrentMediaList],
+    [churchId, db, deleteCanvaProvider, deleteFromProviders, dispatch, getCurrentMediaList],
   );
 
   const handleDeleteFolderKeepContents = useCallback(
@@ -1473,8 +1498,33 @@ export function useMediaLibraryController({
       let uploadCleanupRows: MediaType[] = [];
       let folderFinalized = false;
       const actionUnregisters: Array<() => void> = [];
+      let ownerActive = true;
+      const retireOwner = () => {
+        if (!ownerActive) return;
+        ownerActive = false;
+        actionUnregisters.splice(0).forEach((unregister) => unregister());
+        const transfer = activityActions?.getTransfer(activityId);
+        if (transfer) {
+          activityActions?.updateTransfer({
+            ...transfer,
+            status: transfer.status === "active" ? "failed" : transfer.status,
+            phase: transfer.status === "active"
+              ? { key: "failed", label: "Media closed while deletion was pending" }
+              : transfer.phase,
+            ...(transfer.status === "active"
+              ? { error: { message: "Reopen Media to inspect the library and retry any remaining work." } }
+              : {}),
+            canCancel: false,
+            blocksUnload: false,
+            actions: [],
+          });
+        }
+        routeOwnedTransferDisposersRef.current.delete(activityId);
+      };
+      routeOwnedTransferDisposersRef.current.set(activityId, retireOwner);
 
       const publish = (status: Transfer["status"], phase: string, error?: string) => {
+        if (!ownerActive) return;
         const complete = fileStates.filter((file) => file.status === "complete").length;
         const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
         activityActions?.updateTransfer({
@@ -1499,15 +1549,18 @@ export function useMediaLibraryController({
         });
       };
       const register = (key: string, handler: () => void | Promise<void>) => {
+        if (!ownerActive) return;
         const unregister = activityActions?.registerTransferAction(activityId, key, handler);
         if (unregister) actionUnregisters.push(unregister);
       };
       const finishFolderNavigation = () => {
+        if (!ownerActive || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) return;
         setFolderDeleteOpen(false);
         navigateToFolder(fallback);
       };
       const finalizeFolder = async () => {
         if (folderFinalized) return;
+        if (activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) return;
         dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
         for (const key of Object.keys(repairs) as MediaRouteKey[]) {
           const routeFolderId = repairs[key];
@@ -1693,7 +1746,7 @@ export function useMediaLibraryController({
       });
       register("dismiss", () => {
         if (fileStates.some((file) => file.status === "active")) return;
-        actionUnregisters.forEach((unregister) => unregister());
+        retireOwner();
         activityActions?.removeTransfer(activityId);
       });
 
@@ -1714,6 +1767,7 @@ export function useMediaLibraryController({
       controllerProfile.id,
       list,
       db,
+      churchId,
       dispatch,
       activeMediaRouteFolders,
       removeMediaRowsAfterSweep,
@@ -1766,8 +1820,33 @@ export function useMediaLibraryController({
     let uploadCleanupRetry: (() => Promise<void>) | undefined;
     let uploadCleanupRows: MediaType[] = [];
     const actionUnregisters: Array<() => void> = [];
+    let ownerActive = true;
+    const retireOwner = () => {
+      if (!ownerActive) return;
+      ownerActive = false;
+      actionUnregisters.splice(0).forEach((unregister) => unregister());
+      const transfer = activityActions?.getTransfer(activityId);
+      if (transfer) {
+        activityActions?.updateTransfer({
+          ...transfer,
+          status: transfer.status === "active" ? "failed" : transfer.status,
+          phase: transfer.status === "active"
+            ? { key: "failed", label: "Media closed while deletion was pending" }
+            : transfer.phase,
+          ...(transfer.status === "active"
+            ? { error: { message: "Reopen Media to inspect the library and retry any remaining work." } }
+            : {}),
+          canCancel: false,
+          blocksUnload: false,
+          actions: [],
+        });
+      }
+      routeOwnedTransferDisposersRef.current.delete(activityId);
+    };
+    routeOwnedTransferDisposersRef.current.set(activityId, retireOwner);
 
     const publish = (status: Transfer["status"], phase: string, error?: string) => {
+      if (!ownerActive) return;
       const complete = fileStates.filter((file) => file.status === "complete").length;
           const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
       const transfer: Transfer = {
@@ -1793,6 +1872,7 @@ export function useMediaLibraryController({
       activityActions?.updateTransfer(transfer);
     };
     const register = (key: string, handler: () => void | Promise<void>) => {
+      if (!ownerActive) return;
       const unregister = activityActions?.registerTransferAction(activityId, key, handler);
       if (unregister) actionUnregisters.push(unregister);
     };
@@ -1944,7 +2024,7 @@ export function useMediaLibraryController({
     });
     register("dismiss", () => {
       if (fileStates.some((file) => file.status === "active")) return;
-      actionUnregisters.forEach((unregister) => unregister());
+      retireOwner();
       activityActions?.removeTransfer(activityId);
     });
 
@@ -2058,6 +2138,9 @@ export function useMediaLibraryController({
     ) => {
       const key = options.idempotencyKey;
       const create = async (): Promise<string> => {
+      if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        throw new Error("Media changed while Canva import was running. Reopen Media to create the custom item.");
+      }
       if (!db) throw new Error("The custom item could not be saved because Media is unavailable.");
       if (pages.length === 0) throw new Error("No imported media is available for the custom item.");
       // Prefer live list entries so refreshed Canva backgrounds are current.
@@ -2083,6 +2166,9 @@ export function useMediaLibraryController({
             mediaInfo: page,
           })),
         });
+        if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+          throw new Error("Media changed while Canva import was running. Reopen Media to create the custom item.");
+        }
         const listItem = {
           name: newItem.name,
           type: newItem.type,
@@ -2124,6 +2210,7 @@ export function useMediaLibraryController({
     },
     [
       allItemsList,
+      churchId,
       controllerBasePath,
       db,
       defaultFreeFormBackgroundBrightness,
@@ -2201,19 +2288,24 @@ export function useMediaLibraryController({
       dispatch(removeItemFromMediaList(mediaItem.id));
       throw new Error("Media storage is unavailable. The Canva media was not saved.");
     }
-    const result = await flushMediaLibraryDocToPouch(db, getCurrentMediaList(), store.getState().media.folders, () => ({
-      list: getCurrentMediaList(),
-      folders: store.getState().media.folders,
-    }));
+    const listAtStart = getCurrentMediaList();
+    const foldersAtStart = store.getState().media.folders;
+    const result = await flushMediaLibraryDocToPouch(db, listAtStart, foldersAtStart, () =>
+      isActiveMediaScope()
+        ? { list: getCurrentMediaList(), folders: store.getState().media.folders }
+        : { list: listAtStart, folders: foldersAtStart },
+    );
     if (!result.ok) {
       try {
         const persisted = await loadMediaLibrary(db);
         const persistedList = persisted.list;
         const persistedItem = persistedList.find((item) => item.id === mediaItem.id);
-        dispatch(setMediaListAndFolders({
-          list: [...persistedList],
-          folders: [...persisted.folders],
-        }));
+        if (isActiveMediaScope()) {
+          dispatch(setMediaListAndFolders({
+            list: [...persistedList],
+            folders: [...persisted.folders],
+          }));
+        }
         if (persistedItem) return persistedItem;
       } catch {
         // Keep the optimistic row and provider asset until persistence can be checked again.
@@ -2224,11 +2316,20 @@ export function useMediaLibraryController({
     return mediaItem;
   };
 
-  const addCanvaImage = async (info: mediaInfoType) => persistCanvaMedia(addNewBackground(info));
-  const addCanvaVideo = async (info: MuxUploadResult) => persistCanvaMedia(addMuxVideo(info));
+  const addCanvaImage = async (info: mediaInfoType) => {
+    if (!isActiveMediaScope()) throw new Error("Media changed while Canva import was running.");
+    return persistCanvaMedia(addNewBackground(info));
+  };
+  const addCanvaVideo = async (info: MuxUploadResult) => {
+    if (!isActiveMediaScope()) throw new Error("Media changed while Canva import was running.");
+    return persistCanvaMedia(addMuxVideo(info));
+  };
 
   const refreshCanvaImage = useCallback(
     async (info: mediaInfoType, mediaId: string) => {
+      if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        throw new Error("Media changed while Canva import was running.");
+      }
       const current = getCurrentMediaList().find(
         (mediaItem) => mediaItem.id === mediaId,
       );
@@ -2267,11 +2368,14 @@ export function useMediaLibraryController({
       await commitCanvaReplacement(current, nextMedia);
       return true;
     },
-    [churchId, cloud, commitCanvaReplacement, getCurrentMediaList],
+    [churchId, cloud, commitCanvaReplacement, db, getCurrentMediaList],
   );
 
   const refreshCanvaVideo = useCallback(
     async (info: MuxUploadResult, mediaId: string) => {
+      if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        throw new Error("Media changed while Canva import was running.");
+      }
       const current = getCurrentMediaList().find(
         (mediaItem) => mediaItem.id === mediaId,
       );
@@ -2307,7 +2411,7 @@ export function useMediaLibraryController({
       await commitCanvaReplacement(current, nextMedia);
       return true;
     },
-    [churchId, commitCanvaReplacement, getCurrentMediaList],
+    [churchId, commitCanvaReplacement, db, getCurrentMediaList],
   );
 
   const requestMediaUpload = useCallback(() => {

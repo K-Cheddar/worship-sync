@@ -207,6 +207,7 @@ const loadStoreWithOverlayTemplatePersistence = () => {
   };
 };
 
+let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
@@ -215,10 +216,11 @@ const loadStoreWithItemPersistence = () => {
     get: jest.fn(),
     put: jest.fn(),
   };
+  mockActiveItemDb = db;
 
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
+      get globalDb() { return mockActiveItemDb; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -243,6 +245,7 @@ const loadStoreWithItemPersistence = () => {
     updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
+    setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
   };
 };
 
@@ -687,6 +690,62 @@ describe("store module", () => {
         call[1].length === 0,
     );
     expect(clearedPublishedList).toBe(false);
+  });
+
+  it("keeps active-outline credits reads on Church A when the church changes mid-migration", async () => {
+    let storeModule: any;
+    let itemListsSliceModule: any;
+    let resolveMigration!: () => void;
+    const migrationGate = new Promise<void>((resolve) => { resolveMigration = resolve; });
+    const migrate = jest.fn(() => migrationGate);
+    const ensure = jest.fn().mockResolvedValue(undefined);
+    const getCredits = jest.fn().mockResolvedValue([]);
+    const activeA = { get: jest.fn(), put: jest.fn() };
+    const activeB = { get: jest.fn(), put: jest.fn() };
+    const firebaseA = { church: "a" };
+    const firebaseB = { church: "b" };
+    const fireInfo: any = { db: firebaseA, churchId: "church-a", canWriteSharedData: true };
+    let activeDb: any = activeA;
+    const refMock = jest.fn((_firebase: unknown, path: string) => ({ path }));
+    const setMock = jest.fn();
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        get globalDb() { return activeDb; },
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
+      jest.doMock("../utils/dbUtils", () => ({
+        migrateLegacyCreditsToActiveOutlineIfNeeded: migrate,
+        ensureCreditsIndexDoc: ensure,
+        getCreditsByIds: getCredits,
+      }));
+      jest.doMock("firebase/database", () => ({ ref: refMock, set: setMock, get: jest.fn() }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemListsSliceModule = require("./itemListsSlice");
+    });
+
+    const store = storeModule.default;
+    store.dispatch(itemListsSliceModule.updateItemListsFromRemote({
+      itemLists: [{ _id: "same-outline", name: "Church A outline" }],
+      activeListId: "same-outline",
+    }));
+    for (let attempt = 0; attempt < 20 && migrate.mock.calls.length === 0; attempt += 1) await Promise.resolve();
+    expect(migrate).toHaveBeenCalledWith(activeA, "same-outline");
+
+    activeDb = activeB;
+    fireInfo.db = firebaseB;
+    fireInfo.churchId = "church-b";
+    resolveMigration();
+    await flushListenerEffects();
+
+    expect(ensure).not.toHaveBeenCalled();
+    expect(activeA.get).not.toHaveBeenCalled();
+    expect(activeB.get).not.toHaveBeenCalled();
+    expect(getCredits).not.toHaveBeenCalled();
+    expect(setMock).not.toHaveBeenCalled();
   });
 
   it("keeps controller and display registries across RESET_CONTROLLER_SESSION", () => {
@@ -1642,6 +1701,33 @@ describe("store module", () => {
     );
   });
 
+  it("keeps a delayed item save on its original database and out of the new church state", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db: dbA, postMessage, setGlobalDb } =
+      loadStoreWithItemPersistence();
+    dbA.get.mockResolvedValue(createSongDoc({ _rev: "1-song" }));
+    dbA.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
+    const dbB = { get: jest.fn(), put: jest.fn() };
+
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({ _rev: "1-song" })));
+    await flushListenerEffects();
+    dbA.put.mockClear();
+    postMessage.mockClear();
+    store.dispatch(itemSlice.actions._setName("Church A edit"));
+    store.dispatch({ type: "RESET" });
+    setGlobalDb(dbB);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    expect(dbA.put).toHaveBeenCalledWith(expect.objectContaining({ name: "Church A edit" }));
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.name).not.toBe("Church A edit");
+    jest.useRealTimers();
+  });
+
   it("persists and reloads a custom free section name", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, updateSlides, db } =
@@ -2188,7 +2274,7 @@ describe("store module", () => {
     ).not.toBe("#123456");
   });
 
-  it("persists non-selected overlay docs when undo reverts a multi-overlay change", async () => {
+  it("keeps every undo overlay write on its original database during a church switch", async () => {
     jest.useFakeTimers();
 
     let storeModule: any;
@@ -2203,26 +2289,30 @@ describe("store module", () => {
           ...createOverlay("overlay-a", "Alpha"),
         });
       }
-      if (id === "overlay-overlay-b") {
+      if (id === "overlay-overlay-c") {
         return Promise.resolve({
           _id: id,
-          _rev: "1-b",
+          _rev: "1-c",
           docType: "overlay",
-          ...createOverlay("overlay-b", "Beta"),
+          ...createOverlay("overlay-c", "Gamma"),
         });
       }
       return Promise.reject(new Error(`Unexpected get ${id}`));
     });
-    const putMock = jest.fn((doc: any) =>
-      Promise.resolve({ rev: `${doc._rev || "1"}-next` }),
-    );
+    let releaseFirstPut!: (value: { rev: string }) => void;
+    const firstPut = new Promise<{ rev: string }>((resolve) => { releaseFirstPut = resolve; });
+    let putCount = 0;
+    const putMock = jest.fn((doc: any) => {
+      putCount += 1;
+      return putCount === 1 ? firstPut : Promise.resolve({ rev: `${doc._rev || "1"}-next` });
+    });
+    const dbA = { get: getMock, put: putMock };
+    const dbB = { get: jest.fn(), put: jest.fn() };
+    let activeDb: any = dbA;
 
     jest.isolateModules(() => {
       jest.doMock("../context/controllerInfo", () => ({
-        globalDb: {
-          get: getMock,
-          put: putMock,
-        },
+        get globalDb() { return activeDb; },
         globalBroadcastRef: undefined,
       }));
       jest.doMock("../context/globalInfo", () => ({
@@ -2249,53 +2339,65 @@ describe("store module", () => {
 
     const overlayA = createOverlay("overlay-a", "Alpha");
     const overlayB = createOverlay("overlay-b", "Beta");
+    const overlayC = createOverlay("overlay-c", "Gamma");
 
     store.dispatch({ type: storeModule.CREDITS_EDITOR_PAGE_READY });
     jest.runAllTimers();
 
     store.dispatch(
-      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB]),
+      overlaysSlice.actions.initiateOverlayList([overlayA, overlayB, overlayC]),
     );
     store.dispatch({ type: "@@redux-undo/CLEAR_HISTORY" });
     store.dispatch(overlaySlice.actions.selectOverlay(overlayB));
-
-    const selectedBeforeUpdate =
-      store.getState().undoable.present.overlay.selectedOverlay;
+    const selectedBeforeUpdate = store.getState().undoable.present.overlay.selectedOverlay;
     const updatedFormatting = {
       ...selectedBeforeUpdate.formatting,
       backgroundColor: "#123456",
     };
-
-    store.dispatch(
-      overlaySlice.actions.updateOverlay({
-        ...selectedBeforeUpdate,
-        formatting: updatedFormatting,
-      }),
-    );
-    store.dispatch(
-      overlaysSlice.actions.updateOverlayInList({
-        id: "overlay-a",
-        formatting: updatedFormatting,
-      }),
-    );
-    store.dispatch(
-      overlaysSlice.actions.updateOverlayInList({
-        id: "overlay-b",
-        formatting: updatedFormatting,
-      }),
-    );
+    store.dispatch(overlaySlice.actions.updateOverlay({
+      ...selectedBeforeUpdate,
+      formatting: updatedFormatting,
+    }));
+    store.dispatch(overlaysSlice.actions.updateOverlayList([
+      { ...overlayA, formatting: { ...overlayA.formatting, backgroundColor: "#123456" } },
+      overlayB,
+      { ...overlayC, formatting: { ...overlayC.formatting, backgroundColor: "#123456" } },
+    ]));
 
     store.dispatch({ type: "@@redux-undo/UNDO" });
     jest.runAllTimers();
-    await flushListenerEffects();
+    for (let attempt = 0; attempt < 20 && putCount === 0; attempt += 1) await Promise.resolve();
+    expect(putCount).toBeGreaterThan(0);
+    activeDb = dbB;
+    releaseFirstPut({ rev: "2-first" });
+    for (let attempt = 0; attempt < 100 && putCount < 2; attempt += 1) {
+      await Promise.resolve();
+    }
 
     expect(getMock).toHaveBeenCalledWith("overlay-overlay-a");
+    expect(getMock).toHaveBeenCalledWith("overlay-overlay-c");
     expect(putMock).toHaveBeenCalledWith(
       expect.objectContaining({
         _id: "overlay-overlay-a",
         id: "overlay-a",
       }),
     );
+    expect(putMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "overlay-overlay-c",
+        id: "overlay-c",
+      }),
+    );
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+
+    const state = store.getState().undoable.present;
+    expect(state.overlay.selectedOverlay).toEqual(
+      expect.objectContaining({ id: "overlay-b" }),
+    );
+    expect(state.overlay.selectedOverlay?.formatting?.backgroundColor).not.toBe("#123456");
+    expect(state.overlays.list.find((overlay: any) => overlay.id === "overlay-a")?.formatting?.backgroundColor).not.toBe("#123456");
+    expect(state.overlays.list.find((overlay: any) => overlay.id === "overlay-c")?.formatting?.backgroundColor).not.toBe("#123456");
   });
 
   it("buffers remote item docs instead of applying them while the active item is being edited", async () => {
@@ -2585,6 +2687,101 @@ describe("store module", () => {
     expect(monitorInfo.type).toBe("timer");
     expect(monitorInfo.timerId).toBe("timer-1");
     expect(monitorInfo.itemId).toBe("timer-item");
+  });
+
+  it("does not apply a Church A timer wrap-up slide after the active church changes", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let storeModule: any;
+    let itemSliceModule: any;
+    let timersSliceModule: any;
+    let presentationSliceModule: any;
+    let resolveItem!: (item: any) => void;
+    const dbA = { get: jest.fn(() => new Promise((resolve) => { resolveItem = resolve; })), put: jest.fn() };
+    const dbB = { get: jest.fn(), put: jest.fn() };
+    const firebaseA = { church: "a" };
+    const firebaseB = { church: "b" };
+    const fireInfo: any = { db: firebaseA, churchId: "church-a", canWriteSharedData: false, database: "main" };
+    let activeDb: any;
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({
+        get globalDb() { return activeDb; },
+        globalBroadcastRef: undefined,
+      }));
+      jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
+      jest.doMock("firebase/database", () => ({ ref: jest.fn((_db: unknown, path: string) => path), set: jest.fn(), get: jest.fn() }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      itemSliceModule = require("./itemSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      presentationSliceModule = require("./presentationSlice");
+    });
+
+    const store = storeModule.default;
+    const { itemSlice } = itemSliceModule;
+    const { timersSlice } = timersSliceModule;
+    const { presentationSlice } = presentationSliceModule;
+    const activeItem = createTimerItem({ _id: "church-b-active-item", timerInfo: undefined });
+    const timerItem = createTimerItem({ _id: "church-a-timer-item", timerInfo: undefined });
+    store.dispatch(itemSlice.actions.setActiveItem(activeItem));
+    activeDb = dbA;
+    store.dispatch(presentationSlice.actions.toggleMonitorTransmitting());
+    const churchASlide = timerItem.slides[0];
+    store.dispatch(presentationSlice.actions.updateMonitor({
+      slide: churchASlide,
+      name: "Church A timer",
+      type: "slide",
+      timerId: "timer-1",
+      itemId: "church-a-wrap-up-item",
+      skipTransmissionCheck: true,
+    }));
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "timer-1",
+      hostId: "host-123",
+      name: "Church A timer",
+      timerType: "timer",
+      status: "running",
+      isActive: true,
+      countdownTime: "00:05",
+      duration: 5,
+      remainingTime: 5,
+      endTime: new Date("2026-01-01T00:00:01.000Z").toISOString(),
+      showMinutesOnly: false,
+    }));
+
+    jest.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+    store.dispatch(timersSlice.actions.tickTimers());
+    expect(store.getState().timers.timers.find((timer: any) => timer.id === "timer-1")).toEqual(
+      expect.objectContaining({ remainingTime: 0, status: "stopped" }),
+    );
+    expect(toLegacyPresentationShape(store.getState().presentation).monitorInfo.itemId).toBe("church-a-wrap-up-item");
+    for (let attempt = 0; attempt < 20 && dbA.get.mock.calls.length === 0; attempt += 1) await Promise.resolve();
+    expect(dbA.get).toHaveBeenCalledWith("church-a-wrap-up-item");
+
+    activeDb = dbB;
+    fireInfo.db = firebaseB;
+    fireInfo.churchId = "church-b";
+    const churchBSlide = createScreenSlide("church-b-current", "Church B current");
+    store.dispatch(presentationSlice.actions.updateMonitor({
+      slide: churchBSlide,
+      name: "Church B presentation",
+      type: "slide",
+      timerId: "timer-b",
+      itemId: "church-b-item",
+      skipTransmissionCheck: true,
+    }));
+    resolveItem(createSongDoc({ _id: "church-a-wrap-up-item", slides: [churchASlide, createScreenSlide("church-a-wrap-up", "A wrap-up")] }));
+    await flushListenerEffects();
+
+    const monitorInfo = toLegacyPresentationShape(store.getState().presentation).monitorInfo;
+    expect(monitorInfo.slide).toEqual(churchBSlide);
+    expect(monitorInfo.itemId).toBe("church-b-item");
+    expect(dbB.get).not.toHaveBeenCalled();
+    jest.useRealTimers();
   });
 
   it("persists finalized timer runtime onto the active timer item after starting", async () => {
@@ -4254,10 +4451,11 @@ const loadStoreWithAllItemsPersistence = () => {
     get: jest.fn().mockResolvedValue({ _id: "allItems", items: [] }),
     put: jest.fn().mockResolvedValue({ ok: true, id: "allItems", rev: "2" }),
   };
+  let activeDb: any = db;
 
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
+      get globalDb() { return activeDb; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -4276,7 +4474,7 @@ const loadStoreWithAllItemsPersistence = () => {
     allItemsSliceModule = require("./allItemsSlice");
   });
 
-  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db };
+  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db, setGlobalDb: (next: unknown) => { activeDb = next; } };
 };
 
 describe("allItems persistence", () => {
@@ -4310,8 +4508,33 @@ describe("allItems persistence", () => {
     );
     jest.useRealTimers();
   });
+
+  it("abandons a delayed Church A all-items save after the active database switches", async () => {
+    jest.useFakeTimers();
+    const { store, allItemsSlice, db: dbA, setGlobalDb } = loadStoreWithAllItemsPersistence();
+    const dbB = { get: jest.fn(), put: jest.fn() };
+    store.dispatch(allItemsSlice.setIsInitialized(true));
+    store.dispatch(allItemsSlice.addItemToAllItemsList({
+      _id: "church-a-item",
+      name: "Church A item",
+      type: "song",
+      listId: "outline-a",
+      background: "",
+    }));
+    store.dispatch({ type: "RESET" });
+    setGlobalDb(dbB);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(dbA.put).not.toHaveBeenCalled();
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
 });
 
+let mockActiveControllerDb: any;
 const loadStoreWithControllerMediaFolders = () => {
   let storeModule: any;
   let preferencesModule: any;
@@ -4331,8 +4554,9 @@ const loadStoreWithControllerMediaFolders = () => {
       return { ok: true, rev: next._rev };
     }),
   };
+  mockActiveControllerDb = db;
   jest.isolateModules(() => {
-    jest.doMock("../context/controllerInfo", () => ({ globalDb: db, globalBroadcastRef: { postMessage } }));
+    jest.doMock("../context/controllerInfo", () => ({ get globalDb() { return mockActiveControllerDb; }, globalBroadcastRef: { postMessage } }));
     jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: { db: undefined, churchId: undefined }, globalHostId: "host-123" }));
     jest.doMock("firebase/database", () => ({ ref: jest.fn(), set: jest.fn(), get: jest.fn() }));
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -4340,7 +4564,7 @@ const loadStoreWithControllerMediaFolders = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     preferencesModule = require("./preferencesSlice");
   });
-  return { store: storeModule.default, preferences: preferencesModule, docs, db, postMessage };
+  return { store: storeModule.default, preferences: preferencesModule, docs, db, postMessage, setGlobalDb: (next: unknown) => { mockActiveControllerDb = next; } };
 };
 
 describe("controller media folder persistence", () => {
@@ -4362,6 +4586,62 @@ describe("controller media folder persistence", () => {
       controllerProfileId: "aux-1",
       mediaRouteFolders: { "controller-item-image": "videos" },
     });
+    jest.useRealTimers();
+  });
+
+  it("keeps a queued folder save owned by its original database and profile", async () => {
+    jest.useFakeTimers();
+    let releaseFirst!: () => void;
+    let firstPut = true;
+    const { store, preferences, docs, db, postMessage, setGlobalDb } = loadStoreWithControllerMediaFolders();
+    const dbBdocs = new Map<string, Record<string, unknown>>();
+    const dbB = {
+      get: jest.fn(async (id: string) => {
+        const doc = dbBdocs.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+        return { ...doc };
+      }),
+      put: jest.fn(async (doc: Record<string, unknown>) => {
+        const saved = { ...doc, _rev: "1-b" };
+        dbBdocs.set(String(doc._id), saved);
+        return { ok: true, rev: saved._rev };
+      }),
+    };
+    const originalPut = db.put.getMockImplementation()!;
+    db.put.mockImplementation(async (doc) => {
+      if (firstPut) {
+        firstPut = false;
+        await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      }
+      return originalPut(doc);
+    });
+
+    store.dispatch(preferences.setIsInitialized(true));
+    store.dispatch(preferences.initiateMediaRouteFolders({ controllerProfileId: "church-a-profile", mediaRouteFolders: {} }));
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "church-a-profile", key: "controller-item-image", folderId: "a-first" }));
+    await flushListenerEffects();
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "church-a-profile", key: "controller-item-video", folderId: "a-queued" }));
+    await flushListenerEffects();
+
+    setGlobalDb(dbB);
+    store.dispatch(preferences.initiateMediaRouteFolders({ controllerProfileId: "church-b-profile", mediaRouteFolders: {} }));
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "church-b-profile", key: "controller-item-image", folderId: "b-only" }));
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    await Promise.resolve();
+    releaseFirst();
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect([...docs.keys()]).toEqual(["mediaRouteFolders:church-a-profile"]);
+    expect(db.put.mock.calls.every(([doc]) => doc._id === "mediaRouteFolders:church-a-profile")).toBe(true);
+    expect([...dbBdocs.keys()]).toEqual(["mediaRouteFolders:church-b-profile"]);
+    expect(dbB.put.mock.calls.every(([doc]) => doc._id === "mediaRouteFolders:church-b-profile")).toBe(true);
+    expect(postMessage.mock.calls.flatMap(([message]) => message.data.docs).some((doc) =>
+      doc.controllerProfileId === "church-a-profile" && doc.mediaRouteFolders?.["controller-item-video"] === "a-queued",
+    )).toBe(false);
+    expect(store.getState().undoable.present.preferences.mediaRouteFolders).toEqual({ "controller-item-image": "b-only" });
     jest.useRealTimers();
   });
 });

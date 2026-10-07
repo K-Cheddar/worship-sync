@@ -257,7 +257,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             "rounded-t-md mt-2",
           )}
         >
-          <h2 className="shrink-0 font-semibold">Sources</h2>
+          <h2 className="min-w-0 flex-1 font-semibold">Sources</h2>
           <div className="flex shrink-0 items-center">
             <Button
               variant="tertiary"

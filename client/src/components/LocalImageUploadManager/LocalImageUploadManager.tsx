@@ -77,6 +77,8 @@ const LocalImageUploadManager = () => {
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
   const { db, isGuestSession = false } =
     useContext(ControllerInfoContext) || {};
+  const activeScopeRef = useRef({ db, churchId });
+  activeScopeRef.current = { db, churchId };
   const dispatch = useDispatch();
   const mediaList = useSelector((state: RootState) => state.media.list);
   const mediaIsReady = useSelector(
@@ -94,7 +96,7 @@ const LocalImageUploadManager = () => {
     leaseOwnerId.current = `upload-manager-${generateRandomId()}`;
   }
   const retryTimer = useRef<number | undefined>(undefined);
-  const hasSweptWorkspace = useRef("");
+  const hasSweptWorkspace = useRef<{ db: PouchDB.Database; workspaceId: string } | null>(null);
 
   const processJob = useCallback(
     async (claimedJob: LocalImageUploadJob) => {
@@ -345,13 +347,9 @@ const LocalImageUploadManager = () => {
         if (!cloudMedia.providerStorage) {
           try {
             await updateClaimedJob({ phase: "committing", progress: 90 });
-            if (!providerUploadId) {
-              throw new Error("The cloud upload identity is missing. Retry the upload.");
-            }
             const committed = await commitCloudinaryMediaAsset(
               churchId,
-              providerUploadId,
-              cloudMedia.publicId,
+              { ...(providerUploadId ? { uploadId: providerUploadId } : {}), publicId: cloudMedia.publicId },
             );
             cloudMedia = { ...cloudMedia, providerStorage: committed.asset };
             if (!(await updateClaimedJob({
@@ -387,6 +385,31 @@ const LocalImageUploadManager = () => {
         }
         if (await stopIfCancelled()) return;
         await updateClaimedJob({ phase: "finalizing", progress: 95 });
+        if (activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+          try {
+            await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
+            await updateClaimedJob({
+              status: "cancelled",
+              phase: "cancelled",
+              progress: null,
+              cloudMedia: null,
+              providerUploadId: null,
+              providerExpectedPublicId: null,
+              nextAttemptAt: 0,
+              lastError: undefined,
+            });
+          } catch (error) {
+            await updateClaimedJob({
+              status: "failed",
+              phase: "failed",
+              progress: null,
+              cloudMedia,
+              nextAttemptAt: 0,
+              lastError: error instanceof Error ? error.message : "Church changed during upload; cloud cleanup needs attention.",
+            });
+          }
+          return;
+        }
         const localMedia =
           mediaByIdRef.current.get(job.assetId) ??
           Array.from(mediaByIdRef.current.values()).find(
@@ -420,6 +443,7 @@ const LocalImageUploadManager = () => {
               mediaId: cloudMedia.id,
               url: cloudMedia.background,
             });
+            if (activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) return;
             dispatchLocalImageCloudCopy(dispatch, {
               itemId: job.itemId,
               assetId: job.assetId,
@@ -519,11 +543,31 @@ const LocalImageUploadManager = () => {
   }, [drainQueue]);
 
   useEffect(() => {
-    if (!db || !churchId || hasSweptWorkspace.current === churchId) return;
-    hasSweptWorkspace.current = churchId;
-    void cleanupOrphanedLocalImages({ db, workspaceId: churchId }).catch(
-      (error) => console.error("Local image orphan cleanup failed:", error),
-    );
+    if (!db || !churchId || (hasSweptWorkspace.current?.db === db && hasSweptWorkspace.current.workspaceId === churchId)) return;
+    let active = true;
+    let running = false;
+    const tryCleanup = async () => {
+      if (hasSweptWorkspace.current?.db === db && hasSweptWorkspace.current.workspaceId === churchId) return true;
+      if (running) return false;
+      running = true;
+      try {
+        const result = await cleanupOrphanedLocalImages({ db, workspaceId: churchId });
+        if (result === null || !active) return false;
+        if (active) hasSweptWorkspace.current = { db, workspaceId: churchId };
+        return true;
+      } catch (error) {
+        console.error("Local image orphan cleanup failed:", error);
+        return false;
+      } finally {
+        running = false;
+      }
+    };
+    void tryCleanup();
+    const interval = window.setInterval(() => { void tryCleanup(); }, 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
   }, [churchId, db]);
 
   return null;

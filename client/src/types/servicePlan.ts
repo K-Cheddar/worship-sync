@@ -242,6 +242,7 @@ export type ServicePlanContentResourceType =
   | "scripture"
   | "youtube"
   | "audio"
+  | "image"
   | "document"
   | "custom-document"
   | "url"

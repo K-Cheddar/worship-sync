@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { uploadImageToCloudinarySigned } from "../../containers/Media/utils/cloudinaryUpload";
@@ -6,9 +6,11 @@ import {
   cancelCloudinaryMediaUpload,
   commitCloudinaryMediaAsset,
   createCloudinaryMediaUpload,
+  deleteCloudinaryMediaAsset,
 } from "../../api/providerStorage";
 import {
   claimLocalImageUploadJob,
+  cleanupOrphanedLocalImages,
   deleteLocalImageUploadJob,
   getLocalImage,
   listLocalImageUploadJobs,
@@ -85,6 +87,7 @@ const mockGetLocalImage = jest.mocked(getLocalImage);
 const mockUpload = jest.mocked(uploadImageToCloudinarySigned);
 const mockCommitCloudinary = jest.mocked(commitCloudinaryMediaAsset);
 const mockCancelCloudinaryUpload = jest.mocked(cancelCloudinaryMediaUpload);
+const mockDeleteCloudinaryAsset = jest.mocked(deleteCloudinaryMediaAsset);
 const mockCreateCloudinaryUpload = jest.mocked(createCloudinaryMediaUpload);
 const mockPersistCloudCopy = jest.mocked(persistLocalImageCloudCopy);
 const mockDeleteJob = jest.mocked(deleteLocalImageUploadJob);
@@ -150,6 +153,24 @@ describe("LocalImageUploadManager", () => {
     mockRenewLease.mockResolvedValue(true);
   });
 
+  it("waits for schema v2 before marking a workspace swept", async () => {
+    jest.useFakeTimers();
+    jest.mocked(cleanupOrphanedLocalImages).mockReset().mockResolvedValueOnce(null).mockResolvedValue(0);
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+    await waitFor(() => expect(cleanupOrphanedLocalImages).toHaveBeenCalledTimes(1));
+    await act(async () => { await jest.advanceTimersByTimeAsync(30_000); });
+    await waitFor(() => expect(cleanupOrphanedLocalImages).toHaveBeenCalledTimes(2));
+    expect(cleanupOrphanedLocalImages).toHaveBeenLastCalledWith({ db: expect.any(Object), workspaceId: "church-1" });
+    view.unmount();
+    jest.useRealTimers();
+  });
+
   it("resumes an interrupted upload and completes the cloud handoff", async () => {
     const view = render(
       <ControllerInfoContext.Provider
@@ -170,7 +191,7 @@ describe("LocalImageUploadManager", () => {
       expect.objectContaining({ uploadId: "intent-1", publicId: "cloud-public-id" }),
       expect.any(Object),
     );
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "intent-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", { uploadId: "intent-1", publicId: "cloud-public-id" });
     expect(mockCreateCloudinaryUpload.mock.invocationCallOrder[0]).toBeLessThan(
       mockUpload.mock.invocationCallOrder[0],
     );
@@ -206,6 +227,34 @@ describe("LocalImageUploadManager", () => {
         url: "https://res.cloudinary.com/example/welcome.png",
       },
     });
+    view.unmount();
+  });
+
+  it("cleans up a completed Church A Cloudinary upload without dispatching it into Church B", async () => {
+    let resolveUpload!: (value: { public_id: string; secure_url: string }) => void;
+    mockUpload.mockReturnValueOnce(new Promise((resolve) => { resolveUpload = resolve; }) as any);
+    const dbA = {} as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    const renderManager = (db: PouchDB.Database, churchId: string) => (
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const view = render(renderManager(dbA, "church-1"));
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1));
+
+    view.rerender(renderManager(dbB, "church-2"));
+    await act(async () => {
+      resolveUpload({
+        public_id: "cloud-public-id",
+        secure_url: "https://res.cloudinary.com/example/welcome.png",
+      });
+    });
+
+    await waitFor(() => expect(mockDeleteCloudinaryAsset).toHaveBeenCalledWith("church-1", "cloud-public-id"));
+    expect(mockDispatch).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -316,7 +365,7 @@ describe("LocalImageUploadManager", () => {
     ));
     expect(mockDeleteJob).not.toHaveBeenCalled();
     expect(mockPersistCloudCopy).not.toHaveBeenCalled();
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "intent-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", { uploadId: "intent-1", publicId: "cloud-public-id" });
     expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -374,6 +423,103 @@ describe("LocalImageUploadManager", () => {
     }));
     expect(mockUpload).toHaveBeenCalledTimes(1);
     expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("commits and finalizes a legacy Cloudinary job without an upload intent", async () => {
+    const cloudMedia = {
+      id: "stable-media-id", name: "Welcome.png", type: "image", publicId: "cloud-public-id",
+      background: "https://res.cloudinary.com/example/welcome.png",
+    } as MediaType;
+    const legacyJob = { ...interruptedJob, cloudMedia, providerUploadId: undefined };
+    mockListJobs.mockReset().mockResolvedValueOnce([legacyJob]).mockResolvedValue([]);
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
+      ...legacyJob, leaseOwnerId, leaseExpiresAt: Date.now() + 300_000,
+    }));
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      patch: expect.objectContaining({ status: "complete" }),
+    })));
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", { publicId: "cloud-public-id" });
+    expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      patch: expect.objectContaining({
+        status: "uploaded",
+        phase: "finalizing",
+        cloudMedia: expect.objectContaining({ providerStorage: expect.objectContaining({ assetId: "provider-asset-1" }) }),
+      }),
+    }));
+    view.unmount();
+  });
+
+  it("keeps legacy commit failures retryable and leaves committing state", async () => {
+    const cloudMedia = {
+      id: "stable-media-id", name: "Welcome.png", type: "image", publicId: "cloud-public-id",
+      background: "https://res.cloudinary.com/example/welcome.png",
+    } as MediaType;
+    const legacyJob = { ...interruptedJob, cloudMedia, providerUploadId: undefined };
+    mockListJobs.mockReset().mockResolvedValueOnce([legacyJob]).mockResolvedValue([]);
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
+      ...legacyJob, leaseOwnerId, leaseExpiresAt: Date.now() + 300_000,
+    }));
+    mockCommitCloudinary.mockRejectedValueOnce(Object.assign(new Error("Temporary commit failure"), { status: 503 }));
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      patch: expect.objectContaining({ status: "failed", phase: "failed", nextAttemptAt: expect.any(Number) }),
+    })));
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", { publicId: "cloud-public-id" });
+    expect(mockUpload).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("keeps legacy ownership mismatch recovery without uploading the asset again", async () => {
+    const cloudMedia = {
+      id: "stable-media-id", name: "Welcome.png", type: "image", publicId: "cloud-public-id",
+      background: "https://res.cloudinary.com/example/welcome.png",
+    } as MediaType;
+    const legacyJob = { ...interruptedJob, cloudMedia, providerUploadId: undefined };
+    mockListJobs.mockReset().mockResolvedValueOnce([legacyJob]).mockResolvedValue([]);
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
+      ...legacyJob, leaseOwnerId, leaseExpiresAt: Date.now() + 300_000,
+    }));
+    mockCommitCloudinary.mockRejectedValueOnce(Object.assign(
+      new Error("The image was not uploaded to this church's media folder."),
+      { status: 403, code: "CLOUDINARY_MEDIA_OWNERSHIP_MISMATCH" },
+    ));
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      patch: expect.objectContaining({
+        status: "failed",
+        cloudMedia: expect.objectContaining({ publicId: "cloud-public-id" }),
+        lastErrorCode: "CLOUDINARY_MEDIA_OWNERSHIP_MISMATCH",
+        nextAttemptAt: 0,
+      }),
+    })));
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", { publicId: "cloud-public-id" });
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -445,7 +591,7 @@ describe("LocalImageUploadManager", () => {
     }));
     expect(mockUpload).toHaveBeenCalledTimes(2);
     expect(mockCommitCloudinary).toHaveBeenCalledTimes(1);
-    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", "intent-1", "cloud-public-id");
+    expect(mockCommitCloudinary).toHaveBeenCalledWith("church-1", { uploadId: "intent-1", publicId: "cloud-public-id" });
     view.unmount();
   });
 

@@ -24,6 +24,95 @@ const createMockClient = (handler) => {
   };
 };
 
+const proxyOutput = () => {
+  const chunks = [];
+  const output = new Writable({ write(chunk, encoding, callback) { chunks.push(chunk); callback(); } });
+  output.status = (status) => { output.statusCode = status; return output; };
+  output.json = (value) => { output.body = value; return output; };
+  output.setHeader = (name, value) => { output.headers[name.toLowerCase()] = String(value); };
+  output.headers = {};
+  output.bodyChunks = chunks;
+  return output;
+};
+
+test("PDF proxy rejects a MIME swap to SVG or HTML after the resolver probe", async (t) => {
+  for (const getMime of ["image/svg+xml", "text/html"]) {
+    await t.test(getMime, async () => {
+      const client = createMockClient((config) => config.method === "HEAD"
+        ? response(200, { "content-type": "application/pdf" })
+        : response(200, { "content-type": getMime }, Readable.from([Buffer.from("active")])));
+      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+      const descriptor = await service.resolve("https://files.example.test/guide.pdf");
+      const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+      const output = proxyOutput();
+      await service.handleProxy({ ip: "203.0.113.1", query: { token }, method: "GET", headers: {} }, output);
+      assert.equal(output.statusCode, 415);
+      assert.equal(Buffer.concat(output.bodyChunks).length, 0);
+    });
+  }
+});
+
+test("PDF proxy preserves a valid PDF response and adds nosniff", async () => {
+  const client = createMockClient((config) => config.method === "HEAD"
+    ? response(200, { "content-type": "application/pdf" })
+    : response(200, { "content-type": "application/pdf", "content-length": "4" }, Readable.from([Buffer.from("%PDF")])));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve("https://files.example.test/guide.pdf");
+  const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+  const output = proxyOutput();
+  await service.handleProxy({ ip: "203.0.113.1", query: { token }, method: "GET", headers: {} }, output);
+  assert.equal(output.statusCode, 200);
+  assert.equal(output.headers["content-type"], "application/pdf");
+  assert.equal(output.headers["x-content-type-options"], "nosniff");
+  assert.equal(Buffer.concat(output.bodyChunks).toString(), "%PDF");
+});
+
+test("PDF proxy forwards valid byte ranges without changing the authorized MIME", async () => {
+  const client = createMockClient((config) => config.method === "HEAD"
+    ? response(200, { "content-type": "application/pdf" })
+    : response(206, {
+      "content-type": "application/pdf",
+      "content-range": "bytes 0-2/100",
+      "content-length": "3",
+      "accept-ranges": "bytes",
+    }, Readable.from([Buffer.from("%PD")])));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve("https://files.example.test/guide.pdf");
+  const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+  const output = proxyOutput();
+  await service.handleProxy({ ip: "203.0.113.1", query: { token }, method: "GET", headers: { range: "bytes=0-2" } }, output);
+  assert.equal(client.calls.at(-1).headers.Range, "bytes=0-2");
+  assert.equal(output.statusCode, 206);
+  assert.equal(output.headers["content-type"], "application/pdf");
+  assert.equal(output.headers["content-range"], "bytes 0-2/100");
+  assert.equal(output.headers["x-content-type-options"], "nosniff");
+  assert.equal(Buffer.concat(output.bodyChunks).toString(), "%PD");
+});
+
+test("proxy keeps authorized image, audio, video, and document MIME classes working", async (t) => {
+  for (const [fileName, mimeType] of [
+    ["slide.png", "image/png"],
+    ["track.mp3", "audio/mpeg"],
+    ["clip.mp4", "video/mp4"],
+    ["notes.txt", "text/plain"],
+    ["guide.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  ]) {
+    await t.test(mimeType, async () => {
+      const client = createMockClient((config) => response(200, { "content-type": mimeType },
+        config.method === "GET" ? Readable.from([Buffer.from("file")]) : null));
+      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+      const descriptor = await service.resolve(`https://files.example.test/${fileName}`);
+      const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+      const output = proxyOutput();
+      await service.handleProxy({ ip: "203.0.113.2", query: { token }, method: "GET", headers: {} }, output);
+      assert.equal(output.statusCode, 200);
+      assert.equal(output.headers["content-type"], mimeType);
+      assert.equal(output.headers["x-content-type-options"], "nosniff");
+      assert.equal(Buffer.concat(output.bodyChunks).toString(), "file");
+    });
+  }
+});
+
 test("cached Google exports proxy from the stable URL and follow fresh redirects", async () => {
   const stableUrl = "https://docs.google.com/document/d/doc-id/export?format=pdf";
   let redirectNumber = 0;
@@ -503,5 +592,53 @@ test("proxy forwards one range and streams safe response headers without bufferi
   assert.equal(client.calls.at(-1).headers.Authorization, undefined);
   assert.equal(output.statusCode, 206);
   assert.equal(output.headers["content-range"], "bytes 0-2/3");
+  assert.equal(output.headers["x-content-type-options"], "nosniff");
   assert.equal(Buffer.concat(chunks).toString(), "abc");
+});
+
+test("proxy keeps the probed media class across active-content swaps and redirects", async () => {
+  const mismatches = [
+    { name: "PDF to SVG", url: "https://files.example.test/guide.pdf", probe: "application/pdf", responseType: "image/svg+xml" },
+    { name: "PDF to HTML", url: "https://files.example.test/guide.pdf", probe: "application/pdf", responseType: "text/html" },
+    { name: "image to HTML", url: "https://files.example.test/photo.png", probe: "image/png", responseType: "text/html" },
+    { name: "image to SVG", url: "https://files.example.test/photo.png", probe: "image/png", responseType: "image/svg+xml" },
+    { name: "audio to HTML", url: "https://files.example.test/song.mp3", probe: "audio/mpeg", responseType: "text/html" },
+    { name: "video to HTML", url: "https://files.example.test/clip.mp4", probe: "video/mp4", responseType: "text/html" },
+  ];
+
+  for (const mismatch of mismatches) {
+    const client = createMockClient((config) => config.method === "HEAD"
+      ? response(200, { "content-type": mismatch.probe })
+      : response(200, { "content-type": mismatch.responseType }, Readable.from([Buffer.from("active content")])),
+    );
+    const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+    const descriptor = await service.resolve(mismatch.url);
+    const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+    const chunks = [];
+    const output = new Writable({ write(chunk, encoding, callback) { chunks.push(chunk); callback(); } });
+    output.status = (status) => { output.statusCode = status; return output; };
+    output.json = (value) => { output.body = value; return output; };
+    output.setHeader = (name, value) => { output.headers[name.toLowerCase()] = String(value); };
+    output.headers = {};
+
+    await service.handleProxy({ ip: "203.0.113.9", socket: {}, query: { token }, method: "GET", headers: {} }, output);
+
+    assert.equal(output.statusCode, 415, mismatch.name);
+    assert.deepEqual(chunks, [], mismatch.name);
+  }
+
+  const redirectingClient = createMockClient((config) => {
+    if (config.method === "HEAD") return response(200, { "content-type": "image/jpeg" });
+    if (config.url === "https://files.example.test/photo.jpg") return response(302, { location: "https://cdn.example.test/not-an-image" });
+    return response(200, { "content-type": "text/html" }, Readable.from([Buffer.from("sign-in page")]));
+  });
+  const redirectingService = createExternalResourceService({ httpClient: redirectingClient, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await redirectingService.resolve("https://files.example.test/photo.jpg");
+  const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+  const redirectOutput = new Writable({ write(chunk, encoding, callback) { callback(); } });
+  redirectOutput.status = (status) => { redirectOutput.statusCode = status; return redirectOutput; };
+  redirectOutput.json = (value) => { redirectOutput.body = value; return redirectOutput; };
+  redirectOutput.setHeader = () => {};
+  await redirectingService.handleProxy({ ip: "203.0.113.9", socket: {}, query: { token }, method: "GET", headers: {} }, redirectOutput);
+  assert.equal(redirectOutput.statusCode, 415, "a redirect cannot change the authorized media class");
 });
