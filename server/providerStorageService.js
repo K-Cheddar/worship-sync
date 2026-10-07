@@ -1,3 +1,4 @@
+import mediaImageFormats from "../shared/mediaImageFormats.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
 import {
   ChurchStorageQuotaError,
@@ -5,6 +6,11 @@ import {
   getCloudinaryAssetBytes,
   getMuxStoredMinutes,
 } from "./churchStorageQuota.js";
+
+// REST and signing must use the same comma-separated representation.
+const allowedImageFormats = [
+  ...new Set(mediaImageFormats.map(({ cloudinaryFormat }) => cloudinaryFormat)),
+].join(",");
 
 const requiredString = (value, label) => {
   if (typeof value !== "string" || !value.trim()) {
@@ -141,6 +147,7 @@ export const createProviderStorageService = ({
       timestamp,
       public_id: basePublicId,
       overwrite: false,
+      allowed_formats: allowedImageFormats,
       ...(folderMode === "dynamic" ? { asset_folder: folder } : { folder }),
     };
     const signature = cloudinaryClient.utils.api_sign_request(
@@ -162,6 +169,7 @@ export const createProviderStorageService = ({
       signature,
       public_id: basePublicId,
       overwrite: "false",
+      allowed_formats: allowedImageFormats,
       ...(folderMode === "dynamic" ? { asset_folder: folder } : { folder }),
     };
     return {
@@ -264,13 +272,14 @@ export const createProviderStorageService = ({
       fromStatuses: ["waiting", "committing"],
       status: "committing",
     });
-    if (!claimed || claimed.churchId !== churchId || claimed.assetId !== publicId) {
+    const claimedUpload = claimed?.upload;
+    if (!claimedUpload || claimedUpload.churchId !== churchId || claimedUpload.assetId !== publicId) {
       const error = new Error("That image upload could not be committed.");
       error.statusCode = 409;
       error.code = "CLOUDINARY_UPLOAD_NOT_COMMITTABLE";
       throw error;
     }
-    if (claimed.status === "committed") {
+    if (claimedUpload.status === "committed") {
       const owner = await storageQuota.getProviderAssetOwner({
         provider: "cloudinaryBytes",
         assetId: publicId,
@@ -286,6 +295,12 @@ export const createProviderStorageService = ({
           permanent: true,
         };
       }
+    }
+    if (claimedUpload.status !== "committing") {
+      const error = new Error("That image upload could not be committed.");
+      error.statusCode = 409;
+      error.code = "CLOUDINARY_UPLOAD_NOT_COMMITTABLE";
+      throw error;
     }
     const owner = await storageQuota.getProviderAssetOwner({
       provider: "cloudinaryBytes",
@@ -333,13 +348,19 @@ export const createProviderStorageService = ({
         assetId: publicId,
         amount: bytes,
       });
-      await storageQuota.transitionProviderUpload({
+      const completed = await storageQuota.transitionProviderUpload({
         provider: "cloudinary",
         uploadId,
         fromStatuses: ["committing"],
         status: "committed",
         assetId: publicId,
       });
+      if (completed?.upload?.status !== "committed") {
+        const error = new Error("That image upload could not be finalized.");
+        error.statusCode = 409;
+        error.code = "CLOUDINARY_UPLOAD_NOT_COMMITTABLE";
+        throw error;
+      }
     } catch (error) {
       if (
         (error instanceof ChurchStorageQuotaError || error instanceof ChurchProviderStorageNotReconciledError) &&
@@ -389,13 +410,14 @@ export const createProviderStorageService = ({
       fromStatuses: ["waiting", "cancelling", "cancelled"],
       status: "cancelling",
     });
-    if (!claimed || claimed.churchId !== churchId) {
+    const claimedUpload = claimed?.upload;
+    if (!claimedUpload || claimedUpload.churchId !== churchId) {
       const error = new Error("That upload could not be cancelled safely.");
       error.statusCode = 409;
       throw error;
     }
-    if (claimed.status === "committing" || claimed.status === "committed") {
-      if (claimed.status === "committed") {
+    if (claimedUpload.status === "committing" || claimedUpload.status === "committed") {
+      if (claimedUpload.status === "committed") {
         return { cancelled: false, committed: true };
       }
       const error = new Error("The image is being saved and could not be cancelled yet.");

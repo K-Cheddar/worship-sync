@@ -151,30 +151,51 @@ describe("mediaCacheUtils", () => {
       jest.restoreAllMocks();
     });
 
-    it("returns unique media urls from media doc list", async () => {
+    it("returns unique media urls from v2 media items", async () => {
       const db = {
         get: jest.fn().mockResolvedValue({
-          list: [
+          _id: "media-library-meta",
+          docType: "mediaLibraryMeta",
+          schemaVersion: 2,
+        }),
+        allDocs: jest.fn().mockResolvedValue({
+          rows: [
             {
-              id: "1",
-              type: "video",
-              background: "https://video.example.com/a.mp4",
+              doc: {
+                _id: "media-item:1",
+                docType: "mediaItem",
+                id: "1",
+                type: "video",
+                background: "https://video.example.com/a.mp4",
+              },
             },
             {
-              id: "2",
-              type: "image",
-              background: "https://images.example.com/b.jpg",
+              doc: {
+                _id: "media-item:2",
+                docType: "mediaItem",
+                id: "2",
+                type: "image",
+                background: "https://images.example.com/b.jpg",
+              },
             },
             {
-              id: "3",
-              type: "video",
-              source: "mux",
-              muxPlaybackId: "abc123",
+              doc: {
+                _id: "media-item:3",
+                docType: "mediaItem",
+                id: "3",
+                type: "video",
+                source: "mux",
+                muxPlaybackId: "abc123",
+              },
             },
             {
-              id: "4",
-              type: "image",
-              background: "https://images.example.com/b.jpg",
+              doc: {
+                _id: "media-item:4",
+                docType: "mediaItem",
+                id: "4",
+                type: "image",
+                background: "https://images.example.com/b.jpg",
+              },
             },
           ],
         }),
@@ -182,7 +203,12 @@ describe("mediaCacheUtils", () => {
 
       const urls = await getMediaUrlsFromMediaDoc(db);
 
-      expect(db.get).toHaveBeenCalledWith("media");
+      expect(db.get).toHaveBeenCalledWith("media-library-meta");
+      expect(db.allDocs).toHaveBeenCalledWith({
+        include_docs: true,
+        startkey: "media-item:",
+        endkey: "media-item:\uffff",
+      });
       expect(urls.status).toBe("loaded");
       if (urls.status !== "loaded") throw new Error("expected loaded media doc");
       expect(Array.from(urls.urls)).toEqual([
@@ -192,17 +218,20 @@ describe("mediaCacheUtils", () => {
       ]);
     });
 
-    it("returns a successful empty result for missing media doc without warning", async () => {
+    it("returns a successful empty result for an empty media library without warning", async () => {
       const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
       const db = {
-        get: jest.fn().mockRejectedValue({ status: 404 }),
-        put: jest.fn(),
+        get: jest.fn().mockResolvedValue({
+          _id: "media-library-meta",
+          docType: "mediaLibraryMeta",
+          schemaVersion: 2,
+        }),
+        allDocs: jest.fn().mockResolvedValue({ rows: [] }),
       } as unknown as PouchDB.Database;
 
       const urls = await getMediaUrlsFromMediaDoc(db);
 
-      expect(db.get).toHaveBeenCalledWith("media");
-      expect(db.put).not.toHaveBeenCalled();
+      expect(db.get).toHaveBeenCalledWith("media-library-meta");
       expect(urls).toEqual({ status: "loaded", urls: new Set() });
       expect(warnSpy).not.toHaveBeenCalled();
     });

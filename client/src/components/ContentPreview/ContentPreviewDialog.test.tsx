@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { getExternalResourceResolution } from "../../api/auth";
 import * as openExternalUrlModule from "../../utils/openExternalUrl";
 import ContentPreviewDialog from "./ContentPreviewDialog";
+import { renderAsync } from "docx-preview";
+
+jest.mock("docx-preview", () => ({ renderAsync: jest.fn() }));
+const mockRenderDocx = jest.mocked(renderAsync);
 
 jest.mock("../../api/auth", () => ({
   getExternalResourceResolution: jest.fn(),
@@ -30,6 +34,8 @@ const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["res
 
 describe("ContentPreviewDialog", () => {
   beforeEach(() => {
+    mockRenderDocx.mockReset();
+    mockRenderDocx.mockResolvedValue(undefined);
     mockGetExternalResourceResolution.mockReset();
     mockOpenExternalUrl.mockReset();
     mockOpenExternalUrl.mockImplementation(async (url) => {
@@ -306,6 +312,106 @@ describe("ContentPreviewDialog", () => {
     expect(screen.getByText("Preview service is unavailable.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open in new tab" }));
     await waitFor(() => expect(open).toHaveBeenCalledWith("https://cdn.example.test/clip.mp4", "_blank", "noopener,noreferrer"));
+  });
+
+  it("fetches a signed DOCX and uses Word rendering without an iframe", async () => {
+    const data = new ArrayBuffer(4);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, arrayBuffer: async () => data } as Response);
+    const view = renderPreview({ id: "word", title: "Notes", fileName: "notes.docx", resolveSource: async () => ({
+      url: "https://r2.example.test/opaque?signature=secret", provider: "worshipsync", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }) });
+    await waitFor(() => expect(mockRenderDocx).toHaveBeenCalledWith(data, expect.any(HTMLElement), expect.any(HTMLElement), expect.objectContaining({ useBase64URL: true, renderAltChunks: false })));
+    expect(screen.getByText("WorshipSync • Document")).toBeInTheDocument();
+    expect(screen.getByRole("document", { name: "Word document preview" })).toBeInTheDocument();
+    expect(screen.queryByTitle("Notes")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    await userEvent.setup().click(screen.getByRole("button", { name: "Expand preview" }));
+    expect(screen.getByTestId("preview-stage")).toHaveClass("flex-1");
+    const options = fetchMock.mock.calls[0][1];
+    view.rerender(<ContentPreviewDialog resource={null} onClose={jest.fn()} />);
+    expect(options?.signal?.aborted).toBe(true);
+    fetchMock.mockRestore();
+  });
+
+  it.each(["doc", "xls", "xlsx", "ppt", "pptx"])("immediately falls back for .%s without an iframe", async (extension) => {
+    renderPreview({ id: "office", title: "Unsupported file", fileName: `notes.${extension}`, resolveSource: async () => ({ url: "https://r2.example.test/opaque", provider: "worshipsync" }) });
+    expect(await screen.findByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(screen.queryByTitle("Unsupported file")).not.toBeInTheDocument();
+    expect(screen.getByText(/This file format isn’t supported/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
+  });
+
+  it("shows a useful fallback for failed DOCX rendering", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) } as Response);
+    mockRenderDocx.mockRejectedValueOnce(new Error("Corrupt DOCX"));
+    renderPreview({ id: "word", fileName: "notes.docx", resolveSource: async () => ({ url: "https://r2.example.test/opaque" }) });
+    expect(await screen.findByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(screen.getByText(/This document could not be loaded/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
+    fetchMock.mockRestore();
+  });
+
+  it("ignores late Word render completion after switching resources", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) } as Response);
+    let completeDocx: () => void = () => undefined;
+    mockRenderDocx.mockReturnValueOnce(new Promise<void>((resolve) => { completeDocx = resolve; }));
+    const view = renderPreview({ id: "word", fileName: "notes.docx", resolveSource: async () => ({ url: "https://r2.example.test/opaque" }) });
+    await waitFor(() => expect(mockRenderDocx).toHaveBeenCalledTimes(1));
+    view.rerender(<ContentPreviewDialog resource={{ id: "new-page", title: "New page", url: "https://example.test/page" }} onClose={jest.fn()} />);
+    await screen.findByTitle("New page");
+    await act(async () => { completeDocx(); });
+    expect(screen.getByRole("status")).toHaveTextContent("Loading embedded page");
+    expect(screen.queryByRole("document")).not.toBeInTheDocument();
+    fetchMock.mockRestore();
+  });
+
+  it("eventually fails a slow embed and keeps its open action", async () => {
+    jest.useFakeTimers();
+    renderPreview({ id: "web", title: "Slow page", url: "https://example.test/page" });
+    await screen.findByTitle("Slow page");
+    act(() => jest.advanceTimersByTime(7000));
+    expect(screen.getByText("This preview is taking longer than expected.")).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(23000));
+    expect(screen.getByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(screen.queryByText("This preview is taking longer than expected.")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Slow page")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open in new tab" })).toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("bounds DOCX fetching and aborts it on final failure", async () => {
+    jest.useFakeTimers();
+    const fetchMock = jest.spyOn(global, "fetch").mockReturnValue(new Promise<Response>(() => undefined));
+    renderPreview({ id: "word", fileName: "notes.docx", resolveSource: async () => ({ url: "https://r2.example.test/opaque" }) });
+    await screen.findByRole("document", { hidden: true });
+    act(() => jest.advanceTimersByTime(7000));
+    expect(screen.getByText("This preview is taking longer than expected.")).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(23000));
+    expect(screen.getByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    fetchMock.mockRestore();
+    jest.useRealTimers();
+  });
+
+  it("bounds source resolution and ignores its late success", async () => {
+    jest.useFakeTimers();
+    let completeSource: (source: { url: string }) => void = () => undefined;
+    renderPreview({ id: "pending", resolveSource: () => new Promise((resolve) => { completeSource = resolve; }) });
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing preview");
+    act(() => jest.advanceTimersByTime(30000));
+    expect(screen.getByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    await act(async () => { completeSource({ url: "https://example.test/late.pdf" }); });
+    expect(screen.getByRole("heading", { name: "Preview unavailable" })).toBeInTheDocument();
+    expect(screen.queryByTestId("document-preview-container")).not.toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it.each(["text/plain", "text/markdown"])("fetches %s with the shared text renderer", async (mimeType) => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "Welcome team" } as Response);
+    renderPreview({ id: "text-file", mimeType, resolveSource: async () => ({ url: "https://r2.example.test/opaque", mimeType }) });
+    expect(await screen.findByText("Welcome team")).toBeInTheDocument();
+    expect(screen.queryByTestId("document-preview-container")).not.toBeInTheDocument();
+    fetchMock.mockRestore();
   });
 
   it("shows the resolver reason for an unsupported SharePoint link and keeps the original link available", async () => {

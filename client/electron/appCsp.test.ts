@@ -16,6 +16,23 @@ const parseCspDirectives = (csp: string) =>
 
 describe("buildAppCspHeader", () => {
   it.each([false, true])(
+    "allows Google Docs previews without widening other resource permissions (packaged: %s)",
+    (isPackaged) => {
+      const directives = parseCspDirectives(buildAppCspHeader(isPackaged));
+
+      expect(directives.get("frame-src")).toContain("https://docs.google.com");
+      expect(directives.get("frame-src")).not.toContain("https://*.google.com");
+      expect(directives.get("frame-src")).not.toContain("https:");
+      expect(directives.get("frame-src")).not.toContain("*");
+      const nonFrameSources = [...directives]
+        .filter(([name]) => name !== "frame-src")
+        .flatMap(([, sources]) => sources);
+      expect(nonFrameSources).not.toContain("https://docs.google.com");
+      expect(directives.get("default-src")).toEqual(["'self'"]);
+    },
+  );
+
+  it.each([false, true])(
     "allows SharePoint frames without widening other resource permissions (packaged: %s)",
     (isPackaged) => {
       const directives = parseCspDirectives(buildAppCspHeader(isPackaged));
@@ -66,7 +83,7 @@ describe("buildAppCspHeader", () => {
 });
 
 describe("index.html meta CSP", () => {
-  it("permits HTTPS SharePoint frames through the header and meta policy intersection", () => {
+  it("permits HTTPS SharePoint and Google Docs frames through the header and meta policy intersection", () => {
     const html = readFileSync(join(__dirname, "../index.html"), "utf8");
     const metaMatch = html.match(
       /http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/,

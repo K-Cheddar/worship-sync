@@ -15,6 +15,7 @@ interface DeleteModalProps {
   confirmText?: string;
   cancelText?: string;
   imageUrl?: string;
+  imagePreview?: React.ReactNode;
   /** When true, confirm shows a spinner, both actions are disabled, and close (backdrop/Escape) is ignored. */
   isConfirming?: boolean;
   /** Label on the confirm button while `isConfirming` is true (default: "Deleting..."). */
@@ -33,6 +34,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
   confirmText = "Delete Forever",
   cancelText = "Cancel",
   imageUrl,
+  imagePreview,
   isConfirming = false,
   confirmingLabel = "Deleting...",
 }) => {
@@ -64,14 +66,14 @@ const DeleteModal: React.FC<DeleteModalProps> = ({
       contentPadding="p-4"
       zIndexLevel={2}
     >
-      {imageUrl && (
+      {(imagePreview || imageUrl) && (
         <div className="flex justify-center mb-4">
           <div className="w-32 h-20 border-2 border-gray-600 rounded overflow-hidden">
-            <img
+            {imagePreview ?? <img
               src={resolvedImageUrl ?? imageUrl}
               alt={itemName || "Media preview"}
               className="w-full h-full object-cover"
-            />
+            />}
           </div>
         </div>
       )}

@@ -3,5 +3,5 @@
   "date": "2026-10-06",
   "type": "improved",
   "title": "Follow uploads and deletions in Activity",
-  "description": "Track Media and Resource uploads alongside deletions in Activity. Failed batches show a concise summary with expandable file details, and Activity stays easy to reopen while work is running or needs attention. In narrow Sources layouts, its status icon stays visible when the summary text no longer fits."
+  "description": "Track Media and Resource uploads alongside deletions in Activity. Failed batches show a concise summary with expandable file details, and Activity stays easy to reopen while work is running or needs attention. Close Activity with the top-right X and reopen it without interrupting ongoing work. Activity fits within the Sources header, keeping nearby controls visible. In narrow Sources layouts, its status icon stays visible when the summary text no longer fits. Delete confirmations now show available local media thumbnails."
 }

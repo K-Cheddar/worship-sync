@@ -1,0 +1,7 @@
+{
+  "id": "media-image-cloud-formats",
+  "date": "2026-10-06",
+  "type": "fixed",
+  "title": "Upload AVIF images to cloud Media",
+  "description": "AVIF and other supported Media image formats can now upload to cloud storage without being blocked by upload format settings."
+}

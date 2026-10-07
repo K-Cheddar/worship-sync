@@ -59,6 +59,22 @@ test("leaves unknown HTTPS resources for direct metadata detection", () => {
   });
 });
 
+test("marks native Google Workspace PDF exports for direct GET probing", () => {
+  const cases = [
+    ["https://docs.google.com/document/d/doc-id/edit", "https://docs.google.com/document/d/doc-id/export?format=pdf"],
+    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "https://docs.google.com/spreadsheets/d/sheet-id/export?format=pdf"],
+    ["https://docs.google.com/presentation/d/slides-id/edit", "https://docs.google.com/presentation/d/slides-id/export/pdf"],
+  ];
+  for (const [url, candidateUrl] of cases) {
+    assert.deepEqual(resolveExternalResourceProvider(url), {
+      provider: "google-drive",
+      candidateUrl,
+      probeWithGet: true,
+      nativeGoogleDocument: true,
+    });
+  }
+});
+
 test("does not treat lookalike hostnames as supported providers", () => {
   const resolved = resolveExternalResourceProvider("https://not-sharepoint.com/file.mp4");
   assert.equal(resolved.provider, "direct");

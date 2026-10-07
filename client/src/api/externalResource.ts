@@ -19,6 +19,8 @@ export type ExternalResourceMediaType =
   | "unknown";
 
 export type ExternalResourcePreviewType =
+  | "docx"
+  | "text"
   | "image"
   | "audio"
   | "video"

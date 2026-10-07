@@ -37,12 +37,6 @@ const getDesktopDownloadButtonLabel = (os: DesktopOs) => {
   return "Download Linux app";
 };
 
-const getDesktopDownloadHelpAriaLabel = (os: DesktopOs) => {
-  if (os === "windows") return "Windows download help";
-  if (os === "mac") return "Mac download help";
-  return "Linux download help";
-};
-
 const getDesktopDownloadHelpTitle = (os: DesktopOs) => {
   if (os === "windows") return "Download for Windows";
   if (os === "mac") return "Download for Mac";
@@ -252,7 +246,7 @@ export const useAppInstallChrome = (): AppInstallChrome => {
           isOpen={desktopInstallHelpDialogOpen}
           onClose={() => setDesktopInstallHelpDialogOpen(false)}
           title={getDesktopDownloadHelpTitle(desktopOs)}
-          ariaLabel={getDesktopDownloadHelpAriaLabel(desktopOs)}
+          ariaLabel={getDesktopDownloadHelpTitle(desktopOs)}
           description="Download the app or open the release page for help."
           size="sm"
         >
@@ -268,7 +262,6 @@ export const useAppInstallChrome = (): AppInstallChrome => {
         isOpen={mobileInstallHelpDialogOpen}
         onClose={() => setMobileInstallHelpDialogOpen(false)}
         title={mobileInstallGuidance.title}
-        ariaLabel="Mobile install instructions"
         description="Follow these steps to install WorshipSync."
         size="sm"
       >
