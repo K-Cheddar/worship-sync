@@ -286,7 +286,9 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   const worshipPosition = { positionId: "worship-singer", churchId: "church-1", teamId: worship.teamId, name: "Worship Singer" };
   const worshipDesired = { positionId: "worship-leader", churchId: "church-1", teamId: worship.teamId, name: "Worship Leader" };
   const avPosition = { positionId: "av-camera", churchId: "church-1", teamId: av.teamId, name: "AV Camera" };
+  const avDesired = { positionId: "av-streamer", churchId: "church-1", teamId: av.teamId, name: "AV Streamer" };
   const worshipRole = { roleId: "worship-captain", churchId: "church-1", teamId: worship.teamId, name: "Worship Captain" };
+  const alternateWorshipRole = { roleId: "worship-coordinator", churchId: "church-1", teamId: worship.teamId, name: "Worship Coordinator" };
   const avRole = { roleId: "av-operator", churchId: "church-1", teamId: av.teamId, name: "AV Operator" };
   const worshipArea = { areaId: "worship-safety", churchId: "church-1", teamId: worship.teamId, name: "Worship Safety" };
   const worshipLevel = { levelId: "worship-level", churchId: "church-1", areaId: worshipArea.areaId, name: "Experienced", rank: 1 };
@@ -310,14 +312,14 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
       teamId: worship.teamId,
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
-      membership: { roleId: worshipRole.roleId, isTeamLead: true },
+      membership: { roleId: alternateWorshipRole.roleId, isTeamLead: true },
       qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, levelId: worshipLevel.levelId,
         teamId: worship.teamId, status: "completed", completedAt: "2026-09-15", expiresAt: "2027-09-15", notes: "Updated notes" }],
     },
   } as never);
   renderManager(TEAMS_SECTION_PATHS.groups, {}, {
-    positions: [worshipPosition, worshipDesired, avPosition],
-    roles: [worshipRole, avRole],
+    positions: [worshipPosition, worshipDesired, avPosition, avDesired],
+    roles: [worshipRole, alternateWorshipRole, avRole],
     qualificationAreas: [worshipArea, avArea],
     qualificationLevels: [worshipLevel],
     onRosterMutationReconcile,
@@ -330,6 +332,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   expect(screen.getAllByText("Worship Singer")).toHaveLength(2);
   expect(screen.getAllByText("Worship Leader")).toHaveLength(2);
   expect(screen.queryByText("AV Camera")).not.toBeInTheDocument();
+  expect(screen.queryByText("AV Streamer")).not.toBeInTheDocument();
   expect(screen.queryByText("avery-private@example.test")).not.toBeInTheDocument();
   expect(screen.queryByText("private notes")).not.toBeInTheDocument();
   expect(screen.queryByText("AV Safety")).not.toBeInTheDocument();
@@ -352,6 +355,10 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
   await user.clear(within(dialog).getByRole("textbox", { name: /Notes/ }));
   await user.type(within(dialog).getByRole("textbox", { name: /Notes/ }), "Updated notes");
 
+  await user.click(within(dialog).getByRole("combobox", { name: "Worship role:" }));
+  expect(screen.queryByRole("option", { name: "AV Operator" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("option", { name: "Worship Coordinator" }));
+
   await user.click(screen.getByRole("checkbox", { name: "Avery Singer is a Worship team lead" }));
   await user.click(screen.getByRole("button", { name: "Save Worship profile" }));
   await waitFor(() => expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith(
@@ -361,7 +368,7 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
     expect.objectContaining({
       positionIds: [worshipPosition.positionId],
       desiredPositionIds: [worshipDesired.positionId],
-      membership: { roleId: worshipRole.roleId, isTeamLead: true },
+      membership: { roleId: alternateWorshipRole.roleId, isTeamLead: true },
       qualifications: [expect.objectContaining({
         areaId: worshipArea.areaId,
         levelId: worshipLevel.levelId,
@@ -374,4 +381,48 @@ it("opens a Team-only member profile and saves through the scoped profile API", 
     }),
   ));
   expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);
+});
+
+it("explicitly clears an existing Team role when No role is saved", async () => {
+  const user = userEvent.setup();
+  const worshipRole = { roleId: "worship-captain", churchId: "church-1", teamId: worship.teamId, name: "Worship Captain" };
+  jest.mocked(getTeamRosterMemberProfile).mockResolvedValue({
+    member: { memberId: member.memberId, firstName: "Avery", lastName: "Singer" },
+    teamProfile: {
+      teamId: worship.teamId,
+      positionIds: [],
+      desiredPositionIds: [],
+      membership: { roleId: worshipRole.roleId, isTeamLead: true },
+      qualifications: [],
+    },
+  } as never);
+  jest.mocked(updateTeamRosterMemberProfile).mockResolvedValue({
+    success: true,
+    member: { memberId: member.memberId, firstName: "Avery", lastName: "Singer" },
+    teamProfile: {
+      teamId: worship.teamId,
+      positionIds: [],
+      desiredPositionIds: [],
+      membership: { isTeamLead: true },
+      qualifications: [],
+    },
+  } as never);
+  renderManager(TEAMS_SECTION_PATHS.groups, {}, { roles: [worshipRole] });
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.click(screen.getByRole("button", { name: "Manage" }));
+  const dialog = await screen.findByRole("dialog", { name: "Manage Avery Singer" });
+  expect(getTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId);
+  await user.click(within(dialog).getByRole("combobox", { name: "Worship role:" }));
+  await user.click(screen.getByRole("option", { name: "No role" }));
+  await user.click(within(dialog).getByRole("button", { name: "Save Worship profile" }));
+
+  await waitFor(() => expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith(
+    "church-1",
+    worship.teamId,
+    member.memberId,
+    expect.objectContaining({
+      membership: { roleId: null, isTeamLead: true },
+    }),
+  ));
 });

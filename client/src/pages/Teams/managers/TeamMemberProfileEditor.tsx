@@ -174,7 +174,10 @@ const TeamMemberProfileEditor = ({
       const response = await updateTeamRosterMemberProfile(churchId, team.teamId, member.memberId, {
         positionIds: profile.positionIds,
         desiredPositionIds: profile.desiredPositionIds,
-        membership: profile.membership,
+        membership: {
+          roleId: profile.membership.roleId || null,
+          isTeamLead: profile.membership.isTeamLead,
+        },
         qualifications: profile.qualifications.map((qualification) => ({
           qualificationId: qualification.qualificationId,
           areaId: qualification.areaId,
