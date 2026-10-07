@@ -52,6 +52,30 @@ const RehearsalPlayerWindow = ({ youtubeEngine }: { youtubeEngine: ReactNode }) 
       onCloseRequested={closeRequested}
       onClose={stop}
       contentClassName="bg-gray-900"
+      minimizedActions={
+        <>
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={PlaybackIcon}
+            iconSize="sm"
+            className={cn("max-md:!min-h-8 max-md:!min-w-8 p-1 touch-manipulation", isLoading && "animate-pulse")}
+            aria-label={playbackLabel}
+            disabled={isLoading}
+            onClick={togglePlayback}
+          />
+          <Button
+            type="button"
+            variant="tertiary"
+            svg={SkipForward}
+            iconSize="sm"
+            className="max-md:!min-h-8 max-md:!min-w-8 p-1 touch-manipulation"
+            aria-label="Next song"
+            onClick={next}
+            disabled={queue.length < 2}
+          />
+        </>
+      }
     >
       <div className="flex min-h-0 flex-col gap-3">
         <div className={cn(currentEntry.source.kind !== "youtube" && "hidden")} aria-hidden={currentEntry.source.kind !== "youtube"}>

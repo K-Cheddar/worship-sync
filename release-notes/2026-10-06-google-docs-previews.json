@@ -3,5 +3,5 @@
   "date": "2026-10-06",
   "type": "fixed",
   "title": "Google Docs previews",
-  "description": "Fixed the desktop app blocking Google Docs resource previews."
+  "description": "Google Docs resource previews now open reliably in the desktop app, including when reopening a recently viewed document."
 }

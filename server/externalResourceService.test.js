@@ -24,6 +24,54 @@ const createMockClient = (handler) => {
   };
 };
 
+test("cached Google exports proxy from the stable URL and follow fresh redirects", async () => {
+  const stableUrl = "https://docs.google.com/document/d/doc-id/export?format=pdf";
+  let redirectNumber = 0;
+  const client = createMockClient((config) => {
+    if (config.url === stableUrl) {
+      redirectNumber += 1;
+      return response(302, { location: `https://download.example.test/export-${redirectNumber}.pdf` });
+    }
+    assert.equal(config.url, `https://download.example.test/export-${redirectNumber}.pdf`);
+    return response(200, { "content-type": "application/pdf" }, Readable.from([Buffer.from("%PDF")]));
+  });
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  for (const opening of [1, 2]) {
+    const descriptor = await service.resolve("https://docs.google.com/document/d/doc-id/edit");
+    assert.equal(descriptor.sourceKind, "file");
+    const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+    const verified = verifyExternalResourceProxyToken("secret", token);
+    assert.equal(verified.payload.t, stableUrl);
+    assert.equal(Date.parse(descriptor.expiresAt), verified.payload.exp);
+    const chunks = [];
+    const output = new Writable({ write(chunk, encoding, callback) { chunks.push(chunk); callback(); } });
+    output.status = (status) => { output.statusCode = status; return output; };
+    output.setHeader = () => {};
+    await service.handleProxy({ method: "GET", query: { token }, headers: {}, ip: "test" }, output);
+    assert.equal(output.statusCode, 200);
+    assert.equal(Buffer.concat(chunks).toString(), "%PDF");
+    assert.equal(redirectNumber, opening + 1); // One metadata probe, then fresh proxy redirects.
+  }
+  assert.equal(client.calls.length, 6);
+});
+
+test("SharePoint viewer access is non-ranged and reads only a bounded HTML prefix", async () => {
+  const originalUrl = "https://church.sharepoint.com/:b:/s/team/Eview?e=token";
+  let viewerBody;
+  const client = createMockClient((config) => {
+    if (config.headers.Range) return response(403, { "content-type": "text/html" }, Readable.from(["Access denied"]));
+    viewerBody = Readable.from([Buffer.from("Anonymous viewer" + " ".repeat(5000)), Buffer.from("Access denied")]);
+    return response(200, { "content-type": "text/html" }, viewerBody);
+  });
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve(originalUrl);
+  assert.match(descriptor.reason, /can be viewed in SharePoint/);
+  assert.equal(descriptor.previewUrl, null);
+  assert.equal(descriptor.originalUrl, originalUrl);
+  assert.equal(client.calls[1].headers.Range, undefined);
+  assert.equal(viewerBody.destroyed, true);
+});
+
 test("resolves the first-class providers and uses provider-specific candidates", async () => {
   const client = createMockClient((config) => response(200, { "content-type": "video/mp4" }));
   const service = createExternalResourceService({
@@ -164,7 +212,7 @@ test("uses ranged GETs for hosted providers and follows validated file redirects
       assert.equal(descriptor.previewType, "document");
       assert.equal(descriptor.requiresProxy, true);
       const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
-      assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
+      assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, client.calls[0].url);
     });
   }
 });
@@ -205,7 +253,7 @@ test("resolves an anonymous SharePoint share page when its file candidate redire
   assert.equal(descriptor.canPreview, true);
   assert.equal(descriptor.requiresProxy, true);
   const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
-  assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
+  assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, client.calls[0].url);
 });
 
 test("reports SharePoint sign-in only when the original share URL redirects to Microsoft authentication", async () => {
@@ -237,6 +285,8 @@ test("does not confuse denied file download with anonymous view access", async (
   const descriptor = await service.resolve(originalUrl);
   assert.equal(client.calls.length, 2);
   assert.equal(client.calls[1].url, originalUrl);
+  assert.equal(client.calls[0].headers.Range, "bytes=0-0");
+  assert.equal(client.calls[1].headers.Range, undefined);
   assert.equal(descriptor.sourceKind, "unavailable");
   assert.equal(descriptor.reason, "This file can be viewed in SharePoint, but SharePoint did not provide downloadable file access for an in-app preview.");
   assert.doesNotMatch(descriptor.reason, /don’t have access/i);

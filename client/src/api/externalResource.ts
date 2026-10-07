@@ -22,6 +22,7 @@ export type ExternalResourceResolution = {
   filename?: string;
   mimeType?: string;
   previewUrl: string | null;
+  expiresAt?: string;
   /** @deprecated Use sourceKind and the client renderer selector. */
   mediaType?: "image" | "audio" | "video" | "document" | "web" | "unknown";
   /** @deprecated Use sourceKind and the client renderer selector. */

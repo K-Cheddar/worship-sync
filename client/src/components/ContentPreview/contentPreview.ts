@@ -5,6 +5,7 @@ import type { RichTextDocument } from "../../types/richText";
 import type { ExternalResourceSourceKind } from "../../api/externalResource";
 import type { ChurchResource } from "../../types/churchResource";
 import type { SongAudio } from "../../types";
+import type { PreviewSourceCache } from "./previewSourceCache";
 
 export type ContentPreviewRenderer =
   | "image"
@@ -40,6 +41,7 @@ export type ContentPreviewResolvedSource = {
   sourceKind?: ExternalResourceSourceKind;
   mediaId?: string;
   reason?: string;
+  expiresAt?: string;
 };
 
 export type ContentPreviewResolution = {
@@ -72,6 +74,7 @@ export type ContentPreviewResource = {
   textContent?: string;
   richTextContent?: RichTextDocument;
   resolveSource?: () => Promise<ContentPreviewResolvedSource>;
+  cacheKey?: string;
 };
 
 export const createChurchResourcePreview = (
@@ -80,6 +83,7 @@ export const createChurchResourcePreview = (
 ): ContentPreviewResource => resource.sourceType === "external"
   ? {
       id: resource.id,
+      cacheKey: JSON.stringify(["external", resource.churchId, resource.id, resource.contentVersion, resource.updatedAt, resource.external.url]),
       title: resource.name,
       url: resource.external.url,
       provider: resource.external.provider,
@@ -88,6 +92,7 @@ export const createChurchResourcePreview = (
     }
   : {
       id: resource.id,
+      cacheKey: JSON.stringify(["upload", resource.churchId, resource.id, resource.contentVersion, resource.storage.key, resource.storage.uploadedAt, resource.storage.contentType, resource.storage.fileName, resource.storage.sizeBytes]),
       title: resource.name,
       provider: "worshipsync",
       sourceKind: "file",
@@ -102,6 +107,7 @@ export const createSongAudioPreview = (
   resolveSource: () => Promise<ContentPreviewResolvedSource>,
 ): ContentPreviewResource => ({
   id: audio.id,
+  cacheKey: JSON.stringify(["song-audio", songId, audio.id, audio.key, audio.uploadedAt, audio.contentType, audio.fileName, audio.sizeBytes]),
   title: audio.fileName,
   provider: "worshipsync",
   sourceKind: "file",
@@ -384,8 +390,21 @@ export const resolveExternalContentPreviewSource = async (
     fileName: resolved.filename,
     mediaId: resolved.mediaId,
     reason: resolved.reason,
+    expiresAt: resolved.expiresAt,
   };
 };
+
+export const resolvePreviewSource = (
+  resource: ContentPreviewResource,
+  cache: PreviewSourceCache,
+): Promise<ContentPreviewResolvedSource | null> => cache.resolve(
+  resource.cacheKey || JSON.stringify([resource.id, resource.url, resource.type, resource.mimeType, resource.fileName]),
+  async () => {
+    const source = await (resource.resolveSource ? resource.resolveSource() : resolveExternalContentPreviewSource(resource));
+    if (source?.url && !getSafeHttpUrl(source.url)) throw new Error("This resource returned an unsupported URL.");
+    return source;
+  },
+);
 
 export const resolveContentPreviewResource = (
   resource: ContentPreviewResource,

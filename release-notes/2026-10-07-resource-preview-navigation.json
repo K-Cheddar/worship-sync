@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-07-resource-preview-navigation",
+  "date": "2026-10-07",
+  "type": "improved",
+  "title": "Browse resource previews",
+  "description": "Move between resources without closing the preview. Previous and Next follow your current search, filter, and sort order, and recently viewed files reopen faster."
+}
