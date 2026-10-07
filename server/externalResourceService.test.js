@@ -105,30 +105,34 @@ test("uses a direct ranged GET for Google Docs, Sheets, and Slides PDF exports",
   }
 });
 
-test("keeps ordinary Google Drive files on the hosted-file probe strategy", async () => {
+test("uses a ranged GET for ordinary Google Drive files", async () => {
   const client = createMockClient(() => response(200, { "content-type": "application/pdf" }));
   const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
   const descriptor = await service.resolve("https://drive.google.com/file/d/ordinary-id/view");
-  assert.equal(client.calls[0].method, "HEAD");
+  assert.equal(client.calls[0].method, "GET");
+  assert.equal(client.calls[0].headers.Range, "bytes=0-0");
   assert.equal(descriptor.sourceKind, "file");
   assert.equal(descriptor.previewType, "document");
 });
 
-test("uses conclusive SharePoint HEAD metadata without a GET probe", async () => {
+test("resolves a downloadable anonymous SharePoint file and preserves its sharing URL", async () => {
   const originalUrl = "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token";
-  const client = createMockClient((config) => response(200, {
+  const client = createMockClient(() => response(206, {
     "content-type": "application/pdf",
     "content-disposition": 'attachment; filename="guide.pdf"',
-  }));
+    "content-range": "bytes 0-0/200",
+  }, Readable.from([Buffer.from("%")])));
   const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
 
   const descriptor = await service.resolve(originalUrl);
   assert.equal(client.calls.length, 1);
-  assert.equal(client.calls[0].method, "HEAD");
+  assert.equal(client.calls[0].method, "GET");
+  assert.equal(client.calls[0].headers.Range, "bytes=0-0");
   assert.equal(new URL(client.calls[0].url).searchParams.get("e"), "share-token");
   assert.equal(new URL(client.calls[0].url).searchParams.get("download"), "1");
   assert.equal(descriptor.provider, "sharepoint");
   assert.equal(descriptor.originalUrl, originalUrl);
+  assert.equal(descriptor.externalUrl, originalUrl);
   assert.equal(descriptor.mediaType, "document");
   assert.equal(descriptor.previewType, "document");
   assert.equal(descriptor.canPreview, true);
@@ -137,26 +141,26 @@ test("uses conclusive SharePoint HEAD metadata without a GET probe", async () =>
   assert.match(descriptor.previewUrl, /^\/api\/resources\/proxy\?token=/);
 });
 
-test("probes HTML HEAD responses for every hosted-file provider and follows GET redirects", async (t) => {
+test("uses ranged GETs for hosted providers and follows validated file redirects", async (t) => {
   for (const originalUrl of [
     "https://www.dropbox.com/scl/fi/id/guide?dl=0",
     "https://drive.google.com/file/d/guide/view",
     "https://1drv.ms/u/s!guide",
+    "https://church.sharepoint.com/:b:/s/team/Eguide?e=share-token",
     "https://app.box.com/s/public-file",
   ]) {
     await t.test(originalUrl, async () => {
       const finalUrl = "https://files.example.test/guide.pdf";
       const client = createMockClient((config) => {
-        if (config.method === "HEAD") return response(200, { "content-type": "text/html" });
         if (config.url !== finalUrl) return response(302, { location: finalUrl });
         return response(206, { "content-type": "application/pdf", "content-range": "bytes 0-0/200" }, Readable.from([Buffer.from("%") ]));
       });
       const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
       const descriptor = await service.resolve(originalUrl);
-      assert.deepEqual(client.calls.map(({ method }) => method), ["HEAD", "GET", "GET"]);
-      assert.equal(client.calls[1].headers.Range, "bytes=0-0");
-      assert.equal(client.calls[1].headers.Cookie, undefined);
-      assert.equal(client.calls[1].headers.Authorization, undefined);
+      assert.deepEqual(client.calls.map(({ method }) => method), ["GET", "GET"]);
+      assert.equal(client.calls[0].headers.Range, "bytes=0-0");
+      assert.equal(client.calls[0].headers.Cookie, undefined);
+      assert.equal(client.calls[0].headers.Authorization, undefined);
       assert.equal(descriptor.previewType, "document");
       assert.equal(descriptor.requiresProxy, true);
       const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
@@ -169,16 +173,15 @@ test("falls back to web only after a hosted-file GET confirms HTML", async () =>
   const client = createMockClient(() => response(200, { "content-type": "text/html" }));
   const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
   const descriptor = await service.resolve("https://drive.google.com/file/d/guide/view");
-  assert.deepEqual(client.calls.map(({ method }) => method), ["HEAD", "GET"]);
+  assert.deepEqual(client.calls.map(({ method }) => method), ["GET"]);
   assert.equal(descriptor.previewType, "web");
   assert.equal(descriptor.requiresProxy, false);
 });
 
-test("retries inconclusive SharePoint HTML HEAD with a ranged GET and follows public file redirects", async () => {
+test("resolves an anonymous SharePoint share page when its file candidate redirects to bytes", async () => {
   const originalUrl = "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token";
   const finalUrl = "https://church.sharepoint.com/sites/public/guide.pdf?download-token=abc";
   const client = createMockClient((config) => {
-    if (config.method === "HEAD") return response(200, { "content-type": "text/html" });
     if (config.url === new URL(originalUrl).toString().replace("?e=share-token", "?e=share-token&download=1")) {
       return response(302, { location: finalUrl });
     }
@@ -191,10 +194,10 @@ test("retries inconclusive SharePoint HTML HEAD with a ranged GET and follows pu
   const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
 
   const descriptor = await service.resolve(originalUrl);
-  assert.deepEqual(client.calls.map(({ method }) => method), ["HEAD", "GET", "GET"]);
-  assert.equal(client.calls[1].headers.Range, "bytes=0-0");
-  assert.equal(client.calls[1].headers.Cookie, undefined);
-  assert.equal(client.calls[1].headers.Authorization, undefined);
+  assert.deepEqual(client.calls.map(({ method }) => method), ["GET", "GET"]);
+  assert.equal(client.calls[0].headers.Range, "bytes=0-0");
+  assert.equal(client.calls[0].headers.Cookie, undefined);
+  assert.equal(client.calls[0].headers.Authorization, undefined);
   assert.equal(descriptor.originalUrl, originalUrl);
   assert.equal(descriptor.provider, "sharepoint");
   assert.equal(descriptor.mediaType, "document");
@@ -205,9 +208,9 @@ test("retries inconclusive SharePoint HTML HEAD with a ranged GET and follows pu
   assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
 });
 
-test("returns a sign-in reason when a SharePoint share redirects to Microsoft authentication", async () => {
+test("reports SharePoint sign-in only when the original share URL redirects to Microsoft authentication", async () => {
   const client = createMockClient((config) => {
-    if (config.method === "HEAD") return response(200, { "content-type": "text/html" });
+    if (config.url.includes("download=1")) return response(403, { "content-type": "text/html" }, Readable.from([Buffer.from("Access denied")]));
     if (config.url.includes("church.sharepoint.com")) {
       return response(302, { location: "https://login.microsoftonline.com/common/oauth2/authorize" });
     }
@@ -223,29 +226,50 @@ test("returns a sign-in reason when a SharePoint share redirects to Microsoft au
   assert.equal(descriptor.reason, "This SharePoint link requires sign-in.");
 });
 
-test("returns useful reasons for SharePoint access denied, expired links, and unresolved HTML", async () => {
-  const accessDeniedClient = createMockClient(() => response(403, { "content-type": "text/html" }));
+test("does not confuse denied file download with anonymous view access", async () => {
+  const originalUrl = "https://church.sharepoint.com/:b:/s/team/Eview?e=preserved-token&web=1";
+  const candidateUrl = new URL(originalUrl);
+  candidateUrl.searchParams.set("download", "1");
+  const client = createMockClient((config) => config.url === candidateUrl.toString()
+    ? response(403, { "content-type": "text/html" }, Readable.from([Buffer.from("Download is blocked")] ))
+    : response(200, { "content-type": "text/html" }, Readable.from([Buffer.from("Anonymous viewer")])));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve(originalUrl);
+  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls[1].url, originalUrl);
+  assert.equal(descriptor.sourceKind, "unavailable");
+  assert.equal(descriptor.reason, "This file can be viewed in SharePoint, but SharePoint did not provide downloadable file access for an in-app preview.");
+  assert.doesNotMatch(descriptor.reason, /don’t have access/i);
+  assert.equal(descriptor.originalUrl, originalUrl);
+  assert.equal(descriptor.externalUrl, originalUrl);
+  assert.equal(descriptor.previewUrl, null);
+  for (const call of client.calls) {
+    assert.equal(call.headers.Cookie, undefined);
+    assert.equal(call.headers.Authorization, undefined);
+  }
+  assert.equal(new URL(client.calls[0].url).searchParams.get("e"), "preserved-token");
+  assert.equal(new URL(client.calls[0].url).searchParams.get("web"), "1");
+});
+
+test("reports SharePoint denial and expired links from the original public share URL", async () => {
+  const accessDeniedClient = createMockClient((config) => config.url.includes("download=1")
+    ? response(403, { "content-type": "text/html" })
+    : response(403, { "content-type": "text/html" }, Readable.from([Buffer.from("Access denied")])));
   const accessDeniedService = createExternalResourceService({ httpClient: accessDeniedClient, lookup: publicLookup, tokenSecret: "secret" });
   const accessDenied = await accessDeniedService.resolve("https://church.sharepoint.com/:b:/s/team/Edenied?e=token");
   assert.equal(accessDenied.canPreview, false);
-  assert.equal(accessDenied.reason, "You don’t have access to this SharePoint file.");
+  assert.equal(accessDenied.reason, "This SharePoint file isn’t publicly accessible.");
 
   const expiredClient = createMockClient((config) => response(
-    200,
+    config.url.includes("download=1") ? 403 : 200,
     { "content-type": "text/html" },
-    config.method === "GET" ? Readable.from([Buffer.from("This sharing link has expired")]) : null,
+    Readable.from([Buffer.from(config.url.includes("download=1") ? "Download denied" : "This sharing link has expired")]),
   ));
   const expiredService = createExternalResourceService({ httpClient: expiredClient, lookup: publicLookup, tokenSecret: "secret" });
   const expired = await expiredService.resolve("https://church.sharepoint.com/:b:/s/team/Eexpired?e=token");
   assert.equal(expired.canPreview, false);
   assert.equal(expired.reason, "This SharePoint sharing link may be expired or invalid.");
 
-  const htmlClient = createMockClient(() => response(200, { "content-type": "text/html" }));
-  const htmlService = createExternalResourceService({ httpClient: htmlClient, lookup: publicLookup, tokenSecret: "secret" });
-  const html = await htmlService.resolve("https://church.sharepoint.com/:f:/s/team/Efolder?e=token");
-  assert.equal(html.canPreview, false);
-  assert.equal(html.previewType, "unsupported");
-  assert.equal(html.reason, "The SharePoint link did not resolve to a downloadable file.");
 });
 
 test("returns an external-only descriptor for private or inaccessible provider links", async () => {

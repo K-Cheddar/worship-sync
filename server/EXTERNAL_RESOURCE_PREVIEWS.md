@@ -13,7 +13,7 @@ source/resource
 
 ## Server responsibilities
 
-`externalResourceProviders.js` recognizes known providers and returns a candidate URL plus a small retrieval strategy. Strategies include `get` for native Google Docs, Sheets, and Slides PDF exports, `head-then-get` for hosted share files, `metadata-probe` for unknown/direct HTTPS resources, and `none` for YouTube IDs. The Google export strategy declares its expected PDF MIME type and a useful failure reason.
+`externalResourceProviders.js` recognizes known providers and returns a candidate URL plus a small retrieval strategy. Known hosted files use a ranged `GET` (`Range: bytes=0-0`), including native Google Docs, Sheets, and Slides PDF exports. Unknown/direct HTTPS resources use a generic metadata probe, and YouTube uses `none`. The Google export strategy declares its expected PDF MIME type and a useful failure reason. SharePoint keeps the submitted share URL and checks anonymous view access when its separate download candidate does not return file bytes.
 
 `externalResourceNetwork.js` owns public URL validation, all-address DNS resolution, blocked hostname and IP checks, safe HTTP agents, request timeouts, redirect-by-redirect validation, bounded metadata reads, and response draining. Provider adapters do not create network agents or weaken these checks.
 

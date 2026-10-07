@@ -48,7 +48,7 @@ test("normalizes supported provider share-link variants", () => {
     assert.equal(resolved.provider, provider);
     assert.equal(resolved.candidateUrl, candidateUrl);
     assert.equal(resolved.retrievalStrategy,
-      provider === "youtube" ? "none" : originalUrl.includes("docs.google.com/") ? "get" : "head-then-get");
+      provider === "youtube" ? "none" : provider === "direct" ? "metadata-probe" : "get");
     if (mediaId) assert.equal(resolved.mediaId, mediaId);
   }
 });

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getExternalResourceResolution } from "../../api/auth";
 import * as openExternalUrlModule from "../../utils/openExternalUrl";
@@ -24,15 +24,9 @@ const dropboxMp4Url =
 
 jest.mock("../YouTubePlaylistPlayer/YouTubePlaylistPlayer", () => ({
   __esModule: true,
-  default: () => {
-    return <div aria-label="YouTube player" />;
+  default: ({ onPlayerReady }: { onPlayerReady?: () => void }) => {
+    return <button type="button" aria-label="YouTube player" onClick={onPlayerReady} />;
   },
-}));
-
-jest.mock("docx-preview", () => ({
-  renderAsync: jest.fn(async (_blob: Blob, content: HTMLElement) => {
-    content.textContent = "DOCX preview content";
-  }),
 }));
 
 const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["resource"]) =>
@@ -41,7 +35,9 @@ const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["res
 describe("ContentPreviewDialog", () => {
   beforeEach(() => {
     mockRenderDocx.mockReset();
-    mockRenderDocx.mockResolvedValue(undefined);
+    mockRenderDocx.mockImplementation(async (_data, content) => {
+      content.textContent = "DOCX preview content";
+    });
     mockGetExternalResourceResolution.mockReset();
     mockOpenExternalUrl.mockReset();
     mockOpenExternalUrl.mockImplementation(async (url) => {
@@ -108,10 +104,11 @@ describe("ContentPreviewDialog", () => {
 
   it("renders DOCX files through docx-preview", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(["docx"]) });
+    globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
     try {
       renderPreview({ id: "docx-1", title: "Guide", url: "https://example.test/guide.docx" });
-      expect(await screen.findByText("DOCX preview content")).toBeInTheDocument();
+      const preview = await screen.findByRole("document", { name: "Word document preview" });
+      expect(within(preview.shadowRoot as unknown as HTMLElement).getByText("DOCX preview content")).toBeInTheDocument();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -210,6 +207,58 @@ describe("ContentPreviewDialog", () => {
     fireEvent.load(iframe);
     expect(screen.queryByText("This preview is taking longer than expected.")).not.toBeInTheDocument();
     expect(iframe).toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it.each([
+    ["PDF", { id: "pdf-slow", title: "Slow PDF", mimeType: "application/pdf", url: "https://example.test/guide.pdf" }, "Slow PDF"],
+    ["web", { id: "web-slow", title: "Slow web", url: "https://example.test/page" }, "Slow web"],
+  ] as const)("clears the final timeout when a slow %s iframe becomes ready", async (_label, resource, title) => {
+    jest.useFakeTimers();
+    renderPreview(resource);
+    await act(async () => { await Promise.resolve(); });
+    act(() => jest.advanceTimersByTime(7000));
+    expect(screen.getByText("This preview is taking longer than expected.")).toBeInTheDocument();
+    fireEvent.load(screen.getByTitle(title));
+    act(() => jest.advanceTimersByTime(23000));
+    expect(screen.queryByRole("heading", { name: "Preview unavailable" })).not.toBeInTheDocument();
+    expect(screen.getByTitle(title)).toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("clears the final timeout when a slow DOCX renderer becomes ready", async () => {
+    jest.useFakeTimers();
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) } as Response);
+    let finishRender: () => void = () => undefined;
+    mockRenderDocx.mockReturnValueOnce(new Promise<void>((resolve) => { finishRender = resolve; }));
+    renderPreview({ id: "slow-docx", fileName: "guide.docx", resolveSource: async () => ({ url: "https://r2.example.test/guide.docx" }) });
+    await waitFor(() => expect(mockRenderDocx).toHaveBeenCalledTimes(1));
+    act(() => jest.advanceTimersByTime(7000));
+    expect(screen.getByText("This preview is taking longer than expected.")).toBeInTheDocument();
+    finishRender();
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    act(() => jest.advanceTimersByTime(23000));
+    expect(screen.queryByRole("heading", { name: "Preview unavailable" })).not.toBeInTheDocument();
+    expect(screen.getByRole("document", { name: "Word document preview" })).toBeInTheDocument();
+    fetchMock.mockRestore();
+    jest.useRealTimers();
+  });
+
+  it("clears the final timeout when a slow YouTube player becomes ready", async () => {
+    jest.useFakeTimers();
+    renderPreview({
+      id: "slow-youtube",
+      type: "youtube",
+      mediaId: "dQw4w9WgXcQ",
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    });
+    await act(async () => { await Promise.resolve(); });
+    act(() => jest.advanceTimersByTime(7000));
+    expect(screen.getByText("This preview is taking longer than expected.")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("YouTube player"));
+    act(() => jest.advanceTimersByTime(23000));
+    expect(screen.queryByRole("heading", { name: "Preview unavailable" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("YouTube player")).toBeInTheDocument();
     jest.useRealTimers();
   });
 

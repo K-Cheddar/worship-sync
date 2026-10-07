@@ -183,7 +183,7 @@ const MEDIA_KIND_LABELS: Record<ContentPreviewRenderer, string> = {
   audio: "Audio",
   video: "Video",
   pdf: "PDF",
-  docx: "DOCX",
+  docx: "Document",
   youtube: "Video",
   text: "Text",
   web: "Web page",
@@ -192,6 +192,11 @@ const MEDIA_KIND_LABELS: Record<ContentPreviewRenderer, string> = {
 
 const normalizedMimeType = (value?: string): string =>
   value?.split(";", 1)[0]?.trim().toLowerCase() || "";
+
+const isGenericMimeType = (value?: string): boolean =>
+  ["application/octet-stream", "application/binary", "binary/octet-stream"].includes(
+    normalizedMimeType(value),
+  );
 
 const kindForMimeType = (mimeType?: string): ContentPreviewRenderer | null => {
   const normalized = normalizedMimeType(mimeType);
@@ -395,7 +400,10 @@ export const resolveContentPreviewResource = (
       : sourceUrl;
   const resolvedUrl = source ? sourceUrl : originalUrl;
   const fileName = resource.fileName || source?.fileName;
-  const mimeType = normalizedMimeType(source?.mimeType || resource.mimeType) || undefined;
+  const resolvedMimeType = isGenericMimeType(source?.mimeType)
+    ? undefined
+    : normalizedMimeType(source?.mimeType);
+  const mimeType = resolvedMimeType || normalizedMimeType(resource.mimeType) || undefined;
   const candidate: ContentPreviewResource = {
     ...resource,
     url: resolvedUrl || resource.url,

@@ -246,7 +246,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       !["web", "pdf", "docx", "youtube"].includes(kind) ||
       resolving ||
       resolveError ||
-      renderStatus !== "loading"
+      (renderStatus !== "loading" && renderStatus !== "slow")
     ) return;
     const timer = window.setTimeout(
       () => setRenderStatus(renderStatus === "loading" ? "slow" : "error"),
@@ -309,6 +309,8 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       ? "This site doesn’t allow an embedded preview."
       : kind === "pdf" || kind === "docx"
         ? "This document could not be loaded. Open or download the file to view it."
+        : kind === "unsupported" && resolution?.fileName
+          ? "This file format isn’t supported for preview."
         : "This resource can’t be previewed here."
   );
 
