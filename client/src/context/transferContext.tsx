@@ -15,6 +15,8 @@ import { TransferProgress } from "../components/TransferProgress/TransferProgres
 import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
 import { formatCanvaImportError } from "../utils/canvaImportError";
 import { getActivitySummary, getTransferOverview, type Transfer } from "./transferModel";
+import { uploadChurchResource } from "../api/auth";
+import type { ChurchResource } from "../types/churchResource";
 
 type CanvaStatus = "queued" | "exporting" | "processing" | "finalizing" | "completed" | "partial" | "failed" | "cancelled";
 type CanvaPageState = {
@@ -47,6 +49,26 @@ type CanvaTransferRuntime = {
   finalize: (result: CanvaImportResult, signal: AbortSignal, onPagesPersisted: (pages: number[]) => void) => Promise<{ importedCount: number; viewPath?: string; failedPages?: CanvaImportResult["failedPages"]; customItemError?: string }>;
 };
 
+type ResourceUploadFile = {
+  file: File;
+  name: string;
+  status: "queued" | "active" | "complete" | "failed";
+  error?: string;
+  progress: number | null;
+};
+type ResourceUploadRuntime = {
+  id: string;
+  churchId: string;
+  files: ResourceUploadFile[];
+  retryUnregister?: () => void;
+  running: boolean;
+};
+export type ResourceUploadInput = {
+  id: string;
+  churchId: string;
+  files: Array<{ file: File; name: string }>;
+};
+
 export type CanvaTransferInput = Omit<CanvaTransferRuntime, "status" | "lastProgress" | "pageStatus" | "controller" | "customItemRetryPending" | "cleanupRetryPending" | "cleanupError">;
 export type ActiveTransferSummary = Pick<Transfer, "id" | "name" | "type" | "status" | "progress" | "phase" | "detail" | "error" | "result">;
 
@@ -57,6 +79,8 @@ type TransferContextValue = {
   restoreTransfers: () => void;
   registerActivityHost: () => () => void;
   startCanvaTransfer: (input: CanvaTransferInput) => string;
+  startResourceUpload: (input: ResourceUploadInput) => string;
+  registerResourceUploadListener: (id: string, listener: (resources: ChurchResource[]) => void) => () => void;
   updateTransfer: (transfer: Transfer) => void;
   removeTransfer: (id: string) => void;
   registerTransferAction: (id: string, key: string, handler: () => void | Promise<void>) => () => void;
@@ -214,6 +238,8 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const [activityHostCount, setActivityHostCount] = useState(0);
   const canvaQueue = useRef(Promise.resolve());
   const jobs = useRef(new Map<string, CanvaTransferRuntime>());
+  const resourceJobs = useRef(new Map<string, ResourceUploadRuntime>());
+  const resourceUploadListeners = useRef(new Map<string, (resources: ChurchResource[]) => void>());
   const dedupeJobs = useRef(new Map<string, string>());
   const actionHandlers = useRef(new Map<string, Map<string, () => void | Promise<void>>>());
   const unregisterTransferActions = useCallback((id: string) => {
@@ -234,6 +260,115 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     const normalized = toCanvaTransfer(job);
     setTransfers((current) => [normalized, ...current.filter((transfer) => transfer.id !== job.id)]);
   }, []);
+
+  const registerResourceUploadListener = useCallback<TransferContextValue["registerResourceUploadListener"]>((id, listener) => {
+    resourceUploadListeners.current.set(id, listener);
+    return () => {
+      if (resourceUploadListeners.current.get(id) === listener) resourceUploadListeners.current.delete(id);
+    };
+  }, []);
+
+  const startResourceUpload = useCallback<TransferContextValue["startResourceUpload"]>((input) => {
+    const runtime: ResourceUploadRuntime = {
+      id: input.id,
+      churchId: input.churchId,
+      files: input.files.map(({ file, name }) => ({ file, name, status: "queued", progress: null })),
+      running: false,
+    };
+    resourceJobs.current.set(runtime.id, runtime);
+    const publish = (status: Transfer["status"], phase: string) => {
+      const complete = runtime.files.filter((file) => file.status === "complete").length;
+      const total = runtime.files.length;
+      const progress = total
+        ? runtime.files.reduce((sum, file) => sum + (file.status === "complete" ? 100 : file.status === "active" ? file.progress || 0 : 0), 0) / total
+        : 100;
+      const failures = runtime.files.filter((file) => file.status === "failed");
+      const files = runtime.files.map((file, index) => ({
+        id: `${runtime.id}-${index}`,
+        name: file.name,
+        status: file.status === "complete" ? "complete" as const : file.status === "failed" ? "failed" as const : file.status === "active" ? "active" as const : "queued" as const,
+        progress: file.progress,
+        ...(file.error ? { error: file.error } : {}),
+      }));
+      const transfer: Transfer = {
+        id: runtime.id,
+        type: "Resource upload",
+        name: total === 1 ? runtime.files[0].name : `${total} resources`,
+        status,
+        progress,
+        phase: { key: phase, label: status === "active" ? phase : status === "complete" ? "Upload complete" : status === "partial" ? "Upload completed with errors" : "Upload failed", ...(status === "active" ? { current: complete + 1, total } : {}) },
+        detail: status === "active" ? runtime.files.find((file) => file.status === "active")?.name : `${complete} of ${total} files uploaded`,
+        ...(failures.length ? { error: { message: `${failures.length} ${failures.length === 1 ? "file" : "files"} failed to upload.` } } : {}),
+        files,
+        ...(failures.length ? { actions: [{ key: "retry-failed", label: "Retry failed files" }, { key: "dismiss", label: "Dismiss" }] } : status === "complete" ? { actions: [{ key: "dismiss", label: "Dismiss" }] } : {}),
+        blocksUnload: status === "active",
+      };
+      setTransfers((current) => [transfer, ...current.filter((item) => item.id !== runtime.id)]);
+    };
+    const execute = async () => {
+      if (runtime.running) return;
+      runtime.running = true;
+      runtime.files.forEach((file) => { if (file.status === "failed") file.status = "queued"; });
+      publish("active", "Uploading resources");
+      const uploaded: ChurchResource[] = [];
+      try {
+        for (const [index, pending] of runtime.files.entries()) {
+          if (pending.status !== "queued") continue;
+          pending.status = "active";
+          pending.progress = 0;
+          pending.error = undefined;
+          publish("active", `Uploading ${index + 1} of ${runtime.files.length}`);
+          try {
+            const resource = await uploadChurchResource({
+              churchId: runtime.churchId,
+              file: pending.file,
+              name: pending.name,
+              onProgress: (progress) => {
+                pending.progress = progress;
+                publish("active", `Uploading ${index + 1} of ${runtime.files.length}`);
+              },
+            });
+            pending.status = "complete";
+            pending.progress = 100;
+            uploaded.push(resource);
+          } catch (uploadError) {
+            pending.status = "failed";
+            pending.error = uploadError instanceof Error ? uploadError.message : "Upload failed";
+          }
+          publish("active", `Uploading ${index + 1} of ${runtime.files.length}`);
+        }
+        if (uploaded.length) {
+          try {
+            resourceUploadListeners.current.get(runtime.id)?.(uploaded);
+          } catch (error) {
+            console.error("Uploaded resources could not be added to the open Resources view:", error);
+          }
+        }
+        const failed = runtime.files.some((file) => file.status === "failed");
+        if (failed) {
+          runtime.retryUnregister?.();
+          runtime.retryUnregister = registerTransferAction(runtime.id, "retry-failed", () => execute());
+          publish(runtime.files.some((file) => file.status === "complete") ? "partial" : "failed", "Upload failed");
+        } else {
+          runtime.retryUnregister?.();
+          runtime.retryUnregister = undefined;
+          publish("complete", "Upload complete");
+        }
+      } finally {
+        runtime.running = false;
+      }
+    };
+    registerTransferAction(runtime.id, "dismiss", () => {
+      runtime.retryUnregister?.();
+      resourceJobs.current.delete(runtime.id);
+      resourceUploadListeners.current.delete(runtime.id);
+      unregisterTransferActions(runtime.id);
+      setTransfers((current) => current.filter((item) => item.id !== runtime.id));
+    });
+    publish("active", "Uploading resources");
+    void execute();
+    return runtime.id;
+  }, [registerTransferAction, unregisterTransferActions]);
 
   const startCanvaTransfer = useCallback<TransferContextValue["startCanvaTransfer"]>((input) => {
     if (input.dedupeKey) {
@@ -398,15 +533,17 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       if (activityHosts.current.delete(hostId)) setActivityHostCount(activityHosts.current.size);
     };
   }, []);
-  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
+  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
   const actionValue = useMemo(() => ({
     startCanvaTransfer,
+    startResourceUpload,
+    registerResourceUploadListener,
     updateTransfer,
     removeTransfer,
     registerTransferAction,
     runTransferAction,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
-  }), [startCanvaTransfer, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
+  }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction]);
   return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 

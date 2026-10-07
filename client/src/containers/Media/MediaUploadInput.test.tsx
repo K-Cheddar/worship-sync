@@ -19,6 +19,7 @@ import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { TransferProvider } from "../../context/transferContext";
 import { MediaAddControl } from "./MediaAddControl";
+import { deleteChurchMuxAsset } from "../../api/providerStorage";
 
 const mockValidateFiles = jest.fn((files: File[]): { valid: File[]; invalid: File[] } => ({
   valid: files,
@@ -76,6 +77,10 @@ jest.mock("./utils/muxUpload", () => ({
 
 jest.mock("./utils/cloudinaryUpload", () => ({
   convertCloudinaryImageToLocalWebp: jest.fn(),
+}));
+
+jest.mock("../../api/providerStorage", () => ({
+  deleteChurchMuxAsset: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockedCreateLocalMedia = jest.mocked(createLocalMediaFromFile);
@@ -232,6 +237,58 @@ describe("MediaUploadInput", () => {
     });
 
     await act(async () => finishUpload({} as MuxUploadResult));
+  });
+
+  it("cancels an unmounted upload and cleans up a Mux result that arrives afterward", async () => {
+    let finishUpload!: (result: MuxUploadResult) => void;
+    mockedUploadVideo.mockImplementation(async () => new Promise<MuxUploadResult>((resolve) => { finishUpload = resolve; }));
+    mockDetectFileType.mockReturnValue("video");
+    mockedCreateLocalMedia.mockResolvedValue({
+      ...localImage("local-video-1", "clip.mp4"),
+      type: "video",
+      format: "mp4",
+      localImage: undefined,
+      localVideoFile: {
+        id: "local-video-1",
+        ownerDeviceId: "this-device",
+        ownerLabel: "Booth",
+        fileName: "clip.mp4",
+        contentType: "video/mp4",
+        storagePolicy: "local-and-cloud",
+      },
+    });
+    const onLocalMediaPatched = jest.fn();
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={jest.fn()} onLocalMediaPatched={onLocalMediaPatched} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(mockedUploadVideo).toHaveBeenCalledTimes(1));
+
+    view.rerender(surface(false));
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
+
+    await act(async () => {
+      finishUpload({ assetId: "mux-asset-1" } as MuxUploadResult);
+      await Promise.resolve();
+    });
+
+    expect(deleteChurchMuxAsset).toHaveBeenCalledWith("church-1", "mux-asset-1");
+    expect(onLocalMediaPatched).not.toHaveBeenCalled();
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
   });
 
   it("remembers the upload preference per device when the toggle changes", () => {

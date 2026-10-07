@@ -184,6 +184,26 @@ const safeResponseContentType = (value) => {
     : "";
 };
 
+const isCompatibleProxyMime = (payload, mimeType) => {
+  if (!mimeType) return false;
+  const previewType = payload.pt;
+  const mediaType = payload.mt;
+  if (previewType === "pdf") return mimeType === "application/pdf" || mimeType === "application/x-pdf";
+  if (previewType === "image") return /^image\//.test(mimeType) && !/^image\/svg(?:\+xml)?$/.test(mimeType);
+  if (previewType === "audio") return /^audio\//.test(mimeType);
+  if (previewType === "video") return /^video\//.test(mimeType);
+  if (previewType === "docx") return mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (previewType === "text") return mimeType === "text/plain" || mimeType === "text/markdown";
+  if (mediaType === "document") {
+    const authorizedMime = normalizeMimeType(payload.m);
+    if (authorizedMime === "application/pdf" || authorizedMime === "application/x-pdf") {
+      return mimeType === "application/pdf" || mimeType === "application/x-pdf";
+    }
+    return DOCUMENT_MIMES.has(mimeType) && !["text/html", "application/xhtml+xml"].includes(mimeType);
+  }
+  return false;
+};
+
 const isHtmlResponse = (response) => {
   const mime = normalizeMimeType(headerValue(response?.headers, "content-type"));
   return mime === "text/html" || mime === "application/xhtml+xml";
@@ -496,13 +516,15 @@ export const createExternalResourceService = ({
     });
     const response = responseResult.response;
     const responseMime = safeResponseContentType(headerValue(response.headers, "content-type"));
-    if (!responseMime && isSuccessful(response)) {
+    const status = Number(response.status || 502);
+    const allowedStatus = status === 200 || status === 206 || status === 416 || status === 204;
+    if (!allowedStatus) {
       drainResponse(response);
-      return res.status(415).json({ error: "That resource is not a previewable media file." });
+      return res.status(status >= 400 && status < 600 ? status : 502).json({ error: "The resource could not be loaded." });
     }
-    if (responseMime === "text/html" || responseMime === "application/xhtml+xml") {
+    if (status !== 204 && !isCompatibleProxyMime(payload, responseMime)) {
       drainResponse(response);
-      return res.status(415).json({ error: "HTML resources are not proxied." });
+      return res.status(415).json({ error: "The resource content type changed and cannot be previewed." });
     }
     const contentLength = parseContentLength(headerValue(response.headers, "content-length"));
     const totalLength = contentRangeTotal(headerValue(response.headers, "content-range"));
@@ -511,16 +533,10 @@ export const createExternalResourceService = ({
       return res.status(413).json({ error: "That resource is too large to preview." });
     }
 
-    const status = Number(response.status || 502);
-    const allowedStatus = status === 200 || status === 206 || status === 416 || status === 204;
-    if (!allowedStatus) {
-      drainResponse(response);
-      return res.status(status >= 400 && status < 600 ? status : 502).json({ error: "The resource could not be loaded." });
-    }
-
     const outputMime = responseMime || normalizeMimeType(payload.m) || "application/octet-stream";
     res.status(status);
     res.setHeader("Content-Type", outputMime);
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, max-age=60");
     const contentRange = headerValue(response.headers, "content-range");
     if (contentRange && /^bytes\s+\d+-\d+\/(?:\d+|\*)$/i.test(contentRange)) res.setHeader("Content-Range", contentRange);

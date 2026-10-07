@@ -3,5 +3,5 @@
   "date": "2026-10-07",
   "type": "improved",
   "title": "Follow uploads and deletions in Activity",
-  "description": "Track Media and Resource uploads and deletions in Activity, with clear summaries and file details when a batch needs attention."
+  "description": "Track Media and Resource uploads and deletions in Activity, retry failed files after navigating away, and review clear batch summaries and file details."
 }

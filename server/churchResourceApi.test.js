@@ -102,18 +102,18 @@ test("external ChurchResources use server metadata, skip quota and R2, and retai
   assert.equal(commands.includes("remove"), false);
 });
 
-test("external resource kinds distinguish documents and audio from other media", async () => {
+test("external resource kinds distinguish documents, audio, and images from other media", async () => {
   const cases = [
     ["document", "document"],
     ["audio", "audio"],
-    ["image", "other"],
+    ["image", "image"],
     ["video", "other"],
     ["web", "other"],
     ["unsupported", "other"],
   ];
 
   for (const [mediaType, expectedKind] of cases) {
-    const { handlers } = makeHarness({
+    const { docs, handlers } = makeHarness({
       externalResourceService: {
         resolveRateLimited: async (url) => ({ originalUrl: url, provider: "direct", mediaType }),
       },
@@ -122,7 +122,38 @@ test("external resource kinds distinguish documents and audio from other media",
     await handlers.createExternal(request("church-1", { url: `https://example.test/${mediaType}` }), response);
     assert.equal(response.statusCode, 200, `${mediaType} should be accepted`);
     assert.equal(response.body.resource.kind, expectedKind, `${mediaType} should be ${expectedKind}`);
+    if (mediaType === "image") {
+      const reread = normalizeResourceRecord(response.body.resource);
+      assert.equal(reread.kind, "image");
+      docs.set(reread.id, reread);
+      const listed = makeResponse();
+      await handlers.list(request("church-1"), listed);
+      assert.equal(listed.body.resources[0].kind, "image");
+    }
   }
+});
+
+test("uploaded image kinds survive normalization and API re-reads", async () => {
+  const { docs, handlers } = makeHarness();
+  const raw = {
+    id: "churchResource_image",
+    churchId: "church-1",
+    name: "Service image",
+    kind: "image",
+    sourceType: "upload",
+    storage: { key: "churches/church-1/files/churchResource_image/original", fileName: "slide.avif", contentType: "image/avif", sizeBytes: 10, uploadedAt: "2026-10-01T00:00:00.000Z" },
+    createdAt: "2026-10-01T00:00:00.000Z", createdBy: "user-1",
+    updatedAt: "2026-10-01T00:00:00.000Z", updatedBy: "user-1",
+  };
+  const normalized = normalizeResourceRecord(raw);
+  assert.equal(normalized.kind, "image");
+  docs.set(normalized.id, normalized);
+  const listed = makeResponse();
+  await handlers.list(request("church-1"), listed);
+  assert.equal(listed.body.resources[0].kind, "image");
+  const fetched = makeResponse();
+  await handlers.get(request("church-1", {}, { params: { churchId: "church-1", resourceId: raw.id } }), fetched);
+  assert.equal(fetched.body.resource.kind, "image");
 });
 
 test("unsafe external resource URLs are rejected by the resolver before metadata is stored", async () => {

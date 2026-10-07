@@ -10,6 +10,7 @@ import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import { isRecognizedImageFile } from "./mediaFileTypes";
+import { isMediaLibraryV2 } from "./mediaDocUtils";
 
 const DB_NAME = "worshipsync-local-assets";
 const DB_VERSION = 4;
@@ -1244,6 +1245,11 @@ export const cleanupOrphanedLocalImages = async ({
   minimumAgeMs?: number;
 }) => {
   if (!workspaceId) return 0;
+  try {
+    if (!(await isMediaLibraryV2(db))) return null;
+  } catch {
+    return null;
+  }
   const [storedImages, allDocs] = await Promise.all([
     listLocalImagesForWorkspace(workspaceId),
     db.allDocs({ include_docs: true }),

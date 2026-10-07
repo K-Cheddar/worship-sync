@@ -448,6 +448,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       createdAt: "2020-01-01T00:00:00.000Z",
     });
     const db = {
+      get: jest.fn().mockResolvedValue({ _id: "media-library-meta", schemaVersion: 2 }),
       allDocs: jest.fn().mockResolvedValue({
         rows: [{ doc: itemWithAsset("item-1", "referenced") }],
       }),
@@ -464,6 +465,7 @@ describe("localImageAssets IndexedDB lifecycle", () => {
   it("does not treat the retained legacy media snapshot as a v2 local-image reference", async () => {
     await saveLocalImage(storedImage("legacy-only-reference"));
     const db = {
+      get: jest.fn().mockResolvedValue({ _id: "media-library-meta", schemaVersion: 2 }),
       allDocs: jest.fn().mockResolvedValue({
         rows: [
           {
@@ -481,6 +483,27 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       cleanupOrphanedLocalImages({ db, workspaceId: "church-1", minimumAgeMs: 0 }),
     ).resolves.toBe(1);
     await expect(getLocalImage("legacy-only-reference")).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["missing marker", Object.assign(new Error("missing"), { status: 404, name: "not_found" })],
+    ["schema v1", { _id: "media-library-meta", schemaVersion: 1 }],
+    ["malformed marker", { _id: "media-library-meta", schemaVersion: "2" }],
+    ["marker read failure", new Error("database unavailable")],
+  ])("does not delete a legacy-only referenced asset with %s", async (_case, marker) => {
+    await saveLocalImage(storedImage("legacy-only-reference"));
+    const db = {
+      get: marker instanceof Error
+        ? jest.fn().mockRejectedValue(marker)
+        : jest.fn().mockResolvedValue(marker),
+      allDocs: jest.fn().mockResolvedValue({ rows: [{ doc: {
+        _id: "media",
+        list: [{ id: "old", localImage: { id: "legacy-only-reference" } }],
+      } }] }),
+    } as unknown as PouchDB.Database;
+
+    await expect(cleanupOrphanedLocalImages({ db, workspaceId: "church-1", minimumAgeMs: 0 })).resolves.toBeNull();
+    await expect(getLocalImage("legacy-only-reference")).resolves.toBeDefined();
   });
 
   it("keeps shared bytes when deleting one referencing item", async () => {

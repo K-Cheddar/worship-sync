@@ -196,6 +196,7 @@ const loadStoreWithOverlayTemplatePersistence = () => {
   };
 };
 
+let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = () => {
   let storeModule: any;
   let itemSliceModule: any;
@@ -204,10 +205,11 @@ const loadStoreWithItemPersistence = () => {
     get: jest.fn(),
     put: jest.fn(),
   };
+  mockActiveItemDb = db;
 
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
+      get globalDb() { return mockActiveItemDb; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -232,6 +234,7 @@ const loadStoreWithItemPersistence = () => {
     updateSlides: itemSliceModule.updateSlides,
     db,
     postMessage,
+    setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
   };
 };
 
@@ -1629,6 +1632,33 @@ describe("store module", () => {
         songAudio: undefined,
       }),
     );
+  });
+
+  it("keeps a delayed item save on its original database and out of the new church state", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db: dbA, postMessage, setGlobalDb } =
+      loadStoreWithItemPersistence();
+    dbA.get.mockResolvedValue(createSongDoc({ _rev: "1-song" }));
+    dbA.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
+    const dbB = { get: jest.fn(), put: jest.fn() };
+
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({ _rev: "1-song" })));
+    await flushListenerEffects();
+    dbA.put.mockClear();
+    postMessage.mockClear();
+    store.dispatch(itemSlice.actions._setName("Church A edit"));
+    store.dispatch({ type: "RESET" });
+    setGlobalDb(dbB);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    expect(dbA.put).toHaveBeenCalledWith(expect.objectContaining({ name: "Church A edit" }));
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.name).not.toBe("Church A edit");
+    jest.useRealTimers();
   });
 
   it("persists and reloads a custom free section name", async () => {
@@ -4090,10 +4120,11 @@ const loadStoreWithAllItemsPersistence = () => {
     get: jest.fn().mockResolvedValue({ _id: "allItems", items: [] }),
     put: jest.fn().mockResolvedValue({ ok: true, id: "allItems", rev: "2" }),
   };
+  let activeDb: any = db;
 
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
+      get globalDb() { return activeDb; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -4112,7 +4143,7 @@ const loadStoreWithAllItemsPersistence = () => {
     allItemsSliceModule = require("./allItemsSlice");
   });
 
-  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db };
+  return { store: storeModule.default, allItemsSlice: allItemsSliceModule, db, setGlobalDb: (next: unknown) => { activeDb = next; } };
 };
 
 describe("allItems persistence", () => {
@@ -4146,8 +4177,33 @@ describe("allItems persistence", () => {
     );
     jest.useRealTimers();
   });
+
+  it("abandons a delayed Church A all-items save after the active database switches", async () => {
+    jest.useFakeTimers();
+    const { store, allItemsSlice, db: dbA, setGlobalDb } = loadStoreWithAllItemsPersistence();
+    const dbB = { get: jest.fn(), put: jest.fn() };
+    store.dispatch(allItemsSlice.setIsInitialized(true));
+    store.dispatch(allItemsSlice.addItemToAllItemsList({
+      _id: "church-a-item",
+      name: "Church A item",
+      type: "song",
+      listId: "outline-a",
+      background: "",
+    }));
+    store.dispatch({ type: "RESET" });
+    setGlobalDb(dbB);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(dbA.put).not.toHaveBeenCalled();
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
 });
 
+let mockActiveControllerDb: any;
 const loadStoreWithControllerMediaFolders = () => {
   let storeModule: any;
   let preferencesModule: any;
@@ -4167,8 +4223,9 @@ const loadStoreWithControllerMediaFolders = () => {
       return { ok: true, rev: next._rev };
     }),
   };
+  mockActiveControllerDb = db;
   jest.isolateModules(() => {
-    jest.doMock("../context/controllerInfo", () => ({ globalDb: db, globalBroadcastRef: { postMessage } }));
+    jest.doMock("../context/controllerInfo", () => ({ get globalDb() { return mockActiveControllerDb; }, globalBroadcastRef: { postMessage } }));
     jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: { db: undefined, churchId: undefined }, globalHostId: "host-123" }));
     jest.doMock("firebase/database", () => ({ ref: jest.fn(), set: jest.fn(), get: jest.fn() }));
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -4176,7 +4233,7 @@ const loadStoreWithControllerMediaFolders = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     preferencesModule = require("./preferencesSlice");
   });
-  return { store: storeModule.default, preferences: preferencesModule, docs, db, postMessage };
+  return { store: storeModule.default, preferences: preferencesModule, docs, db, postMessage, setGlobalDb: (next: unknown) => { mockActiveControllerDb = next; } };
 };
 
 describe("controller media folder persistence", () => {
@@ -4198,6 +4255,62 @@ describe("controller media folder persistence", () => {
       controllerProfileId: "aux-1",
       mediaRouteFolders: { "controller-item-image": "videos" },
     });
+    jest.useRealTimers();
+  });
+
+  it("keeps a queued folder save owned by its original database and profile", async () => {
+    jest.useFakeTimers();
+    let releaseFirst!: () => void;
+    let firstPut = true;
+    const { store, preferences, docs, db, postMessage, setGlobalDb } = loadStoreWithControllerMediaFolders();
+    const dbBdocs = new Map<string, Record<string, unknown>>();
+    const dbB = {
+      get: jest.fn(async (id: string) => {
+        const doc = dbBdocs.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+        return { ...doc };
+      }),
+      put: jest.fn(async (doc: Record<string, unknown>) => {
+        const saved = { ...doc, _rev: "1-b" };
+        dbBdocs.set(String(doc._id), saved);
+        return { ok: true, rev: saved._rev };
+      }),
+    };
+    const originalPut = db.put.getMockImplementation()!;
+    db.put.mockImplementation(async (doc) => {
+      if (firstPut) {
+        firstPut = false;
+        await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      }
+      return originalPut(doc);
+    });
+
+    store.dispatch(preferences.setIsInitialized(true));
+    store.dispatch(preferences.initiateMediaRouteFolders({ controllerProfileId: "church-a-profile", mediaRouteFolders: {} }));
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "church-a-profile", key: "controller-item-image", folderId: "a-first" }));
+    await flushListenerEffects();
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "church-a-profile", key: "controller-item-video", folderId: "a-queued" }));
+    await flushListenerEffects();
+
+    setGlobalDb(dbB);
+    store.dispatch(preferences.initiateMediaRouteFolders({ controllerProfileId: "church-b-profile", mediaRouteFolders: {} }));
+    store.dispatch(preferences.setMediaRouteFolder({ controllerProfileId: "church-b-profile", key: "controller-item-image", folderId: "b-only" }));
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    await Promise.resolve();
+    releaseFirst();
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect([...docs.keys()]).toEqual(["mediaRouteFolders:church-a-profile"]);
+    expect(db.put.mock.calls.every(([doc]) => doc._id === "mediaRouteFolders:church-a-profile")).toBe(true);
+    expect([...dbBdocs.keys()]).toEqual(["mediaRouteFolders:church-b-profile"]);
+    expect(dbB.put.mock.calls.every(([doc]) => doc._id === "mediaRouteFolders:church-b-profile")).toBe(true);
+    expect(postMessage.mock.calls.flatMap(([message]) => message.data.docs).some((doc) =>
+      doc.controllerProfileId === "church-a-profile" && doc.mediaRouteFolders?.["controller-item-video"] === "a-queued",
+    )).toBe(false);
+    expect(store.getState().undoable.present.preferences.mediaRouteFolders).toEqual({ "controller-item-image": "b-only" });
     jest.useRealTimers();
   });
 });

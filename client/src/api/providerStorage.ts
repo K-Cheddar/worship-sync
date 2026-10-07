@@ -47,12 +47,11 @@ export const cancelCloudinaryMediaUpload = (churchId: string, uploadId: string) 
 
 export const commitCloudinaryMediaAsset = (
   churchId: string,
-  uploadId: string,
-  publicId: string,
+  { uploadId, publicId }: { uploadId?: string; publicId: string },
 ) =>
   apiFetch<{ asset: ProviderAssetAccounting }>(
     `${base(churchId)}/media-storage/cloudinary/commit`,
-    { method: "POST", body: JSON.stringify({ uploadId, publicId }) },
+    { method: "POST", body: JSON.stringify({ ...(uploadId ? { uploadId } : {}), publicId }) },
   );
 
 export const deleteCloudinaryMediaAsset = (churchId: string, publicId: string) =>

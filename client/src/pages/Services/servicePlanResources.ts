@@ -4,6 +4,7 @@ import {
   FileQuestion,
   FileText,
   Files,
+  Image as ImageIcon,
   Link as LinkIcon,
   Music,
   StickyNote,
@@ -51,6 +52,7 @@ export const SERVICE_PLAN_RESOURCE_REGISTRY: Record<
   scripture: { label: "Scripture", icon: BookOpen, toneClassName: "text-violet-300", canEdit: false },
   youtube: { label: "YouTube", icon: SquarePlay, toneClassName: "text-red-300", canEdit: false },
   audio: { label: "Audio", icon: AudioLines, toneClassName: "text-amber-300", canEdit: false },
+  image: { label: "Image", icon: ImageIcon, toneClassName: "text-fuchsia-300", canEdit: false },
   document: { label: "File", icon: FileText, toneClassName: "text-cyan-300", canEdit: false },
   "custom-document": { label: "Custom document", icon: Files, toneClassName: "text-indigo-300", canEdit: false },
   url: { label: "Web link", icon: LinkIcon, toneClassName: "text-blue-300", canEdit: true },
@@ -239,12 +241,14 @@ export const getEffectiveServicePlanResourceDefinition = (
         case "web":
           return SERVICE_PLAN_RESOURCE_REGISTRY.url;
         case "image":
+          return SERVICE_PLAN_RESOURCE_REGISTRY.image;
         default:
           return SERVICE_PLAN_RESOURCE_REGISTRY.generic;
       }
     }
     if (churchResource?.kind === "audio") return SERVICE_PLAN_RESOURCE_REGISTRY.audio;
-    if (churchResource?.kind === "image" || churchResource?.kind === "other") return SERVICE_PLAN_RESOURCE_REGISTRY.generic;
+    if (churchResource?.kind === "image") return SERVICE_PLAN_RESOURCE_REGISTRY.image;
+    if (churchResource?.kind === "other") return SERVICE_PLAN_RESOURCE_REGISTRY.generic;
     return SERVICE_PLAN_RESOURCE_REGISTRY.document;
   }
   return getServicePlanResourceDefinition(resource.type);

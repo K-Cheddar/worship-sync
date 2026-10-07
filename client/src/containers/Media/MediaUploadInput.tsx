@@ -11,7 +11,7 @@ import { Cloud, Upload } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Modal from "../../components/Modal/Modal";
 import Toggle from "../../components/Toggle/Toggle";
-import { ControllerInfoContext } from "../../context/controllerInfo";
+import { ControllerInfoContext, globalDb } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import type { LocalAssetStoragePolicy } from "../../types";
 import {
@@ -75,6 +75,7 @@ type UploadTimeout = {
 
 type MediaUploadBatch = {
   id: string;
+  database: unknown;
   files: FileUploadProgress[];
   storagePolicy: LocalAssetStoragePolicy;
   cancelled: boolean;
@@ -107,7 +108,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
   ) => {
     const { churchId = "", uploadPreset: contextUploadPreset } =
       useContext(GlobalInfoContext) || {};
-    const { isGuestSession = false } = useContext(ControllerInfoContext) || {};
+    const { db, isGuestSession = false } = useContext(ControllerInfoContext) || {};
     const transferContext = useOptionalTransferActions();
     const updateTransfer = transferContext?.updateTransfer;
     const removeTransfer = transferContext?.removeTransfer;
@@ -212,7 +213,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     const publishBatch = useCallback((batch: MediaUploadBatch, terminal?: "complete" | "partial" | "failed" | "cancelled") => {
       const progress = getMediaBatchProgress(batch.files);
-      const failedFiles = batch.files.filter((file) => file.status === "error");
+      const failedFiles = batch.files.filter((file) => file.status === "error" && !batch.cancelled);
       const succeeded = batch.files.filter((file) => file.status === "ready").length;
       const status: Transfer["status"] = terminal ?? "active";
       const errorMessage = failedFiles.length
@@ -237,11 +238,12 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             id: mediaId || file.file.name,
             name: file.displayName,
             status: file.status === "ready" ? "complete" as const
-              : file.status === "error" ? (batch.cancelledMediaIds.has(mediaId) ? "cancelled" as const : "failed" as const)
-                : file.status === "idle" ? "queued" as const : "active" as const,
+              : batch.cancelled || batch.cancelledMediaIds.has(mediaId) ? "cancelled" as const
+                : file.status === "error" ? "failed" as const
+                  : file.status === "idle" ? "queued" as const : "active" as const,
             progress: file.progress,
-            phase: file.phase || (file.status === "ready" ? "Upload complete" : file.status === "error" ? "Upload failed" : "Adding media"),
-            ...(file.error ? { error: file.error } : {}),
+            phase: batch.cancelled ? "Upload cancelled" : file.phase || (file.status === "ready" ? "Upload complete" : file.status === "error" ? "Upload failed" : "Adding media"),
+            ...(!batch.cancelled && file.error ? { error: file.error } : {}),
           };
         }),
         ...(errorMessage ? { error: { message: errorMessage } } : {}),
@@ -288,7 +290,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           ...(fileProgress.displayName !== fileProgress.file.name ? { displayName: fileProgress.displayName } : {}),
         }));
         if (!fileProgress.localMedia) {
-          onLocalMediaAdded(media);
+          if (globalDb === batch.database) onLocalMediaAdded(media);
           updateBatchFile(batch, fileIndex, { localMedia: media, progress: 40, phase: "Saved on this device" });
         }
         if (storagePolicy !== "local-and-cloud") {
@@ -353,7 +355,17 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         if (fileProgress.fileType === "video") {
           updateBatchFile(batch, fileIndex, { status: "processing", progress: 40, phase: "Uploading video" });
           const result = await uploadVideoToMux(fileProgress.file, { churchId, mediaId: media.id, title: fileProgress.displayName }, callbacks);
-          if (!operationClaim.isCurrent() || batch.cancelledMediaIds.has(media.id)) {
+          if (globalDb !== batch.database) {
+            const cleanup = async () => { await deleteChurchMuxAsset(churchId, result.assetId); };
+            try {
+              await cleanup();
+            } catch (error) {
+              operationClaim.failCleanup(error instanceof Error ? error : new Error("Mux cleanup failed."), cleanup);
+              batch.cleanupRetries.set(fileIndex, cleanup);
+            }
+            throw new Error("Church changed while this upload was running. The video was not added to the current Media library.");
+          }
+          if (!operationClaim.isCurrent() || batch.cancelled || batch.cancelledMediaIds.has(media.id)) {
             try { await deleteChurchMuxAsset(churchId, result.assetId); }
             catch (error) {
               const retry = async () => { await deleteChurchMuxAsset(churchId, result.assetId); };
@@ -679,6 +691,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       const batchId = `media-upload-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
       const batch: MediaUploadBatch = {
         id: batchId,
+        database: db,
         files: selectedFiles.map((file, index) => ({ ...file, displayName: normalizedNames[index] })),
         storagePolicy,
         cancelled: false,
