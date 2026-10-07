@@ -1786,7 +1786,7 @@ export const removeTeamRosterMemberFromTeam = async (
   success: boolean;
   team: TeamRecord;
   member: SafeTeamRosterMemberProjection;
-  preservedTotalAssignmentCount: number;
+  preservedAssignmentCount: number;
 }>(
   `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
   { method: "DELETE" },

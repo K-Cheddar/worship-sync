@@ -48,6 +48,17 @@ const normalizeRosterMember = (member: TeamRosterMember): TeamRosterMember => ({
   blockoutDates: member.blockoutDates || [],
 });
 
+export const normalizeSafeRosterMember = (
+  member: Pick<TeamRosterMember, "memberId" | "churchId" | "title" | "firstName" | "lastName" | "profileImageUrl">,
+): TeamRosterMember => normalizeRosterMember({
+  ...member,
+  positionIds: [],
+  desiredPositionIds: [],
+  teamMemberships: {},
+  qualifications: [],
+  blockoutDates: [],
+});
+
 const normalizeIntakeForm = (form: TeamIntakeForm): TeamIntakeForm => ({
   ...form,
   availabilityServices: form.availabilityServices || [],

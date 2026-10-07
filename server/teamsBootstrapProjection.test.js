@@ -603,6 +603,63 @@ test("truncated ownership sources fail closed for rich member projection", () =>
   }
 });
 
+test("known archived ownership metadata does not block editability from the only active Team", () => {
+  const member = makeWorshipOnlyMember("archived-stale-member");
+  member.positionIds = ["position-worship", "position-archived"];
+  member.teamMemberships.archived = { teamId: "archived" };
+  member.qualifications = [{
+    qualificationId: "old-qualification", areaId: "area-archived", teamId: "archived",
+  }];
+  const data = {
+    ...source,
+    truncated: false,
+    members: [member],
+    teams: source.teams.map((team) => team.teamId === "worship"
+      ? { ...team, memberIds: [member.memberId] }
+      : team),
+    qualificationAreas: [
+      ...source.qualificationAreas,
+      { areaId: "area-archived", teamId: "archived" },
+    ],
+  };
+  const projected = projectTeamsBootstrapForAccess({
+    data,
+    access: {
+      viewAll: false,
+      viewTeamIds: new Set(["worship"]),
+      editTeamIds: new Set(["worship"]),
+    },
+  });
+  const [projectedMember] = projected.members;
+  assert.ok(projected.editableMemberIds.includes(member.memberId));
+  assert.equal(projectedMember.email, member.email);
+  assert.deepEqual(projectedMember.positionIds, ["position-worship"]);
+  assert.deepEqual(projectedMember.qualifications, []);
+});
+
+test("unknown Team ownership metadata fails closed for rich member projection", () => {
+  const member = makeWorshipOnlyMember("unknown-owner-member");
+  member.teamMemberships["unknown-team"] = { teamId: "unknown-team" };
+  const projected = projectTeamsBootstrapForAccess({
+    data: {
+      ...source,
+      truncated: false,
+      members: [member],
+      teams: source.teams.map((team) => team.teamId === "worship"
+        ? { ...team, memberIds: [member.memberId] }
+        : team),
+    },
+    access: {
+      viewAll: false,
+      viewTeamIds: new Set(["worship"]),
+      editTeamIds: new Set(["worship"]),
+    },
+  });
+  const [projectedMember] = projected.members;
+  assert.equal(projectedMember.email, undefined);
+  assert.equal(projected.editableMemberIds.includes(member.memberId), false);
+});
+
 test("read-only and scoped-manager projections omit intake and SMS data", () => {
   for (const access of [
     {

@@ -40,7 +40,7 @@ import EntityIconPicker from "../EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
-import { countMemberAssignmentsOnTeam, describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
+import { describeDeletionImpacts, memberName, normalizeSafeRosterMember, sortPositionsByOrder } from "../teamsUtils";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import {
   buildGroupsReturnTo,
@@ -71,6 +71,8 @@ type TeamManagerProps = {
   onRemoved: (teamId: string) => void;
   onTeamRosterSaved?: (team: TeamRecord) => void;
   onRosterMemberSaved?: (member: TeamRosterMember) => void;
+  onRosterMemberRemoved?: (memberId: string) => void;
+  onRosterMutationReconcile?: (memberId: string) => void;
   onImported?: () => void;
 };
 
@@ -88,6 +90,8 @@ const TeamManager = ({
   onRemoved,
   onTeamRosterSaved = () => {},
   onRosterMemberSaved = () => {},
+  onRosterMemberRemoved = () => {},
+  onRosterMutationReconcile = () => {},
   onImported,
 }: TeamManagerProps) => {
   const context = useContext(GlobalInfoContext);
@@ -365,13 +369,8 @@ const TeamManager = ({
     try {
       const result = await addTeamRosterMemberToTeam(churchId, rosterPickerTeam.teamId, candidate.memberId);
       onTeamRosterSaved(result.team);
-      const existingMember = members.find((member) => member.memberId === candidate.memberId);
-      onRosterMemberSaved({
-        ...(existingMember || {}),
-        ...result.member,
-        positionIds: existingMember?.positionIds || [],
-        blockoutDates: existingMember?.blockoutDates || [],
-      });
+      onRosterMemberSaved(normalizeSafeRosterMember(result.member));
+      onRosterMutationReconcile(candidate.memberId);
       setCandidates((current) => current.filter((item) => item.memberId !== candidate.memberId));
       setRosterPickerTeam(null);
       setCandidateQuery("");
@@ -388,16 +387,17 @@ const TeamManager = ({
     try {
       const result = await removeTeamRosterMemberFromTeam(churchId, editing.teamId, rosterMutationMember.memberId);
       onTeamRosterSaved(result.team);
-      const positionIds = new Set(positions.filter((position) => position.teamId === editing.teamId).map((position) => position.positionId));
-      onRosterMemberSaved({
-        ...rosterMutationMember,
-        positionIds: (rosterMutationMember.positionIds || []).filter((positionId) => !positionIds.has(positionId)),
-        desiredPositionIds: (rosterMutationMember.desiredPositionIds || []).filter((positionId) => !positionIds.has(positionId)),
-        teamMemberships: Object.fromEntries(Object.entries(rosterMutationMember.teamMemberships || {}).filter(([teamId]) => teamId !== editing.teamId)),
-        qualifications: (rosterMutationMember.qualifications || []).filter((qualification) =>
-          qualification.teamId !== editing.teamId && qualificationAreas.find((area) => area.areaId === qualification.areaId)?.teamId !== editing.teamId,
-        ),
-      });
+      const remainsInVisibleTeam = teams.some((team) =>
+        !team.archivedAt &&
+        team.teamId !== editing.teamId &&
+        team.memberIds?.includes(rosterMutationMember.memberId),
+      );
+      if (remainsInVisibleTeam) {
+        onRosterMemberSaved(normalizeSafeRosterMember(result.member));
+      } else {
+        onRosterMemberRemoved(rosterMutationMember.memberId);
+      }
+      onRosterMutationReconcile(rosterMutationMember.memberId);
       setRosterMutationMember(null);
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not remove this person from the team.");
@@ -668,11 +668,7 @@ const TeamManager = ({
       >
         {rosterMutationMember ? <div className="space-y-4 text-sm text-gray-200">
           <p>This removes their {editing?.name || "team"} positions, team role, and qualifications.</p>
-          {(() => {
-            const count = countMemberAssignmentsOnTeam(rosterMutationMember.memberId, editing?.teamId || "", data.schedules);
-            if (!count) return <p>Existing schedule assignments, if any, will remain and can be reassigned separately.</p>;
-            return <p>{count} existing schedule assignment{count === 1 ? "" : "s"} will remain and can be reassigned separately.</p>;
-          })()}
+          <p>Existing schedule assignments will remain and can be reassigned separately.</p>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" disabled={rosterMutationBusy} onClick={() => setRosterMutationMember(null)}>Cancel</Button>
             <Button type="button" isLoading={rosterMutationBusy} disabled={rosterMutationBusy} onClick={() => void confirmRosterRemoval()}>Remove from team</Button>

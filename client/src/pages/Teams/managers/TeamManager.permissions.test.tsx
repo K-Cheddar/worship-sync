@@ -30,6 +30,9 @@ const av: TeamRecord = {
 };
 const member: TeamRosterMember = {
   memberId: "member-1", churchId: "church-1", firstName: "Avery", lastName: "Singer",
+  email: "avery-private@example.test", phoneNumber: "+15555550123", notes: "private notes",
+  qualifications: [{ qualificationId: "private-qualification", teamId: worship.teamId, areaId: "private-area", status: "completed", notes: "private" }],
+  recurringAvailability: { weeksOfMonth: [1], includeLastWeekOfMonth: false },
   positionIds: [], blockoutDates: [],
 };
 const data: TeamsData = {
@@ -44,6 +47,13 @@ const data: TeamsData = {
 const renderManager = (
   initialEntry: string | { pathname: string; state?: unknown } = TEAMS_SECTION_PATHS.groups,
   permissions: { canEditTeams?: boolean; canEditTeam?: (teamId: string) => boolean } = {},
+  overrides: {
+    teams?: TeamRecord[];
+    member?: TeamRosterMember;
+    onRosterMemberSaved?: (member: TeamRosterMember) => void;
+    onRosterMemberRemoved?: (memberId: string) => void;
+    onRosterMutationReconcile?: (memberId: string) => void;
+  } = {},
 ) =>
   render(
     <MemoryRouter initialEntries={[initialEntry]}>
@@ -51,10 +61,13 @@ const renderManager = (
         <ToastProvider>
           <TeamsNavigationGuardProvider>
             <TeamManager
-              teams={[worship, av]} positions={[]} roles={[]} qualificationAreas={[]}
-              members={[member]} data={data} canEditTeams={permissions.canEditTeams ?? false}
+              teams={overrides.teams ?? [worship, av]} positions={[]} roles={[]} qualificationAreas={[]}
+              members={[overrides.member ?? member]} data={{ ...data, teams: overrides.teams ?? [worship, av], members: [overrides.member ?? member] }} canEditTeams={permissions.canEditTeams ?? false}
               canEditTeam={permissions.canEditTeam ?? ((teamId) => teamId === worship.teamId)}
               onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
+              onRosterMemberSaved={overrides.onRosterMemberSaved}
+              onRosterMemberRemoved={overrides.onRosterMemberRemoved}
+              onRosterMutationReconcile={overrides.onRosterMutationReconcile}
             />
           </TeamsNavigationGuardProvider>
         </ToastProvider>
@@ -125,6 +138,7 @@ it("searches safe candidate results and adds the selected person", async () => {
   } as never);
   const onTeamRosterSaved = jest.fn();
   const onRosterMemberSaved = jest.fn();
+  const onRosterMutationReconcile = jest.fn();
   render(
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
       <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
@@ -132,7 +146,8 @@ it("searches safe candidate results and adds the selected person", async () => {
           <TeamManager teams={[worship, av]} positions={[]} roles={[]} qualificationAreas={[]} members={[member]} data={data}
             canEditTeams={false} canEditTeam={(teamId) => teamId === worship.teamId}
             onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
-            onTeamRosterSaved={onTeamRosterSaved} onRosterMemberSaved={onRosterMemberSaved} />
+            onTeamRosterSaved={onTeamRosterSaved} onRosterMemberSaved={onRosterMemberSaved}
+            onRosterMutationReconcile={onRosterMutationReconcile} />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -145,25 +160,70 @@ it("searches safe candidate results and adds the selected person", async () => {
   await user.click(screen.getByRole("button", { name: /^Add$/ }));
   await waitFor(() => expect(addTeamRosterMemberToTeam).toHaveBeenCalledWith("church-1", worship.teamId, "member-new"));
   expect(onTeamRosterSaved).toHaveBeenCalledWith(expect.objectContaining({ memberIds: ["member-1", "member-new"] }));
-  expect(onRosterMemberSaved).toHaveBeenCalledWith(expect.objectContaining({ memberId: "member-new", positionIds: [], blockoutDates: [] }));
+  expect(onRosterMemberSaved).toHaveBeenCalledWith(expect.objectContaining({
+    memberId: "member-new", positionIds: [], desiredPositionIds: [], blockoutDates: [],
+    teamMemberships: {}, qualifications: [],
+  }));
+  const immediatelyAddedMember = jest.mocked(onRosterMemberSaved).mock.calls[0][0];
+  expect(immediatelyAddedMember.email).toBeUndefined();
+  expect(immediatelyAddedMember.phoneNumber).toBeUndefined();
+  expect(immediatelyAddedMember.notes).toBeUndefined();
+  expect(onRosterMutationReconcile).toHaveBeenCalledWith("member-new");
 });
 
 it("confirms team removal and explains that existing assignments stay", async () => {
   const user = userEvent.setup();
+  const onRosterMemberSaved = jest.fn();
+  const onRosterMemberRemoved = jest.fn();
+  const onRosterMutationReconcile = jest.fn();
   jest.mocked(removeTeamRosterMemberFromTeam).mockResolvedValue({
     success: true,
     team: { ...worship, memberIds: [] },
-    member: { memberId: member.memberId, firstName: member.firstName, lastName: member.lastName },
+    member: { memberId: member.memberId, churchId: "church-1", firstName: member.firstName, lastName: member.lastName },
     preservedAssignmentCount: 1,
   } as never);
-  renderManager();
+  renderManager(TEAMS_SECTION_PATHS.groups, {}, {
+    onRosterMemberSaved, onRosterMemberRemoved, onRosterMutationReconcile,
+  });
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   await user.click(screen.getByRole("button", { name: "Remove from team" }));
   expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
-    "1 existing schedule assignment will remain and can be reassigned separately.",
+    "Existing schedule assignments will remain and can be reassigned separately.",
   );
   await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
   await waitFor(() => expect(removeTeamRosterMemberFromTeam).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId));
+  expect(onRosterMemberSaved).toHaveBeenCalledWith(expect.objectContaining({
+    memberId: member.memberId, churchId: "church-1", firstName: "Avery", lastName: "Singer",
+    positionIds: [], desiredPositionIds: [], blockoutDates: [], teamMemberships: {}, qualifications: [],
+  }));
+  const immediatelyRemovedMember = onRosterMemberSaved.mock.calls[0][0];
+  expect(immediatelyRemovedMember.email).toBeUndefined();
+  expect(immediatelyRemovedMember.phoneNumber).toBeUndefined();
+  expect(immediatelyRemovedMember.notes).toBeUndefined();
+  expect(onRosterMemberRemoved).not.toHaveBeenCalled();
+  expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);
+});
+
+it("removes a sole-Team member from projected state immediately", async () => {
+  const user = userEvent.setup();
+  const onRosterMemberSaved = jest.fn();
+  const onRosterMemberRemoved = jest.fn();
+  const onRosterMutationReconcile = jest.fn();
+  jest.mocked(removeTeamRosterMemberFromTeam).mockResolvedValue({
+    success: true,
+    team: { ...worship, memberIds: [] },
+    member: { memberId: member.memberId, churchId: "church-1", firstName: "Avery", lastName: "Singer" },
+    preservedAssignmentCount: 0,
+  } as never);
+  renderManager(TEAMS_SECTION_PATHS.groups, {}, {
+    teams: [worship], onRosterMemberSaved, onRosterMemberRemoved, onRosterMutationReconcile,
+  });
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.click(screen.getByRole("button", { name: "Remove from team" }));
+  await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
+  await waitFor(() => expect(onRosterMemberRemoved).toHaveBeenCalledWith(member.memberId));
+  expect(onRosterMemberSaved).not.toHaveBeenCalled();
+  expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);
 });
 
 it("does not open a read-only team's editor from a restore request", async () => {

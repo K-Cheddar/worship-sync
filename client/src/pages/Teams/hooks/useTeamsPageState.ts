@@ -145,6 +145,14 @@ export const useTeamsPageState = (
   const [editableMemberIds, setEditableMemberIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const invalidateMemberEditability = useCallback((memberId: string) => {
+    setEditableMemberIds((current) => {
+      if (!current.has(memberId)) return current;
+      const next = new Set(current);
+      next.delete(memberId);
+      return next;
+    });
+  }, []);
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
   const [scheduleHydrationRequestId, setScheduleHydrationRequestId] = useState("");
   /** Bumped when another admin changes a service plan, so the Plans page can
@@ -177,6 +185,7 @@ export const useTeamsPageState = (
   // Separate in-flight gate for background bootstrap recovery so it never trips
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
+  const backgroundRefreshPromiseRef = useRef<Promise<void> | null>(null);
   // Cleared on unmount so a background request that resolves after the page is gone
   // doesn't apply state (mirrors refresh's isCancelled guard).
   const isMountedRef = useRef(true);
@@ -674,69 +683,100 @@ export const useTeamsPageState = (
     [],
   );
 
+  const applyTeamsProjection = useCallback((response: Awaited<ReturnType<typeof getTeamsBootstrap>>) => {
+    accessDeniedRef.current = false;
+    setAccessDenied(false);
+    setMembershipAccessGranted(true);
+    setEditableMemberIds(new Set(response.editableMemberIds || []));
+    const nextData = buildTeamsDataFromBootstrap(response);
+    nextData.schedules = withRetainedHydration(nextData.schedules);
+    const changedKeys = teamsDataKeys.filter(
+      (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
+    );
+    lastSuccessfulBootstrapAtRef.current = Date.now();
+    if (changedKeys.length === 0) return;
+    setData((current) => {
+      let merged = current;
+      changedKeys.forEach((key) => {
+        merged = { ...merged, [key]: nextData[key] };
+      });
+      return merged;
+    });
+    if (changedKeys.includes("schedules")) {
+      const current = selectedScheduleIdRef.current;
+      const nextSelectedScheduleId =
+        current &&
+        nextData.schedules.some((schedule) => schedule.scheduleId === current)
+          ? current
+          : "";
+      setSelectedScheduleId(nextSelectedScheduleId);
+      selectedScheduleIdRef.current = nextSelectedScheduleId;
+      writeSelectedScheduleId(churchId, nextSelectedScheduleId);
+    }
+  }, [churchId, withRetainedHydration]);
+
+  const loadTeamsProjection = useCallback(async (ignoreLocalEditCooldown: boolean) => {
+    const response = await getTeamsBootstrap(churchId);
+    if (!isMountedRef.current || churchIdRef.current !== churchId) return;
+    if (!ignoreLocalEditCooldown && isLocalEditCoolingDown()) return;
+    applyTeamsProjection(response);
+  }, [applyTeamsProjection, churchId, isLocalEditCoolingDown]);
+
   // Silent background bootstrap used for SSE reconnect recovery and as a
   // bounded stale-on-focus fallback. Unlike `refresh`, it never toggles
   // `loading`, diff-gates unchanged data, and bails out while a local edit is
   // settling so it cannot clobber optimistic state.
   const backgroundRefresh = useCallback(async () => {
     if (!churchId || accessDeniedRef.current) return;
-    // Don't pile onto a full (loading) refresh or another background request.
-    // A background request uses its own gate so it never trips `refresh`'s dedupe
-    // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a
-    // background request during a church switch would make refresh skip the load.
-    if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current)
-      return;
+    if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current) return;
     if (isLocalEditCoolingDown()) return;
     backgroundRefreshInFlightRef.current = true;
+    const load = loadTeamsProjection(false);
+    backgroundRefreshPromiseRef.current = load;
     try {
-      const response = await getTeamsBootstrap(churchId);
-      // Bail on stale writes: the page may have unmounted, the active church may
-      // have switched, or a local edit may have landed while the request was in
-      // flight.
-      if (!isMountedRef.current) return;
-      if (churchIdRef.current !== churchId) return;
-      if (isLocalEditCoolingDown()) return;
-      accessDeniedRef.current = false;
-      setAccessDenied(false);
-      setMembershipAccessGranted(true);
-      setEditableMemberIds(new Set(response.editableMemberIds || []));
-      const nextData = buildTeamsDataFromBootstrap(response);
-      nextData.schedules = withRetainedHydration(nextData.schedules);
-      const changedKeys = teamsDataKeys.filter(
-        (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
-      );
-      lastSuccessfulBootstrapAtRef.current = Date.now();
-      if (changedKeys.length === 0) return;
-      setData((current) => {
-        let merged = current;
-        changedKeys.forEach((key) => {
-          merged = { ...merged, [key]: nextData[key] };
-        });
-        return merged;
-      });
-      if (changedKeys.includes("schedules")) {
-        const current = selectedScheduleIdRef.current;
-        const nextSelectedScheduleId =
-          current &&
-          nextData.schedules.some((schedule) => schedule.scheduleId === current)
-            ? current
-            : "";
-        setSelectedScheduleId(nextSelectedScheduleId);
-        selectedScheduleIdRef.current = nextSelectedScheduleId;
-        writeSelectedScheduleId(churchId, nextSelectedScheduleId);
-      }
+      await load;
     } catch (error) {
       if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
         denyTeamsAccess();
         return;
       }
-      // Background sync failures are non-fatal: a later focus, reconnect, or
-      // manual refresh can recover. Stay silent to avoid interrupting operators.
       console.error("Could not background-sync teams.", error);
     } finally {
       backgroundRefreshInFlightRef.current = false;
+      backgroundRefreshPromiseRef.current = null;
     }
-  }, [churchId, denyTeamsAccess, isLocalEditCoolingDown, withRetainedHydration]);
+  }, [churchId, denyTeamsAccess, isLocalEditCoolingDown, loadTeamsProjection]);
+
+  // Authorization changes caused by roster mutations require a fresh server
+  // projection even during the ordinary local-edit cooldown. Wait out older
+  // bootstrap work first so a pre-mutation response cannot land after this one.
+  const reconcileTeamsProjection = useCallback(async () => {
+    if (!churchId || accessDeniedRef.current) return;
+    await Promise.allSettled([
+      refreshInFlightRef.current ? bootstrapLoadRef.current : null,
+      backgroundRefreshPromiseRef.current,
+    ].filter((pending): pending is Promise<void> => Boolean(pending)));
+    if (!isMountedRef.current || churchIdRef.current !== churchId || accessDeniedRef.current) return;
+    if (backgroundRefreshInFlightRef.current) {
+      await backgroundRefreshPromiseRef.current;
+      if (!isMountedRef.current || churchIdRef.current !== churchId) return;
+    }
+    backgroundRefreshInFlightRef.current = true;
+    const load = loadTeamsProjection(true);
+    backgroundRefreshPromiseRef.current = load;
+    try {
+      await load;
+    } catch (error) {
+      if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+        denyTeamsAccess();
+        return;
+      }
+      console.error("Could not reconcile Teams projection after roster mutation.", error);
+    } finally {
+      backgroundRefreshInFlightRef.current = false;
+      backgroundRefreshPromiseRef.current = null;
+    }
+  }, [churchId, denyTeamsAccess, loadTeamsProjection]);
 
   // Merge server-hydrated schedules over their summaries in place, keeping list
   // order stable so the picker and grid don't reshuffle when hydration lands.
@@ -1159,6 +1199,7 @@ export const useTeamsPageState = (
     canViewServices,
     availableNavSections,
     editableMemberIds,
+    invalidateMemberEditability,
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
@@ -1177,6 +1218,7 @@ export const useTeamsPageState = (
     reorderPositions,
     trackTeamsSave,
     refresh,
+    reconcileTeamsProjection,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
@@ -1192,6 +1234,7 @@ export const useTeamsPageState = (
     canViewServices,
     availableNavSections,
     editableMemberIds,
+    invalidateMemberEditability,
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
@@ -1208,6 +1251,7 @@ export const useTeamsPageState = (
     reorderPositions,
     trackTeamsSave,
     refresh,
+    reconcileTeamsProjection,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,

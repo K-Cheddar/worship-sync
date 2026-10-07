@@ -167,9 +167,25 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
     // schedule/intake-only truncation suppresses scoped member editing. Keep
     // failing closed until per-collection completeness is available.
     let hasUnresolvedOwnership = source.truncated === true;
-    for (const teamId of Object.keys(member.teamMemberships || {})) {
+    const addKnownTeamOwnership = (teamId) => {
+      if (!teamId || !sourceTeamIds.has(teamId)) {
+        hasUnresolvedOwnership = true;
+        return;
+      }
+      // A known archived owner is stale metadata, not current ownership.
       if (activeSourceTeamIds.has(teamId)) relevantTeamIds.add(teamId);
-      else if (!sourceTeamIds.has(teamId)) hasUnresolvedOwnership = true;
+    };
+    if (
+      member.teamMemberships !== undefined &&
+      (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships))
+    ) {
+      hasUnresolvedOwnership = true;
+    }
+    for (const [teamId, membership] of Object.entries(member.teamMemberships || {})) {
+      if (membership?.teamId && membership.teamId !== teamId) {
+        hasUnresolvedOwnership = true;
+      }
+      addKnownTeamOwnership(teamId);
     }
     for (const positionId of Array.isArray(member.positionIds)
       ? member.positionIds
@@ -179,16 +195,16 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
         hasUnresolvedOwnership = true;
         continue;
       }
-      if (activeSourceTeamIds.has(position.teamId)) {
-        relevantTeamIds.add(position.teamId);
-      } else if (position.teamId && !sourceTeamIds.has(position.teamId)) {
-        hasUnresolvedOwnership = true;
-      }
+      addKnownTeamOwnership(position.teamId);
     }
     for (const qualification of Array.isArray(member.qualifications)
       ? member.qualifications
       : []) {
-      const areaTeamId = allAreaById.get(qualification?.areaId)?.teamId;
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+        hasUnresolvedOwnership = true;
+        continue;
+      }
+      const areaTeamId = allAreaById.get(qualification.areaId)?.teamId;
       if (qualification?.areaId && !allAreaById.has(qualification.areaId)) {
         hasUnresolvedOwnership = true;
       }
@@ -199,15 +215,13 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
       ) {
         hasUnresolvedOwnership = true;
       }
-      for (const teamId of [qualification?.teamId, areaTeamId]) {
-        if (teamId && activeSourceTeamIds.has(teamId)) {
-          relevantTeamIds.add(teamId);
-        } else if (teamId && !activeSourceTeamIds.has(teamId)) {
-          // Stale/unknown ownership is treated conservatively until it can be
-          // confirmed against the complete active team collection.
-          hasUnresolvedOwnership = true;
-        }
+      if (qualification.teamId && !sourceTeamIds.has(qualification.teamId)) {
+        hasUnresolvedOwnership = true;
       }
+      if (qualification.teamId && areaTeamId && qualification.teamId !== areaTeamId) {
+        hasUnresolvedOwnership = true;
+      }
+      addKnownTeamOwnership(areaTeamId || qualification.teamId);
     }
     const isFullyEditable =
       relevantTeamIds.size > 0 &&

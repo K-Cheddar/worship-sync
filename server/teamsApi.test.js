@@ -15397,7 +15397,7 @@ test("scoped managers can mutate one Team roster without editing shared member r
   }, { merge: true });
   const removeShared = await run(authHandlers.removeTeamRosterMember, manager, { memberId: fixture.sharedId });
   assert.equal(removeShared.statusCode, 200);
-  assert.equal(removeShared.payload.preservedTotalAssignmentCount, 3);
+  assert.equal(removeShared.payload.preservedAssignmentCount, 3);
   const cleanedShared = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   assert.deepEqual(cleanedShared.positionIds, [avPositionId]);
   assert.deepEqual(cleanedShared.desiredPositionIds, [avPositionId]);
@@ -15410,4 +15410,66 @@ test("scoped managers can mutate one Team roster without editing shared member r
 
   await setDoc(COLLECTIONS.teams, fixture.ids.worship, { archivedAt: "2026-10-01" }, { merge: true });
   assert.equal((await run(authHandlers.addTeamRosterMember, manager, { memberId: davidId })).statusCode, 403);
+});
+
+test("archived member ownership is ignored, while unknown ownership fails closed", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("archived_member_ownership");
+  const manager = await createHumanContext("archived_member_ownership_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const memberId = `${fixture.churchId}_kevin_archived_owner`;
+  const archivedTeamId = `${fixture.churchId}_old_choir`;
+  const archivedPositionId = `${archivedTeamId}_position`;
+  const archivedAreaId = `${archivedTeamId}_area`;
+  await setDoc(COLLECTIONS.teams, archivedTeamId, {
+    teamId: archivedTeamId, churchId: fixture.churchId, name: "Old Choir",
+    archivedAt: "2026-10-01", memberIds: [memberId],
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamPositions, archivedPositionId, {
+    positionId: archivedPositionId, churchId: fixture.churchId,
+    teamId: archivedTeamId, name: "Archived Singer",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, archivedAreaId, {
+    areaId: archivedAreaId, churchId: fixture.churchId,
+    teamId: archivedTeamId, name: "Archived qualification area",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+    memberId, churchId: fixture.churchId, firstName: "Kevin", lastName: "Singer",
+    email: "kevin@example.test", positionIds: [
+      `${fixture.ids.worship}_position`, archivedPositionId,
+    ],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship },
+      [archivedTeamId]: { teamId: archivedTeamId },
+    },
+    qualifications: [{ qualificationId: "old-skill", areaId: archivedAreaId, teamId: archivedTeamId }],
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teams, fixture.ids.worship, {
+    memberIds: [fixture.memberId, fixture.sharedId, memberId],
+  }, { merge: true });
+
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context: manager });
+  assert.equal(bootstrap.statusCode, 200);
+  assert.ok(bootstrap.payload.editableMemberIds.includes(memberId));
+  const body = {
+    firstName: "Kevin", lastName: "Singer", email: "kevin-updated@example.test",
+    positionIds: [`${fixture.ids.worship}_position`], desiredPositionIds: [],
+    blockoutDates: [], teamIds: [fixture.ids.worship],
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
+    qualifications: [],
+  };
+  const allowed = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager, params: { memberId }, body,
+  });
+  assert.equal(allowed.statusCode, 200, JSON.stringify(allowed.payload));
+
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+    teamMemberships: { "unknown-team": { teamId: "unknown-team" } },
+  }, { merge: true });
+  const malformed = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager, params: { memberId }, body,
+  });
+  assert.equal(malformed.statusCode, 409, JSON.stringify(malformed.payload));
 });

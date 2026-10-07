@@ -130,6 +130,108 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
+  it("reconciles a removed sole-Team member and clears editability through the authoritative bootstrap", async () => {
+    const kevin = {
+      memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer",
+      email: "kevin-private@example.test", phoneNumber: "+15555550123", notes: "private",
+      positionIds: ["worship-position"], blockoutDates: [],
+    };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: ["kevin"],
+        members: [kevin],
+        teams: [{ teamId: "worship", name: "Worship", memberIds: ["kevin"] }],
+      } as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, editableMemberIds: [], teams: [] } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.pageData.members[0].email).toBe("kevin-private@example.test");
+    expect(result.current.editableMemberIds.has("kevin")).toBe(true);
+
+    act(() => {
+      result.current.removeData("members", "memberId", "kevin");
+      result.current.invalidateMemberEditability("kevin");
+    });
+    expect(result.current.pageData.members).toEqual([]);
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.members).toEqual([]);
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+    unmount();
+  });
+
+  it("keeps a shared member visible as read-only after removing the editable Team", async () => {
+    const kevin = {
+      memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer",
+      email: "kevin-private@example.test", notes: "Worship only private metadata",
+      positionIds: ["worship-position", "av-position"], blockoutDates: [],
+    };
+    const safeKevin = { memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer", positionIds: [], blockoutDates: [] };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: ["kevin"], members: [kevin],
+        teams: [
+          { teamId: "worship", name: "Worship", memberIds: ["kevin"] },
+          { teamId: "av", name: "AV", memberIds: ["kevin"] },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: [], members: [{ ...safeKevin, positionIds: ["av-position"] }],
+        teams: [{ teamId: "av", name: "AV", memberIds: ["kevin"] }],
+      } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    act(() => {
+      result.current.upsertData("teams", "teamId", { teamId: "worship", name: "Worship", memberIds: [] } as never);
+      result.current.upsertData("members", "memberId", safeKevin as never);
+      result.current.invalidateMemberEditability("kevin");
+    });
+    expect(result.current.pageData.members[0].email).toBeUndefined();
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.pageData.teams.map(({ teamId }) => teamId)).toEqual(["av"]);
+    expect(result.current.pageData.members[0]).toEqual(expect.objectContaining({
+      memberId: "kevin", positionIds: ["av-position"],
+    }));
+    expect(result.current.pageData.members[0].email).toBeUndefined();
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+    unmount();
+  });
+
+  it("upgrades a newly added member only when the server bootstrap marks them editable", async () => {
+    const safeDavid = { memberId: "david", churchId: "church-1", firstName: "David", lastName: "Lee", positionIds: [], blockoutDates: [] };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({ ...emptyBootstrap, editableMemberIds: [], teams: [{ teamId: "worship", name: "Worship", memberIds: [] }] } as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: ["david"],
+        members: [{ ...safeDavid, email: "david@example.test", notes: "server projected" }],
+        teams: [{ teamId: "worship", name: "Worship", memberIds: ["david"] }],
+      } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    act(() => {
+      result.current.upsertData("teams", "teamId", { teamId: "worship", name: "Worship", memberIds: ["david"] } as never);
+      result.current.upsertData("members", "memberId", safeDavid as never);
+      result.current.invalidateMemberEditability("david");
+    });
+    expect(result.current.pageData.members[0].email).toBeUndefined();
+    expect(result.current.editableMemberIds.has("david")).toBe(false);
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.pageData.members[0].email).toBe("david@example.test");
+    expect(result.current.pageData.members[0].notes).toBe("server projected");
+    expect(result.current.editableMemberIds.has("david")).toBe(true);
+    unmount();
+  });
+
   it("uses bounded REST refresh without EventSource for scoped/member access", async () => {
     canUseTeamsLiveSync = false;
     const { unmount } = renderPageState();

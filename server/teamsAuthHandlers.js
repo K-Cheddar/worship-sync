@@ -2936,27 +2936,6 @@ export const createTeamsAuthHandlers = ({
   };
 
   const collectMemberTeamIds = async (member, churchId) => {
-    const teamIds = new Set();
-    Object.keys(member?.teamMemberships || {}).forEach((teamId) => {
-      if (teamId) teamIds.add(teamId);
-    });
-    (member?.qualifications || []).forEach((qualification) => {
-      if (qualification?.teamId) teamIds.add(qualification.teamId);
-    });
-    await Promise.all(
-      (member?.positionIds || []).map(async (positionId) => {
-        const position = await assertTeamEntityInChurch(
-          "position",
-          positionId,
-          churchId,
-          { label: "Position", active: false },
-        );
-        if (position.teamId) teamIds.add(position.teamId);
-      }),
-    );
-    if (!member?.memberId) return Array.from(teamIds);
-    // Canonical roster ownership lives on Team.memberIds. Member-owned fields
-    // can be incomplete (for example, a shared member with no AV position).
     const teams = await listTeamCollectionForChurch(
       COLLECTIONS.teams,
       "teamId",
@@ -2965,12 +2944,94 @@ export const createTeamsAuthHandlers = ({
     if (teams.length >= TEAM_COLLECTION_QUERY_LIMIT) {
       throw httpError(409, "Team ownership could not be verified completely.");
     }
+    const teamById = new Map(
+      teams.map((team) => [team.teamId || team.id, team]),
+    );
+    const activeTeamIds = new Set(
+      teams
+        .filter((team) => !team.archivedAt)
+        .map((team) => team.teamId || team.id),
+    );
+    const teamIds = new Set();
+    const requireKnownTeam = (teamId) => {
+      const team = teamById.get(teamId);
+      if (!team) throw httpError(409, "Member team ownership is invalid.");
+      return team;
+    };
+    const addActiveOwner = (teamId) => {
+      const team = requireKnownTeam(teamId);
+      if (activeTeamIds.has(teamId)) teamIds.add(teamId);
+      return team;
+    };
+
+    if (
+      (member?.teamMemberships !== undefined &&
+        (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships))) ||
+      (member?.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+      (member?.positionIds !== undefined && !Array.isArray(member.positionIds))
+    ) {
+      throw httpError(409, "Member team data is invalid.");
+    }
+    for (const [teamId, membership] of Object.entries(member?.teamMemberships || {})) {
+      requireKnownTeam(teamId);
+      if (membership?.teamId && membership.teamId !== teamId) {
+        throw httpError(409, "Member team ownership is invalid.");
+      }
+      if (activeTeamIds.has(teamId)) teamIds.add(teamId);
+    }
+
+    const qualifications = member?.qualifications || [];
+    const areas = qualifications.some((qualification) => qualification?.areaId)
+      ? await listTeamCollectionForChurch(
+          COLLECTIONS.teamQualificationAreas,
+          "areaId",
+          churchId,
+        )
+      : [];
+    if (areas.length >= TEAM_COLLECTION_QUERY_LIMIT) {
+      throw httpError(409, "Qualification ownership could not be verified completely.");
+    }
+    const areaById = new Map(areas.map((area) => [area.areaId || area.id, area]));
+    for (const qualification of qualifications) {
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      let areaTeamId = "";
+      if (qualification.areaId) {
+        const area = areaById.get(qualification.areaId);
+        if (!area?.teamId) throw httpError(409, "Member qualification ownership is invalid.");
+        areaTeamId = area.teamId;
+        requireKnownTeam(areaTeamId);
+      }
+      if (qualification.teamId) requireKnownTeam(qualification.teamId);
+      if (qualification.teamId && areaTeamId && qualification.teamId !== areaTeamId) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      const ownerTeamId = areaTeamId || qualification.teamId;
+      if (!ownerTeamId) throw httpError(409, "Member qualification ownership is invalid.");
+      if (activeTeamIds.has(ownerTeamId)) teamIds.add(ownerTeamId);
+    }
+
+    await Promise.all((member?.positionIds || []).map(async (positionId) => {
+      const position = await assertTeamEntityInChurch(
+        "position",
+        positionId,
+        churchId,
+        { label: "Position", active: false },
+      );
+      if (!position.teamId) throw httpError(409, "Position ownership is invalid.");
+      addActiveOwner(position.teamId);
+    }));
+
+    // Canonical roster ownership lives on Team.memberIds. Member-owned fields
+    // can be incomplete (for example, a shared member with no AV position).
+    if (!member?.memberId) return Array.from(teamIds);
     for (const team of teams) {
       if (team.archivedAt) continue;
       if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
         throw httpError(409, "Team roster ownership is invalid.");
       }
-      if (team.memberIds?.includes(member?.memberId)) teamIds.add(team.teamId);
+      if (team.memberIds?.includes(member.memberId)) teamIds.add(team.teamId || team.id);
     }
     return Array.from(teamIds);
   };
@@ -11978,7 +12039,7 @@ export const createTeamsAuthHandlers = ({
           success: true,
           team: result.team,
           member: result.member,
-          preservedTotalAssignmentCount: result.preservedAssignmentCount,
+          preservedAssignmentCount: result.preservedAssignmentCount,
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not remove this member from the team.");
