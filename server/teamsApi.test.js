@@ -15562,3 +15562,234 @@ test("archived member ownership is ignored, while unknown ownership fails closed
   });
   assert.equal(malformedDesiredPositions.statusCode, 409, JSON.stringify(malformedDesiredPositions.payload));
 });
+
+test("team profile reads expose only the authorized shared-member slice", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_read_isolation");
+  const worshipManager = await createHumanContext("team_profile_worship_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const avManager = await createHumanContext("team_profile_av_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.av]: "edit" } },
+  });
+  const rosterReader = await createHumanContext("team_profile_roster_reader", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "view" },
+  });
+  const worshipAreaId = `${fixture.ids.worship}_area`;
+  const avAreaId = `${fixture.ids.av}_area`;
+  await setDoc(COLLECTIONS.teamQualificationAreas, worshipAreaId, {
+    areaId: worshipAreaId, churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, avAreaId, {
+    areaId: avAreaId, churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, "worship-captain", {
+    roleId: "worship-captain", churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship Captain",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, "av-operator", {
+    roleId: "av-operator", churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV Operator",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    email: "private@example.test", phoneNumber: "+15555550123", notes: "private member note",
+    birthDate: { year: 1990, month: 1, day: 1 }, userId: "private-user", invitedAt: "2026-01-01",
+    desiredPositionIds: [`${fixture.ids.worship}_position`, `${fixture.ids.av}_position`],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: "worship-captain", isTeamLead: true },
+      [fixture.ids.av]: { teamId: fixture.ids.av, roleId: "av-operator", isTeamLead: false },
+    },
+    qualifications: [
+      { qualificationId: "worship-skill", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "completed" },
+      { qualificationId: "av-skill", areaId: avAreaId, teamId: fixture.ids.av, status: "in_training" },
+    ],
+  }, { merge: true });
+
+  const worship = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+    context: worshipManager,
+    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  });
+  assert.equal(worship.statusCode, 200, JSON.stringify(worship.payload));
+  assert.deepEqual(Object.keys(worship.payload.member).sort(), ["firstName", "lastName", "memberId"]);
+  assert.deepEqual(worship.payload.teamProfile, {
+    teamId: fixture.ids.worship,
+    positionIds: [`${fixture.ids.worship}_position`],
+    desiredPositionIds: [`${fixture.ids.worship}_position`],
+    membership: { roleId: "worship-captain", isTeamLead: true },
+    qualifications: [{ qualificationId: "worship-skill", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "completed" }],
+  });
+  assert.equal(JSON.stringify(worship.payload).includes("private@example.test"), false);
+  assert.equal(JSON.stringify(worship.payload).includes("av-operator"), false);
+  assert.equal(JSON.stringify(worship.payload).includes(`${fixture.ids.av}_position`), false);
+
+  const av = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+    context: avManager,
+    params: { teamId: fixture.ids.av, memberId: fixture.sharedId },
+  });
+  assert.equal(av.statusCode, 200, JSON.stringify(av.payload));
+  assert.deepEqual(av.payload.teamProfile.positionIds, [`${fixture.ids.av}_position`]);
+  assert.equal(av.payload.teamProfile.membership.roleId, "av-operator");
+  assert.deepEqual(av.payload.teamProfile.qualifications.map(({ qualificationId }) => qualificationId), ["av-skill"]);
+
+  const denied = await callHandler(authHandlers.getTeamRosterMemberProfile, {
+    context: rosterReader,
+    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  });
+  assert.equal(denied.statusCode, 403);
+  const anonymousGet = createRes();
+  await authHandlers.getTeamRosterMemberProfile(createReq({
+    params: { churchId: fixture.churchId, teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  }), anonymousGet);
+  assert.equal(anonymousGet.statusCode, 401);
+  const anonymousPatch = createRes();
+  await authHandlers.updateTeamRosterMemberProfile(createReq({
+    params: { churchId: fixture.churchId, teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    body: { positionIds: [] },
+  }), anonymousPatch);
+  assert.equal(anonymousPatch.statusCode, 401);
+});
+
+test("team profile patches replace one team slice and reject cross-team fields", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_write_isolation");
+  const worshipManager = await createHumanContext("team_profile_write_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const worshipAreaId = `${fixture.ids.worship}_area`;
+  const avAreaId = `${fixture.ids.av}_area`;
+  await setDoc(COLLECTIONS.teamQualificationAreas, worshipAreaId, {
+    areaId: worshipAreaId, churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, avAreaId, {
+    areaId: avAreaId, churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, "worship-captain", {
+    roleId: "worship-captain", churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship Captain",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRoles, "av-operator", {
+    roleId: "av-operator", churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV Operator",
+  }, { merge: false });
+  const original = {
+    email: "private@example.test", phoneNumber: "+15555550123", notes: "private member note",
+    positionIds: [`${fixture.ids.worship}_position`, `${fixture.ids.av}_position`],
+    desiredPositionIds: [`${fixture.ids.worship}_position`, `${fixture.ids.av}_position`],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: "worship-captain", roleLabel: "Legacy Captain", isTeamLead: false },
+      [fixture.ids.av]: { teamId: fixture.ids.av, roleId: "av-operator", isTeamLead: true },
+    },
+    qualifications: [
+      { qualificationId: "worship-old", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "in_training" },
+      { qualificationId: "av-keep", areaId: avAreaId, teamId: fixture.ids.av, status: "completed" },
+    ],
+  };
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, original, { merge: true });
+  const body = {
+    positionIds: [`${fixture.ids.worship}_position`],
+    desiredPositionIds: [],
+    membership: { roleId: "worship-captain", isTeamLead: true },
+    qualifications: [{ qualificationId: "worship-new", areaId: worshipAreaId, teamId: fixture.ids.worship, status: "completed" }],
+  };
+  const saved = await callHandler(authHandlers.updateTeamRosterMemberProfile, {
+    context: worshipManager,
+    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    body,
+  });
+  assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+  const after = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
+  assert.deepEqual(after.positionIds, [`${fixture.ids.av}_position`, `${fixture.ids.worship}_position`]);
+  assert.deepEqual(after.desiredPositionIds, [`${fixture.ids.av}_position`]);
+  assert.deepEqual(after.teamMemberships[fixture.ids.av], original.teamMemberships[fixture.ids.av]);
+  assert.equal(after.teamMemberships[fixture.ids.worship].isTeamLead, true);
+  assert.deepEqual(after.qualifications.map(({ qualificationId }) => qualificationId).sort(), ["av-keep", "worship-new"]);
+  assert.equal(after.email, original.email);
+  assert.equal(after.phoneNumber, original.phoneNumber);
+  assert.equal(after.notes, original.notes);
+  const reject = async (patchBody) => callHandler(authHandlers.updateTeamRosterMemberProfile, {
+    context: worshipManager,
+    params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    body: patchBody,
+  });
+  const clearRole = await reject({ membership: { roleId: null, isTeamLead: false } });
+  assert.equal(clearRole.statusCode, 200, JSON.stringify(clearRole.payload));
+  const afterRoleClear = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
+  assert.equal(afterRoleClear.teamMemberships[fixture.ids.worship].roleId, undefined);
+  assert.equal(afterRoleClear.teamMemberships[fixture.ids.worship].roleLabel, undefined);
+  assert.equal((await reject({ desiredPositionIds: [`${fixture.ids.av}_position`] })).statusCode, 400);
+  assert.equal((await reject({ membership: { roleId: "av-operator" } })).statusCode, 400);
+  assert.equal((await reject({ qualifications: [{ qualificationId: "inject", areaId: avAreaId, teamId: fixture.ids.av }] })).statusCode, 400);
+  const privateField = await reject({ email: "attacker@example.test" });
+  assert.equal(privateField.statusCode, 400);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId)).email, original.email);
+
+  const archivedPositionId = `${fixture.ids.worship}_archived_position`;
+  await setDoc(COLLECTIONS.teamPositions, archivedPositionId, {
+    positionId: archivedPositionId, churchId: fixture.churchId, teamId: fixture.ids.worship,
+    name: "Archived Worship Position", archivedAt: "2026-10-01",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds: [fixture.ids.av + "_position", archivedPositionId],
+    desiredPositionIds: [fixture.ids.av + "_position", archivedPositionId],
+  }, { merge: true });
+  const preserveArchived = await reject({ positionIds: [archivedPositionId], desiredPositionIds: [archivedPositionId] });
+  assert.equal(preserveArchived.statusCode, 200, JSON.stringify(preserveArchived.payload));
+  const removeArchived = await reject({ positionIds: [], desiredPositionIds: [] });
+  assert.equal(removeArchived.statusCode, 200, JSON.stringify(removeArchived.payload));
+  const readdArchived = await reject({ positionIds: [archivedPositionId] });
+  assert.equal(readdArchived.statusCode, 400);
+});
+
+test("concurrent team profile saves preserve each team slice and removal blocks stale saves", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("team_profile_concurrency");
+  const worshipManager = await createHumanContext("team_profile_concurrency_worship", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const avManager = await createHumanContext("team_profile_concurrency_av", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.av]: "edit" } },
+  });
+  const worshipAreaId = `${fixture.ids.worship}_area`;
+  const avAreaId = `${fixture.ids.av}_area`;
+  await setDoc(COLLECTIONS.teamQualificationAreas, worshipAreaId, {
+    areaId: worshipAreaId, churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, avAreaId, {
+    areaId: avAreaId, churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV skills",
+  }, { merge: false });
+  const [worship, av, worshipAgain] = await Promise.all([
+    callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+      body: { qualifications: [{ qualificationId: "worship-concurrent", areaId: worshipAreaId, teamId: fixture.ids.worship }] },
+    }),
+    callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: avManager, params: { teamId: fixture.ids.av, memberId: fixture.sharedId },
+      body: { qualifications: [{ qualificationId: "av-concurrent", areaId: avAreaId, teamId: fixture.ids.av }] },
+    }),
+    callHandler(authHandlers.updateTeamRosterMemberProfile, {
+      context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+      body: { membership: { isTeamLead: true } },
+    }),
+  ]);
+  assert.equal(worship.statusCode, 200, JSON.stringify(worship.payload));
+  assert.equal(av.statusCode, 200, JSON.stringify(av.payload));
+  assert.equal(worshipAgain.statusCode, 200, JSON.stringify(worshipAgain.payload));
+  const bothSaved = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
+  assert.deepEqual(bothSaved.qualifications.map(({ qualificationId }) => qualificationId).sort(), ["av-concurrent", "worship-concurrent"]);
+  assert.equal(bothSaved.teamMemberships[fixture.ids.worship].isTeamLead, true);
+
+  const removed = await callHandler(authHandlers.removeTeamRosterMember, {
+    context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+  });
+  assert.equal(removed.statusCode, 200);
+  const stale = await callHandler(authHandlers.updateTeamRosterMemberProfile, {
+    context: worshipManager, params: { teamId: fixture.ids.worship, memberId: fixture.sharedId },
+    body: { qualifications: [{ qualificationId: "resurrect", areaId: worshipAreaId, teamId: fixture.ids.worship }] },
+  });
+  assert.equal(stale.statusCode, 409);
+  const afterRemoval = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
+  assert.equal(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "resurrect"), false);
+  assert.ok(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "av-concurrent"));
+});

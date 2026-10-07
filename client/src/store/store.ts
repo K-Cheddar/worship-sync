@@ -161,7 +161,7 @@ const cleanObject = (obj: Object) =>
 
 const writePendingTimersToStorageAndFirebase = async (
   state: RootState,
-  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteSharedData: boolean },
+  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteTimers: boolean },
 ): Promise<boolean> => {
   const { timers, shouldUpdateTimers } = state.timers;
   if (!shouldUpdateTimers) return false;
@@ -178,7 +178,7 @@ const writePendingTimersToStorageAndFirebase = async (
     return false;
   }
 
-  if (!scope.canWriteSharedData || !globalFireDbInfo.writeCapabilities.timers) {
+  if (!scope.canWriteTimers) {
     return true;
   }
 
@@ -1624,7 +1624,7 @@ listenerMiddleware.startListening({
     const churchScope = {
       db: globalFireDbInfo.db,
       churchId: globalFireDbInfo.churchId,
-      canWriteSharedData: globalFireDbInfo.canWriteSharedData,
+      canWriteTimers: globalFireDbInfo.writeCapabilities?.timers === true,
     };
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);

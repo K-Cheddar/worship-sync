@@ -8,8 +8,10 @@ import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import {
   addTeamRosterMemberToTeam,
   createTeam,
+  getTeamRosterMemberProfile,
   removeTeamRosterMemberFromTeam,
   searchTeamRosterCandidates,
+  updateTeamRosterMemberProfile,
   updateTeam,
 } from "../../../api/auth";
 import type { TeamRecord, TeamRosterMember } from "../../../api/authTypes";
@@ -19,6 +21,7 @@ import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 jest.mock("../../../api/auth", () => ({
   archiveTeam: jest.fn(), createTeam: jest.fn(), deleteTeam: jest.fn(), updateTeam: jest.fn(),
   addTeamRosterMemberToTeam: jest.fn(), removeTeamRosterMemberFromTeam: jest.fn(), searchTeamRosterCandidates: jest.fn(),
+  getTeamRosterMemberProfile: jest.fn(), updateTeamRosterMemberProfile: jest.fn(),
 }));
 
 const worship: TeamRecord = {
@@ -50,6 +53,10 @@ const renderManager = (
   overrides: {
     teams?: TeamRecord[];
     member?: TeamRosterMember;
+    positions?: TeamsData["positions"];
+    roles?: TeamsData["teamRoles"];
+    qualificationAreas?: TeamsData["qualificationAreas"];
+    qualificationLevels?: TeamsData["qualificationLevels"];
     onRosterMemberSaved?: (member: TeamRosterMember) => void;
     onRosterMemberRemoved?: (memberId: string) => void;
     onRosterMutationReconcile?: (memberId: string) => void;
@@ -61,8 +68,8 @@ const renderManager = (
         <ToastProvider>
           <TeamsNavigationGuardProvider>
             <TeamManager
-              teams={overrides.teams ?? [worship, av]} positions={[]} roles={[]} qualificationAreas={[]}
-              members={[overrides.member ?? member]} data={{ ...data, teams: overrides.teams ?? [worship, av], members: [overrides.member ?? member] }} canEditTeams={permissions.canEditTeams ?? false}
+              teams={overrides.teams ?? [worship, av]} positions={overrides.positions ?? []} roles={overrides.roles ?? []} qualificationAreas={overrides.qualificationAreas ?? []}
+              members={[overrides.member ?? member]} data={{ ...data, teams: overrides.teams ?? [worship, av], members: [overrides.member ?? member], qualificationLevels: overrides.qualificationLevels ?? [] }} canEditTeams={permissions.canEditTeams ?? false}
               canEditTeam={permissions.canEditTeam ?? ((teamId) => teamId === worship.teamId)}
               onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
               onRosterMemberSaved={overrides.onRosterMemberSaved}
@@ -81,6 +88,8 @@ beforeEach(() => {
   jest.mocked(addTeamRosterMemberToTeam).mockReset();
   jest.mocked(removeTeamRosterMemberFromTeam).mockReset();
   jest.mocked(searchTeamRosterCandidates).mockReset();
+  jest.mocked(getTeamRosterMemberProfile).mockReset();
+  jest.mocked(updateTeamRosterMemberProfile).mockReset();
 });
 
 it("lets a scoped manager edit team settings and manage only that team's roster", async () => {
@@ -250,6 +259,7 @@ it("shows roster names to read-only Team viewers without roster mutation control
   renderManager(TEAMS_SECTION_PATHS.groups, { canEditTeam: () => false });
   expect(screen.getAllByText(/1 member \| 0 positions · Avery Singer/)).toHaveLength(2);
   expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Remove from team" })).not.toBeInTheDocument();
 });
 
@@ -268,4 +278,69 @@ it("keeps creation and roster controls available to global Teams editors", async
   await user.click(screen.getByRole("button", { name: "Team actions" }));
   expect(await screen.findByText("Archive team")).toBeInTheDocument();
   expect(screen.getByText("Delete team")).toBeInTheDocument();
+});
+
+it("opens a Team-only member profile and saves through the scoped profile API", async () => {
+  const user = userEvent.setup();
+  const onRosterMutationReconcile = jest.fn();
+  const worshipPosition = { positionId: "worship-singer", churchId: "church-1", teamId: worship.teamId, name: "Worship Singer" };
+  const worshipDesired = { positionId: "worship-leader", churchId: "church-1", teamId: worship.teamId, name: "Worship Leader" };
+  const avPosition = { positionId: "av-camera", churchId: "church-1", teamId: av.teamId, name: "AV Camera" };
+  const worshipRole = { roleId: "worship-captain", churchId: "church-1", teamId: worship.teamId, name: "Worship Captain" };
+  const avRole = { roleId: "av-operator", churchId: "church-1", teamId: av.teamId, name: "AV Operator" };
+  const worshipArea = { areaId: "worship-safety", churchId: "church-1", teamId: worship.teamId, name: "Worship Safety" };
+  const avArea = { areaId: "av-safety", churchId: "church-1", teamId: av.teamId, name: "AV Safety" };
+  jest.mocked(getTeamRosterMemberProfile).mockResolvedValue({
+    member: { memberId: member.memberId, firstName: "Avery", lastName: "Singer" },
+    teamProfile: {
+      teamId: worship.teamId,
+      positionIds: [worshipPosition.positionId],
+      desiredPositionIds: [worshipDesired.positionId],
+      membership: { roleId: worshipRole.roleId, isTeamLead: false },
+      qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, teamId: worship.teamId, status: "completed" }],
+    },
+  } as never);
+  jest.mocked(updateTeamRosterMemberProfile).mockResolvedValue({
+    success: true,
+    member: { memberId: member.memberId, firstName: "Avery", lastName: "Singer" },
+    teamProfile: {
+      teamId: worship.teamId,
+      positionIds: [worshipPosition.positionId],
+      desiredPositionIds: [worshipDesired.positionId],
+      membership: { roleId: worshipRole.roleId, isTeamLead: true },
+      qualifications: [{ qualificationId: "worship-qualification", areaId: worshipArea.areaId, teamId: worship.teamId, status: "completed" }],
+    },
+  } as never);
+  renderManager(TEAMS_SECTION_PATHS.groups, {}, {
+    positions: [worshipPosition, worshipDesired, avPosition],
+    roles: [worshipRole, avRole],
+    qualificationAreas: [worshipArea, avArea],
+    onRosterMutationReconcile,
+  });
+
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.click(screen.getByRole("button", { name: "Manage" }));
+  expect(await screen.findByRole("dialog", { name: "Manage Avery Singer" })).toBeInTheDocument();
+  expect(getTeamRosterMemberProfile).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId);
+  expect(screen.getAllByText("Worship Singer")).toHaveLength(2);
+  expect(screen.getAllByText("Worship Leader")).toHaveLength(2);
+  expect(screen.queryByText("AV Camera")).not.toBeInTheDocument();
+  expect(screen.queryByText("avery-private@example.test")).not.toBeInTheDocument();
+  expect(screen.queryByText("private notes")).not.toBeInTheDocument();
+  expect(screen.queryByText("AV Safety")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: "Avery Singer is a Worship team lead" }));
+  await user.click(screen.getByRole("button", { name: "Save Worship profile" }));
+  await waitFor(() => expect(updateTeamRosterMemberProfile).toHaveBeenCalledWith(
+    "church-1",
+    worship.teamId,
+    member.memberId,
+    expect.objectContaining({
+      positionIds: [worshipPosition.positionId],
+      desiredPositionIds: [worshipDesired.positionId],
+      membership: { roleId: worshipRole.roleId, isTeamLead: true },
+      qualifications: [expect.objectContaining({ areaId: worshipArea.areaId })],
+    }),
+  ));
+  expect(onRosterMutationReconcile).toHaveBeenCalledWith(member.memberId);
 });

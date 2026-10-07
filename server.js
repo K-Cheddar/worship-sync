@@ -1505,6 +1505,14 @@ app.get(
   "/api/churches/:churchId/teams/:teamId/roster-candidates",
   authHandlers.searchTeamRosterCandidates,
 );
+app.get(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId/team-profile",
+  authHandlers.getTeamRosterMemberProfile,
+);
+app.patch(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId/team-profile",
+  authHandlers.updateTeamRosterMemberProfile,
+);
 app.post(
   "/api/churches/:churchId/teams/:teamId/roster/:memberId",
   authHandlers.addTeamRosterMember,

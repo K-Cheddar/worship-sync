@@ -67,6 +67,7 @@ import type {
   SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
+  TeamMemberQualification,
   TeamSchedule,
   TeamScheduleAssignments,
   TeamScheduleCellAssignment,
@@ -1790,6 +1791,43 @@ export const removeTeamRosterMemberFromTeam = async (
 }>(
   `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
   { method: "DELETE" },
+);
+
+export type TeamMemberProfile = Pick<
+  TeamRosterMember,
+  "memberId" | "title" | "firstName" | "lastName" | "profileImageUrl"
+>;
+export type TeamMemberTeamProfile = {
+  teamId: string;
+  positionIds: string[];
+  desiredPositionIds: string[];
+  membership: { roleId?: string; isTeamLead: boolean };
+  qualifications: TeamMemberQualification[];
+};
+export type TeamMemberTeamProfilePatch = Partial<
+  Pick<TeamMemberTeamProfile, "positionIds" | "desiredPositionIds" | "qualifications">
+> & { membership?: { roleId?: string | null; isTeamLead?: boolean } };
+export type TeamMemberTeamProfileResponse = {
+  member: TeamMemberProfile;
+  teamProfile: TeamMemberTeamProfile;
+};
+
+export const getTeamRosterMemberProfile = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<TeamMemberTeamProfileResponse>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}/team-profile`,
+);
+
+export const updateTeamRosterMemberProfile = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+  body: TeamMemberTeamProfilePatch,
+) => apiFetch<{ success: boolean } & TeamMemberTeamProfileResponse>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}/team-profile`,
+  { method: "PATCH", body: JSON.stringify(body) },
 );
 
 export type MyScheduleServing = {

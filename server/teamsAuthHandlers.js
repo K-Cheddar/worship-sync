@@ -3262,6 +3262,316 @@ export const createTeamsAuthHandlers = ({
     return result;
   };
 
+  const teamProfileQualificationView = (qualification) => ({
+    qualificationId: qualification.qualificationId,
+    areaId: qualification.areaId,
+    ...(qualification.levelId ? { levelId: qualification.levelId } : {}),
+    ...(qualification.teamId ? { teamId: qualification.teamId } : {}),
+    ...(qualification.status ? { status: qualification.status } : {}),
+    ...(qualification.completedAt ? { completedAt: qualification.completedAt } : {}),
+    ...(qualification.expiresAt ? { expiresAt: qualification.expiresAt } : {}),
+    ...(qualification.notes ? { notes: qualification.notes } : {}),
+  });
+
+  const getTeamProfile = async ({ churchId, teamId, memberId }) => {
+    const team = await assertTeamEntityInChurch("team", teamId, churchId, {
+      label: "Team",
+    });
+    const member = await assertTeamEntityInChurch(
+      "member",
+      memberId,
+      churchId,
+      { label: "Member" },
+    );
+    if (!Array.isArray(team.memberIds) || !team.memberIds.includes(memberId)) {
+      throw httpError(409, "This member is no longer on the team.");
+    }
+    if ((team.teamId && team.teamId !== teamId) || (member.memberId && member.memberId !== memberId)) {
+      throw httpError(409, "Team profile ownership is invalid.");
+    }
+    if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+        (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
+        (member.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+        (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
+      throw httpError(409, "Member team data is invalid.");
+    }
+    const positionIds = Array.isArray(member.positionIds) ? member.positionIds : [];
+    const desiredPositionIds = Array.isArray(member.desiredPositionIds)
+      ? member.desiredPositionIds
+      : [];
+    const allPositionIds = [...new Set([...positionIds, ...desiredPositionIds])];
+    const positions = await Promise.all(allPositionIds.map((id) => getTeamEntity("position", id)));
+    const positionById = new Map(positions.filter(Boolean).map((position) => [position.positionId, position]));
+    const targetPositions = (ids) => ids.filter((id) => {
+      const position = positionById.get(id);
+      return position?.positionId === id && position.churchId === churchId && position.teamId === teamId;
+    });
+    const qualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
+    const areaIds = [...new Set(qualifications.map((item) => item?.areaId).filter(Boolean))];
+    const areas = await Promise.all(areaIds.map((id) => getTeamEntity("qualificationArea", id)));
+    const areaById = new Map(areas.filter(Boolean).map((area) => [area.areaId, area]));
+    const teamQualifications = qualifications
+      .filter((item) => item && typeof item === "object" &&
+        (!item.teamId || item.teamId === teamId) &&
+        areaById.get(item.areaId)?.areaId === item.areaId &&
+        areaById.get(item.areaId)?.churchId === churchId &&
+        areaById.get(item.areaId)?.teamId === teamId)
+      .map(teamProfileQualificationView);
+    const membership = member.teamMemberships?.[teamId];
+    const role = membership?.roleId ? await getTeamEntity("role", membership.roleId) : null;
+    const roleId = role && role.roleId === membership?.roleId && role.churchId === churchId && role.teamId === teamId
+      ? membership.roleId
+      : undefined;
+    return {
+      member: {
+        memberId,
+        ...(member.title !== undefined ? { title: member.title } : {}),
+        ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
+        ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
+        ...(member.profileImageUrl !== undefined ? { profileImageUrl: member.profileImageUrl } : {}),
+      },
+      teamProfile: {
+        teamId,
+        positionIds: targetPositions(positionIds),
+        desiredPositionIds: targetPositions(desiredPositionIds),
+        membership: {
+          ...(roleId ? { roleId } : {}),
+          isTeamLead: membership?.isTeamLead === true,
+        },
+        qualifications: teamQualifications,
+      },
+    };
+  };
+
+  const validateTeamProfilePatch = (body) => {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw httpError(400, "A team profile is required.");
+    }
+    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications"]);
+    const unknown = Object.keys(body).filter((key) => !allowed.has(key));
+    if (unknown.length) {
+      throw httpError(400, `Unsupported team profile field: ${unknown[0]}.`);
+    }
+    const patch = {};
+    for (const key of ["positionIds", "desiredPositionIds"]) {
+      if (!Object.hasOwn(body, key)) continue;
+      if (!Array.isArray(body[key]) || body[key].some((id) => typeof id !== "string" || !id.trim())) {
+        throw httpError(400, `${key} must be an array of IDs.`);
+      }
+      patch[key] = [...new Set(body[key].map((id) => id.trim()))];
+    }
+    if (Object.hasOwn(body, "membership")) {
+      const membership = body.membership;
+      if (!membership || typeof membership !== "object" || Array.isArray(membership)) {
+        throw httpError(400, "Team membership must be an object.");
+      }
+      const membershipKeys = Object.keys(membership);
+      if (membershipKeys.some((key) => !["roleId", "isTeamLead"].includes(key))) {
+        throw httpError(400, "Only this team's role and lead state can be changed.");
+      }
+      if (Object.hasOwn(membership, "roleId") && membership.roleId !== null && typeof membership.roleId !== "string") {
+        throw httpError(400, "Team role is invalid.");
+      }
+      if (Object.hasOwn(membership, "isTeamLead") && typeof membership.isTeamLead !== "boolean") {
+        throw httpError(400, "Team lead state is invalid.");
+      }
+      patch.membership = {
+        ...(Object.hasOwn(membership, "roleId")
+          ? { roleId: membership.roleId?.trim() || null }
+          : {}),
+        ...(Object.hasOwn(membership, "isTeamLead") ? { isTeamLead: membership.isTeamLead } : {}),
+      };
+    }
+    if (Object.hasOwn(body, "qualifications")) {
+      if (!Array.isArray(body.qualifications)) throw httpError(400, "Qualifications must be an array.");
+      patch.qualifications = body.qualifications;
+    }
+    if (Object.keys(patch).length === 0) throw httpError(400, "No team profile fields were supplied.");
+    return patch;
+  };
+
+  const updateTeamProfile = async ({ churchId, teamId, memberId, body, adminUserId }) => {
+    const requested = validateTeamProfilePatch(body);
+    const db = requireFirestore();
+    const now = nowIso();
+    const mutate = async (transaction = null) => {
+      const read = async (collectionName, id) => {
+        if (!transaction) return getDoc(collectionName, id);
+        const snapshot = await transaction.get(db.collection(collectionName).doc(id));
+        return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : null;
+      };
+      const listOwnedAreas = async () => {
+        if (!transaction) {
+          return (await listTeamCollectionForChurch(COLLECTIONS.teamQualificationAreas, "areaId", churchId))
+            .filter((area) => area.teamId === teamId);
+        }
+        const snapshot = await transaction.get(
+          db.collection(COLLECTIONS.teamQualificationAreas).where("teamId", "==", teamId),
+        );
+        return snapshot.docs
+          .map((doc) => ({ areaId: doc.id, ...doc.data() }))
+          .filter((area) => area.churchId === churchId);
+      };
+      const team = await read(COLLECTIONS.teams, teamId);
+      const member = await read(COLLECTIONS.teamRosterMembers, memberId);
+      if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
+      if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
+      if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+      if (!Array.isArray(team.memberIds) || !team.memberIds.includes(memberId)) {
+        throw httpError(409, "This member is no longer on the team.");
+      }
+      if (!member || member.churchId !== churchId) throw httpError(404, "Member not found.");
+      if (member.memberId && member.memberId !== memberId) throw httpError(409, "Member ownership is invalid.");
+      if (member.archivedAt) throw httpError(400, "This member is archived.");
+      if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+          (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
+          (member.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+          (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
+        throw httpError(409, "Member team data is invalid.");
+      }
+      const existingPositions = new Set([
+        ...(member.positionIds || []),
+        ...(member.desiredPositionIds || []),
+      ]);
+      const requestedPositionIds = new Set([
+        ...(requested.positionIds || []),
+        ...(requested.desiredPositionIds || []),
+      ]);
+      const positionDocs = new Map();
+      for (const id of new Set([...existingPositions, ...requestedPositionIds])) {
+        const position = await read(COLLECTIONS.teamPositions, id);
+        positionDocs.set(id, position);
+      }
+      const validatePositionIds = (ids, existingIds) => {
+        if (!ids) return undefined;
+        for (const id of ids) {
+          const position = positionDocs.get(id);
+          if (!position || position.churchId !== churchId || position.teamId !== teamId) {
+            throw httpError(400, "Position must belong to this team.");
+          }
+          if (position.archivedAt && !existingIds.has(id)) {
+            throw httpError(400, "Archived positions cannot be added.");
+          }
+        }
+        return ids;
+      };
+      const nextPositions = validatePositionIds(requested.positionIds, new Set(member.positionIds || []));
+      const nextDesired = validatePositionIds(requested.desiredPositionIds, new Set(member.desiredPositionIds || []));
+      const replacePositionSlice = (previous, replacement) => replacement === undefined
+        ? undefined
+        : [...new Set([
+            ...previous.filter((id) => positionDocs.get(id)?.teamId !== teamId),
+            ...replacement,
+          ])];
+
+      let nextMembership;
+      if (requested.membership) {
+        const prior = member.teamMemberships?.[teamId] || {};
+        const roleId = Object.hasOwn(requested.membership, "roleId")
+          ? requested.membership.roleId
+          : prior.roleId;
+        if (roleId) {
+          const role = await read(COLLECTIONS.teamRoles, roleId);
+          if (!role || role.churchId !== churchId || role.teamId !== teamId) {
+            throw httpError(400, "Team role must belong to this team.");
+          }
+        }
+        nextMembership = {
+          teamId,
+          ...(roleId ? { roleId } : {}),
+          isTeamLead: Object.hasOwn(requested.membership, "isTeamLead")
+            ? requested.membership.isTeamLead === true
+            : prior.isTeamLead === true,
+        };
+      }
+
+      let nextQualifications;
+      if (requested.qualifications) {
+        const priorQualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
+        const ownedAreas = await listOwnedAreas();
+        const ownedAreaIds = new Set(ownedAreas.map((area) => area.areaId || area.id));
+        const areasById = new Map();
+        const levelById = new Map();
+        const requestedIds = new Set();
+        const replacements = [];
+        for (const qualification of requested.qualifications) {
+          if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+            throw httpError(400, "Qualification is invalid.");
+          }
+          const allowedKeys = new Set(["qualificationId", "areaId", "levelId", "teamId", "status", "completedAt", "expiresAt", "notes"]);
+          if (Object.keys(qualification).some((key) => !allowedKeys.has(key))) {
+            throw httpError(400, "Qualification contains unsupported fields.");
+          }
+          const areaId = normalizeShortText(qualification.areaId, { max: 160 });
+          if (!areaId) throw httpError(400, "Qualification area is required.");
+          if (!areasById.has(areaId)) areasById.set(areaId, await read(COLLECTIONS.teamQualificationAreas, areaId));
+          const area = areasById.get(areaId);
+          if (!area || area.churchId !== churchId || area.teamId !== teamId) {
+            throw httpError(400, "Qualification area must belong to this team.");
+          }
+          const qualificationId = normalizeShortText(qualification.qualificationId, { max: 160 });
+          const priorWithId = priorQualifications.find((item) => item?.qualificationId === qualificationId);
+          if (priorWithId && !ownedAreaIds.has(priorWithId.areaId)) {
+            throw httpError(400, "Qualification belongs to another team.");
+          }
+          const wasOnTeam = priorQualifications.some((priorQualification) => priorQualification?.qualificationId === qualificationId && priorQualification?.areaId === areaId);
+          if (area.archivedAt && !wasOnTeam) throw httpError(400, "Archived qualifications cannot be added.");
+          const levelId = normalizeShortText(qualification.levelId, { max: 160 });
+          if (levelId) {
+            if (!levelById.has(levelId)) levelById.set(levelId, await read(COLLECTIONS.teamQualificationLevels, levelId));
+            const level = levelById.get(levelId);
+            if (!level || level.churchId !== churchId || level.areaId !== areaId || (level.archivedAt && !wasOnTeam)) {
+              throw httpError(400, "Qualification level must belong to this team's area.");
+            }
+          }
+          if (qualification.teamId && qualification.teamId !== teamId) {
+            throw httpError(400, "Qualification must belong to this team.");
+          }
+          const statusValues = new Set(["in_training", "completed", "expired"]);
+          if (qualification.status !== undefined && !statusValues.has(qualification.status)) {
+            throw httpError(400, "Qualification status is invalid.");
+          }
+          const status = statusValues.has(qualification.status) ? qualification.status : "in_training";
+          const normalized = {
+            qualificationId: qualificationId || createId("memberQualification"),
+            areaId,
+            ...(levelId ? { levelId } : {}),
+            teamId,
+            status,
+            completedAt: normalizeOptionalPlainDate(qualification.completedAt, "Qualification completion date"),
+            expiresAt: normalizeOptionalPlainDate(qualification.expiresAt, "Qualification expiration date"),
+            notes: normalizeLongText(qualification.notes, { max: 500 }),
+          };
+          if (requestedIds.has(normalized.qualificationId)) throw httpError(400, "Duplicate qualification.");
+          requestedIds.add(normalized.qualificationId);
+          replacements.push(normalized);
+        }
+        const unrelated = priorQualifications.filter((item) => !ownedAreaIds.has(item?.areaId));
+        nextQualifications = [...unrelated, ...replacements];
+      }
+
+      const memberPatch = {
+        ...(nextPositions ? { positionIds: replacePositionSlice(member.positionIds || [], nextPositions) } : {}),
+        ...(nextDesired ? { desiredPositionIds: replacePositionSlice(member.desiredPositionIds || [], nextDesired) } : {}),
+        ...(nextQualifications ? { qualifications: nextQualifications } : {}),
+        ...(nextMembership ? { teamMemberships: { ...(member.teamMemberships || {}), [teamId]: nextMembership } } : {}),
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      if (transaction) {
+        transaction.set(db.collection(COLLECTIONS.teamRosterMembers).doc(memberId), memberPatch, { merge: true });
+      } else {
+        await setDoc(COLLECTIONS.teamRosterMembers, memberId, memberPatch, { merge: true });
+      }
+      return memberPatch;
+    };
+
+    if (db) return db.runTransaction((transaction) => mutate(transaction));
+    return enqueueInMemoryTeamRosterMutation(teamId, () =>
+      enqueueInMemoryRosterMemberMutation(memberId, () => mutate()),
+    );
+  };
+
   const requireTeamsEditForTeamIds = async (req, churchId, teamIds) => {
     const uniqueTeamIds = Array.from(new Set(teamIds.filter(Boolean)));
     if (uniqueTeamIds.length === 0) {
@@ -11955,6 +12265,41 @@ export const createTeamsAuthHandlers = ({
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this member.");
+      }
+    },
+
+    async getTeamRosterMemberProfile(req, res) {
+      try {
+        const { churchId, teamId, memberId } = req.params;
+        await requireHumanSession(req);
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team" });
+        if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
+        await requireTeamsEditForTeam(req, churchId, teamId);
+        return res.json(await getTeamProfile({ churchId, teamId, memberId }));
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load this team profile.");
+      }
+    },
+
+    async updateTeamRosterMemberProfile(req, res) {
+      try {
+        await requireHumanSession(req);
+        await assertCsrf(req);
+        const { churchId, teamId, memberId } = req.params;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team" });
+        if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
+        const admin = await requireTeamsEditForTeam(req, churchId, teamId);
+        await updateTeamProfile({
+          churchId,
+          teamId,
+          memberId,
+          body: req.body,
+          adminUserId: admin.user.uid,
+        });
+        const result = await getTeamProfile({ churchId, teamId, memberId });
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save this team profile.");
       }
     },
 

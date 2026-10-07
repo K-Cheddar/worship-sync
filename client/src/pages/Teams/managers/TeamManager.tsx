@@ -35,6 +35,7 @@ import {
   type EntityListFilterState,
 } from "../components/EntityListFilters";
 import TeamEditorRelatedSection from "../components/TeamEditorRelatedSection";
+import TeamMemberProfileEditor from "./TeamMemberProfileEditor";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityIconPicker from "../EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
@@ -112,6 +113,7 @@ const TeamManager = ({
   const [candidateError, setCandidateError] = useState("");
   const candidateRequestSequenceRef = useRef(0);
   const [rosterMutationMember, setRosterMutationMember] = useState<TeamRosterMember | null>(null);
+  const [teamProfileMember, setTeamProfileMember] = useState<TeamRosterMember | null>(null);
   const [rosterMutationBusy, setRosterMutationBusy] = useState(false);
   const [draft, setDraft] = useState<TeamPayload>({
     name: "",
@@ -178,6 +180,7 @@ const TeamManager = ({
   };
 
   const startEditingTeam = useCallback((team: TeamRecord) => {
+    setTeamProfileMember(null);
     setEditing(team);
     setShowCreate(true);
     setDraft({
@@ -548,7 +551,10 @@ const TeamManager = ({
                   <li key={memberId} className="flex items-center justify-between gap-3 py-2">
                     <span className="min-w-0 truncate text-sm text-gray-200">{memberName(rosterMember)}</span>
                     {canEditCurrentTeam && !editing.archivedAt ? (
-                      <Button type="button" variant="tertiary" className="text-xs" onClick={() => setRosterMutationMember(rosterMember)}>Remove from team</Button>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <Button type="button" variant="secondary" className="text-xs" onClick={() => setTeamProfileMember(rosterMember)}>Manage</Button>
+                        <Button type="button" variant="tertiary" className="text-xs" onClick={() => setRosterMutationMember(rosterMember)}>Remove from team</Button>
+                      </span>
                     ) : null}
                   </li>
                 );
@@ -675,6 +681,19 @@ const TeamManager = ({
           </div>
         </div> : null}
       </Modal>
+      {editing ? (
+        <TeamMemberProfileEditor
+          churchId={churchId}
+          team={editing}
+          member={teamProfileMember}
+          positions={positions}
+          roles={roles}
+          qualificationAreas={qualificationAreas}
+          qualificationLevels={data.qualificationLevels}
+          onClose={() => setTeamProfileMember(null)}
+          onSaved={(memberId) => onRosterMutationReconcile(memberId)}
+        />
+      ) : null}
     </>
   );
 };
