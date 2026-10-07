@@ -202,23 +202,24 @@ const sharePointHtmlReason = ({ response, finalUrl, bodyText = "" }) => {
       /sign in to your account|sign-in required|login to microsoft|need to sign in/.test(bodyText)) {
     return "This SharePoint link requires sign-in.";
   }
-  if (status === 403 || /accessdenied|access-denied|unauthorized/.test(pathAndQuery) || /access denied|you don.t have permission/.test(bodyText)) {
-    return "You don’t have access to this SharePoint file.";
-  }
   if (/sharinglinkexpired|expired|invalidlink|invalid-link/.test(pathAndQuery) || status === 404 || /link has expired|sharing link is invalid|link is no longer available/.test(bodyText)) {
     return "This SharePoint sharing link may be expired or invalid.";
+  }
+  if (status === 403 || /accessdenied|access-denied|unauthorized/.test(pathAndQuery) || /access denied|you don.t have permission/.test(bodyText)) {
+    return "This SharePoint file isn’t publicly accessible.";
+  }
+  if (isSuccessful(response) && (isHtmlResponse(response) || !bodyText)) {
+    return "This file can be viewed in SharePoint, but SharePoint did not provide downloadable file access for an in-app preview.";
   }
   return "The SharePoint link did not resolve to a downloadable file.";
 };
 
 const isSuccessful = (response) => Number(response?.status || 0) >= 200 && Number(response?.status || 0) < 300;
-const shouldProbeByGet = (response, retrievalStrategy) => {
+const shouldRetryMetadataWithGet = (response) => {
   const status = Number(response?.status || 0);
   if (status === 405 || status === 501) return true;
-  if (retrievalStrategy === "head-then-get" && [401, 403].includes(status)) return true;
   if (status < 200 || status >= 300) return false;
-  return !headerValue(response?.headers, "content-type") ||
-    (retrievalStrategy === "head-then-get" && isHtmlResponse(response));
+  return !headerValue(response?.headers, "content-type");
 };
 
 const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUrl, mimeType, fileName, title, mediaType, reason }) => {
@@ -273,21 +274,24 @@ export const createExternalResourceService = ({
   const checkRate = rateLimiter();
   const { requestFollowingRedirects } = createExternalResourceNetwork({ httpClient, lookup });
 
-  const probe = async ({ originalUrl, provider, mediaId, candidateUrl, retrievalStrategy, expectedMimeType, failureReason }) => {
+  const requestMetadata = async ({ url, retrievalStrategy }) => {
     const requestHeaders = { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" };
-    let result = retrievalStrategy === "get"
-      ? await requestFollowingRedirects({ url: candidateUrl, method: "GET", headers: { ...requestHeaders, Range: "bytes=0-0" }, responseType: "stream" })
-      : await requestFollowingRedirects({ url: candidateUrl, method: "HEAD", headers: requestHeaders });
-    if (retrievalStrategy !== "get" && shouldProbeByGet(result.response, retrievalStrategy)) {
+    let result = retrievalStrategy === "metadata-probe"
+      ? await requestFollowingRedirects({ url, method: "HEAD", headers: requestHeaders })
+      : await requestFollowingRedirects({ url, method: "GET", headers: { ...requestHeaders, Range: "bytes=0-0" }, responseType: "stream" });
+    if (retrievalStrategy === "metadata-probe" && shouldRetryMetadataWithGet(result.response)) {
       drainResponse(result.response);
       result = await requestFollowingRedirects({
-        url: candidateUrl,
+        url,
         method: "GET",
         headers: { ...requestHeaders, Range: "bytes=0-0" },
         responseType: "stream",
       });
     }
+    return result;
+  };
 
+  const describeProbeResult = async ({ originalUrl, provider, mediaId, candidateUrl, result, expectedMimeType, failureReason }) => {
     const response = result.response;
     const mimeType = normalizeMimeType(headerValue(response.headers, "content-type")) || undefined;
     const fileName = filenameFromContentDisposition(headerValue(response.headers, "content-disposition")) || filenameFromUrl(result.finalUrl) || undefined;
@@ -331,7 +335,7 @@ export const createExternalResourceService = ({
         reason: "That resource is too large to preview.",
       });
     }
-    if (provider === "sharepoint" && (mediaType === "web" || mediaType === "unknown")) {
+    if (provider === "sharepoint" && mediaType === "web") {
       return buildDescriptor({
         originalUrl,
         provider,
@@ -345,6 +349,45 @@ export const createExternalResourceService = ({
       });
     }
     return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName, mediaType });
+  };
+
+  const probe = async ({ originalUrl, provider, mediaId, candidateUrl, retrievalStrategy, expectedMimeType, failureReason }) => {
+    if (provider !== "sharepoint") {
+      const result = await requestMetadata({ url: candidateUrl, retrievalStrategy });
+      return describeProbeResult({ originalUrl, provider, mediaId, candidateUrl, result, expectedMimeType, failureReason });
+    }
+
+    let candidateResult;
+    try {
+      candidateResult = await requestMetadata({ url: candidateUrl, retrievalStrategy: "get" });
+    } catch (error) {
+      if (error instanceof ExternalResourceError) throw error;
+    }
+    if (candidateResult) {
+      const candidateDescriptor = await describeProbeResult({ originalUrl, provider, mediaId, candidateUrl, result: candidateResult });
+      if (candidateDescriptor.sourceKind === "file") return candidateDescriptor;
+    }
+
+    // A failed download candidate does not establish whether the anonymous
+    // sharing link itself is viewable. Recheck that original URL without credentials.
+    const shareResult = await requestMetadata({ url: originalUrl, retrievalStrategy: "get" });
+    const shareDescriptor = await describeProbeResult({ originalUrl, provider, mediaId, candidateUrl, result: shareResult });
+    if (shareDescriptor.sourceKind === "file") return shareDescriptor;
+    const reason = shareDescriptor.reason || sharePointHtmlReason({
+      response: shareResult.response,
+      finalUrl: shareResult.finalUrl,
+    });
+    return buildDescriptor({
+      originalUrl,
+      provider,
+      mediaId,
+      candidateUrl,
+      finalUrl: shareResult.finalUrl,
+      mimeType: shareDescriptor.mimeType,
+      fileName: shareDescriptor.filename,
+      mediaType: "unknown",
+      reason,
+    });
   };
 
   const resolveBase = async (originalUrl) => {

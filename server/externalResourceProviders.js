@@ -101,7 +101,7 @@ const providerResolvers = [
     provider: "dropbox",
     matches: (url) => DROPBOX_HOSTS.has(url.hostname.toLowerCase()),
     resolve: (url) => ({
-      retrievalStrategy: "head-then-get",
+      retrievalStrategy: "get",
       candidateUrl: copyWithQuery(url, (params) => {
         params.delete("dl");
         params.set("raw", "1");
@@ -120,18 +120,18 @@ const providerResolvers = [
           return {
             candidateUrl: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`,
             mediaId: fileId,
-            retrievalStrategy: "head-then-get",
+            retrievalStrategy: "get",
           };
         }
       }
-      return { candidateUrl: url.toString(), retrievalStrategy: "head-then-get" };
+      return { candidateUrl: url.toString(), retrievalStrategy: "get" };
     },
   },
   {
     provider: "onedrive",
     matches: (url) => ONEDRIVE_HOSTS.has(url.hostname.toLowerCase()),
     resolve: (url) => ({
-      retrievalStrategy: "head-then-get",
+      retrievalStrategy: "get",
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
     }),
   },
@@ -139,7 +139,7 @@ const providerResolvers = [
     provider: "sharepoint",
     matches: (url) => isSharePointHost(url.hostname.toLowerCase()),
     resolve: (url) => ({
-      retrievalStrategy: "head-then-get",
+      retrievalStrategy: "get",
       // Keep the tenant's path and every sharing token intact. SharePoint share
       // links can route through a viewer unless explicitly asked to download.
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
@@ -151,7 +151,7 @@ const providerResolvers = [
       BOX_HOSTS.has(url.hostname.toLowerCase()) ||
       url.hostname.toLowerCase().endsWith(".boxcloud.com"),
     resolve: (url) => ({
-      retrievalStrategy: "head-then-get",
+      retrievalStrategy: "get",
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
     }),
   },
