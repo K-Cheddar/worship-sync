@@ -110,7 +110,10 @@ const renderManager = ({
   userId = "",
   role = "admin",
   canEdit = true,
+  canEditAllTeams = true,
+  canManageMemberLifecycle = true,
   canEditMember,
+  initialEntry,
 }: {
   data?: TeamsData;
   onSaved?: jest.Mock;
@@ -119,10 +122,13 @@ const renderManager = ({
   /** Invite and the account picker call admin-only endpoints. */
   role?: string;
   canEdit?: boolean;
+  canEditAllTeams?: boolean;
+  canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
+  initialEntry?: string | { pathname: string; state?: unknown };
 } = {}) => {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>
       <GlobalInfoContext.Provider
         value={
           { churchId: "church-1", userId, role } as ContextType<
@@ -137,6 +143,8 @@ const renderManager = ({
               positions={data.positions}
               data={data}
               canEdit={canEdit}
+              canEditAllTeams={canEditAllTeams}
+              canManageMemberLifecycle={canManageMemberLifecycle}
               canEditMember={canEditMember}
               onSaved={onSaved}
               onTeamSaved={onTeamSaved}
@@ -233,6 +241,47 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("keeps church-level member lifecycle actions hidden from a scoped Team editor", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: joinedData(),
+      canEditAllTeams: false,
+      canManageMemberLifecycle: false,
+      canEditMember: () => true,
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByLabelText(/^First name/i)).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Member actions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Archive member")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delete member")).not.toBeInTheDocument();
+  });
+
+  it("preselects the source Team and requires roster ownership for scoped creation", async () => {
+    const user = userEvent.setup();
+    mockCreateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
+    });
+    renderManager({
+      data: buildData(),
+      canEditAllTeams: false,
+      initialEntry: {
+        pathname: TEAMS_SECTION_PATHS.members,
+        state: { teamsCreateMember: { teamId: worshipTeam.teamId } },
+      },
+    });
+    expect(await screen.findByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(worshipTeamCheckbox()).toBeChecked();
+    expect(within(teamsField()).queryByRole("checkbox", { name: /Media/ })).not.toBeInTheDocument();
+    await fillName(user);
+    await user.click(within(teamsField()).getByRole("button", { name: "Clear all" }));
+    expect(saveButton()).toBeDisabled();
+    await user.click(worshipTeamCheckbox());
+    expect(saveButton()).toBeEnabled();
+    await user.click(saveButton());
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledWith("church-1", expect.objectContaining({ teamIds: [worshipTeam.teamId] })));
+  });
+
   it("shows create, pending, and saved states after a successful member save", async () => {
     const user = userEvent.setup();
     let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;

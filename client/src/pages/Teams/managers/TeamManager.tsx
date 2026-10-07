@@ -1,8 +1,11 @@
 import { useContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, UserPlus } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
+import Modal from "../../../components/Modal/Modal";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import { useToast } from "../../../context/toastContext";
@@ -11,6 +14,10 @@ import {
   createTeam,
   deleteTeam,
   updateTeam,
+  addTeamRosterMemberToTeam,
+  removeTeamRosterMemberFromTeam,
+  searchTeamRosterCandidates,
+  type TeamRosterCandidate,
   type TeamPayload,
 } from "../../../api/auth";
 import type { TeamRecord, TeamPosition, TeamQualificationArea, TeamRole, TeamRosterMember } from "../../../api/authTypes";
@@ -32,7 +39,9 @@ import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityIconPicker from "../EntityIconPicker";
 import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import EntityIconBadge from "../../../components/icons/EntityIconBadge";
-import { describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
+import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
+import { countMemberAssignmentsOnTeam, describeDeletionImpacts, memberName, sortPositionsByOrder } from "../teamsUtils";
+import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 import {
   buildGroupsReturnTo,
   buildTeamsPositionsPath,
@@ -60,6 +69,8 @@ type TeamManagerProps = {
   onSaved: (team: TeamRecord, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (teamId: string) => void;
+  onTeamRosterSaved?: (team: TeamRecord) => void;
+  onRosterMemberSaved?: (member: TeamRosterMember) => void;
   onImported?: () => void;
 };
 
@@ -75,11 +86,14 @@ const TeamManager = ({
   onSaved,
   onArchived,
   onRemoved,
+  onTeamRosterSaved = () => {},
+  onRosterMemberSaved = () => {},
   onImported,
 }: TeamManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
+  const navigate = useNavigate();
   const [editing, setEditing] = useState<TeamRecord | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [listQuery, setListQuery] = useState("");
@@ -87,6 +101,14 @@ const TeamManager = ({
   const [showFilters, setShowFilters] = useState(false);
   const [deleting, setDeleting] = useState<TeamRecord | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [rosterPickerTeam, setRosterPickerTeam] = useState<TeamRecord | null>(null);
+  const [candidateQuery, setCandidateQuery] = useState("");
+  const [candidates, setCandidates] = useState<TeamRosterCandidate[]>([]);
+  const [candidateBusy, setCandidateBusy] = useState(false);
+  const [candidateError, setCandidateError] = useState("");
+  const candidateRequestSequenceRef = useRef(0);
+  const [rosterMutationMember, setRosterMutationMember] = useState<TeamRosterMember | null>(null);
+  const [rosterMutationBusy, setRosterMutationBusy] = useState(false);
   const [draft, setDraft] = useState<TeamPayload>({
     name: "",
     description: "",
@@ -297,6 +319,92 @@ const TeamManager = ({
 
   const formatNameList = (names: string[]) =>
     names.length === 0 ? "None yet." : names.join(", ");
+  const teamSubtitle = (team: TeamRecord) => {
+    const names = team.memberIds
+      .map((memberId) => members.find((member) => member.memberId === memberId))
+      .filter((member): member is TeamRosterMember => Boolean(member))
+      .slice(0, 3)
+      .map(memberName);
+    const remaining = Math.max(0, team.memberIds.length - names.length);
+    const moreSummary = remaining > 0 ? ` +${remaining} more` : "";
+    const rosterSummary = names.length === 0 ? "" : ` · ${names.join(", ")}${moreSummary}`;
+    const memberLabel = team.memberIds.length === 1 ? "member" : "members";
+    return `${team.memberIds.length} ${memberLabel} | ${positions.filter((position) => position.teamId === team.teamId).length} positions${rosterSummary}`;
+  };
+
+  const searchCandidates = async () => {
+    if (!rosterPickerTeam || candidateQuery.trim().length < 2 || candidateBusy) return;
+    const requestSequence = ++candidateRequestSequenceRef.current;
+    const requestedTeamId = rosterPickerTeam.teamId;
+    setCandidateBusy(true);
+    setCandidateError("");
+    try {
+      const result = await searchTeamRosterCandidates(churchId, requestedTeamId, candidateQuery.trim());
+      if (requestSequence === candidateRequestSequenceRef.current) {
+        setCandidates(result.candidates || []);
+      }
+    } catch (error) {
+      if (requestSequence === candidateRequestSequenceRef.current) {
+        setCandidateError("Could not search people. Try again.");
+        showApiErrorToast(showToast, error, "Could not search people.");
+      }
+    } finally {
+      setCandidateBusy(false);
+    }
+  };
+
+  const updateCandidateQuery = (query: string) => {
+    candidateRequestSequenceRef.current += 1;
+    setCandidates([]);
+    setCandidateQuery(query);
+  };
+
+  const addCandidate = async (candidate: TeamRosterCandidate) => {
+    if (!rosterPickerTeam || candidateBusy) return;
+    setCandidateBusy(true);
+    try {
+      const result = await addTeamRosterMemberToTeam(churchId, rosterPickerTeam.teamId, candidate.memberId);
+      onTeamRosterSaved(result.team);
+      const existingMember = members.find((member) => member.memberId === candidate.memberId);
+      onRosterMemberSaved({
+        ...(existingMember || {}),
+        ...result.member,
+        positionIds: existingMember?.positionIds || [],
+        blockoutDates: existingMember?.blockoutDates || [],
+      });
+      setCandidates((current) => current.filter((item) => item.memberId !== candidate.memberId));
+      setRosterPickerTeam(null);
+      setCandidateQuery("");
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not add this person to the team.");
+    } finally {
+      setCandidateBusy(false);
+    }
+  };
+
+  const confirmRosterRemoval = async () => {
+    if (!editing || !rosterMutationMember || rosterMutationBusy) return;
+    setRosterMutationBusy(true);
+    try {
+      const result = await removeTeamRosterMemberFromTeam(churchId, editing.teamId, rosterMutationMember.memberId);
+      onTeamRosterSaved(result.team);
+      const positionIds = new Set(positions.filter((position) => position.teamId === editing.teamId).map((position) => position.positionId));
+      onRosterMemberSaved({
+        ...rosterMutationMember,
+        positionIds: (rosterMutationMember.positionIds || []).filter((positionId) => !positionIds.has(positionId)),
+        desiredPositionIds: (rosterMutationMember.desiredPositionIds || []).filter((positionId) => !positionIds.has(positionId)),
+        teamMemberships: Object.fromEntries(Object.entries(rosterMutationMember.teamMemberships || {}).filter(([teamId]) => teamId !== editing.teamId)),
+        qualifications: (rosterMutationMember.qualifications || []).filter((qualification) =>
+          qualification.teamId !== editing.teamId && qualificationAreas.find((area) => area.areaId === qualification.areaId)?.teamId !== editing.teamId,
+        ),
+      });
+      setRosterMutationMember(null);
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Could not remove this person from the team.");
+    } finally {
+      setRosterMutationBusy(false);
+    }
+  };
 
   return (
     <>
@@ -344,7 +452,7 @@ const TeamManager = ({
               <EntityRow
                 key={team.teamId}
                 title={team.name}
-                subtitle={`${team.memberIds.length} members | ${positions.filter((position) => position.teamId === team.teamId).length} positions`}
+                subtitle={teamSubtitle(team)}
                 icon={team.icon}
                 archived={Boolean(team.archivedAt)}
                 canEdit={canEditTeam(team.teamId)}
@@ -418,20 +526,35 @@ const TeamManager = ({
             onChange={(memberIds) => setDraft((d) => ({ ...d, memberIds }))}
           />
         ) : editing ? (
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-gray-200">Members</p>
-            <p className="text-sm text-gray-300">
-              {(currentEditingTeam?.memberIds || []).length} {currentEditingTeam?.memberIds.length === 1 ? "member" : "members"}
-            </p>
-            <p className="text-sm text-gray-300">
-              {formatNameList(
-                (currentEditingTeam?.memberIds || []).map((memberId) => {
-                  const member = members.find((item) => item.memberId === memberId);
-                  return member ? memberName(member) : "";
-                }).filter(Boolean),
-              )}
-            </p>
-            <p className="text-xs text-gray-400">Roster changes are managed separately.</p>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-gray-200">Members</p>
+                <p className="text-sm text-gray-300">{(currentEditingTeam?.memberIds || []).length} {(currentEditingTeam?.memberIds || []).length === 1 ? "member" : "members"}</p>
+              </div>
+              {canEditCurrentTeam && !editing.archivedAt ? (
+                <Button type="button" variant="secondary" svg={UserPlus} iconSize="sm" onClick={() => {
+                  setRosterPickerTeam(editing);
+                  setCandidateQuery("");
+                  setCandidates([]);
+                }}>Add member</Button>
+              ) : null}
+            </div>
+            <ul className="divide-y divide-gray-700/60">
+              {(currentEditingTeam?.memberIds || []).map((memberId) => {
+                const rosterMember = members.find((item) => item.memberId === memberId);
+                if (!rosterMember) return null;
+                return (
+                  <li key={memberId} className="flex items-center justify-between gap-3 py-2">
+                    <span className="min-w-0 truncate text-sm text-gray-200">{memberName(rosterMember)}</span>
+                    {canEditCurrentTeam && !editing.archivedAt ? (
+                      <Button type="button" variant="tertiary" className="text-xs" onClick={() => setRosterMutationMember(rosterMember)}>Remove from team</Button>
+                    ) : null}
+                  </li>
+                );
+              })}
+              {(currentEditingTeam?.memberIds || []).length === 0 ? <li className="py-2 text-sm text-gray-400">No members yet.</li> : null}
+            </ul>
           </div>
         ) : null}
         <Checkbox
@@ -499,6 +622,63 @@ const TeamManager = ({
         impacts={deleting ? describeDeletionImpacts("team", deleting.teamId, data) : undefined}
         warningMessage="This cannot be undone. Archive instead if you only want to hide it."
       />
+      <Modal
+        isOpen={Boolean(rosterPickerTeam)}
+        onClose={() => { if (!candidateBusy) { candidateRequestSequenceRef.current += 1; setRosterPickerTeam(null); } }}
+        title={`Add member to ${rosterPickerTeam?.name || "team"}`}
+        description="Search active church roster members by name."
+        size="md"
+        busy={candidateBusy}
+      >
+        <div className="space-y-4">
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <Input label="Search existing person" value={candidateQuery} onChange={(value) => updateCandidateQuery(String(value))} />
+            </div>
+            <Button type="button" variant="secondary" svg={Search} isLoading={candidateBusy} disabled={candidateQuery.trim().length < 2 || candidateBusy} onClick={() => void searchCandidates()}>Search</Button>
+          </div>
+          {candidateQuery.trim().length > 0 && candidateQuery.trim().length < 2 ? <p className="text-sm text-gray-400">Enter at least 2 characters.</p> : null}
+          {candidateError ? <p role="alert" className="text-sm text-red-300">{candidateError}</p> : null}
+          <ul className="divide-y divide-gray-700/60">
+            {candidates.map((candidate) => {
+              const name = memberName(candidate as TeamRosterMember);
+              return <li key={candidate.memberId} className="flex items-center justify-between gap-3 py-2">
+                <span className="flex min-w-0 items-center gap-2">
+                  <MemberAvatar profileImageUrl={candidate.profileImageUrl} memberName={name} />
+                  <span className="truncate text-sm text-gray-200">{name}</span>
+                </span>
+                <Button type="button" variant="secondary" svg={Plus} iconSize="sm" disabled={candidateBusy} onClick={() => void addCandidate(candidate)}>Add</Button>
+              </li>;
+            })}
+          </ul>
+          {candidates.length === 0 && candidateQuery.trim().length >= 2 && !candidateBusy && !candidateError ? <p className="text-sm text-gray-400">No matching people found.</p> : null}
+          {canEditCurrentTeam ? <Button type="button" variant="tertiary" svg={Plus} onClick={() => {
+            const team = rosterPickerTeam;
+            setRosterPickerTeam(null);
+            if (team) navigate(TEAMS_SECTION_PATHS.members, { state: { teamsCreateMember: { teamId: team.teamId } } });
+          }}>Create new member</Button> : null}
+        </div>
+      </Modal>
+      <Modal
+        isOpen={Boolean(rosterMutationMember)}
+        onClose={() => { if (!rosterMutationBusy) setRosterMutationMember(null); }}
+        title={`Remove ${rosterMutationMember ? memberName(rosterMutationMember) : "member"} from ${editing?.name || "team"}?`}
+        size="sm"
+        busy={rosterMutationBusy}
+      >
+        {rosterMutationMember ? <div className="space-y-4 text-sm text-gray-200">
+          <p>This removes their {editing?.name || "team"} positions, team role, and qualifications.</p>
+          {(() => {
+            const count = countMemberAssignmentsOnTeam(rosterMutationMember.memberId, editing?.teamId || "", data.schedules);
+            if (!count) return <p>Existing schedule assignments, if any, will remain and can be reassigned separately.</p>;
+            return <p>{count} existing schedule assignment{count === 1 ? "" : "s"} will remain and can be reassigned separately.</p>;
+          })()}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" disabled={rosterMutationBusy} onClick={() => setRosterMutationMember(null)}>Cancel</Button>
+            <Button type="button" isLoading={rosterMutationBusy} disabled={rosterMutationBusy} onClick={() => void confirmRosterRemoval()}>Remove from team</Button>
+          </div>
+        </div> : null}
+      </Modal>
     </>
   );
 };

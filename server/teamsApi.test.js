@@ -15246,3 +15246,168 @@ test("scoped Team managers can change settings but cannot change the roster or T
   assert.equal(deletable.statusCode, 200);
   assert.equal((await run(authHandlers.deleteTeam, globalEditor, { teamId: deletable.payload.team.teamId })).statusCode, 200);
 });
+
+test("scoped managers can mutate one Team roster without editing shared member records", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("roster_2b1");
+  const manager = await createHumanContext("roster_2b1_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit" } },
+  });
+  const noTeamsAccess = await createHumanContext("roster_2b1_no_access", {
+    churchId: fixture.churchId, role: "member", permissions: { teams: "none", teamScopes: {} },
+  });
+  const avManager = await createHumanContext("roster_2b1_av_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.av]: "edit" } },
+  });
+  const linkedSarahId = `${fixture.churchId}_sarah`;
+  const davidId = `${fixture.churchId}_david`;
+  const linkedSarah = await createHumanContext("roster_2b1_sarah", {
+    churchId: fixture.churchId, userId: `${fixture.churchId}_sarah_user`,
+    role: "member", appAccess: "member", permissions: { teams: "none", teamScopes: {} },
+  });
+  const run = (handler, context, params = {}, body = {}, query = {}) => callHandler(handler, {
+    context, params: { teamId: fixture.ids.worship, ...params }, body, query,
+  });
+  const avPositionId = `${fixture.ids.av}_position`;
+  await setDoc(COLLECTIONS.teamRosterMembers, linkedSarahId, {
+    memberId: linkedSarahId, churchId: fixture.churchId,
+    userId: `${fixture.churchId}_sarah_user`, firstName: "Sarah", lastName: "Audio",
+    email: "sarah-private@example.com", phoneNumber: "+15555550123", notes: "private",
+    positionIds: [avPositionId], desiredPositionIds: [avPositionId], blockoutDates: [],
+    qualifications: [], teamMemberships: {},
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, davidId, {
+    memberId: davidId, churchId: fixture.churchId, firstName: "David", lastName: "No Team",
+    positionIds: [], desiredPositionIds: [], blockoutDates: [], qualifications: [], teamMemberships: {},
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teams, fixture.ids.av, { memberIds: [fixture.sharedId, linkedSarahId] }, { merge: true });
+
+  const candidates = await run(authHandlers.searchTeamRosterCandidates, manager, {}, {}, { q: "sarah" });
+  assert.equal(candidates.statusCode, 200);
+  assert.deepEqual(candidates.payload.candidates.map(({ memberId }) => memberId), [linkedSarahId]);
+  assert.deepEqual(Object.keys(candidates.payload.candidates[0]).sort(), ["firstName", "lastName", "memberId"]);
+  assert.equal((await run(authHandlers.searchTeamRosterCandidates, manager, {}, {}, { q: "s" })).statusCode, 400);
+  assert.equal((await run(authHandlers.searchTeamRosterCandidates, noTeamsAccess, {}, {}, { q: "sarah" })).statusCode, 403);
+  assert.equal((await run(authHandlers.addTeamRosterMember, avManager, { memberId: linkedSarahId })).statusCode, 403);
+  assert.equal((await run(authHandlers.addTeamRosterMember, noTeamsAccess, { memberId: linkedSarahId })).statusCode, 403);
+
+  const addSarah = await run(authHandlers.addTeamRosterMember, manager, { memberId: linkedSarahId });
+  assert.equal(addSarah.statusCode, 200);
+  assert.equal(addSarah.payload.member.email, undefined);
+  assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, linkedSarahId)).positionIds, [avPositionId]);
+  assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, linkedSarahId)).teamMemberships, {});
+  const accessAfterAdd = await callHandler(authHandlers.getTeamsBootstrap, { context: linkedSarah });
+  assert.equal(accessAfterAdd.statusCode, 200);
+  assert.deepEqual(new Set(accessAfterAdd.payload.teams.map(({ teamId }) => teamId)), new Set([fixture.ids.av, fixture.ids.worship]));
+
+  const [addDavid, repeatedAddSarah] = await Promise.all([
+    run(authHandlers.addTeamRosterMember, manager, { memberId: davidId }),
+    run(authHandlers.addTeamRosterMember, manager, { memberId: linkedSarahId }),
+  ]);
+  assert.equal(addDavid.statusCode, 200);
+  assert.equal(repeatedAddSarah.statusCode, 200);
+  let worshipRoster = (await getDoc(COLLECTIONS.teams, fixture.ids.worship)).memberIds;
+  assert.ok(worshipRoster.includes(linkedSarahId));
+  assert.ok(worshipRoster.includes(davidId));
+  await setDoc(COLLECTIONS.teamRosterMembers, davidId, { userId: "another_account" }, { merge: true });
+  assert.equal((await callHandler(authHandlers.linkTeamRosterMember, {
+    context: manager, params: { memberId: davidId }, body: { userId: "another_account" },
+  })).statusCode, 403);
+  assert.equal((await callHandler(authHandlers.unlinkTeamRosterMember, {
+    context: manager, params: { memberId: davidId },
+  })).statusCode, 403);
+  const [racingAdd, racingRemove] = await Promise.all([
+    run(authHandlers.addTeamRosterMember, manager, { memberId: davidId }),
+    run(authHandlers.removeTeamRosterMember, manager, { memberId: davidId }),
+  ]);
+  assert.equal(racingAdd.statusCode, 200);
+  assert.equal(racingRemove.statusCode, 200);
+  worshipRoster = (await getDoc(COLLECTIONS.teams, fixture.ids.worship)).memberIds;
+  assert.equal(worshipRoster.includes(davidId), false);
+
+  const removeSarah = await run(authHandlers.removeTeamRosterMember, manager, { memberId: linkedSarahId });
+  assert.equal(removeSarah.statusCode, 200);
+  const accessAfterRemove = await callHandler(authHandlers.getTeamsBootstrap, { context: linkedSarah });
+  assert.equal(accessAfterRemove.statusCode, 200);
+  assert.deepEqual(accessAfterRemove.payload.teams.map(({ teamId }) => teamId), [fixture.ids.av]);
+
+  // Canonical AV roster ownership blocks a full edit even when AV is absent
+  // from the member's position metadata.
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds: [`${fixture.ids.worship}_position`],
+    desiredPositionIds: [`${fixture.ids.worship}_position`],
+    blockoutDates: [], teamMemberships: {}, qualifications: [],
+  }, { merge: true });
+  const deniedFullUpdate = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager,
+    params: { memberId: fixture.sharedId },
+    body: {
+      firstName: "Changed", lastName: "Shared", phoneNumber: "+19545551234", notes: "changed",
+      positionIds: [`${fixture.ids.worship}_position`], desiredPositionIds: [], blockoutDates: [],
+      teamIds: [fixture.ids.worship], teamMemberships: {}, qualifications: [],
+    },
+  });
+  assert.equal(deniedFullUpdate.statusCode, 403, JSON.stringify(deniedFullUpdate.payload));
+  assert.equal((await callHandler(authHandlers.archiveTeamRosterMember, { context: manager, params: { memberId: fixture.sharedId } })).statusCode, 403);
+  assert.equal((await callHandler(authHandlers.deleteTeamRosterMember, { context: manager, params: { memberId: fixture.sharedId } })).statusCode, 403);
+  const bothTeamManager = await createHumanContext("roster_2b1_both_manager", {
+    churchId: fixture.churchId, role: "member",
+    permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit", [fixture.ids.av]: "edit" } },
+  });
+  const allowedFullUpdate = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: bothTeamManager,
+    params: { memberId: fixture.sharedId },
+    body: {
+      firstName: "Shared", lastName: "Member", phoneNumber: "+19545551234", notes: "updated by both-team manager",
+      positionIds: [`${fixture.ids.worship}_position`], desiredPositionIds: [], blockoutDates: [],
+      teamMemberships: {}, qualifications: [],
+    },
+  });
+  assert.equal(allowedFullUpdate.statusCode, 200);
+
+  const worshipAreaId = `${fixture.ids.worship}_area`;
+  const avAreaId = `${fixture.ids.av}_area`;
+  await setDoc(COLLECTIONS.teamQualificationAreas, worshipAreaId, {
+    areaId: worshipAreaId, churchId: fixture.churchId, teamId: fixture.ids.worship, name: "Worship skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamQualificationAreas, avAreaId, {
+    areaId: avAreaId, churchId: fixture.churchId, teamId: fixture.ids.av, name: "AV skills",
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId, {
+    positionIds: [`${fixture.ids.worship}_position`, avPositionId],
+    desiredPositionIds: [`${fixture.ids.worship}_position`, avPositionId],
+    teamMemberships: {
+      [fixture.ids.worship]: { teamId: fixture.ids.worship, roleId: "worship-role" },
+      [fixture.ids.av]: { teamId: fixture.ids.av, roleId: "av-role" },
+    },
+    qualifications: [
+      { qualificationId: "worship-qualification", areaId: worshipAreaId, teamId: fixture.ids.worship },
+      { qualificationId: "av-qualification", areaId: avAreaId, teamId: fixture.ids.av },
+    ],
+  }, { merge: true });
+  const worshipScheduleId = `${fixture.ids.worship}_schedule`;
+  await setDoc(COLLECTIONS.teamSchedules, worshipScheduleId, {
+    assignments: {
+      first: { slot: { primaryMemberId: fixture.sharedId, shadows: [] } },
+      second: { slot: { primaryMemberId: fixture.sharedId, shadows: [] } },
+      third: { slot: { primaryMemberId: fixture.sharedId, shadows: [] } },
+    },
+  }, { merge: true });
+  const removeShared = await run(authHandlers.removeTeamRosterMember, manager, { memberId: fixture.sharedId });
+  assert.equal(removeShared.statusCode, 200);
+  assert.equal(removeShared.payload.preservedTotalAssignmentCount, 3);
+  const cleanedShared = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
+  assert.deepEqual(cleanedShared.positionIds, [avPositionId]);
+  assert.deepEqual(cleanedShared.desiredPositionIds, [avPositionId]);
+  assert.equal(cleanedShared.teamMemberships[fixture.ids.worship], undefined);
+  assert.equal(cleanedShared.teamMemberships[fixture.ids.av].roleId, "av-role");
+  assert.deepEqual(cleanedShared.qualifications.map(({ qualificationId }) => qualificationId), ["av-qualification"]);
+  assert.ok((await getDoc(COLLECTIONS.teams, fixture.ids.av)).memberIds.includes(fixture.sharedId));
+  const preservedSchedule = await getDoc(COLLECTIONS.teamSchedules, worshipScheduleId);
+  assert.equal(preservedSchedule.assignments.first.slot.primaryMemberId, fixture.sharedId);
+
+  await setDoc(COLLECTIONS.teams, fixture.ids.worship, { archivedAt: "2026-10-01" }, { merge: true });
+  assert.equal((await run(authHandlers.addTeamRosterMember, manager, { memberId: davidId })).statusCode, 403);
+});

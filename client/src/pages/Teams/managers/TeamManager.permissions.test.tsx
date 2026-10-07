@@ -5,13 +5,20 @@ import TeamManager from "./TeamManager";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
-import { createTeam, updateTeam } from "../../../api/auth";
+import {
+  addTeamRosterMemberToTeam,
+  createTeam,
+  removeTeamRosterMemberFromTeam,
+  searchTeamRosterCandidates,
+  updateTeam,
+} from "../../../api/auth";
 import type { TeamRecord, TeamRosterMember } from "../../../api/authTypes";
 import type { TeamsData } from "../types";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 
 jest.mock("../../../api/auth", () => ({
   archiveTeam: jest.fn(), createTeam: jest.fn(), deleteTeam: jest.fn(), updateTeam: jest.fn(),
+  addTeamRosterMemberToTeam: jest.fn(), removeTeamRosterMemberFromTeam: jest.fn(), searchTeamRosterCandidates: jest.fn(),
 }));
 
 const worship: TeamRecord = {
@@ -27,7 +34,10 @@ const member: TeamRosterMember = {
 };
 const data: TeamsData = {
   members: [member], positions: [], teams: [worship, av], teamRoles: [],
-  qualificationAreas: [], qualificationLevels: [], services: [], schedules: [],
+  qualificationAreas: [], qualificationLevels: [], services: [], schedules: [{
+    churchId: "church-1", scheduleId: "schedule-1", teamId: worship.teamId, name: "Sunday", serviceIds: [],
+    assignments: { occurrence: { slot: { primaryMemberId: member.memberId, shadows: [] } } },
+  }],
   intakeForms: [], intakeSubmissions: [], intakeRecipients: [],
 };
 
@@ -55,9 +65,12 @@ const renderManager = (
 beforeEach(() => {
   jest.mocked(createTeam).mockReset();
   jest.mocked(updateTeam).mockReset();
+  jest.mocked(addTeamRosterMemberToTeam).mockReset();
+  jest.mocked(removeTeamRosterMemberFromTeam).mockReset();
+  jest.mocked(searchTeamRosterCandidates).mockReset();
 });
 
-it("lets a scoped manager edit team settings while showing the roster read-only", async () => {
+it("lets a scoped manager edit team settings and manage only that team's roster", async () => {
   const user = userEvent.setup();
   jest.mocked(updateTeam).mockResolvedValue({
     success: true,
@@ -74,7 +87,8 @@ it("lets a scoped manager edit team settings while showing the roster read-only"
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   expect(screen.getByRole("heading", { name: "Edit team" })).toBeInTheDocument();
   expect(screen.getByText("Avery Singer")).toBeInTheDocument();
-  expect(screen.getByText("Roster changes are managed separately.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add member" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Remove from team" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Team actions" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /select members/i })).not.toBeInTheDocument();
 
@@ -99,6 +113,59 @@ it("lets a scoped manager edit team settings while showing the roster read-only"
   }));
 });
 
+it("searches safe candidate results and adds the selected person", async () => {
+  const user = userEvent.setup();
+  jest.mocked(searchTeamRosterCandidates).mockResolvedValue({
+    candidates: [{ memberId: "member-new", firstName: "Jordan", lastName: "Lee" }],
+  } as never);
+  jest.mocked(addTeamRosterMemberToTeam).mockResolvedValue({
+    success: true,
+    team: { ...worship, memberIds: ["member-1", "member-new"] },
+    member: { memberId: "member-new", churchId: "church-1", firstName: "Jordan", lastName: "Lee" },
+  } as never);
+  const onTeamRosterSaved = jest.fn();
+  const onRosterMemberSaved = jest.fn();
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamManager teams={[worship, av]} positions={[]} roles={[]} qualificationAreas={[]} members={[member]} data={data}
+            canEditTeams={false} canEditTeam={(teamId) => teamId === worship.teamId}
+            onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
+            onTeamRosterSaved={onTeamRosterSaved} onRosterMemberSaved={onRosterMemberSaved} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.click(screen.getByRole("button", { name: "Add member" }));
+  await user.type(screen.getByRole("textbox", { name: "Search existing person:" }), "Jordan");
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  expect(await screen.findByText("Jordan Lee")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /^Add$/ }));
+  await waitFor(() => expect(addTeamRosterMemberToTeam).toHaveBeenCalledWith("church-1", worship.teamId, "member-new"));
+  expect(onTeamRosterSaved).toHaveBeenCalledWith(expect.objectContaining({ memberIds: ["member-1", "member-new"] }));
+  expect(onRosterMemberSaved).toHaveBeenCalledWith(expect.objectContaining({ memberId: "member-new", positionIds: [], blockoutDates: [] }));
+});
+
+it("confirms team removal and explains that existing assignments stay", async () => {
+  const user = userEvent.setup();
+  jest.mocked(removeTeamRosterMemberFromTeam).mockResolvedValue({
+    success: true,
+    team: { ...worship, memberIds: [] },
+    member: { memberId: member.memberId, firstName: member.firstName, lastName: member.lastName },
+    preservedAssignmentCount: 1,
+  } as never);
+  renderManager();
+  await user.click(screen.getByRole("button", { name: "Edit Worship" }));
+  await user.click(screen.getByRole("button", { name: "Remove from team" }));
+  expect(screen.getByRole("dialog", { name: "Remove Avery Singer from Worship?" })).toHaveTextContent(
+    "1 existing schedule assignment will remain and can be reassigned separately.",
+  );
+  await user.click(screen.getByRole("button", { name: /^Remove from team$/ }));
+  await waitFor(() => expect(removeTeamRosterMemberFromTeam).toHaveBeenCalledWith("church-1", worship.teamId, member.memberId));
+});
+
 it("does not open a read-only team's editor from a restore request", async () => {
   renderManager({
     pathname: TEAMS_SECTION_PATHS.groups,
@@ -119,6 +186,13 @@ it("keeps Team creation global-only for roster readers", () => {
   expect(within(screen.getByTestId("teams-create-panel-list")).queryByRole("button", { name: "Create team" })).not.toBeInTheDocument();
 });
 
+it("shows roster names to read-only Team viewers without roster mutation controls", () => {
+  renderManager(TEAMS_SECTION_PATHS.groups, { canEditTeam: () => false });
+  expect(screen.getAllByText(/1 member \| 0 positions · Avery Singer/)).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Remove from team" })).not.toBeInTheDocument();
+});
+
 it("keeps creation and roster controls available to global Teams editors", async () => {
   const user = userEvent.setup();
   renderManager(TEAMS_SECTION_PATHS.groups, {
@@ -129,7 +203,7 @@ it("keeps creation and roster controls available to global Teams editors", async
   expect(within(screen.getByTestId("teams-create-panel-list")).getByRole("button", { name: "Create team" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Edit AV" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
-  expect(screen.queryByText("Roster changes are managed separately.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
   expect(within(screen.getByRole("group", { name: "Members" })).getByText("Clear all")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Team actions" }));
   expect(await screen.findByText("Archive team")).toBeInTheDocument();

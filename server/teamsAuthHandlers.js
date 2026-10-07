@@ -218,6 +218,8 @@ export const createTeamsAuthHandlers = ({
   // transactions. Serialize writes to one schedule so they retain the same
   // no-lost-update guarantee as Firestore transactions.
   const inMemoryScheduleSaveQueues = new Map();
+  const inMemoryTeamRosterMutationQueues = new Map();
+  const inMemoryRosterMemberMutationQueues = new Map();
   const portableCreateQueues = new Map();
   const enqueuePortableCreate = (key, task) => {
     const previous = portableCreateQueues.get(key) || Promise.resolve();
@@ -243,6 +245,30 @@ export const createTeamsAuthHandlers = ({
     void settled.finally(() => {
       if (inMemoryScheduleSaveQueues.get(scheduleId) === settled) {
         inMemoryScheduleSaveQueues.delete(scheduleId);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryTeamRosterMutation = (teamId, task) => {
+    const previous = inMemoryTeamRosterMutationQueues.get(teamId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryTeamRosterMutationQueues.set(teamId, settled);
+    void settled.finally(() => {
+      if (inMemoryTeamRosterMutationQueues.get(teamId) === settled) {
+        inMemoryTeamRosterMutationQueues.delete(teamId);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryRosterMemberMutation = (memberId, task) => {
+    const previous = inMemoryRosterMemberMutationQueues.get(memberId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryRosterMemberMutationQueues.set(memberId, settled);
+    void settled.finally(() => {
+      if (inMemoryRosterMemberMutationQueues.get(memberId) === settled) {
+        inMemoryRosterMemberMutationQueues.delete(memberId);
       }
     });
     return run;
@@ -2928,7 +2954,243 @@ export const createTeamsAuthHandlers = ({
         if (position.teamId) teamIds.add(position.teamId);
       }),
     );
+    if (!member?.memberId) return Array.from(teamIds);
+    // Canonical roster ownership lives on Team.memberIds. Member-owned fields
+    // can be incomplete (for example, a shared member with no AV position).
+    const teams = await listTeamCollectionForChurch(
+      COLLECTIONS.teams,
+      "teamId",
+      churchId,
+    );
+    if (teams.length >= TEAM_COLLECTION_QUERY_LIMIT) {
+      throw httpError(409, "Team ownership could not be verified completely.");
+    }
+    for (const team of teams) {
+      if (team.archivedAt) continue;
+      if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      if (team.memberIds?.includes(member?.memberId)) teamIds.add(team.teamId);
+    }
     return Array.from(teamIds);
+  };
+
+  const getSafeRosterMemberProjection = (member, churchId) => ({
+    memberId: member.memberId,
+    churchId,
+    ...(member.title !== undefined ? { title: member.title } : {}),
+    ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
+    ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
+    ...(member.profileImageUrl !== undefined
+      ? { profileImageUrl: member.profileImageUrl }
+      : {}),
+  });
+
+  const countTeamMemberAssignments = async ({ churchId, teamId, memberId }) => {
+    const schedules = await listTeamCollectionForChurch(
+      COLLECTIONS.teamSchedules,
+      "scheduleId",
+      churchId,
+    );
+    return schedules
+      .filter((schedule) => schedule.teamId === teamId)
+      .reduce((count, schedule) => {
+        for (const row of Object.values(schedule.assignments || {})) {
+          for (const cell of Object.values(row || {})) {
+            const isPrimary = readCellHolderId(cell) === memberId;
+            const isShadow = Array.isArray(cell?.shadows) &&
+              cell.shadows.some((shadow) => shadow?.memberId === memberId);
+            if (isPrimary || isShadow) count += 1;
+          }
+        }
+        return count;
+      }, 0);
+  };
+
+  const mutateTeamRoster = async ({
+    churchId,
+    teamId,
+    memberId,
+    add,
+    adminUserId,
+  }) => {
+    const db = requireFirestore();
+    const mutate = async (transaction = null) => {
+      const read = async (collectionName, id) => {
+        if (!transaction) return getDoc(collectionName, id);
+        const snapshot = await transaction.get(
+          db.collection(collectionName).doc(id),
+        );
+        return snapshot.exists ? snapshot.data() : null;
+      };
+      const readTeamOwnedCollection = async (collectionName, idField) => {
+        if (!transaction) {
+          const rows = await listTeamCollectionForChurch(
+            collectionName,
+            idField,
+            churchId,
+          );
+          return rows.filter((row) => row.teamId === teamId);
+        }
+        const snapshot = await transaction.get(
+          db.collection(collectionName).where("teamId", "==", teamId),
+        );
+        return snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter((row) => row.churchId === churchId);
+      };
+      const team = await read(COLLECTIONS.teams, teamId);
+      const member = await read(COLLECTIONS.teamRosterMembers, memberId);
+      if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
+      if (team.teamId && team.teamId !== teamId) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+      if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      if (!member || member.churchId !== churchId) {
+        throw httpError(404, "Member not found.");
+      }
+      if (member.memberId && member.memberId !== memberId) {
+        throw httpError(409, "Member roster ownership is invalid.");
+      }
+      if (member.archivedAt) throw httpError(400, "This member is archived.");
+      const memberIds = Array.isArray(team.memberIds) ? team.memberIds : [];
+      const alreadyPresent = memberIds.includes(memberId);
+      const now = nowIso();
+      if (add) {
+        const nextTeam = alreadyPresent
+          ? { ...team, teamId, churchId }
+          : {
+              ...team,
+              teamId,
+              churchId,
+              memberIds: [...memberIds, memberId],
+              updatedAt: now,
+              updatedByUid: adminUserId,
+            };
+        if (!alreadyPresent) {
+          if (transaction) {
+            transaction.set(db.collection(COLLECTIONS.teams).doc(teamId), {
+              memberIds: nextTeam.memberIds,
+              updatedAt: now,
+              updatedByUid: adminUserId,
+            }, { merge: true });
+          } else {
+            await setDoc(COLLECTIONS.teams, teamId, {
+              memberIds: nextTeam.memberIds,
+              updatedAt: now,
+              updatedByUid: adminUserId,
+            }, { merge: true });
+          }
+        }
+        return {
+          team: nextTeam,
+          member: getSafeRosterMemberProjection({ ...member, memberId }, churchId),
+          preservedAssignmentCount: 0,
+          changed: !alreadyPresent,
+        };
+      }
+
+      if (
+        (Object.hasOwn(member, "positionIds") && !Array.isArray(member.positionIds)) ||
+        (Object.hasOwn(member, "desiredPositionIds") && !Array.isArray(member.desiredPositionIds)) ||
+        (Object.hasOwn(member, "qualifications") && !Array.isArray(member.qualifications)) ||
+        (Object.hasOwn(member, "teamMemberships") &&
+          (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))
+      ) {
+        throw httpError(409, "Member team data is invalid.");
+      }
+
+      const positionDocs = await readTeamOwnedCollection(COLLECTIONS.teamPositions, "positionId");
+      const teamPositionIds = new Set(positionDocs.map((position) => position.positionId));
+      const qualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
+      const teamAreaDocs = await readTeamOwnedCollection(COLLECTIONS.teamQualificationAreas, "areaId");
+      const referencedAreaDocs = await Promise.all(
+        [...new Set(qualifications.map((qualification) => qualification?.areaId).filter(Boolean))]
+          .map((areaId) => read(COLLECTIONS.teamQualificationAreas, areaId)),
+      );
+      const areaDocs = [...teamAreaDocs, ...referencedAreaDocs]
+        .filter((area) => area && area.churchId === churchId);
+      const areaTeamById = new Map(areaDocs.map((area) => [area.areaId, area.teamId]));
+      const teamOwnedQualifications = new Set();
+      for (const qualification of qualifications) {
+        if (!qualification || typeof qualification !== "object") {
+          throw httpError(409, "Member team data is invalid.");
+        }
+        if (
+          qualification.areaId &&
+          (!areaTeamById.has(qualification.areaId) || !areaTeamById.get(qualification.areaId))
+        ) {
+          throw httpError(409, "Member qualification ownership is invalid.");
+        }
+        const areaTeamId = areaTeamById.get(qualification.areaId);
+        if (qualification.teamId && areaTeamId && qualification.teamId !== areaTeamId) {
+          throw httpError(409, "Member qualification ownership is invalid.");
+        }
+        const ownerTeamId = qualification.areaId ? areaTeamId : qualification.teamId;
+        if (ownerTeamId && ownerTeamId !== teamId && qualification.teamId === teamId) {
+          throw httpError(409, "Member qualification ownership is invalid.");
+        }
+        if (ownerTeamId === teamId) teamOwnedQualifications.add(qualification);
+      }
+      const nextPositionIds = (Array.isArray(member.positionIds) ? member.positionIds : [])
+        .filter((positionId) => !teamPositionIds.has(positionId));
+      const nextDesiredPositionIds = (Array.isArray(member.desiredPositionIds) ? member.desiredPositionIds : [])
+        .filter((positionId) => !teamPositionIds.has(positionId));
+      const nextQualifications = qualifications.filter(
+        (qualification) => !teamOwnedQualifications.has(qualification),
+      );
+      const nextMemberships = { ...(member.teamMemberships || {}) };
+      delete nextMemberships[teamId];
+      const nextMemberIds = memberIds.filter((id) => id !== memberId);
+      const nextTeam = {
+        ...team,
+        teamId,
+        churchId,
+        memberIds: nextMemberIds,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      const memberPatch = {
+        positionIds: nextPositionIds,
+        ...(Object.hasOwn(member, "desiredPositionIds") ? { desiredPositionIds: nextDesiredPositionIds } : {}),
+        qualifications: nextQualifications,
+        teamMemberships: nextMemberships,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      if (transaction) {
+        transaction.set(db.collection(COLLECTIONS.teams).doc(teamId), {
+          memberIds: nextMemberIds,
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        }, { merge: true });
+        transaction.set(db.collection(COLLECTIONS.teamRosterMembers).doc(memberId), memberPatch, { merge: true });
+      } else {
+        await setDoc(COLLECTIONS.teams, teamId, {
+          memberIds: nextMemberIds,
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        }, { merge: true });
+        await setDoc(COLLECTIONS.teamRosterMembers, memberId, memberPatch, { merge: true });
+      }
+      return {
+        team: nextTeam,
+        member: getSafeRosterMemberProjection({ ...member, ...memberPatch, memberId }, churchId),
+      };
+    };
+
+    const result = db
+      ? await db.runTransaction((transaction) => mutate(transaction))
+      : await enqueueInMemoryTeamRosterMutation(teamId, () =>
+          enqueueInMemoryRosterMemberMutation(memberId, () => mutate()),
+        );
+    if (!add) {
+      result.preservedAssignmentCount = await countTeamMemberAssignments({ churchId, teamId, memberId });
+    }
+    return result;
   };
 
   const requireTeamsEditForTeamIds = async (req, churchId, teamIds) => {
@@ -11627,6 +11889,102 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async searchTeamRosterCandidates(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        const teamId = req.params.teamId;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, {
+          label: "Team", active: false,
+        });
+        if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+        await requireTeamsEditForTeam(req, churchId, team.teamId);
+        const query = String(req.query?.q || "").trim().toLocaleLowerCase();
+        if (query.length < 2) throw httpError(400, "Enter at least 2 characters to search.");
+        if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+          throw httpError(409, "Team roster ownership is invalid.");
+        }
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          churchId,
+        );
+        const alreadyOnTeam = new Set(Array.isArray(team.memberIds) ? team.memberIds : []);
+        const candidates = members
+          .filter((member) => !member.archivedAt && !alreadyOnTeam.has(member.memberId))
+          .filter((member) => `${member.firstName || ""} ${member.lastName || ""}`.toLocaleLowerCase().includes(query))
+          .slice(0, 20)
+          .map((member) => ({
+            memberId: member.memberId,
+            ...(member.title !== undefined ? { title: member.title } : {}),
+            ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
+            ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
+            ...(member.profileImageUrl !== undefined ? { profileImageUrl: member.profileImageUrl } : {}),
+          }));
+        return res.json({ candidates });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not search roster candidates.");
+      }
+    },
+
+    async addTeamRosterMember(req, res) {
+      try {
+        await assertCsrf(req);
+        const { churchId, teamId, memberId } = req.params;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team", active: false });
+        if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+        const admin = await requireTeamsEditForTeam(req, churchId, team.teamId);
+        const result = await mutateTeamRoster({
+          churchId,
+          teamId: team.teamId,
+          memberId,
+          add: true,
+          adminUserId: admin.user.uid,
+        });
+        await addSecurityEvent({
+          type: "team_roster_member_added",
+          churchId,
+          userId: admin.user.uid,
+          teamId: team.teamId,
+          memberId,
+        });
+        return res.json({ success: true, team: result.team, member: result.member });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not add this member to the team.");
+      }
+    },
+
+    async removeTeamRosterMember(req, res) {
+      try {
+        await assertCsrf(req);
+        const { churchId, teamId, memberId } = req.params;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team", active: false });
+        if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+        const admin = await requireTeamsEditForTeam(req, churchId, team.teamId);
+        const result = await mutateTeamRoster({
+          churchId,
+          teamId: team.teamId,
+          memberId,
+          add: false,
+          adminUserId: admin.user.uid,
+        });
+        await addSecurityEvent({
+          type: "team_roster_member_removed",
+          churchId,
+          userId: admin.user.uid,
+          teamId: team.teamId,
+          memberId,
+        });
+        return res.json({
+          success: true,
+          team: result.team,
+          member: result.member,
+          preservedTotalAssignmentCount: result.preservedAssignmentCount,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not remove this member from the team.");
+      }
+    },
+
     async archiveTeamRosterMember(req, res) {
       try {
         await assertCsrf(req);
@@ -11636,11 +11994,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        const admin = await requireTeamsEdit(req, req.params.churchId);
         await archiveTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
@@ -12589,7 +12943,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
+        let admin = await requireTeamsEditForMember(
           req,
           req.params.churchId,
           existing,
@@ -12601,6 +12955,7 @@ export const createTeamsAuthHandlers = ({
         const isSelf = userId === admin.user.uid;
 
         if (!isSelf) {
+          admin = await requireAdminSession(req, req.params.churchId);
           const memberships =
             (await listMembershipsForChurch(req.params.churchId)) || [];
           const target = memberships.find(
@@ -12699,6 +13054,9 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           existing,
         );
+        if (existing.userId && existing.userId !== admin.user.uid) {
+          await requireAdminSession(req, req.params.churchId);
+        }
         if (!existing.userId) {
           return res.json({ success: true, member: existing });
         }
@@ -14710,11 +15068,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        const admin = await requireTeamsEdit(req, req.params.churchId);
         await deleteTeamEntity({
           kind: "member",
           churchId: req.params.churchId,

@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Plus, X } from "lucide-react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
@@ -165,6 +165,8 @@ type MemberManagerProps = {
   positions: TeamPosition[];
   data: TeamsData;
   canEdit: boolean;
+  canEditAllTeams?: boolean;
+  canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
   /** Applies rosters the server changed by joining this member to a team. */
@@ -179,6 +181,8 @@ const MemberManager = ({
   positions,
   data,
   canEdit,
+  canEditAllTeams = true,
+  canManageMemberLifecycle = true,
   canEditMember: canEditMemberProp,
   onSaved,
   onTeamSaved,
@@ -243,9 +247,11 @@ const MemberManager = ({
   const [showDesiredPositions, setShowDesiredPositions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const pendingEditMemberIdRef = useRef<string | null>(null);
+  const consumedCreateLocationKeyRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback(
     (member: TeamRosterMember) => {
@@ -273,6 +279,18 @@ const MemberManager = ({
     nextParams.delete(TEAMS_MEMBER_EDIT_SEARCH_PARAM);
     setSearchParams(nextParams, { replace: true, state: location.state });
   }, [canEdit, location.state, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const state = location.state as { teamsCreateMember?: { teamId?: string } } | null;
+    const teamId = state?.teamsCreateMember?.teamId;
+    if (!teamId || !canEdit || consumedCreateLocationKeyRef.current === location.key) return;
+    if (!data.teams.some((team) => team.teamId === teamId && !team.archivedAt)) return;
+    consumedCreateLocationKeyRef.current = location.key;
+    setEditing(null);
+    setDraft(buildMemberDraft(null, [teamId]));
+    setShowCreate(true);
+    navigate(location.pathname, { replace: true, state: { ...(state || {}), teamsCreateMember: undefined } });
+  }, [canEdit, data.teams, location.key, location.pathname, location.state, navigate]);
 
   useEffect(() => {
     const editMemberId = pendingEditMemberIdRef.current;
@@ -1167,7 +1185,7 @@ const MemberManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEditActiveMember}
+                  canEdit={canEditActiveMember && canManageMemberLifecycle}
                   archiveLabel="Archive member"
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
@@ -1232,7 +1250,8 @@ const MemberManager = ({
               // a failed round-trip into an inline message.
               Boolean(emailError) ||
               isSavingCurrent ||
-              profileImageUploading
+              profileImageUploading ||
+              (!editing && !canEditAllTeams && (draft.teamIds || []).length === 0)
             }
           />
           ) : null

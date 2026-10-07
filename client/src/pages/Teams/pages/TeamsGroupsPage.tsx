@@ -21,6 +21,8 @@ const TeamsGroupsPage = () => {
       onArchived={() => void refresh()}
       onImported={() => void refresh()}
       onRemoved={(teamId) => removeData("teams", "teamId", teamId)}
+      onTeamRosterSaved={(team) => upsertData("teams", "teamId", team)}
+      onRosterMemberSaved={(member) => upsertData("members", "memberId", member)}
     />
   );
 };

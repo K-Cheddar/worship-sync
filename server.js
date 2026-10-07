@@ -1502,6 +1502,18 @@ app.post(
   authHandlers.deleteTeamRosterMember,
 );
 app.get(
+  "/api/churches/:churchId/teams/:teamId/roster-candidates",
+  authHandlers.searchTeamRosterCandidates,
+);
+app.post(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId",
+  authHandlers.addTeamRosterMember,
+);
+app.delete(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId",
+  authHandlers.removeTeamRosterMember,
+);
+app.get(
   "/api/churches/:churchId/my-team-assignments",
   authHandlers.getMyTeamAssignments,
 );

@@ -1755,6 +1755,43 @@ export const deleteTeamRosterMember = async (
     },
   );
 
+export type TeamRosterCandidate = Pick<
+  TeamRosterMember,
+  "memberId" | "title" | "firstName" | "lastName" | "profileImageUrl"
+>;
+type SafeTeamRosterMemberProjection = TeamRosterCandidate & Pick<TeamRosterMember, "churchId">;
+
+export const searchTeamRosterCandidates = async (
+  churchId: string,
+  teamId: string,
+  query: string,
+) => apiFetch<{ candidates: TeamRosterCandidate[] }>(
+  `api/churches/${churchId}/teams/${teamId}/roster-candidates?q=${encodeURIComponent(query)}`,
+);
+
+export const addTeamRosterMemberToTeam = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<{ success: boolean; team: TeamRecord; member: SafeTeamRosterMemberProjection }>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
+  { method: "POST", body: JSON.stringify({}) },
+);
+
+export const removeTeamRosterMemberFromTeam = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<{
+  success: boolean;
+  team: TeamRecord;
+  member: SafeTeamRosterMemberProjection;
+  preservedTotalAssignmentCount: number;
+}>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
+  { method: "DELETE" },
+);
+
 export type MyScheduleServing = {
   /** Set only for this person's own rows; others are name-only by design. */
   memberId: string;

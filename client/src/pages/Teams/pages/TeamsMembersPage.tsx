@@ -47,6 +47,8 @@ const TeamsMembersPage = () => {
       positions={canEditScopedMembers ? managerData.positions : pageData.positions}
       data={canEditScopedMembers ? managerData : pageData}
       canEdit={canEditScopedMembers}
+      canEditAllTeams={canEditTeams}
+      canManageMemberLifecycle={canEditTeams}
       canEditMember={(member) =>
         canEditTeams || editableMemberIds.has(member.memberId)
       }
