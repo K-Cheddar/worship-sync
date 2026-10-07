@@ -228,7 +228,8 @@ describe("MemberAccessSheet independent access axes", () => {
       },
     };
     context.toTeamsAccessOption.mockReturnValue("edit");
-    context.getMemberAccessValue.mockReturnValue("full");
+    // Simulate an invalid leftover draft from an older version of the sheet.
+    context.getMemberAccessValue.mockReturnValue("member");
     context.getMemberTeamsAccessValue.mockReturnValue("none");
     context.getMemberServicesAccessValue.mockReturnValue("none");
     context.getMemberTeamScopeValue.mockReturnValue(["worship"]);
@@ -250,7 +251,7 @@ describe("MemberAccessSheet independent access axes", () => {
     expect(screen.queryByRole("group", { name: "Manage selected teams" })).not.toBeInTheDocument();
 
     fireEvent.change(accessSelect, {
-      target: { value: "none" },
+      target: { value: "member" },
     });
     rerender(<MemberAccessSheet />);
     expect(setters.setMemberAccessDrafts).not.toHaveBeenCalled();
