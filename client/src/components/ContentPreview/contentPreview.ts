@@ -30,6 +30,25 @@ export type ContentPreviewProvider =
   | "web"
   | "unknown";
 
+export type ContentPreviewRenderer = Exclude<ContentPreviewKind, "document"> |
+  "pdf" | "docx" | "spreadsheet" | "presentation" | "legacy-office";
+
+const DOCUMENT_RENDERERS: Record<string, ContentPreviewRenderer> = {
+  "application/pdf": "pdf",
+  "application/x-pdf": "pdf",
+  "application/msword": "legacy-office",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "spreadsheet",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "spreadsheet",
+  "application/vnd.ms-powerpoint": "presentation",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "presentation",
+};
+
+const DOCUMENT_EXTENSION_RENDERERS: Record<string, ContentPreviewRenderer> = {
+  pdf: "pdf", doc: "legacy-office", docx: "docx",
+  xls: "spreadsheet", xlsx: "spreadsheet", ppt: "presentation", pptx: "presentation",
+};
+
 export type ContentPreviewResolvedSource = {
   url: string;
   originalUrl?: string;
@@ -54,7 +73,7 @@ export type ContentPreviewResolution = {
   providerLabel: string;
   mediaType: ContentPreviewKind;
   mimeType?: string;
-  renderer: ContentPreviewKind;
+  renderer: ContentPreviewRenderer;
   canPreview: boolean;
   fileName?: string;
   mediaId?: string;
@@ -151,6 +170,7 @@ const normalizedMimeType = (value?: string): string =>
 const kindForMimeType = (mimeType?: string): ContentPreviewKind | null => {
   const normalized = normalizedMimeType(mimeType);
   if (!normalized) return null;
+  if (DOCUMENT_RENDERERS[normalized]) return "document";
   if (MIME_KIND_BY_VALUE[normalized]) return MIME_KIND_BY_VALUE[normalized];
   return MIME_KIND_BY_PREFIX.find(([prefix]) => normalized.startsWith(prefix))?.[1] || null;
 };
@@ -171,7 +191,8 @@ const extensionForFileName = (fileName?: string | null): string =>
   fileName?.toLowerCase().split(".").pop() || "";
 
 const kindForFileName = (fileName?: string | null): ContentPreviewKind | null =>
-  EXTENSION_KIND[extensionForFileName(fileName)] || null;
+  DOCUMENT_EXTENSION_RENDERERS[extensionForFileName(fileName)] ? "document" :
+    EXTENSION_KIND[extensionForFileName(fileName)] || null;
 
 const kindForUrlExtension = (value?: string): ContentPreviewKind | null => {
   return kindForFileName(pathFileName(value));
@@ -216,8 +237,11 @@ export const getContentPreviewKind = (
     return "youtube";
   }
 
-  const mimeKind = kindForMimeType(resolvedMimeType || resource.mimeType);
+  const mimeKind = kindForMimeType(resolvedMimeType) || kindForMimeType(resource.mimeType);
   if (mimeKind) return mimeKind;
+
+  const fileKind = kindForFileName(resource.fileName);
+  if (fileKind) return fileKind;
 
   if (["image", "audio", "video", "document", "text"].includes(type || "")) {
     return type as ContentPreviewKind;
@@ -340,7 +364,9 @@ export const resolveContentPreviewResource = (
       : sourceUrl;
   const resolvedUrl = sourceUrl || originalUrl;
   const fileName = resource.fileName || source?.fileName;
-  const mimeType = normalizedMimeType(source?.mimeType || resource.mimeType) || undefined;
+  const mimeType = normalizedMimeType(
+    kindForMimeType(source?.mimeType) ? source?.mimeType : resource.mimeType || source?.mimeType,
+  ) || undefined;
   const candidate: ContentPreviewResource = {
     ...resource,
     url: resolvedUrl || resource.url,
@@ -348,9 +374,10 @@ export const resolveContentPreviewResource = (
     mimeType,
   };
   const serverPreviewType = source?.previewType;
-  const mediaType = source?.mediaType
-    ? source.mediaType as ContentPreviewKind
-    : getContentPreviewKind(candidate, mimeType);
+  const metadataKind = kindForMimeType(mimeType) || kindForFileName(fileName);
+  const mediaType = resource.textContent !== undefined
+    ? "text"
+    : metadataKind || source?.mediaType || getContentPreviewKind(candidate, mimeType);
   const youtubeVideoId = source?.mediaId || getYouTubePreviewVideoId(candidate);
   const explicitProvider = resource.provider?.trim().toLowerCase();
   const normalizedExplicitProvider = isContentPreviewProvider(explicitProvider)
@@ -373,10 +400,21 @@ export const resolveContentPreviewResource = (
   const normalizedProvider = isContentPreviewProvider(provider) ? provider : "unknown";
   const providerLabel = (sourceProvider ? PROVIDER_LABELS[sourceProvider] : null) ||
     getContentPreviewProviderLabel(provider, originalUrl || resolvedUrl || undefined);
-  const renderer = serverPreviewType || mediaType;
-  const canPreview = source?.canPreview ?? (mediaType !== "unsupported" && (
+  // A document category is not a browser capability. Inspect the actual file,
+  // including provider conversions (for example Google Docs exported as PDF).
+  const documentRenderer = DOCUMENT_RENDERERS[mimeType || ""] ||
+    DOCUMENT_EXTENSION_RENDERERS[extensionForFileName(fileName)] ||
+    DOCUMENT_EXTENSION_RENDERERS[extensionForFileName(pathFileName(resolvedUrl || undefined))];
+  let renderer: ContentPreviewRenderer = mediaType === "document" ? documentRenderer || "unsupported" : mediaType;
+  if (serverPreviewType === "unsupported" || source?.canPreview === false) renderer = "unsupported";
+  else if (serverPreviewType === "youtube") renderer = "youtube";
+  const supported = !["unsupported", "unknown", "spreadsheet", "presentation", "legacy-office"].includes(renderer);
+  const canPreview = supported && (source?.canPreview ?? (mediaType !== "unsupported" && (
     mediaType === "text" || Boolean(resolvedUrl)
-  ));
+  )));
+  const reason = source?.reason || (!supported
+    ? "This file format isn’t supported for preview. Open or download the file to view it."
+    : undefined);
 
   return {
     originalUrl,
@@ -395,6 +433,6 @@ export const resolveContentPreviewResource = (
     ...(fileName ? { fileName } : {}),
     ...(youtubeVideoId ? { mediaId: youtubeVideoId } : {}),
     ...(source?.requiresProxy !== undefined ? { requiresProxy: source.requiresProxy } : {}),
-    ...(source?.reason ? { reason: source.reason } : {}),
+    ...(reason ? { reason } : {}),
   };
 };

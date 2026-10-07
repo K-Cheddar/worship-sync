@@ -107,7 +107,7 @@ const providerResolvers = [
     matches: (url) => GOOGLE_DRIVE_HOSTS.has(url.hostname.toLowerCase()),
     resolve: (url) => {
       const documentCandidate = googleDocumentCandidate(url);
-      if (documentCandidate) return { candidateUrl: documentCandidate };
+      if (documentCandidate) return { candidateUrl: documentCandidate, probeWithGet: true, nativeGoogleDocument: true };
       if (url.hostname.toLowerCase() === "drive.google.com") {
         const fileId = googleDriveFileId(url);
         if (fileId) {

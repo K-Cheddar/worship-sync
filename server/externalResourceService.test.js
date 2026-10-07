@@ -83,6 +83,135 @@ test("detects provider media types from metadata for images, audio, and document
   });
 });
 
+test("probes native Google Docs, Sheets, and Slides exports with a streaming GET first", async () => {
+  const cases = [
+    ["https://docs.google.com/document/d/doc-id/edit", "https://docs.google.com/document/d/doc-id/export?format=pdf"],
+    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "https://docs.google.com/spreadsheets/d/sheet-id/export?format=pdf"],
+    ["https://docs.google.com/presentation/d/slides-id/edit", "https://docs.google.com/presentation/d/slides-id/export/pdf"],
+  ];
+  for (const [originalUrl, candidateUrl] of cases) {
+    let responseStream;
+    const client = createMockClient((config) => {
+      assert.equal(config.method, "GET");
+      assert.equal(config.responseType, "stream");
+      assert.equal(config.headers.Range, "bytes=0-0");
+      responseStream = Readable.from([Buffer.from("%PDF-1.7")]);
+      return response(200, { "content-type": "application/pdf", "content-length": "100" }, responseStream);
+    });
+    const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+    const descriptor = await service.resolve(originalUrl);
+    assert.equal(client.calls.length, 1);
+    assert.equal(client.calls[0].url, candidateUrl);
+    assert.equal(descriptor.previewType, "document");
+    assert.equal(descriptor.canPreview, true);
+    assert.equal(descriptor.requiresProxy, true);
+    assert.match(descriptor.previewUrl, /^\/api\/resources\/proxy\?token=/);
+    assert.equal(responseStream.destroyed, true);
+  }
+});
+
+test("follows native Google export redirects through validated requests", async () => {
+  const originalUrl = "https://docs.google.com/document/d/doc-id/edit";
+  const exportUrl = "https://docs.google.com/document/d/doc-id/export?format=pdf";
+  const finalUrl = "https://download.example.test/export.pdf";
+  const client = createMockClient((config) => config.url === exportUrl
+    ? response(302, { location: finalUrl })
+    : response(200, { "content-type": "application/pdf" }, Readable.from([Buffer.from("%PDF")])));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+
+  const descriptor = await service.resolve(originalUrl);
+  assert.deepEqual(client.calls.map(({ method }) => method), ["GET", "GET"]);
+  assert.ok(client.calls.every(({ maxRedirects }) => maxRedirects === 0));
+  const token = new URL(descriptor.previewUrl, "https://worshipsync.test").searchParams.get("token");
+  assert.equal(verifyExternalResourceProxyToken("secret", token).payload.t, finalUrl);
+});
+
+test("rejects unsafe redirects from native Google export endpoints", async () => {
+  const exportUrl = "https://docs.google.com/document/d/doc-id/export?format=pdf";
+  const client = createMockClient(() => response(302, { location: "http://127.0.0.1/private" }));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  await assert.rejects(
+    () => service.resolve("https://docs.google.com/document/d/doc-id/edit"),
+    (error) => error instanceof ExternalResourceError && error.code === "blocked_host",
+  );
+  assert.equal(client.calls.length, 1);
+  assert.equal(client.calls[0].url, exportUrl);
+});
+
+test("does not expose native Google HTML, login, error, or non-PDF responses as previews", async (t) => {
+  for (const [name, status, contentType] of [
+    ["HTML", 200, "text/html"],
+    ["login", 401, "text/html"],
+    ["blocked", 403, "text/html"],
+    ["non-PDF", 200, "application/octet-stream"],
+  ]) {
+    await t.test(name, async () => {
+      const client = createMockClient(() => response(status, { "content-type": contentType }, Readable.from([Buffer.from("response body")])));
+      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+      const descriptor = await service.resolve("https://docs.google.com/document/d/private-id/edit");
+      assert.deepEqual(client.calls.map(({ method }) => method), ["GET"]);
+      assert.equal(descriptor.canPreview, false);
+      assert.equal(descriptor.previewType, "unsupported");
+      assert.equal(descriptor.previewUrl, null);
+      assert.equal(descriptor.requiresProxy, false);
+      assert.match(descriptor.reason, /could not be exported for preview/i);
+    });
+  }
+});
+
+test("logs safe provider probe diagnostics without private sharing URLs", async () => {
+  const client = createMockClient(() => {
+    const error = new Error("request failed for https://docs.google.com/export?token=private-sharing-token");
+    error.name = "AxiosError";
+    error.code = "ECONNRESET";
+    throw error;
+  });
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const priorWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const descriptor = await service.resolve("https://docs.google.com/document/d/private-id/edit?sharing=private-sharing-token");
+    assert.equal(descriptor.canPreview, false);
+  } finally {
+    console.warn = priorWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][0], "[external-resource] Provider probe failed");
+  assert.deepEqual(warnings[0][1], {
+    provider: "google-drive",
+    stage: "direct_get",
+    errorType: "AxiosError",
+    code: "ECONNRESET",
+  });
+  assert.doesNotMatch(JSON.stringify(warnings), /private-sharing-token/);
+});
+
+test("ordinary uploaded Google Drive files keep their HEAD-first behavior", async () => {
+  const client = createMockClient((config) => response(200, { "content-type": "application/pdf" }));
+  const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+  const descriptor = await service.resolve("https://drive.google.com/file/d/uploaded-file/view");
+  assert.equal(client.calls[0].method, "HEAD");
+  assert.equal(descriptor.previewType, "document");
+  assert.equal(descriptor.canPreview, true);
+});
+
+test("other hosted providers retain HEAD-first probing", async (t) => {
+  for (const url of [
+    "https://www.dropbox.com/scl/fi/id/clip.mp4?dl=0",
+    "https://1drv.ms/u/s!file",
+    "https://app.box.com/s/public-file",
+  ]) {
+    await t.test(url, async () => {
+      const client = createMockClient(() => response(200, { "content-type": "video/mp4" }));
+      const service = createExternalResourceService({ httpClient: client, lookup: publicLookup, tokenSecret: "secret" });
+      await service.resolve(url);
+      assert.equal(client.calls[0].method, "HEAD");
+      assert.equal(client.calls.length, 1);
+    });
+  }
+});
+
 test("uses conclusive SharePoint HEAD metadata without a GET probe", async () => {
   const originalUrl = "https://church.sharepoint.com/:b:/s/team/Efile?e=share-token";
   const client = createMockClient((config) => response(200, {

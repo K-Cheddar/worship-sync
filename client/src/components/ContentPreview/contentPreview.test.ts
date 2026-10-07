@@ -10,6 +10,42 @@ const dropboxMp4Url =
 
 describe("content preview normalization", () => {
   it.each([
+    ["application/msword", "doc", "legacy-office", false],
+    ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx", "docx", true],
+    ["application/vnd.ms-excel", "xls", "spreadsheet", false],
+    ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx", "spreadsheet", false],
+    ["application/vnd.ms-powerpoint", "ppt", "presentation", false],
+    ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx", "presentation", false],
+    ["application/pdf", "pdf", "pdf", true],
+  ])("selects a capability for %s and .%s", (mimeType, extension, renderer, canPreview) => {
+    const metadata = { id: "office", url: "https://r2.example.test/opaque?signature=secret" };
+    expect(resolveContentPreviewResource({ ...metadata, mimeType })).toMatchObject({ mediaType: "document", renderer, canPreview });
+    expect(resolveContentPreviewResource({ ...metadata, fileName: `notes.${extension}` })).toMatchObject({ mediaType: "document", renderer, canPreview });
+    expect(resolveContentPreviewResource({ id: "extension", url: `https://files.example.test/notes.${extension}` })).toMatchObject({ renderer, canPreview });
+  });
+
+  it("keeps DOCX metadata when the signed response has a generic MIME type", () => {
+    expect(resolveContentPreviewResource({ id: "docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, {
+      url: "https://r2.example.test/opaque?signature=secret", mimeType: "application/octet-stream", provider: "worshipsync",
+    })).toMatchObject({ renderer: "docx", mediaType: "document", canPreview: true });
+  });
+
+  it("preserves explicit inline text even when file metadata is also supplied", () => {
+    expect(resolveContentPreviewResource({ id: "notes", fileName: "notes.docx", textContent: "Welcome" })).toMatchObject({ mediaType: "text", renderer: "text", canPreview: true });
+  });
+
+  it("uses the actual PDF capability for provider-converted Office files", () => {
+    expect(resolveContentPreviewResource({ id: "converted", fileName: "notes.docx" }, {
+      url: "https://worshipsync.test/proxy?token=secret", mimeType: "application/pdf", previewType: "document", mediaType: "document", canPreview: true,
+    })).toMatchObject({ renderer: "pdf", canPreview: true });
+  });
+
+  it("does not trust an old server's document capability for raw Office files", () => {
+    expect(resolveContentPreviewResource({ id: "sheet", fileName: "notes.xlsx" }, {
+      url: "https://worshipsync.test/proxy?token=secret", previewType: "document", mediaType: "document", canPreview: true,
+    })).toMatchObject({ renderer: "spreadsheet", canPreview: false });
+  });
+  it.each([
     ["image", "https://example.test/photo.jpg", "image"],
     ["video", "https://example.test/video.mp4", "video"],
     ["audio", "https://example.test/audio.mp3", "audio"],

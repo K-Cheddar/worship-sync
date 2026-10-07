@@ -20,6 +20,12 @@ import {
 } from "../api/auth";
 import { updateAllDocs } from "../utils/dbUtils";
 
+// Renderer behavior and binary fetching are covered by the shared preview tests.
+jest.mock("../components/ContentPreview/DocxPreview", () => ({
+  __esModule: true,
+  default: () => <div role="document" aria-label="Word document preview" />,
+}));
+
 jest.mock("../components/AppPageShell/AppWorkspaceShell", () => ({
   __esModule: true,
   default: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -540,6 +546,23 @@ describe("Resources page", () => {
     expect(getChurchResourceUrl).toHaveBeenCalledWith(
       expect.objectContaining({ churchId: "church-1", resourceId: "resource-1" }),
     );
+  });
+
+  it("previews an uploaded DOCX as a document and keeps download available", async () => {
+    mockResources = [{ ...resource, name: "Guidelines.docx", storage: {
+      ...resource.storage, fileName: "Guidelines.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    } }];
+    mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
+    jest.mocked(getChurchResourceUrl).mockResolvedValue({ url: "https://r2.example.test/opaque?signature=secret", expiresAt: "2026-09-22T00:00:00.000Z" });
+    renderPage();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Preview Guidelines.docx" }));
+    expect(await screen.findByRole("document", { hidden: true })).toBeInTheDocument();
+    expect(screen.getByText("WorshipSync • Document")).toBeVisible();
+    expect(screen.getByText(/DOCX · 100 B · Updated/)).toBeVisible();
+    expect(screen.queryByTitle("Guidelines.docx")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
+    expect(screen.getByRole("menuitem", { name: "Download" })).toBeInTheDocument();
   });
 
   it("keeps song-audio removal and uploads restricted to full access", async () => {

@@ -434,12 +434,28 @@ const sharePointHtmlReason = ({ response, finalUrl, bodyText = "" }) => {
 
 const isSuccessful = (response) => Number(response?.status || 0) >= 200 && Number(response?.status || 0) < 300;
 
+const documentPreviewTypeFor = (mimeType, fileName, url) => {
+  const mime = normalizeMimeType(mimeType);
+  const byMime = {
+    "application/pdf": "document", "application/x-pdf": "document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "text/plain": "text", "text/markdown": "text",
+  };
+  if (byMime[mime]) return byMime[mime];
+  // Known unsupported MIME metadata must not be overridden by a filename.
+  if (DOCUMENT_MIMES.has(mime)) return "unsupported";
+  const extension = (fileName || filenameFromUrl(url)).toLowerCase().split(".").pop();
+  return { pdf: "document", docx: "docx", txt: "text", md: "text" }[extension] || "unsupported";
+};
+
 const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUrl, mimeType, fileName, title, mediaType, reason }) => {
   const previewType = provider === "youtube"
     ? "youtube"
     : mediaType === "web"
       ? "web"
-      : ["image", "audio", "video", "document"].includes(mediaType)
+      : mediaType === "document"
+        ? documentPreviewTypeFor(mimeType, fileName, finalUrl || candidateUrl)
+      : ["image", "audio", "video"].includes(mediaType)
         ? mediaType
         : "unsupported";
   const canPreview = previewType !== "unsupported";
@@ -457,7 +473,7 @@ const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUr
     requiresProxy,
     canPreview,
     ...(mediaId ? { mediaId } : {}),
-    ...(reason ? { reason } : {}),
+    ...((reason || !canPreview) ? { reason: reason || "This file format isn’t supported for preview. Open or download the file to view it." } : {}),
     _upstreamUrl: finalUrl || candidateUrl,
   };
 };
@@ -511,15 +527,11 @@ export const createExternalResourceService = ({
     throw new ExternalResourceError("The resource could not be reached.", { statusCode: 502, code: "redirect_limit" });
   };
 
-  const probe = async ({ originalUrl, provider, mediaId, candidateUrl }) => {
-    let result = await requestFollowingRedirects({
-      url: candidateUrl,
-      method: "HEAD",
-      headers: { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" },
-    });
-    if (shouldProbeByGet(result.response, { provider, candidateUrl, finalUrl: result.finalUrl })) {
-      drainResponse(result.response);
-      result = await requestFollowingRedirects({
+  const probe = async ({ originalUrl, provider, mediaId, candidateUrl, probeWithGet = false, nativeGoogleDocument = false }) => {
+    let stage = probeWithGet ? "direct_get" : "head";
+    try {
+      let result;
+      const getOptions = {
         url: candidateUrl,
         method: "GET",
         headers: {
@@ -528,62 +540,101 @@ export const createExternalResourceService = ({
           "User-Agent": "WorshipSync-resource-resolver/1",
         },
         responseType: "stream",
-      });
-    }
+      };
+      if (probeWithGet) {
+        result = await requestFollowingRedirects(getOptions);
+      } else {
+        result = await requestFollowingRedirects({
+          url: candidateUrl,
+          method: "HEAD",
+          headers: { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" },
+        });
+        if (shouldProbeByGet(result.response, { provider, candidateUrl, finalUrl: result.finalUrl })) {
+          drainResponse(result.response);
+          stage = "fallback_get";
+          result = await requestFollowingRedirects(getOptions);
+        }
+      }
 
-    const response = result.response;
-    const mimeType = normalizeMimeType(headerValue(response.headers, "content-type")) || undefined;
-    const fileName = filenameFromContentDisposition(headerValue(response.headers, "content-disposition")) || filenameFromUrl(result.finalUrl) || undefined;
-    const mediaType = mediaTypeFor(mimeType, fileName, result.finalUrl);
-    const declaredLength = parseContentLength(headerValue(response.headers, "content-length"));
-    const declaredTotal = contentRangeTotal(headerValue(response.headers, "content-range"));
-    const htmlPrefix = provider === "sharepoint" && isHtmlResponse(response)
-      ? await readResponsePrefix(response)
-      : "";
-    drainResponse(response);
-    if (!isSuccessful(response)) {
-      const reason = provider === "sharepoint"
-        ? sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix })
-        : undefined;
-      return buildDescriptor({
-        originalUrl,
+      const response = result.response;
+      const mimeType = normalizeMimeType(headerValue(response.headers, "content-type")) || undefined;
+      const fileName = filenameFromContentDisposition(headerValue(response.headers, "content-disposition")) || filenameFromUrl(result.finalUrl) || undefined;
+      const mediaType = mediaTypeFor(mimeType, fileName, result.finalUrl);
+      const declaredLength = parseContentLength(headerValue(response.headers, "content-length"));
+      const declaredTotal = contentRangeTotal(headerValue(response.headers, "content-range"));
+      const htmlPrefix = provider === "sharepoint" && isHtmlResponse(response)
+        ? await readResponsePrefix(response)
+        : "";
+      drainResponse(response);
+      if (nativeGoogleDocument && (!isSuccessful(response) || mimeType !== "application/pdf")) {
+        return buildDescriptor({
+          originalUrl,
+          provider,
+          mediaId,
+          candidateUrl,
+          finalUrl: result.finalUrl,
+          mimeType,
+          fileName,
+          mediaType: "unknown",
+          reason: "This Google document could not be exported for preview.",
+        });
+      }
+      if (!isSuccessful(response)) {
+        const reason = provider === "sharepoint"
+          ? sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix })
+          : undefined;
+        return buildDescriptor({
+          originalUrl,
+          provider,
+          mediaId,
+          candidateUrl,
+          finalUrl: result.finalUrl,
+          mimeType,
+          fileName,
+          mediaType: "unknown",
+          reason: reason || `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
+        });
+      }
+      if ((declaredLength !== null && declaredLength > maxBytes) || (declaredTotal !== null && declaredTotal > maxBytes)) {
+        return buildDescriptor({
+          originalUrl,
+          provider,
+          mediaId,
+          candidateUrl,
+          finalUrl: result.finalUrl,
+          mimeType,
+          fileName,
+          mediaType: "unknown",
+          reason: "That resource is too large to preview.",
+        });
+      }
+      if (provider === "sharepoint" && (mediaType === "web" || mediaType === "unknown")) {
+        return buildDescriptor({
+          originalUrl,
+          provider,
+          mediaId,
+          candidateUrl,
+          finalUrl: result.finalUrl,
+          mimeType,
+          fileName,
+          mediaType: "unknown",
+          reason: sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix }),
+        });
+      }
+      return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName, mediaType });
+    } catch (error) {
+      const safeCode = typeof error?.code === "string" && /^[A-Z0-9_-]{1,64}$/i.test(error.code) ? error.code : undefined;
+      const statusValue = error?.statusCode || error?.response?.status;
+      const safeStatus = Number.isInteger(Number(statusValue)) ? Number(statusValue) : undefined;
+      console.warn("[external-resource] Provider probe failed", {
         provider,
-        mediaId,
-        candidateUrl,
-        finalUrl: result.finalUrl,
-        mimeType,
-        fileName,
-        mediaType: "unknown",
-        reason: reason || `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
+        stage,
+        errorType: typeof error?.name === "string" ? error.name.slice(0, 64) : "Error",
+        ...(safeCode ? { code: safeCode } : {}),
+        ...(safeStatus ? { status: safeStatus } : {}),
       });
+      throw error;
     }
-    if ((declaredLength !== null && declaredLength > maxBytes) || (declaredTotal !== null && declaredTotal > maxBytes)) {
-      return buildDescriptor({
-        originalUrl,
-        provider,
-        mediaId,
-        candidateUrl,
-        finalUrl: result.finalUrl,
-        mimeType,
-        fileName,
-        mediaType: "unknown",
-        reason: "That resource is too large to preview.",
-      });
-    }
-    if (provider === "sharepoint" && (mediaType === "web" || mediaType === "unknown")) {
-      return buildDescriptor({
-        originalUrl,
-        provider,
-        mediaId,
-        candidateUrl,
-        finalUrl: result.finalUrl,
-        mimeType,
-        fileName,
-        mediaType: "unknown",
-        reason: sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix }),
-      });
-    }
-    return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName, mediaType });
   };
 
   const resolveBase = async (originalUrl) => {
@@ -603,6 +654,15 @@ export const createExternalResourceService = ({
       return await probe({ originalUrl, ...providerInfo });
     } catch (error) {
       if (error instanceof ExternalResourceError) throw error;
+      if (providerInfo.nativeGoogleDocument) {
+        return buildDescriptor({
+          originalUrl,
+          provider: providerInfo.provider,
+          candidateUrl: providerInfo.candidateUrl,
+          mediaType: "unknown",
+          reason: "This Google document could not be exported for preview.",
+        });
+      }
       return buildDescriptor({
         originalUrl,
         provider: providerInfo.provider,
@@ -667,7 +727,7 @@ export const createExternalResourceService = ({
     const verified = verifyExternalResourceProxyToken(tokenSecret, token, now());
     if (!verified.valid) return res.status(401).json({ error: "This preview link has expired." });
     const payload = verified.payload;
-    if (!["image", "audio", "video", "document"].includes(payload.pt)) {
+    if (!["image", "audio", "video", "document", "docx", "text"].includes(payload.pt)) {
       return res.status(403).json({ error: "HTML resources are not proxied." });
     }
     const targetUrl = await validateExternalResourceUrl(payload.t, { lookup });

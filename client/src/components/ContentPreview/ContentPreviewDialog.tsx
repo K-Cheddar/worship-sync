@@ -1,4 +1,5 @@
 import Spinner from "@/components/Spinner/Spinner";
+import DocxPreview from "./DocxPreview";
 import {
   AudioLines,
   Copy,
@@ -44,6 +45,7 @@ type ContentPreviewDialogProps = {
 type RenderStatus = "loading" | "slow" | "ready" | "error";
 
 const EMBED_TIMEOUT_MS = 7000;
+const PREVIEW_FAILURE_TIMEOUT_MS = 30000;
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
@@ -112,7 +114,8 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     () => resource ? resolveContentPreviewResource(resource, source) : null,
     [resource, source],
   );
-  const kind = resolution?.renderer || "unsupported";
+  const kind = resolution?.mediaType || "unsupported";
+  const renderer = resolution?.renderer || "unsupported";
   const sourceUrl = resolution?.resolvedUrl || "";
   const externalUrl = resolution?.originalUrl || "";
   const title = resolution?.title || "Content preview";
@@ -128,6 +131,12 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
 
     let active = true;
     const controller = new AbortController();
+    const resolutionTimer = window.setTimeout(() => {
+      active = false;
+      controller.abort();
+      setResolving(false);
+      setResolveError("The preview could not be prepared in time. Open or download the file to view it.");
+    }, PREVIEW_FAILURE_TIMEOUT_MS);
     const directUrl = getSafeHttpUrl(resource.url);
     setResolving(Boolean(directUrl && !resource.resolveSource));
     setSource(null);
@@ -141,6 +150,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     setExpanded(false);
 
     if (!resource.resolveSource) {
+      if (!directUrl) window.clearTimeout(resolutionTimer);
       if (!directUrl && resource.textContent === undefined) {
         setResolveError("This resource does not contain a previewable link.");
       }
@@ -153,7 +163,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
               return;
             }
             setSource(resolved);
-            if ((resolved.mimeType || "").split(";", 1)[0].trim().toLowerCase() === "text/plain" && resolved.url) {
+            if (resolveContentPreviewResource(resource, resolved).renderer === "text" && resolved.url && resource.textContent === undefined) {
               return fetch(resolved.url, { credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal })
                 .then((response) => {
                   if (!response.ok) throw new Error("This text file could not be opened.");
@@ -171,10 +181,12 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
             }
           })
           .finally(() => {
+            window.clearTimeout(resolutionTimer);
             if (active) setResolving(false);
           });
       }
       return () => {
+        window.clearTimeout(resolutionTimer);
         active = false;
         controller.abort();
         actionGenerationRef.current += 1;
@@ -191,7 +203,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
           return;
         }
         setSource({ ...resolved, url: safeUrl });
-        if ((resolved.mimeType || resource.mimeType || "").split(";", 1)[0].trim().toLowerCase() === "text/plain") {
+        if (resolveContentPreviewResource(resource, resolved).renderer === "text" && resource.textContent === undefined) {
           return fetch(safeUrl, { credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal })
             .then((response) => {
               if (!response.ok) throw new Error("This text file could not be opened.");
@@ -204,10 +216,12 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         if (active) setResolveError(errorMessage(error, "This resource could not be opened."));
       })
       .finally(() => {
+        window.clearTimeout(resolutionTimer);
         if (active) setResolving(false);
       });
 
     return () => {
+      window.clearTimeout(resolutionTimer);
       active = false;
       controller.abort();
       actionGenerationRef.current += 1;
@@ -230,14 +244,17 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   useEffect(() => {
     if (
       !sourceUrl ||
-      !["web", "document", "youtube"].includes(kind) ||
+      !resolution?.canPreview ||
       resolving ||
       resolveError ||
-      renderStatus !== "loading"
+      (renderStatus !== "loading" && renderStatus !== "slow")
     ) return;
-    const timer = window.setTimeout(() => setRenderStatus("slow"), EMBED_TIMEOUT_MS);
+    const timer = window.setTimeout(
+      () => setRenderStatus(renderStatus === "loading" ? "slow" : "error"),
+      renderStatus === "loading" ? EMBED_TIMEOUT_MS : PREVIEW_FAILURE_TIMEOUT_MS - EMBED_TIMEOUT_MS,
+    );
     return () => window.clearTimeout(timer);
-  }, [kind, renderStatus, resolveError, resolving, sourceUrl]);
+  }, [resolution?.canPreview, renderStatus, resolveError, resolving, sourceUrl]);
 
   const handleOpenExternal = async () => {
     if (!externalUrl || openingExternal) return;
@@ -290,9 +307,9 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     resolution && !resolution.canPreview && resolution.reason
       ? resolution.reason
       : kind === "web"
-      ? "This site doesn’t allow an embedded preview."
+      ? "This page could not be loaded. Open it in a new tab to view it."
       : kind === "document"
-        ? "This document can’t be previewed here."
+        ? "This document could not be loaded. Open or download the file to view it."
         : "This resource can’t be previewed here."
   );
 
@@ -327,7 +344,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         </div>
       );
     }
-    if (kind === "youtube" && youtubeQueue.length) {
+    if (renderer === "youtube" && youtubeQueue.length) {
       return (
         <div className="flex h-full w-full items-center justify-center bg-black p-2">
           <div className={`w-full max-w-5xl ${renderStatus === "ready" ? "" : "invisible"}`}>
@@ -342,6 +359,13 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       );
     }
     if (!sourceUrl) return <PreviewFallback kind={kind} message={fallbackMessage} providerLabel={metadataLabel} />;
+    if (renderer === "docx") {
+      return (
+        <div className={`h-full w-full ${renderStatus === "ready" ? "" : "invisible"}`}>
+          <DocxPreview key={`${resourceKey}:${sourceUrl}`} url={sourceUrl} onReady={handleMediaReady} onError={handleMediaError} />
+        </div>
+      );
+    }
     if (kind === "image") {
       return (
         <div className="flex h-full w-full items-center justify-center bg-black p-2">
@@ -363,7 +387,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         </div>
       );
     }
-    if (kind === "document" || kind === "web") {
+    if (renderer === "pdf" || renderer === "web") {
       return (
         <div data-testid="document-preview-container" className="relative h-full min-h-0 w-full bg-white">
           <iframe
@@ -438,4 +462,9 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   );
 };
 
-export default ContentPreviewDialog;
+// Each resource owns its resolution, callbacks and rendering lifecycle.
+const ResourcePreviewDialog = (props: ContentPreviewDialogProps) => (
+  <ContentPreviewDialog key={props.resource ? `${props.resource.id}:${props.resource.url || ""}:${props.resource.mimeType || ""}:${props.resource.fileName || ""}` : "closed"} {...props} />
+);
+
+export default ResourcePreviewDialog;
