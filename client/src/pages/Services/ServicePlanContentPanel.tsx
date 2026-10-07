@@ -23,6 +23,7 @@ import {
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
+import { createSongAudioPreview } from "../../components/ContentPreview/contentPreview";
 import Input from "../../components/Input/Input";
 import RichTextEditor from "../../components/RichTextEditor/RichTextEditor";
 import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlowRichText";
@@ -434,6 +435,8 @@ const ServicePlanContentPanel = ({
             url: result.url,
             mimeType: churchResource.storage.contentType,
             fileName: churchResource.storage.fileName,
+            provider: "worshipsync" as const,
+            sourceKind: "file" as const,
           };
         }
       : churchId && songId && audio
@@ -448,15 +451,17 @@ const ServicePlanContentPanel = ({
               url: result.url,
               mimeType: audio.contentType,
               fileName: audio.fileName,
+              provider: "worshipsync" as const,
+              sourceKind: "file" as const,
             };
           }
         : undefined;
-    setPreviewResource(
-      normalizeServicePlanResourceForPreview(resource, {
-        churchResource,
-        ...(resolveSource ? { resolveSource } : {}),
-      }),
-    );
+    setPreviewResource(audio && songId && resolveSource
+      ? createSongAudioPreview(audio, songId, resolveSource)
+      : normalizeServicePlanResourceForPreview(resource, {
+          churchResource,
+          ...(resolveSource ? { resolveSource } : {}),
+        }));
   };
 
   const openChurchResourcePreview = (resource: ChurchResource) => {

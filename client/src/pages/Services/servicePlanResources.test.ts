@@ -13,6 +13,7 @@ import {
   isServicePlanChurchResourceReference,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
+import { createChurchResourcePreview } from "../../components/ContentPreview/contentPreview";
 import { getServicePlanElementContentResources } from "../../types/servicePlan";
 import { plainTextToRichText } from "../../types/richText";
 
@@ -150,6 +151,7 @@ describe("service-plan content resources", () => {
       createServicePlanChurchResourceReference({ resourceId: churchResource.id }),
       { churchResource },
     );
+    expect({ ...preview, id: churchResource.id }).toEqual(createChurchResourcePreview(churchResource));
     expect(preview).toMatchObject({
       title: "Shared guide",
       url: churchResource.external.url,

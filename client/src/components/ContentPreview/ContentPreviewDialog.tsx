@@ -1,5 +1,4 @@
 import Spinner from "@/components/Spinner/Spinner";
-import DocxPreview from "./DocxPreview";
 import {
   AudioLines,
   Copy,
@@ -12,12 +11,13 @@ import {
   Image,
   Video,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/DropdownMenu";
 import YouTubePlaylistPlayer from "../YouTubePlaylistPlayer/YouTubePlaylistPlayer";
+import DocxPreview from "./DocxPreview";
 import type { YouTubePlaylistEntry } from "../YouTubePlaylistPlayer/youtubePlaylist";
 import ServiceFlowRichText from "../ServiceFlowRichText/ServiceFlowRichText";
 import { isRichTextEmpty } from "../../types/richText";
@@ -88,7 +88,7 @@ const PreviewKindIcon = ({ kind }: { kind: ContentPreviewKind }) => {
       ? AudioLines
       : kind === "video" || kind === "youtube"
         ? Video
-        : kind === "document" || kind === "text"
+        : kind === "pdf" || kind === "docx" || kind === "text"
           ? FileText
           : FileQuestion;
   return <Icon className="size-5 shrink-0 text-cyan-300" aria-hidden />;
@@ -114,13 +114,12 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     () => resource ? resolveContentPreviewResource(resource, source) : null,
     [resource, source],
   );
-  const kind = resolution?.mediaType || "unsupported";
-  const renderer = resolution?.renderer || "unsupported";
+  const kind = resolution?.renderer || "unsupported";
   const sourceUrl = resolution?.resolvedUrl || "";
   const externalUrl = resolution?.originalUrl || "";
   const title = resolution?.title || "Content preview";
   const metadataLabel = resolution
-    ? `${resolution.providerLabel} • ${getContentPreviewMediaLabel(resolution.mediaType)}`
+    ? `${resolution.providerLabel} • ${getContentPreviewMediaLabel(resolution.renderer)}`
     : "";
   const youtubeVideoId = resolution?.mediaId || (resource ? getYouTubePreviewVideoId(resource) : null);
   const canOpenExternally = Boolean(getSafeHttpUrl(externalUrl));
@@ -244,17 +243,17 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   useEffect(() => {
     if (
       !sourceUrl ||
-      !resolution?.canPreview ||
+      !["web", "pdf", "docx", "youtube"].includes(kind) ||
       resolving ||
       resolveError ||
-      (renderStatus !== "loading" && renderStatus !== "slow")
+      renderStatus !== "loading"
     ) return;
     const timer = window.setTimeout(
       () => setRenderStatus(renderStatus === "loading" ? "slow" : "error"),
       renderStatus === "loading" ? EMBED_TIMEOUT_MS : PREVIEW_FAILURE_TIMEOUT_MS - EMBED_TIMEOUT_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [resolution?.canPreview, renderStatus, resolveError, resolving, sourceUrl]);
+  }, [kind, renderStatus, resolveError, resolving, sourceUrl]);
 
   const handleOpenExternal = async () => {
     if (!externalUrl || openingExternal) return;
@@ -297,18 +296,18 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     }
   };
 
-  const handleMediaError = () => setRenderStatus("error");
-  const handleMediaReady = () => setRenderStatus((current) => current === "error" ? current : "ready");
-  const waitingForSource = Boolean(resource?.url && resolving && !source && !resolveError);
+  const handleMediaError = useCallback(() => setRenderStatus("error"), []);
+  const handleMediaReady = useCallback(() => setRenderStatus((current) => current === "error" ? current : "ready"), []);
+  const waitingForSource = Boolean(resource && !source && !resolveError && (resource.url || resource.resolveSource));
   const showFallback = Boolean(resolveError) || (
-    !resolving && Boolean(resolution && !resolution.canPreview)
+    !resolving && Boolean(resolution && kind === "unsupported")
   ) || (!resolving && renderStatus === "error");
   const fallbackMessage = resolveError || (
-    resolution && !resolution.canPreview && resolution.reason
+    resolution?.reason
       ? resolution.reason
       : kind === "web"
-      ? "This page could not be loaded. Open it in a new tab to view it."
-      : kind === "document"
+      ? "This site doesn’t allow an embedded preview."
+      : kind === "pdf" || kind === "docx"
         ? "This document could not be loaded. Open or download the file to view it."
         : "This resource can’t be previewed here."
   );
@@ -344,7 +343,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         </div>
       );
     }
-    if (renderer === "youtube" && youtubeQueue.length) {
+    if (kind === "youtube" && youtubeQueue.length) {
       return (
         <div className="flex h-full w-full items-center justify-center bg-black p-2">
           <div className={`w-full max-w-5xl ${renderStatus === "ready" ? "" : "invisible"}`}>
@@ -359,13 +358,6 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       );
     }
     if (!sourceUrl) return <PreviewFallback kind={kind} message={fallbackMessage} providerLabel={metadataLabel} />;
-    if (renderer === "docx") {
-      return (
-        <div className={`h-full w-full ${renderStatus === "ready" ? "" : "invisible"}`}>
-          <DocxPreview key={`${resourceKey}:${sourceUrl}`} url={sourceUrl} onReady={handleMediaReady} onError={handleMediaError} />
-        </div>
-      );
-    }
     if (kind === "image") {
       return (
         <div className="flex h-full w-full items-center justify-center bg-black p-2">
@@ -387,7 +379,14 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         </div>
       );
     }
-    if (renderer === "pdf" || renderer === "web") {
+    if (kind === "docx") {
+      return (
+        <div className={`h-full w-full ${renderStatus === "ready" ? "" : "invisible"}`}>
+          <DocxPreview key={`${resourceKey}:${sourceUrl}`} url={sourceUrl} onReady={handleMediaReady} onError={handleMediaError} />
+        </div>
+      );
+    }
+    if (kind === "pdf" || kind === "web") {
       return (
         <div data-testid="document-preview-container" className="relative h-full min-h-0 w-full bg-white">
           <iframe
@@ -455,7 +454,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       <div data-testid="preview-stage" className={`relative flex min-h-56 w-full items-center justify-center overflow-hidden ${expanded ? "min-h-0 flex-1" : "h-[min(65vh,42rem)]"} ${kind === "text" ? "bg-gray-900" : "bg-gray-950"}`}>
         {renderPreviewContent()}
         {(resolving || waitingForSource || renderStatus === "loading" || renderStatus === "slow") && !showFallback ? (
-          <LoadingState slow={renderStatus === "slow"} label={resolving || waitingForSource ? "Preparing preview…" : kind === "web" ? "Loading embedded page…" : kind === "document" ? "Loading document…" : kind === "youtube" ? "Loading video player…" : `Loading ${kind}…`} />
+          <LoadingState slow={renderStatus === "slow"} label={resolving || waitingForSource ? "Preparing preview…" : kind === "web" ? "Loading embedded page…" : kind === "pdf" || kind === "docx" ? "Loading document…" : kind === "youtube" ? "Loading video player…" : `Loading ${kind}…`} />
         ) : null}
       </div>
     </Modal>

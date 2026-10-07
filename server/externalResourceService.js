@@ -1,22 +1,28 @@
 import crypto from "node:crypto";
-import dns from "node:dns/promises";
-import http from "node:http";
-import https from "node:https";
-import net from "node:net";
-import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import axios from "axios";
 import {
   EXTERNAL_RESOURCE_PROVIDER_LABELS,
   resolveExternalResourceProvider,
 } from "./externalResourceProviders.js";
+import {
+  ExternalResourceError,
+  contentRangeTotal,
+  createByteLimitTransform,
+  createExternalResourceNetwork,
+  defaultExternalResourceLookup,
+  drainResponse,
+  headerValue,
+  parseContentLength,
+  readResponsePrefix,
+  validateExternalResourceUrl,
+} from "./externalResourceNetwork.js";
+export { ExternalResourceError, validateExternalResourceUrl } from "./externalResourceNetwork.js";
 
 export const EXTERNAL_RESOURCE_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const EXTERNAL_RESOURCE_CACHE_TTL_MS = 10 * 60 * 1000;
 export const EXTERNAL_RESOURCE_MAX_BYTES = 500 * 1024 * 1024;
 
-const MAX_REDIRECTS = 5;
-const RESOLVE_TIMEOUT_MS = 8_000;
 const MAX_CACHE_ENTRIES = 500;
 const MAX_RATE_BUCKETS = 2_000;
 
@@ -72,15 +78,6 @@ const EXTENSION_MEDIA_TYPES = {
 
 const asString = (value) => (typeof value === "string" ? value : "");
 
-export class ExternalResourceError extends Error {
-  constructor(message, { statusCode = 400, code = "external_resource_error" } = {}) {
-    super(message);
-    this.name = "ExternalResourceError";
-    this.statusCode = statusCode;
-    this.code = code;
-  }
-}
-
 const normalizeMimeType = (value) => asString(value).split(";", 1)[0].trim().toLowerCase();
 
 const cleanFileName = (value) => {
@@ -121,216 +118,6 @@ const mediaTypeFor = (mimeType, filename, fallbackUrl) => {
   if (DOCUMENT_MIMES.has(mime)) return "document";
   const extension = (filename || filenameFromUrl(fallbackUrl)).toLowerCase().split(".").pop() || "";
   return EXTENSION_MEDIA_TYPES[extension] || "unknown";
-};
-
-const headerValue = (headers, name) => {
-  if (!headers) return "";
-  if (typeof headers.get === "function") return asString(headers.get(name));
-  const lowerName = name.toLowerCase();
-  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === lowerName);
-  return key ? asString(headers[key]) : "";
-};
-
-const isRedirect = (status) => [301, 302, 303, 307, 308].includes(Number(status));
-
-const ipv4Parts = (value) => {
-  const parts = value.split(".").map(Number);
-  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ? parts
-    : null;
-};
-
-const isBlockedIpv4 = (value) => {
-  const parts = ipv4Parts(value);
-  if (!parts) return false;
-  const [a, b, c] = parts;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 0 && c === 0) ||
-    (a === 192 && b === 0 && c === 2) ||
-    (a === 192 && b === 88 && c === 99) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && b >= 18 && b <= 19) ||
-    (a === 198 && b === 51 && c === 100) ||
-    (a === 203 && b === 0 && c === 113) ||
-    a >= 224
-  );
-};
-
-const ipv6ToBigInt = (value) => {
-  const normalized = value.toLowerCase().split("%", 1)[0];
-  const pieces = normalized.split("::");
-  if (pieces.length > 2) return null;
-  const expand = (part) => {
-    if (!part) return [];
-    const output = [];
-    for (const piece of part.split(":")) {
-      if (piece.includes(".")) {
-        const parts = ipv4Parts(piece);
-        if (!parts) return null;
-        output.push((parts[0] << 8) | parts[1], (parts[2] << 8) | parts[3]);
-      } else if (/^[0-9a-f]{1,4}$/i.test(piece)) {
-        output.push(Number.parseInt(piece, 16));
-      } else {
-        return null;
-      }
-    }
-    return output;
-  };
-  const left = expand(pieces[0]);
-  const right = expand(pieces[1] || "");
-  if (!left || !right || (pieces.length === 1 && left.length !== 8) || left.length + right.length > 8) return null;
-  const groups = [...left, ...Array(8 - left.length - right.length).fill(0), ...right];
-  return groups.reduce((result, group) => (result << 16n) | BigInt(group), 0n);
-};
-
-const isBlockedIp = (address) => {
-  if (net.isIP(address) === 4) return isBlockedIpv4(address);
-  if (net.isIP(address) !== 6) return true;
-  const value = ipv6ToBigInt(address);
-  if (value === null) return true;
-  const first = value >> 120n;
-  const firstSeven = value >> 121n;
-  const firstTen = value >> 118n;
-  const mappedIpv4 = value >> 32n;
-  return (
-    value === 0n ||
-    value === 1n ||
-    firstSeven === 0b1111110n || // fc00::/7
-    firstTen === 0b1111111010n || // fe80::/10
-    firstTen === 0b1111111011n || // fec0::/10 (deprecated site-local)
-    first === 0xffn || // multicast
-    (value >> 96n) === 0n ||
-    (value >> 96n) === 0x20010db8n || // documentation
-    (value >> 96n) === 0xffffn && isBlockedIpv4([
-      Number((mappedIpv4 >> 24n) & 255n),
-      Number((mappedIpv4 >> 16n) & 255n),
-      Number((mappedIpv4 >> 8n) & 255n),
-      Number(mappedIpv4 & 255n),
-    ].join("."))
-  );
-};
-
-const blockedHostname = (hostname) => {
-  const normalized = hostname.toLowerCase().replace(/\.$/, "");
-  return (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local") ||
-    normalized.endsWith(".internal") ||
-    normalized.endsWith(".lan") ||
-    normalized === "metadata.google.internal" ||
-    normalized === "metadata" ||
-    normalized === "instance-data.ec2.internal"
-  );
-};
-
-const defaultLookup = (hostname, options) => dns.lookup(hostname, options);
-
-const lookupRecords = async (lookup, hostname) => {
-  const result = await lookup(hostname, { all: true, verbatim: true });
-  const records = Array.isArray(result) ? result : [result];
-  const validatedRecords = records.map((record) => {
-    const address = typeof record === "string" ? record : record?.address;
-    const family = net.isIP(address);
-    return address ? { address, family } : null;
-  }).filter(Boolean);
-  if (!validatedRecords.length || validatedRecords.some(({ address }) => isBlockedIp(address))) {
-    throw new ExternalResourceError("That resource host is not publicly reachable.", {
-      statusCode: 400,
-      code: "blocked_host",
-    });
-  }
-  return validatedRecords;
-};
-
-export const validateExternalResourceUrl = async (value, { lookup = defaultLookup } = {}) => {
-  const trimmed = asString(value).trim();
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    throw new ExternalResourceError("Enter a valid resource URL.", { code: "invalid_url" });
-  }
-  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
-    throw new ExternalResourceError("Only public HTTP and HTTPS resources can be previewed.", { code: "unsafe_url" });
-  }
-  if (parsed.port && !["80", "443"].includes(parsed.port)) {
-    throw new ExternalResourceError("That resource uses an unsupported port.", { code: "unsafe_port" });
-  }
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-  if (blockedHostname(hostname)) {
-    throw new ExternalResourceError("That resource host is not allowed.", { code: "blocked_host" });
-  }
-  if (net.isIP(hostname) && isBlockedIp(hostname)) {
-    throw new ExternalResourceError("That resource host is not publicly reachable.", {
-      statusCode: 400,
-      code: "blocked_host",
-    });
-  }
-  await lookupRecords(lookup, hostname);
-  return parsed.toString();
-};
-
-const createLookupFamilyError = (hostname, family) => {
-  const error = new Error(`getaddrinfo ENOTFOUND ${hostname}${family ? ` (IPv${family})` : ""}`);
-  error.code = "ENOTFOUND";
-  error.hostname = hostname;
-  return error;
-};
-
-export const createSafeLookup = (lookup) => async (hostname, options = {}, callback) => {
-  try {
-    const records = await lookupRecords(lookup, hostname);
-    const matchingRecords = options.family
-      ? records.filter(({ family }) => family === options.family)
-      : records;
-    if (!matchingRecords.length) throw createLookupFamilyError(hostname, options.family);
-
-    if (options.all === true) {
-      callback(null, matchingRecords);
-      return;
-    }
-
-    const { address, family } = matchingRecords[0];
-    callback(null, address, family);
-  } catch (error) {
-    callback(error);
-  }
-};
-
-const drainResponse = (response) => {
-  const body = response?.data;
-  if (body && typeof body.destroy === "function") body.destroy();
-};
-
-const readResponsePrefix = async (response, maxBytes = 4096) => {
-  const body = response?.data;
-  if (typeof body === "string") return body.slice(0, maxBytes).toLowerCase();
-  if (Buffer.isBuffer(body)) return body.subarray(0, maxBytes).toString("utf8").toLowerCase();
-  if (!body?.[Symbol.asyncIterator]) return "";
-  const chunks = [];
-  let size = 0;
-  const iterator = body[Symbol.asyncIterator]();
-  try {
-    while (size < maxBytes) {
-      const { value, done } = await iterator.next();
-      if (done) break;
-      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-      const remaining = maxBytes - size;
-      chunks.push(chunk.subarray(0, remaining));
-      size += Math.min(chunk.length, remaining);
-    }
-  } finally {
-    if (size >= maxBytes) await iterator.return?.();
-    drainResponse(response);
-  }
-  return Buffer.concat(chunks, size).toString("utf8").toLowerCase();
 };
 
 const createCache = () => new Map();
@@ -397,38 +184,9 @@ const safeResponseContentType = (value) => {
     : "";
 };
 
-const parseContentLength = (value) => {
-  const parsed = Number.parseInt(asString(value), 10);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-};
-
-const contentRangeTotal = (value) => {
-  const match = asString(value).match(/^bytes\s+\d+-\d+\/(\d+|\*)$/i);
-  if (!match || match[1] === "*") return null;
-  return Number.parseInt(match[1], 10);
-};
-
 const isHtmlResponse = (response) => {
   const mime = normalizeMimeType(headerValue(response?.headers, "content-type"));
   return mime === "text/html" || mime === "application/xhtml+xml";
-};
-
-const shouldProbeByGet = (response, { provider, candidateUrl, finalUrl }) => {
-  const status = Number(response?.status || 0);
-  if (status === 405 || status === 501) return true;
-  if (provider === "sharepoint" && [401, 403].includes(status)) return true;
-  if (status < 200 || status >= 300) return false;
-  if (!headerValue(response?.headers, "content-type")) return true;
-  const filename = filenameFromContentDisposition(headerValue(response?.headers, "content-disposition"));
-  const expectedType = mediaTypeFor(
-    headerValue(response?.headers, "content-type"),
-    filename,
-    finalUrl || candidateUrl,
-  );
-  const expectedFile = expectedType !== "unknown" && expectedType !== "web";
-  const hostedFile = ["dropbox", "google-drive", "onedrive", "box", "sharepoint"].includes(provider);
-  return (provider === "sharepoint" && (isHtmlResponse(response) || !expectedFile)) ||
-    (isHtmlResponse(response) && (hostedFile || expectedFile));
 };
 
 const sharePointHtmlReason = ({ response, finalUrl, bodyText = "" }) => {
@@ -454,19 +212,13 @@ const sharePointHtmlReason = ({ response, finalUrl, bodyText = "" }) => {
 };
 
 const isSuccessful = (response) => Number(response?.status || 0) >= 200 && Number(response?.status || 0) < 300;
-
-const documentPreviewTypeFor = (mimeType, fileName, url) => {
-  const mime = normalizeMimeType(mimeType);
-  const byMime = {
-    "application/pdf": "document", "application/x-pdf": "document",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "text/plain": "text", "text/markdown": "text",
-  };
-  if (byMime[mime]) return byMime[mime];
-  // Known unsupported MIME metadata must not be overridden by a filename.
-  if (DOCUMENT_MIMES.has(mime)) return "unsupported";
-  const extension = (fileName || filenameFromUrl(url)).toLowerCase().split(".").pop();
-  return { pdf: "document", docx: "docx", txt: "text", md: "text" }[extension] || "unsupported";
+const shouldProbeByGet = (response, retrievalStrategy) => {
+  const status = Number(response?.status || 0);
+  if (status === 405 || status === 501) return true;
+  if (retrievalStrategy === "head-then-get" && [401, 403].includes(status)) return true;
+  if (status < 200 || status >= 300) return false;
+  return !headerValue(response?.headers, "content-type") ||
+    (retrievalStrategy === "head-then-get" && isHtmlResponse(response));
 };
 
 const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUrl, mimeType, fileName, title, mediaType, reason }) => {
@@ -474,34 +226,40 @@ const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUr
     ? "youtube"
     : mediaType === "web"
       ? "web"
-      : mediaType === "document"
-        ? documentPreviewTypeFor(mimeType, fileName, finalUrl || candidateUrl)
-      : ["image", "audio", "video"].includes(mediaType)
+      : ["image", "audio", "video", "document"].includes(mediaType)
         ? mediaType
         : "unsupported";
   const canPreview = previewType !== "unsupported";
-  const requiresProxy = canPreview && !["youtube", "web"].includes(previewType);
+  const sourceKind = provider === "youtube"
+    ? "youtube"
+    : mediaType === "web"
+      ? "web"
+      : mediaType !== "unknown" || !reason
+        ? "file"
+        : "unavailable";
   return {
     originalUrl,
     externalUrl: originalUrl,
     provider,
+    sourceKind,
     title: title || fileName || EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "Content preview",
     ...(fileName ? { filename: fileName } : {}),
     ...(mimeType ? { mimeType } : {}),
     mediaType,
     previewType,
-    previewUrl: canPreview && !requiresProxy ? (finalUrl || candidateUrl) : null,
-    requiresProxy,
+    previewUrl: sourceKind === "web" || sourceKind === "youtube" ? (finalUrl || candidateUrl) : null,
+    // Deprecated API compatibility fields. Runtime decisions use sourceKind.
+    requiresProxy: canPreview && sourceKind === "file",
     canPreview,
     ...(mediaId ? { mediaId } : {}),
-    ...((reason || !canPreview) ? { reason: reason || "This file format isn’t supported for preview. Open or download the file to view it." } : {}),
+    ...(reason ? { reason } : {}),
     _upstreamUrl: finalUrl || candidateUrl,
   };
 };
 
 export const createExternalResourceService = ({
   httpClient = axios,
-  lookup = defaultLookup,
+  lookup = defaultExternalResourceLookup,
   tokenSecret = secretForEnvironment(),
   now = () => Date.now(),
   cacheTtlMs = EXTERNAL_RESOURCE_CACHE_TTL_MS,
@@ -513,149 +271,80 @@ export const createExternalResourceService = ({
   const cache = createCache();
   const pending = new Map();
   const checkRate = rateLimiter();
-  const safeLookup = createSafeLookup(lookup);
-  const httpAgent = new http.Agent({ lookup: safeLookup });
-  const httpsAgent = new https.Agent({ lookup: safeLookup });
+  const { requestFollowingRedirects } = createExternalResourceNetwork({ httpClient, lookup });
 
-  const request = async ({ url, method, headers = {}, responseType }) => {
-    const safeUrl = await validateExternalResourceUrl(url, { lookup });
-    return httpClient.request({
-      url: safeUrl,
-      method,
-      headers,
-      timeout: RESOLVE_TIMEOUT_MS,
-      maxRedirects: 0,
-      responseType,
-      decompress: false,
-      proxy: false,
-      validateStatus: () => true,
-      httpAgent,
-      httpsAgent,
-    });
-  };
-
-  const requestFollowingRedirects = async ({ url, method, headers, responseType }) => {
-    let currentUrl = url;
-    for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-      const response = await request({ url: currentUrl, method, headers, responseType });
-      if (!isRedirect(response.status)) return { response, finalUrl: currentUrl };
-      const location = headerValue(response.headers, "location");
-      drainResponse(response);
-      if (!location) throw new ExternalResourceError("The resource returned an invalid redirect.", { statusCode: 502, code: "invalid_redirect" });
-      if (redirectCount === MAX_REDIRECTS) throw new ExternalResourceError("The resource redirected too many times.", { statusCode: 502, code: "redirect_limit" });
-      currentUrl = new URL(location, currentUrl).toString();
-    }
-    throw new ExternalResourceError("The resource could not be reached.", { statusCode: 502, code: "redirect_limit" });
-  };
-
-  const probe = async ({ originalUrl, provider, mediaId, candidateUrl, probeWithGet = false, nativeGoogleDocument = false }) => {
-    let stage = probeWithGet ? "direct_get" : "head";
-    try {
-      let result;
-      const getOptions = {
+  const probe = async ({ originalUrl, provider, mediaId, candidateUrl, retrievalStrategy, expectedMimeType, failureReason }) => {
+    const requestHeaders = { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" };
+    let result = retrievalStrategy === "get"
+      ? await requestFollowingRedirects({ url: candidateUrl, method: "GET", headers: { ...requestHeaders, Range: "bytes=0-0" }, responseType: "stream" })
+      : await requestFollowingRedirects({ url: candidateUrl, method: "HEAD", headers: requestHeaders });
+    if (retrievalStrategy !== "get" && shouldProbeByGet(result.response, retrievalStrategy)) {
+      drainResponse(result.response);
+      result = await requestFollowingRedirects({
         url: candidateUrl,
         method: "GET",
-        headers: {
-          Accept: "*/*",
-          Range: "bytes=0-0",
-          "User-Agent": "WorshipSync-resource-resolver/1",
-        },
+        headers: { ...requestHeaders, Range: "bytes=0-0" },
         responseType: "stream",
-      };
-      if (probeWithGet) {
-        result = await requestFollowingRedirects(getOptions);
-      } else {
-        result = await requestFollowingRedirects({
-          url: candidateUrl,
-          method: "HEAD",
-          headers: { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" },
-        });
-        if (shouldProbeByGet(result.response, { provider, candidateUrl, finalUrl: result.finalUrl })) {
-          drainResponse(result.response);
-          stage = "fallback_get";
-          result = await requestFollowingRedirects(getOptions);
-        }
-      }
-
-      const response = result.response;
-      const mimeType = normalizeMimeType(headerValue(response.headers, "content-type")) || undefined;
-      const fileName = filenameFromContentDisposition(headerValue(response.headers, "content-disposition")) || filenameFromUrl(result.finalUrl) || undefined;
-      const mediaType = mediaTypeFor(mimeType, fileName, result.finalUrl);
-      const declaredLength = parseContentLength(headerValue(response.headers, "content-length"));
-      const declaredTotal = contentRangeTotal(headerValue(response.headers, "content-range"));
-      const htmlPrefix = provider === "sharepoint" && isHtmlResponse(response)
-        ? await readResponsePrefix(response)
-        : "";
-      drainResponse(response);
-      if (nativeGoogleDocument && (!isSuccessful(response) || mimeType !== "application/pdf")) {
-        return buildDescriptor({
-          originalUrl,
-          provider,
-          mediaId,
-          candidateUrl,
-          finalUrl: result.finalUrl,
-          mimeType,
-          fileName,
-          mediaType: "unknown",
-          reason: "This Google document could not be exported for preview.",
-        });
-      }
-      if (!isSuccessful(response)) {
-        const reason = provider === "sharepoint"
-          ? sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix })
-          : undefined;
-        return buildDescriptor({
-          originalUrl,
-          provider,
-          mediaId,
-          candidateUrl,
-          finalUrl: result.finalUrl,
-          mimeType,
-          fileName,
-          mediaType: "unknown",
-          reason: reason || `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
-        });
-      }
-      if ((declaredLength !== null && declaredLength > maxBytes) || (declaredTotal !== null && declaredTotal > maxBytes)) {
-        return buildDescriptor({
-          originalUrl,
-          provider,
-          mediaId,
-          candidateUrl,
-          finalUrl: result.finalUrl,
-          mimeType,
-          fileName,
-          mediaType: "unknown",
-          reason: "That resource is too large to preview.",
-        });
-      }
-      if (provider === "sharepoint" && (mediaType === "web" || mediaType === "unknown")) {
-        return buildDescriptor({
-          originalUrl,
-          provider,
-          mediaId,
-          candidateUrl,
-          finalUrl: result.finalUrl,
-          mimeType,
-          fileName,
-          mediaType: "unknown",
-          reason: sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix }),
-        });
-      }
-      return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName, mediaType });
-    } catch (error) {
-      const safeCode = typeof error?.code === "string" && /^[A-Z0-9_-]{1,64}$/i.test(error.code) ? error.code : undefined;
-      const statusValue = error?.statusCode || error?.response?.status;
-      const safeStatus = Number.isInteger(Number(statusValue)) ? Number(statusValue) : undefined;
-      console.warn("[external-resource] Provider probe failed", {
-        provider,
-        stage,
-        errorType: typeof error?.name === "string" ? error.name.slice(0, 64) : "Error",
-        ...(safeCode ? { code: safeCode } : {}),
-        ...(safeStatus ? { status: safeStatus } : {}),
       });
-      throw error;
     }
+
+    const response = result.response;
+    const mimeType = normalizeMimeType(headerValue(response.headers, "content-type")) || undefined;
+    const fileName = filenameFromContentDisposition(headerValue(response.headers, "content-disposition")) || filenameFromUrl(result.finalUrl) || undefined;
+    const mediaType = mediaTypeFor(mimeType, fileName, result.finalUrl);
+    const declaredLength = parseContentLength(headerValue(response.headers, "content-length"));
+    const declaredTotal = contentRangeTotal(headerValue(response.headers, "content-range"));
+    const htmlPrefix = provider === "sharepoint" && isHtmlResponse(response)
+      ? await readResponsePrefix(response)
+      : "";
+    drainResponse(response);
+    if (expectedMimeType && mimeType !== expectedMimeType) {
+      return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName,
+        mediaType: "unknown", reason: failureReason });
+    }
+    if (!isSuccessful(response)) {
+      const reason = provider === "sharepoint"
+        ? sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix })
+        : undefined;
+      return buildDescriptor({
+        originalUrl,
+        provider,
+        mediaId,
+        candidateUrl,
+        finalUrl: result.finalUrl,
+        mimeType,
+        fileName,
+        mediaType: "unknown",
+        reason: reason || failureReason || `The ${EXTERNAL_RESOURCE_PROVIDER_LABELS[provider] || "resource"} link could not be read.`,
+      });
+    }
+    if ((declaredLength !== null && declaredLength > maxBytes) || (declaredTotal !== null && declaredTotal > maxBytes)) {
+      return buildDescriptor({
+        originalUrl,
+        provider,
+        mediaId,
+        candidateUrl,
+        finalUrl: result.finalUrl,
+        mimeType,
+        fileName,
+        mediaType: "unknown",
+        reason: "That resource is too large to preview.",
+      });
+    }
+    if (provider === "sharepoint" && (mediaType === "web" || mediaType === "unknown")) {
+      return buildDescriptor({
+        originalUrl,
+        provider,
+        mediaId,
+        candidateUrl,
+        finalUrl: result.finalUrl,
+        mimeType,
+        fileName,
+        mediaType: "unknown",
+        reason: sharePointHtmlReason({ response, finalUrl: result.finalUrl, bodyText: htmlPrefix }),
+      });
+    }
+    return buildDescriptor({ originalUrl, provider, mediaId, candidateUrl, finalUrl: result.finalUrl, mimeType, fileName, mediaType });
   };
 
   const resolveBase = async (originalUrl) => {
@@ -675,15 +364,6 @@ export const createExternalResourceService = ({
       return await probe({ originalUrl, ...providerInfo });
     } catch (error) {
       if (error instanceof ExternalResourceError) throw error;
-      if (providerInfo.nativeGoogleDocument) {
-        return buildDescriptor({
-          originalUrl,
-          provider: providerInfo.provider,
-          candidateUrl: providerInfo.candidateUrl,
-          mediaType: "unknown",
-          reason: "This Google document could not be exported for preview.",
-        });
-      }
       return buildDescriptor({
         originalUrl,
         provider: providerInfo.provider,
@@ -716,11 +396,12 @@ export const createExternalResourceService = ({
   const decorate = (base) => {
     const descriptor = { ...base };
     delete descriptor._upstreamUrl;
-    if (base.requiresProxy && base.canPreview) {
+    if (base.sourceKind === "file") {
       const token = createExternalResourceProxyToken(tokenSecret, {
         t: base._upstreamUrl,
         n: crypto.randomUUID(),
         p: base.provider,
+        sk: base.sourceKind,
         mt: base.mediaType,
         pt: base.previewType,
         m: base.mimeType || "",
@@ -748,7 +429,7 @@ export const createExternalResourceService = ({
     const verified = verifyExternalResourceProxyToken(tokenSecret, token, now());
     if (!verified.valid) return res.status(401).json({ error: "This preview link has expired." });
     const payload = verified.payload;
-    if (!["image", "audio", "video", "document", "docx", "text"].includes(payload.pt)) {
+    if (payload.sk !== "file" && !(payload.sk === undefined && ["image", "audio", "video", "document", "docx", "text"].includes(payload.pt))) {
       return res.status(403).json({ error: "HTML resources are not proxied." });
     }
     const targetUrl = await validateExternalResourceUrl(payload.t, { lookup });
@@ -804,17 +485,7 @@ export const createExternalResourceService = ({
       return res.end();
     }
     if (!response.data || typeof response.data.pipe !== "function") return res.end();
-    let streamedBytes = 0;
-    const limiter = new Transform({
-      transform(chunk, encoding, callback) {
-        streamedBytes += chunk.length;
-        if (streamedBytes > maxBytes) {
-          callback(new ExternalResourceError("That resource is too large to preview.", { statusCode: 413, code: "resource_too_large" }));
-          return;
-        }
-        callback(null, chunk, encoding);
-      },
-    });
+    const limiter = createByteLimitTransform(maxBytes);
     try {
       await pipeline(response.data, limiter, res);
     } catch (error) {

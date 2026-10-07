@@ -47,6 +47,8 @@ test("normalizes supported provider share-link variants", () => {
     const resolved = resolveExternalResourceProvider(originalUrl);
     assert.equal(resolved.provider, provider);
     assert.equal(resolved.candidateUrl, candidateUrl);
+    assert.equal(resolved.retrievalStrategy,
+      provider === "youtube" ? "none" : originalUrl.includes("docs.google.com/") ? "get" : "head-then-get");
     if (mediaId) assert.equal(resolved.mediaId, mediaId);
   }
 });
@@ -56,21 +58,22 @@ test("leaves unknown HTTPS resources for direct metadata detection", () => {
   assert.deepEqual(resolveExternalResourceProvider(originalUrl), {
     provider: "direct",
     candidateUrl: originalUrl,
+    retrievalStrategy: "metadata-probe",
   });
 });
 
-test("marks native Google Workspace PDF exports for direct GET probing", () => {
-  const cases = [
-    ["https://docs.google.com/document/d/doc-id/edit", "https://docs.google.com/document/d/doc-id/export?format=pdf"],
-    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "https://docs.google.com/spreadsheets/d/sheet-id/export?format=pdf"],
-    ["https://docs.google.com/presentation/d/slides-id/edit", "https://docs.google.com/presentation/d/slides-id/export/pdf"],
-  ];
-  for (const [url, candidateUrl] of cases) {
+test("selects direct PDF GET strategies for native Google documents", () => {
+  for (const [url, expectedPath] of [
+    ["https://docs.google.com/document/d/doc-id/edit", "/document/d/doc-id/export?format=pdf"],
+    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "/spreadsheets/d/sheet-id/export?format=pdf"],
+    ["https://docs.google.com/presentation/d/slide-id/edit", "/presentation/d/slide-id/export/pdf"],
+  ]) {
     assert.deepEqual(resolveExternalResourceProvider(url), {
       provider: "google-drive",
-      candidateUrl,
-      probeWithGet: true,
-      nativeGoogleDocument: true,
+      candidateUrl: `https://docs.google.com${expectedPath}`,
+      retrievalStrategy: "get",
+      expectedMimeType: "application/pdf",
+      failureReason: "This Google document could not be exported for preview.",
     });
   }
 });

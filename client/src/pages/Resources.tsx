@@ -22,6 +22,7 @@ import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
 import ConfirmDialog from "../components/Modal/ConfirmDialog";
 import ContentPreviewDialog from "../components/ContentPreview/ContentPreviewDialog";
+import { createChurchResourcePreview, createSongAudioPreview } from "../components/ContentPreview/contentPreview";
 import { ExternalResourceDialog } from "./ExternalResourceDialog";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -225,32 +226,17 @@ const ResourcePreview = ({
   return (
     <>
       <ContentPreviewDialog
-        resource={entry.source === "song-audio" ? {
-          id: entry.audio.id,
-          title: entry.audio.fileName,
-          mimeType: entry.audio.contentType,
-          fileName: entry.audio.fileName,
-          resolveSource: async () => {
+        resource={entry.source === "song-audio"
+          ? createSongAudioPreview(entry.audio, entry.songId, async () => {
             const result = await getSongAudioUrl({ churchId, songId: entry.songId, audio: entry.audio, disposition: "inline" });
-            return { url: result.url, mimeType: entry.audio.contentType, fileName: entry.audio.fileName, provider: "worshipsync" };
-          },
-        } : resource ? {
-          id: resource.id,
-          title: resource.name,
-          ...(resource.sourceType === "external" ? {
-            url: resource.external.url,
-            provider: resource.external.provider,
-            mimeType: resource.external.mimeType,
-            fileName: resource.external.fileName,
-          } : {
-            mimeType: resource.storage.contentType,
-            fileName: resource.storage.fileName,
-            resolveSource: async () => {
-              const result = await getChurchResourceUrl({ churchId, resourceId: resource.id, disposition: "inline" });
-              return { url: result.url, mimeType: resource.storage.contentType, fileName: resource.storage.fileName, provider: "worshipsync" };
-            },
-          }),
-        } : null}
+            return { url: result.url, mimeType: entry.audio.contentType, fileName: entry.audio.fileName, provider: "worshipsync", sourceKind: "file" };
+          })
+          : resource
+            ? createChurchResourcePreview(resource, resource.sourceType === "external" ? undefined : async () => {
+                const result = await getChurchResourceUrl({ churchId, resourceId: resource.id, disposition: "inline" });
+                return { url: result.url, mimeType: resource.storage.contentType, fileName: resource.storage.fileName, provider: "worshipsync", sourceKind: "file" };
+              })
+            : null}
         onClose={onClose}
         dialogLabel={resourceEntryName(entry)}
         metadata={`${typeLabel(entry)} · ${formatEntrySize(entry)} · Updated ${formatDate(entryUpdatedAt(entry))}`}

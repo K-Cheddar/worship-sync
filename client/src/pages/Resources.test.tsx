@@ -263,6 +263,7 @@ describe("Resources page", () => {
       originalUrl: externalResource.external.url,
       externalUrl: externalResource.external.url,
       provider: "google-drive",
+      sourceKind: "file",
       title: "Team guide",
       filename: "team-guide.pdf",
       mimeType: "application/pdf",
@@ -436,6 +437,9 @@ describe("Resources page", () => {
     [externalResource("external-pdf-label", "Guide PDF", "document", "https://example.test/guide.pdf", "document", { mimeType: "application/pdf", fileName: "guide.pdf" }), "PDF"],
     [externalResource("external-docx-label", "Guide DOCX", "document", "https://example.test/guide.docx", "document", { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName: "guide.docx" }), "DOCX"],
   ] as const)("labels %s as %s", async (external, expectedLabel) => {
+    const fetchMock = expectedLabel === "DOCX"
+      ? jest.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false } as Response)
+      : undefined;
     mockResources = [external];
     mockListChurchResources.mockResolvedValue({ success: true, resources: mockResources });
     const user = userEvent.setup();
@@ -443,6 +447,7 @@ describe("Resources page", () => {
 
     await user.click(await screen.findByRole("button", { name: new RegExp(`Preview ${external.name}`) }));
     expect(await screen.findByText(new RegExp(`${expectedLabel} · External · Updated`))).toBeInTheDocument();
+    fetchMock?.mockRestore();
   });
 
   it("sorts resources by the selected column and toggles direction", async () => {
@@ -537,7 +542,7 @@ describe("Resources page", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "More preview actions" }));
     expect(await screen.findByRole("menuitem", { name: "Download" })).toBeInTheDocument();
-    expect(screen.getByText("WorshipSync • Document")).toBeVisible();
+    expect(screen.getByText("WorshipSync • PDF")).toBeVisible();
     expect(screen.getByText(/PDF · 100 B · Updated/)).toBeVisible();
     expect(await screen.findByTitle("Guidelines.pdf")).toHaveAttribute(
       "src",
