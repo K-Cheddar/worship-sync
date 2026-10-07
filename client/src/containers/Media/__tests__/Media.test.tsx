@@ -12,7 +12,9 @@ import {
 import userEvent from "@testing-library/user-event";
 import Media, { getMediaPanelClassName } from "../Media";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
+import { GlobalInfoContext } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
+import { claimMediaUpload } from "../../../utils/mediaOperationClaims";
 
 const mockDispatch = jest.fn();
 const mockDeleteMediaItemsFromPouch = jest.fn();
@@ -485,7 +487,9 @@ const renderMedia = async ({
         } as any
       }
     >
-      <Media />
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+        <Media />
+      </GlobalInfoContext.Provider>
     </ControllerInfoContext.Provider>,
   );
 
@@ -1157,6 +1161,163 @@ describe("Media", () => {
     expect(mockGetTransfer(transferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
     await act(async () => { await mockTransferActionHandlers.get(`${transferId}:dismiss`)?.(); });
     expect(mockRemoveTransfer).toHaveBeenCalledWith(transferId);
+  });
+
+  it("publishes deletion success and keeps Dismiss after Media unmounts during provider cleanup", async () => {
+    mockState = makeBaseState();
+    mockState.media.list[0] = { ...mockState.media.list[0], publicId: "sunrise-image" };
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
+    let resolveProviderCleanup!: () => void;
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(new Promise<void>((resolve) => { resolveProviderCleanup = resolve; }));
+    const { view } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "sunrise-image"));
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    view.unmount();
+    const dispatchCountAfterUnmount = mockDispatch.mock.calls.length;
+
+    await act(async () => { resolveProviderCleanup(); });
+
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "complete",
+      phase: expect.objectContaining({ label: "Deletion complete" }),
+      actions: [{ key: "dismiss", label: "Dismiss" }],
+    }));
+    expect(mockDispatch).toHaveBeenCalledTimes(dispatchCountAfterUnmount);
+    expect(mockTransferActionHandlers.has(`${activityId}:dismiss`)).toBe(true);
+    await act(async () => { await mockTransferActionHandlers.get(`${activityId}:dismiss`)?.(); });
+    expect(mockRemoveTransfer).toHaveBeenCalledWith(activityId);
+  });
+
+  it("makes late provider cleanup failure retryable after Media unmounts", async () => {
+    mockState = makeBaseState();
+    mockState.media.list[0] = { ...mockState.media.list[0], publicId: "sunrise-image" };
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
+    let rejectProviderCleanup!: (error: Error) => void;
+    mockDeleteCloudinaryMediaAsset
+      .mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectProviderCleanup = reject; }))
+      .mockResolvedValueOnce(undefined);
+    const { view } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "sunrise-image"));
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    view.unmount();
+    const dispatchCountAfterUnmount = mockDispatch.mock.calls.length;
+
+    await act(async () => { rejectProviderCleanup(new Error("provider unavailable")); });
+    await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "partial",
+      phase: expect.objectContaining({ label: "Media removed; cloud cleanup needs attention" }),
+      actions: expect.arrayContaining([
+        { key: "retry-cleanup", label: "Retry cleanup" },
+        { key: "dismiss", label: "Dismiss" },
+      ]),
+    })));
+    expect(mockTransferActionHandlers.has(`${activityId}:retry-delete`)).toBe(false);
+    expect(mockTransferActionHandlers.has(`${activityId}:retry-cleanup`)).toBe(true);
+
+    await act(async () => { await mockTransferActionHandlers.get(`${activityId}:retry-cleanup`)?.(); });
+
+    expect(mockDeleteCloudinaryMediaAsset).toHaveBeenLastCalledWith("church-1", "sunrise-image");
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "complete",
+      actions: [{ key: "dismiss", label: "Dismiss" }],
+    }));
+    expect(mockDispatch).toHaveBeenCalledTimes(dispatchCountAfterUnmount);
+    expect(mockNavigate).not.toHaveBeenCalled();
+    await act(async () => { await mockTransferActionHandlers.get(`${activityId}:dismiss`)?.(); });
+    expect(mockRemoveTransfer).toHaveBeenCalledWith(activityId);
+  });
+
+  it("exposes late folder provider cleanup failure through detached Activity retry", async () => {
+    const mediaRow = {
+      ...makeBaseState().media.list[0],
+      id: "folder-cloud-media",
+      name: "Folder image",
+      folderId: "folder-1",
+      source: "cloudinary" as const,
+      publicId: "folder-cloud-asset",
+    };
+    mockState = makeBaseState({
+      media: { list: [mediaRow], folders: [{ id: "folder-1", name: "Sermon slides", parentId: null }] },
+    });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    let rejectProviderCleanup!: (error: Error) => void;
+    mockDeleteCloudinaryMediaAsset
+      .mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectProviderCleanup = reject; }))
+      .mockResolvedValueOnce(undefined);
+    const { view } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "folder-cloud-asset"));
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    view.unmount();
+    const dispatchCountAfterUnmount = mockDispatch.mock.calls.length;
+
+    await act(async () => { rejectProviderCleanup(new Error("provider unavailable")); });
+    await waitFor(() => expect(mockGetTransfer(activityId)?.actions).toEqual(expect.arrayContaining([
+      { key: "retry-cleanup", label: "Retry cleanup" },
+      { key: "dismiss", label: "Dismiss" },
+    ])));
+    await act(async () => { await mockTransferActionHandlers.get(`${activityId}:retry-cleanup`)?.(); });
+
+    expect(mockDeleteCloudinaryMediaAsset).toHaveBeenLastCalledWith("church-1", "folder-cloud-asset");
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "complete",
+      actions: [{ key: "dismiss", label: "Dismiss" }],
+    }));
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalled();
+    expect(mockDispatch).toHaveBeenCalledTimes(dispatchCountAfterUnmount);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("registers detached cleanup retry when upload cleanup failure settles after unmount", async () => {
+    mockState = makeBaseState();
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
+    let rejectCancel!: (error: Error) => void;
+    const retryUploadCleanup = jest.fn().mockResolvedValue(undefined);
+    const uploadClaim = claimMediaUpload("media-1")!;
+    uploadClaim.setCancel(() => new Promise<void>((_resolve, reject) => { rejectCancel = reject; }));
+    uploadClaim.failCleanup(new Error("upload cleanup failed"), retryUploadCleanup);
+    const { view } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+    await waitFor(() => expect(rejectCancel).toBeDefined());
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    view.unmount();
+    await act(async () => {
+      rejectCancel(new Error("cancel cleanup unavailable"));
+      uploadClaim.release();
+    });
+    await waitFor(() => expect(mockGetTransfer(activityId)?.actions).toEqual(expect.arrayContaining([
+      { key: "retry-cleanup", label: "Retry cleanup" },
+      { key: "dismiss", label: "Dismiss" },
+    ])));
+
+    await act(async () => { await mockTransferActionHandlers.get(`${activityId}:retry-cleanup`)?.(); });
+
+    expect(retryUploadCleanup).toHaveBeenCalledTimes(1);
+    expect(mockDeleteMediaItemAtRevisionFromPouch).not.toHaveBeenCalled();
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "failed",
+      phase: expect.objectContaining({ label: "Upload cleanup complete; deletion was not resumed" }),
+      actions: [{ key: "dismiss", label: "Dismiss" }],
+    }));
   });
 
   it("does not tombstone or clean up a provider when reference cleanup fails", async () => {

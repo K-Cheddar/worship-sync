@@ -67,6 +67,8 @@ For every globally visible operation whose local owner can unmount, write a reti
 
 A persistent Activity entry must not become permanently actionless unless it auto-removes. If cleanup can fail after local-owner retirement, its recovery action must live with the longer-lived owner. Dismiss is normally safe to retain in the provider because it does not need route-local business state. Do not retain route-local callbacks merely because Activity remains visible. Require tests for unmount while active followed by late success, late cleanup failure, unmount after terminal completion/failure, and invoking retained actions after unmount.
 
+Retirement must account for recovery needs discovered after the local owner has already retired. Do not determine the detached action set only from failure or cleanup state known at unmount time. Canonical transition: start durable operation -> unmount before provider cleanup begins -> durable app mutation succeeds -> provider cleanup fails afterward -> global Activity gains Retry cleanup -> invoke Retry cleanup after the route is gone.
+
 ### Authorization and data projections
 
 For handlers or selectors that return permission-dependent data, trace `auth guard -> permission object -> source document -> derived projections -> nested loaders/lookups -> serialized response`. Ask:
