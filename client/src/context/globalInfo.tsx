@@ -500,7 +500,10 @@ type globalFireBaseInfoType = {
   writeCapabilities: {
     presentation: boolean;
     timers: boolean;
-    serviceTimes: boolean;
+    /** Controller/operator writes for service timer and display runtime state. */
+    serviceRuntime: boolean;
+    /** Services-management writes for service definitions and planning data. */
+    serviceManagement: boolean;
   };
   user: string;
   database: string;
@@ -510,7 +513,12 @@ type globalFireBaseInfoType = {
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   isConnected: false,
-  writeCapabilities: { presentation: false, timers: false, serviceTimes: false },
+  writeCapabilities: {
+    presentation: false,
+    timers: false,
+    serviceRuntime: false,
+    serviceManagement: false,
+  },
   user: "Demo",
   database: "demo",
   churchId: "",
@@ -918,7 +926,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "";
       globalFireDbInfo.database = "";
       globalFireDbInfo.churchId = "";
-      globalFireDbInfo.writeCapabilities = { presentation: false, timers: false, serviceTimes: false };
+      globalFireDbInfo.writeCapabilities = {
+        presentation: false,
+        timers: false,
+        serviceRuntime: false,
+        serviceManagement: false,
+      };
       return;
     }
 
@@ -987,12 +1000,13 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       bootstrap.sessionKind === "human" || bootstrap.sessionKind === "workstation";
     const canWriteControllerData =
       hasSharedWriteSession &&
-      normalizedControllerAccess !== "view" &&
-      normalizedControllerAccess !== "none";
+      (normalizedControllerAccess === "music" ||
+        normalizedControllerAccess === "full");
     globalFireDbInfo.writeCapabilities = {
       presentation: canWriteControllerData,
       timers: canWriteControllerData,
-      serviceTimes:
+      serviceRuntime: canWriteControllerData,
+      serviceManagement:
         hasSharedWriteSession &&
         (bootstrap.role === "admin" ||
           bootstrap.permissions?.teams === "edit" ||
@@ -1514,7 +1528,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "Demo";
       globalFireDbInfo.database = "demo";
       globalFireDbInfo.churchId = "";
-      globalFireDbInfo.writeCapabilities = { presentation: false, timers: false, serviceTimes: false };
+      globalFireDbInfo.writeCapabilities = {
+        presentation: false,
+        timers: false,
+        serviceRuntime: false,
+        serviceManagement: false,
+      };
       dispatch({ type: "RESET" });
       navigate(nextPath, { replace: true });
     },

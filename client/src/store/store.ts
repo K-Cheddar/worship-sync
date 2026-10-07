@@ -2547,7 +2547,9 @@ listenerMiddleware.startListening({
     const localServices = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes.list;
     const { db: firebaseDb, churchId, writeCapabilities } = globalFireDbInfo;
-    if (!writeCapabilities.serviceTimes) return;
+    // The legacy RTDB services collection stores both service definitions and
+    // Controller-owned timer/runtime state, so either authority may write it.
+    if (!writeCapabilities.serviceRuntime && !writeCapabilities.serviceManagement) return;
     if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       notifyPresentationSyncError(

@@ -668,7 +668,8 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(globalFireDbInfo.writeCapabilities).toEqual({
       presentation: false,
       timers: false,
-      serviceTimes: true,
+      serviceRuntime: false,
+      serviceManagement: true,
     });
   });
 
@@ -685,12 +686,64 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(globalFireDbInfo.writeCapabilities).toEqual({
       presentation: false,
       timers: false,
-      serviceTimes: false,
+      serviceRuntime: false,
+      serviceManagement: false,
     });
     expect(
       onValueCallbacks.has("churches/church-1/data/currentServiceWorkspace"),
     ).toBe(false);
   });
+
+  it.each(["music", "full"] as const)(
+    "allows Controller %s runtime writes without Services management access",
+    async (controllerAccess) => {
+      (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+        ...loggedInHumanBootstrap,
+        role: "member",
+        appAccess: controllerAccess,
+        controllerAccess,
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+      });
+
+      renderProvider(<TeamsLiveProbe />);
+
+      await waitFor(() =>
+        expect(globalFireDbInfo.writeCapabilities.serviceRuntime).toBe(true),
+      );
+      expect(screen.getByTestId("can-edit-services")).toHaveTextContent("false");
+      expect(globalFireDbInfo.writeCapabilities).toEqual({
+        presentation: true,
+        timers: true,
+        serviceRuntime: true,
+        serviceManagement: false,
+      });
+    },
+  );
+
+  it.each(["view", "none"] as const)(
+    "does not grant Controller %s runtime writes",
+    async (controllerAccess) => {
+      (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+        ...loggedInHumanBootstrap,
+        role: "member",
+        appAccess: controllerAccess === "none" ? "member" : controllerAccess,
+        controllerAccess,
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+      });
+
+      renderProvider(<TeamsLiveProbe />);
+
+      await waitFor(() =>
+        expect(globalFireDbInfo.writeCapabilities.serviceRuntime).toBe(false),
+      );
+      expect(globalFireDbInfo.writeCapabilities).toEqual({
+        presentation: false,
+        timers: false,
+        serviceRuntime: false,
+        serviceManagement: false,
+      });
+    },
+  );
 
   it("routes storage updates to the current debounced projector, monitor, and stream actions", async () => {
     renderProvider();
