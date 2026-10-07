@@ -398,6 +398,102 @@ describe("MediaUploadInput", () => {
     expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
   });
 
+  it("cleans up a pending local video when the mounted upload changes churches", async () => {
+    let resolveImport!: (media: MediaType) => void;
+    mockedCreateLocalMedia.mockImplementation(() => new Promise((resolve) => {
+      resolveImport = resolve;
+    }));
+    mockedDeleteLocalVideoFile.mockRejectedValueOnce(new Error("Local cleanup failed"));
+    mockDetectFileType.mockReturnValue("video");
+    const dbA = {};
+    const dbB = {};
+    const onLocalMediaAdded = jest.fn();
+    const onLocalMediaPatched = jest.fn();
+    const onUploadComplete = jest.fn();
+    const surface = (churchId: string, db: unknown) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId, uploadPreset: "preset-1" } as never}>
+            <MediaUploadInput
+              onLocalMediaAdded={onLocalMediaAdded}
+              onLocalMediaPatched={onLocalMediaPatched}
+              onUploadComplete={onUploadComplete}
+            />
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface("church-A", dbA));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1));
+
+    view.rerender(surface("church-B", dbB));
+    await act(async () => {
+      resolveImport(localVideo("same-media-id"));
+      await Promise.resolve();
+    });
+
+    expect(mockedDeleteLocalVideoFile).toHaveBeenCalledWith("same-media-id");
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
+    expect(onLocalMediaPatched).not.toHaveBeenCalled();
+    expect(mockedUploadVideo).not.toHaveBeenCalled();
+    expect(mockedEnqueueUpload).not.toHaveBeenCalled();
+    expect(onUploadComplete).not.toHaveBeenCalled();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText("Added to Media")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry cleanup" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup" }));
+    await waitFor(() => expect(mockedDeleteLocalVideoFile).toHaveBeenCalledTimes(2));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText("Added to Media")).not.toBeInTheDocument();
+  });
+
+  it("cleans up a pending local-only image when the mounted upload changes churches", async () => {
+    let resolveImport!: (media: MediaType) => void;
+    mockedCreateLocalMedia.mockImplementation(() => new Promise((resolve) => {
+      resolveImport = resolve;
+    }));
+    const dbA = {};
+    const dbB = {};
+    const onLocalMediaAdded = jest.fn();
+    const surface = (churchId: string, db: unknown) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId, uploadPreset: "preset-1" } as never}>
+            <MediaUploadInput onLocalMediaAdded={onLocalMediaAdded} />
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface("church-A", dbA));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("switch", { name: /Upload to cloud/i }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add (1 file)" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1));
+
+    view.rerender(surface("church-B", dbB));
+    await act(async () => {
+      resolveImport(localImage("same-media-id"));
+      await Promise.resolve();
+    });
+
+    expect(mockedDeleteLocalImage).toHaveBeenCalledWith("same-media-id");
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
+    expect(mockedEnqueueUpload).not.toHaveBeenCalled();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText("Added to Media")).not.toBeInTheDocument();
+  });
+
   it("keeps failed local-asset cleanup retryable on the cancelled transfer", async () => {
     let resolveImport!: (media: MediaType) => void;
     mockedCreateLocalMedia.mockImplementation(() => new Promise((resolve) => {
