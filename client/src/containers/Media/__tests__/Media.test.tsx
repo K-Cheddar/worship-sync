@@ -43,7 +43,9 @@ const mockUpdateOverlayInList = jest.fn((payload: any) => ({
   type: "overlays/updateOverlayInList",
   payload,
 }));
-const mockUpdateTransfer = jest.fn();
+const mockTransfers = new Map<string, any>();
+const mockUpdateTransfer = jest.fn((transfer: { id: string }) => mockTransfers.set(transfer.id, transfer));
+const mockGetTransfer = jest.fn((id: string) => mockTransfers.get(id));
 const mockTransferActionHandlers = new Map<string, () => void | Promise<void>>();
 const mockRegisterTransferAction = jest.fn((
   transferId: string,
@@ -103,6 +105,7 @@ jest.mock("../../../context/transferContext", () => ({
   useOptionalTransfers: () => null,
   useOptionalTransferActions: () => ({
     updateTransfer: mockUpdateTransfer,
+    getTransfer: mockGetTransfer,
     registerTransferAction: mockRegisterTransferAction,
     removeTransfer: mockRemoveTransfer,
   }),
@@ -470,7 +473,7 @@ const renderMedia = async ({
   const cloud = { image: jest.fn(), video: jest.fn() };
   const updater = new EventTarget();
 
-  render(
+  const view = render(
     <ControllerInfoContext.Provider
       value={
         {
@@ -496,13 +499,14 @@ const renderMedia = async ({
     });
   }
 
-  return { db };
+  return { db, view };
 };
 
 describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUpdateTransfer.mockClear();
+    mockTransfers.clear();
     mockTransferActionHandlers.clear();
     mockFlushMediaLibraryDocToPouch.mockResolvedValue({ ok: true });
     mockDeleteMediaItemsFromPouch.mockImplementation(async (_db, ids: string[]) => ({
@@ -1124,6 +1128,32 @@ describe("Media", () => {
       type: "media/removeMediaItemFromRemote",
       payload: "media-1",
     });
+  });
+
+  it("removes route-owned retry actions when Media unmounts before deletion settles", async () => {
+    mockState = makeBaseState();
+    mockSelectedMediaIds = new Set(["media-1"]);
+    mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
+    let rejectDelete!: (error: Error) => void;
+    mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectDelete = reject; }));
+    const user = userEvent.setup();
+    const { view } = await renderMedia();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "confirm-delete" }));
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled());
+    const transferId = mockUpdateTransfer.mock.calls[0]?.[0]?.id ?? "";
+    expect(transferId).toBeTruthy();
+
+    view.unmount();
+    const terminalTransfer = mockGetTransfer(transferId);
+    expect(terminalTransfer.status).toBe("failed");
+    expect(terminalTransfer.actions).toEqual([]);
+    expect([...mockTransferActionHandlers.keys()].some((key) => key.startsWith(`${transferId}:`))).toBe(false);
+
+    await act(async () => { rejectDelete(new Error("disk unavailable after unmount")); });
+    expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+    expect(mockGetTransfer(transferId).actions).toEqual([]);
   });
 
   it("does not tombstone or clean up a provider when reference cleanup fails", async () => {

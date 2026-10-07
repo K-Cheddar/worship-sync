@@ -93,10 +93,9 @@ const normalizeResourceRecord = (resource) => {
     ...(normalizeShortText(resource.description, MAX_DESCRIPTION_LENGTH)
       ? { description: normalizeShortText(resource.description, MAX_DESCRIPTION_LENGTH) }
       : {}),
-    kind:
-      resource.kind === "audio" || resource.kind === "other"
-        ? resource.kind
-        : "document",
+    kind: ["audio", "image", "other"].includes(resource.kind)
+      ? resource.kind
+      : "document",
     ...normalizedSource,
     ...(Array.isArray(resource.tags) && normalizeTags(resource.tags)
       ? { tags: normalizeTags(resource.tags) }
@@ -381,7 +380,7 @@ export const createChurchResourceHandlers = ({
           churchId,
           name,
           description: normalizeShortText(req.body?.description, MAX_DESCRIPTION_LENGTH),
-          kind: ["document", "audio"].includes(mediaType) ? mediaType : "other",
+          kind: ["document", "audio", "image"].includes(mediaType) ? mediaType : "other",
           sourceType: "external",
           external,
           createdAt: now,

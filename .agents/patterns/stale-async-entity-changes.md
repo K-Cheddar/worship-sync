@@ -23,8 +23,9 @@ Recent history reinforces the need: `21a4d68d` fixed stale video retry listeners
 
 ## Lifecycle and edge cases
 
+- Guard using the full ownership scope, not only the visible entity ID. For example, `Church A / outline "main"` and `Church B / outline "main"` are different owners; a check that only compares `"main"` is insufficient.
 - Reset or preserve loading/error state deliberately when the entity changes.
-- Guard both successful and failed completion paths.
+- Guard both stale success and stale failure/rollback paths; a late failure must not clear or roll back newer state either.
 - Clear intervals, timeouts, subscriptions, and media listeners in cleanup.
 - When applying a result changes a collection or entity, re-read the latest authoritative local state after `await`; never merge into a snapshot captured before concurrent remote or local updates could arrive.
 - Re-check whether the bootstrap condition is still true after `await`. Use an in-flight guard keyed by the stable entity/scope identity when duplicate setup would be harmful, and release it in `finally`.

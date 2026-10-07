@@ -58,7 +58,7 @@ describe("ResourceUploadDialog", () => {
       storage: { key: file.name, fileName: file.name, contentType: file.type, sizeBytes: file.size, uploadedAt: "2026-10-05" },
       createdAt: "2026-10-05", createdBy: "user-1", updatedAt: "2026-10-05", updatedBy: "user-1",
     }));
-    render(<ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} />);
+    render(<MemoryRouter><TransferProvider><ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} /></TransferProvider></MemoryRouter>);
     await user.click(screen.getByRole("button", { name: "Upload" }));
     const input = screen.getByLabelText("Select resource files");
     for (const contentType of ["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif"]) {
@@ -116,7 +116,7 @@ describe("ResourceUploadDialog", () => {
     await user.upload(screen.getByLabelText("Select resource files"), new File(["guide"], "guide.pdf", { type: "application/pdf" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Upload" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar", { name: "guide.pdf progress" }).map((bar) => bar.getAttribute("aria-valuenow"))).toEqual(["50", "50"]);
+    expect(screen.getAllByRole("progressbar", { name: "guide.pdf progress" }).map((bar) => bar.getAttribute("aria-valuenow"))).toEqual(["50"]);
     await user.click(screen.getByRole("button", { name: "Restore resource upload" }));
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
     expect(within(screen.getByRole("dialog")).getByRole("progressbar", { name: "guide.pdf progress" })).toHaveAttribute("aria-valuenow", "50");
@@ -161,7 +161,7 @@ describe("ResourceUploadDialog", () => {
       };
     });
 
-    render(<ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} />);
+    render(<MemoryRouter><TransferProvider><ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} /></TransferProvider></MemoryRouter>);
     await user.click(screen.getByRole("button", { name: "Upload" }));
     await user.upload(screen.getByLabelText("Select resource files"), [
       new File(["one"], "one.pdf", { type: "application/pdf" }),
@@ -207,10 +207,53 @@ describe("ResourceUploadDialog", () => {
     ]);
     await user.click(screen.getByRole("button", { name: "Upload (2 files)" }));
 
-    await user.click(await screen.findByRole("button", { name: "Retry failed files" }));
-    await screen.findByText("Complete");
+    await user.click(screen.getByRole("button", { name: "Restore resource upload" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry failed" }));
+    await screen.findAllByText("Complete");
     expect(mockUploadChurchResource).toHaveBeenCalledTimes(3);
     expect(mockUploadChurchResource.mock.calls.map(([input]) => input.file.name)).toEqual(["one.pdf", "two.txt", "two.txt"]);
     expect(onResourcesUploaded).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed file from the global transfer after the Resources dialog unmounts", async () => {
+    const user = userEvent.setup();
+    let releaseFirst!: () => void;
+    let twoAttempts = 0;
+    const onResourcesUploaded = jest.fn();
+    mockUploadChurchResource.mockImplementation(async ({ file, name }) => {
+      if (file.name === "one.pdf") {
+        await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      } else if (twoAttempts++ === 0) {
+        throw new Error("Temporary upload failure.");
+      }
+      return {
+        id: `${file.name}-resource`, churchId: "church-1", name: name || file.name,
+        kind: "document", storage: { key: file.name, fileName: file.name, contentType: file.type, sizeBytes: file.size, uploadedAt: "2026-10-05" },
+        createdAt: "2026-10-05", createdBy: "user-1", updatedAt: "2026-10-05", updatedBy: "user-1",
+      };
+    });
+    const Route = () => {
+      const [onResourcesRoute, setOnResourcesRoute] = useState(true);
+      return <>
+        <button onClick={() => setOnResourcesRoute(false)}>Leave Resources</button>
+        {onResourcesRoute ? <ResourceUploadDialog churchId="church-1" onResourcesUploaded={onResourcesUploaded} /> : null}
+      </>;
+    };
+    render(<MemoryRouter><TransferProvider><Route /></TransferProvider></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+    await user.upload(screen.getByLabelText("Select resource files"), [
+      new File(["one"], "one.pdf", { type: "application/pdf" }),
+      new File(["two"], "two.txt", { type: "text/plain" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Upload (2 files)" }));
+    await user.click(screen.getByRole("button", { name: "Leave Resources" }));
+    await act(async () => releaseFirst());
+    await screen.findByRole("button", { name: "Retry failed files" });
+    await user.click(screen.getByRole("button", { name: "Retry failed files" }));
+    await screen.findAllByText("Complete");
+    expect(mockUploadChurchResource.mock.calls.map(([input]) => input.file.name)).toEqual([
+      "one.pdf", "two.txt", "two.txt",
+    ]);
+    expect(onResourcesUploaded).not.toHaveBeenCalled();
   });
 });

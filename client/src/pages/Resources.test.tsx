@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext as AppGlobalInfoContext } from "../context/globalInfo";
+import { TransferProvider } from "../context/transferContext";
 import ResourcesPage, { ResourceTableSkeleton } from "./Resources";
 import type { DBItem } from "../types";
 import type { ChurchResource } from "../types/churchResource";
@@ -146,11 +147,13 @@ const externalResource = (
 
 const renderPage = (access: "full" | "music" | "view" | "member" = "full") =>
   render(
-    <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access } as never}>
-      <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
-        <ResourcesPage />
-      </ControllerInfoContext.Provider>
-    </AppGlobalInfoContext.Provider>,
+    <TransferProvider>
+      <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access } as never}>
+        <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
+          <ResourcesPage />
+        </ControllerInfoContext.Provider>
+      </AppGlobalInfoContext.Provider>
+    </TransferProvider>,
   );
 
 const deferred = <T,>() => {
@@ -612,11 +615,13 @@ describe("Resources page", () => {
 
     mockState.allDocs.allSongDocs = [song(false)];
     view.rerender(
-      <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access: "full" } as never}>
-        <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
-          <ResourcesPage />
-        </ControllerInfoContext.Provider>
-      </AppGlobalInfoContext.Provider>,
+      <TransferProvider>
+        <AppGlobalInfoContext.Provider value={{ churchId: "church-1", churchName: "Church", access: "full" } as never}>
+          <ControllerInfoContext.Provider value={{ db: mockDb } as never}>
+            <ResourcesPage />
+          </ControllerInfoContext.Provider>
+        </AppGlobalInfoContext.Provider>
+      </TransferProvider>,
     );
 
     await waitFor(() => expect(screen.queryByText("rehearsal.mp3")).not.toBeInTheDocument());
