@@ -1503,6 +1503,7 @@ export function useMediaLibraryController({
         if (!ownerActive) return;
         ownerActive = false;
         actionUnregisters.splice(0).forEach((unregister) => unregister());
+        activityActions?.registerTransferAction(activityId, "dismiss", () => activityActions.removeTransfer(activityId));
         const transfer = activityActions?.getTransfer(activityId);
         if (transfer) {
           activityActions?.updateTransfer({
@@ -1516,7 +1517,7 @@ export function useMediaLibraryController({
               : {}),
             canCancel: false,
             blocksUnload: false,
-            actions: [],
+            actions: [{ key: "dismiss", label: "Dismiss" }],
           });
         }
         routeOwnedTransferDisposersRef.current.delete(activityId);
@@ -1825,6 +1826,7 @@ export function useMediaLibraryController({
       if (!ownerActive) return;
       ownerActive = false;
       actionUnregisters.splice(0).forEach((unregister) => unregister());
+      activityActions?.registerTransferAction(activityId, "dismiss", () => activityActions.removeTransfer(activityId));
       const transfer = activityActions?.getTransfer(activityId);
       if (transfer) {
         activityActions?.updateTransfer({
@@ -1838,7 +1840,7 @@ export function useMediaLibraryController({
             : {}),
           canCancel: false,
           blocksUnload: false,
-          actions: [],
+          actions: [{ key: "dismiss", label: "Dismiss" }],
         });
       }
       routeOwnedTransferDisposersRef.current.delete(activityId);

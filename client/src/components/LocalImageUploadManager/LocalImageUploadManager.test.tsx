@@ -258,6 +258,111 @@ describe("LocalImageUploadManager", () => {
     view.unmount();
   });
 
+  it("preserves a resumed cloud checkpoint when the active church changes", async () => {
+    let resolveStoredImage!: (value: Awaited<ReturnType<typeof getLocalImage>>) => void;
+    mockGetLocalImage.mockReturnValueOnce(new Promise((resolve) => { resolveStoredImage = resolve; }));
+    const cloudMedia = {
+      id: "stable-media-id",
+      name: "Welcome.png",
+      type: "image",
+      publicId: "cloud-public-id",
+      background: "https://res.cloudinary.com/example/welcome.png",
+      providerStorage: {
+        provider: "cloudinary",
+        assetId: "provider-asset-1",
+        publicId: "cloud-public-id",
+        churchId: "church-1",
+        permanent: true,
+      },
+    } as MediaType;
+    const checkpointJob = {
+      ...interruptedJob,
+      status: "uploaded",
+      phase: "finalizing",
+      cloudMedia,
+    } as LocalImageUploadJob;
+    let durableJob = checkpointJob;
+    mockListJobs.mockReset().mockImplementation(async () => [durableJob]);
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
+      ...durableJob,
+      leaseOwnerId,
+      leaseExpiresAt: Date.now() + 300_000,
+    }));
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = {
+        ...durableJob,
+        ...patch,
+        leaseOwnerId,
+        leaseExpiresAt: now + leaseDurationMs,
+        updatedAt: new Date(now).toISOString(),
+      } as LocalImageUploadJob;
+      return durableJob;
+    });
+    mockReleaseLease.mockImplementation(async () => {
+      delete durableJob.leaseOwnerId;
+      delete durableJob.leaseExpiresAt;
+      return true;
+    });
+    const dbA = {} as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    const renderManager = (db: PouchDB.Database, churchId: string) => (
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const view = render(renderManager(dbA, "church-1"));
+    await waitFor(() => expect(mockClaimJob).toHaveBeenCalled());
+    view.rerender(renderManager(dbB, "church-2"));
+    await act(async () => resolveStoredImage({
+      id: "asset-1",
+      workspaceId: "church-1",
+      blob: new Blob(["image"], { type: "image/png" }),
+      fileName: "Welcome.png",
+      contentType: "image/png",
+      size: 5,
+      width: 1920,
+      height: 1080,
+      createdAt: interruptedJob.createdAt,
+    }));
+
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: "asset-1",
+      patch: expect.objectContaining({
+        status: "uploaded",
+        phase: "finalizing",
+        cloudMedia,
+        nextAttemptAt: 0,
+      }),
+    })));
+    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).not.toHaveBeenCalled();
+    expect(mockReleaseLease).toHaveBeenCalledWith("asset-1", expect.any(String));
+
+    view.rerender(renderManager(dbA, "church-1"));
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: "asset-1",
+      patch: expect.objectContaining({ status: "complete", cloudMedia }),
+    })));
+    expect(mockPersistCloudCopy).toHaveBeenCalledWith(expect.objectContaining({
+      db: dbA,
+      itemId: "item-1",
+      assetId: "asset-1",
+      mediaId: "stable-media-id",
+      url: cloudMedia.background,
+    }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "presentation/attachCloudCopyToLocalImageInPresentation",
+    }));
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).not.toHaveBeenCalled();
+    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it("cleans an ambiguous provider intent before creating a replacement upload", async () => {
     const ambiguousJob = { ...interruptedJob, providerUploadId: "old-intent" };
     mockListJobs.mockReset().mockResolvedValueOnce([ambiguousJob]).mockResolvedValue([]);

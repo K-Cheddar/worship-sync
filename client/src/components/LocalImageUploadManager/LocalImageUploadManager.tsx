@@ -106,6 +106,7 @@ const LocalImageUploadManager = () => {
       if (!claimedJob.leaseOwnerId) return;
       let job = claimedJob;
       let cloudMedia = claimedJob.cloudMedia;
+      const resumedCloudCheckpoint = Boolean(claimedJob.cloudMedia);
       const jobLeaseOwnerId = claimedJob.leaseOwnerId;
       let providerUploadId = claimedJob.providerUploadId;
       let leaseIsActive = true;
@@ -386,6 +387,16 @@ const LocalImageUploadManager = () => {
         if (await stopIfCancelled()) return;
         await updateClaimedJob({ phase: "finalizing", progress: 95 });
         if (activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+          if (resumedCloudCheckpoint) {
+            await updateClaimedJob({
+              status: "uploaded",
+              phase: "finalizing",
+              progress: 95,
+              cloudMedia,
+              nextAttemptAt: 0,
+            });
+            return;
+          }
           try {
             await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
             await updateClaimedJob({

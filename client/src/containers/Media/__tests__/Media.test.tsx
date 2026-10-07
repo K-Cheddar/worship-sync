@@ -1130,7 +1130,7 @@ describe("Media", () => {
     });
   });
 
-  it("removes route-owned retry actions when Media unmounts before deletion settles", async () => {
+  it("retires route-owned deletion actions but keeps Media Activity dismissible after unmount", async () => {
     mockState = makeBaseState();
     mockSelectedMediaIds = new Set(["media-1"]);
     mockSelectedMedia = { ...mockState.media.list[0], source: "cloudinary" as const };
@@ -1148,12 +1148,15 @@ describe("Media", () => {
     view.unmount();
     const terminalTransfer = mockGetTransfer(transferId);
     expect(terminalTransfer.status).toBe("failed");
-    expect(terminalTransfer.actions).toEqual([]);
-    expect([...mockTransferActionHandlers.keys()].some((key) => key.startsWith(`${transferId}:`))).toBe(false);
+    expect(terminalTransfer.actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransferActionHandlers.has(`${transferId}:retry-delete`)).toBe(false);
+    expect(mockTransferActionHandlers.has(`${transferId}:dismiss`)).toBe(true);
 
     await act(async () => { rejectDelete(new Error("disk unavailable after unmount")); });
     expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
-    expect(mockGetTransfer(transferId).actions).toEqual([]);
+    expect(mockGetTransfer(transferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    await act(async () => { await mockTransferActionHandlers.get(`${transferId}:dismiss`)?.(); });
+    expect(mockRemoveTransfer).toHaveBeenCalledWith(transferId);
   });
 
   it("does not tombstone or clean up a provider when reference cleanup fails", async () => {
@@ -1206,7 +1209,7 @@ describe("Media", () => {
       "controller-default": "folder-1",
     };
     mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
-    await renderMedia();
+    const { view } = await renderMedia();
 
     await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
     await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
@@ -1224,6 +1227,49 @@ describe("Media", () => {
       }));
     });
     expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled();
+    const folderTransferId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    expect(mockGetTransfer(folderTransferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    view.unmount();
+    expect(mockGetTransfer(folderTransferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransferActionHandlers.has(`${folderTransferId}:dismiss`)).toBe(true);
+    await act(async () => { await mockTransferActionHandlers.get(`${folderTransferId}:dismiss`)?.(); });
+    expect(mockRemoveTransfer).toHaveBeenCalledWith(folderTransferId);
+  });
+
+  it("keeps folder deletion dismissible when Media unmounts while it is pending", async () => {
+    const mediaRow = {
+      ...makeBaseState().media.list[0],
+      id: "pending-folder-media",
+      name: "Folder image",
+      folderId: "folder-1",
+      source: "uploaded",
+    };
+    mockState = makeBaseState({
+      media: {
+        list: [mediaRow],
+        folders: [{ id: "folder-1", name: "Sermon slides", parentId: null }],
+      },
+    });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    let rejectDelete!: (error: Error) => void;
+    mockDeleteMediaItemAtRevisionFromPouch.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectDelete = reject; }));
+    const user = userEvent.setup();
+    const { view } = await renderMedia();
+
+    await user.click(screen.getByRole("button", { name: "Delete folder" }));
+    await user.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    await user.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled());
+    const folderTransferId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+
+    view.unmount();
+    expect(mockGetTransfer(folderTransferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransferActionHandlers.has(`${folderTransferId}:retry-delete`)).toBe(false);
+    await act(async () => { await mockTransferActionHandlers.get(`${folderTransferId}:dismiss`)?.(); });
+    expect(mockRemoveTransfer).toHaveBeenCalledWith(folderTransferId);
+    await act(async () => { rejectDelete(new Error("disk unavailable after unmount")); });
+    expect(mockGetTransfer(folderTransferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
   });
 
   it("deletes each selected row by its known item id", async () => {

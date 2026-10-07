@@ -44,6 +44,45 @@ When applicable, load and apply the deeper domain guidance:
 | Contract round trip | Trace enums, resource types, statuses, wire fields, and provider metadata through `creation -> normalization -> persistence -> API read -> client model -> filtering/presentation`. Does the value survive every step? |
 | Validate/use | Can the resource later used differ from the one validated or authorized, and is later use bound to that validation? Consider metadata probe -> proxy GET, permission check -> delayed mutation, signed token -> response type, and preview classification -> actual content. |
 
+For retryable UI flows, identify the source of truth at each stage:
+
+- Before first execution, what owns editable intent?
+- After execution begins, what owns the durable runtime?
+- After partial failure, can the UI still edit names, items, or options?
+- On Retry, does Retry consume those edits or the retained runtime?
+
+If UI state can diverge from a retained runtime after failure, either synchronize the runtime deliberately or freeze the UI for that batch. When the failed UI remains editable, require a transition test that changes a selection, name, or option between failure and retry and proves which values Retry uses.
+
+For every globally visible operation whose local owner can unmount, write a retirement matrix before accepting the lifecycle design:
+
+| Concern | After local owner retires |
+| --- | --- |
+| underlying operation | cancel / continue / hand off |
+| Activity entry | remove / remain |
+| Cancel | who owns it? |
+| Retry failed | who owns it? |
+| Retry cleanup | who owns it? |
+| Dismiss | who owns it? |
+| late success/failure | who publishes it? |
+
+A persistent Activity entry must not become permanently actionless unless it auto-removes. If cleanup can fail after local-owner retirement, its recovery action must live with the longer-lived owner. Dismiss is normally safe to retain in the provider because it does not need route-local business state. Do not retain route-local callbacks merely because Activity remains visible. Require tests for unmount while active followed by late success, late cleanup failure, unmount after terminal completion/failure, and invoking retained actions after unmount.
+
+### Authorization and data projections
+
+For handlers or selectors that return permission-dependent data, trace `auth guard -> permission object -> source document -> derived projections -> nested loaders/lookups -> serialized response`. Ask:
+
+- What is the least-privileged caller admitted by the guard, and what may that caller not read?
+- Are there multiple projections such as a plan plus snapshot, details, preview, export, or nested derived object?
+- Can a secondary projection reintroduce fields removed from the primary response?
+- Does a public-safe sanitizer only filter fields, or does it actually establish authorization? Sanitization is never proof of authorization.
+- Can `allowUnpublished`, preview mode, public formatting, or internal rendering bypass a permission check?
+
+Require negative assertions for sensitive readers. For example, a `services:view` caller with no Teams permission may see saved plan content but must not see roster details; a general public link receives only its public projection; a Teams-authorized reader may receive the richer serving-team projection.
+
+### Review test expectation changes as contract changes
+
+A test expectation change is not proof of the new contract. If a test starts expecting more data for a less-privileged user, fewer recovery controls, a different retry target, or deletion of a previously durable external resource, independently derive the intended contract from authorization, persistence, lifecycle, and product rules. Security-sensitive expectation changes need explicit justification. Expectations such as `plan-only reader -> roster details` or `Media unmount -> actions: []` are review signals, not evidence that the behavior is correct.
+
 ### Search and compare beyond the diff
 
 For substantial reviews, derive repository searches from the invariant and operation under review. Search likely sibling implementations, not the whole repository without reason. Examples include async listeners, `.then(async ...)`, delayed callbacks, queues, `db.get`/`put`/`bulkDocs`, mutable DB references, Firebase writes; transfer registration/update/retry/cancel/dismiss actions; cleanup/delete/orphan and schema/migration checks; durable job interfaces and persisted IndexedDB records; normalization helpers; and enum creation, filtering, and presentation paths. Once an invariant is relevant, find the other places that implement it. A representative bug is a starting point for this search, not its conclusion.
@@ -125,3 +164,7 @@ For substantial reviews, append this completion checklist and justify each `Not 
 - **Unmount/lifetime test reviewed or added:** Yes / No / Not applicable
 - **Contract round trip traced:** Yes / No / Not applicable
 - **Validate/use security boundary reviewed:** Yes / No / Not applicable
+- **Retry-state authority reviewed:** Yes / No / Not applicable
+- **Owner-retirement handoff reviewed:** Yes / No / Not applicable
+- **External side-effect adoption/compensation reviewed:** Yes / No / Not applicable
+- **Authorization/data-projection reviewed:** Yes / No / Not applicable
