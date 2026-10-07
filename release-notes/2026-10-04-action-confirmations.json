@@ -1,7 +1,0 @@
-{
-  "id": "2026-10-04-action-confirmations",
-  "date": "2026-10-04",
-  "type": "improved",
-  "title": "Clearer action confirmations",
-  "description": "Removing a schedule guest now shows a confirmation in WorshipSync with the assignments that will be cleared. Confirmations stay visible above floating tools. Resource uploads, link saves, custom document creation, and media cleanup retries are protected from accidental dismissal while work is in progress."
-}

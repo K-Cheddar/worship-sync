@@ -597,6 +597,7 @@ const ServicePlanAssigneeList = ({
                 <span key={iem.id} className="inline-flex items-center gap-0.5">
                   <ServiceEquipmentChip
                     equipment={iem}
+                    iconClassName="size-3.5"
                     className="gap-1 rounded-full px-2 py-1"
                   >
                     {allowEdit ? (

@@ -2,6 +2,8 @@ import Spinner from "@/components/Spinner/Spinner";
 import {
   AudioLines,
   Copy,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Maximize2,
   Minimize2,
@@ -27,11 +29,19 @@ import {
   getSafeHttpUrl,
   getYouTubePreviewVideoId,
   resolveContentPreviewResource,
-  resolveExternalContentPreviewSource,
+  resolvePreviewSource,
   type ContentPreviewKind,
   type ContentPreviewResource,
   type ContentPreviewResolvedSource,
 } from "./contentPreview";
+import { createPreviewSourceCache, type PreviewSourceCache } from "./previewSourceCache";
+
+export type ContentPreviewNavigation = {
+  index: number;
+  total: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+};
 
 type ContentPreviewDialogProps = {
   resource: ContentPreviewResource | null;
@@ -40,6 +50,8 @@ type ContentPreviewDialogProps = {
   metadata?: ReactNode;
   secondaryInfo?: ReactNode;
   menuActions?: ReactNode;
+  navigation?: ContentPreviewNavigation;
+  sourceCache?: PreviewSourceCache;
 };
 
 type RenderStatus = "loading" | "slow" | "ready" | "error";
@@ -94,7 +106,10 @@ const PreviewKindIcon = ({ kind }: { kind: ContentPreviewKind }) => {
   return <Icon className="size-5 shrink-0 text-cyan-300" aria-hidden />;
 };
 
-const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, secondaryInfo, menuActions }: ContentPreviewDialogProps) => {
+const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, secondaryInfo, menuActions, navigation, sourceCache }: ContentPreviewDialogProps) => {
+  const [localCache] = useState(createPreviewSourceCache);
+  const cache = sourceCache || localCache;
+  const [sourceResourceKey, setSourceResourceKey] = useState("");
   const [source, setSource] = useState<ContentPreviewResolvedSource | null>(null);
   const [resolvedText, setResolvedText] = useState("");
   const [resolving, setResolving] = useState(false);
@@ -108,11 +123,13 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   const actionGenerationRef = useRef(0);
 
   const resourceKey = resource
-    ? `${resource.id}:${resource.url || ""}:${resource.mediaId || ""}:${resource.mimeType || ""}`
+    ? resource.cacheKey || `${resource.id}:${resource.url || ""}:${resource.mediaId || ""}:${resource.mimeType || ""}:${resource.fileName || ""}`
     : "";
+  const currentResourceKey = useRef(resourceKey);
+  currentResourceKey.current = resourceKey;
   const resolution = useMemo(
-    () => resource ? resolveContentPreviewResource(resource, source) : null,
-    [resource, source],
+    () => resource ? resolveContentPreviewResource(resource, sourceResourceKey === resourceKey ? source : null) : null,
+    [resource, source, sourceResourceKey, resourceKey],
   );
   const kind = resolution?.renderer || "unsupported";
   const sourceUrl = resolution?.resolvedUrl || "";
@@ -126,7 +143,11 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
 
   useEffect(() => {
     actionGenerationRef.current += 1;
-    if (!resource) return;
+    if (!resource) {
+      setExpanded(false);
+      setSourceResourceKey("");
+      return;
+    }
 
     let active = true;
     const controller = new AbortController();
@@ -139,6 +160,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     const directUrl = getSafeHttpUrl(resource.url);
     setResolving(Boolean(directUrl && !resource.resolveSource));
     setSource(null);
+    setSourceResourceKey(resourceKey);
     setResolvedText("");
     setResolveError("");
     setActionError("");
@@ -146,7 +168,6 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     setOpeningExternal(false);
     setCopyingLink(false);
     setRenderStatus("loading");
-    setExpanded(false);
 
     if (!resource.resolveSource) {
       if (!directUrl) window.clearTimeout(resolutionTimer);
@@ -154,7 +175,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         setResolveError("This resource does not contain a previewable link.");
       }
       if (directUrl) {
-        void resolveExternalContentPreviewSource(resource)
+        void resolvePreviewSource(resource, cache)
           .then((resolved) => {
             if (!active) return;
             if (!resolved) {
@@ -193,9 +214,10 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     }
 
     setResolving(true);
-    void resource.resolveSource()
+    void resolvePreviewSource(resource, cache)
       .then((resolved) => {
         if (!active) return;
+        if (!resolved) throw new Error("This resource could not be resolved for preview.");
         const safeUrl = getSafeHttpUrl(resolved.url);
         if (!safeUrl) {
           setResolveError("This resource returned an unsupported URL.");
@@ -225,7 +247,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       controller.abort();
       actionGenerationRef.current += 1;
     };
-  }, [resource, resourceKey]);
+  }, [resource, resourceKey, cache]);
 
   useEffect(() => {
     if (!resource || resolving || resolveError) return;
@@ -296,9 +318,14 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     }
   };
 
-  const handleMediaError = useCallback(() => setRenderStatus("error"), []);
-  const handleMediaReady = useCallback(() => setRenderStatus((current) => current === "error" ? current : "ready"), []);
-  const waitingForSource = Boolean(resource && !source && !resolveError && (resource.url || resource.resolveSource));
+  const handleMediaError = useCallback(() => {
+    if (currentResourceKey.current === resourceKey) setRenderStatus("error");
+  }, [resourceKey]);
+  const handleMediaReady = useCallback(() => {
+    if (currentResourceKey.current === resourceKey) setRenderStatus((current) => current === "error" ? current : "ready");
+  }, [resourceKey]);
+  const switchingResource = sourceResourceKey !== resourceKey;
+  const waitingForSource = switchingResource || Boolean(resource && !source && !resolveError && (resource.url || resource.resolveSource));
   const showFallback = Boolean(resolveError) || (
     !resolving && Boolean(resolution && kind === "unsupported")
   ) || (!resolving && renderStatus === "error");
@@ -420,6 +447,11 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       contentPadding="p-0"
       headerAction={(
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          {navigation ? <div className="flex items-center gap-1" role="group" aria-label="Preview navigation">
+            <Button type="button" variant="tertiary" svg={ChevronLeft} aria-label="Previous resource" disabled={navigation.index <= 0 || !navigation.onPrevious} onClick={navigation.onPrevious} />
+            <span className="whitespace-nowrap text-xs text-gray-300" aria-live="polite">{navigation.index + 1} of {navigation.total}</span>
+            <Button type="button" variant="tertiary" svg={ChevronRight} aria-label="Next resource" disabled={navigation.index >= navigation.total - 1 || !navigation.onNext} onClick={navigation.onNext} />
+          </div> : null}
           <Button type="button" variant="tertiary" svg={expanded ? Minimize2 : Maximize2} aria-label={expanded ? "Exit expanded preview" : "Expand preview"} onClick={() => setExpanded((current) => !current)} />
           {canOpenExternally ? (
             <Button type="button" variant="tertiary" svg={ExternalLink} aria-label={openingExternal ? "Opening in new tab" : "Open in new tab"} title="Open in new tab" className="max-md:min-h-0" isLoading={openingExternal} disabled={openingExternal} onClick={() => void handleOpenExternal()} />
@@ -453,9 +485,9 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         {metadata ? <span>· {metadata}</span> : null}
       </div>
       {secondaryInfo ? <div className="shrink-0 px-4 pb-2 text-xs text-gray-400">{secondaryInfo}</div> : null}
-      <div data-testid="preview-stage" className={`relative flex min-h-56 w-full items-center justify-center overflow-hidden ${expanded ? "min-h-0 flex-1" : "h-[min(65vh,42rem)]"} ${kind === "text" ? "bg-gray-900" : "bg-gray-950"}`}>
+      <div key={resourceKey} data-testid="preview-stage" className={`relative flex min-h-56 w-full items-center justify-center overflow-hidden ${expanded ? "min-h-0 flex-1" : "h-[min(65vh,42rem)]"} ${kind === "text" ? "bg-gray-900" : "bg-gray-950"}`}>
         {renderPreviewContent()}
-        {(resolving || waitingForSource || renderStatus === "loading" || renderStatus === "slow") && !showFallback ? (
+        {(resolving || waitingForSource || renderStatus === "loading" || renderStatus === "slow") && (switchingResource || !showFallback) ? (
           <LoadingState slow={renderStatus === "slow"} label={resolving || waitingForSource ? "Preparing preview…" : kind === "web" ? "Loading embedded page…" : kind === "pdf" || kind === "docx" ? "Loading document…" : kind === "youtube" ? "Loading video player…" : `Loading ${kind}…`} />
         ) : null}
       </div>
@@ -463,9 +495,4 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   );
 };
 
-// Each resource owns its resolution, callbacks and rendering lifecycle.
-const ResourcePreviewDialog = (props: ContentPreviewDialogProps) => (
-  <ContentPreviewDialog key={props.resource ? `${props.resource.id}:${props.resource.url || ""}:${props.resource.mimeType || ""}:${props.resource.fileName || ""}` : "closed"} {...props} />
-);
-
-export default ResourcePreviewDialog;
+export default ContentPreviewDialog;

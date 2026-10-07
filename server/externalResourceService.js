@@ -254,7 +254,9 @@ const buildDescriptor = ({ originalUrl, provider, mediaId, candidateUrl, finalUr
     canPreview,
     ...(mediaId ? { mediaId } : {}),
     ...(reason ? { reason } : {}),
-    _upstreamUrl: finalUrl || candidateUrl,
+    // Probe redirects may be short-lived signed URLs. Always retrieve from the
+    // strategy's stable starting URL and validate its redirects again at use time.
+    _proxyTargetUrl: candidateUrl,
   };
 };
 
@@ -274,11 +276,11 @@ export const createExternalResourceService = ({
   const checkRate = rateLimiter();
   const { requestFollowingRedirects } = createExternalResourceNetwork({ httpClient, lookup });
 
-  const requestMetadata = async ({ url, retrievalStrategy }) => {
-    const requestHeaders = { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1" };
+  const requestMetadata = async ({ url, retrievalStrategy, intent = "file-probe" }) => {
+    const requestHeaders = { Accept: "*/*", "User-Agent": "WorshipSync-resource-resolver/1", ...(intent === "view-access" ? { "Accept-Encoding": "identity" } : {}) };
     let result = retrievalStrategy === "metadata-probe"
       ? await requestFollowingRedirects({ url, method: "HEAD", headers: requestHeaders })
-      : await requestFollowingRedirects({ url, method: "GET", headers: { ...requestHeaders, Range: "bytes=0-0" }, responseType: "stream" });
+      : await requestFollowingRedirects({ url, method: "GET", headers: { ...requestHeaders, ...(intent === "file-probe" ? { Range: "bytes=0-0" } : {}) }, responseType: "stream" });
     if (retrievalStrategy === "metadata-probe" && shouldRetryMetadataWithGet(result.response)) {
       drainResponse(result.response);
       result = await requestFollowingRedirects({
@@ -370,8 +372,8 @@ export const createExternalResourceService = ({
 
     // A failed download candidate does not establish whether the anonymous
     // sharing link itself is viewable. Recheck that original URL without credentials.
-    const shareResult = await requestMetadata({ url: originalUrl, retrievalStrategy: "get" });
-    const shareDescriptor = await describeProbeResult({ originalUrl, provider, mediaId, candidateUrl, result: shareResult });
+    const shareResult = await requestMetadata({ url: originalUrl, retrievalStrategy: "get", intent: "view-access" });
+    const shareDescriptor = await describeProbeResult({ originalUrl, provider, mediaId, candidateUrl: originalUrl, result: shareResult });
     if (shareDescriptor.sourceKind === "file") return shareDescriptor;
     const reason = shareDescriptor.reason || sharePointHtmlReason({
       response: shareResult.response,
@@ -438,10 +440,11 @@ export const createExternalResourceService = ({
 
   const decorate = (base) => {
     const descriptor = { ...base };
-    delete descriptor._upstreamUrl;
+    delete descriptor._proxyTargetUrl;
     if (base.sourceKind === "file") {
+      const expiresAt = now() + tokenTtlMs;
       const token = createExternalResourceProxyToken(tokenSecret, {
-        t: base._upstreamUrl,
+        t: base._proxyTargetUrl,
         n: crypto.randomUUID(),
         p: base.provider,
         sk: base.sourceKind,
@@ -449,8 +452,9 @@ export const createExternalResourceService = ({
         pt: base.previewType,
         m: base.mimeType || "",
         f: base.filename || "",
-      }, now() + tokenTtlMs);
+      }, expiresAt);
       descriptor.previewUrl = `${proxyBasePath}?token=${encodeURIComponent(token)}`;
+      descriptor.expiresAt = new Date(expiresAt).toISOString();
     }
     return descriptor;
   };

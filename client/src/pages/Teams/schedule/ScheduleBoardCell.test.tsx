@@ -1,7 +1,8 @@
 import { createRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { RefObject } from "react";
 import type { TeamRosterMember } from "../../../api/authTypes";
+import type { PositionIcon } from "../../../components/icons/iconTypes";
 import ScheduleBoardCell from "./ScheduleBoardCell";
 import {
   ScheduleAssignmentContext,
@@ -26,7 +27,7 @@ const baseProps = {
   columnKey: "p1::0",
   positionId: "p1",
   positionLabel: "Front Of House Audio",
-  positionIcon: undefined,
+  positionIcon: undefined as PositionIcon | undefined,
   positionArchived: false,
   isMemberHighlighted: false,
   isActiveSlot: false,
@@ -54,6 +55,7 @@ const renderCell = (props: Partial<typeof baseProps> & Record<string, unknown> =
 describe("ScheduleBoardCell", () => {
   it("shows the position label and the assigned member's name", () => {
     renderCell({
+      positionIcon: { source: "lucide", name: "Camera", color: "#123456" },
       allMembers: [member({ profileImageUrl: "https://example.com/kameal.jpg" })],
       assignmentCell: { primaryMemberId: "m1" },
     });
@@ -63,10 +65,18 @@ describe("ScheduleBoardCell", () => {
       "src",
       "https://example.com/kameal.jpg",
     );
+    expect(screen.getByTestId("schedule-position-inline-icon")).toHaveClass(
+      "h-5",
+      "w-5",
+    );
+    expect(screen.queryByTestId("schedule-position-marker")).not.toBeInTheDocument();
   });
 
   it("shows an unassigned placeholder when the slot is empty", () => {
-    renderCell({ assignmentCell: undefined });
+    renderCell({
+      assignmentCell: undefined,
+      positionIcon: { source: "lucide", name: "Camera", color: "#123456" },
+    });
     // Behavior change: assert shared assignment-label classes, not presence alone.
     // The previous toBeInTheDocument() check is obsolete now that empty slots use
     // the same muted label styling as assigned names for scanability.
@@ -74,15 +84,62 @@ describe("ScheduleBoardCell", () => {
       ...scheduleAssignmentLabelClassName.split(" "),
     );
     expect(screen.queryByAltText("")).not.toBeInTheDocument();
+    expect(screen.getByTestId("schedule-position-marker")).toHaveClass("h-8", "w-8");
+    expect(screen.getByTestId("schedule-position-marker").style.backgroundColor).toBe(
+      "rgb(18, 52, 86)",
+    );
+    expect(screen.queryByTestId("schedule-position-inline-icon")).not.toBeInTheDocument();
   });
 
-  it("uses the responsive schedule avatar size for the assigned member", () => {
+  it("uses a 32px initials avatar in the left marker slot", () => {
     renderCell({ assignmentCell: { primaryMemberId: "m1" } });
 
-    expect(screen.getByText("KA")).toHaveClass(
-      "size-[1.5rem]",
-      "max-md:size-[1.75rem]",
+    expect(screen.getByText("KA")).toHaveClass("h-8", "w-8");
+    expect(within(screen.getByRole("button")).getByText("KA")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Camera", "#123456"],
+    ["AudioLines", "#22c55e"],
+    ["CircleHelp", "#f97316"],
+  ])("keeps the compact colored %s icon beside the position title", (name, color) => {
+    renderCell({
+      positionIcon: { source: "lucide", name, color },
+      assignmentCell: { primaryMemberId: "m1" },
+    });
+
+    const button = screen.getByRole("button");
+    const title = within(button).getByText("Front Of House Audio");
+    const icon = within(button).getByTestId("schedule-position-inline-icon");
+    expect(icon).toHaveClass("h-5", "w-5");
+    expect(icon.style.backgroundColor).not.toBe("");
+    expect(button).toContainElement(title);
+    expect(button).toContainElement(icon);
+    expect(screen.queryByTestId("schedule-position-marker")).not.toBeInTheDocument();
+  });
+
+  it("keeps a Producer position's custom color on its supporting icon", () => {
+    renderCell({
+      positionLabel: "Producer",
+      positionIcon: { source: "lucide", name: "Clapperboard", color: "#a855f7" },
+      assignmentCell: { primaryMemberId: "m1" },
+    });
+
+    expect(screen.getByText("Producer")).toBeInTheDocument();
+    expect(screen.getByTestId("schedule-position-inline-icon").style.backgroundColor).toBe(
+      "rgb(168, 85, 247)",
     );
+  });
+
+  it("keeps long member names in the existing truncating name slot", () => {
+    renderCell({
+      allMembers: [member({ firstName: "Alexandria-Catherine", lastName: "Montgomery-Smythe" })],
+      duplicateFirstNames: new Set(["alexandria-catherine"]),
+      assignmentCell: { primaryMemberId: "m1" },
+    });
+
+    const name = screen.getByText("Alexandria-Catherine M.");
+    expect(name).toHaveClass(...scheduleAssignmentLabelClassName.split(" "));
   });
 
   it("activates the matching slot, anchored to the row, when clicked (picker parity)", () => {

@@ -33,6 +33,34 @@ const renderPreview = (resource: Parameters<typeof ContentPreviewDialog>[0]["res
   render(<ContentPreviewDialog resource={resource} onClose={jest.fn()} />);
 
 describe("ContentPreviewDialog", () => {
+  it("keeps the shell mounted and ignores an old source resolution while navigating", async () => {
+    let finishOld!: (value: { url: string; mimeType: string }) => void;
+    const oldResource = { id: "old", title: "Old guide", resolveSource: () => new Promise<{ url: string; mimeType: string }>((resolve) => { finishOld = resolve; }) };
+    const newResource = { id: "new", title: "New guide", resolveSource: jest.fn(async () => ({ url: "https://files.test/new.pdf", mimeType: "application/pdf" })) };
+    const view = renderPreview(oldResource);
+    const shell = screen.getByRole("dialog");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Expand preview" }));
+    view.rerender(<ContentPreviewDialog resource={newResource} onClose={jest.fn()} />);
+    expect(screen.getByRole("heading", { name: "New guide" })).toBeInTheDocument();
+    expect(await screen.findByTitle("New guide")).toHaveAttribute("src", "https://files.test/new.pdf");
+    await act(async () => { finishOld({ url: "https://files.test/old.pdf", mimeType: "application/pdf" }); });
+    expect(screen.getByRole("dialog")).toBe(shell);
+    expect(screen.getByRole("button", { name: "Exit expanded preview" })).toBeInTheDocument();
+    expect(screen.getByTitle("New guide")).toHaveAttribute("src", "https://files.test/new.pdf");
+    expect(screen.queryByTitle("Old guide")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading document");
+  });
+
+  it("reuses the caller-local cache after closing and reopening", async () => {
+    const resource = { id: "reopen", title: "Cached PDF", resolveSource: jest.fn(async () => ({ url: "https://files.test/cached.pdf", mimeType: "application/pdf" })) };
+    const view = renderPreview(resource);
+    await screen.findByTitle("Cached PDF");
+    view.rerender(<ContentPreviewDialog resource={null} onClose={jest.fn()} />);
+    view.rerender(<ContentPreviewDialog resource={resource} onClose={jest.fn()} />);
+    await screen.findByTitle("Cached PDF");
+    expect(resource.resolveSource).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     mockRenderDocx.mockReset();
     mockRenderDocx.mockImplementation(async (_data, content) => {

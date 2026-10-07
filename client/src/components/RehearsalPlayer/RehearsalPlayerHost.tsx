@@ -7,8 +7,8 @@ import type { YouTubePlaylistPlayerHandle } from "../YouTubePlaylistPlayer/YouTu
 import RehearsalPlayerWindow from "./RehearsalPlayerWindow";
 import { createYouTubeQueueEntry, useRehearsalPlaybackController } from "./RehearsalPlaybackContext";
 
+// Keep playback through "/": Home navigation uses it as a signed-in redirect.
 const isRehearsalIneligibleRoute = (pathname: string) =>
-  pathname === "/" ||
   pathname === "/privacy" ||
   pathname === "/terms" ||
   pathname === "/support" ||

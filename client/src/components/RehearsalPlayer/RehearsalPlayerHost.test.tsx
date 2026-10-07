@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { Link, MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { RehearsalPlaybackProvider, useRehearsalPlayback } from "./RehearsalPlaybackContext";
@@ -32,6 +32,12 @@ const renderHost = (path: string) => render(
   <GlobalInfoContext.Provider value={{ loginState: "success", sessionKind: "human", userId: "user-1", churchId: "church-1" } as never}>
     <RehearsalPlaybackProvider>
       <MemoryRouter initialEntries={[path]}>
+        <Link to="/">Home</Link>
+        <Link to="/controller">Presentation</Link>
+        <Routes>
+          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="*" element={null} />
+        </Routes>
         <Link to="/projector">Projector</Link>
         <Link to="/services/share-id">Public service</Link>
         <Link to="/auth/reset">Password reset</Link>
@@ -43,6 +49,23 @@ const renderHost = (path: string) => render(
 );
 
 describe("RehearsalPlayerHost", () => {
+  it("preserves the player and media engine through the Home redirect and another domain", () => {
+    renderHost("/teams-and-services/services/plan-1");
+    fireEvent.click(screen.getByRole("button", { name: "Start rehearsal" }));
+    const engine = screen.getByTestId("youtube-engine");
+    const progress = screen.getByRole("slider", { name: "Rehearsal progress" });
+
+    fireEvent.click(screen.getByRole("link", { name: "Home" }));
+    expect(screen.getByText("Song One")).toBeInTheDocument();
+    expect(screen.getByTestId("youtube-engine")).toBe(engine);
+    expect(screen.getByRole("slider", { name: "Rehearsal progress" })).toBe(progress);
+
+    fireEvent.click(screen.getByRole("link", { name: "Presentation" }));
+    expect(screen.getByText("Song One")).toBeInTheDocument();
+    expect(screen.getByTestId("youtube-engine")).toBe(engine);
+    expect(screen.getByRole("slider", { name: "Rehearsal progress" })).toBe(progress);
+  });
+
   it.each([
     ["/projector", "Projector"],
     ["/services/share-id", "Public service"],
