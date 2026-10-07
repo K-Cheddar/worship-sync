@@ -1064,9 +1064,20 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             });
           })();
         } else if (batch.files.some((file) => file.status === "error")) {
-          const terminal = publishBatch(batch, batch.files.some((file) => file.status === "ready") ? "partial" : "failed");
-          updateTransfer?.({ ...terminal, actions: [{ key: "dismiss", label: "Dismiss" }] });
-          batch.unregisterActions.forEach((unregister) => unregister());
+          batch.ownerActive = false;
+          const cleanupPending = batch.cleanupRetries.size > 0;
+          for (const key of [...batch.registeredActions.keys()]) {
+            if (key !== "retry-cleanup" && key !== "dismiss") unregisterBatchAction(batch, key);
+          }
+          if (!cleanupPending) unregisterBatchAction(batch, "retry-cleanup");
+          const terminal = publishBatch(batch, batch.files.some((file) => file.status === "ready") ? "partial" : "failed", true);
+          updateTransfer?.({
+            ...terminal,
+            actions: [
+              ...(cleanupPending ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+              { key: "dismiss", label: "Dismiss" },
+            ],
+          });
         } else {
           batch.unregisterActions.forEach((unregister) => unregister());
         }
