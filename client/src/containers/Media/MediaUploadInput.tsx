@@ -17,7 +17,9 @@ import type { LocalAssetStoragePolicy } from "../../types";
 import {
   getRememberedLocalImagePolicy,
   rememberLocalImagePolicy,
+  deleteLocalImage,
 } from "../../utils/localImageAssets";
+import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { cancelLocalImageUpload, enqueueLocalImageUpload, getLocalImageUploadJob, retryLocalImageUpload, retryLocalImageUploadCancellation, waitForLocalImageUpload } from "../../utils/localImageUploadQueue";
 import { claimMediaUpload, type MediaUploadClaim } from "../../utils/mediaOperationClaims";
 import { deleteChurchMuxAsset } from "../../api/providerStorage";
@@ -47,6 +49,57 @@ const isLocalMediaPlaybackError = (error: unknown) =>
   error instanceof Error &&
   (error.name === "LocalVideoPlaybackError" ||
     error.name === "LocalImagePlaybackError");
+
+const deleteLocalMediaAsset = async (media: FileUploadProgress["localMedia"]) => {
+  if (media?.localImage) await deleteLocalImage(media.localImage.id);
+  else if (media?.localVideoFile) await deleteLocalVideoFile(media.localVideoFile.id);
+};
+
+const registerLocalAssetCleanupRetry = (
+  media: NonNullable<FileUploadProgress["localMedia"]>,
+  retryCleanup: () => Promise<void>,
+  initialError: unknown,
+  updateTransfer?: (transfer: Transfer) => void,
+  registerTransferAction?: (id: string, key: string, handler: () => void | Promise<void>) => () => void,
+  removeTransfer?: (id: string) => void,
+) => {
+  if (!updateTransfer || !registerTransferAction) return false;
+  const transferId = `media-cleanup-${media.id}`;
+  const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Local asset cleanup failed. Try again.";
+  const publish = (error?: unknown) => updateTransfer({
+    id: transferId,
+    type: "Media upload",
+    name: media.name,
+    status: "cancelled",
+    progress: 0,
+    phase: { key: "cancelled", label: "Upload cancelled" },
+    detail: "The local asset still needs cleanup.",
+    files: [{ id: media.id, name: media.name, status: "cancelled", progress: 0, phase: "Upload cancelled" }],
+    ...(error ? { error: { message: errorMessage(error) } } : {}),
+    canCancel: false,
+    blocksUnload: false,
+    actions: [{ key: "retry-cleanup", label: "Retry cleanup" }, { key: "dismiss", label: "Dismiss" }],
+  });
+  let unregisterRetry = () => {};
+  let unregisterDismiss = () => {};
+  unregisterRetry = registerTransferAction(transferId, "retry-cleanup", async () => {
+    try {
+      await retryCleanup();
+      unregisterRetry();
+      unregisterDismiss();
+      removeTransfer?.(transferId);
+    } catch (error) {
+      publish(error);
+    }
+  });
+  unregisterDismiss = registerTransferAction(transferId, "dismiss", () => {
+    unregisterRetry();
+    unregisterDismiss();
+    removeTransfer?.(transferId);
+  });
+  publish(initialError);
+  return true;
+};
 
 const MediaUploadTaskbarProgress = () => {
   const transferContext = useOptionalTransfers();
@@ -131,6 +184,9 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const cancelRequestedRef = useRef(false);
     const activeXhrRef = useRef<XMLHttpRequest | null>(null);
     const conversionTimeoutsRef = useRef<UploadTimeout[]>([]);
+    const legacyConversionOwnerActiveRef = useRef(true);
+    const currentMediaOwnerRef = useRef({ db, churchId });
+    currentMediaOwnerRef.current = { db, churchId };
     const cancelConversionTimeouts = () => {
       const pendingTimeouts = conversionTimeoutsRef.current;
       conversionTimeoutsRef.current = [];
@@ -286,11 +342,23 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       let operationClaim: MediaUploadClaim | null = null;
       let claimedMediaId = "";
       try {
+        const createdLocalMedia = !fileProgress.localMedia;
         const media = fileProgress.localMedia ?? (await createLocalMediaFromFile(fileProgress.file, churchId, storagePolicy, {
           allowCloudPlaybackFallback: storagePolicy === "local-and-cloud",
           ...(fileProgress.displayName !== fileProgress.file.name ? { displayName: fileProgress.displayName } : {}),
         }));
-        if (!fileProgress.localMedia) {
+        if (createdLocalMedia && (batch.cancelled || !batch.ownerActive)) {
+          const retryCleanup = () => deleteLocalMediaAsset(media);
+          try {
+            await retryCleanup();
+          } catch (error) {
+            batch.cleanupRetries.set(fileIndex, retryCleanup);
+            throw error;
+          }
+          updateBatchFile(batch, fileIndex, { status: "error", error: "Cancelled" });
+          return;
+        }
+        if (createdLocalMedia) {
           if (batch.ownerActive && globalDb === batch.database) onLocalMediaAdded(media);
           updateBatchFile(batch, fileIndex, { localMedia: media, progress: 40, phase: "Saved on this device" });
         }
@@ -459,10 +527,24 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           const convertedFile = fileProgress.fileType === "image"
             ? await convertCloudinaryImageToLocalWebp(fileProgress.file, resolvedUploadPreset, callbacks, churchId)
             : await convertMuxVideoToLocalMp4(fileProgress.file, churchId, callbacks);
+          if (batch.cancelled || !batch.ownerActive) return;
           media = await createLocalMediaFromFile(convertedFile, churchId, "local-only", {
             importBytes: true,
             ...(fileProgress.displayName !== fileProgress.file.name ? { displayName: fileProgress.displayName } : {}),
           });
+          if (batch.cancelled || !batch.ownerActive) {
+            const retryCleanup = () => deleteLocalMediaAsset(media);
+            try {
+              await retryCleanup();
+            } catch (error) {
+              batch.cleanupRetries.set(fileIndex, retryCleanup);
+              throw error;
+            }
+            updateBatchFile(batch, fileIndex, { status: "error", error: "Cancelled" });
+            batch.active = false;
+            publishBatch(batch, "cancelled", true);
+            return;
+          }
           onLocalMediaAdded(media);
           updateBatchFile(batch, fileIndex, { localMedia: media });
         }
@@ -505,11 +587,19 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       } catch (conversionError) {
         updateBatchFile(batch, fileIndex, {
           status: "error",
-          error: conversionError instanceof Error ? conversionError.message : "Conversion failed",
-          canConvertForOfflinePlayback: true,
+          error: batch.cancelled || !batch.ownerActive
+            ? "Cancelled"
+            : conversionError instanceof Error ? conversionError.message : "Conversion failed",
+          canConvertForOfflinePlayback: !batch.cancelled && batch.ownerActive,
         });
         batch.active = false;
-        publishBatch(batch, batch.files.some((file) => file.status === "ready") ? "partial" : "failed");
+        publishBatch(
+          batch,
+          batch.cancelled || !batch.ownerActive
+            ? "cancelled"
+            : batch.files.some((file) => file.status === "ready") ? "partial" : "failed",
+          !batch.ownerActive,
+        );
       } finally {
         if (imageClaim) {
           if (batch.activeMediaId === batch.files[fileIndex]?.localMedia?.id) {
@@ -537,6 +627,12 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       setUploadStatus("processing");
       setError("");
       cancelRequestedRef.current = false;
+      const ownerAtStart = { db, churchId };
+      const isOwnerCurrent = () =>
+        legacyConversionOwnerActiveRef.current &&
+        !cancelRequestedRef.current &&
+        currentMediaOwnerRef.current.db === ownerAtStart.db &&
+        currentMediaOwnerRef.current.churchId === ownerAtStart.churchId;
 
       const callbacks: MuxUploadCallbacks = {
         onProgress: (progress) => {
@@ -572,6 +668,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                   churchId,
                   callbacks,
                 );
+          if (!isOwnerCurrent()) {
+            if (legacyConversionOwnerActiveRef.current && !cancelRequestedRef.current) setUploadStatus("idle");
+            return;
+          }
           media = await createLocalMediaFromFile(
             convertedFile,
             churchId,
@@ -583,6 +683,26 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
                 : {}),
             },
           );
+          if (!isOwnerCurrent()) {
+            if (legacyConversionOwnerActiveRef.current && !cancelRequestedRef.current) setUploadStatus("idle");
+            const retryCleanup = () => deleteLocalMediaAsset(media);
+            try {
+              await retryCleanup();
+            } catch (cleanupError) {
+              const retryRegistered = registerLocalAssetCleanupRetry(
+                media,
+                retryCleanup,
+                cleanupError,
+                updateTransfer,
+                registerTransferAction,
+                removeTransfer,
+              );
+              if (!retryRegistered && legacyConversionOwnerActiveRef.current) {
+                setError(cleanupError instanceof Error ? cleanupError.message : "Local asset cleanup failed. Try again.");
+              }
+            }
+            return;
+          }
           onLocalMediaAdded(media);
           // Local conversion/import is durable. A later cloud-share failure
           // must retry from this checkpoint instead of creating another item.
@@ -609,6 +729,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         setUploadStatus("ready");
         window.setTimeout(() => handleCancel(), 2000);
       } catch (err) {
+        if (!legacyConversionOwnerActiveRef.current) return;
         updateFileStatus(fileIndex, {
           status: "error",
           error: err instanceof Error ? err.message : "Conversion failed",
@@ -621,8 +742,10 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             : "Could not convert this video for offline playback.",
         );
       } finally {
-        setConvertingFileIndex(null);
-        activeXhrRef.current = null;
+        if (legacyConversionOwnerActiveRef.current) {
+          setConvertingFileIndex(null);
+          activeXhrRef.current = null;
+        }
         cancelConversionTimeouts();
       }
     };
@@ -727,7 +850,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
             try {
               await retry();
               batch.cleanupRetries.delete(index);
-              batch.files[index].error = "Cleanup succeeded; retry this file to upload again.";
+              batch.files[index].error = "Cleanup succeeded.";
             } catch (error) {
               batch.files[index].error = error instanceof Error ? error.message : "Cleanup failed. Try again.";
             }
@@ -786,7 +909,6 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       setError("");
       setUploadStatus("idle");
       setIsModalOpen(false);
-      cancelRequestedRef.current = false;
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -827,8 +949,15 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       [],
     );
 
-    useEffect(() => () => {
-      batchesRef.current.forEach((batch) => {
+    useEffect(() => {
+      legacyConversionOwnerActiveRef.current = true;
+      const batches = batchesRef.current;
+      return () => {
+      legacyConversionOwnerActiveRef.current = false;
+      cancelRequestedRef.current = true;
+      activeXhrRef.current?.abort();
+      cancelConversionTimeouts();
+      batches.forEach((batch) => {
         if (batch.active) {
           batch.cancelled = true;
           batch.active = false;
@@ -873,7 +1002,8 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           batch.unregisterActions.forEach((unregister) => unregister());
         }
       });
-      batchesRef.current.clear();
+      batches.clear();
+      };
     }, [cancelBatchResources, publishBatch, updateTransfer]);
 
     useEffect(() => {

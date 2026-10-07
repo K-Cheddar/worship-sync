@@ -20,6 +20,8 @@ import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { TransferProvider } from "../../context/transferContext";
 import { MediaAddControl } from "./MediaAddControl";
 import { deleteChurchMuxAsset } from "../../api/providerStorage";
+import { deleteLocalImage } from "../../utils/localImageAssets";
+import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 
 const mockValidateFiles = jest.fn((files: File[]): { valid: File[]; invalid: File[] } => ({
   valid: files,
@@ -83,6 +85,16 @@ jest.mock("../../api/providerStorage", () => ({
   deleteChurchMuxAsset: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../../utils/localImageAssets", () => ({
+  ...jest.requireActual("../../utils/localImageAssets"),
+  deleteLocalImage: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("../../utils/localVideoFileAssets", () => ({
+  ...jest.requireActual("../../utils/localVideoFileAssets"),
+  deleteLocalVideoFile: jest.fn().mockResolvedValue(undefined),
+}));
+
 const mockedCreateLocalMedia = jest.mocked(createLocalMediaFromFile);
 const mockedCancelUpload = jest.mocked(cancelLocalImageUpload);
 const mockedEnqueueUpload = jest.mocked(enqueueLocalImageUpload);
@@ -95,6 +107,8 @@ const mockedUploadVideo = jest.mocked(uploadVideoToMux);
 const mockedConvertCloudinaryImage = jest.mocked(
   convertCloudinaryImageToLocalWebp,
 );
+const mockedDeleteLocalImage = jest.mocked(deleteLocalImage);
+const mockedDeleteLocalVideoFile = jest.mocked(deleteLocalVideoFile);
 
 const localImage = (id = "local_image_1", name = "photo.png"): MediaType => ({
   path: "",
@@ -117,6 +131,21 @@ const localImage = (id = "local_image_1", name = "photo.png"): MediaType => ({
     fileName: name,
     contentType: "image/png",
     storagePolicy: "local-only",
+  },
+});
+
+const localVideo = (id = "local_video_1", name = "clip.mp4"): MediaType => ({
+  ...localImage(id, name),
+  format: "mp4",
+  type: "video",
+  localImage: undefined,
+  localVideoFile: {
+    id,
+    ownerDeviceId: "this-device",
+    ownerLabel: "Booth",
+    fileName: name,
+    contentType: "video/mp4",
+    storagePolicy: "local-and-cloud",
   },
 });
 
@@ -287,6 +316,205 @@ describe("MediaUploadInput", () => {
 
     expect(deleteChurchMuxAsset).toHaveBeenCalledWith("church-1", "mux-asset-1");
     expect(onLocalMediaPatched).not.toHaveBeenCalled();
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
+  });
+
+  it("deletes a newly imported local video when unmounted before import resolves", async () => {
+    let resolveImport!: (media: MediaType) => void;
+    mockedCreateLocalMedia.mockImplementation(() => new Promise((resolve) => {
+      resolveImport = resolve;
+    }));
+    mockDetectFileType.mockReturnValue("video");
+    const onLocalMediaAdded = jest.fn();
+    const onLocalMediaPatched = jest.fn();
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={onLocalMediaAdded} onLocalMediaPatched={onLocalMediaPatched} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1));
+
+    view.rerender(surface(false));
+    await act(async () => {
+      resolveImport(localVideo("local_video_created_during_import"));
+      await Promise.resolve();
+    });
+
+    expect(mockedDeleteLocalVideoFile).toHaveBeenCalledWith("local_video_created_during_import");
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
+    expect(onLocalMediaPatched).not.toHaveBeenCalled();
+    expect(mockedUploadVideo).not.toHaveBeenCalled();
+    expect(mockedEnqueueUpload).not.toHaveBeenCalled();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
+  });
+
+  it("deletes a newly imported local image when unmounted before import resolves", async () => {
+    let resolveImport!: (media: MediaType) => void;
+    mockedCreateLocalMedia.mockImplementation(() => new Promise((resolve) => {
+      resolveImport = resolve;
+    }));
+    const onLocalMediaAdded = jest.fn();
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={onLocalMediaAdded} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1));
+
+    view.rerender(surface(false));
+    await act(async () => {
+      resolveImport(localImage("local_image_created_during_import"));
+      await Promise.resolve();
+    });
+
+    expect(mockedDeleteLocalImage).toHaveBeenCalledWith("local_image_created_during_import");
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
+    expect(mockedEnqueueUpload).not.toHaveBeenCalled();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
+    expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
+  });
+
+  it("keeps failed local-asset cleanup retryable on the cancelled transfer", async () => {
+    let resolveImport!: (media: MediaType) => void;
+    mockedCreateLocalMedia.mockImplementation(() => new Promise((resolve) => {
+      resolveImport = resolve;
+    }));
+    mockedDeleteLocalVideoFile.mockRejectedValueOnce(new Error("Local cleanup failed"));
+    mockDetectFileType.mockReturnValue("video");
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={jest.fn()} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1));
+    view.rerender(surface(false));
+    await act(async () => {
+      resolveImport(localVideo("local_video_cleanup_retry"));
+      await Promise.resolve();
+    });
+
+    const retryCleanup = await screen.findByRole("button", { name: "Retry cleanup" });
+    expect(mockedDeleteLocalVideoFile).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByRole("complementary", { name: "Activity" })).getAllByText("Cancelled").length).toBeGreaterThan(0);
+
+    fireEvent.click(retryCleanup);
+    await waitFor(() => expect(mockedDeleteLocalVideoFile).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry cleanup" })).not.toBeInTheDocument());
+    expect(within(screen.getByRole("complementary", { name: "Activity" })).getAllByText("Cancelled").length).toBeGreaterThan(0);
+  });
+
+  it("keeps a pre-existing local video checkpoint when its cloud retry is cancelled", async () => {
+    const media = localVideo("existing_local_video");
+    let finishUpload!: (result: MuxUploadResult) => void;
+    mockedCreateLocalMedia.mockResolvedValueOnce(media);
+    mockedUploadVideo
+      .mockRejectedValueOnce(new Error("Mux is unavailable"))
+      .mockImplementationOnce(async () => new Promise((resolve) => { finishUpload = resolve; }));
+    mockDetectFileType.mockReturnValue("video");
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={jest.fn()} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry failed files" }));
+    await waitFor(() => expect(mockedUploadVideo).toHaveBeenCalledTimes(2));
+
+    view.rerender(surface(false));
+    await act(async () => {
+      finishUpload({ assetId: "mux_asset" } as MuxUploadResult);
+      await Promise.resolve();
+    });
+
+    expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1);
+    expect(mockedDeleteLocalVideoFile).not.toHaveBeenCalled();
+  });
+
+  it("cleans a converted local asset when its transfer owner unmounts during import", async () => {
+    const playbackError = new Error(
+      "This video cannot be played on this device. You can convert it for offline playback.",
+    );
+    playbackError.name = "LocalVideoPlaybackError";
+    const sourceFile = new File(["source"], "camera.mov", { type: "video/quicktime" });
+    const convertedFile = new File(["converted"], "camera.mp4", { type: "video/mp4" });
+    let resolveImport!: (media: MediaType) => void;
+    mockedCreateLocalMedia
+      .mockRejectedValueOnce(playbackError)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveImport = resolve; }));
+    mockedConvertMuxVideo.mockResolvedValueOnce(convertedFile);
+    mockDetectFileType.mockReturnValue("video");
+    const onLocalMediaAdded = jest.fn();
+    const onLocalMediaPatched = jest.fn();
+    const surface = (showInput: boolean) => (
+      <TransferProvider>
+        <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+          <GlobalInfoContext.Provider value={{ churchId: "church-1", uploadPreset: "preset-1" } as never}>
+            {showInput ? <MediaUploadInput onLocalMediaAdded={onLocalMediaAdded} onLocalMediaPatched={onLocalMediaPatched} /> : null}
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </TransferProvider>
+    );
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [sourceFile] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload (1 file)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Convert camera.mov" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(2));
+
+    view.rerender(surface(false));
+    await act(async () => {
+      resolveImport(localVideo("converted_video_created_during_import"));
+      await Promise.resolve();
+    });
+
+    expect(mockedDeleteLocalVideoFile).toHaveBeenCalledWith("converted_video_created_during_import");
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
+    expect(onLocalMediaPatched).not.toHaveBeenCalled();
+    expect(mockedUploadVideo).not.toHaveBeenCalled();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
     expect(activity.getAllByText("Cancelled").length).toBeGreaterThan(0);
     expect(activity.queryByText(/1 failed/)).not.toBeInTheDocument();
   });

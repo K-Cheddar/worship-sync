@@ -20,6 +20,17 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 
 For a substantial review involving async work, persistence, uploads, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for the recurring shapes; it supplements this workflow rather than replacing it.
 
+### Required specialized guidance
+
+When applicable, load and apply the deeper domain guidance:
+
+- Shared persisted writes, autosaves, PouchDB/Firebase writes, cross-client contention, or datastore switching: `$persisted-mutation-safety`.
+- Multi-stage async workflows, retries, uploads, durable jobs, or identity/lifetime boundaries: `$reliable-state-mutations`.
+- React async lifecycle, unmount, or stale-result behavior: `$react-quality` and [stale async work on entity changes](../../patterns/stale-async-entity-changes.md).
+- Schedule persistence or mutations: `$schedule-mutation-safety`.
+
+`code-review` orchestrates the review; these specialized guides supply the detailed domain rules. Do not duplicate their contents here.
+
 ## Required cross-boundary passes
 
 | Boundary | Questions to answer |
