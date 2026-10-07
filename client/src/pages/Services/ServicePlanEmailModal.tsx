@@ -1,3 +1,4 @@
+import TextArea from "../../components/TextArea/TextArea";
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Check, RotateCcw, Send, X } from "lucide-react";
 import type {
@@ -225,9 +226,9 @@ const ServicePlanEmailModal = ({
   return (
     <Modal
       isOpen
-      onClose={isSending ? () => undefined : onClose}
+      onClose={onClose}
+      busy={isSending}
       title="Email service plan"
-      showCloseButton={!isSending}
       size="sm"
     >
       {isSent ? (
@@ -280,7 +281,17 @@ const ServicePlanEmailModal = ({
                 {recipients.map((recipient) => (
                   <span key={recipient} className="inline-flex max-w-full items-center gap-1 rounded-full bg-gray-700 px-2 py-0.5 text-sm text-gray-100">
                     <span className="max-w-[16rem] truncate">{recipient}</span>
-                    <button type="button" className="rounded-full text-gray-300 hover:text-white" aria-label={`Remove ${recipient}`} onClick={() => setRecipients((current) => current.filter((value) => value !== recipient))} disabled={isSending}>×</button>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={X}
+                      iconSize="xs"
+                      padding="p-1"
+                      className="size-8 justify-center rounded-full text-gray-300 hover:text-white"
+                      aria-label={`Remove ${recipient}`}
+                      onClick={() => setRecipients((current) => current.filter((value) => value !== recipient))}
+                      disabled={isSending}
+                    />
                   </span>
                 ))}
                 <input
@@ -330,13 +341,13 @@ const ServicePlanEmailModal = ({
             >
               Message
             </label>
-            <textarea
+            <TextArea
               id="service-plan-email-message"
-              className="min-h-28 w-full resize-y rounded-md border border-gray-600 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-65"
+              textareaClassName="min-h-28 w-full resize-y rounded-md border border-gray-600 bg-gray-950/60 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-65"
               value={message}
               maxLength={5000}
               disabled={isSending}
-              onChange={(event) => setMessage(event.target.value)}
+              onChange={setMessage}
             />
           </div>
           {status === "error" ? (

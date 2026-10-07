@@ -119,6 +119,25 @@ describe("ScheduleGridCell", () => {
     expect(screen.queryByAltText("")).not.toBeInTheDocument();
   });
 
+  it("uses the responsive schedule avatar size for the assigned member", () => {
+    renderCell({
+      assignmentCell: { primaryMemberId: "m1" },
+      allMembers: [{
+        memberId: "m1",
+        churchId: "church-1",
+        firstName: "Rae",
+        lastName: "Kim",
+        positionIds: ["cam"],
+        blockoutDates: [],
+      }],
+    });
+
+    expect(screen.getByText("RK")).toHaveClass(
+      "size-[1.5rem]",
+      "max-md:size-[1.75rem]",
+    );
+  });
+
   it("labels a schedule-only guest without treating the slot as empty", () => {
     renderCell({
       assignmentCell: { primaryMemberId: "scheduleGuest_1" },

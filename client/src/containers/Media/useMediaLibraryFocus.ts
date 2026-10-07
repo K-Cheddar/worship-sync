@@ -16,6 +16,7 @@ type UseMediaLibraryFocusArgs = {
   selectedLibraryFilter: string | null;
   pendingDeletionIds: Set<string>;
   deviceId: string;
+  controllerProfileId: string;
   routeKey: MediaRouteKey;
   mediaGridRef: React.RefObject<VirtualMediaGridHandle | null>;
   setSearchTerm: (value: string) => void;
@@ -39,6 +40,7 @@ export function useMediaLibraryFocus({
   selectedLibraryFilter,
   pendingDeletionIds,
   deviceId,
+  controllerProfileId,
   routeKey,
   mediaGridRef,
   setSearchTerm,
@@ -106,14 +108,31 @@ export function useMediaLibraryFocus({
     }
 
     const targetFolder = resolveShowInMediaFolderId(mediaItem);
-    dispatch(setMediaRouteFolder({ key: routeKey, folderId: targetFolder }));
+    dispatch(
+      setMediaRouteFolder({ controllerProfileId, key: routeKey, folderId: targetFolder }),
+    );
     setSelectedMedia(mediaItem);
     setSelectedMediaIds(new Set([mediaItem.id]));
     setPreviewMedia(mediaItem);
     // The focus request is intentionally stored in a ref so these lifecycle
     // transitions do not add a render-only state update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cancelFocusWork, focusMediaId, list, isMediaLoading]);
+  }, [
+    cancelFocusWork,
+    focusMediaId,
+    list,
+    isMediaLoading,
+    controllerProfileId,
+    dispatch,
+    routeKey,
+    deviceId,
+    setSearchTerm,
+    setOriginFilter,
+    setTypeFilter,
+    setShowOtherDeviceLocalMedia,
+    setSelectedMedia,
+    setSelectedMediaIds,
+    setPreviewMedia,
+  ]);
 
   const tryFocusPendingMedia = useCallback(() => {
     const pendingId = focusPendingIdRef.current;

@@ -1,6 +1,7 @@
 import {
   convertCloudinaryImageToLocalWebp,
   uploadImageToCloudinary,
+  uploadImageToCloudinarySigned,
 } from "./cloudinaryUpload";
 
 function mockXhrSuccess(responseText: string) {
@@ -67,6 +68,54 @@ describe("uploadImageToCloudinary", () => {
   afterEach(() => {
     global.XMLHttpRequest = OriginalXHR;
     jest.restoreAllMocks();
+  });
+
+  it("sends dynamic asset folder placement without sending it as a legacy folder", async () => {
+    const file = new File(["x"], "welcome.png", { type: "image/png" });
+    const responseJson = JSON.stringify({
+      public_id: "welcome_123",
+      secure_url: "https://cdn.example/welcome_123.png",
+      width: 100,
+      height: 80,
+      format: "png",
+      created_at: "2026-01-01T00:00:00.000Z",
+      bytes: 10,
+    });
+    const xhr = mockXhrSuccess(responseJson);
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+
+    await uploadImageToCloudinary(file, "preset", "test-cloud", {}, {
+      assetFolder: "worship-sync/churches/church-1/media",
+    });
+
+    const formData = (xhr.send as jest.Mock).mock.calls[0][0] as FormData;
+    expect(formData.get("asset_folder")).toBe(
+      "worship-sync/churches/church-1/media",
+    );
+    expect(formData.get("folder")).toBeNull();
+  });
+
+  it("continues to send legacy folder for callers that explicitly request it", async () => {
+    const file = new File(["x"], "profile.png", { type: "image/png" });
+    const responseJson = JSON.stringify({
+      public_id: "profile_123",
+      secure_url: "https://cdn.example/profile_123.png",
+      width: 100,
+      height: 80,
+      format: "png",
+      created_at: "2026-01-01T00:00:00.000Z",
+      bytes: 10,
+    });
+    const xhr = mockXhrSuccess(responseJson);
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+
+    await uploadImageToCloudinary(file, "preset", "test-cloud", {}, {
+      folder: "member-profiles/church-1",
+    });
+
+    const formData = (xhr.send as jest.Mock).mock.calls[0][0] as FormData;
+    expect(formData.get("folder")).toBe("member-profiles/church-1");
+    expect(formData.get("asset_folder")).toBeNull();
   });
 
   it("prefers local file.name over Cloudinary original_filename", async () => {
@@ -245,5 +294,77 @@ describe("uploadImageToCloudinary", () => {
         }),
       }),
     );
+  });
+});
+
+describe("uploadImageToCloudinarySigned", () => {
+  const OriginalXHR = global.XMLHttpRequest;
+
+  afterEach(() => {
+    global.XMLHttpRequest = OriginalXHR;
+    jest.restoreAllMocks();
+  });
+
+  it("sends only file and server-provided signed fields to the intent URL", async () => {
+    const file = new File(["x"], "welcome.png", { type: "image/png" });
+    const responseJson = JSON.stringify({
+      public_id: "worship-sync-image-1",
+      secure_url: "https://res.cloudinary.com/portable-media/image/upload/worship-sync-image-1.png",
+      width: 100,
+      height: 80,
+      format: "png",
+      created_at: "2026-01-01T00:00:00.000Z",
+      bytes: 10,
+    });
+    const xhr = mockXhrSuccess(responseJson);
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+    const intent = {
+      uploadId: "intent-1",
+      uploadUrl: "https://api.cloudinary.com/v1_1/portable-media/image/upload",
+      publicId: "worship-sync-image-1",
+      fields: {
+        api_key: "public-key",
+        timestamp: "1",
+        signature: "server-signature",
+        public_id: "worship-sync-image-1",
+        overwrite: "false",
+        allowed_formats: "avif,bmp,gif,heic,jpg,jxl,png,svg,tiff,webp,ico",
+        asset_folder: "worship-sync/churches/church-1/media",
+      },
+    };
+
+    await uploadImageToCloudinarySigned(file, intent);
+
+    expect(xhr.open).toHaveBeenCalledWith("POST", intent.uploadUrl);
+    const formData = (xhr.send as jest.Mock).mock.calls[0][0] as FormData;
+    Object.entries(intent.fields).forEach(([key, value]) => {
+      expect(formData.get(key)).toBe(value);
+    });
+    expect(formData.get("file")).toBeTruthy();
+    expect(formData.get("upload_preset")).toBeNull();
+    expect(formData.get("folder")).toBeNull();
+    expect(formData.get("resource_type")).toBeNull();
+  });
+
+  it("rejects a Cloudinary public ID that differs from the server intent", async () => {
+    const xhr = mockXhrSuccess(JSON.stringify({
+      public_id: "other-image",
+      secure_url: "https://res.cloudinary.com/portable-media/image/upload/other-image.png",
+      width: 100,
+      height: 80,
+      format: "png",
+      created_at: "2026-01-01T00:00:00.000Z",
+      bytes: 10,
+    }));
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+    await expect(uploadImageToCloudinarySigned(
+      new File(["x"], "image.png", { type: "image/png" }),
+      {
+        uploadId: "intent-1",
+        uploadUrl: "https://api.cloudinary.com/v1_1/portable-media/image/upload",
+        publicId: "expected-image",
+        fields: { api_key: "key", timestamp: "1", signature: "sig", public_id: "expected-image" },
+      },
+    )).rejects.toThrow("Cloudinary returned an unexpected image ID.");
   });
 });

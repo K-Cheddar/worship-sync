@@ -95,6 +95,7 @@ export type MediaLibraryBarAction = {
   label: string;
   icon?: React.ReactNode;
   disabled?: boolean;
+  supportingText?: string;
   variant?: "default" | "destructive";
 } & (
     | { menuItems: MediaLibraryBarMenuEntry[]; onClick?: undefined }

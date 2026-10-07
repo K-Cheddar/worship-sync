@@ -484,9 +484,12 @@ const LocalVideoInputPicker = ({
     nextCaptureKind: LocalVideoCaptureKind,
     audioEnabled: boolean,
   ) => {
+    const suggestedLabel = selectedDesktopSource?.name ?? browserShare?.name;
     onLinked({
       ...nextSource,
-      label: label.trim() || nextSource.label,
+      label:
+        (isLabelEdited ? label.trim() : suggestedLabel ?? label.trim()) ||
+        nextSource.label,
       captureKind: nextCaptureKind,
       fit,
       audioEnabled,

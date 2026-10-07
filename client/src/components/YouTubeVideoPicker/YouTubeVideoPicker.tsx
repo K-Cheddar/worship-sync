@@ -91,6 +91,7 @@ const YouTubeVideoPicker = ({
               title: previewResult.title,
               artist: previewResult.channelName,
               videoId: previewResult.videoId,
+              playbackRanges: [{}],
               ...(previewResult.durationSeconds === undefined
                 ? {}
                 : { durationSeconds: previewResult.durationSeconds }),

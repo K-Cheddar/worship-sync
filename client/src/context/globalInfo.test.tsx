@@ -19,6 +19,9 @@ import {
   setPendingLinkCredentialState,
   setPendingLinkState,
   getWorkstationSessionOperatorName,
+  getCsrfToken,
+  clearCsrfToken,
+  setWorkstationToken,
   setWorkstationSessionOperatorName,
 } from "../utils/authStorage";
 
@@ -1829,6 +1832,40 @@ describe("GlobalInfoProvider auth regression coverage", () => {
       expect(screen.getByTestId("session-kind")).toHaveTextContent("human");
     });
     expect(screen.getByTestId("church-id")).toHaveTextContent("church-1");
+  });
+
+  it("applies the refreshed CSRF token from a recovered workstation bootstrap", async () => {
+    setWorkstationToken("persisted-workstation-token");
+    setWorkstationSessionOperatorName("Alex");
+    clearCsrfToken();
+    (authApi.getAuthBootstrap as jest.Mock)
+      .mockResolvedValueOnce({
+        ...loggedInWorkstationBootstrap,
+        csrfToken: "stale-csrf-token",
+      })
+      .mockResolvedValueOnce({
+        ...loggedInWorkstationBootstrap,
+        csrfToken: "refreshed-csrf-token",
+      });
+
+    renderProvider(<ContextProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("session-kind")).toHaveTextContent("workstation"),
+    );
+    expect(getCsrfToken()).toBe("stale-csrf-token");
+
+    let recovered = false;
+    await act(async () => {
+      recovered = await requestAuthRecovery();
+    });
+
+    expect(recovered).toBe(true);
+    expect(authApi.getAuthBootstrap).toHaveBeenLastCalledWith({
+      workstationToken: "persisted-workstation-token",
+      authRecovery: false,
+    });
+    expect(getCsrfToken()).toBe("refreshed-csrf-token");
   });
 
   it("restores a pending provider link after remount and links on password sign-in", async () => {

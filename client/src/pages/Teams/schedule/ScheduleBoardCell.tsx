@@ -112,6 +112,8 @@ const ScheduleBoardCell = memo(({
   const assignedMember = allMembers.find(
     (item) => item.memberId === assignedMemberId,
   );
+  const avatarMember =
+    assignedMember && !assignedMember.scheduleGuest ? assignedMember : null;
 
   const assigneeLabel = assignedMember
     ? scheduleMemberName(assignedMember, duplicateFirstNames)
@@ -184,11 +186,18 @@ const ScheduleBoardCell = memo(({
         )}
         onClick={handleActivate}
       >
-        {positionIcon ? (
+        {avatarMember ? (
+          <MemberAvatar
+            profileImageUrl={avatarMember.profileImageUrl}
+            memberName={`${avatarMember.firstName} ${avatarMember.lastName}`}
+            className="h-8 w-8"
+          />
+        ) : positionIcon ? (
           <PositionIconBadge
             icon={positionIcon}
             className="h-8 w-8 rounded-md"
             iconClassName="h-4 w-4"
+            data-testid="schedule-position-marker"
           />
         ) : (
           <span
@@ -199,7 +208,15 @@ const ScheduleBoardCell = memo(({
           </span>
         )}
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex items-center gap-1.5 truncate text-xs font-medium text-gray-400">
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium text-gray-400">
+            {avatarMember && positionIcon ? (
+              <PositionIconBadge
+                icon={positionIcon}
+                className="h-5 w-5 rounded"
+                iconClassName="h-3 w-3"
+                data-testid="schedule-position-inline-icon"
+              />
+            ) : null}
             {positionLabel}
             {positionArchived ? (
               <span className="shrink-0 font-normal text-gray-500">(archived)</span>
@@ -215,13 +232,6 @@ const ScheduleBoardCell = memo(({
               <ScheduleResponseIndicator
                 response={response}
                 memberName={assigneeLabel}
-              />
-            ) : null}
-            {assignedMember && !assignedMember.scheduleGuest ? (
-              <MemberAvatar
-                profileImageUrl={assignedMember.profileImageUrl}
-                memberName={`${assignedMember.firstName} ${assignedMember.lastName}`}
-                className="h-5 w-5 text-[8px]"
               />
             ) : null}
             <span className={scheduleAssignmentLabelClassName}>

@@ -9,7 +9,8 @@ import {
   DBAllItems,
   DBItemListDetails,
   DBOverlayTemplates,
-  MEDIA_ROUTE_FOLDERS_POUCH_ID,
+  isControllerMediaRouteFoldersDocId,
+  getControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   PreferencesClusterRemoteDoc,
@@ -52,6 +53,8 @@ import {
   initiateMonitorSettings,
   initiatePreferences,
   initiateQuickLinks,
+  initiateMediaRouteFolders,
+  updateControllerMediaRouteFoldersFromRemote,
   preferencesClusterLoadFallback,
   setIsLoading,
   updatePreferencesFromRemote,
@@ -64,7 +67,6 @@ import {
 import {
   initiateMediaList,
   initiateMediaFromDoc,
-  syncMediaFromRemote,
   removeMediaItemFromRemote,
   updateMediaFoldersFromRemote,
   upsertMediaItemFromRemote,
@@ -73,10 +75,8 @@ import {
 } from "../../store/mediaSlice";
 import {
   loadMediaLibrary as readMediaLibrary,
-  isMediaLibraryV2,
-  MEDIA_LIBRARY_META_ID,
-  MEDIA_LIBRARY_SCHEMA_VERSION,
   parseMediaReplicationDoc,
+  requireMediaLibraryV2,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setAllItemsIsInitialized } from "../../store/allItemsSlice";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
@@ -99,6 +99,7 @@ import {
   useActiveControllerProfile,
 } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
+import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -139,9 +140,6 @@ export const useControllerPageLifecycle = () => {
   );
 
   const hasDispatchedControllerPageReady = useRef(false);
-  const mediaSchemaV2Ref = useRef(false);
-  const mediaSchemaV2ObservedRef = useRef(false);
-  const mediaSchemaDbRef = useRef<PouchDB.Database | undefined>(undefined);
   const mediaReplicationRevisionRef = useRef(0);
   const mediaReplicationDbRef = useRef<PouchDB.Database | undefined>(db);
   const mediaReplicationFingerprintsRef = useRef(new Map<string, string>());
@@ -243,14 +241,6 @@ export const useControllerPageLifecycle = () => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
       for (const update of updates) {
-        if (
-          update?._id === MEDIA_LIBRARY_META_ID &&
-          Number(update.schemaVersion) >= MEDIA_LIBRARY_SCHEMA_VERSION
-        ) {
-          mediaSchemaV2Ref.current = true;
-          mediaSchemaV2ObservedRef.current = true;
-          continue;
-        }
         if (typeof update?._id === "string") {
           const fingerprint = JSON.stringify(
             Object.fromEntries(
@@ -266,12 +256,10 @@ export const useControllerPageLifecycle = () => {
             if (oldestId) mediaReplicationFingerprintsRef.current.delete(oldestId);
           }
         }
-        const change = parseMediaReplicationDoc(update, mediaSchemaV2Ref.current);
+        const change = parseMediaReplicationDoc(update);
         if (!change) continue;
         mediaReplicationRevisionRef.current += 1;
-        if (change.kind === "legacy") {
-          dispatch(syncMediaFromRemote({ list: change.list, folders: change.folders }));
-        } else if (change.kind === "folders") {
+        if (change.kind === "folders") {
           dispatch(updateMediaFoldersFromRemote(change.folders));
         } else if (change.kind === "item-delete") {
           dispatch(removeMediaItemFromRemote(change.id));
@@ -295,13 +283,17 @@ export const useControllerPageLifecycle = () => {
             _update._id === PREFERENCES_POUCH_ID ||
             _update._id === QUICK_LINKS_POUCH_ID ||
             _update._id === MONITOR_SETTINGS_POUCH_ID ||
-            _update._id === MEDIA_ROUTE_FOLDERS_POUCH_ID
+            isControllerMediaRouteFoldersDocId(_update._id)
           ) {
-            dispatch(
-              updatePreferencesFromRemote(
-                _update as PreferencesClusterRemoteDoc,
-              ),
-            );
+            if (isControllerMediaRouteFoldersDocId(_update._id) && "controllerProfileId" in _update) {
+              if (_update._id !== getControllerMediaRouteFoldersDocId(_update.controllerProfileId)) continue;
+              dispatch(updateControllerMediaRouteFoldersFromRemote({
+                controllerProfileId: _update.controllerProfileId,
+                mediaRouteFolders: _update.mediaRouteFolders ?? {},
+              }));
+            } else {
+              dispatch(updatePreferencesFromRemote(_update as PreferencesClusterRemoteDoc));
+            }
           }
         }
       } catch (e) {
@@ -423,13 +415,7 @@ export const useControllerPageLifecycle = () => {
     const getPreferences = async () => {
       try {
         const bundle = await loadOrCreatePreferencesBundle(db);
-        dispatch(
-          initiatePreferences({
-            preferences: bundle.preferences,
-            isMusic: access === "music",
-            mediaRouteFolders: bundle.mediaRouteFolders,
-          }),
-        );
+        dispatch(initiatePreferences({ preferences: bundle.preferences, isMusic: access === "music" }));
         dispatch(initiateQuickLinks(bundle.quickLinks));
         dispatch(initiateMonitorSettings(bundle.monitorSettings));
       } catch (e) {
@@ -439,7 +425,6 @@ export const useControllerPageLifecycle = () => {
           initiatePreferences({
             preferences: fb.preferences,
             isMusic: access === "music",
-            mediaRouteFolders: fb.mediaRouteFolders,
           }),
         );
         dispatch(initiateQuickLinks(fb.quickLinks));
@@ -455,6 +440,24 @@ export const useControllerPageLifecycle = () => {
     };
     void getPreferences();
   }, [dispatch, db, access, showToast]);
+
+  useEffect(() => {
+    if (!db || !activeControllerId) return;
+    let isCurrent = true;
+    const controllerProfileId = activeControllerId;
+    dispatch(initiateMediaRouteFolders({ controllerProfileId, mediaRouteFolders: {} }));
+    void loadOrCreateControllerMediaRouteFolders(db, controllerProfileId).then(
+      (doc) => {
+        if (isCurrent) dispatch(initiateMediaRouteFolders({
+          controllerProfileId,
+          mediaRouteFolders: doc.mediaRouteFolders,
+        }));
+      },
+    ).catch((error) => {
+      console.error("Could not load controller media folder preferences", error);
+    });
+    return () => { isCurrent = false; };
+  }, [dispatch, db, activeControllerId]);
 
   useEffect(() => {
     if (!db) return;
@@ -487,29 +490,13 @@ export const useControllerPageLifecycle = () => {
     if (!db || access !== "full") return;
     let cancelled = false;
     dispatch(setMediaLoadStatus("loading"));
-    if (mediaSchemaDbRef.current !== db) {
-      mediaSchemaDbRef.current = db;
-      mediaSchemaV2Ref.current = false;
-      mediaSchemaV2ObservedRef.current = false;
-    }
-
     const initializeMediaLibrary = async () => {
       try {
-        const initializedAsV2 = await isMediaLibraryV2(db);
+        await requireMediaLibraryV2(db);
         if (cancelled) return;
-        if (!mediaSchemaV2ObservedRef.current) {
-          mediaSchemaV2Ref.current = initializedAsV2;
-          mediaSchemaV2ObservedRef.current = initializedAsV2;
-        }
         const replicationRevisionAtStart = mediaReplicationRevisionRef.current;
         let loaded = await readMediaLibrary(db);
         if (cancelled) return;
-        // A v2 marker can replicate while the initial legacy read is pending.
-        // Re-read using the active schema before publishing that stale snapshot.
-        if (mediaSchemaV2Ref.current && !initializedAsV2) {
-          loaded = await readMediaLibrary(db);
-          if (cancelled) return;
-        }
         // Item or folder documents can replicate during a same-schema read too.
         // Re-read until no media change arrived while the read was in flight.
         let readRevision = mediaReplicationRevisionRef.current;

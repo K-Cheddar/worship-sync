@@ -57,7 +57,7 @@ jest.mock("@dnd-kit/sortable", () => ({
   verticalListSortingStrategy: jest.fn(),
 }));
 
-jest.mock("../../../components/PopOver/PopOver", () => ({
+jest.mock("../../../components/PopOver/PopoverPanel", () => ({
   __esModule: true,
   default: ({ TriggeringButton, children }: { TriggeringButton: ReactNode; children: ReactNode }) => (
     <div>{TriggeringButton}{children}</div>

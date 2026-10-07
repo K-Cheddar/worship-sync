@@ -81,3 +81,83 @@ it("keeps an edited role open after Save and navigates with restore state only o
     state: { teamsRestore: returnTo.restore },
   }));
 });
+
+it("creates a role with its selected icon and renders icons with a fallback for legacy roles", async () => {
+  const user = userEvent.setup();
+  const onSaved = jest.fn();
+  const icon = { source: "lucide", name: "Users" } as const;
+  const storedIcon = { ...icon, color: "#22c55e" } as const;
+  jest.mocked(createTeamRole).mockResolvedValue({
+    success: true,
+    role: { ...role, name: "Safety Lead", icon },
+  } as never);
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[role, { ...role, roleId: "role-stored-icon", name: "Stored icon", icon: storedIcon }]} teams={[team]} canEdit onSaved={onSaved} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getAllByTestId("entity-icon-badge")).toHaveLength(2);
+  expect(screen.getAllByTestId("entity-icon-badge")[1]).toHaveStyle({ backgroundColor: "#22c55e" });
+  await user.click(screen.getByText("Lead"));
+  await user.click(screen.getByRole("button", { name: "Icon picker" }));
+  expect(screen.getByRole("button", { name: /Shield Check/i })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Icon picker" })).toHaveTextContent("Shield Check (default)");
+  await user.keyboard("{Escape}");
+  await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+  await user.click(screen.getAllByRole("button", { name: "Create role" }).at(-1)!);
+  await user.type(screen.getByLabelText(/^Name:?$/), "Safety Lead");
+  await user.click(screen.getByRole("button", { name: "Icon picker" }));
+  await user.click(screen.getByRole("button", { name: "Users" }));
+  await user.click(screen.getAllByRole("button", { name: "Create role" }).at(-1)!);
+
+  await waitFor(() => expect(createTeamRole).toHaveBeenCalledWith("church-1", expect.objectContaining({ icon })));
+  expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ icon }), expect.any(String));
+});
+
+it("removes a saved role icon through the shared picker", async () => {
+  const user = userEvent.setup();
+  const icon = { source: "lucide", name: "ShieldCheck", color: "#22c55e" } as const;
+  jest.mocked(updateTeamRole).mockResolvedValue({ success: true, role: { ...role, icon: "" } } as never);
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[{ ...role, icon }]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByText("Lead"));
+  await user.click(screen.getByRole("button", { name: "Icon picker" }));
+  await user.click(screen.getByRole("button", { name: "Clear icon" }));
+  await user.click(screen.getByRole("button", { name: "Save role" }));
+  await waitFor(() => expect(updateTeamRole).toHaveBeenCalledWith("church-1", role.roleId, expect.objectContaining({ icon: "" })));
+});
+
+it("changes a role icon and keeps its selected color", async () => {
+  const user = userEvent.setup();
+  const previousIcon = { source: "lucide", name: "Users", color: "#22c55e" } as const;
+  const icon = { source: "lucide", name: "Guitar", color: "#22c55e" } as const;
+  jest.mocked(updateTeamRole).mockResolvedValue({ success: true, role: { ...role, icon } } as never);
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.roles]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[{ ...role, icon: previousIcon }]} teams={[team]} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByText("Lead"));
+  await user.click(screen.getByRole("button", { name: "Icon picker" }));
+  await user.click(screen.getByRole("button", { name: "Guitar" }));
+  await user.click(screen.getByRole("button", { name: "Save role" }));
+  await waitFor(() => expect(updateTeamRole).toHaveBeenCalledWith("church-1", role.roleId, expect.objectContaining({ icon })));
+});

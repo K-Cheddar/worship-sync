@@ -9,6 +9,7 @@ import {
   Undo2,
 } from "lucide-react";
 import Button from "../../../components/Button/Button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../../../components/ui/DropdownMenu";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -310,6 +311,7 @@ const IntakeManager = ({
     setShowCreate(false);
     setShowEditForm(false);
     setShowSendForm(false);
+    setPreserveSuggestedOccurrences(false);
     setEditing(null);
     setDraft(emptyDraft());
   };
@@ -368,6 +370,7 @@ const IntakeManager = ({
       return;
     }
     setShowEditForm(false);
+    setPreserveSuggestedOccurrences(false);
     setEditing(null);
     setDraft(emptyDraft());
   };
@@ -476,7 +479,9 @@ const IntakeManager = ({
       editing.availabilityOccurrences?.length
     );
     const preserveOccurrences = editingFormHasIssuedRequests || unchangedExistingCoverage || preserveSuggestedOccurrences;
-    const availabilityOccurrences = preserveOccurrences
+    const availabilityOccurrences = preserveSuggestedOccurrences
+      ? draft.availabilityOccurrences
+      : preserveOccurrences
       ? editing?.availabilityOccurrences?.length ? editing.availabilityOccurrences : draft.availabilityOccurrences
       : draft.startDate && draft.endDate
         ? generateScheduleOccurrences({
@@ -570,6 +575,14 @@ const IntakeManager = ({
 
   const openUpcomingAvailabilityDraft = () => {
     if (!upcomingAvailabilitySuggestion) return;
+    if (upcomingAvailabilitySuggestion.kind === "update") {
+      const existingForm = forms.find((form) => form.formId === upcomingAvailabilitySuggestion.formId);
+      if (!existingForm) return;
+      openFormEditor(existingForm);
+      setPreserveSuggestedOccurrences(true);
+      setDraft(upcomingAvailabilitySuggestion.draft);
+      return;
+    }
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(true);
@@ -1382,7 +1395,7 @@ const IntakeManager = ({
         }
       />
       {editingFormHasIssuedRequests ? (
-        <p className="text-sm text-sky-200">This form already has private links or responses. Its covered service dates are saved and won’t change here.</p>
+        <p className="text-sm text-sky-200">This form already has private links or responses. Existing service dates are saved; newly suggested dates will be added when you save.</p>
       ) : null}
       <Input
         label="Response deadline"
@@ -1429,7 +1442,7 @@ const IntakeManager = ({
         emptyText="No teams yet."
       />
       {editingFormHasIssuedRequests ? (
-        <p className="text-sm text-gray-300">Availability services: {(editing?.availabilityServices || []).map(({ name }) => name).join(", ") || "None"}</p>
+        <p className="text-sm text-gray-300">Availability services: {draft.availabilityServices.map(({ name }) => name).join(", ") || "None"}</p>
       ) : (
         <EntityMultiSelect
           label="Show services for availability"
@@ -1764,15 +1777,21 @@ const IntakeManager = ({
                         >
                           Send SMS
                         </Button>
-                        <details className="relative">
-                          <summary className="cursor-pointer text-gray-300 underline decoration-gray-600 underline-offset-2">More</summary>
-                          <div className="absolute right-0 z-20 mt-1 flex min-w-36 flex-col rounded border border-gray-600 bg-gray-900 p-2 shadow-lg">
-                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} isLoading={recipientActionKey === recipient.recipientId} onClick={() => void getRecipientLink(recipient, { copy: true })}>Copy private link</Button>
-                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} onClick={() => void getRecipientLink(recipient)}>Open form</Button>
-                            <Button variant="textLink" padding="px-0 py-1" disabled={Boolean(recipientActionKey)} onClick={() => void revokeRecipient(recipient)}>Revoke request</Button>
-                            {recipientIntents.length ? <div className="mt-1 border-t border-gray-700 px-1 pt-2"><p className="text-xs font-semibold text-gray-300">Message history</p><ul className="mt-1 space-y-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul></div> : null}
-                          </div>
-                        </details>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="textLink" isLoading={recipientActionKey === recipient.recipientId}>More</Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)]">
+                            <DropdownMenuItem disabled={Boolean(recipientActionKey)} onSelect={() => void getRecipientLink(recipient, { copy: true })}>Copy private link</DropdownMenuItem>
+                            <DropdownMenuItem disabled={Boolean(recipientActionKey)} onSelect={() => void getRecipientLink(recipient)}>Open form</DropdownMenuItem>
+                            <DropdownMenuItem variant="destructive" disabled={Boolean(recipientActionKey)} onSelect={() => void revokeRecipient(recipient)}>Revoke request</DropdownMenuItem>
+                            {recipientIntents.length ? <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuLabel className="text-xs text-gray-300">Message history</DropdownMenuLabel>
+                              <ul className="space-y-1 px-2 pb-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul>
+                            </> : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </>
                     ) : null}
                   </div>
@@ -2014,9 +2033,33 @@ const IntakeManager = ({
             {upcomingAvailabilitySuggestion && !panelOpen && canEdit ? (
               <section className="mb-4 space-y-2 rounded-lg border border-sky-600/70 bg-sky-950/30 p-4" aria-labelledby="upcoming-availability-heading">
                 <div>
-                  <h2 id="upcoming-availability-heading" className="font-semibold text-sky-100">Upcoming availability</h2>
-                  <p className="mt-1 text-sm text-gray-200">{upcomingAvailabilitySuggestion.name}</p>
-                  <p className="text-sm text-gray-300">{formatPlainDateRangeLabel(upcomingAvailabilitySuggestion.startDate, upcomingAvailabilitySuggestion.endDate)} · {upcomingAvailabilitySuggestion.occurrenceCount} upcoming service{upcomingAvailabilitySuggestion.occurrenceCount === 1 ? "" : "s"}</p>
+                  <h2 id="upcoming-availability-heading" className="font-semibold text-sky-100">
+                    {upcomingAvailabilitySuggestion.kind === "update"
+                      ? `${upcomingAvailabilitySuggestion.name} needs updating`
+                      : "Upcoming availability"}
+                  </h2>
+                  {upcomingAvailabilitySuggestion.kind === "create" ? (
+                    <>
+                      <p className="mt-1 text-sm text-gray-200">{upcomingAvailabilitySuggestion.name}</p>
+                      <p className="text-sm text-gray-300">{formatPlainDateRangeLabel(upcomingAvailabilitySuggestion.startDate, upcomingAvailabilitySuggestion.endDate)} · {upcomingAvailabilitySuggestion.occurrenceCount} upcoming service{upcomingAvailabilitySuggestion.occurrenceCount === 1 ? "" : "s"}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-1 text-sm text-gray-300">
+                        {upcomingAvailabilitySuggestion.occurrenceCount} upcoming service{upcomingAvailabilitySuggestion.occurrenceCount === 1 ? " isn’t" : "s aren’t"} included.
+                      </p>
+                      <ul className="mt-1 space-y-0.5 text-sm text-gray-200">
+                        {upcomingAvailabilitySuggestion.missingOccurrences.slice(0, 3).map((occurrence) => (
+                          <li key={occurrence.occurrenceId}>
+                            {occurrence.name} · {new Date(occurrence.startsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                          </li>
+                        ))}
+                        {upcomingAvailabilitySuggestion.occurrenceCount > 3 ? (
+                          <li className="text-gray-300">And {upcomingAvailabilitySuggestion.occurrenceCount - 3} more</li>
+                        ) : null}
+                      </ul>
+                    </>
+                  )}
                 </div>
                 <Button variant="secondary" onClick={openUpcomingAvailabilityDraft}>Review form</Button>
               </section>

@@ -10,6 +10,11 @@ export const CHURCH_RESOURCE_ID_PATTERN =
   /^churchResource_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const RESOURCE_TYPES = new Map([
+  ["image/jpeg", { extension: ".jpg", kind: "image" }],
+  ["image/png", { extension: ".png", kind: "image" }],
+  ["image/gif", { extension: ".gif", kind: "image" }],
+  ["image/webp", { extension: ".webp", kind: "image" }],
+  ["image/avif", { extension: ".avif", kind: "image" }],
   ["application/pdf", { extension: ".pdf", kind: "document" }],
   ["text/plain", { extension: ".txt", kind: "document" }],
   ["application/msword", { extension: ".doc", kind: "document" }],
@@ -36,9 +41,9 @@ const CONTENT_TYPE_ALIASES = new Map([
 ]);
 
 const EXTENSION_TYPES = new Map(
-  [...RESOURCE_TYPES.entries()].map(([contentType, value]) => [
-    value.extension,
-    { contentType, kind: value.kind },
+  [...RESOURCE_TYPES.entries()].flatMap(([contentType, value]) => [
+    [value.extension, { contentType, kind: value.kind }],
+    ...(contentType === "image/jpeg" ? [[".jpeg", { contentType, kind: value.kind }]] : []),
   ]),
 );
 
@@ -99,7 +104,7 @@ const normalizeContentType = (value, fileName) => {
     return inferred.contentType;
   }
   throw new ChurchResourceInputError(
-    "That file type is not supported. Choose a PDF, text, Office, or MP3 file.",
+    "That file type is not supported. Choose a JPEG, PNG, GIF, WebP, AVIF, PDF, text, Office, or MP3 file.",
   );
 };
 

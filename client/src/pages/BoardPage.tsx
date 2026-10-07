@@ -11,6 +11,7 @@ import { useParams } from "react-router-dom";
 import Button from "../components/Button/Button";
 import { ChurchLogoImg } from "../components/ChurchLogoImg";
 import Modal from "../components/Modal/Modal";
+import ConfirmDialog from "../components/Modal/ConfirmDialog";
 import Input from "../components/Input/Input";
 import TextArea from "../components/TextArea/TextArea";
 import { createBoardPost, deleteOwnBoardPost, updateOwnBoardPost } from "../boards/api";
@@ -129,7 +130,7 @@ const BoardPage = () => {
       }
     }
 
-    if (deletePost) {
+    if (deletePost && !isDeletingPost) {
       const stillThere = posts.some(
         (p) => p._id === deletePost._id && !p.deleted,
       );
@@ -139,7 +140,7 @@ const BoardPage = () => {
         setIsDeletingPost(false);
       }
     }
-  }, [deletePost, editPost, hasLoadedOnce, posts]);
+  }, [deletePost, editPost, hasLoadedOnce, isDeletingPost, posts]);
 
   useEffect(() => {
     const saved = localStorage.getItem(BOARD_LOCAL_NAME_STORAGE_KEY) || "";
@@ -344,7 +345,7 @@ const BoardPage = () => {
   };
 
   const handleConfirmDeletePost = async () => {
-    if (!aliasId || !deletePost) return;
+    if (!aliasId || !deletePost || isDeletingPost) return;
     setIsDeletingPost(true);
     setDeletePostError("");
     try {
@@ -507,9 +508,10 @@ const BoardPage = () => {
       )}
 
       {deletePost && (
-        <Modal
-          isOpen
-          onClose={closeDeletePostModal}
+        <ConfirmDialog
+          open
+          onCancel={closeDeletePostModal}
+          onConfirm={() => void handleConfirmDeletePost()}
           title="Delete this post?"
           size="sm"
           contentPadding="p-6"
@@ -517,6 +519,11 @@ const BoardPage = () => {
           surfaceClassName={boardModalSurfaceClassName}
           headerClassName={boardModalHeaderClassName}
           titleClassName={boardModalTitleClassName}
+          destructive
+          busy={isDeletingPost}
+          confirmLabel={isDeletingPost ? "Deleting..." : "Delete"}
+          cancelVariant="tertiary"
+          actionsClassName="mt-6 flex w-full flex-row gap-2"
         >
           <div className="space-y-4">
             <p className="text-base text-stone-300">
@@ -525,28 +532,8 @@ const BoardPage = () => {
             {deletePostError && (
               <p className="text-sm font-medium text-red-300">{deletePostError}</p>
             )}
-            <div className="flex flex-row gap-2">
-              <Button
-                type="button"
-                variant="tertiary"
-                className="min-w-0 flex-1 justify-center sm:min-w-36"
-                onClick={closeDeletePostModal}
-                disabled={isDeletingPost}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="min-w-0 flex-1 justify-center border-red-500/40 bg-red-950/50 text-red-100 hover:bg-red-900/60 sm:min-w-36"
-                onClick={() => void handleConfirmDeletePost()}
-                disabled={isDeletingPost}
-              >
-                {isDeletingPost ? "Deleting..." : "Delete"}
-              </Button>
-            </div>
           </div>
-        </Modal>
+        </ConfirmDialog>
       )}
 
       <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-4 pt-4 pb-0">

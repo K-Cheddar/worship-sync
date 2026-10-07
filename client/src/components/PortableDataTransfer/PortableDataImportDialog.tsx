@@ -1,12 +1,8 @@
+import Spinner from "@/components/Spinner/Spinner";
+import Select from "../Select/Select";
 import { useMemo, useRef, useState } from "react";
-import { FileUp, LoaderCircle } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { FileUp } from "lucide-react";
+import Modal from "../Modal/Modal";
 import Button from "@/components/Button/Button";
 import {
   commitPortableImport,
@@ -177,12 +173,11 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   };
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!busy) onOpenChange(nextOpen); }}>
-      <DialogContent className="max-h-[90dvh] max-w-4xl overflow-y-auto border-gray-700 bg-gray-900 text-white">
-        <DialogHeader>
-          <DialogTitle>Import {currentType.label} from CSV</DialogTitle>
-          <DialogDescription className="text-gray-300">Choose a CSV, map its columns, review matches, then confirm the rows to import. Selecting a file never changes your data. Imports do not archive or restore records; skip rows marked Archived.</DialogDescription>
-        </DialogHeader>
+    <Modal isOpen={open} onClose={() => onOpenChange(false)} busy={busy === "commit"}
+      title={`Import ${currentType.label} from CSV`} size="lg"
+      description="Choose a CSV, map its columns, review matches, then confirm the rows to import. Selecting a file never changes your data. Imports do not archive or restore records; skip rows marked Archived."
+      surfaceClassName="rounded-lg border border-gray-700 bg-gray-900 text-white">
+      <p className="mb-4 text-sm text-gray-300">Choose a CSV, map its columns, review matches, then confirm the rows to import. Selecting a file never changes your data. Imports do not archive or restore records; skip rows marked Archived.</p>
         <section className="space-y-4 text-white">
         <div className="flex flex-wrap items-center gap-3">
           <input ref={inputRef} className="sr-only" type="file" accept=".csv,text/csv" aria-label={`Choose ${currentType.label} CSV`} onChange={(event) => void handleFile(event.currentTarget.files?.[0])} />
@@ -200,13 +195,10 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
             <p className="text-sm text-gray-200">{inspection.rowCount} {inspection.rowCount === 1 ? "row" : "rows"} · {inspection.columnCount} columns detected</p>
             <div className="space-y-2">
               {PORTABLE_FIELD_ORDER[type].map((field) => (
-                <label key={field} className="grid gap-1 sm:grid-cols-[minmax(9rem,0.7fr)_minmax(0,1.3fr)] sm:items-center sm:gap-3">
+                <div key={field} className="grid gap-1 sm:grid-cols-[minmax(9rem,0.7fr)_minmax(0,1.3fr)] sm:items-center sm:gap-3">
                   <span className="text-sm text-gray-200">{PORTABLE_FIELD_LABELS[field] || field}{(type === "members" ? field === "name" ? !mappings.firstName || !mappings.lastName : ["firstName", "lastName"].includes(field) && !mappings.name : currentType.required.includes(field)) && <span className="ml-1 text-cyan-300">Required</span>}</span>
-                  <select className="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={mappings[field] || ""} onChange={(event) => setInspection((current) => current ? { ...current, mapping: { ...current.mapping, [field]: event.target.value } } : current)}>
-                    <option value="">Ignore this field</option>
-                    {inspection.headers.map((header) => <option key={header} value={header}>{header}</option>)}
-                  </select>
-                </label>
+                  <Select aria-label={`Column for ${PORTABLE_FIELD_LABELS[field] || field}`} selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={mappings[field] || ""} onChange={(value) => setInspection((current) => current ? { ...current, mapping: { ...current.mapping, [field]: value } } : current)} options={[{ value: "", label: "Ignore this field" }, ...inspection.headers.map((header) => ({ value: header, label: header }))]} />
+                </div>
               ))}
             </div>
             {type === "members" && <p className="text-sm text-amber-200">Import teams and positions first to keep member relationships. Email addresses are contact details and won’t match member identity.</p>}
@@ -231,30 +223,24 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                       <p className="text-sm font-medium">Row {row.row}: {row.record.name || [row.record.firstName, row.record.lastName].filter(Boolean).join(" ") || row.record.person || "Untitled row"}</p>
                       {commitResults.filter((result) => result.row === row.row).map((result) => <p key={`result-${row.row}`} className={`mt-1 text-xs ${result.status === "failed" ? "text-red-200" : "text-green-200"}`}>{result.status === "failed" ? `Import failed: ${result.message || "Preview this file again."}` : result.status === "created" ? "Imported." : "Updated."}</p>)}
                       {row.issues.map((issue, index) => <p key={`${issue.code}-${index}`} className={`mt-1 text-xs ${issue.code === "required" || issue.code === "missing_reference" || issue.code === "unresolved_reference" || issue.code === "not_found" || issue.code === "archived_match" ? "text-red-200" : "text-amber-200"}`}>{issue.message}</p>)}
-                      {row.issues.filter((issue) => issue.candidates?.length && ["ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).map((issue) => { const fieldLabel = /^service\d+$/.test(issue.field) ? `Service ${Number(issue.field.slice(7)) + 1}` : PORTABLE_FIELD_LABELS[issue.field] || issue.field; const referenceIndex = issue.referenceIndex ?? 0; const choiceKey = relationshipChoiceKey(row.row, issue.field, referenceIndex); const description = issue.referenceValue ? `${fieldLabel.replace(/s$/, "")}: ${issue.referenceValue}` : fieldLabel; return <label key={`resolve-${issue.field}-${referenceIndex}-${issue.code}`} className="mt-2 grid max-w-lg gap-1 text-xs text-gray-200"><span>{description}</span><select aria-label={`Resolve ${description} for row ${row.row}`} className="min-h-9 rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={relationshipChoices[choiceKey] || ""} onChange={(event) => setRelationshipChoices((current) => ({ ...current, [choiceKey]: event.target.value }))}><option value="">Choose a local match…</option>{(issue.candidates || []).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>; })}
+                      {row.issues.filter((issue) => issue.candidates?.length && ["ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).map((issue) => { const fieldLabel = /^service\d+$/.test(issue.field) ? `Service ${Number(issue.field.slice(7)) + 1}` : PORTABLE_FIELD_LABELS[issue.field] || issue.field; const referenceIndex = issue.referenceIndex ?? 0; const choiceKey = relationshipChoiceKey(row.row, issue.field, referenceIndex); const description = issue.referenceValue ? `${fieldLabel.replace(/s$/, "")}: ${issue.referenceValue}` : fieldLabel; return <div key={`resolve-${issue.field}-${referenceIndex}-${issue.code}`} className="mt-2 grid max-w-lg gap-1 text-xs text-gray-200"><span>{description}</span><Select aria-label={`Resolve ${description} for row ${row.row}`} selectClassName="min-h-9 rounded border border-gray-600 bg-gray-900 px-2 text-sm text-white" value={relationshipChoices[choiceKey] || ""} onChange={(value) => setRelationshipChoices((current) => ({ ...current, [choiceKey]: value }))} options={[{ value: "", label: "Choose a local match…" }, ...(issue.candidates || []).map((candidate) => ({ value: candidate.id, label: candidate.name }))]} /></div>; })}
                       {row.candidates.length > 0 && <p className="mt-1 text-xs text-gray-400">Several possible matches. Choose one or create a new record.</p>}
                     </div>
-                    <select aria-label={`Action for row ${row.row}`} className="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={selected} disabled={row.action === "invalid" || Boolean(busy)} onChange={(event) => setRowChoices((current) => ({ ...current, [row.row]: event.target.value }))}>
-                      <option value="skip">Skip row</option>
-                      <option value="create">Create new</option>
-                      {row.matchedId && <option value={`update:${row.matchedId}`}>Update matched record</option>}
-                      {row.candidates.map((candidate) => <option key={candidate.id} value={`update:${candidate.id}`}>Match {candidate.name}</option>)}
-                    </select>
+                    <Select aria-label={`Action for row ${row.row}`} selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={selected} disabled={row.action === "invalid" || Boolean(busy)} onChange={(value) => setRowChoices((current) => ({ ...current, [row.row]: value }))} options={[{ value: "skip", label: "Skip row" }, { value: "create", label: "Create new" }, ...(row.matchedId ? [{ value: `update:${row.matchedId}`, label: "Update matched record" }] : []), ...row.candidates.filter((candidate) => candidate.id !== row.matchedId).map((candidate) => ({ value: `update:${candidate.id}`, label: `Match ${candidate.name}` }))]} />
                   </div>
                 );
               })}
               {preview.rows.length > 50 && <div className="flex items-center justify-between gap-3 text-sm text-gray-300"><span>Rows {previewPage * 50 + 1}–{Math.min((previewPage + 1) * 50, preview.rows.length)} of {preview.rows.length}</span><div className="flex gap-2"><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.max(0, page - 1))} disabled={previewPage === 0}>Previous</Button><Button type="button" variant="tertiary" onClick={() => setPreviewPage((page) => Math.min(Math.ceil(preview.rows.length / 50) - 1, page + 1))} disabled={(previewPage + 1) * 50 >= preview.rows.length}>Next</Button></div></div>}
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={() => void handleCommit()} disabled={selectedRows.length === 0 || Boolean(busy)}>{busy === "commit" ? <><LoaderCircle className="mr-2 size-4 animate-spin" />Importing…</> : `Import ${selectedRows.length} ${selectedRows.length === 1 ? "row" : "rows"}`}</Button>
+              <Button type="button" onClick={() => void handleCommit()} disabled={selectedRows.length === 0 || Boolean(busy)}>{busy === "commit" ? <><Spinner size="sm" className="mr-2 shrink-0" />Importing…</> : `Import ${selectedRows.length} ${selectedRows.length === 1 ? "row" : "rows"}`}</Button>
               <Button type="button" variant="tertiary" onClick={() => { setPreview(null); setRowChoices({}); }} disabled={Boolean(busy)}>Back to column mapping</Button>
             </div>
           </div>
         )}
         {message && <p role="status" className="text-sm text-amber-100">{message}</p>}
         </section>
-      </DialogContent>
-    </Dialog>
+    </Modal>
   );
 };
 

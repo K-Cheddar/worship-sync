@@ -125,6 +125,7 @@ export type { AuthBootstrap, ChurchStatus, SessionKind } from "./authTypes";
 
 export class AuthApiError extends Error {
   status?: number;
+  code?: string;
   isReachabilityError: boolean;
   details?: unknown;
 
@@ -132,6 +133,7 @@ export class AuthApiError extends Error {
     message: string,
     options: {
       status?: number;
+      code?: string;
       isReachabilityError?: boolean;
       details?: unknown;
     } = {},
@@ -139,6 +141,7 @@ export class AuthApiError extends Error {
     super(message);
     this.name = "AuthApiError";
     this.status = options.status;
+    this.code = options.code;
     this.isReachabilityError = Boolean(options.isReachabilityError);
     this.details = options.details;
   }
@@ -155,6 +158,7 @@ const readJsonResponse = async <T>(response: Response) => {
     return (await response.json()) as T & {
       errorMessage?: string;
       error?: string;
+      code?: string;
     };
   } catch {
     throw new AuthApiError("Received an invalid server response.", {
@@ -267,6 +271,63 @@ export const apiFetch = async <T>(
     }
   }
 
+  const method = String(options.method || "GET").toUpperCase();
+  const isMutatingRequest = method !== "GET";
+  const hasWorkstationToken = Boolean(getWorkstationToken());
+  const csrfRecoveryContext = {
+    path: path.split("?")[0],
+    method,
+    sessionKind: hasWorkstationToken
+      ? "workstation"
+      : getHumanApiToken()
+        ? "human"
+        : "unknown",
+    hasWorkstationToken,
+  };
+  if (
+    !response.ok &&
+    response.status === 403 &&
+    data?.code === "AUTH_CSRF_MISMATCH" &&
+    isMutatingRequest &&
+    config.authRecovery !== false &&
+    authenticatedSessionExpected
+  ) {
+    logAuthDiagnostic("warn", "auth_api_csrf_recovery_attempted", {
+      ...csrfRecoveryContext,
+    });
+    const recovered = await requestAuthRecovery();
+    if (recovered) {
+      try {
+        ({ response, data } = await runFetch());
+      } catch (error) {
+        logAuthDiagnostic("error", "auth_api_csrf_recovery_failed", {
+          ...csrfRecoveryContext,
+          reason: "retry_request_failed",
+        });
+        throw error;
+      }
+      if (response.ok) {
+        logAuthDiagnostic("debug", "auth_api_csrf_recovery_succeeded", {
+          ...csrfRecoveryContext,
+        });
+      } else {
+        logAuthDiagnostic("error", "auth_api_csrf_recovery_failed", {
+          ...csrfRecoveryContext,
+          reason:
+            response.status === 403 && data?.code === "AUTH_CSRF_MISMATCH"
+              ? "csrf_mismatch_after_retry"
+              : "retry_request_rejected",
+          retryStatus: response.status,
+        });
+      }
+    } else {
+      logAuthDiagnostic("error", "auth_api_csrf_recovery_failed", {
+        ...csrfRecoveryContext,
+        reason: "auth_recovery_failed",
+      });
+    }
+  }
+
   if (
     !response.ok &&
     response.status === 401 &&
@@ -305,6 +366,7 @@ export const apiFetch = async <T>(
       data?.errorMessage || data?.error || "Request failed",
       {
         status: response.status,
+        code: data?.code,
         details: data,
       },
     );
@@ -653,6 +715,24 @@ export const getChurchResource = async (churchId: string, resourceId: string) =>
   apiFetch<{ success: boolean; resource: ChurchResource }>(
     `${churchResourcesPath(churchId)}/${encodeURIComponent(resourceId)}`,
   );
+
+export const createExternalChurchResource = async ({
+  churchId,
+  url,
+  name,
+  description,
+}: {
+  churchId: string;
+  url: string;
+  name?: string;
+  description?: string;
+}): Promise<ChurchResource> => {
+  const result = await apiFetch<{ success: boolean; resource: ChurchResource }>(
+    `${churchResourcesPath(churchId)}/external`,
+    { method: "POST", body: JSON.stringify({ url, name, description }) },
+  );
+  return result.resource;
+};
 
 export const uploadChurchResource = async ({
   churchId,
@@ -1194,12 +1274,14 @@ export type TeamRolePayload = {
   teamId: string;
   name: string;
   description?: string;
+  icon?: import("../components/icons/iconTypes").EntityIcon;
 };
 
 export type TeamQualificationAreaPayload = {
   teamId: string;
   name: string;
   description?: string;
+  icon?: import("../components/icons/iconTypes").EntityIcon;
 };
 
 export type TeamQualificationLevelPayload = {
@@ -2257,6 +2339,26 @@ export const updateTeamScheduleAssignment = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const updateTeamScheduleGuest = async (
+  churchId: string,
+  scheduleId: string,
+  guest: TeamScheduleGuest,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/guests/update`,
+    { method: "POST", body: JSON.stringify({ guest }) },
+  );
+
+export const removeTeamScheduleGuest = async (
+  churchId: string,
+  scheduleId: string,
+  guestId: string,
+) =>
+  apiFetch<{ success: boolean; schedule: TeamSchedule }>(
+    `api/churches/${churchId}/team-schedules/${scheduleId}/guests/remove`,
+    { method: "POST", body: JSON.stringify({ guestId }) },
   );
 
 export const updateTeamScheduleAssignmentsBatch = async (

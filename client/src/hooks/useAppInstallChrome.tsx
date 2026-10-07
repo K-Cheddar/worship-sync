@@ -8,12 +8,7 @@ import {
 import { Smartphone } from "lucide-react";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog";
+import Modal from "../components/Modal/Modal";
 import { usePwaInstallPrompt } from "./usePwaInstallPrompt";
 import type { MenuItemType } from "../types";
 import { getBrowserFamily } from "../utils/browserFamily";
@@ -40,12 +35,6 @@ const getDesktopDownloadButtonLabel = (os: DesktopOs) => {
   if (os === "windows") return "Download Windows app";
   if (os === "mac") return "Download Mac app";
   return "Download Linux app";
-};
-
-const getDesktopDownloadHelpAriaLabel = (os: DesktopOs) => {
-  if (os === "windows") return "Windows download help";
-  if (os === "mac") return "Mac download help";
-  return "Linux download help";
 };
 
 const getDesktopDownloadHelpTitle = (os: DesktopOs) => {
@@ -253,43 +242,29 @@ export const useAppInstallChrome = (): AppInstallChrome => {
   const installHelpDialogs = (
     <>
       {desktopOs ? (
-        <Dialog
-          open={desktopInstallHelpDialogOpen}
-          onOpenChange={setDesktopInstallHelpDialogOpen}
+        <Modal
+          isOpen={desktopInstallHelpDialogOpen}
+          onClose={() => setDesktopInstallHelpDialogOpen(false)}
+          title={getDesktopDownloadHelpTitle(desktopOs)}
+          ariaLabel={getDesktopDownloadHelpTitle(desktopOs)}
+          description="Download the app or open the release page for help."
+          size="sm"
         >
-          <DialogContent
-            className="border-gray-600 bg-gray-800 text-gray-100"
-            aria-describedby={undefined}
-            aria-label={getDesktopDownloadHelpAriaLabel(desktopOs)}
-          >
-            <DialogHeader>
-              <DialogTitle className="text-white">
-                {getDesktopDownloadHelpTitle(desktopOs)}
-              </DialogTitle>
-            </DialogHeader>
             <DesktopDownloadHelp
               os={desktopOs}
               onTryAgain={handleDownloadInstallerClick}
               showHeading={false}
             />
-          </DialogContent>
-        </Dialog>
+        </Modal>
       ) : null}
 
-      <Dialog
-        open={mobileInstallHelpDialogOpen}
-        onOpenChange={setMobileInstallHelpDialogOpen}
+      <Modal
+        isOpen={mobileInstallHelpDialogOpen}
+        onClose={() => setMobileInstallHelpDialogOpen(false)}
+        title={mobileInstallGuidance.title}
+        description="Follow these steps to install WorshipSync."
+        size="sm"
       >
-        <DialogContent
-          className="border-gray-600 bg-gray-800 text-gray-100"
-          aria-describedby={undefined}
-          aria-label="Mobile install instructions"
-        >
-          <DialogHeader>
-            <DialogTitle className="text-white">
-              {mobileInstallGuidance.title}
-            </DialogTitle>
-          </DialogHeader>
           <p className="text-sm text-gray-200">
             {mobileInstallGuidance.segments.map((segment, index) =>
               segment.type === "emphasis" ? (
@@ -301,8 +276,7 @@ export const useAppInstallChrome = (): AppInstallChrome => {
               ),
             )}
           </p>
-        </DialogContent>
-      </Dialog>
+      </Modal>
     </>
   );
 

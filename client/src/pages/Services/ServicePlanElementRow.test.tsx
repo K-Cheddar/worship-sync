@@ -6,6 +6,7 @@ import ServicePlanElementRow, {
   elementDndId,
   getServicePlanElementSurfaceClassName,
   richTextOneLinePreview,
+  SERVICE_PLAN_COL,
   type ServicePlanRoleNoteOption,
   type ServicePlanTeamNoteOption,
 } from "./ServicePlanElementRow";
@@ -117,6 +118,15 @@ describe("richTextOneLinePreview", () => {
         ],
       }),
     ).toBe("First line Second");
+  });
+});
+
+describe("service plan row responsive columns", () => {
+  it("reserves the additional participant preview for the 2xl assignment width", () => {
+    expect(SERVICE_PLAN_COL.row).toContain("lg:grid-cols-[1.5rem_4.5rem_max-content_minmax(11rem,1.6fr)_minmax(9rem,1.2fr)_minmax(8rem,1fr)");
+    expect(SERVICE_PLAN_COL.row).toContain("2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.6fr)_minmax(14rem,1.2fr)_minmax(12rem,1fr)");
+    expect(SERVICE_PLAN_COL.mediumViewWithActions).toContain("lg:grid-cols-[1.5rem_5rem_max-content_minmax(12rem,1.4fr)_minmax(10rem,1.4fr)_minmax(11rem,1.1fr)");
+    expect(SERVICE_PLAN_COL.mediumViewWithActions).toContain("2xl:grid-cols-[1.5rem_5rem_max-content_minmax(16rem,1.4fr)_minmax(14rem,1.4fr)_minmax(12rem,1.1fr)");
   });
 });
 
@@ -904,6 +914,7 @@ describe("ServicePlanElementRow", () => {
     expect(screen.getByPlaceholderText("Led by")).toHaveValue("Pastor John");
     const additionalNames = screen.getByTitle("pastor john, Pastor John, Sarah Lee");
     expect(additionalNames).toHaveTextContent("pastor john, Pastor John, Sarah Lee");
+    expect(additionalNames).toHaveClass("hidden", "2xl:block");
     const trigger = screen.getByRole("button", {
       name: "Show all 4 participants for Pastoral Greetings",
     });
@@ -943,15 +954,23 @@ describe("ServicePlanElementRow", () => {
       },
     });
 
-    expect(screen.getByText("Pastor John, pastor john, Pastor John, Sarah Lee")).toHaveAttribute(
+    const participantNames = screen.getByText("Pastor John, pastor john, Pastor John, Sarah Lee");
+    expect(participantNames).toHaveAttribute(
       "title",
       "Pastor John, pastor john, Pastor John, Sarah Lee",
     );
-    expect(
-      screen.getByRole("button", {
-        name: "Show all 4 participants for Pastoral Greetings",
-      }),
-    ).toHaveTextContent("4");
+    expect(participantNames).toHaveClass(
+      "min-w-0",
+      "flex-1",
+      "overflow-hidden",
+      "text-ellipsis",
+      "whitespace-nowrap",
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Show all 4 participants for Pastoral Greetings",
+    });
+    expect(trigger).toHaveTextContent("4");
+    expect(trigger).toHaveClass("min-w-10", "shrink-0");
   });
 
   it("keeps the edit assignment trigger without a count for zero participants", async () => {
@@ -1308,14 +1327,15 @@ describe("ServicePlanElementRow", () => {
   it("removes an inferred source-classified song instead of recreating it", async () => {
     const user = userEvent.setup();
     const onUpdate = jest.fn();
+    const importedElement = {
+      ...baseElement,
+      sourceElementTypeRaw: "Song",
+      title: plainTextToRichText("Welcome and announcements"),
+    };
 
-    renderRow({
+    const view = renderRow({
       onUpdate,
-      element: {
-        ...baseElement,
-        sourceElementTypeRaw: "Song",
-        title: plainTextToRichText("Welcome and announcements"),
-      },
+      element: importedElement,
     });
 
     await user.click(screen.getByRole("button", { name: "Remove song" }));
@@ -1324,7 +1344,37 @@ describe("ServicePlanElementRow", () => {
       songRef: undefined,
       songRefs: [],
       sourceSongReferenceDismissed: true,
+      sourceSongReferenceDismissedFingerprint: expect.any(String),
+      sourceSongReferenceDismissedOccurrenceId: undefined,
     });
+    view.unmount();
+    renderRow({ element: { ...importedElement, ...onUpdate.mock.calls[0][0] } });
+    expect(screen.queryByRole("img", { name: /Not in library/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add content/i })).toBeInTheDocument();
+  });
+
+  it("does not dismiss the source song while another song remains", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      element: {
+        ...baseElement,
+        sourceElementTypeRaw: "Song",
+        songRefs: [
+          { kind: "pending", title: "Opening Song", lyricsText: "" },
+          { kind: "pending", title: "Response Song", lyricsText: "" },
+        ],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /Manage content for Pastoral Greetings/i }));
+    await user.click(await screen.findByRole("button", { name: "Remove song Response Song" }));
+
+    expect(onUpdate.mock.calls[0][0]).toMatchObject({
+      songRefs: [{ kind: "pending", title: "Opening Song" }],
+    });
+    expect(onUpdate.mock.calls[0][0].sourceSongReferenceDismissed).toBeUndefined();
   });
 
   it("shows a song added to the library after the import as linked", async () => {
@@ -1631,9 +1681,14 @@ describe("assignees and their microphones", () => {
     await user.click(
       screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: /Change Orange for Pastor John/i }),
-    );
+    const changeMicrophoneButton = screen.getByRole("button", {
+      name: /Change Orange for Pastor John/i,
+    });
+    expect(within(changeMicrophoneButton).queryByRole("button")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Remove Orange from Pastor John/i }),
+    ).toBeInTheDocument();
+    await user.click(changeMicrophoneButton);
     await user.click(screen.getByRole("menuitem", { name: /Lapel 1/i }));
 
     expect(onUpdate).toHaveBeenCalledWith(
@@ -1785,7 +1840,9 @@ describe("assignees and their microphones", () => {
     });
     await user.click(screen.getByRole("button", { name: "Show all 1 participant for Pastoral Greetings" }));
     expect(screen.getByRole("group", { name: "Assignees for Pastoral Greetings" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "IEM conflict for IEM 1" }));
+    const conflictTrigger = screen.getByRole("button", { name: "IEM conflict for IEM 1" });
+    expect(conflictTrigger).toHaveAttribute("data-variant", "presentTertiary");
+    await user.click(conflictTrigger);
     expect(await screen.findByText("IEM 1 is scheduled to Jordan Lee.")).toBeInTheDocument();
   });
 
@@ -1890,7 +1947,11 @@ describe("assignees and their microphones", () => {
     });
 
     expect(screen.queryByText(/is scheduled to Johnny Mclain/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Microphone conflict for Orange/i }));
+    const trigger = screen.getByRole("button", {
+      name: /Microphone conflict for Orange/i,
+    });
+    expect(trigger).toHaveAttribute("data-variant", "presentTertiary");
+    await user.click(trigger);
     expect(await screen.findByText(/Orange · Handheld is scheduled to Johnny Mclain/i)).toBeInTheDocument();
   });
 
@@ -1932,6 +1993,50 @@ describe("microphone slots from a template", () => {
     { id: "choir-r", name: "Choir R", type: "Choir", color: "#a78bfa" },
     { id: "choir-c", name: "Choir C", type: "Choir", color: "#a78bfa" },
   ];
+
+  it("claims a blank equipment slot when a name is entered in compact Led by", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "slot-1", microphoneIds: [orange.id] }],
+      },
+    });
+
+    const lead = screen.getByPlaceholderText("Led by");
+    await user.type(lead, "Jasmine");
+    await user.tab();
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assignees: [{ id: "slot-1", name: "Jasmine", microphoneIds: [orange.id] }],
+    });
+  });
+
+  it("keeps explicit Add person separate from a blank equipment slot", async () => {
+    const user = userEvent.setup();
+    const onUpdate = jest.fn();
+    renderRow({
+      onUpdate,
+      microphones: [orange],
+      element: {
+        ...baseElement,
+        assignees: [{ id: "slot-1", microphoneIds: [orange.id] }],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /Assignees for Pastoral Greetings/i }));
+    await user.click(await screen.findByRole("button", { name: /Add person/i }));
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      assignees: [
+        { id: "slot-1", microphoneIds: [orange.id] },
+        expect.objectContaining({ id: expect.any(String) }),
+      ],
+    }, undefined);
+  });
 
   it("offers another person while a microphone slot is unclaimed", async () => {
     const user = userEvent.setup();

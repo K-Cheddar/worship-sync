@@ -1,6 +1,7 @@
 import type { TeamSchedulePayload } from "../../../api/auth";
 import type {
   TeamRecord,
+  TeamPosition,
   TeamSchedule,
   TeamScheduleAssignments,
   TeamScheduleOccurrence,
@@ -13,6 +14,25 @@ import { getDefaultScheduleRange } from "@/utils/teamScheduleOccurrences";
 export type ScheduleFormMode = "edit" | "create-custom" | "copy";
 
 export const CUSTOM_SCHEDULE_DRAFT_KEY = "new:custom";
+
+export const canRefreshScheduleOccurrences = ({
+  schedule,
+  services,
+  regeneratedOccurrences,
+}: {
+  schedule: TeamSchedule;
+  services: TeamService[];
+  regeneratedOccurrences: TeamScheduleOccurrence[];
+}) => {
+  const availableServiceIds = new Set(services.map((service) => service.serviceId));
+  const storedServiceIds = new Set([
+    ...(schedule.serviceIds || []),
+    ...(schedule.occurrences || []).flatMap((occurrence) =>
+      occurrence.serviceIds || [occurrence.serviceId]),
+  ]);
+  return [...storedServiceIds].every((id) => availableServiceIds.has(id)) &&
+    (!(schedule.occurrences?.length) || regeneratedOccurrences.length > 0);
+};
 
 export const getScheduleCopyDraftKey = (sourceScheduleId: string) =>
   `new:copy:${sourceScheduleId}`;
@@ -428,6 +448,7 @@ export type ScheduleEditFormProps = {
   defaultServiceIds: string[];
   defaultRange: { startDate: string; endDate: string };
   services: TeamService[];
+  positions: TeamPosition[];
   activeTeams: TeamRecord[];
   /** Hydrated schedules used for assignment conflict checks on save. */
   schedules: TeamSchedule[];

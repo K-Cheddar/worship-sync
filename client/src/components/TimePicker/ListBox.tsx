@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect } from "react";
 import { cn } from "@/utils/cnHelper";
-import Button from "@/components/ui/Button";
+import Button from "@/components/Button/Button";
 
 export interface ListboxProps<T extends string | number> {
   label?: string;
@@ -48,13 +48,12 @@ export function Listbox<T extends string | number>({
             key={String(item)}
             type="button"
             variant="none"
-            size="sm"
             role="option"
             aria-selected={String(value) === String(item)}
             onClick={() => onChange?.(item)}
             ref={String(value) === String(item) ? selectedItemRef : undefined}
             className={cn(
-              "h-[2rem] min-h-[2rem] w-full justify-start px-2 py-0 text-left text-sm",
+              "h-[2rem] min-h-[2rem] max-md:min-h-[2rem] w-full justify-start px-2 py-0 text-left text-sm",
               String(value) === String(item)
                 ? "bg-cyan-500 text-white hover:bg-cyan-400"
                 : "text-gray-100 hover:bg-gray-800 hover:text-white",

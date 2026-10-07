@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-06-media-activity-cloud-workflows",
+  "date": "2026-10-07",
+  "type": "improved",
+  "title": "Follow uploads and deletions in Activity",
+  "description": "Track Media and Resource uploads and deletions in Activity, with clear summaries and file details when a batch needs attention."
+}

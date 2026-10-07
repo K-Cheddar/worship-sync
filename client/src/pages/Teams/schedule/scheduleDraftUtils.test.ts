@@ -6,6 +6,7 @@ import type {
 import {
   buildScheduleCopyDraft,
   buildScheduleDraft,
+  canRefreshScheduleOccurrences,
   rekeyAssignmentsByServiceDate,
   remapAssignmentsToOccurrences,
 } from "./scheduleDraftUtils";
@@ -445,5 +446,49 @@ describe("buildScheduleCopyDraft", () => {
     expect(draft.additionalPositionSlots).toEqual(source.additionalPositionSlots);
     expect(draft).not.toHaveProperty("source");
     expect(draft).not.toHaveProperty("generatedPeriodKey");
+  });
+});
+
+
+describe("canRefreshScheduleOccurrences", () => {
+  const stored = occurrence("old-service", "2026-10-03T10:00:00.000Z");
+  const schedule: TeamSchedule = {
+    scheduleId: "saved", churchId: "church-1", name: "October", teamId: "team-1",
+    serviceIds: [stored.serviceId], occurrences: [stored],
+    assignments: { [stored.occurrenceId]: { "camera::0": cell("member") } },
+    microphoneAssignments: { [stored.occurrenceId]: { "camera::0": ["mic"] } },
+    iemAssignments: { [stored.occurrenceId]: { "camera::0": ["iem"] } },
+    additionalPositionSlots: { [stored.occurrenceId]: ["camera"] },
+  };
+  const service = { serviceId: "old-service" } as import("../../../api/authTypes").TeamService;
+
+  it("blocks unresolved IDs without changing stored rows or equipment", () => {
+    const before = JSON.parse(JSON.stringify(schedule));
+    expect(canRefreshScheduleOccurrences({ schedule, services: [], regeneratedOccurrences: [] })).toBe(false);
+    expect(schedule).toEqual(before);
+  });
+
+  it("blocks partial ID loss even when surviving services generate rows", () => {
+    expect(canRefreshScheduleOccurrences({
+      schedule: { ...schedule, serviceIds: ["old-service", "missing"] },
+      services: [service], regeneratedOccurrences: [stored],
+    })).toBe(false);
+  });
+
+  it("blocks an empty target even when every stored ID resolves", () => {
+    expect(canRefreshScheduleOccurrences({ schedule, services: [service], regeneratedOccurrences: [] })).toBe(false);
+  });
+
+  it("blocks unresolved members of grouped occurrences", () => {
+    expect(canRefreshScheduleOccurrences({
+      schedule: { ...schedule, occurrences: [combinedOccurrence("group", ["old-service", "missing"], stored.startsAt)] },
+      services: [service], regeneratedOccurrences: [stored],
+    })).toBe(false);
+  });
+
+  it("allows grouping or timing changes when service references resolve and rows remain", () => {
+    expect(canRefreshScheduleOccurrences({
+      schedule, services: [service], regeneratedOccurrences: [occurrence("old-service", "2026-10-03T11:00:00.000Z")],
+    })).toBe(true);
   });
 });

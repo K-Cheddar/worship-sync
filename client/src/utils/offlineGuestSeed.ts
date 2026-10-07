@@ -4,7 +4,6 @@ import type {
   DBItem,
   DBItemListDetails,
   DBItemLists,
-  DBMedia,
   DBOverlay,
   DBOverlayTemplates,
   DBPreferences,
@@ -634,6 +633,27 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
   const serviceItems = serviceItemsFromGuests(guestItemDocs);
   const guestMediaList = buildGuestSampleMedia(now);
   const guestQuickLinks = buildGuestQuickLinks(guestMediaList);
+  const guestMediaDocs: SeedDoc[] = [
+    {
+      _id: "media-library-meta",
+      docType: "mediaLibraryMeta",
+      schemaVersion: 2,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      _id: "media-folders",
+      docType: "mediaFolders",
+      folders: [],
+      createdAt: now,
+      updatedAt: now,
+    },
+    ...guestMediaList.map((item) => ({
+      ...item,
+      _id: `media-item:${item.id}`,
+      docType: "mediaItem",
+    })),
+  ];
 
   const docs: SeedDoc[] = [
     {
@@ -688,14 +708,7 @@ export const createOfflineGuestSeedDocs = (now = new Date().toISOString()) => {
       updatedAt: now,
       docType: "mediaRouteFolders",
     } satisfies Omit<DBMediaRouteFoldersDoc, "_rev">,
-    {
-      _id: "media",
-      list: guestMediaList,
-      folders: [],
-      createdAt: now,
-      updatedAt: now,
-      docType: "media",
-    } satisfies Omit<DBMedia, "_rev">,
+    ...guestMediaDocs,
     {
       _id: "overlay-templates",
       templatesByType: {} as TemplatesByType,

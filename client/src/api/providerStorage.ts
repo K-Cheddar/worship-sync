@@ -12,6 +12,13 @@ export type ProviderAssetAccounting = {
 
 export type MuxUploadIntent = { uploadId: string; url: string };
 
+export type CloudinaryImageUploadIntent = {
+  uploadId: string;
+  uploadUrl: string;
+  publicId: string;
+  fields: Record<string, string>;
+};
+
 export type MuxProviderAsset = {
   status: string;
   assetId?: string;
@@ -26,10 +33,26 @@ export type MuxProviderAsset = {
 const base = (churchId: string) =>
   `api/churches/${encodeURIComponent(churchId)}`;
 
-export const commitCloudinaryMediaAsset = (churchId: string, publicId: string) =>
+export const createCloudinaryMediaUpload = (churchId: string, mediaId: string) =>
+  apiFetch<CloudinaryImageUploadIntent>(
+    `${base(churchId)}/media-storage/cloudinary/uploads`,
+    { method: "POST", body: JSON.stringify({ mediaId }) },
+  );
+
+export const cancelCloudinaryMediaUpload = (churchId: string, uploadId: string) =>
+  apiFetch<{ cancelled: boolean; committed?: boolean }>(
+    `${base(churchId)}/media-storage/cloudinary/uploads/${encodeURIComponent(uploadId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+
+export const commitCloudinaryMediaAsset = (
+  churchId: string,
+  uploadId: string,
+  publicId: string,
+) =>
   apiFetch<{ asset: ProviderAssetAccounting }>(
     `${base(churchId)}/media-storage/cloudinary/commit`,
-    { method: "POST", body: JSON.stringify({ publicId }) },
+    { method: "POST", body: JSON.stringify({ uploadId, publicId }) },
   );
 
 export const deleteCloudinaryMediaAsset = (churchId: string, publicId: string) =>
@@ -50,6 +73,12 @@ export const createChurchMuxUpload = (
 export const getChurchMuxUpload = (churchId: string, uploadId: string) =>
   apiFetch<{ status: string; assetId?: string }>(
     `${base(churchId)}/mux/uploads/${encodeURIComponent(uploadId)}`,
+  );
+
+export const cancelChurchMuxUpload = (churchId: string, uploadId: string) =>
+  apiFetch<{ cancelled: boolean; assetId?: string }>(
+    `${base(churchId)}/mux/uploads/${encodeURIComponent(uploadId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
   );
 
 export const getChurchMuxAsset = (churchId: string, assetId: string) =>

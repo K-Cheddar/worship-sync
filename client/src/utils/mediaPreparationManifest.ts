@@ -148,6 +148,7 @@ const safeReadinessMediaKey = (mediaKey: string): string => {
 /** Derives display-only video rows from the same inventory and surface state as the aggregate report. */
 export const buildMediaPreparationReadinessVideos = (
   inputs: MediaPreparationReadinessVideoInput[],
+  selectedInputs: MediaPreparationReadinessVideoInput[] = [],
 ): { videos: MediaPreparationReadinessVideo[]; videosTruncated: boolean } => {
   const byKey = new Map<string, MediaPreparationReadinessVideoInput>();
   const phasePriority = (phase: ReadinessSurfacePhase | undefined) =>
@@ -156,7 +157,7 @@ export const buildMediaPreparationReadinessVideos = (
         : phase === "preparing" || phase === "activation-requested" || phase === "loading" ? 3
           : phase === "error" ? 2 : 0;
   const candidatePriority: Record<ReadinessCandidateState, number> = { excluded: 0, "pending-cache": 1, eligible: 2 };
-  inputs.forEach((input) => {
+  [...inputs, ...selectedInputs].forEach((input) => {
     const current = byKey.get(input.mediaKey);
     if (!current) {
       byKey.set(input.mediaKey, input);
@@ -195,6 +196,42 @@ export const buildMediaPreparationReadinessVideos = (
     } satisfies MediaPreparationReadinessVideo;
   }).sort((left, right) => readinessVideoStatusOrder[left.status] - readinessVideoStatusOrder[right.status] || (left.name ?? left.mediaKey).localeCompare(right.name ?? right.mediaKey));
   return { videos: videos.slice(0, READINESS_VIDEO_LIMIT), videosTruncated: videos.length > READINESS_VIDEO_LIMIT };
+};
+
+type ReadinessVideoSource = {
+  mediaKey: string;
+  source?: string;
+  originalSource?: string;
+  itemId?: string;
+  itemName?: string;
+  status: "eligible" | "pending-cache" | "excluded";
+};
+
+/** Builds report rows from inventory plus the bounded selected pool, including protected media outside inventory. */
+export const buildMediaPreparationReadinessVideoInputs = (
+  inventory: ReadinessVideoSource[],
+  selectedCandidates: ReadinessVideoSource[],
+  surfaces: Array<{ mediaKey: string; phase: string; error?: string }>,
+): MediaPreparationReadinessVideoInput[] => {
+  const selectedKeys = new Set(selectedCandidates.map(({ mediaKey }) => mediaKey));
+  const surfaceByKey = new Map(surfaces.map((surface) => [surface.mediaKey, surface]));
+  const toInput = (video: ReadinessVideoSource, selected: boolean) => {
+    const surface = surfaceByKey.get(video.mediaKey);
+    return {
+      mediaKey: video.mediaKey,
+      name: getMediaReadinessFileName(video.originalSource ?? video.source),
+      itemId: video.itemId,
+      itemName: video.itemName,
+      status: video.status,
+      selected,
+      phase: surface?.phase,
+      error: surface?.error,
+    };
+  };
+  return [
+    ...inventory.map((video) => toInput(video, selectedKeys.has(video.mediaKey))),
+    ...selectedCandidates.map((video) => toInput(video, true)),
+  ];
 };
 
 export type ReadinessCandidateState = "eligible" | "pending-cache" | "excluded";

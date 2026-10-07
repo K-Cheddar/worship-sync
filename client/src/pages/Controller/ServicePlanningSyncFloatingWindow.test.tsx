@@ -375,7 +375,16 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const item = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
       await onItemAdded?.(item);
-      return { items: [item], insertedCount: 1, skippedTitles: ["Example Song"] };
+      return {
+        items: [item],
+        insertedCount: 1,
+        skippedTitles: ["Example Song"],
+        placementIssues: [{
+          sectionName: "Announcements",
+          headingName: "Welcome & Notices",
+          reason: "mapped-heading-missing",
+        }],
+      };
     });
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";
@@ -406,23 +415,25 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     await userEvent.setup().click(await screen.findByRole("button", { name: "Sync outline" }));
-    const summaryButton = await screen.findByRole("button", { name: /1 outline · 0 overlays · 1 skipped/i });
+    const summaryButton = await screen.findByRole("button", { name: /1 outline · 0 overlays · 2 skipped/i });
     const summaryCard = screen.getByLabelText("Most recent sync");
     const summary = within(summaryCard);
     expect(summaryButton).toHaveAttribute("aria-expanded", "true");
     expect(summary.getByText("Outline added · 1")).toBeInTheDocument();
     expect(summary.getByText("What A Beautiful Name")).toBeInTheDocument();
-    expect(summary.getByText("Skipped · 1")).toBeInTheDocument();
+    expect(summary.getByText("Skipped · 2")).toBeInTheDocument();
     expect(summary.getByText("Example Song")).toBeInTheDocument();
     expect(summary.getByText(/Unresolved Service Plan attachment/)).toBeInTheDocument();
+    expect(summary.getByText("Announcements")).toBeInTheDocument();
+    expect(summary.getByText(/Mapped outline heading "Welcome & Notices" is not present/)).toBeInTheDocument();
     expect(summary.getByRole("heading", { name: "Outline added · 1" })).toHaveClass("text-cyan-300");
-    expect(summary.getByRole("heading", { name: "Skipped · 1" })).toHaveClass("text-amber-300");
+    expect(summary.getByRole("heading", { name: "Skipped · 2" })).toHaveClass("text-amber-300");
 
     await userEvent.setup().click(summaryButton);
     expect(summaryButton).toHaveAttribute("aria-expanded", "false");
     expect(summary.queryByText("What A Beautiful Name")).not.toBeInTheDocument();
     expect(summary.queryByText("Example Song")).not.toBeInTheDocument();
-    expect(summaryButton).toHaveTextContent("1 outline · 0 overlays · 1 skipped");
+    expect(summaryButton).toHaveTextContent("1 outline · 0 overlays · 2 skipped");
     expect(summary.queryByText(/Outline added ·/)).not.toBeInTheDocument();
 
     await userEvent.setup().click(summaryButton);
@@ -483,7 +494,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const song = { _id: "song-1", name: "What A Beautiful Name", type: "song", listId: "song-link" };
     mockPushPlanToOutline.mockImplementation(async (_plan, _isCurrent, onItemAdded) => {
       await onItemAdded?.(song);
-      return { items: [song], insertedCount: 1, skippedTitles: [] };
+      return { items: [song], insertedCount: 1, skippedTitles: [], placementIssues: [] };
     });
     mockPlanSource.isPlanSourced = true;
     mockPlanSource.selectedPlanKey = "service-1@2026-07-30";

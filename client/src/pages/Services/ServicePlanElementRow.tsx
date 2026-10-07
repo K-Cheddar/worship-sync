@@ -32,15 +32,14 @@ import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
-import type { ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
+import { createChurchResourcePreview, resolveExternalContentPreviewSource, type ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {
-  addServicePlanAssignee,
   addIemSlot,
   addMicrophoneSlot,
   DebouncedAssigneeNameField,
 } from "./ServicePlanAssigneeList";
-import { hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
+import { claimServicePlanAssigneeSlot, hasServicePlanAssigneeEquipment } from "./servicePlanAssigneeUtils";
 import DebouncedInput from "../../components/DebouncedInput/DebouncedInput";
 import Input from "../../components/Input/Input";
 import Select from "../../components/Select/Select";
@@ -134,6 +133,7 @@ import {
 } from "../../types/servicePlan";
 import { getServicePlanSongRefLabel } from "../../integrations/servicePlanning/formatSongTitleWithKey";
 import { servicePlanImportAmbiguityNeedsReview } from "./servicePlanningTitleClassifier";
+import { getServicePlanSongReferencesUpdate } from "./servicePlanSongAttachmentUtils";
 
 export const elementDndId = (elementId: string) => `element:${elementId}`;
 
@@ -521,7 +521,7 @@ const RoleNoteAudienceSubmenu = ({
         placeholder="Search roles"
         aria-label="Search roles"
         className="w-full"
-        inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
+        inputClassName="h-8 min-h-0 max-md:min-h-0 bg-gray-950 text-sm"
         onKeyDown={(event) => event.stopPropagation()}
       />
       <div>
@@ -782,7 +782,7 @@ const RoleNoteAudiencePicker = ({
           placeholder="Search roles"
           aria-label="Search roles"
           className="w-full"
-          inputClassName="h-8 min-h-0 bg-gray-950 text-sm"
+          inputClassName="h-8 min-h-0 max-md:min-h-0 bg-gray-950 text-sm"
         />
         <div className="mt-2 max-h-56 touch-pan-y overflow-y-auto overscroll-contain rounded border border-gray-700 p-1">
           {groupRoleOptionsByTeam(filteredOptions).map((group) => (
@@ -1443,15 +1443,20 @@ const ServicePlanElementRow = ({
     const resourceId = getServicePlanChurchResourceId(resource);
     const resolveSource = churchId && resourceId
       ? async () => {
-          const [resourceResult, urlResult] = await Promise.all([
-            getChurchResource(churchId, resourceId),
-            getChurchResourceUrl({ churchId, resourceId, disposition: "inline" }),
-          ]);
+          const resourceResult = await getChurchResource(churchId, resourceId);
+          const preview = createChurchResourcePreview(resourceResult.resource);
+          if (resourceResult.resource.sourceType === "external") {
+            const resolved = await resolveExternalContentPreviewSource(preview);
+            if (!resolved) throw new Error("This resource could not be resolved for preview.");
+            return resolved;
+          }
+          const urlResult = await getChurchResourceUrl({ churchId, resourceId, disposition: "inline" });
           return {
             url: urlResult.url,
-            title: resourceResult.resource.name,
             mimeType: resourceResult.resource.storage.contentType,
             fileName: resourceResult.resource.storage.fileName,
+            provider: "worshipsync" as const,
+            sourceKind: "file" as const,
           };
         }
       : undefined;
@@ -1482,7 +1487,8 @@ const ServicePlanElementRow = ({
       {allowEdit ? (
         <div className={cn(SERVICE_PLAN_SECONDARY_CONTROL_CLASS, "flex w-full min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-800/70 bg-gray-950/70")}>
           {/* HistorySuggestField's inner anchor can shrink; give the editable
-              field twice the space and hide the summary on tablet widths. */}
+              field twice the space and reserve the summary for the wider 2xl
+              assignment column. */}
           <div className="min-w-0 flex-[2_1_0%]">
             <DebouncedAssigneeNameField
               value={leadInputAssignee?.name || ""}
@@ -1495,7 +1501,12 @@ const ServicePlanElementRow = ({
                     ),
                   });
                 } else if (name.trim()) {
-                  onUpdate({ assignees: addServicePlanAssignee(assignees, { name }) });
+                  onUpdate({
+                    assignees: claimServicePlanAssigneeSlot(
+                      assignees,
+                      { id: generateRandomId(), name: name.trim() },
+                    ).assignees,
+                  });
                 }
               }}
               historyValues={assignedToHistoryValues}
@@ -1508,7 +1519,7 @@ const ServicePlanElementRow = ({
           </div>
           {additionalParticipantNamesLabel ? (
             <span
-              className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400 lg:block"
+              className="hidden min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-1 text-xs text-gray-400 2xl:block"
               title={additionalParticipantNamesLabel}
             >
               {additionalParticipantNamesLabel}
@@ -1666,22 +1677,16 @@ const ServicePlanElementRow = ({
     songIndex: number,
     nextSongRef: ServicePlanSongReference,
   ) => {
-    onUpdate({
-      songRef: undefined,
-      songRefs: songRefs.map((current, index) =>
-        index === songIndex ? nextSongRef : current,
-      ),
-    });
+    onUpdate(getServicePlanSongReferencesUpdate(element, songRefs.map((current, index) =>
+      index === songIndex ? nextSongRef : current,
+    )));
   };
 
   const removeSongAt = (songIndex: number) => {
-    onUpdate({
-      songRef: undefined,
-      songRefs: songRefs.filter((_, currentIndex) => currentIndex !== songIndex),
-      ...(element.sourceElementTypeRaw && songRefs.length === 1
-        ? { sourceSongReferenceDismissed: true }
-        : {}),
-    });
+    onUpdate(getServicePlanSongReferencesUpdate(
+      element,
+      songRefs.filter((_, currentIndex) => currentIndex !== songIndex),
+    ));
   };
 
   const allFreeFormDocs = useSelector((state) => state.allDocs.allFreeFormDocs);
@@ -2063,14 +2068,17 @@ const ServicePlanElementRow = ({
                 )}
               />
             ) : (
-              <>
+              <span className={cn(
+                "flex h-[2rem] min-w-0 items-center gap-0.5",
+                placement === "summary" && "self-stretch px-1.5",
+              )}>
                 <Icon
                   svg={BookOpen}
                   size="xs"
                   className={cn("shrink-0", SERVICE_PLAN_SCRIPTURE_ICON_CLASS)}
                 />
                 <span className="min-w-0 flex-1 truncate leading-5">{scriptureLabel}</span>
-              </>
+              </span>
             )}
             {allowEdit ? (
               <Button
@@ -2129,10 +2137,10 @@ const ServicePlanElementRow = ({
                   )}
                 />
               ) : (
-                <>
+                <span className="flex h-[2rem] min-w-0 items-center gap-0.5">
                   <Icon svg={BookOpen} size="xs" className={SERVICE_PLAN_SCRIPTURE_ICON_CLASS} />
                   <span className="min-w-0 flex-1 truncate leading-5">{additionalScripture.label}</span>
-                </>
+                </span>
               )}
               {allowEdit ? (
                 <Button
@@ -2928,10 +2936,7 @@ const ServicePlanElementRow = ({
               replaceSongAt(songPickerTargetIndex, songRef);
               return;
             }
-            onUpdate({
-              songRef: undefined,
-              songRefs: [...songRefs, songRef],
-            });
+            onUpdate(getServicePlanSongReferencesUpdate(element, [...songRefs, songRef]));
           }}
         />
       ) : null}

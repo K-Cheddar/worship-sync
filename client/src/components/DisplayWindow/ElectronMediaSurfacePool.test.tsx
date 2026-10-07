@@ -193,6 +193,7 @@ describe("ElectronMediaSurfacePool", () => {
         outputId="projector"
         windowRole="projector"
         candidates={[candidate]}
+        candidateDiagnostics={[]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
@@ -208,6 +209,7 @@ describe("ElectronMediaSurfacePool", () => {
     expect(
       screen.getByTestId("electron-media-surface-remote:clip"),
     ).toHaveAttribute("data-prepared-state", "ready");
+    const preparedSurface = screen.getByTestId("electron-media-surface-remote:clip");
     expect(
       screen.getByTestId("electron-media-surface-video-remote:clip"),
     ).not.toHaveStyle({ visibility: "hidden" });
@@ -227,20 +229,25 @@ describe("ElectronMediaSurfacePool", () => {
             };
           }
         ).__wsMediaSurfacePoolDiagnostics,
-      ).toMatchObject({ surfaceCount: 1, readyCount: 1, candidateDetails: [expect.any(Object)] });
+      ).toMatchObject({
+        surfaceCount: 1,
+        readyCount: 1,
+        candidateDetails: [expect.objectContaining({ mediaKey: candidate.mediaKey, selected: true })],
+      });
     });
     rerender(
       <ElectronMediaSurfacePool
         enabled
         outputId="projector"
         windowRole="projector"
-        candidates={[{ ...candidate }]}
+        candidates={[{ ...candidate, priority: 12 }]}
         views={[view(false)]}
         onReadyChange={onReadyChange}
         onFirstAdvancingFrameChange={onFirstAdvancingFrameChange}
         onSurfaceElement={onSurfaceElement}
       />,
     );
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toBe(preparedSurface);
     expect(
       (
         window as Window & {
@@ -881,6 +888,7 @@ describe("ElectronMediaSurfacePool", () => {
         enabled
         candidates={[candidate]}
         views={[]}
+        windowRole="local-preparation"
         onReadyChange={jest.fn()}
         onGeometryReadyChange={onGeometryReadyChange}
         onFirstAdvancingFrameChange={jest.fn()}
@@ -898,6 +906,7 @@ describe("ElectronMediaSurfacePool", () => {
     await waitFor(() => expect(onGeometryReadyChange).toHaveBeenCalledWith(candidate.mediaKey, true));
     expect(diagnostics.at(-1)).toEqual(
       expect.objectContaining({
+        renderer: "editor",
         geometryReady: true,
         framePresentedReady: true,
         canonicalSourceMatch: true,
@@ -1456,6 +1465,66 @@ describe("ElectronMediaSurfacePool", () => {
         screen.getByTestId("electron-media-surface-remote:clip"),
       ).toHaveAttribute("data-prepared-state", "ready"),
     );
+  });
+
+  it("keeps a playing prepared surface and playhead when its cue is removed", async () => {
+    let currentTime = 0;
+    const setCurrentTime = jest.fn((value: number) => {
+      currentTime = value;
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: setCurrentTime,
+    });
+    const playback: NonNullable<ElectronMediaSurfaceView["playback"]> = {
+      mediaKey: candidate.mediaKey,
+      positionSeconds: 2,
+      paused: false,
+      atServerMs: Date.now(),
+      generation: 1,
+      applySeek: false,
+    };
+    const makePlayingView = (cue?: ElectronMediaSurfaceView["playback"]) =>
+      makeView(candidate.mediaKey, candidate.source, true, cue);
+    const { rerender } = render(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makePlayingView(playback)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("electron-media-surface-remote:clip")).toHaveAttribute(
+        "data-prepared-state",
+        "playing",
+      ),
+    );
+    const surface = screen.getByTestId("electron-media-surface-remote:clip");
+    const video = screen.getByTestId("electron-media-surface-video-remote:clip");
+    currentTime = 15;
+    setCurrentTime.mockClear();
+
+    rerender(
+      <ElectronMediaSurfacePool
+        enabled
+        candidates={[candidate]}
+        views={[makePlayingView(undefined)]}
+        onReadyChange={jest.fn()}
+        onFirstAdvancingFrameChange={jest.fn()}
+        onSurfaceElement={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("electron-media-surface-remote:clip")).toBe(surface);
+    expect(screen.getByTestId("electron-media-surface-video-remote:clip")).toBe(video);
+    expect(surface).toHaveAttribute("data-prepared-state", "playing");
+    expect(currentTime).toBe(15);
+    expect(setCurrentTime).not.toHaveBeenCalled();
   });
 
   it("bounds recovery attempts when seeked never arrives", async () => {

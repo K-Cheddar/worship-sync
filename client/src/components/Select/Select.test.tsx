@@ -14,6 +14,21 @@ const renderSelect = (options: React.ComponentProps<typeof Select>["options"]) =
   );
 
 describe("Select", () => {
+  it("supports a rich selected value, compact trigger, disabled options and typeahead text", async () => {
+    const user = userEvent.setup();
+    const onChange = jest.fn();
+    render(<Select aria-label="Microphone" aria-describedby="mic-help" size="sm" value="one" onChange={onChange}
+      selectedValueLabel={<span>Selected mic</span>}
+      options={[{ value: "one", label: <span>Mic one <span>Assigned elsewhere</span></span>, textValue: "Alpha" }, { value: "two", label: <span>Mic two</span>, textValue: "Beta" }, { value: "three", label: "Unavailable", disabled: true }]} />);
+    const trigger = screen.getByRole("combobox", { name: "Microphone" });
+    expect(trigger).toHaveTextContent("Selected mic");
+    expect(trigger).toHaveAttribute("data-size", "sm");
+    expect(trigger).toHaveAttribute("aria-describedby", "mic-help");
+    await user.click(trigger);
+    expect(screen.getByRole("option", { name: "Unavailable" })).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("b{Enter}");
+    expect(onChange).toHaveBeenCalledWith("two");
+  });
   it("renders grouped options under a heading that labels them", async () => {
     const user = userEvent.setup();
     renderSelect([

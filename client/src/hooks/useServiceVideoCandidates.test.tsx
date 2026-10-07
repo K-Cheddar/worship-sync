@@ -1145,6 +1145,42 @@ describe("useServiceVideoCandidates", () => {
     ]);
   });
 
+  it("reprioritizes service candidates without reloading the outline when the item changes", async () => {
+    const docs = [
+      item("item-1", "First", [
+        slide("slide-1", [
+          { id: "video-1", mediaInfo: video("video-1", "https://cdn.example.com/video-1.mp4") },
+        ]),
+      ]),
+      item("item-2", "Second", [
+        slide("slide-2", [
+          { id: "video-2", mediaInfo: video("video-2", "https://cdn.example.com/video-2.mp4") },
+        ]),
+      ]),
+      item("item-3", "Third", [
+        slide("slide-3", [
+          { id: "video-3", mediaInfo: video("video-3", "https://cdn.example.com/video-3.mp4") },
+        ]),
+      ]),
+    ];
+    const { result, db, setCurrentItem, rerender } = renderCandidates(docs, {
+      maxSurfaces: 1,
+    });
+
+    await waitFor(() => expect(result.current.discovery.itemCount).toBe(3));
+    expect(result.current.candidates[0]?.mediaKey).toBe("remote:video-1");
+    const outlineReads = db.allDocs.mock.calls.length;
+
+    setCurrentItem("item-2");
+    rerender();
+
+    await waitFor(() =>
+      expect(result.current.candidates[0]?.mediaKey).toBe("remote:video-2"),
+    );
+    expect(result.current.discovery.currentItemId).toBe("item-2");
+    expect(db.allDocs).toHaveBeenCalledTimes(outlineReads);
+  });
+
   it("supports an explicit current-item scope for generic callers", async () => {
     const { result } = renderCandidates(
       [

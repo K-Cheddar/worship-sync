@@ -4,14 +4,12 @@ import type {
   DBAllItems,
   DBItemLists,
   DBMonitorSettingsDoc,
-  DBMediaRouteFoldersDoc,
   DBPreferences,
   DBQuickLinksDoc,
   ItemList,
   PreferencesType,
 } from "../types";
 import {
-  MEDIA_ROUTE_FOLDERS_POUCH_ID,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
@@ -235,18 +233,6 @@ export async function loadOrCreatePreferencesBundle(
         }) satisfies Omit<DBMonitorSettingsDoc, "_rev">,
     );
 
-    await putIfMissing(
-      db,
-      MEDIA_ROUTE_FOLDERS_POUCH_ID,
-      () =>
-        ({
-          _id: MEDIA_ROUTE_FOLDERS_POUCH_ID,
-          mediaRouteFolders: { ...defaults.mediaRouteFolders },
-          createdAt: now,
-          updatedAt: now,
-          docType: "mediaRouteFolders",
-        }) satisfies Omit<DBMediaRouteFoldersDoc, "_rev">,
-    );
   }
 
   return loadPreferencesBundle(db);

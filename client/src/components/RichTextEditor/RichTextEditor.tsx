@@ -29,7 +29,7 @@ import Label from "@/components/ui/Label";
 import { cn } from "@/utils/cnHelper";
 import Button from "../Button/Button";
 import { BrandAwareColorPicker } from "../ColorField/ColorField";
-import PopOver from "../PopOver/PopOver";
+import PopoverPanel from "../PopOver/PopoverPanel";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
@@ -442,7 +442,7 @@ const RichTextEditor = ({
   );
 
   const renderTextSizeControl = () => (
-    <PopOver
+    <PopoverPanel
       align="start"
       TriggeringButton={
         <Button
@@ -484,11 +484,11 @@ const RichTextEditor = ({
           </Button>
         ))}
       </div>
-    </PopOver>
+    </PopoverPanel>
   );
 
   const renderTextColorControl = () => (
-    <PopOver
+    <PopoverPanel
       align="start"
       onOpenChange={(open) => {
         setColorPickerOpen(open);
@@ -522,7 +522,7 @@ const RichTextEditor = ({
         colors={brandColors}
         onChange={scheduleTextColorApply}
       />
-    </PopOver>
+    </PopoverPanel>
   );
 
   return (
@@ -570,7 +570,7 @@ const RichTextEditor = ({
                   {markButton("bold", Bold, "Bold")}
                   {listButton("bullet", List, "Bulleted list")}
                   {renderTextColorControl()}
-                  <PopOver
+                  <PopoverPanel
                     align="start"
                     TriggeringButton={
                       <Button
@@ -605,7 +605,7 @@ const RichTextEditor = ({
                       <ToolbarDivider />
                       {renderAlignControls()}
                     </div>
-                  </PopOver>
+                  </PopoverPanel>
                 </>
               )}
             </div>

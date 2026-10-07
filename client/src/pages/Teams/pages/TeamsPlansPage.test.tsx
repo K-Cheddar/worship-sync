@@ -21,6 +21,9 @@ import {
 import type { TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { formatPlainDate } from "../../../utils/plainDate";
+import { setServerTimeOffset } from "../../../utils/serverTime";
+import { formatResolvedDateRange } from "../rangeSelection";
+import { writePlansFilterPreferences } from "../plansFilterPersistence";
 
 jest.mock("../../../api/auth", () => ({
   // Autosave's conflict check does `error instanceof AuthApiError`.
@@ -91,6 +94,38 @@ const easterOneTime: TeamService = {
 /** Occurrences for a one-time service are keyed `<serviceId>@<startsAt>`. */
 const oneTimeStartsAt = easterOneTime.dateTimeISO as string;
 const oneTimeOccurrenceId = `easter@${oneTimeStartsAt}`;
+
+const oneTimeService = (
+  serviceId: string,
+  name: string,
+  date: string,
+  archivedAt: string | null = null,
+): TeamService => ({
+  id: serviceId,
+  serviceId,
+  churchId: "church-1",
+  name,
+  timerType: "countdown",
+  reccurence: "one_time",
+  dateTimeISO: `${date}T14:00:00.000Z`,
+  archivedAt,
+});
+
+const octoberService = oneTimeService("october", "October Service", "2026-10-10");
+const novemberService = oneTimeService("november", "November Service", "2026-11-10");
+const expectDisplayedRange = (start: string, end: string) => {
+  expect(screen.getByText(formatResolvedDateRange({ start, end }))).toBeInTheDocument();
+};
+
+const useServices = (services: TeamService[]) => {
+  mockUseTeamsPage.mockReturnValue({
+    ...mockUseTeamsPage(),
+    pageData: {
+      ...mockUseTeamsPage().pageData,
+      services,
+    },
+  });
+};
 
 const mockUseTeamsPage = jest.fn();
 let mockTemplatesResource: {
@@ -1048,6 +1083,138 @@ describe("TeamsPlansPage", () => {
 
     expect(screen.getByRole("heading", { name: "Sabbath Service" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Easter Sunday" })).not.toBeInTheDocument();
+  });
+
+  it("resolves Upcoming from the selected service", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    useServices([octoberService, novemberService]);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderPage();
+
+    expectDisplayedRange("2026-10-01", "2026-10-31");
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(screen.getByRole("checkbox", { name: "November Service" }));
+    expectDisplayedRange("2026-11-01", "2026-11-30");
+
+    jest.useRealTimers();
+    setServerTimeOffset(0);
+  });
+
+  it("resolves Upcoming from the server date across midnight", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(2026, 9, 31, 23, 30));
+    setServerTimeOffset(2 * 60 * 60 * 1000);
+    const lateOctoberService = oneTimeService("late-october", "Late October", "2026-10-31");
+    lateOctoberService.dateTimeISO = new Date(2026, 9, 31, 23, 45).toISOString();
+    useServices([lateOctoberService]);
+
+    renderPage();
+
+    expectDisplayedRange("2026-11-01", "2026-11-30");
+  });
+
+  it("resolves October when only the October service is selected", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    useServices([octoberService, novemberService]);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(screen.getByRole("checkbox", { name: "October Service" }));
+    expectDisplayedRange("2026-10-01", "2026-10-31");
+
+    jest.useRealTimers();
+  });
+
+  it("uses the earliest occurrence when multiple services are selected", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    useServices([octoberService, novemberService]);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(screen.getByRole("checkbox", { name: "November Service" }));
+    await user.click(screen.getByRole("checkbox", { name: "October Service" }));
+    expectDisplayedRange("2026-10-01", "2026-10-31");
+
+    jest.useRealTimers();
+  });
+
+  it("returns Upcoming to all active services when the service filter is cleared", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    useServices([octoberService, novemberService]);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(screen.getByRole("checkbox", { name: "November Service" }));
+    expectDisplayedRange("2026-11-01", "2026-11-30");
+    await user.click(screen.getByRole("checkbox", { name: "All services" }));
+    expectDisplayedRange("2026-10-01", "2026-10-31");
+
+    jest.useRealTimers();
+  });
+
+  it("uses the restored service filter for the initial Upcoming range", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    useServices([octoberService, novemberService]);
+    writePlansFilterPreferences("church-1", {
+      serviceIds: ["november"],
+      organizeMode: "byDate",
+    });
+
+    renderPage();
+
+    expectDisplayedRange("2026-11-01", "2026-11-30");
+    expect(screen.getByRole("heading", { name: "November Service" })).toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("ignores inactive services left in the saved service filter", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    const inactiveOctoberService = oneTimeService(
+      "inactive-october",
+      "Inactive October Service",
+      "2026-10-10",
+      "2026-08-01T00:00:00.000Z",
+    );
+    useServices([inactiveOctoberService, novemberService]);
+    writePlansFilterPreferences("church-1", {
+      serviceIds: ["inactive-october"],
+      organizeMode: "byDate",
+    });
+
+    renderPage();
+
+    expectDisplayedRange("2026-11-01", "2026-11-30");
+    expect(screen.queryByText("Inactive October Service")).not.toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("keeps a custom range when the service filter changes", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-15T12:00:00.000Z"));
+    useServices([octoberService, novemberService]);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Range preset: Upcoming" }));
+    await user.click(screen.getByRole("button", { name: "Custom" }));
+    const rangeInput = screen.getByRole("textbox", { name: "Custom date range" });
+    const originalCustomRange = (rangeInput as HTMLInputElement).value;
+    await user.click(screen.getByRole("button", { name: "Service filter" }));
+    await user.click(screen.getByRole("checkbox", { name: "November Service" }));
+
+    expect(screen.getByRole("button", { name: "Range preset: Custom" })).toBeInTheDocument();
+    expect(rangeInput).toHaveValue(originalCustomRange);
+
+    jest.useRealTimers();
   });
 
   it("allows multiple services to be selected", async () => {

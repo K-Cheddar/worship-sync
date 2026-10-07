@@ -130,7 +130,7 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(
       variant === "textLink" ? "font-normal" : "font-semibold",
       "max-w-full justify-start",
       gap,
-      variant !== "textLink" && "max-md:min-h-14",
+      variant !== "textLink" && "max-md:min-h-[2rem]",
       variant !== "textLink" && "disabled:opacity-65",
       disabled && "pointer-events-none cursor-not-allowed opacity-65",
       _padding,

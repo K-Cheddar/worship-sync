@@ -26,7 +26,7 @@ jest.mock("../../api/canva", () => ({
 
 const mockStartCanvaTransfer = jest.fn();
 jest.mock("../../context/transferContext", () => ({
-  useTransfers: () => ({ startCanvaTransfer: mockStartCanvaTransfer }),
+  useTransferActions: () => ({ startCanvaTransfer: mockStartCanvaTransfer }),
 }));
 
 const mockShowToast = jest.fn();

@@ -1,0 +1,62 @@
+[
+  {
+    "cloudinaryFormat": "avif",
+    "mimeType": "image/avif",
+    "extensions": ["avif"]
+  },
+  {
+    "cloudinaryFormat": "bmp",
+    "mimeType": "image/bmp",
+    "extensions": ["bmp"]
+  },
+  {
+    "cloudinaryFormat": "gif",
+    "mimeType": "image/gif",
+    "extensions": ["gif"]
+  },
+  {
+    "cloudinaryFormat": "heic",
+    "mimeType": "image/heic",
+    "extensions": ["heic"]
+  },
+  {
+    "cloudinaryFormat": "heic",
+    "mimeType": "image/heif",
+    "extensions": ["heif"]
+  },
+  {
+    "cloudinaryFormat": "jpg",
+    "mimeType": "image/jpeg",
+    "extensions": ["jpg", "jpeg", "jpe"]
+  },
+  {
+    "cloudinaryFormat": "jxl",
+    "mimeType": "image/jxl",
+    "extensions": ["jxl"]
+  },
+  {
+    "cloudinaryFormat": "png",
+    "mimeType": "image/png",
+    "extensions": ["png"]
+  },
+  {
+    "cloudinaryFormat": "svg",
+    "mimeType": "image/svg+xml",
+    "extensions": ["svg"]
+  },
+  {
+    "cloudinaryFormat": "tiff",
+    "mimeType": "image/tiff",
+    "extensions": ["tiff", "tif"]
+  },
+  {
+    "cloudinaryFormat": "webp",
+    "mimeType": "image/webp",
+    "extensions": ["webp"]
+  },
+  {
+    "cloudinaryFormat": "ico",
+    "mimeType": "image/x-icon",
+    "extensions": ["ico"]
+  }
+]

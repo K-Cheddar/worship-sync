@@ -44,8 +44,8 @@ import type {
 } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
   buildMediaPreparationReadinessCounts,
+  buildMediaPreparationReadinessVideoInputs,
   buildMediaPreparationReadinessVideos,
-  getMediaReadinessFileName,
 } from "../../utils/mediaPreparationManifest";
 import {
   isMediaSurfaceVisible,
@@ -613,8 +613,6 @@ const DisplayBoxTransitionStage = ({
       ? poolCandidates.filter((candidate) => isPlayableMediaSource(candidate.source) && !isHLSVideoSource(candidate.source)).length
       : 0,
   );
-  const selectedPoolMediaKeys = new Set((poolEnabled ? poolCandidates : []).map((candidate) => candidate.mediaKey));
-  const remoteVideoStatuses = new Map(remoteSurfaceStatuses.map((status) => [status.mediaKey, status]));
   const readinessVideoInventory = usingRemoteManifest
     ? remoteManifestDiagnostics
     : poolCandidateResult.discovery.items.flatMap((item) => item.videos.map((video) => ({
@@ -622,19 +620,32 @@ const DisplayBoxTransitionStage = ({
         itemId: item.itemId,
         itemName: item.itemName,
       })));
-  const readinessVideos = buildMediaPreparationReadinessVideos(readinessVideoInventory.map((video) => {
-    const surface = remoteVideoStatuses.get(video.mediaKey);
+  const selectedReadinessCandidates = (poolEnabled ? poolCandidates : []).map((candidate) => {
+    const pendingCache = isHLSVideoSource(candidate.source);
+    const eligible = isPlayableMediaSource(candidate.source) && !pendingCache;
     return {
+      mediaKey: candidate.mediaKey,
+      source: candidate.originalSource ?? candidate.source,
+      itemId: candidate.itemId,
+      itemName: candidate.itemName,
+      status: eligible ? "eligible" as const : pendingCache ? "pending-cache" as const : "excluded" as const,
+    };
+  });
+  const selectedPoolMediaKeys = new Set(selectedReadinessCandidates.map((candidate) => candidate.mediaKey));
+  const readinessVideoInputs = buildMediaPreparationReadinessVideoInputs(
+    readinessVideoInventory.map((video) => ({
       mediaKey: video.mediaKey,
-      name: getMediaReadinessFileName("source" in video ? video.source : video.originalSource),
+      source: "source" in video ? video.source : video.originalSource,
       itemId: video.itemId,
       itemName: video.itemName,
       status: video.status,
-      selected: selectedPoolMediaKeys.has(video.mediaKey),
-      phase: surface?.phase,
-      error: surface?.error,
-    };
-  }));
+    })),
+    selectedReadinessCandidates,
+    remoteSurfaceStatuses,
+  );
+  const readinessVideos = buildMediaPreparationReadinessVideos(
+    readinessVideoInputs,
+  );
   const readinessErrors = remoteSurfaceStatuses
     .filter((status) => status.phase === "error" && selectedPoolMediaKeys.has(status.mediaKey))
     .map((status) => (status.error ?? "Video preparation failed").replace(/https?:\/\/\S+/gi, "[media URL]"));

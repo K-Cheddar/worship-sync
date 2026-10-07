@@ -382,7 +382,10 @@ const ServicePlanningSyncFloatingWindow = ({
   const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
   const [isSyncSummaryExpanded, setIsSyncSummaryExpanded] = useState(true);
   const cancelSavedPlanPushRef = useRef(false);
-  const pendingSavedPlanSummaryRef = useRef<string[] | null>(null);
+  const pendingSavedPlanSummaryRef = useRef<{
+    addedTitles: string[];
+    skipped: SyncSummaryEntry[];
+  } | null>(null);
   const [activeTab, setActiveTab] = useState<"plan" | "assignments">("plan");
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [microphoneRefreshVersion, setMicrophoneRefreshVersion] = useState(0);
@@ -579,21 +582,43 @@ const ServicePlanningSyncFloatingWindow = ({
         () => !cancelSavedPlanPushRef.current,
       )
         .then((result) => {
+          const skipped = [
+            ...result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" })),
+            ...result.placementIssues.map((issue) => ({
+              label: issue.sectionName,
+              reason: issue.reason === "mapped-heading-missing"
+                ? `Mapped outline heading "${issue.headingName}" is not present`
+                : issue.reason === "heading-removed"
+                  ? `Outline heading "${issue.headingName}" disappeared before insertion`
+                  : "No matching outline heading or section rule",
+            })),
+          ];
           setLastSyncSummary({
             outline: addedTitles.map((label) => ({ label })),
             overlaysUpdated: [],
             overlaysCreated: [],
-            skipped: result.skippedTitles.map((label) => ({ label, reason: "Unresolved Service Plan attachment" })),
+            skipped,
             errors: [],
-            title: cancelSavedPlanPushRef.current ? "Sync stopped" : "Sync complete",
+            title: cancelSavedPlanPushRef.current
+              ? "Sync stopped"
+              : skipped.length
+                ? "Sync complete with skipped items"
+                : "Sync complete",
           });
           setIsSyncSummaryExpanded(true);
           if (mode === "both" && !cancelSavedPlanPushRef.current && allowOverlaySync && canSyncOverlays) {
-            pendingSavedPlanSummaryRef.current = addedTitles;
+            pendingSavedPlanSummaryRef.current = { addedTitles, skipped };
             dispatch(setServicePlanningFloatingWindowDismissed(false));
             dispatch(startServicePlanningSync({ mode: "overlays" }));
           } else {
-            showToast(cancelSavedPlanPushRef.current ? "Sync stopped." : "Sync complete.", cancelSavedPlanPushRef.current ? "info" : "success");
+            showToast(
+              cancelSavedPlanPushRef.current
+                ? "Sync stopped."
+                : skipped.length
+                  ? "Sync complete. Some items were skipped."
+                  : "Sync complete.",
+              cancelSavedPlanPushRef.current || skipped.length ? "info" : "success",
+            );
           }
         })
         .catch((error: unknown) => {
@@ -640,12 +665,21 @@ const ServicePlanningSyncFloatingWindow = ({
     const overlaysCreated = sync.syncItems.filter((item) => item.phase === "overlays" && item.status === "created").map((item) => ({ label: overlayLabel(item) }));
     if (!savedOutline && sync.mode === "outline") return;
     setLastSyncSummary({
-      outline: (savedOutline || sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => item.label)).map((label) => ({ label })),
+      outline: (savedOutline?.addedTitles || sync.syncItems.filter((item) => item.phase === "outline" && item.status === "added").map((item) => item.label)).map((label) => ({ label })),
       overlaysUpdated,
       overlaysCreated,
-      skipped: sync.reasons.filter((reason) => !/already (?:up to date|exists)/i.test(reason)).map((label) => ({ label })),
+      skipped: [
+        ...(savedOutline?.skipped ?? []),
+        ...sync.reasons.filter((reason) => !/already (?:up to date|exists)/i.test(reason)).map((label) => ({ label })),
+      ],
       errors: sync.error ? [{ label: sync.error }] : [],
-      title: sync.status === "cancelled" ? "Sync stopped" : sync.status === "failed" ? "Sync incomplete" : "Sync complete",
+      title: sync.status === "cancelled"
+        ? "Sync stopped"
+        : sync.status === "failed"
+          ? "Sync incomplete"
+          : savedOutline?.skipped.length
+            ? "Sync complete with skipped items"
+            : "Sync complete",
     });
     setIsSyncSummaryExpanded(true);
     pendingSavedPlanSummaryRef.current = null;

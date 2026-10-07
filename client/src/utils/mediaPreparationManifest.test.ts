@@ -5,6 +5,7 @@ import {
   isMediaPreparationManifest,
   isMediaPreparationReadinessReport,
   buildMediaPreparationReadinessCounts,
+  buildMediaPreparationReadinessVideoInputs,
   buildMediaPreparationReadinessVideos,
   sanitizeMediaPreparationReadinessText,
   mediaPreparationManifestToCandidates,
@@ -200,6 +201,53 @@ describe("media preparation manifest", () => {
     expect(counts).toMatchObject({ readyCount: 2, preparingCount: 1, failedCount: 1, finiteCandidateCount: 4 });
   });
 
+  it("reports a protected selected video outside inventory in both counts and per-video rows", () => {
+    const inventory = [] as Array<{ mediaKey: string; status: "eligible" }>;
+    const selected = [{ mediaKey: "protected:current", status: "eligible" as const }];
+    const counts = buildMediaPreparationReadinessCounts(
+      inventory,
+      [{ mediaKey: "protected:current", phase: "active-playing" }],
+      selected,
+      1,
+    );
+    const details = buildMediaPreparationReadinessVideos([], [{
+      mediaKey: "protected:current", name: "Current video.mp4", itemName: "Current item",
+      status: "eligible", selected: true, phase: "active-playing",
+    }]);
+    expect(counts).toMatchObject({ finiteCandidateCount: 0, selectedFiniteCandidateCount: 1, readyCount: 1 });
+    expect(details.videos).toMatchObject([{ name: "Current video.mp4", status: "playing", itemName: "Current item" }]);
+  });
+
+  it("builds report rows from an empty inventory and the protected selected playing pool", () => {
+    const inputs = buildMediaPreparationReadinessVideoInputs(
+      [],
+      [{
+        mediaKey: "protected:current",
+        originalSource: "https://cdn.example.test/current.mp4",
+        itemId: "item-current",
+        itemName: "Current item",
+        status: "eligible",
+      }],
+      [{ mediaKey: "protected:current", phase: "active-playing" }],
+    );
+    const videos = buildMediaPreparationReadinessVideos(inputs);
+    const counts = buildMediaPreparationReadinessCounts(
+      [],
+      [{ mediaKey: "protected:current", phase: "active-playing" }],
+      [{ mediaKey: "protected:current", status: "eligible" }],
+      1,
+    );
+
+    expect(counts).toMatchObject({ finiteCandidateCount: 0, selectedFiniteCandidateCount: 1, readyCount: 1 });
+    expect(videos.videos).toMatchObject([{
+      mediaKey: "protected:current",
+      name: "current.mp4",
+      itemId: "item-current",
+      itemName: "Current item",
+      status: "playing",
+    }]);
+  });
+
   it("separates complete inventory from a changing bounded selection, duplicates, and protected transition media", () => {
     const inventory = Array.from({ length: 30 }, (_, index) => ({
       mediaKey: `finite:${index}`,
@@ -229,6 +277,17 @@ describe("media preparation manifest", () => {
     });
     const movedSelection = buildMediaPreparationReadinessCounts(inventory, [], inventory.slice(6, 30), 24);
     expect(movedSelection).toMatchObject({ selectedCandidateCount: 24, deferredFiniteCount: 6, readyCount: 0 });
+  });
+
+  it("keeps 30 finite inventory videos distinct from a 12-video bounded pool", () => {
+    const inventory = Array.from({ length: 30 }, (_, index) => ({ mediaKey: `finite:${index}`, status: "eligible" as const }));
+    const selected = inventory.slice(0, 12);
+    const surfaces = [
+      ...selected.slice(0, 10).map(({ mediaKey }) => ({ mediaKey, phase: "ready-paused" })),
+      ...selected.slice(10).map(({ mediaKey }) => ({ mediaKey, phase: "preparing" })),
+    ];
+    const counts = buildMediaPreparationReadinessCounts(inventory, surfaces, selected, 12);
+    expect(counts).toMatchObject({ finiteCandidateCount: 30, selectedFiniteCandidateCount: 12, readyCount: 10, preparingCount: 2, deferredFiniteCount: 18 });
   });
 
   it("accepts portable HTTP URLs without treating renderer checks as SSRF validation", () => {

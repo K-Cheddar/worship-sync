@@ -1,99 +1,55 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { Activity, CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 import { DropdownMenuItem } from "../../components/ui/DropdownMenu";
 import Button from "../../components/Button/Button";
-import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "../../components/ui/Popover";
-import { getTransferOverview, useOptionalTransfers } from "../../context/transferContext";
+import { useOptionalTransfers } from "../../context/transferContext";
+import { getActivitySummary, type Transfer } from "../../context/transferModel";
 
 type MediaAddControlProps = {
   children: ReactNode;
-  uploadProgress: { isUploading: boolean; progress: number };
-  uploadTitle: string;
 };
 
-export const MediaAddControl = ({
-  children,
-  uploadProgress,
-  uploadTitle,
-}: MediaAddControlProps) => {
+const getActivityIcon = (transfers: Transfer[]) => {
+  const summary = getActivitySummary(transfers);
+  if (summary.attentionCount) return CircleAlert;
+  if (summary.activeCount) return LoaderCircle;
+  if (transfers.every((transfer) => transfer.status === "complete")) return CircleCheck;
+  return Activity;
+};
+
+export const MediaAddControl = ({ children }: MediaAddControlProps) => {
   const transferContext = useOptionalTransfers();
-  const transfers = transferContext?.transfers ?? (uploadProgress.isUploading ? [{
-    id: "media-upload",
-    kind: "upload" as const,
-    title: uploadTitle,
-    status: "uploading" as const,
-    progress: uploadProgress.progress,
-    message: "Uploading media",
-  }] : []);
-  const overview = getTransferOverview(transfers);
-  const percent = overview.progress === null ? null : Math.round(overview.progress);
-  const progressLabel = percent === null ? "Working…" : `${percent}%`;
-  const headingProgressLabel = percent === null ? progressLabel : `${progressLabel} overall`;
-  const accessibleProgressLabel = percent === null ? "progress unknown" : `${percent}% overall`;
-  const showProgress = overview.activeCount > 0;
+  const transfers = transferContext?.transfers ?? [];
+  const summary = getActivitySummary(transfers);
+  const showActivity = transfers.length > 0;
+  const registerActivityHost = transferContext?.registerActivityHost;
+
+  useEffect(() => {
+    if (!registerActivityHost) return;
+    return registerActivityHost();
+  }, [registerActivityHost]);
+
+  const activityAccent = summary.accent === "attention"
+    ? "text-amber-300"
+    : summary.accent === "active" ? "text-cyan-300" : "text-gray-400";
+  const ActivityIcon = getActivityIcon(transfers);
+  const activityIconMotion = summary.activeCount ? "animate-spin motion-reduce:animate-none" : "";
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex min-w-0 items-center justify-end gap-1">
       {children}
-      {showProgress ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="tertiary"
-              title="Show transfer summary"
-              aria-label={`Show transfer summary: ${overview.activeCount} active transfers, ${accessibleProgressLabel}`}
-              className="gap-1"
-              padding="px-1.5 py-1"
-            >
-              <span className="relative inline-flex size-6 shrink-0 items-center justify-center" aria-hidden="true">
-                <svg viewBox="0 0 24 24" className="absolute inset-0 size-6">
-                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity="0.24" strokeWidth="2" />
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeDasharray={2 * Math.PI * 9}
-                    strokeDashoffset={2 * Math.PI * 9 * (1 - (overview.progress ?? 0) / 100)}
-                    transform="rotate(-90 12 12)"
-                    className="motion-safe:transition-[stroke-dashoffset] motion-safe:duration-300 motion-reduce:transition-none"
-                  />
-                </svg>
-              </span>
-              <span>{progressLabel}</span>
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] space-y-3 p-3">
-            <h2 className="text-sm font-semibold">Transfers · {overview.activeCount} active · {headingProgressLabel}</h2>
-            <ul className="max-h-64 space-y-3 overflow-y-auto">
-              {overview.transfers.map((transfer) => (
-                <li key={transfer.id} className="min-w-0">
-                  <p className="truncate text-sm font-medium">{transfer.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {transfer.type ? `${transfer.type} · ` : ""}{transfer.status} · {Math.round(transfer.progress)}%
-                  </p>
-                  <div
-                    role="progressbar"
-                    aria-label={`${transfer.name} progress`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(transfer.progress)}
-                    className="mt-1.5 h-1 overflow-hidden rounded bg-muted"
-                  >
-                    <div className="h-full rounded bg-primary transition-[width] motion-reduce:transition-none" style={{ width: `${transfer.progress}%` }} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <PopoverClose asChild>
-              <Button variant="tertiary" className="w-full justify-center" onClick={transferContext?.restoreTransfers}>
-                View all transfers
-              </Button>
-            </PopoverClose>
-          </PopoverContent>
-        </Popover>
+      {showActivity ? (
+        <Button
+          variant="tertiary"
+          title={`Show ${summary.label}`}
+          aria-label={`Show ${summary.label}`}
+          onClick={transferContext?.restoreTransfers}
+          className="min-w-0 shrink gap-1"
+          padding="px-1.5 py-1"
+        >
+          <ActivityIcon size={16} aria-hidden data-testid="activity-icon" className={`shrink-0 ${activityAccent} ${activityIconMotion}`} />
+          <span className="block min-w-0 max-w-40 truncate @max-[300px]/sources-actions:max-w-16 @max-[240px]/sources-actions:hidden">{summary.label}</span>
+        </Button>
       ) : null}
     </div>
   );
@@ -102,5 +58,9 @@ export const MediaAddControl = ({
 export const ShowTransfersMenuItem = () => {
   const transfers = useOptionalTransfers();
   if (!transfers?.isMinimized || transfers.transfers.length === 0) return null;
-  return <DropdownMenuItem onSelect={transfers.restoreTransfers}>Show transfers</DropdownMenuItem>;
+  const summary = getActivitySummary(transfers.transfers);
+  const activityAccent = summary.accent === "attention"
+    ? "text-amber-300"
+    : summary.accent === "active" ? "text-cyan-300" : "text-gray-400";
+  return <DropdownMenuItem onSelect={transfers.restoreTransfers}><Activity size={16} aria-hidden data-testid="activity-menu-icon" className={activityAccent} />Show Activity</DropdownMenuItem>;
 };

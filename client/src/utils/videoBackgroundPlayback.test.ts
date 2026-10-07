@@ -556,7 +556,7 @@ describe("videoBackgroundPlayback", () => {
       ).toEqual(liveCue);
     });
 
-    it("starts a local preview cue when the selected slide is not on air", () => {
+    it("returns no cue when the selected slide is not on air", () => {
       const selected = slideWithVideo(videoMedia());
       const other = { ...selected, id: "slide-2" };
       expect(
@@ -569,14 +569,38 @@ describe("videoBackgroundPlayback", () => {
           },
           selected,
         ),
-      ).toEqual(
-        expect.objectContaining({
-          mediaKey: "remote:video-1",
-          positionSeconds: 0,
-          paused: false,
-          generation: 0,
-        }),
-      );
+      ).toBeUndefined();
+    });
+
+    it("keeps a non-live preview cue absent across state changes", () => {
+      const selected = slideWithVideo(videoMedia());
+      const outputSlots = {};
+
+      expect(resolveEditorPreviewVideoPlayback(outputSlots, selected)).toBeUndefined();
+      expect(
+        resolveEditorPreviewVideoPlayback(
+          { ...outputSlots, unrelated: { isTransmitting: false, info: {} } },
+          { ...selected },
+        ),
+      ).toBeUndefined();
+    });
+
+    it("removes the live cue when the selected slide stops transmitting", () => {
+      const slide = slideWithVideo(videoMedia());
+      const outputs = {
+        projector: {
+          isTransmitting: true,
+          info: { slide, videoPlayback: liveCue },
+        },
+      };
+
+      expect(resolveEditorPreviewVideoPlayback(outputs, slide)).toEqual(liveCue);
+      expect(
+        resolveEditorPreviewVideoPlayback(
+          { projector: { ...outputs.projector, isTransmitting: false } },
+          slide,
+        ),
+      ).toBeUndefined();
     });
 
     it("picks the newest matching cue across transmitting outputs", () => {

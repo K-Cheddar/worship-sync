@@ -4,19 +4,9 @@ import { ServicePlanMicrophoneChip } from "../../../components/ServicePlanMicrop
 import { ServicePlanMicrophoneIcon } from "../../../components/ServicePlanMicrophoneIcon";
 import { ServiceEquipmentChip } from "../../../components/ServiceEquipmentChip";
 import { ServiceEquipmentIcon, getServiceEquipmentSubtypeLabel } from "../../../components/ServiceEquipmentIcon";
-import {
-  Select as RadixSelect,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/Select";
+import Select from "../../../components/Select/Select";
 import type { ServiceEquipment, ServicePlanMicrophone } from "../../../types/servicePlan";
 import { TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
-
-/** Radix reserves an empty string for clearing the current selection. */
-const NONE_MICROPHONE_VALUE = "__none__";
-const NO_IEM_VALUE = "__none_iem__";
 
 export type ScheduleMicrophoneHolder = {
   slotKey: string;
@@ -112,63 +102,26 @@ const ScheduleMicrophoneSelect = ({
     <div className="space-y-1.5">
       {showMicrophones ? <div>
       {canEdit ? (
-        <RadixSelect
-          value={selectedId || NONE_MICROPHONE_VALUE}
-          disabled={saving}
-          onValueChange={(next) => {
-            onChange(next === NONE_MICROPHONE_VALUE ? [] : [next]);
-          }}
-        >
-          <SelectTrigger
-            size="sm"
-            aria-label={ariaLabel}
-            className="h-8 w-full justify-between border-gray-700 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100"
-          >
-            <SelectValue placeholder="No microphone">
-              {selectedMicrophone ? (
-                <span className="inline-flex min-w-0 items-center gap-2">
-                  <ServicePlanMicrophoneIcon
-                    microphone={selectedMicrophone}
-                    color={selectedMicrophone.color}
-                    className="size-4 shrink-0"
-                  />
-                  <span className="truncate">{selectedMicrophone.name}</span>
+        <Select
+          value={selectedId} disabled={saving} onChange={(next) => onChange(next ? [next] : [])}
+          size="sm" aria-label={ariaLabel} placeholder="No microphone"
+          selectClassName="h-8 w-full justify-between border-gray-700 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100 max-md:text-sm"
+          contentClassName="min-w-[14rem]"
+          selectedValueLabel={selectedMicrophone ? <span className="inline-flex min-w-0 items-center gap-2"><ServicePlanMicrophoneIcon microphone={selectedMicrophone} color={selectedMicrophone.color} className="size-4 shrink-0" /><span className="truncate">{selectedMicrophone.name}</span></span> : "No microphone"}
+          options={[
+            { value: "", label: "No microphone" },
+            ...microphones.map((microphone) => {
+              const assignedElsewhere = (holdersByMicrophone.get(microphone.id) || []).filter((holder) => holder.slotKey !== slotKey).map((holder) => holder.label);
+              return { value: microphone.id, textValue: microphone.name, label: (
+                <span className="inline-flex min-w-0 flex-1 items-center gap-2">
+                  <ServicePlanMicrophoneIcon microphone={microphone} color={microphone.color} className="size-4 shrink-0" />
+                  <span className="truncate">{microphone.name}</span>
+                  {assignedElsewhere.length ? <span className="ml-auto shrink-0 text-[10px] font-normal text-amber-300">Assigned: {assignedElsewhere.join(", ")}</span> : null}
                 </span>
-              ) : (
-                "No microphone"
-              )}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent className="min-w-[14rem]">
-            <SelectItem value={NONE_MICROPHONE_VALUE}>No microphone</SelectItem>
-            {microphones.map((microphone) => {
-              const assignedElsewhere = (holdersByMicrophone.get(microphone.id) || [])
-                .filter((holder) => holder.slotKey !== slotKey)
-                .map((holder) => holder.label);
-              return (
-                <SelectItem
-                  key={microphone.id}
-                  value={microphone.id}
-                  textValue={microphone.name}
-                >
-                  <span className="inline-flex min-w-0 flex-1 items-center gap-2">
-                    <ServicePlanMicrophoneIcon
-                      microphone={microphone}
-                      color={microphone.color}
-                      className="size-4 shrink-0"
-                    />
-                    <span className="truncate">{microphone.name}</span>
-                    {assignedElsewhere.length ? (
-                      <span className="ml-auto shrink-0 text-[10px] font-normal text-amber-300">
-                        Assigned: {assignedElsewhere.join(", ")}
-                      </span>
-                    ) : null}
-                  </span>
-                </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </RadixSelect>
+              ) };
+            }),
+          ]}
+        />
       ) : selectedMicrophone ? (
         <ServicePlanMicrophoneChip microphone={selectedMicrophone} />
       ) : (
@@ -184,30 +137,24 @@ const ScheduleMicrophoneSelect = ({
       {onIemChange ? (
         <div>
           {iemLoading ? <p className="text-[11px] text-gray-500">Loading IEMs…</p> : iemUnavailable ? <p className="text-[11px] text-amber-300">IEMs unavailable.</p> : iems.length === 0 ? <p className="text-[11px] text-gray-500">No IEMs configured.</p> : canEdit ? (
-            <RadixSelect
-              value={selectedIem?.id || NO_IEM_VALUE}
-              disabled={savingIem}
-              onValueChange={(next) => onIemChange(next === NO_IEM_VALUE ? [] : [next])}
-            >
-              <SelectTrigger size="sm" aria-label={`${ariaLabel} IEM`} className="h-8 w-full justify-between border-cyan-900/70 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100">
-                <SelectValue placeholder="No IEM">{selectedIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedIem} color={selectedIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedIem.name}</span></span> : "No IEM"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent className="min-w-[14rem]">
-                <SelectItem value={NO_IEM_VALUE}>No IEM</SelectItem>
-                {iems.map((iem) => (
-                  <SelectItem key={iem.id} value={iem.id} textValue={iem.name}>
-                    <span className="inline-flex min-w-0 flex-1 items-center gap-2">
-                      <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
-                      <span className="truncate">{iem.name}</span>
-                      <span className="ml-auto shrink-0 text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span>
-                      {iemHoldersByIem.get(iem.id)?.filter((holder) => holder.slotKey !== slotKey).length ? (
-                        <span className="ml-auto shrink-0 text-[10px] text-amber-300">Assigned elsewhere</span>
-                      ) : null}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </RadixSelect>
+            <Select
+              value={selectedIem?.id || ""} disabled={savingIem} onChange={(next) => onIemChange(next ? [next] : [])}
+              size="sm" aria-label={`${ariaLabel} IEM`} placeholder="No IEM"
+              selectClassName="h-8 w-full justify-between border-cyan-900/70 bg-gray-950/60 px-2 text-left text-[11px] text-gray-100 max-md:text-sm"
+              contentClassName="min-w-[14rem]"
+              selectedValueLabel={selectedIem ? <span className="inline-flex min-w-0 items-center gap-2"><ServiceEquipmentIcon equipment={selectedIem} color={selectedIem.color} className="size-4 shrink-0" /><span className="truncate">{selectedIem.name}</span></span> : "No IEM"}
+              options={[
+                { value: "", label: "No IEM" },
+                ...iems.map((iem) => ({ value: iem.id, textValue: iem.name, label: (
+                  <span className="inline-flex min-w-0 flex-1 items-center gap-2">
+                    <ServiceEquipmentIcon equipment={iem} color={iem.color} className="size-4 shrink-0" />
+                    <span className="truncate">{iem.name}</span>
+                    <span className="ml-auto shrink-0 text-xs text-gray-400">{getServiceEquipmentSubtypeLabel(iem.subtype)}</span>
+                    {iemHoldersByIem.get(iem.id)?.filter((holder) => holder.slotKey !== slotKey).length ? <span className="ml-auto shrink-0 text-[10px] text-amber-300">Assigned elsewhere</span> : null}
+                  </span>
+                ) })),
+              ]}
+            />
           ) : selectedIem ? <ServiceEquipmentChip equipment={selectedIem} className="text-[11px]" /> : <p className="text-[11px] text-gray-300">IEM: None</p>}
           {sharedIemWith.length ? <p className="mt-1 text-[11px] text-amber-300">IEM conflict: shared with {sharedIemWith.join(", ")}</p> : null}
         </div>

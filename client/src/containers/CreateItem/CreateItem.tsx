@@ -1,3 +1,4 @@
+import Spinner from "@/components/Spinner/Spinner";
 import {
   useContext,
   useEffect,
@@ -14,7 +15,6 @@ import {
   Plus,
   Check,
   X,
-  Loader2,
 } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
@@ -686,7 +686,7 @@ const CreateItem = ({
           role="status"
           aria-label="Loading lyrics results"
         >
-          <Loader2 className="mr-2 size-5 animate-spin" aria-hidden="true" />
+          <Spinner size="sm" width="20px" className="mr-2 shrink-0" />
           Searching for lyrics...
         </div>
       ) : (

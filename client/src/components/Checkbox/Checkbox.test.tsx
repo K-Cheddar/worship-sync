@@ -20,6 +20,21 @@ const StatefulCheckbox = ({
 };
 
 describe("Checkbox", () => {
+  it("supports mixed selection with an external accessible label and boolean changes", async () => {
+    const user = userEvent.setup();
+    const onCheckedChange = jest.fn();
+    render(<Checkbox checked="indeterminate" aria-label="Select shown" onCheckedChange={onCheckedChange} />);
+    const checkbox = screen.getByRole("checkbox", { name: "Select shown" });
+    expect(checkbox).toBePartiallyChecked();
+    await user.click(checkbox);
+    expect(onCheckedChange).toHaveBeenCalledWith(true);
+  });
+  it("keeps the labeled mobile tap row at a fixed-rem minimum", () => {
+    render(<StatefulCheckbox />);
+
+    expect(screen.getByText("Team")).toHaveClass("max-md:min-h-[2rem]");
+  });
+
   it("toggles once when the control is clicked", async () => {
     const user = userEvent.setup();
     const onCheckedChange = jest.fn();

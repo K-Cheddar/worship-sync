@@ -51,8 +51,8 @@ const SelectTrigger = ({
       className={cn(
         "control-spacing data-[placeholder]:text-neutral-400 text-left text-neutral-100 [&_svg:not([class*='text-'])]:text-neutral-400 focus-visible:ring-cyan-500/35 aria-invalid:ring-destructive/30 box-border flex w-full items-center justify-between gap-2 overflow-hidden rounded-md border border-neutral-500 bg-neutral-900 px-2 py-0 text-sm leading-none whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         size === "sm"
-          ? "h-8 min-h-8"
-          : "h-[2.25rem] min-h-[2.25rem]",
+          ? "h-8 min-h-8 max-md:min-h-[2rem]"
+          : "h-[2.25rem] min-h-[2.25rem] max-md:min-h-[2rem]",
         className
       )}
       {...props}
@@ -153,7 +153,7 @@ const SelectItem = ({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "text-neutral-100 focus:bg-neutral-700 focus:text-neutral-100 [&_svg:not([class*='text-'])]:text-neutral-400 relative flex w-full cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2 data-[state=checked]:bg-neutral-700/80 data-[state=checked]:font-semibold data-[state=checked]:text-neutral-100",
+        "text-neutral-100 focus:bg-neutral-700 focus:text-neutral-100 [&_svg:not([class*='text-'])]:text-neutral-400 relative flex w-full cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none max-md:min-h-[2rem] data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2 data-[state=checked]:bg-neutral-700/80 data-[state=checked]:font-semibold data-[state=checked]:text-neutral-100",
         className
       )}
       {...props}

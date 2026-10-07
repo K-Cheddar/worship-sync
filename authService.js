@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { serializeAuthError } from "./server/authErrorResponse.js";
 import crypto from "node:crypto";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
@@ -314,9 +315,10 @@ const normalizeDesktopAuthProvider = (value) => {
   return DESKTOP_AUTH_PROVIDER_VALUES.has(normalized) ? normalized : "";
 };
 
-const httpError = (statusCode, message) => {
+const httpError = (statusCode, message, code) => {
   const error = new Error(message);
   error.statusCode = statusCode;
+  if (code) error.code = code;
   return error;
 };
 
@@ -346,13 +348,12 @@ const respondInviteAccessError = (res, error) => {
       message: error.message,
     });
   }
-  return res.status(statusCode).json({
-    success: false,
+  return res.status(statusCode).json(serializeAuthError(error, {
     errorMessage:
       statusCode < 500 && error?.message
         ? error.message
         : "Could not update invite access. Try again in a moment.",
-  });
+  }));
 };
 
 const validateUpdateInviteAccessPayload = (body) => {
@@ -1200,12 +1201,30 @@ const ensureSessionCsrfToken = (req) => {
  * If there is no session auth yet, we skip (caller must enforce auth first).
  */
 const assertCsrf = async (req) => {
+  if (
+    req.appSession?.sessionKind === SESSION_KIND_WORKSTATION &&
+    req.appSession.workstationTokenProvided === true
+  ) {
+    logAuthEvent("log", "auth.csrf.workstation_token.accepted", {
+      sessionKind: SESSION_KIND_WORKSTATION,
+    });
+    return;
+  }
+
   const cookieHuman = await getHumanBootstrap(req);
   if (cookieHuman) {
     const expected = cookieHuman.csrfToken;
     const provided = String(req.headers["x-csrf-token"] || "").trim();
     if (!expected || !provided || provided !== expected) {
-      throw httpError(403, "Could not verify this request.");
+      logAuthEvent("warn", "auth.csrf.rejected", {
+        sessionKind: SESSION_KIND_HUMAN,
+        source: "cookie",
+      });
+      throw httpError(
+        403,
+        "Could not verify this request.",
+        "AUTH_CSRF_MISMATCH",
+      );
     }
     return;
   }
@@ -1214,7 +1233,15 @@ const assertCsrf = async (req) => {
     const expected = bearerHuman.csrfToken;
     const provided = String(req.headers["x-csrf-token"] || "").trim();
     if (!expected || !provided || provided !== expected) {
-      throw httpError(403, "Could not verify this request.");
+      logAuthEvent("warn", "auth.csrf.rejected", {
+        sessionKind: SESSION_KIND_HUMAN,
+        source: "bearer",
+      });
+      throw httpError(
+        403,
+        "Could not verify this request.",
+        "AUTH_CSRF_MISMATCH",
+      );
     }
     return;
   }
@@ -1222,7 +1249,20 @@ const assertCsrf = async (req) => {
   const expected = ensureSessionCsrfToken(req);
   const provided = String(req.headers["x-csrf-token"] || "").trim();
   if (!provided || provided !== expected) {
-    throw httpError(403, "Could not verify this request.");
+    logAuthEvent("warn", "auth.csrf.rejected", {
+      sessionKind: req.session.auth.sessionKind || "unknown",
+      source: "session",
+    });
+    throw httpError(
+      403,
+      "Could not verify this request.",
+      "AUTH_CSRF_MISMATCH",
+    );
+  }
+  if (req.session.auth.sessionKind === SESSION_KIND_WORKSTATION) {
+    logAuthEvent("log", "auth.csrf.workstation_session.accepted", {
+      sessionKind: SESSION_KIND_WORKSTATION,
+    });
   }
 };
 
@@ -7445,10 +7485,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message || "Could not sign out",
-      });
+      }));
     }
   },
 
@@ -7794,10 +7833,9 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message || "Could not update your profile.",
-      });
+      }));
     }
   },
 
@@ -7834,11 +7872,10 @@ export const authHandlers = {
       );
       return res.json({ success: true, notifications });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage:
           error.message || "Could not update your notification settings.",
-      });
+      }));
     }
   },
 
@@ -7849,10 +7886,9 @@ export const authHandlers = {
       const devices = await listTrustedHumanDevicesForChurch(admin.churchId);
       return res.json({ success: true, devices });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -7893,10 +7929,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -7951,10 +7986,9 @@ export const authHandlers = {
       );
       return res.json({ success: true, members });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -7983,10 +8017,9 @@ export const authHandlers = {
         ),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8022,10 +8055,9 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8048,10 +8080,9 @@ export const authHandlers = {
         branding,
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8083,10 +8114,9 @@ export const authHandlers = {
         integrations,
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8126,10 +8156,9 @@ export const authHandlers = {
         currentServiceWorkspace,
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8305,13 +8334,12 @@ export const authHandlers = {
           });
         }
       }
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
         ...(error.existingInvite
           ? { existingInvite: error.existingInvite }
           : {}),
-      });
+      }));
     }
   },
 
@@ -8399,10 +8427,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message || "Could not revoke this invite",
-      });
+      }));
     }
   },
 
@@ -8431,10 +8458,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message || "Could not remove this expired invite",
-      });
+      }));
     }
   },
 
@@ -8584,10 +8610,9 @@ export const authHandlers = {
       });
       return res.json({ success: true, church });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8637,10 +8662,9 @@ export const authHandlers = {
       });
       return res.json({ success: true, church });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8687,10 +8711,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8735,10 +8758,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8806,10 +8828,9 @@ export const authHandlers = {
       });
       return res.json({ success: true, requestId });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8851,10 +8872,9 @@ export const authHandlers = {
       });
       return res.json({ success: true, churchId: request.churchId });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -8934,10 +8954,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9041,13 +9060,12 @@ export const authHandlers = {
         invite: sanitizeInviteWithEffectiveStatus(refreshedInvite),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
         ...(error.existingInvite
           ? { existingInvite: error.existingInvite }
           : {}),
-      });
+      }));
     }
   },
 
@@ -9261,10 +9279,9 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message || "Could not approve device pairing.",
-      });
+      }));
     }
   },
 
@@ -9380,10 +9397,9 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9449,10 +9465,9 @@ export const authHandlers = {
         }),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9471,10 +9486,9 @@ export const authHandlers = {
         ),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9507,10 +9521,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9553,10 +9566,9 @@ export const authHandlers = {
       }
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9598,10 +9610,9 @@ export const authHandlers = {
         }),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9636,10 +9647,9 @@ export const authHandlers = {
         },
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9696,10 +9706,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9735,10 +9744,9 @@ export const authHandlers = {
         device: sanitizeDisplayDeviceForClient({ deviceId, ...display }),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9757,10 +9765,9 @@ export const authHandlers = {
         ),
       });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9796,10 +9803,9 @@ export const authHandlers = {
       });
       return res.json({ success: true, settings });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 
@@ -9832,10 +9838,9 @@ export const authHandlers = {
       });
       return res.json({ success: true });
     } catch (error) {
-      return res.status(error.statusCode || 500).json({
-        success: false,
+      return res.status(error.statusCode || 500).json(serializeAuthError(error, {
         errorMessage: error.message,
-      });
+      }));
     }
   },
 };

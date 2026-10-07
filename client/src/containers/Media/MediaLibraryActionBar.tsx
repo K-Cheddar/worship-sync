@@ -933,6 +933,8 @@ const MediaLibraryActionBar = ({
                     data-measure-action-btn
                     variant="tertiary"
                     className={classNameForMediaLibraryBarAction(slot.action)}
+                    title={slot.action.supportingText}
+                    aria-label={slot.action.supportingText ? `${slot.action.label}. ${slot.action.supportingText}` : undefined}
                     tabIndex={-1}
                     aria-hidden
                   >
@@ -1238,6 +1240,7 @@ const MediaLibraryActionBar = ({
                               className={classNameForMediaLibraryOverflowMenuItem(
                                 slot.action,
                               )}
+                              title={slot.action.supportingText}
                               onSelect={(e) => {
                                 e.preventDefault();
                                 const a = slot.action;
@@ -1268,6 +1271,7 @@ const MediaLibraryActionBar = ({
                               className={classNameForMediaLibraryOverflowMenuItem(
                                 slot.action,
                               )}
+                              title={slot.action.supportingText}
                               onSelect={(e) => {
                                 e.preventDefault();
                                 slot.action.onClick?.();

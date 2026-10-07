@@ -15,6 +15,8 @@ describe("ScheduleOccurrenceDateButton", () => {
       name: "View and copy assignments for Sabbath Service on Sat, Jul 25, 2026, 10:00",
     });
     expect(button).toHaveAttribute("title", "Sat, Jul 25, 2026, 10:00");
+    expect(button).toHaveClass("max-md:min-h-[2rem]");
+    expect(button).not.toHaveClass("max-md:min-h-0");
 
     expect(screen.getByText("Sat, Jul 25, 2026, 10:00")).toHaveClass(
       "min-w-0",

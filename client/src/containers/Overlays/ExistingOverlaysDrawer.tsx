@@ -16,13 +16,7 @@ import {
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
-import {
-  Select as RadixSelect,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/Select";
+import Select from "../../components/Select/Select";
 import { useDispatch, useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import generateRandomId from "../../utils/generateRandomId";
@@ -580,36 +574,11 @@ const AddExistingOverlayDrawer = ({
               svg={searchValue ? X : Search}
               svgActionAriaLabel={searchValue ? "Clear search" : undefined}
             />
-            <RadixSelect
-              value={typeFilter}
-              onValueChange={setTypeFilter}
-            >
-              <SelectTrigger
-                className="w-40 bg-gray-700 text-white text-sm"
-                chevronColor="text-white"
-              >
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent
-                className="bg-gray-800 border-gray-600"
-                contentBackgroundColor="bg-gray-800"
-                contentTextColor="text-white"
-              >
-                {TYPE_FILTER_OPTIONS.map((opt) => {
-                  const textColor =
-                    opt.value === TYPE_FILTER_ALL
-                      ? "text-gray-200"
-                      : overlayTextColorMap.get(opt.value) ?? "text-gray-400";
-                  return (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      <span className={cn("font-medium", textColor)}>
-                        {opt.label}
-                      </span>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </RadixSelect>
+            <Select value={typeFilter} onChange={setTypeFilter} aria-label="Overlay type" placeholder="Type"
+              className="w-40" selectClassName="bg-gray-700 text-white text-sm" chevronColor="text-white"
+              contentClassName="bg-gray-800 border-gray-600" contentBackgroundColor="bg-gray-800" contentTextColor="text-white"
+              options={TYPE_FILTER_OPTIONS.map((opt) => ({ ...opt, className: cn("font-medium", opt.value === TYPE_FILTER_ALL ? "text-gray-200" : overlayTextColorMap.get(opt.value) ?? "text-gray-400") }))}
+            />
             <Menu
               menuItems={[
                 {
