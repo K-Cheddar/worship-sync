@@ -29,15 +29,16 @@ export async function deleteMediaItemAtRevisionFromPouch(
 ): Promise<"deleted" | "missing"> {
   if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
   const result = await removeMediaItemAtRevision(db, doc);
-  if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
   if (!result) return "missing";
-  safePostMessage({
-    type: "update",
-    data: {
-      docs: [{ _id: doc._id, id: doc.id, _deleted: true }],
-      hostId: globalHostId,
-    },
-  });
+  if (activeDb === db) {
+    safePostMessage({
+      type: "update",
+      data: {
+        docs: [{ _id: doc._id, id: doc.id, _deleted: true }],
+        hostId: globalHostId,
+      },
+    });
+  }
   return "deleted";
 }
 
@@ -60,8 +61,8 @@ export async function deleteMediaItemsFromPouch(
       continue;
     }
     try {
-      await removeMediaItem(db, id, () => activeDb === db);
-      if (activeDb !== db) {
+      const result = await removeMediaItem(db, id, () => activeDb === db);
+      if (activeDb !== db && !result) {
         failed.push({ id, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) });
         continue;
       }

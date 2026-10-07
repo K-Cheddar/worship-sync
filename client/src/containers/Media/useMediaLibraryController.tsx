@@ -148,6 +148,7 @@ function createMediaDeletionActivityHandoff(
   activityActions: MediaActivityActions | null,
 ) {
   let ownerActive = true;
+  let activityDismissed = false;
   let detachedCleanupRetry: (() => void | Promise<void>) | undefined;
   let lastTransfer: Transfer | undefined;
   const routeActions = new Map<string, () => void>();
@@ -172,6 +173,7 @@ function createMediaDeletionActivityHandoff(
       activityActions?.updateTransfer(transfer);
       return;
     }
+    if (activityDismissed) return;
     activityActions?.updateTransfer({
       ...transfer,
       canCancel: false,
@@ -189,9 +191,19 @@ function createMediaDeletionActivityHandoff(
   };
 
   const setDetachedCleanupRetry = (handler?: () => void | Promise<void>) => {
+    const cleanupWasRequired = Boolean(detachedCleanupRetry);
     detachedCleanupRetry = handler;
     if (!ownerActive) {
       replaceAction(detachedActions, "retry-cleanup", handler);
+      if (activityDismissed && !cleanupWasRequired && handler) {
+        activityDismissed = false;
+        replaceAction(detachedActions, "dismiss", () => {
+          activityDismissed = true;
+          detachedActions.forEach((unregister) => unregister());
+          detachedActions.clear();
+          activityActions?.removeTransfer(activityId);
+        });
+      }
       publishRetired();
     }
   };
@@ -207,7 +219,12 @@ function createMediaDeletionActivityHandoff(
     routeActions.forEach((unregister) => unregister());
     routeActions.clear();
     replaceAction(detachedActions, "retry-cleanup", detachedCleanupRetry);
-    replaceAction(detachedActions, "dismiss", () => activityActions?.removeTransfer(activityId));
+    replaceAction(detachedActions, "dismiss", () => {
+      activityDismissed = true;
+      detachedActions.forEach((unregister) => unregister());
+      detachedActions.clear();
+      activityActions?.removeTransfer(activityId);
+    });
     if (lastTransfer) {
       const wasActive = lastTransfer.status === "active" || lastTransfer.status === "queued";
       publish({
