@@ -1,3 +1,26 @@
+# [2.42.0](https://github.com/K-Cheddar/worship-sync/compare/v2.41.2...v2.42.0) (2026-10-07)
+
+
+### Bug Fixes
+
+* align Teams ranges and schedule defaults ([d7fd230](https://github.com/K-Cheddar/worship-sync/commit/d7fd230a0edfe9c955d3972bf5d3df15402dd2ba))
+* correct display video preview playback ([f64a561](https://github.com/K-Cheddar/worship-sync/commit/f64a56170ba12f4d1d19003558bc0ad57c3ab5f1))
+* Correcting upload types ([b5b0af7](https://github.com/K-Cheddar/worship-sync/commit/b5b0af74f6a50acf5d31954b92f111f6856dea2e))
+* Fixed Pdf viewer ([9a9c553](https://github.com/K-Cheddar/worship-sync/commit/9a9c55351e67483dfea1668ba2a690eff25bb921))
+* Improve image uploads to cloudinary ([aae78f6](https://github.com/K-Cheddar/worship-sync/commit/aae78f6bdb0a921664d90417207387e65cb5c51e))
+* Improve media management progress ([0808d8c](https://github.com/K-Cheddar/worship-sync/commit/0808d8ca3ebf5201ca5832c670877b40a0b9bc3e))
+* improve Teams plan and schedule layouts ([688a642](https://github.com/K-Cheddar/worship-sync/commit/688a642c109c17298674e7c8f334328fa96fd4e9))
+* preserve service plan ownership and viewer access ([b311291](https://github.com/K-Cheddar/worship-sync/commit/b31129137b096248cad9517b77a8c428f414c4e9))
+* tighten mobile controls and window lifecycle ([05acda8](https://github.com/K-Cheddar/worship-sync/commit/05acda82264a9a56f2e936f5228fe7dfca007235))
+
+
+### Features
+
+* add service plan rehearsal playback ([40f6327](https://github.com/K-Cheddar/worship-sync/commit/40f6327d7a7650f4bd5c8551f52c9edb9236e175))
+* adding external resource support ([80eb0c8](https://github.com/K-Cheddar/worship-sync/commit/80eb0c8ca90113d0fd8738ff54c3acea33c89cc5))
+* improve media transfer and library workflows ([6a8e9e1](https://github.com/K-Cheddar/worship-sync/commit/6a8e9e160fa3366385fd2e6a68de6818478a479a))
+* improve media transfers and library handling ([ca7ccb9](https://github.com/K-Cheddar/worship-sync/commit/ca7ccb91799c811af1da0847b42faa099f676ff3))
+
 ## [2.41.2](https://github.com/K-Cheddar/worship-sync/compare/v2.41.1...v2.41.2) (2026-10-02)
 
 
