@@ -1631,6 +1631,71 @@ test("generated schedule ensure rejects inactive services and mismatched groups"
   assert.equal(wrongWeekday.statusCode, 400);
 });
 
+test("generated grouped schedules validate and persist service-local dates", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("generated_schedule_local_timezone");
+  const { teamId } = await seedTeam(context, { teamName: "Worship" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      {
+        id: "sabbath-evening-early",
+        name: "Early Service",
+        serviceGroupId: "sabbath-evening",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "22:30",
+      },
+      {
+        id: "sabbath-evening-late",
+        name: "Late Service",
+        serviceGroupId: "sabbath-evening",
+        reccurence: "weekly",
+        dayOfWeek: 6,
+        time: "23:30",
+      },
+    ],
+  });
+
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October 2026",
+      teamId,
+      startDate: "2026-10-03",
+      endDate: "2026-10-03",
+      timeZone: "America/New_York",
+      serviceIds: ["sabbath-evening-early", "sabbath-evening-late"],
+      occurrences: [
+        {
+          occurrenceId: "group:sabbath-evening@2026-10-03",
+          serviceId: "sabbath-evening-early",
+          serviceIds: ["sabbath-evening-early", "sabbath-evening-late"],
+          groupId: "sabbath-evening",
+          name: "Early Service & Late Service",
+          startsAt: "2026-10-04T02:30:00.000Z",
+          serviceDate: "2026-10-03",
+          positionRequirements: [],
+        },
+      ],
+    },
+  });
+
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.deepEqual(
+    result.payload.schedule.occurrences.map((occurrence) => ({
+      occurrenceId: occurrence.occurrenceId,
+      startsAt: occurrence.startsAt,
+      serviceDate: occurrence.serviceDate,
+    })),
+    [{
+      occurrenceId: "group:sabbath-evening@2026-10-03",
+      startsAt: "2026-10-04T02:30:00.000Z",
+      serviceDate: "2026-10-03",
+    }],
+  );
+});
+
 test("Services edit can change service plans without receiving Teams data", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("services_edit_permission");

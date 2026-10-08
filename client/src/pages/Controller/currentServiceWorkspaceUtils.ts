@@ -132,8 +132,9 @@ export const formatOccurrenceLabel = (startsAt: string): string => {
 export const listCurrentServiceOccurrences = (
   services: TeamService[],
   nowMs?: number,
+  window?: { timeZone?: string },
 ): TeamScheduleOccurrence[] =>
-  listCurrentServiceOccurrencesFromResolution(services, nowMs);
+  listCurrentServiceOccurrencesFromResolution(services, nowMs, window);
 
 export const pickCurrentServiceOccurrence = (
   occurrences: TeamScheduleOccurrence[],

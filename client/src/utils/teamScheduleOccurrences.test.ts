@@ -102,6 +102,46 @@ describe("generateScheduleOccurrences", () => {
     ]);
   });
 
+  it("uses the church timezone when the operator is in a different timezone", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({
+          serviceId: "late-service",
+          dayOfWeek: 0,
+          time: "22:30",
+          serviceGroupId: "sunday-night",
+        }),
+        service({
+          serviceId: "later-service",
+          dayOfWeek: 0,
+          time: "23:30",
+          serviceGroupId: "sunday-night",
+        }),
+      ],
+      serviceIds: ["late-service", "later-service"],
+      startDate: "2026-10-04",
+      endDate: "2026-10-04",
+      timeZone: "America/New_York",
+    });
+
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]).toMatchObject({
+      occurrenceId: "group:sunday-night@2026-10-04",
+      serviceDate: "2026-10-04",
+      startsAt: "2026-10-05T02:30:00.000Z",
+    });
+    // The same instant is already Monday in UTC, while the service belongs to
+    // Sunday in New York. The operator's calendar date must not define its key.
+    expect(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(occurrences[0].startsAt)),
+    ).toBe("2026-10-05");
+  });
+
   it("keeps historical occurrences for archived services and skips dates after archive", () => {
     const archivedService = service({
       serviceId: "retired",

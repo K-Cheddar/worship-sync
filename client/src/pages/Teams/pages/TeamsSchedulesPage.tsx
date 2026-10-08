@@ -29,6 +29,7 @@ const TeamsSchedulesPage = () => {
     canEditTeam,
     editableMemberIds,
     refresh,
+    serviceTimeZone,
   } = useTeamsPage();
   const selectedSchedule = pageData.schedules.find(
     (schedule) => schedule.scheduleId === selectedScheduleId,
@@ -63,6 +64,7 @@ const TeamsSchedulesPage = () => {
   return (
     <ScheduleTab
       data={pageData}
+      serviceTimeZone={serviceTimeZone}
       canEdit={canEditTeams || canEditSelectedSchedule}
       // Drives the default team filter: someone scoped to a single team gets
       // their schedules narrowed for them on first visit.

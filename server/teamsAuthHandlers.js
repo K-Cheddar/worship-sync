@@ -1131,6 +1131,9 @@ export const createTeamsAuthHandlers = ({
   }) => {
     const primaryService = servicesById.get(serviceId);
     assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    if (serviceDate && serviceDate !== localParts.date) {
+      throw httpError(400, "A service occurrence has an invalid calendar date.");
+    }
     const configuredGroupId = normalizeShortText(
       primaryService?.serviceGroupId,
       { max: 160 },
@@ -1174,9 +1177,8 @@ export const createTeamsAuthHandlers = ({
       const localOccurrenceId = `group:${groupId}@${localParts.date}`;
       const legacyUtcOccurrenceId = `group:${groupId}@${startsAt.slice(0, 10)}`;
       if (
-        (serviceDate && serviceDate !== localParts.date) ||
-        (occurrenceId !== localOccurrenceId &&
-          (serviceDate || occurrenceId !== legacyUtcOccurrenceId))
+        occurrenceId !== localOccurrenceId &&
+        (serviceDate || occurrenceId !== legacyUtcOccurrenceId)
       ) {
         throw httpError(400, "A combined occurrence has an invalid identity.");
       }
@@ -6046,6 +6048,9 @@ export const createTeamsAuthHandlers = ({
             occurrence?.startsAt,
             "Availability service date",
           ),
+          ...(occurrence?.serviceDate
+            ? { serviceDate: assertPlainDate(occurrence.serviceDate, "Availability service calendar date") }
+            : {}),
         };
       })
       .filter(Boolean);

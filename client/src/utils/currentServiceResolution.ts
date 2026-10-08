@@ -1,6 +1,6 @@
 import type { TeamScheduleOccurrence, TeamService } from "../api/authTypes";
 import type { ServiceTime } from "../types";
-import { generateScheduleOccurrences } from "./teamScheduleOccurrences";
+import { calendarDateInTimeZone, generateScheduleOccurrences } from "./teamScheduleOccurrences";
 import { serverDate } from "./serverTime";
 
 export const CURRENT_SERVICE_RUN_WINDOW_MS = 3 * 60 * 60 * 1000;
@@ -11,6 +11,7 @@ export const CURRENT_SERVICE_RECENT_GRACE_MS = 90 * 60 * 1000;
 export type CurrentServiceOccurrenceWindow = {
   lookbackDays?: number;
   lookaheadDays?: number;
+  timeZone?: string;
 };
 
 export type CurrentServiceResolutionReason =
@@ -81,17 +82,21 @@ export const listCurrentServiceOccurrences = (
     0,
     window.lookaheadDays ?? CURRENT_SERVICE_LOOKAHEAD_DAYS,
   );
-  const startDate = new Date(nowMs - lookbackDays * DAY_MS)
-    .toISOString()
-    .slice(0, 10);
-  const endDate = new Date(nowMs + lookaheadDays * DAY_MS)
-    .toISOString()
-    .slice(0, 10);
+  const timeZone = window.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const startDate = calendarDateInTimeZone(
+    new Date(nowMs - lookbackDays * DAY_MS),
+    timeZone,
+  );
+  const endDate = calendarDateInTimeZone(
+    new Date(nowMs + lookaheadDays * DAY_MS),
+    timeZone,
+  );
   return generateScheduleOccurrences({
     services: activeServices,
     serviceIds: activeServices.map((service) => service.serviceId),
     startDate,
     endDate,
+    timeZone,
   })
     .filter((occurrence) => Number.isFinite(occurrenceTime(occurrence)))
     .sort((left, right) => occurrenceTime(left) - occurrenceTime(right));

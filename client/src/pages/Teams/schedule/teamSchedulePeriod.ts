@@ -34,6 +34,7 @@ export const buildTeamSchedulePeriod = ({
   startDate,
   endDate,
   additionalPositionSlots,
+  timeZone,
 }: {
   services: TeamService[];
   positions: TeamPosition[];
@@ -41,6 +42,7 @@ export const buildTeamSchedulePeriod = ({
   startDate: string;
   endDate: string;
   additionalPositionSlots?: Record<string, string[]>;
+  timeZone?: string;
 }): TeamSchedulePeriod => {
   const teamPositionIds = positions
     .filter((position) => position.teamId === teamId)
@@ -60,6 +62,7 @@ export const buildTeamSchedulePeriod = ({
       serviceIds: [service.serviceId],
       startDate,
       endDate,
+      timeZone,
     });
     if (ownOccurrences.some((occurrence) =>
       explicitTeamOccurrenceIds.includes(occurrence.occurrenceId) ||
@@ -79,6 +82,7 @@ export const buildTeamSchedulePeriod = ({
     serviceIds: teamRelevantServices.map((service) => service.serviceId),
     startDate,
     endDate,
+    timeZone,
   });
   const occurrences: TeamScheduleOccurrence[] = [];
   const requirementsByOccurrence = new Map<string, PositionRequirement[]>();
@@ -157,7 +161,9 @@ export const findInitialTeamSchedulePeriod = ({
     ));
   const searchDates = relevantServices.flatMap((service) => [
     service.startDateISO,
-    ...(service.reccurence === "one_time" ? [service.dateTimeISO?.slice(0, 10)] : []),
+    ...(service.reccurence === "one_time" && service.dateTimeISO
+      ? [calendarDateInTimeZone(new Date(service.dateTimeISO), timeZone)]
+      : []),
   ]).filter((value): value is string => Boolean(value)).sort();
   const searchHorizon = new Date(today);
   searchHorizon.setFullYear(searchHorizon.getFullYear() + 1);
@@ -170,6 +176,7 @@ export const findInitialTeamSchedulePeriod = ({
     serviceIds: relevantServices.map((service) => service.serviceId),
     startDate: scanStart,
     endDate: searchEnd,
+    timeZone,
   });
   const savedFuture = schedules
     .filter((schedule) => !schedule.archivedAt && schedule.teamId === teamId)
@@ -207,6 +214,7 @@ export const findInitialTeamSchedulePeriod = ({
     startDate: range.start,
     endDate: range.end,
     additionalPositionSlots,
+    timeZone,
   });
   if (
     nextOccurrence &&

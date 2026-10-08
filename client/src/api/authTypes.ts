@@ -647,6 +647,7 @@ export type TeamIntakeAvailabilityOccurrence = {
   serviceId: string;
   name: string;
   startsAt: string;
+  serviceDate?: string;
 };
 
 export type TeamIntakeFieldId =

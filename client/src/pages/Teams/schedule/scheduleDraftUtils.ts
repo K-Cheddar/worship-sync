@@ -458,6 +458,7 @@ export type ScheduleEditFormProps = {
    */
   seedSchedules: (TeamSchedule | TeamScheduleSummary)[];
   churchId: string;
+  serviceTimeZone?: string;
   canEdit: boolean;
   onDraftChange: (draftKey: string, draft: TeamSchedulePayload) => void;
   onDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;

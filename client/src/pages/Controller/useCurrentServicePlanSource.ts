@@ -226,7 +226,7 @@ export const useCurrentServicePlanSource = () => {
       (candidate) => getServicePlanKey(candidate) === selectedPlanKey,
     );
 
-  const refreshPlans = useCallback(async () => {
+  const refreshPlans = useCallback(async (preserveSelectedPlan = false) => {
     if (!isEnabled || !churchId) return;
     const requestId = ++planListRequestIdRef.current;
     planListActiveRequestIdRef.current = requestId;
@@ -241,7 +241,20 @@ export const useCurrentServicePlanSource = () => {
     try {
       const result = await listServicePlans(churchIdAtStart);
       if (!isCurrentListRequest()) return;
-      setSavedPlans(sortControllerServicePlans(result.servicePlans));
+      setSavedPlans((current) => {
+        const refreshed = result.servicePlans;
+        const selectedSummary = current.find(
+          (plan) => plan.planKey === selectedPlanKeyRef.current,
+        );
+        const includesSelected = refreshed.some(
+          (plan) => plan.planKey === selectedPlanKeyRef.current,
+        );
+        return sortControllerServicePlans(
+          preserveSelectedPlan && selectedSummary && !includesSelected
+            ? [...refreshed, selectedSummary]
+            : refreshed,
+        );
+      });
       setPlansLoaded(true);
     } catch {
       if (!isCurrentListRequest()) return;
@@ -800,10 +813,11 @@ export const useCurrentServicePlanSource = () => {
         return;
       }
 
-      if (
-        !isServicePlanUpdatedEvent(event) ||
-        event.planKey !== selectedPlanKeyRef.current
-      ) {
+      if (!isServicePlanUpdatedEvent(event)) return;
+      if (event.planKey !== selectedPlanKeyRef.current) {
+        // Unselected changes only affect the summary list. Refresh it without
+        // advancing the selected-plan generation or touching its preview.
+        void refreshPlans(true);
         return;
       }
       void reconcileSelectedPlan({
@@ -816,6 +830,7 @@ export const useCurrentServicePlanSource = () => {
       churchId,
       clearUnavailablePlan,
       isEnabled,
+      refreshPlans,
       reconcileSelectedPlan,
     ],
   );

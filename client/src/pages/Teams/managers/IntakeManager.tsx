@@ -80,6 +80,7 @@ import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { useTeamsPage } from "../TeamsPageContext";
 import {
   intakeSubmissionNeedsAction,
   selectIntakeExactMemberMatch,
@@ -222,6 +223,7 @@ const IntakeManager = ({
 }: IntakeManagerProps) => {
   const visibleForms = displayForms ?? forms;
   const context = useContext(GlobalInfoContext);
+  const { serviceTimeZone } = useTeamsPage();
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
@@ -413,9 +415,10 @@ const IntakeManager = ({
             services: services.filter(isActive),
             startDate: draft.startDate,
             endDate: draft.endDate,
+            timeZone: serviceTimeZone,
           })
         : [],
-    [draft.endDate, draft.startDate, services],
+    [draft.endDate, draft.startDate, serviceTimeZone, services],
   );
 
   const availabilityServiceOptions = useMemo(
@@ -446,6 +449,7 @@ const IntakeManager = ({
         services,
         startDate,
         endDate,
+        timeZone: serviceTimeZone,
       }).map((service) => service.serviceId),
     );
     return availabilityServices.filter((item) =>
@@ -489,11 +493,13 @@ const IntakeManager = ({
             serviceIds,
             startDate: draft.startDate,
             endDate: draft.endDate,
+            timeZone: serviceTimeZone,
           }).map((occurrence) => ({
             occurrenceId: occurrence.occurrenceId,
             serviceId: occurrence.serviceId,
             name: occurrence.name,
             startsAt: occurrence.startsAt,
+            serviceDate: occurrence.serviceDate,
           }))
         : [];
     return {
@@ -569,8 +575,8 @@ const IntakeManager = ({
   activeSelectedFormIdRef.current = activeSelectedFormId;
   churchIdRef.current = churchId;
   const upcomingAvailabilitySuggestion = useMemo(
-    () => getUpcomingAvailabilitySuggestion({ services, forms }),
-    [forms, services],
+    () => getUpcomingAvailabilitySuggestion({ services, forms, timeZone: serviceTimeZone }),
+    [forms, serviceTimeZone, services],
   );
 
   const openUpcomingAvailabilityDraft = () => {

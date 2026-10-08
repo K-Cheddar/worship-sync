@@ -30,6 +30,7 @@ import {
   pickCurrentServiceOccurrence,
 } from "./currentServiceWorkspaceUtils";
 import type { TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
+import { useChat } from "../../chat/ChatContext";
 
 export type CurrentServiceOccurrence = {
   /** Occurrences the operator can switch between, earliest first. */
@@ -76,6 +77,8 @@ const useAuthoritativeServerNowMs = (): number => {
 export const useCurrentServiceOccurrence = (
   services: TeamService[],
 ): CurrentServiceOccurrence => {
+  const chat = useChat();
+  const serviceTimeZone = chat?.context?.timeZone;
   const authoritativeNowMs = useAuthoritativeServerNowMs();
   /** Anchored for the current server calendar-day context: the candidate
    * window shouldn't drift under a session that stays open through a service. */
@@ -86,8 +89,8 @@ export const useCurrentServiceOccurrence = (
   >(null);
 
   const occurrences = useMemo(
-    () => listCurrentServiceOccurrences(services, loadedAtMs),
-    [loadedAtMs, services],
+    () => listCurrentServiceOccurrences(services, loadedAtMs, { timeZone: serviceTimeZone }),
+    [loadedAtMs, serviceTimeZone, services],
   );
 
   /**

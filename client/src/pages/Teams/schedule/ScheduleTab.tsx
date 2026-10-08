@@ -359,6 +359,7 @@ type PendingAvailabilityConfirmation = {
 
 const ScheduleTab = ({
   data,
+  serviceTimeZone,
   canEdit: canEditSelectedSchedule,
   editableTeamIds,
   canEditMember,
@@ -377,6 +378,7 @@ const ScheduleTab = ({
   onImported,
 }: {
   data: TeamsData;
+  serviceTimeZone: string;
   canEdit: boolean;
   /** Teams this user can edit, used to default the team filter. */
   editableTeamIds?: Set<string>;
@@ -471,11 +473,12 @@ const ScheduleTab = ({
         teamId: workspaceTeamId,
         schedules: data.schedules,
         now: referenceTime,
+        timeZone: serviceTimeZone,
       }),
       periodReferenceTime: referenceTime,
     };
   },
-    [activeServices, data.positions, data.schedules, workspaceTeamId],
+    [activeServices, data.positions, data.schedules, serviceTimeZone, workspaceTeamId],
   );
   const initialPeriodRange = useMemo(() => ({
     start: initialTeamPeriodResult.start,
@@ -530,8 +533,9 @@ const ScheduleTab = ({
       teamId: workspaceTeamId,
       startDate: persistedPeriodRange.start,
       endDate: persistedPeriodRange.end,
+      timeZone: serviceTimeZone,
     }),
-    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, workspaceTeamId],
+    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, serviceTimeZone, workspaceTeamId],
   );
   const periodServiceIds = teamPeriod.serviceIds;
   const generatedPeriodOccurrences = useMemo(
@@ -653,7 +657,7 @@ const ScheduleTab = ({
             visibleEndDate: periodRange.end,
             preferredScheduleId: selectedScheduleId,
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+            timeZone: serviceTimeZone,
           }));
           onScheduleSaved(result.schedule);
           if (activeScheduleIdRef.current !== virtualScheduleId) return null;
@@ -684,6 +688,7 @@ const ScheduleTab = ({
     periodServiceIds,
     selectedScheduleId,
     setSelectedScheduleId,
+    serviceTimeZone,
     trackTeamsSave,
     workspaceTeamId,
   ]);
@@ -723,8 +728,9 @@ const ScheduleTab = ({
         services: data.services,
         positions: data.positions,
         schedules: data.schedules,
+        timeZone: serviceTimeZone,
       }),
-    [churchId, data.positions, data.schedules, data.services, defaultTeamId],
+    [churchId, data.positions, data.schedules, data.services, defaultTeamId, serviceTimeZone],
   );
   const defaultServiceIds = useMemo(
     () =>
@@ -733,8 +739,9 @@ const ScheduleTab = ({
         schedules: data.schedules,
         services: data.services,
         range: defaultRange,
+        timeZone: serviceTimeZone,
       }),
-    [data.schedules, data.services, defaultRange, defaultTeamId],
+    [data.schedules, data.services, defaultRange, defaultTeamId, serviceTimeZone],
   );
 
   const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
@@ -783,8 +790,9 @@ const ScheduleTab = ({
       serviceIds: selectedSchedule.serviceIds || [],
       startDate: selectedSchedule.startDate,
       endDate: selectedSchedule.endDate,
+      timeZone: serviceTimeZone,
     });
-  }, [data.services, selectedSchedule]);
+  }, [data.services, selectedSchedule, serviceTimeZone]);
   const baseScheduleOccurrences = useMemo(() => {
     if (selectedSchedule?.occurrences?.length) return selectedSchedule.occurrences;
     if (regeneratedOccurrences) return regeneratedOccurrences;
@@ -5105,6 +5113,7 @@ const ScheduleTab = ({
       schedules={onlyHydratedSchedules(data.schedules)}
       seedSchedules={data.schedules}
       churchId={churchId}
+      serviceTimeZone={serviceTimeZone}
       canEdit={canEdit}
       onDraftChange={onScheduleDraftChanged}
       onDraftFlush={onScheduleDraftFlush}

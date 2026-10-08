@@ -5,12 +5,21 @@ import type {
   ServicePlanTemplateRemovedEvent,
   ServicePlanTemplateUpdatedEvent,
 } from "./hooks/useTeamsLiveSync";
+import { useChat } from "../../chat/ChatContext";
 
-export type TeamsPageState = ReturnType<typeof useTeamsPageState> & ReturnType<typeof useTeamsDomainResources>;
+export type TeamsPageState = ReturnType<typeof useTeamsPageState> &
+  ReturnType<typeof useTeamsDomainResources> & { serviceTimeZone: string };
 
 const TeamsPageContext = createContext<TeamsPageState | null>(null);
 
 export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
+  const chat = useChat();
+  // Chat context is persisted per church, so schedules keep the church's wall
+  // clock when an operator opens Teams from another timezone.
+  const serviceTimeZone =
+    chat?.context?.timeZone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    "UTC";
   const domainResources = useTeamsDomainResources();
   const templatesLoaded = domainResources.templates.loaded;
   const refreshTemplates = domainResources.templates.refresh;
@@ -40,7 +49,8 @@ export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
   const value = useMemo(() => ({
     ...pageState,
     ...domainResources,
-  }), [pageState, domainResources]);
+    serviceTimeZone,
+  }), [domainResources, pageState, serviceTimeZone]);
 
   return (
     <TeamsPageContext.Provider value={value}>

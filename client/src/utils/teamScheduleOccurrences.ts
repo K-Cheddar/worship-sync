@@ -6,19 +6,13 @@ import type {
 import type { MonthWeekOrdinal, Weekday } from "../types";
 import { formatPlainDate, parsePlainDate } from "./plainDate";
 
-const setDateTime = (date: Date, time = "10:00") => {
-  const [hour = 0, minute = 0] = time.split(":").map((part) => Number(part));
-  const next = new Date(date);
-  next.setHours(hour, minute, 0, 0);
-  return next;
-};
-
 const occurrenceIdFor = (serviceId: string, startsAt: string) =>
   `${serviceId}@${startsAt}`;
 
 const toOccurrence = (
   service: TeamService,
   startsAt: Date,
+  serviceDate: string,
 ): TeamScheduleOccurrence => {
   const iso = startsAt.toISOString();
   return {
@@ -26,7 +20,7 @@ const toOccurrence = (
     serviceId: service.serviceId,
     name: service.name,
     startsAt: iso,
-    serviceDate: formatPlainDate(startsAt),
+    serviceDate,
     ...(service.positionRequirements?.length
       ? {
           // Keep a schedule-time snapshot so every server-side slot check uses
@@ -40,6 +34,66 @@ const toOccurrence = (
         }
       : {}),
   };
+};
+
+const wallClockPartsAt = (instant: number, timeZone: string) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(instant));
+  return Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+};
+
+/** Convert a service's local date and wall clock into an instant in its zone. */
+const serviceDateTime = (
+  date: string,
+  time: string,
+  timeZone: string,
+): Date | null => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    return null;
+  }
+  const requested = `${date}T${time}:00`;
+  const naive = Date.parse(`${requested}Z`);
+  try {
+    const offsets = new Set<number>();
+    for (let hours = -36; hours <= 36; hours += 6) {
+      const sample = naive + hours * 60 * 60 * 1000;
+      const parts = wallClockPartsAt(sample, timeZone);
+      const wallClock = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+      offsets.add(Date.parse(`${wallClock}Z`) - sample);
+    }
+    const candidates = [...offsets].map((offset) => naive - offset);
+    const exact = candidates
+      .filter((instant) => {
+        const parts = wallClockPartsAt(instant, timeZone);
+        return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}` === requested;
+      })
+      .sort((left, right) => left - right);
+    if (exact.length) return new Date(exact[0]);
+
+    // Match the existing local Date behavior through a spring-forward gap by
+    // moving the wall clock forward to the first valid time on the same date.
+    const forward = candidates
+      .map((instant) => {
+        const parts = wallClockPartsAt(instant, timeZone);
+        return {
+          instant,
+          wallClock: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`,
+        };
+      })
+      .filter(({ wallClock }) => wallClock.slice(0, 10) === date && wallClock > requested)
+      .sort((left, right) => left.wallClock.localeCompare(right.wallClock) || left.instant - right.instant)[0];
+    return forward ? new Date(forward.instant) : null;
+  } catch {
+    return null;
+  }
 };
 
 const nthWeekdayOfMonth = (
@@ -159,7 +213,9 @@ export const formatOccurrenceRowLabel = (
   return `${parts[0]}, ${parts[1]}, ${parts[2]}`;
 };
 
-export const getOccurrenceDate = (occurrence: TeamScheduleOccurrence) =>
+export const getOccurrenceDate = (
+  occurrence: Pick<TeamScheduleOccurrence, "serviceDate" | "occurrenceId" | "startsAt">,
+) =>
   occurrence.serviceDate ||
   occurrence.occurrenceId.match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1] ||
   occurrence.startsAt.slice(0, 10);
@@ -316,11 +372,14 @@ export const generateScheduleOccurrences = ({
   serviceIds,
   startDate,
   endDate,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 }: {
   services: TeamService[];
   serviceIds: string[];
   startDate: string;
   endDate: string;
+  /** Church/service timezone, independent of the operator's browser timezone. */
+  timeZone?: string;
 }) => {
   const start = parsePlainDate(startDate);
   const end = parsePlainDate(endDate);
@@ -352,20 +411,23 @@ export const generateScheduleOccurrences = ({
       if (serviceEnd && date > serviceEnd) return false;
       return true;
     };
-    const pushOccurrence = (startsAt: Date) => {
+    const pushOccurrence = (startsAt: Date, serviceDate: string) => {
       // Archived services remain in history but are unavailable after archive.
       if (archivedAt && !Number.isNaN(archivedAt.getTime()) && startsAt > archivedAt) {
         return;
       }
-      occurrences.push(toOccurrence(service, startsAt));
+      occurrences.push(toOccurrence(service, startsAt, serviceDate));
     };
 
     if (service.reccurence === "one_time") {
       const startsAt = service.dateTimeISO
         ? new Date(service.dateTimeISO)
         : null;
-      if (startsAt && startsAt >= start && startsAt <= endTime) {
-        pushOccurrence(startsAt);
+      const serviceDate = startsAt && !Number.isNaN(startsAt.getTime())
+        ? calendarDateInTimeZone(startsAt, timeZone)
+        : "";
+      if (startsAt && serviceDate >= startDate && serviceDate <= endDate) {
+        pushOccurrence(startsAt, serviceDate);
       }
       continue;
     }
@@ -379,7 +441,9 @@ export const generateScheduleOccurrences = ({
       ) {
         if (cursor.getDay() !== service.dayOfWeek) continue;
         if (!withinServiceBounds(cursor)) continue;
-        pushOccurrence(setDateTime(cursor, service.time));
+        const serviceDate = formatPlainDate(cursor);
+        const startsAt = serviceDateTime(serviceDate, service.time, timeZone);
+        if (startsAt) pushOccurrence(startsAt, serviceDate);
       }
       continue;
     }
@@ -393,7 +457,11 @@ export const generateScheduleOccurrences = ({
       ) {
         if (!withinServiceBounds(cursor)) continue;
         const day = days.find((item) => item.day === cursor.getDay());
-        if (day) pushOccurrence(setDateTime(cursor, day.time));
+        if (day) {
+          const serviceDate = formatPlainDate(cursor);
+          const startsAt = serviceDateTime(serviceDate, day.time, timeZone);
+          if (startsAt) pushOccurrence(startsAt, serviceDate);
+        }
       }
       continue;
     }
@@ -419,7 +487,9 @@ export const generateScheduleOccurrences = ({
           !withinServiceBounds(occurrenceDate)
         )
           continue;
-        pushOccurrence(setDateTime(occurrenceDate, service.time));
+        const serviceDate = formatPlainDate(occurrenceDate);
+        const startsAt = serviceDateTime(serviceDate, service.time, timeZone);
+        if (startsAt) pushOccurrence(startsAt, serviceDate);
       }
     }
   }
@@ -452,10 +522,12 @@ export const filterServicesWithOccurrencesInRange = ({
   services,
   startDate,
   endDate,
+  timeZone,
 }: {
   services: TeamService[];
   startDate: string;
   endDate: string;
+  timeZone?: string;
 }) => {
   if (!startDate || !endDate) return [];
   return services.filter(
@@ -465,6 +537,7 @@ export const filterServicesWithOccurrencesInRange = ({
         serviceIds: [service.serviceId],
         startDate,
         endDate,
+        timeZone,
       }).length > 0,
   );
 };

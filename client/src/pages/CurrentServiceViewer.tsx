@@ -154,6 +154,7 @@ export const buildCurrentServiceViewerOptions = (
 };
 
 export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
+  const chat = useChat();
   const serverTimeOffset = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -168,8 +169,9 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
     () =>
       listCurrentServiceOccurrences(services, nowMs, {
         lookaheadDays: VIEWER_OCCURRENCE_LOOKAHEAD_DAYS,
+        timeZone: chat?.context?.timeZone,
       }),
-    [nowMs, services],
+    [chat?.context?.timeZone, nowMs, services],
   );
   const automaticResolution = useMemo(
     () => resolveCurrentServiceOccurrence(occurrences, nowMs),

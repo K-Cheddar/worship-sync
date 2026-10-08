@@ -384,6 +384,7 @@ const TeamsPlansPage = () => {
     hydratingScheduleIds,
     hasTeamsWorkspaceAccess,
     trackTeamsSave,
+    serviceTimeZone,
     templates: templateResource,
   } = useTeamsPage();
   const {
@@ -634,6 +635,7 @@ const TeamsPlansPage = () => {
       serviceIds: pageData.services.map((service) => service.serviceId),
       startDate: shiftPlainDate(date, -1),
       endDate: shiftPlainDate(date, 1),
+      timeZone: serviceTimeZone,
     }).find((occurrence) => occurrence.occurrenceId === occurrenceId);
     if (!match) return;
     const service = pageData.services.find(
@@ -649,7 +651,7 @@ const TeamsPlansPage = () => {
     if (date > windowEnd) {
       setRangeSelection("custom", { start: windowStart, end: date });
     }
-  }, [pendingPlanRestore, pageData.services, setRangeSelection, windowStart, windowEnd]);
+  }, [pendingPlanRestore, pageData.services, serviceTimeZone, setRangeSelection, windowStart, windowEnd]);
 
   useEffect(() => {
     if (!churchId) {
@@ -722,6 +724,7 @@ const TeamsPlansPage = () => {
       serviceIds: pageData.services.map((service) => service.serviceId),
       startDate: windowStart,
       endDate: windowEnd,
+      timeZone: serviceTimeZone,
     });
 
     const order: string[] = [];
@@ -756,7 +759,7 @@ const TeamsPlansPage = () => {
       });
     }
     return order.map((key) => byKey.get(key) as ServiceGroup);
-  }, [activeServices, pageData.services, windowStart, windowEnd]);
+  }, [activeServices, pageData.services, serviceTimeZone, windowStart, windowEnd]);
 
   const visibleGroups = useMemo(
     () =>
@@ -926,7 +929,7 @@ const TeamsPlansPage = () => {
         });
       const response = await trackTeamsSave(applyServicePlanTemplateBulk(churchId, {
         ...(bulkUseDefaults ? { useServiceDefaults: true } : { templateId: bulkTemplateId }),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        timeZone: serviceTimeZone,
         targets,
         existingPlanMode: "skip",
       }));
