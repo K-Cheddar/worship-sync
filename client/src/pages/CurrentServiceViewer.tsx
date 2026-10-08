@@ -15,8 +15,9 @@ import {
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Select from "../components/Select/Select";
-import { useChat } from "../chat/ChatContext";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { useChurchServiceTimeZone } from "../context/churchServiceTimeZone";
+import { useChat } from "../chat/ChatContext";
 import { useSelector } from "../hooks";
 import {
   getServicePlanViewer,
@@ -43,6 +44,8 @@ import {
   subscribeServerTimeOffset,
 } from "../utils/serverTime";
 import { getServicePlanKey } from "../utils/servicePlanKeys";
+import { calendarDateInTimeZone, serviceDateTimeInTimeZone } from "../utils/teamScheduleOccurrences";
+import { formatPlainDate, parsePlainDate } from "../utils/plainDate";
 import ServicePublicView from "./ServicePublicView";
 import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
 import type { Option } from "../types";
@@ -74,14 +77,16 @@ const buildCurrentServiceViewerBranding = (
   };
 };
 
-const formatOccurrenceOptionDate = (startsAt: string): string => {
+const formatOccurrenceOptionDate = (startsAt: string, timeZone: string): string => {
   const timestamp = Date.parse(startsAt);
   if (!Number.isFinite(timestamp)) return "Time unavailable";
   return new Intl.DateTimeFormat(undefined, {
+    timeZone,
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   }).format(timestamp);
 };
 
@@ -105,12 +110,9 @@ export const getCurrentServiceViewerStatusLabel = (
 export const buildCurrentServiceViewerOptions = (
   occurrences: TeamScheduleOccurrence[],
   nowMs: number,
+  timeZone = "UTC",
 ): Option[] => {
-  const today = new Date(nowMs);
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(
-    2,
-    "0",
-  )}-${String(today.getDate()).padStart(2, "0")}`;
+  const todayKey = calendarDateInTimeZone(new Date(nowMs), timeZone);
   const groups = new Map<string, Option[]>();
 
   const nextFutureOccurrence = occurrences.find(
@@ -127,10 +129,7 @@ export const buildCurrentServiceViewerOptions = (
 
   boundedOccurrences.forEach((occurrence) => {
     const startsAt = Date.parse(occurrence.startsAt);
-    const startsDate = new Date(startsAt);
-    const startsKey = `${startsDate.getFullYear()}-${String(
-      startsDate.getMonth() + 1,
-    ).padStart(2, "0")}-${String(startsDate.getDate()).padStart(2, "0")}`;
+    const startsKey = calendarDateInTimeZone(new Date(startsAt), timeZone);
     let group = "Upcoming";
     if (startsAt <= nowMs) {
       group = "Recent";
@@ -141,6 +140,7 @@ export const buildCurrentServiceViewerOptions = (
     options.push({
       label: `${occurrence.name} · ${formatOccurrenceOptionDate(
         occurrence.startsAt,
+        timeZone,
       )}`,
       value: occurrence.occurrenceId,
       group,
@@ -154,7 +154,8 @@ export const buildCurrentServiceViewerOptions = (
 };
 
 export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
-  const chat = useChat();
+  const churchTimeZone = useChurchServiceTimeZone();
+  const timeZone = churchTimeZone.timeZone || "UTC";
   const serverTimeOffset = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -166,33 +167,38 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
   >(null);
   const nowMs = serverDate().getTime();
   const occurrences = useMemo(
-    () =>
-      listCurrentServiceOccurrences(services, nowMs, {
+    () => churchTimeZone.status === "ready"
+      ? listCurrentServiceOccurrences(services, nowMs, {
         lookaheadDays: VIEWER_OCCURRENCE_LOOKAHEAD_DAYS,
-        timeZone: chat?.context?.timeZone || "UTC",
-      }),
-    [chat?.context?.timeZone, nowMs, services],
+        timeZone,
+      })
+      : [],
+    [churchTimeZone.status, nowMs, services, timeZone],
   );
   const automaticResolution = useMemo(
-    () => resolveCurrentServiceOccurrence(occurrences, nowMs),
-    [occurrences, nowMs],
+    () => resolveCurrentServiceOccurrence(occurrences, nowMs, timeZone),
+    [occurrences, nowMs, timeZone],
   );
 
   useEffect(() => {
-    const boundary = new Date(nowMs);
-    boundary.setHours(24, 0, 0, 0);
+    const nextDate = parsePlainDate(calendarDateInTimeZone(new Date(nowMs), timeZone));
+    nextDate?.setDate(nextDate.getDate() + 1);
+    const boundary = nextDate
+      ? serviceDateTimeInTimeZone(formatPlainDate(nextDate), "00:00", timeZone)?.getTime() ?? Number.POSITIVE_INFINITY
+      : Number.POSITIVE_INFINITY;
     const recheckAt = getCurrentServiceResolutionRecheckAtMs(
       occurrences,
       nowMs,
+      timeZone,
     );
-    const nextAt = Math.min(recheckAt ?? Number.POSITIVE_INFINITY, boundary.getTime());
+    const nextAt = Math.min(recheckAt ?? Number.POSITIVE_INFINITY, boundary);
     if (!Number.isFinite(nextAt)) return;
     const timeoutId = window.setTimeout(
       () => setClockTick((tick) => tick + 1),
       Math.max(1_000, nextAt - serverDate().getTime()),
     );
     return () => window.clearTimeout(timeoutId);
-  }, [nowMs, occurrences, serverTimeOffset, clockTick]);
+  }, [nowMs, occurrences, serverTimeOffset, clockTick, timeZone]);
 
   useEffect(() => {
     if (
@@ -219,6 +225,7 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
 
   return {
     automaticResolution,
+    timeZone,
     occurrences,
     occurrence: occurrence ?? null,
     selectedOccurrenceId,
@@ -259,6 +266,7 @@ const useCurrentServiceViewerData = (
   canViewTeams: boolean,
   canUseTeamsLiveSync: boolean,
   occurrence: TeamScheduleOccurrence | null,
+  timeZone: string,
 ): ViewerData => {
   const [planState, setPlanState] = useState<ViewerPlanState>({ kind: "idle" });
   const [refreshVersion, setRefreshVersion] = useState(0);
@@ -608,10 +616,11 @@ const CurrentServiceViewer = () => {
     canViewTeams,
     canUseTeamsLiveSync,
     selection.occurrence,
+    selection.timeZone,
   );
   const options = useMemo(
-    () => buildCurrentServiceViewerOptions(selection.occurrences, selection.nowMs),
-    [selection.nowMs, selection.occurrences],
+    () => buildCurrentServiceViewerOptions(selection.occurrences, selection.nowMs, selection.timeZone),
+    [selection.nowMs, selection.occurrences, selection.timeZone],
   );
   const isOffline =
     typeof navigator !== "undefined" && navigator.onLine === false;

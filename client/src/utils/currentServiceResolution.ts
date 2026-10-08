@@ -39,13 +39,8 @@ const compareOccurrences = (
   return timeDifference || left.occurrenceId.localeCompare(right.occurrenceId);
 };
 
-const localDayKey = (timestampMs: number): string => {
-  const date = new Date(timestampMs);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const serviceDayKey = (timestampMs: number, timeZone: string): string =>
+  calendarDateInTimeZone(new Date(timestampMs), timeZone);
 
 const sortedFiniteOccurrences = (
   occurrences: TeamScheduleOccurrence[],
@@ -146,9 +141,10 @@ export const pickCurrentServiceOccurrence = (
 export const resolveCurrentServiceOccurrence = (
   occurrences: TeamScheduleOccurrence[],
   nowMs = serverDate().getTime(),
+  timeZone = "UTC",
 ): CurrentServiceResolution => {
   const sortedOccurrences = sortedFiniteOccurrences(occurrences);
-  const todayKey = localDayKey(nowMs);
+  const todayKey = serviceDayKey(nowMs, timeZone);
 
   const inProgress = sortedOccurrences
     .filter((occurrence) => {
@@ -166,7 +162,7 @@ export const resolveCurrentServiceOccurrence = (
   const upcomingToday = sortedOccurrences.find(
     (occurrence) =>
       occurrenceTime(occurrence) > nowMs &&
-      localDayKey(occurrenceTime(occurrence)) === todayKey,
+        serviceDayKey(occurrenceTime(occurrence), timeZone) === todayKey,
   );
   if (upcomingToday) {
     return { occurrence: upcomingToday, reason: "upcoming-today" };
@@ -176,7 +172,7 @@ export const resolveCurrentServiceOccurrence = (
     .filter((occurrence) => {
       const endsAt = occurrenceTime(occurrence) + CURRENT_SERVICE_RUN_WINDOW_MS;
       return (
-        localDayKey(occurrenceTime(occurrence)) === todayKey &&
+        serviceDayKey(occurrenceTime(occurrence), timeZone) === todayKey &&
         nowMs >= endsAt &&
         nowMs <= endsAt + CURRENT_SERVICE_RECENT_GRACE_MS
       );
@@ -206,8 +202,9 @@ export const findCurrentServiceOccurrence = (
 export const getCurrentServiceResolutionRecheckAtMs = (
   occurrences: TeamScheduleOccurrence[],
   nowMs = serverDate().getTime(),
+  timeZone = "UTC",
 ): number | null => {
-  const resolution = resolveCurrentServiceOccurrence(occurrences, nowMs);
+  const resolution = resolveCurrentServiceOccurrence(occurrences, nowMs, timeZone);
   const futureStarts = sortedFiniteOccurrences(occurrences)
     .map(occurrenceTime)
     .filter((startsAt) => startsAt > nowMs);

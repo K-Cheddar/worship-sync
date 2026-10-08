@@ -143,11 +143,16 @@ export const formatOccurrencePositionLine = (
   return `${position.name}: ${tokens.length ? tokens.join(", ") : OCCURRENCE_EMPTY_SLOT_LABEL}`;
 };
 
-export const formatOccurrenceDateLabel = (startsAt: string) =>
-  new Date(startsAt).toLocaleDateString(undefined, {
+export const formatOccurrenceDateLabel = (startsAt: string, timeZone = "UTC") =>
+  new Date(startsAt).toLocaleString(undefined, {
+    timeZone,
+    weekday: "short",
     month: "long",
     day: "numeric",
     year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
 
 /**
@@ -157,12 +162,14 @@ export const formatOccurrenceDateLabel = (startsAt: string) =>
 export const formatOccurrenceMessage = ({
   startsAt,
   groups,
+  timeZone = "UTC",
 }: {
   startsAt: string;
   groups: OccurrenceSummaryGroup[];
+  timeZone?: string;
 }): string => {
   const lines: string[] = [
-    `Schedule for ${formatOccurrenceDateLabel(startsAt)}`,
+    `Schedule for ${formatOccurrenceDateLabel(startsAt, timeZone)}`,
     "",
   ];
   groups.forEach((group) => {

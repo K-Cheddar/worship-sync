@@ -9,7 +9,7 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import { clampPlainDateToMin } from "@/utils/plainDate";
-import { getDefaultScheduleRange } from "@/utils/teamScheduleOccurrences";
+import { getDefaultScheduleRange, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
 
 export type ScheduleFormMode = "edit" | "create-custom" | "copy";
 
@@ -315,7 +315,7 @@ export const buildScheduleCopyDraft = ({
 });
 
 const occurrenceDate = (occurrence: TeamScheduleOccurrence) =>
-  occurrence.startsAt.slice(0, 10);
+  getOccurrenceDate(occurrence);
 
 const occurrenceServiceIds = (occurrence: TeamScheduleOccurrence) =>
   occurrence.serviceIds?.length

@@ -60,7 +60,7 @@ import {
 import { cn } from "@/utils/cnHelper";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { useChat } from "../../chat/ChatContext";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { useToast } from "../../context/toastContext";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateAllDocs } from "../../utils/dbUtils";
@@ -97,6 +97,7 @@ import { ANIMATE_COLLAPSE_DURATION_MS } from "../../components/AnimateCollapse/A
 import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
+  calendarDateInTimeZone,
   formatOccurrenceRowLabel,
   getSharedOccurrenceTiming,
   isOccurrenceOnCalendarDay,
@@ -512,7 +513,7 @@ const ServicePlanEditor = ({
 }: ServicePlanEditorProps) => {
   const { churchId, userId, access, churchBranding, churchIntegrations, canUseTeamsLiveSync } =
     useContext(GlobalInfoContext) || {};
-  const churchTimeZone = useChat()?.context?.timeZone || "UTC";
+  const churchTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
     churchIntegrations?.planningCenter?.connected,
@@ -993,14 +994,14 @@ const ServicePlanEditor = ({
       serviceId: occurrence.serviceId,
       serviceIds: occurrence.serviceIds || [occurrence.serviceId],
       groupId: occurrence.groupId,
-      date: occurrence.startsAt.slice(0, 10),
+      date: occurrence.serviceDate || calendarDateInTimeZone(new Date(occurrence.startsAt), churchTimeZone),
       name: planName || occurrence.name,
       startsAt: occurrence.startsAt,
       timezone: planTimezone,
       sections,
       ...(sourceImport ? { sourceImport } : {}),
     };
-  }, [occurrence, planName, planTimezone, sections, sourceImport]);
+  }, [churchTimeZone, occurrence, planName, planTimezone, sections, sourceImport]);
 
   const saveAutosavePayload = useCallback(
     (payload: ServicePlanPayload, baseRevision: number, operationId?: string) => {
@@ -2097,7 +2098,8 @@ const ServicePlanEditor = ({
   const anchorStartTime = sections?.[0]?.elements?.[0]?.startTime || "";
   const occurrenceTiming = formatOccurrenceRowLabel(
     occurrence,
-    getSharedOccurrenceTiming([occurrence]),
+    getSharedOccurrenceTiming([occurrence], churchTimeZone),
+    churchTimeZone,
   );
   // Starter actions stay available both before a plan exists and after every
   // section has been removed. A fresh "Start from scratch" draft still has one

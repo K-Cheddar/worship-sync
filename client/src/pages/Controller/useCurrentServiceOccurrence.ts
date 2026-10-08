@@ -30,7 +30,9 @@ import {
   pickCurrentServiceOccurrence,
 } from "./currentServiceWorkspaceUtils";
 import type { TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
-import { useChat } from "../../chat/ChatContext";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
+import { calendarDateInTimeZone, serviceDateTimeInTimeZone } from "../../utils/teamScheduleOccurrences";
+import { formatPlainDate, parsePlainDate } from "../../utils/plainDate";
 
 export type CurrentServiceOccurrence = {
   /** Occurrences the operator can switch between, earliest first. */
@@ -43,15 +45,10 @@ export type CurrentServiceOccurrence = {
   returnToCurrent: () => void;
 };
 
-const sessionDayKey = (nowMs: number): string => {
-  const date = new Date(nowMs);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const sessionDayKey = (nowMs: number, timeZone: string): string =>
+  calendarDateInTimeZone(new Date(nowMs), timeZone);
 
-const useAuthoritativeServerNowMs = (): number => {
+const useAuthoritativeServerNowMs = (timeZone: string): number => {
   const serverOffsetMs = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -61,15 +58,18 @@ const useAuthoritativeServerNowMs = (): number => {
 
   useEffect(() => {
     const nowMs = serverDate().getTime();
-    const nextBoundary = new Date(nowMs);
-    nextBoundary.setHours(24, 0, 0, 0);
-    const delayMs = Math.max(1, nextBoundary.getTime() - nowMs);
+    const nextDate = parsePlainDate(calendarDateInTimeZone(new Date(nowMs), timeZone));
+    nextDate?.setDate(nextDate.getDate() + 1);
+    const nextBoundary = nextDate
+      ? serviceDateTimeInTimeZone(formatPlainDate(nextDate), "00:00", timeZone)?.getTime() ?? Number.POSITIVE_INFINITY
+      : Number.POSITIVE_INFINITY;
+    const delayMs = Math.max(1, nextBoundary - nowMs);
     const timeoutId = window.setTimeout(
       () => setDayBoundaryTick((tick) => tick + 1),
       delayMs,
     );
     return () => window.clearTimeout(timeoutId);
-  }, [dayBoundaryTick, serverOffsetMs]);
+  }, [dayBoundaryTick, serverOffsetMs, timeZone]);
 
   return serverDate().getTime();
 };
@@ -77,20 +77,22 @@ const useAuthoritativeServerNowMs = (): number => {
 export const useCurrentServiceOccurrence = (
   services: TeamService[],
 ): CurrentServiceOccurrence => {
-  const chat = useChat();
-  const serviceTimeZone = chat?.context?.timeZone || "UTC";
-  const authoritativeNowMs = useAuthoritativeServerNowMs();
+  const churchTimeZone = useChurchServiceTimeZone();
+  const serviceTimeZone = churchTimeZone.timeZone || "UTC";
+  const authoritativeNowMs = useAuthoritativeServerNowMs(serviceTimeZone);
   /** Anchored for the current server calendar-day context: the candidate
    * window shouldn't drift under a session that stays open through a service. */
   const [loadedAtMs, setLoadedAtMs] = useState(() => authoritativeNowMs);
-  const loadedDayKeyRef = useRef(sessionDayKey(loadedAtMs));
+  const loadedDayKeyRef = useRef(sessionDayKey(loadedAtMs, serviceTimeZone));
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<
     string | null
   >(null);
 
   const occurrences = useMemo(
-    () => listCurrentServiceOccurrences(services, loadedAtMs, { timeZone: serviceTimeZone }),
-    [loadedAtMs, serviceTimeZone, services],
+    () => churchTimeZone.status === "ready" && serviceTimeZone
+      ? listCurrentServiceOccurrences(services, loadedAtMs, { timeZone: serviceTimeZone })
+      : [],
+    [churchTimeZone.status, loadedAtMs, serviceTimeZone, services],
   );
 
   /**
@@ -105,14 +107,14 @@ export const useCurrentServiceOccurrence = (
   );
 
   const resetStaleSession = useCallback((nowMs = serverDate().getTime()) => {
-    const nextDayKey = sessionDayKey(nowMs);
+    const nextDayKey = sessionDayKey(nowMs, serviceTimeZone);
     if (nextDayKey === loadedDayKeyRef.current) return;
     loadedDayKeyRef.current = nextDayKey;
     setLoadedAtMs(nowMs);
     // A new calendar day gets a new automatic context. Explicit selections are
     // retained below when their occurrence is still present in the new window.
     setPinnedOccurrenceId(null);
-  }, []);
+  }, [serviceTimeZone]);
 
   useEffect(() => {
     resetStaleSession(authoritativeNowMs);

@@ -1,14 +1,32 @@
 import {
   compareServicesByScheduleOrder,
-  getClosestUpcomingService,
-  getDisplayedUpcomingService,
-  getEffectiveTargetTime,
-  getMostRecentTargetTime,
-  getNextOccurrenceForService,
-  getUpcomingServiceRefreshDelay,
+  getClosestUpcomingService as getClosestUpcomingServiceInZone,
+  getDisplayedUpcomingService as getDisplayedUpcomingServiceInZone,
+  getEffectiveTargetTime as getEffectiveTargetTimeInZone,
+  getMostRecentTargetTime as getMostRecentTargetTimeInZone,
+  getNextOccurrenceForService as getNextOccurrenceForServiceInZone,
+  getUpcomingServiceRefreshDelay as getUpcomingServiceRefreshDelayInZone,
   sortServicesByScheduleOrder,
 } from "./serviceTimes";
 import type { ServiceTime } from "../types";
+
+const testTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const getClosestUpcomingService = (services: ServiceTime[], now?: Date) =>
+  getClosestUpcomingServiceInZone(services, now, testTimeZone);
+const getDisplayedUpcomingService = (
+  services: ServiceTime[], now?: Date, graceMs?: number,
+  options?: { keepRecentlyElapsedDuringGrace?: boolean },
+) => getDisplayedUpcomingServiceInZone(services, now, graceMs, options, testTimeZone);
+const getEffectiveTargetTime = (service: ServiceTime, now?: Date) =>
+  getEffectiveTargetTimeInZone(service, now, testTimeZone);
+const getMostRecentTargetTime = (service: ServiceTime, now?: Date) =>
+  getMostRecentTargetTimeInZone(service, now, testTimeZone);
+const getNextOccurrenceForService = (service: ServiceTime, now?: Date) =>
+  getNextOccurrenceForServiceInZone(service, now, testTimeZone);
+const getUpcomingServiceRefreshDelay = (
+  services: ServiceTime[], now?: Date, graceMs?: number,
+  options?: { keepRecentlyElapsedDuringGrace?: boolean },
+) => getUpcomingServiceRefreshDelayInZone(services, now, graceMs, options, testTimeZone);
 
 const createService = (overrides: Partial<ServiceTime>): ServiceTime => ({
   id: "svc-1",

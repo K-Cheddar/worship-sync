@@ -1117,7 +1117,12 @@ export const listChurchMembers = async (churchId: string) =>
   );
 
 export const getChurchServiceTimeZone = async (churchId: string) =>
-  apiFetch<{ success: boolean; serviceTimeZone: string; isConfigured: boolean }>(
+  apiFetch<{
+    success: boolean;
+    serviceTimeZone: string;
+    isConfigured: boolean;
+    legacyTimeZoneSuggestion?: string | null;
+  }>(
     `api/churches/${churchId}/service-time-zone`,
   );
 
@@ -1125,7 +1130,11 @@ export const updateChurchServiceTimeZone = async (
   churchId: string,
   serviceTimeZone: string,
 ) =>
-  apiFetch<{ success: boolean; serviceTimeZone: string; isConfigured: boolean }>(
+  apiFetch<{
+    success: boolean;
+    serviceTimeZone: string;
+    isConfigured: boolean;
+  }>(
     `api/churches/${churchId}/service-time-zone`,
     { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
   );
@@ -1924,6 +1933,7 @@ export type MyScheduleOccurrence = {
 export const getMyTeamAssignments = async (churchId: string) =>
   apiFetch<{
     success: boolean;
+    serviceTimeZone?: string;
     member: TeamRosterMember | null;
     occurrences: MyScheduleOccurrence[];
   }>(`api/churches/${churchId}/my-team-assignments`);
@@ -1954,6 +1964,7 @@ export const getAssignmentResponseContext = async (token: string) =>
   apiFetch<{
     success: boolean;
     churchName: string;
+    serviceTimeZone?: string;
     firstName: string;
     assignments: AssignmentResponseSlot[];
   }>(`api/team-schedule-response?${new URLSearchParams({ token }).toString()}`);

@@ -24,6 +24,7 @@ import {
 } from "../../components/ui/tabs";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import CreditsPreview from "../../containers/Credits/Credits";
 import UserSection from "../../containers/Toolbar/ToolbarElements/UserSection";
 import { useDispatch, useSelector, useSyncMonitorSettings } from "../../hooks";
@@ -226,6 +227,7 @@ const ServiceHeading = ({
   occurrenceServices = [],
   timingPlan,
 }: ServiceHeadingProps) => {
+  const serviceTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
   const nowMs = useCurrentServiceClockMs();
   if (!service || !occurrence) return null;
 
@@ -234,6 +236,7 @@ const ServiceHeading = ({
     occurrenceServices,
     plan: timingPlan,
     nowMs,
+    timeZone: serviceTimeZone,
   });
   const displayService =
     timingState.type === "upcoming-service" ? timingState.service : service;
@@ -583,6 +586,7 @@ const PreviewPanel = ({
  * service. Editing the plan follows the user's Services edit permission.
  */
 const CurrentServiceWorkspace = () => {
+  const serviceTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
   const {
     canViewTeams,
     canUseTeamsLiveSync,
@@ -990,11 +994,11 @@ const CurrentServiceWorkspace = () => {
     () => ({
       options: occurrences.map((candidate) => ({
         occurrenceId: candidate.occurrenceId,
-        label: `${candidate.name} · ${formatOccurrenceLabel(candidate.startsAt)}`,
+        label: `${candidate.name} · ${formatOccurrenceLabel(candidate.startsAt, serviceTimeZone)}`,
       })),
       onSelect: selectOccurrence,
     }),
-    [occurrences, selectOccurrence],
+    [occurrences, selectOccurrence, serviceTimeZone],
   );
 
   /**

@@ -29,16 +29,18 @@ import { cn } from "@/utils/cnHelper";
  * them: "Can you serve at this service?" with no way to tell which.
  */
 
-const formatWhen = (startsAt: string): string => {
+const formatWhen = (startsAt: string, timeZone: string): string => {
   if (!startsAt) return "Date to be confirmed";
   const parsed = new Date(startsAt);
   if (Number.isNaN(parsed.getTime())) return "Date to be confirmed";
   return parsed.toLocaleString(undefined, {
+    timeZone,
     weekday: "long",
     month: "long",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 };
 
@@ -68,6 +70,7 @@ const ScheduleResponsePublic = () => {
     intent === "accepted" || intent === "declined" ? intent : null;
   const [slots, setSlots] = useState<AssignmentResponseSlot[]>([]);
   const [churchName, setChurchName] = useState("");
+  const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [firstName, setFirstName] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -100,6 +103,7 @@ const ScheduleResponsePublic = () => {
         : await getAssignmentResponseContext(token);
       setSlots(result.assignments || []);
       setChurchName(result.churchName || "");
+      setServiceTimeZone(result.serviceTimeZone || "UTC");
       setFirstName(result.firstName || "");
       setStatus("ready");
     } catch (caught) {
@@ -231,7 +235,7 @@ const ScheduleResponsePublic = () => {
                       {slot.serviceName}
                     </p>
                     <p className="mt-0.5 text-xs text-gray-400">
-                      {formatWhen(slot.startsAt)}
+                      {formatWhen(slot.startsAt, serviceTimeZone)}
                     </p>
                     {slot.positionName ? (
                       <p className="mt-0.5 text-xs text-orange-300">

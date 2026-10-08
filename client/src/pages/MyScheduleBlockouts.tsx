@@ -8,6 +8,7 @@ import { updateMyBlockoutDates, type MyScheduleOccurrence } from "../api/auth";
 import type { TeamBlockoutDateRange, TeamRosterMember } from "../api/authTypes";
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 import { useToast } from "../context/toastContext";
+import { calendarDateInTimeZone } from "../utils/teamScheduleOccurrences";
 
 /**
  * A volunteer's own time off, on the one Teams surface they can reach.
@@ -24,6 +25,7 @@ import { useToast } from "../context/toastContext";
 
 type MyScheduleBlockoutsProps = {
   churchId: string;
+  serviceTimeZone: string;
   blockoutDates: TeamBlockoutDateRange[];
   /** `updatedAt` of the record this edit started from; the write precondition. */
   expectedUpdatedAt: string;
@@ -41,13 +43,11 @@ type BlockoutConflict = {
   label: string;
 };
 
-/** Local calendar date as YYYY-MM-DD; en-CA is ISO-like and stable. */
-const todayPlainDate = () => new Date().toLocaleDateString("en-CA");
-
-const formatConflictWhen = (occurrence: MyScheduleOccurrence): string => {
+const formatConflictWhen = (occurrence: MyScheduleOccurrence, timeZone: string): string => {
   const parsed = new Date(occurrence.startsAt);
   if (Number.isNaN(parsed.getTime())) return occurrence.date;
   return parsed.toLocaleDateString(undefined, {
+    timeZone,
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -68,8 +68,8 @@ const hasEnded = (range: TeamBlockoutDateRange, today: string) =>
  * several years would otherwise scroll past dozens of dead entries to reach
  * next summer.
  */
-const partitionByEnded = (ranges: TeamBlockoutDateRange[]) => {
-  const today = todayPlainDate();
+const partitionByEnded = (ranges: TeamBlockoutDateRange[], timeZone: string) => {
+  const today = calendarDateInTimeZone(new Date(), timeZone);
   return {
     ended: ranges.filter((range) => hasEnded(range, today)),
     current: ranges.filter((range) => !hasEnded(range, today)),
@@ -81,6 +81,7 @@ const signRanges = (ranges: TeamBlockoutDateRange[]) => JSON.stringify(ranges);
 
 const MyScheduleBlockouts = ({
   churchId,
+  serviceTimeZone,
   blockoutDates,
   expectedUpdatedAt,
   occurrences,
@@ -92,14 +93,14 @@ const MyScheduleBlockouts = ({
   const conflictHeadingId = useId();
   const [open, setOpen] = useState(false);
   const { current } = useMemo(
-    () => partitionByEnded(blockoutDates),
-    [blockoutDates],
+    () => partitionByEnded(blockoutDates, serviceTimeZone),
+    [blockoutDates, serviceTimeZone],
   );
   const [showEnded, setShowEnded] = useState(false);
   const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(blockoutDates);
   const { ended: draftEnded, current: draftCurrent } = useMemo(
-    () => partitionByEnded(draft),
-    [draft],
+    () => partitionByEnded(draft, serviceTimeZone),
+    [draft, serviceTimeZone],
   );
   const editorRanges = showEnded ? draft : draftCurrent;
   const [saving, setSaving] = useState(false);
@@ -129,7 +130,7 @@ const MyScheduleBlockouts = ({
    * still picking dates instead of only after the fact.
    */
   const conflicts = useMemo<BlockoutConflict[]>(() => {
-    const today = todayPlainDate();
+    const today = calendarDateInTimeZone(new Date(), serviceTimeZone);
     return occurrences
       .filter((occurrence) => occurrence.date >= today)
       .filter((occurrence) =>
@@ -140,9 +141,9 @@ const MyScheduleBlockouts = ({
       )
       .map((occurrence) => ({
         occurrenceId: occurrence.occurrenceId,
-        label: `${occurrence.name || "Service"} · ${formatConflictWhen(occurrence)}`,
+        label: `${occurrence.name || "Service"} · ${formatConflictWhen(occurrence, serviceTimeZone)}`,
       }));
-  }, [draft, occurrences]);
+  }, [draft, occurrences, serviceTimeZone]);
 
   const draftSignature = signRanges(draft);
   const serverSignature = signRanges(blockoutDates);

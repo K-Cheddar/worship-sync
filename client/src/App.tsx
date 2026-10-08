@@ -10,6 +10,7 @@ import store from "./store/store";
 import Login from "./pages/Login";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
+import { ChurchServiceTimeZoneProvider } from "./context/churchServiceTimeZone";
 import { ToastProvider } from "./context/toastContext";
 import TimerManager from "./components/TimerManager/TimerManager";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
@@ -561,27 +562,29 @@ const App: React.FC = () => {
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
-          {isElectronCaptureHost ? (
-            <Suspense fallback={null}>
-              <LocalVideoCaptureHost />
-            </Suspense>
-          ) : (
-            <FloatingWindowZIndexProvider>
-              <RehearsalPlaybackProvider>
-                <ToastProvider>
-                  <ChatProvider>
-                    <RoutePersistence />
-                    <DisplayOutputsSync />
-                    <ControllerProfilesSync />
-                    <TimerManager />
-                    <AppRoutes />
-                    <ChatWindowHost />
-                    <RehearsalPlayerHost />
-                  </ChatProvider>
-                </ToastProvider>
-              </RehearsalPlaybackProvider>
-            </FloatingWindowZIndexProvider>
-          )}
+          <ChurchServiceTimeZoneProvider>
+            {isElectronCaptureHost ? (
+              <Suspense fallback={null}>
+                <LocalVideoCaptureHost />
+              </Suspense>
+            ) : (
+              <FloatingWindowZIndexProvider>
+                <RehearsalPlaybackProvider>
+                  <ToastProvider>
+                    <ChatProvider>
+                      <RoutePersistence />
+                      <DisplayOutputsSync />
+                      <ControllerProfilesSync />
+                      <TimerManager />
+                      <AppRoutes />
+                      <ChatWindowHost />
+                      <RehearsalPlayerHost />
+                    </ChatProvider>
+                  </ToastProvider>
+                </RehearsalPlaybackProvider>
+              </FloatingWindowZIndexProvider>
+            )}
+          </ChurchServiceTimeZoneProvider>
         </GlobalInfoProvider>
       </Router>
     </Provider>

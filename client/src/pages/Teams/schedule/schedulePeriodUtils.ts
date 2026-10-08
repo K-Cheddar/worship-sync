@@ -1,6 +1,6 @@
 import { parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
-import { calendarDateInTimeZone } from "@/utils/teamScheduleOccurrences";
+import { calendarDateInTimeZone, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
 import { RANGE_PRESET_OPTIONS, resolveRangePreset, type RangePreset } from "../rangeSelection";
 
 export type SchedulePeriodPreset = RangePreset;
@@ -25,8 +25,9 @@ export const resolveDisplayedPeriodRange = ({
 export const filterOccurrencesToRange = (
   occurrences: TeamScheduleOccurrence[],
   range: { start: string; end: string },
+  timeZone = "UTC",
 ) => occurrences.filter((occurrence) => {
-  const date = occurrence.startsAt.slice(0, 10);
+  const date = getOccurrenceDate(occurrence, timeZone);
   return date >= range.start && date <= range.end;
 });
 

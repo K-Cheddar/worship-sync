@@ -36,6 +36,7 @@ import {
   findNextUpcomingOccurrenceId,
   generateScheduleOccurrences,
   getOccurrenceDate,
+  getOccurrenceTimeZoneAbbreviation,
   getSharedOccurrenceTiming,
   isOccurrenceToday,
   type SharedOccurrenceTiming,
@@ -133,23 +134,32 @@ type PlansTileParts = {
   label: string;
 };
 
-const monthKeyFromStartsAt = (startsAt: string) => {
-  const date = new Date(startsAt);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+const occurrenceCalendarDateTime = (
+  occurrence: TeamScheduleOccurrence,
+  timeZone: string,
+) => {
+  const date = getOccurrenceDate(occurrence, timeZone);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? new Date(`${date}T12:00:00.000Z`)
+    : new Date(occurrence.startsAt);
 };
 
-const monthLabelFromStartsAt = (startsAt: string) =>
-  new Date(startsAt).toLocaleString(undefined, {
+const monthLabelFromStartsAt = (date: Date) =>
+  date.toLocaleString(undefined, {
+    timeZone: "UTC",
     month: "long",
     year: "numeric",
   });
 
 const groupOccurrencesByMonth = (
   occurrences: TeamScheduleOccurrence[],
+  timeZone: string,
 ): MonthGroup[] => {
   const groups: MonthGroup[] = [];
   for (const occurrence of occurrences) {
-    const key = monthKeyFromStartsAt(occurrence.startsAt);
+    const date = getOccurrenceDate(occurrence, timeZone);
+    const key = date.slice(0, 7);
+    const monthDate = occurrenceCalendarDateTime(occurrence, timeZone);
     const last = groups[groups.length - 1];
     if (last?.key === key) {
       last.occurrences.push(occurrence);
@@ -157,7 +167,7 @@ const groupOccurrencesByMonth = (
     }
     groups.push({
       key,
-      label: monthLabelFromStartsAt(occurrence.startsAt),
+      label: monthLabelFromStartsAt(monthDate),
       occurrences: [occurrence],
     });
   }
@@ -171,14 +181,17 @@ const groupOccurrencesByMonth = (
 const getPlansTileParts = (
   occurrence: TeamScheduleOccurrence,
   shared: SharedOccurrenceTiming,
+  timeZone: string,
 ): PlansTileParts => {
-  const date = new Date(occurrence.startsAt);
-  const weekday = date.toLocaleString(undefined, { weekday: "short" });
-  const month = date.toLocaleString(undefined, { month: "short" });
-  const day = date.toLocaleString(undefined, { day: "numeric" });
+  const date = occurrenceCalendarDateTime(occurrence, timeZone);
+  const weekday = date.toLocaleString(undefined, { timeZone: "UTC", weekday: "short" });
+  const month = date.toLocaleString(undefined, { timeZone: "UTC", month: "short" });
+  const day = date.toLocaleString(undefined, { timeZone: "UTC", day: "numeric" });
+  const scheduledStart = new Date(occurrence.startsAt);
   const time = shared.sharedTime
     ? null
-    : date.toLocaleString(undefined, {
+    : scheduledStart.toLocaleString(undefined, {
+      timeZone,
       hour: "numeric",
       minute: "2-digit",
     });
@@ -186,11 +199,18 @@ const getPlansTileParts = (
   return { weekday, month, day, time, label };
 };
 
-const serviceTimingLabel = (shared: SharedOccurrenceTiming) => {
+const serviceTimingLabel = (
+  shared: SharedOccurrenceTiming,
+  startsAt: string,
+  timeZone: string,
+) => {
+  const zonedTime = shared.sharedTime
+    ? `${shared.sharedTime} ${getOccurrenceTimeZoneAbbreviation(startsAt, timeZone)}`
+    : null;
   if (shared.sharedWeekday && shared.sharedTime) {
-    return `${shared.sharedWeekday} at ${shared.sharedTime}`;
+    return `${shared.sharedWeekday} at ${zonedTime}`;
   }
-  return shared.sharedWeekday || shared.sharedTime || null;
+  return shared.sharedWeekday || zonedTime || null;
 };
 
 /** Always show time on by-date tiles — service headers are not there to carry it. */
@@ -202,6 +222,7 @@ const BY_DATE_TILE_SHARED: SharedOccurrenceTiming = {
 type PlansOccurrenceTileProps = {
   occurrence: TeamScheduleOccurrence;
   shared: SharedOccurrenceTiming;
+  timeZone: string;
   serviceName?: string;
   hasPlan: boolean;
   isPast: boolean;
@@ -213,6 +234,7 @@ type PlansOccurrenceTileProps = {
 const PlansOccurrenceTile = ({
   occurrence,
   shared,
+  timeZone,
   serviceName,
   hasPlan,
   isPast,
@@ -220,8 +242,8 @@ const PlansOccurrenceTile = ({
   planStatusLoading,
   onOpen,
 }: PlansOccurrenceTileProps) => {
-  const tile = getPlansTileParts(occurrence, shared);
-  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
+  const tile = getPlansTileParts(occurrence, shared, timeZone);
+  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
   let planActionLabel = `Add plan for ${tile.label}`;
   if (planStatusLoading) {
     planActionLabel = `Plan for ${tile.label}`;
@@ -422,8 +444,8 @@ const TeamsPlansPage = () => {
     const servicesForRange = selectedActiveServices.length > 0
       ? selectedActiveServices
       : activeServices;
-    return getUpcomingServiceRange(servicesForRange, referenceTime);
-  }, [activeServices, churchId, filtersHydratedForChurchId, selectedServiceIds]);
+    return getUpcomingServiceRange(servicesForRange, referenceTime, serviceTimeZone);
+  }, [activeServices, churchId, filtersHydratedForChurchId, selectedServiceIds, serviceTimeZone]);
   const {
     preset: rangePreset,
     range: selectedRange,
@@ -806,8 +828,9 @@ const TeamsPlansPage = () => {
     () =>
       groupOccurrencesByMonth(
         chronologicalEntries.map((entry) => entry.occurrence),
+        serviceTimeZone,
       ),
-    [chronologicalEntries],
+    [chronologicalEntries, serviceTimeZone],
   );
 
   const chronologicalPlannedCount = useMemo(
@@ -924,7 +947,7 @@ const TeamsPlansPage = () => {
             ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
             occurrenceId: occurrence.occurrenceId,
             startsAt: occurrence.startsAt,
-            date: getOccurrenceDate(occurrence),
+            date: getOccurrenceDate(occurrence, serviceTimeZone),
           };
         });
       const response = await trackTeamsSave(applyServicePlanTemplateBulk(churchId, {
@@ -1000,7 +1023,7 @@ const TeamsPlansPage = () => {
       const returnTo = buildPlansReturnTo({
         serviceId: selection.service.serviceId,
         occurrenceId: selection.occurrence.occurrenceId,
-        date: getOccurrenceDate(selection.occurrence),
+        date: getOccurrenceDate(selection.occurrence, serviceTimeZone),
       });
       persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
       navigate(TEAMS_SECTION_PATHS.schedules, {
@@ -1014,12 +1037,12 @@ const TeamsPlansPage = () => {
         }),
       });
     },
-    [navigate, selection],
+    [navigate, selection, serviceTimeZone],
   );
 
   const openGeneratedSchedulePeriod = useCallback(() => {
     if (!selection) return;
-    const date = getOccurrenceDate(selection.occurrence);
+    const date = getOccurrenceDate(selection.occurrence, serviceTimeZone);
     const parsedDate = new Date(`${date}T12:00:00`);
     const startDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth(), 1));
     const endDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth() + 1, 0));
@@ -1053,7 +1076,7 @@ const TeamsPlansPage = () => {
         },
       }),
     });
-  }, [navigate, pageData.positions, pageData.teams, selection, showToast]);
+  }, [navigate, pageData.positions, pageData.teams, selection, serviceTimeZone, showToast]);
 
   /**
    * Previous/next within the current date window. By service stays on that
@@ -1244,7 +1267,16 @@ const TeamsPlansPage = () => {
                     {selection.service.name}
                   </h1>
                   <p className="text-sm text-gray-300">
-                    {new Date(selection.occurrence.startsAt).toLocaleString()}
+                    {new Date(selection.occurrence.startsAt).toLocaleString(undefined, {
+                      timeZone: serviceTimeZone,
+                      weekday: "long",
+                      month: "long",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                      timeZoneName: "short",
+                    })}
                   </p>
                 </div>
                 <div className="flex justify-end">
@@ -1518,13 +1550,14 @@ const TeamsPlansPage = () => {
                         !planStatusLoading &&
                         planKeysWithPlans.has(getServicePlanKey(occurrence));
                       const isPast =
-                        getOccurrenceDate(occurrence) <
+                        getOccurrenceDate(occurrence, serviceTimeZone) <
                         formatPlainDate(now);
                       return (
                         <PlansOccurrenceTile
                           key={occurrence.occurrenceId}
                           occurrence={occurrence}
                           shared={BY_DATE_TILE_SHARED}
+                          timeZone={serviceTimeZone}
                           serviceName={
                             selectedServiceIds.length !== 1
                               ? entry.serviceName
@@ -1561,12 +1594,16 @@ const TeamsPlansPage = () => {
             )}
           >
             {visibleGroups.map(({ key, name, service, serviceIds, occurrences }) => {
-              const shared = getSharedOccurrenceTiming(occurrences);
+              const shared = getSharedOccurrenceTiming(occurrences, serviceTimeZone);
               const plannedCount = occurrences.filter((occurrence) =>
                 planKeysWithPlans.has(getServicePlanKey(occurrence)),
               ).length;
-              const months = groupOccurrencesByMonth(occurrences);
-              const timingLabel = serviceTimingLabel(shared);
+              const months = groupOccurrencesByMonth(occurrences, serviceTimeZone);
+              const timingLabel = serviceTimingLabel(
+                shared,
+                occurrences[0]?.startsAt || "",
+                serviceTimeZone,
+              );
               const plannedRatio =
                 occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
 
@@ -1696,13 +1733,14 @@ const TeamsPlansPage = () => {
                                 getServicePlanKey(occurrence),
                               );
                             const isPast =
-                              getOccurrenceDate(occurrence) <
+                              getOccurrenceDate(occurrence, serviceTimeZone) <
                               formatPlainDate(now);
                             return (
                               <PlansOccurrenceTile
                                 key={occurrence.occurrenceId}
                                 occurrence={occurrence}
                                 shared={shared}
+                                timeZone={serviceTimeZone}
                                 hasPlan={hasPlan}
                                 isPast={isPast}
                                 isNextUpcoming={

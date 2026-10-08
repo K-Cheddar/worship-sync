@@ -473,6 +473,7 @@ export type TeamScheduleOccurrence = {
 export type TeamSchedulePublicSnapshot = {
   success: boolean;
   churchName: string;
+  serviceTimeZone?: string;
   teamName: string;
   churchLogoUrl?: string;
   schedule: {
@@ -889,6 +890,7 @@ export type TeamIntakeSubmission = {
 export type TeamIntakePreview = {
   success: boolean;
   churchName: string;
+  serviceTimeZone?: string;
   churchLogoUrl?: string;
   form: Pick<
     TeamIntakeForm,

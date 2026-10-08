@@ -9,11 +9,11 @@ import { getUpcomingServiceRange } from "../servicePeriodRange";
 import { serverDate } from "../../../utils/serverTime";
 
 const TeamsFormsPage = () => {
-  const { pageData, upsertData, canEditTeams } = useTeamsPage();
+  const { pageData, upsertData, canEditTeams, serviceTimeZone } = useTeamsPage();
   const now = serverDate();
   const resolveUpcomingRange = useCallback((referenceTime: Date) => {
-    return getUpcomingServiceRange(pageData.services.filter(isActive), referenceTime);
-  }, [pageData.services]);
+    return getUpcomingServiceRange(pageData.services.filter(isActive), referenceTime, serviceTimeZone);
+  }, [pageData.services, serviceTimeZone]);
   const {
     preset: periodPreset,
     range: periodRange,

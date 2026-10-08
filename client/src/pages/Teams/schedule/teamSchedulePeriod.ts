@@ -67,7 +67,7 @@ export const buildTeamSchedulePeriod = ({
     if (ownOccurrences.some((occurrence) =>
       explicitTeamOccurrenceIds.includes(occurrence.occurrenceId) ||
       Boolean(service.serviceGroupId && explicitTeamOccurrenceIds.includes(
-        `group:${service.serviceGroupId}@${getOccurrenceDate(occurrence)}`,
+        `group:${service.serviceGroupId}@${getOccurrenceDate(occurrence, timeZone)}`,
       )),
     )) explicitlyStaffedServiceIds.add(service.serviceId);
   }
@@ -218,7 +218,7 @@ export const findInitialTeamSchedulePeriod = ({
   });
   if (
     nextOccurrence &&
-    calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone) !== getOccurrenceDate(nextOccurrence) &&
+    calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone) !== getOccurrenceDate(nextOccurrence, timeZone) &&
     !period.occurrences.some((occurrence) => occurrence.occurrenceId === nextOccurrence.occurrenceId)
   ) {
     const occurrenceDate = calendarDateInTimeZone(new Date(nextOccurrence.startsAt), timeZone);

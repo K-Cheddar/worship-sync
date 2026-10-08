@@ -116,15 +116,17 @@ export const resolveLiveItemSource = (
 };
 
 /** Weekday + time is enough to tell nearby services apart in a picker. */
-export const formatOccurrenceLabel = (startsAt: string): string => {
+export const formatOccurrenceLabel = (startsAt: string, timeZone = "UTC"): string => {
   const startsAtMs = Date.parse(startsAt);
   if (!Number.isFinite(startsAtMs)) return "";
   return new Date(startsAtMs).toLocaleString(undefined, {
+    timeZone,
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 };
 

@@ -64,6 +64,7 @@ import ActionBar, { type ActionBarItem as ActionBarItemDef } from "../../compone
 import { MEDIA_LIBRARY_ACTION_BAR_BTN_CLASS, MEDIA_LIBRARY_MEDIA_ACTION_LUCIDE_SIZE } from "../../containers/Media/mediaLibraryMediaActionUi";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { getServicePlanMicrophones } from "../../api/auth";
 import type { ServicePlanMicrophone } from "../../types/servicePlan";
 import { getServicePlanElementContentResources } from "../../types/servicePlan";
@@ -367,6 +368,8 @@ const ServicePlanningSyncFloatingWindow = ({
   const controllerBasePath = useControllerBasePath();
   const controllerProfile = useActiveControllerProfile();
   const { churchBranding, churchId } = useContext(GlobalInfoContext) || {};
+  const { timeZone: churchTimeZone } = useChurchServiceTimeZone();
+  const planTimeZone = churchTimeZone || "UTC";
   const { loadPreview } = useServicePlanningImport();
   const { pushPlanToOutline } = useServicePlanOutlinePush();
   const { showToast } = useToast();
@@ -940,12 +943,12 @@ const ServicePlanningSyncFloatingWindow = ({
 
   const selectedPlanName = selectedPlan?.name?.trim() || "Service plan";
   const selectedPlanDateTime = selectedPlan
-    ? formatControllerServicePlanDateTime(selectedPlan)
+    ? formatControllerServicePlanDateTime(selectedPlan, planTimeZone)
     : null;
 
   let selectedPlanLabel = "Choose a service plan";
   if (selectedPlan) {
-    selectedPlanLabel = formatControllerServicePlanLabel(selectedPlan);
+    selectedPlanLabel = formatControllerServicePlanLabel(selectedPlan, planTimeZone);
   } else if (!isPlanSourced && serviceOutline?.planLabel?.trim()) {
     selectedPlanLabel = serviceOutline.planLabel.trim();
   } else if (plansError) {
@@ -1099,7 +1102,7 @@ const ServicePlanningSyncFloatingWindow = ({
                             ref={active ? activePlanOptionRef : undefined}
                             type="button"
                             role="option"
-                            aria-label={formatControllerServicePlanLabel(plan)}
+                            aria-label={formatControllerServicePlanLabel(plan, planTimeZone)}
                             aria-selected={selected}
                             tabIndex={-1}
                             disabled={isSyncActive}
@@ -1117,7 +1120,7 @@ const ServicePlanningSyncFloatingWindow = ({
                               {selected ? <Check size={14} className="shrink-0 text-cyan-300 sm:hidden" aria-hidden /> : null}
                             </span>
                             <span className="shrink-0 text-[11px] text-zinc-400 sm:text-xs">
-                              {formatControllerServicePlanDateTime(plan)}
+                              {formatControllerServicePlanDateTime(plan, planTimeZone)}
                             </span>
                             {selected ? <Check size={14} className="hidden shrink-0 text-cyan-300 sm:block" aria-hidden /> : null}
                           </button>

@@ -1,7 +1,7 @@
 import type { TeamIntakeForm, TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
 import type { TeamIntakeFormPayload } from "../../api/auth";
 import { serverDate } from "../../utils/serverTime";
-import { generateScheduleOccurrences, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
+import { calendarDateInTimeZone, generateScheduleOccurrences, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
 import { parsePlainDate } from "../../utils/plainDate";
 import { ALL_INTAKE_FORM_FIELDS, resolveIntakeFormFields } from "./intakeFormFields";
 import { getUpcomingServiceRange } from "./servicePeriodRange";
@@ -60,6 +60,7 @@ const getOccurrenceCoverageKeys = (
   occurrence: Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "serviceIds" | "startsAt" | "serviceDate">,
   servicesByGroupId: Map<string, string[]>,
   allowedServiceIds?: Set<string>,
+  timeZone?: string,
 ) => {
   const groupId = occurrence.occurrenceId.startsWith("group:")
     ? occurrence.occurrenceId.slice("group:".length).split("@")[0]
@@ -73,7 +74,7 @@ const getOccurrenceCoverageKeys = (
   } else {
     serviceIds = groupedServiceIds || [occurrence.serviceId];
   }
-  const date = getOccurrenceDate(occurrence);
+  const date = getOccurrenceDate(occurrence, timeZone || "UTC");
   const coveredServiceIds = serviceIds.length ? serviceIds : [occurrence.serviceId];
   return coveredServiceIds.map((serviceId) => `${serviceId}@${date}`);
 };
@@ -91,7 +92,7 @@ const getCoverageKeys = (forms: TeamIntakeForm[], services: TeamService[], timeZ
   forms.forEach((form) => {
     const allowedServiceIds = new Set((form.availabilityServices || []).map(({ serviceId }) => serviceId));
     getFormOccurrences(form, services, timeZone).forEach((occurrence) => {
-      getOccurrenceCoverageKeys(occurrence, servicesByGroupId, allowedServiceIds).forEach((key) => keys.add(key));
+      getOccurrenceCoverageKeys(occurrence, servicesByGroupId, allowedServiceIds, timeZone).forEach((key) => keys.add(key));
     });
   });
   return { keys, servicesByGroupId };
@@ -151,9 +152,7 @@ export const getUpcomingAvailabilitySuggestion = ({
   now?: Date;
   timeZone?: string;
 }): UpcomingAvailabilitySuggestion | null => {
-  // Match the server's response-deadline comparison, which treats date-only
-  // deadlines as UTC calendar dates. Period ranges below retain local calendar semantics.
-  const today = now.toISOString().slice(0, 10);
+  const today = calendarDateInTimeZone(now, timeZone || "UTC");
   const activeServices = services.filter((service) => !service.archivedAt);
   if (!activeServices.length) return null;
 
@@ -168,7 +167,7 @@ export const getUpcomingAvailabilitySuggestion = ({
   const servicesById = new Map(activeServices.map((service) => [service.serviceId, service]));
   // Upcoming starts with the same full period used by the Teams range selector.
   // Look ahead only far enough to find the next useful month; no records are created.
-  let range = getUpcomingServiceRange(activeServices, now);
+  let range = getUpcomingServiceRange(activeServices, now, timeZone);
   for (let offset = 0; offset < 12; offset += 1) {
     const periodOccurrences = generateScheduleOccurrences({
       services: activeServices,
@@ -182,7 +181,7 @@ export const getUpcomingAvailabilitySuggestion = ({
     );
     const candidateRange = range;
     const uncovered = actionableOccurrences.filter((occurrence) =>
-      !getOccurrenceCoverageKeys(occurrence, servicesByGroupId)
+      !getOccurrenceCoverageKeys(occurrence, servicesByGroupId, undefined, timeZone)
         .every((key) => coveredOccurrenceKeys.has(key)),
     );
     if (!uncovered.length) {

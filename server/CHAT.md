@@ -38,9 +38,11 @@ firebase deploy --only firestore:indexes
 ```
 
 TTL deletion is asynchronous, so application reads also enforce the 365-day
-retention boundary. The first authenticated chat client for a church sets that
-church's chat timezone in `chatSettings`; later clients use the stored value so
-everyone rolls over to the same weekly room.
+retention boundary. Chat uses the church's dedicated `churches.serviceTimeZone`
+setting so its weekly rooms share the same calendar boundary as schedules and
+Service Plans. The browser timezone hint is not used to establish the church
+setting. Existing `chatSettings.timeZone` values are exposed to administrators
+as suggestions for confirmation when the dedicated setting is not configured.
 
 Photo sharing shares R2 credentials and endpoint with song audio, but uses the
 separate Resources bucket:

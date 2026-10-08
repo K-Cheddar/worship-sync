@@ -778,6 +778,10 @@ export const createTeamsAuthHandlers = ({
       "scheduleId",
       churchId,
     );
+    const church = await getDoc(COLLECTIONS.churches, churchId);
+    const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+      ? church.serviceTimeZone
+      : "UTC";
     const blockedAt = nowIso();
 
     for (const schedule of schedules) {
@@ -787,7 +791,8 @@ export const createTeamsAuthHandlers = ({
         previousRanges,
         nextRanges,
         readHolder: readCellHolderId,
-        fromDate: blockedAt.slice(0, 10),
+        fromDate: getOccurrenceCalendarParts(blockedAt, timeZone).date,
+        timeZone,
       });
       if (slots.length === 0) continue;
 
@@ -6681,6 +6686,9 @@ export const createTeamsAuthHandlers = ({
 
     return {
       churchName: church?.name || "WorshipSync",
+      serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+        ? church.serviceTimeZone
+        : "UTC",
       teamName:
         team && team.churchId === churchId
           ? String(team.name || "").trim()
@@ -12643,6 +12651,11 @@ export const createTeamsAuthHandlers = ({
           throw httpError(401, "Authentication required");
         }
 
+        const church = await getDoc(COLLECTIONS.churches, req.params.churchId);
+        const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
+
         const members = await listTeamCollectionForChurch(
           COLLECTIONS.teamRosterMembers,
           "memberId",
@@ -12650,7 +12663,7 @@ export const createTeamsAuthHandlers = ({
         );
         const member = members.find((row) => row.userId === userId);
         if (!member) {
-          return res.json({ success: true, member: null, occurrences: [] });
+          return res.json({ success: true, serviceTimeZone, member: null, occurrences: [] });
         }
 
         const [schedules, positions, teams] = await Promise.all([
@@ -12893,7 +12906,7 @@ export const createTeamsAuthHandlers = ({
           );
         });
 
-        return res.json({ success: true, member, occurrences });
+        return res.json({ success: true, serviceTimeZone, member, occurrences });
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -13110,6 +13123,9 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           churchName: church?.name || "",
+          serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+            ? church.serviceTimeZone
+            : "UTC",
           firstName: String(member?.firstName || member?.name || "")
             .trim()
             .split(/\s+/)[0],
@@ -14245,6 +14261,9 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           churchName: church?.name || "WorshipSync",
+          serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+            ? church.serviceTimeZone
+            : "UTC",
           ...(churchLogoUrl ? { churchLogoUrl } : {}),
           form: {
             formId: form.formId,
@@ -15795,7 +15814,7 @@ export const createTeamsAuthHandlers = ({
       try {
         const churchId = req.params.churchId;
         try {
-          await requireServicesView(req, churchId);
+          await requireServicesWorkspaceView(req, churchId);
         } catch (error) {
           if (error?.statusCode !== 403) throw error;
           await requireTeamsView(req, churchId);
@@ -15804,7 +15823,20 @@ export const createTeamsAuthHandlers = ({
         if (!church) throw httpError(404, "Church settings were not found.");
         const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
         const serviceTimeZone = isConfigured ? church.serviceTimeZone : "UTC";
-        return res.json({ success: true, serviceTimeZone, isConfigured });
+        let legacyTimeZoneSuggestion = null;
+        if (!isConfigured) {
+          const legacyChatSettings = await getDoc("chatSettings", churchId);
+          const legacyTimeZone = legacyChatSettings?.timeZone;
+          if (isValidPortableTimeZone(legacyTimeZone)) {
+            legacyTimeZoneSuggestion = legacyTimeZone;
+          }
+        }
+        return res.json({
+          success: true,
+          serviceTimeZone,
+          isConfigured,
+          legacyTimeZoneSuggestion,
+        });
       } catch (error) {
         return sendTeamsJsonError(
           res,

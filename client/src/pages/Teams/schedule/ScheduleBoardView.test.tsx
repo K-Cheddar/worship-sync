@@ -80,6 +80,7 @@ const renderView = (
       ]}
       columns={columns}
       teamName="Media Team"
+      timeZone="UTC"
       canEdit
       nextUpcomingOccurrenceId={options.nextUpcomingOccurrenceId ?? null}
       isExpanded={options.isExpanded ?? (() => true)}

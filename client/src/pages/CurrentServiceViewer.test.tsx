@@ -39,6 +39,16 @@ jest.mock("../chat/ChatContext", () => ({
   useChat: jest.fn(),
 }));
 
+jest.mock("../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const plan: ServicePlan = {
   planId: "plan-1",
   churchId: "church-1",

@@ -252,7 +252,7 @@ const ScheduleEditForm = ({
 
     return services.map((service) => ({
       id: service.serviceId,
-      label: [service.name, formatServiceTiming(service)]
+      label: [service.name, formatServiceTiming(service, serviceTimeZone)]
         .filter(Boolean)
         .join(" - "),
       archived: Boolean(service.archivedAt),

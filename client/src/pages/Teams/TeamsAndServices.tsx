@@ -24,6 +24,7 @@ import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
@@ -327,8 +328,23 @@ const TeamsNoAccess = () => (
 );
 
 const TeamsAndServicesContent = () => {
-  const { accessDenied, canViewServices } = useTeamsPage();
-  return accessDenied && !canViewServices ? <TeamsNoAccess /> : <TeamsAndServicesRoutes />;
+  const { accessDenied, canViewServices, serviceTimeZoneStatus } = useTeamsPage();
+  const churchTimeZone = useChurchServiceTimeZone();
+  if (accessDenied && !canViewServices) return <TeamsNoAccess />;
+  if (serviceTimeZoneStatus === "loading") {
+    return <main className="p-6 text-sm text-gray-600">Loading church time zone…</main>;
+  }
+  if (serviceTimeZoneStatus === "error") {
+    return (
+      <main className="p-6 text-sm text-red-700">
+        Could not load the church time zone. Scheduling is unavailable until it loads.
+        <button className="ml-2 underline" onClick={() => void churchTimeZone.refresh()}>
+          Retry
+        </button>
+      </main>
+    );
+  }
+  return <TeamsAndServicesRoutes />;
 };
 
 const TeamsAndServicesPage = () => (

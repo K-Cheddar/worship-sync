@@ -422,8 +422,8 @@ const IntakeManager = ({
   );
 
   const availabilityServiceOptions = useMemo(
-    () => buildIntakeAvailabilityServiceOptions(applicableServices),
-    [applicableServices],
+    () => buildIntakeAvailabilityServiceOptions(applicableServices, serviceTimeZone),
+    [applicableServices, serviceTimeZone],
   );
 
   const selectedAvailabilityServiceOptionIds = useMemo(() => {
@@ -970,7 +970,7 @@ const IntakeManager = ({
       })
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
       .map(({ name, startsAt }) =>
-        startsAt ? `${name} · ${formatShortOccurrenceDate(startsAt)}` : name,
+        startsAt ? `${name} · ${formatShortOccurrenceDate(startsAt, serviceTimeZone)}` : name,
       );
 
   const copyPublicUrl = async (url: string) => {
@@ -2057,7 +2057,7 @@ const IntakeManager = ({
                       <ul className="mt-1 space-y-0.5 text-sm text-gray-200">
                         {upcomingAvailabilitySuggestion.missingOccurrences.slice(0, 3).map((occurrence) => (
                           <li key={occurrence.occurrenceId}>
-                            {occurrence.name} · {new Date(occurrence.startsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            {occurrence.name} · {formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)}
                           </li>
                         ))}
                         {upcomingAvailabilitySuggestion.occurrenceCount > 3 ? (

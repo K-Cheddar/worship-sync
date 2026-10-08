@@ -32,6 +32,13 @@ describe("controller service plan date formatting", () => {
       `Sabbath School · ${expectedDate}`,
     );
   });
+
+  it("formats saved plan timestamps in the church timezone", () => {
+    const savedPlan = plan("service@2026-10-04", "2026-10-04T03:30:00.000Z");
+    expect(formatControllerServicePlanDateTime(savedPlan, "America/New_York")).toMatch(
+      /Sat, Oct 3, 11:30 PM EDT/,
+    );
+  });
 });
 
 const plan = (

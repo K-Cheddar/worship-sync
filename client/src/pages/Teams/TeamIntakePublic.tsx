@@ -450,7 +450,7 @@ const TeamIntakePublic = () => {
               options={preview.form.availabilityOccurrences.map((occurrence) => ({
                 id: occurrence.occurrenceId,
                 label: occurrence.name,
-                sublabel: formatShortOccurrenceDate(occurrence.startsAt),
+                sublabel: formatShortOccurrenceDate(occurrence.startsAt, preview.serviceTimeZone || "UTC"),
               }))}
               value={availableOccurrenceIds}
               onChange={(occurrenceIds) =>

@@ -15,6 +15,7 @@ import type {
 } from "../../api/authTypes";
 import {
   formatOccurrenceRowLabel,
+  getOccurrenceTimeZoneAbbreviation,
   getSharedOccurrenceTiming,
 } from "@/utils/teamScheduleOccurrences";
 import { parsePlainDate } from "@/utils/plainDate";
@@ -234,11 +235,11 @@ const TeamSchedulePublic = () => {
       const groupOccurrences = byService.get(serviceId) || [];
       return {
         serviceName: groupOccurrences[0]?.name || "Service",
-        sharedTiming: getSharedOccurrenceTiming(groupOccurrences),
+        sharedTiming: getSharedOccurrenceTiming(groupOccurrences, snapshot?.serviceTimeZone || "UTC"),
         occurrences: groupOccurrences,
       };
     });
-  }, [snapshot?.schedule.occurrences]);
+  }, [snapshot?.schedule.occurrences, snapshot?.serviceTimeZone]);
 
   const { columns, equipmentAssignments } = useMemo(
     () => {
@@ -310,12 +311,17 @@ const TeamSchedulePublic = () => {
       columns,
       groups: serviceGroups.map((group) => ({
         serviceName: group.serviceName,
-        timingLabel: [group.sharedTiming.sharedWeekday, group.sharedTiming.sharedTime]
+        timingLabel: [
+          group.sharedTiming.sharedWeekday,
+          [group.sharedTiming.sharedTime, group.sharedTiming.sharedTime && group.occurrences[0]
+            ? getOccurrenceTimeZoneAbbreviation(group.occurrences[0].startsAt, snapshot.serviceTimeZone || "UTC")
+            : null].filter(Boolean).join(" "),
+        ]
           .filter(Boolean)
           .join(" · "),
         occurrences: group.occurrences.map((occurrence) => ({
           occurrenceId: occurrence.occurrenceId,
-          rowLabel: formatOccurrenceRowLabel(occurrence, group.sharedTiming),
+          rowLabel: formatOccurrenceRowLabel(occurrence, group.sharedTiming, snapshot.serviceTimeZone || "UTC"),
         })),
       })),
       requiredCountFor: (occurrenceId, positionId) => {

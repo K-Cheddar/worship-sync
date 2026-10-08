@@ -103,8 +103,9 @@ export const servicePlanToSummary = (plan: ServicePlan): ServicePlanSummary => (
 
 export const formatControllerServicePlanDateTime = (
   plan: ServicePlanSummary,
+  timeZone = "UTC",
 ): string => {
-  const dateSource = plan.startsAt || `${plan.date}T12:00:00`;
+  const dateSource = plan.startsAt || `${plan.date}T12:00:00.000Z`;
   const parsed = Date.parse(dateSource);
   return Number.isFinite(parsed)
     ? new Date(parsed).toLocaleString(undefined, {
@@ -112,13 +113,15 @@ export const formatControllerServicePlanDateTime = (
         month: "short",
         day: "numeric",
         ...(plan.startsAt
-          ? { hour: "numeric", minute: "2-digit" }
+          ? { hour: "numeric", minute: "2-digit", timeZoneName: "short" as const }
           : {}),
+        timeZone: plan.startsAt ? timeZone : "UTC",
       })
     : plan.date;
 };
 
 export const formatControllerServicePlanLabel = (
   plan: ServicePlanSummary,
+  timeZone = "UTC",
 ): string =>
-  `${plan.name?.trim() || "Service plan"} · ${formatControllerServicePlanDateTime(plan)}`;
+  `${plan.name?.trim() || "Service plan"} · ${formatControllerServicePlanDateTime(plan, timeZone)}`;

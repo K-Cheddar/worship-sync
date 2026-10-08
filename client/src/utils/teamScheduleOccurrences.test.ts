@@ -10,6 +10,7 @@ import {
   isOccurrenceOnCalendarDay,
   isOccurrenceToday,
   occurrenceIdsMatch,
+  serviceDateTimeInTimeZone,
 } from "./teamScheduleOccurrences";
 
 const service = (overrides: Partial<TeamService>): TeamService => ({
@@ -94,7 +95,7 @@ describe("generateScheduleOccurrences", () => {
       endDate: "2026-07-31",
     });
 
-    expect(occurrences.map(getOccurrenceDate)).toEqual([
+    expect(occurrences.map((occurrence) => getOccurrenceDate(occurrence))).toEqual([
       "2026-07-05",
       "2026-07-12",
       "2026-07-19",
@@ -213,7 +214,7 @@ describe("generateScheduleOccurrences", () => {
       startDate: "2026-07-01",
       endDate: "2026-07-12",
     });
-    expect(historical.map(getOccurrenceDate)).toEqual([
+    expect(historical.map((occurrence) => getOccurrenceDate(occurrence))).toEqual([
       "2026-07-05",
       "2026-07-12",
     ]);
@@ -271,7 +272,7 @@ describe("generateScheduleOccurrences", () => {
       endDate: "2026-07-31",
     });
 
-    expect(occurrences.map(getOccurrenceDate)).toEqual([
+    expect(occurrences.map((occurrence) => getOccurrenceDate(occurrence))).toEqual([
       "2026-07-02",
       "2026-07-07",
       "2026-07-09",
@@ -296,7 +297,7 @@ describe("generateScheduleOccurrences", () => {
       endDate: "2026-07-31",
     });
 
-    expect(occurrences.map(getOccurrenceDate)).toEqual([
+    expect(occurrences.map((occurrence) => getOccurrenceDate(occurrence))).toEqual([
       "2026-07-12",
       "2026-07-19",
       "2026-07-26",
@@ -321,7 +322,7 @@ describe("generateScheduleOccurrences", () => {
       endDate: "2026-09-30",
     });
 
-    expect(occurrences.map(getOccurrenceDate)).toEqual([
+    expect(occurrences.map((occurrence) => getOccurrenceDate(occurrence))).toEqual([
       "2026-08-05",
       "2026-09-02",
     ]);
@@ -344,7 +345,7 @@ describe("generateScheduleOccurrences", () => {
       endDate: "2026-09-30",
     });
 
-    expect(occurrences.map(getOccurrenceDate)).toEqual([
+    expect(occurrences.map((occurrence) => getOccurrenceDate(occurrence))).toEqual([
       "2026-07-29",
       "2026-08-26",
       "2026-09-30",
@@ -555,15 +556,17 @@ describe("getSharedOccurrenceTiming", () => {
   ];
 
   it("hoists matching weekday and time when a service has multiple occurrences", () => {
-    const shared = getSharedOccurrenceTiming(sundayOccurrences);
+    const shared = getSharedOccurrenceTiming(sundayOccurrences, "UTC");
 
     expect(shared.sharedWeekday).toBe(
       new Date(sundayOccurrences[0].startsAt).toLocaleString(undefined, {
+        timeZone: "UTC",
         weekday: "short",
       }),
     );
     expect(shared.sharedTime).toBe(
       new Date(sundayOccurrences[0].startsAt).toLocaleString(undefined, {
+        timeZone: "UTC",
         hour: "numeric",
         minute: "2-digit",
       }),
@@ -571,14 +574,14 @@ describe("getSharedOccurrenceTiming", () => {
   });
 
   it("hoists timing for a single occurrence", () => {
-    expect(getSharedOccurrenceTiming([sundayOccurrences[0]])).toEqual({
+    expect(getSharedOccurrenceTiming([sundayOccurrences[0]], "UTC")).toEqual({
       sharedWeekday: new Date(sundayOccurrences[0].startsAt).toLocaleString(
         undefined,
-        { weekday: "short" },
+        { timeZone: "UTC", weekday: "short" },
       ),
       sharedTime: new Date(sundayOccurrences[0].startsAt).toLocaleString(
         undefined,
-        { hour: "numeric", minute: "2-digit" },
+        { timeZone: "UTC", hour: "numeric", minute: "2-digit" },
       ),
     });
   });
@@ -590,20 +593,22 @@ describe("getSharedOccurrenceTiming", () => {
       name: "Power Up",
       startsAt: "2026-06-03T19:00:00.000Z",
     };
-    const shared = getSharedOccurrenceTiming([powerUpOccurrence]);
+    const shared = getSharedOccurrenceTiming([powerUpOccurrence], "UTC");
 
     expect(shared.sharedWeekday).toBe(
       new Date(powerUpOccurrence.startsAt).toLocaleString(undefined, {
+        timeZone: "UTC",
         weekday: "short",
       }),
     );
     expect(shared.sharedTime).toBe(
       new Date(powerUpOccurrence.startsAt).toLocaleString(undefined, {
+        timeZone: "UTC",
         hour: "numeric",
         minute: "2-digit",
       }),
     );
-    expect(formatOccurrenceRowLabel(powerUpOccurrence, shared)).not.toContain(
+    expect(formatOccurrenceRowLabel(powerUpOccurrence, shared, "UTC")).not.toContain(
       shared.sharedWeekday as string,
     );
   });
@@ -626,6 +631,30 @@ describe("getSharedOccurrenceTiming", () => {
 
     expect(shared.sharedWeekday).toBeNull();
     expect(shared.sharedTime).not.toBeNull();
+  });
+
+  it("formats occurrences in the church zone even when their UTC date differs", () => {
+    const lateSaturday = {
+      occurrenceId: "late@2026-10-04T03:30:00.000Z",
+      serviceId: "late",
+      name: "Late service",
+      startsAt: "2026-10-04T03:30:00.000Z",
+      serviceDate: "2026-10-03",
+    } satisfies TeamScheduleOccurrence;
+    const label = formatOccurrenceTiming(lateSaturday, "America/New_York");
+    expect(label).toContain("Sat");
+    expect(label).toContain("Oct 3");
+    expect(label).toContain("11:30 PM");
+    expect(getOccurrenceDate(lateSaturday, "Pacific/Auckland")).toBe("2026-10-03");
+  });
+});
+
+describe("serviceDateTimeInTimeZone", () => {
+  it("keeps spring-forward gaps and fall-back overlaps on the established wall-clock policy", () => {
+    expect(serviceDateTimeInTimeZone("2026-03-08", "02:30", "America/New_York")?.toISOString())
+      .toBe("2026-03-08T07:30:00.000Z");
+    expect(serviceDateTimeInTimeZone("2026-11-01", "01:30", "America/New_York")?.toISOString())
+      .toBe("2026-11-01T05:30:00.000Z");
   });
 });
 
@@ -746,14 +775,25 @@ describe("isOccurrenceToday", () => {
   };
 
   it("matches the local calendar day of the reference date", () => {
-    expect(isOccurrenceToday(occurrence, new Date("2026-07-28T12:00:00"))).toBe(
+    expect(isOccurrenceToday(occurrence, "UTC", new Date("2026-07-28T12:00:00Z"))).toBe(
       true,
     );
   });
 
   it("is false for a different local calendar day", () => {
-    expect(isOccurrenceToday(occurrence, new Date("2026-07-27T12:00:00"))).toBe(
+    expect(isOccurrenceToday(occurrence, "UTC", new Date("2026-07-27T12:00:00Z"))).toBe(
       false,
     );
+  });
+
+  it("uses the church day for Today badges across UTC midnight", () => {
+    const occurrence = {
+      occurrenceId: "svc@2026-10-04T03:30:00.000Z",
+      serviceId: "svc",
+      name: "Service",
+      startsAt: "2026-10-04T03:30:00.000Z",
+    } satisfies TeamScheduleOccurrence;
+    expect(isOccurrenceToday(occurrence, "America/New_York", new Date("2026-10-04T05:00:00Z"))).toBe(false);
+    expect(isOccurrenceToday(occurrence, "Pacific/Auckland", new Date("2026-10-04T05:00:00Z"))).toBe(true);
   });
 });

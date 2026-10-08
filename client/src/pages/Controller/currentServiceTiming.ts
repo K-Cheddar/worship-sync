@@ -1,13 +1,16 @@
 import type { TeamScheduleOccurrence } from "../../api/authTypes";
 import type { ServiceTime, Weekday } from "../../types";
-import { formatPlainDate, parsePlainDate } from "../../utils/plainDate";
+import { parsePlainDate } from "../../utils/plainDate";
+import {
+  calendarDateInTimeZone,
+  serviceDateTimeInTimeZone,
+} from "../../utils/teamScheduleOccurrences";
 import { serverDate } from "../../utils/serverTime";
 import {
   resolveServicePlanEndMs,
   type ServicePlanTimingSource,
 } from "../Services/servicePlanTimingUtils";
 
-const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const DAY_MS = 24 * 60 * 60_000;
 
 export type OccurrenceServiceStart = {
@@ -33,22 +36,15 @@ export type CurrentServiceTimingState =
       type: "live";
     };
 
-const parseTimeToMinutes = (time?: string): number | null => {
-  if (!time || !TIME_PATTERN.test(time)) return null;
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours * 60 + minutes;
-};
-
 const getOccurrenceDate = (
   occurrence: TeamScheduleOccurrence,
+  timeZone: string,
 ): Date | null => {
   const startsAtMs = Date.parse(occurrence.startsAt);
   if (!Number.isFinite(startsAtMs)) return null;
-  const startsAt = new Date(startsAtMs);
-  return new Date(startsAt.getFullYear(), startsAt.getMonth(), startsAt.getDate());
+  const date = occurrence.serviceDate || calendarDateInTimeZone(new Date(startsAtMs), timeZone);
+  return parsePlainDate(date) || null;
 };
-
-const getDateKey = (date: Date): string => formatPlainDate(date);
 
 const isWithinServiceBounds = (date: Date, service: ServiceTime): boolean => {
   const start = service.startDateISO ? parsePlainDate(service.startDateISO) : null;
@@ -60,17 +56,9 @@ const isWithinServiceBounds = (date: Date, service: ServiceTime): boolean => {
   return true;
 };
 
-const setTimeOnDate = (date: Date, time?: string): number | null => {
-  const minutes = parseTimeToMinutes(time);
-  if (minutes == null) return null;
-  const result = new Date(date);
-  result.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-  const timestamp = result.getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
-const isSameCalendarDate = (leftMs: number, rightDate: Date): boolean =>
-  getDateKey(new Date(leftMs)) === getDateKey(rightDate);
+const isSameCalendarDate = (leftMs: number, rightDate: Date, timeZone: string): boolean =>
+  calendarDateInTimeZone(new Date(leftMs), timeZone) ===
+  `${rightDate.getFullYear()}-${String(rightDate.getMonth() + 1).padStart(2, "0")}-${String(rightDate.getDate()).padStart(2, "0")}`;
 
 const nthWeekdayOfMonth = (
   year: number,
@@ -95,6 +83,7 @@ const resolveScheduledServiceStartMs = (
   occurrence: TeamScheduleOccurrence,
   occurrenceDate: Date,
   service: ServiceTime,
+  timeZone: string,
 ): number | null => {
   const occurrenceStartsAtMs = Date.parse(occurrence.startsAt);
 
@@ -114,21 +103,21 @@ const resolveScheduledServiceStartMs = (
     const scheduledMs = service.dateTimeISO
       ? Date.parse(service.dateTimeISO)
       : Number.NaN;
-    return Number.isFinite(scheduledMs) && isSameCalendarDate(scheduledMs, occurrenceDate)
+    return Number.isFinite(scheduledMs) && isSameCalendarDate(scheduledMs, occurrenceDate, timeZone)
       ? scheduledMs
       : null;
   }
 
   if (service.reccurence === "weekly") {
     return service.dayOfWeek === occurrenceDate.getDay()
-      ? setTimeOnDate(occurrenceDate, service.time)
+      ? serviceDateTimeInTimeZone(formatServiceDate(occurrenceDate), service.time || "", timeZone)?.getTime() ?? null
       : null;
   }
 
   if (service.reccurence === "multi_weekly") {
     const matchingTimes = (service.daysOfWeek || [])
       .filter((entry) => entry.day === occurrenceDate.getDay())
-      .map((entry) => setTimeOnDate(occurrenceDate, entry.time))
+      .map((entry) => serviceDateTimeInTimeZone(formatServiceDate(occurrenceDate), entry.time, timeZone)?.getTime() ?? null)
       .filter((timestamp): timestamp is number => timestamp !== null);
     return matchingTimes.length ? Math.min(...matchingTimes) : null;
   }
@@ -145,7 +134,7 @@ const resolveScheduledServiceStartMs = (
       service.weekday,
     );
     return expectedDate && expectedDate.getDate() === occurrenceDate.getDate()
-      ? setTimeOnDate(occurrenceDate, service.time)
+      ? serviceDateTimeInTimeZone(formatServiceDate(occurrenceDate), service.time || "", timeZone)?.getTime() ?? null
       : null;
   }
 
@@ -154,23 +143,28 @@ const resolveScheduledServiceStartMs = (
   return null;
 };
 
+const formatServiceDate = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 const resolveServiceStartMs = (
   occurrence: TeamScheduleOccurrence,
   occurrenceDate: Date,
   service: ServiceTime,
   nowMs: number,
+  timeZone: string,
 ): number | null => {
   const scheduledMs = resolveScheduledServiceStartMs(
     occurrence,
     occurrenceDate,
     service,
+    timeZone,
   );
 
   if (service.overrideDateTimeISO) {
     const overrideMs = Date.parse(service.overrideDateTimeISO);
     const isSameOccurrenceDate =
       Number.isFinite(overrideMs) &&
-      isSameCalendarDate(overrideMs, occurrenceDate);
+      isSameCalendarDate(overrideMs, occurrenceDate, timeZone);
     // TimeAdjuster applies an absolute future override. Permit a cross-midnight
     // adjustment (23:58 -> 00:03) while keeping a later recurring occurrence
     // out of this pinned occurrence's scope.
@@ -201,9 +195,10 @@ export const resolveOccurrenceServiceStarts = (
   occurrence: TeamScheduleOccurrence | null,
   occurrenceServices: ServiceTime[],
   nowMs = serverDate().getTime(),
+  timeZone = "UTC",
 ): OccurrenceServiceStart[] => {
   if (!occurrence) return [];
-  const occurrenceDate = getOccurrenceDate(occurrence);
+  const occurrenceDate = getOccurrenceDate(occurrence, timeZone);
   if (!occurrenceDate) return [];
 
   return occurrenceServices
@@ -214,6 +209,7 @@ export const resolveOccurrenceServiceStarts = (
         occurrenceDate,
         service,
         nowMs,
+        timeZone,
       ),
       index,
     }))
@@ -233,11 +229,13 @@ export const resolveCurrentServiceTimingState = ({
   occurrenceServices,
   plan,
   nowMs,
+  timeZone = "UTC",
 }: {
   occurrence: TeamScheduleOccurrence | null;
   occurrenceServices: ServiceTime[];
   plan: ServicePlanTimingSource | null | undefined;
   nowMs: number;
+  timeZone?: string;
 }): CurrentServiceTimingState => {
   if (!occurrence) return { type: "live" };
 
@@ -245,6 +243,7 @@ export const resolveCurrentServiceTimingState = ({
     occurrence,
     occurrenceServices,
     nowMs,
+    timeZone,
   ).find(({ targetMs }) => targetMs > nowMs);
   if (nextService) {
     return {

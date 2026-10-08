@@ -1704,6 +1704,9 @@ test("church service timezone is stored separately from Chat browser hints", asy
     name: "Timezone Church",
     otherSetting: "preserved",
   });
+  await setDoc("chatSettings", context.churchId, {
+    timeZone: "America/Los_Angeles",
+  });
 
   const initial = await callHandler(authHandlers.getChurchServiceTimeZone, {
     context,
@@ -1712,6 +1715,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
   assert.equal(initial.statusCode, 200);
   assert.equal(initial.payload.serviceTimeZone, "UTC");
   assert.equal(initial.payload.isConfigured, false);
+  assert.equal(initial.payload.legacyTimeZoneSuggestion, "America/Los_Angeles");
 
   const updated = await callHandler(authHandlers.updateChurchServiceTimeZone, {
     context,
@@ -1721,6 +1725,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
   assert.equal(updated.statusCode, 200);
   assert.equal(updated.payload.serviceTimeZone, "America/New_York");
   assert.equal(updated.payload.isConfigured, true);
+  assert.equal(updated.payload.legacyTimeZoneSuggestion, null);
   const savedChurch = await getDoc(COLLECTIONS.churches, context.churchId);
   assert.equal(savedChurch.serviceTimeZone, "America/New_York");
   assert.equal(savedChurch.otherSetting, "preserved");
@@ -3570,6 +3575,7 @@ test("schedule assignments support schedule-only guests without exposing contact
     query: { token: link.payload.publicToken },
   });
   assert.equal(publicSchedule.statusCode, 200);
+  assert.equal(publicSchedule.payload.serviceTimeZone, "UTC");
   assert.deepEqual(
     publicSchedule.payload.members.find(
       (person) => person.memberId === guest.guestId,
@@ -5740,6 +5746,7 @@ test("intake form stores custom wording and ships it on the public preview", asy
     previewRes,
   );
   assert.equal(previewRes.statusCode, 200);
+  assert.equal(previewRes.payload.serviceTimeZone, "UTC");
   assert.equal(
     previewRes.payload.form.welcomeMessage,
     "Welcome to Worship sign-ups!",

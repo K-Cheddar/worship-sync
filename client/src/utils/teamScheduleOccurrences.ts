@@ -88,7 +88,7 @@ const getServiceDateOffsets = (date: string, timeZone: string, naive: number) =>
 };
 
 /** Convert a service's local date and wall clock into an instant in its zone. */
-const serviceDateTime = (
+export const serviceDateTimeInTimeZone = (
   date: string,
   time: string,
   timeZone: string,
@@ -164,58 +164,81 @@ export const getDefaultScheduleRange = (timeZone = "UTC") => {
   };
 };
 
-export const formatOccurrenceTiming = (occurrence: TeamScheduleOccurrence) =>
+export const formatOccurrenceTiming = (
+  occurrence: TeamScheduleOccurrence,
+  timeZone = "UTC",
+  includeTimeZone = true,
+) =>
   new Date(occurrence.startsAt).toLocaleString(undefined, {
+    timeZone,
     weekday: "short",
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    ...(includeTimeZone ? { timeZoneName: "short" as const } : {}),
   });
+
+export const getOccurrenceTimeZoneAbbreviation = (
+  startsAt: string,
+  timeZone: string,
+): string => {
+  const date = new Date(startsAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "short",
+  }).formatToParts(date).find((part) => part.type === "timeZoneName")?.value || "";
+};
 
 export type SharedOccurrenceTiming = {
   sharedWeekday: string | null;
   sharedTime: string | null;
 };
 
-const occurrenceWeekdayLabel = (startsAt: string) =>
-  new Date(startsAt).toLocaleString(undefined, { weekday: "short" });
+const occurrenceWeekdayLabel = (startsAt: string, timeZone: string) =>
+  new Date(startsAt).toLocaleString(undefined, { timeZone, weekday: "short" });
 
-const occurrenceTimeLabel = (startsAt: string) =>
+const occurrenceTimeLabel = (startsAt: string, timeZone: string) =>
   new Date(startsAt).toLocaleString(undefined, {
+    timeZone,
     hour: "numeric",
     minute: "2-digit",
   });
 
-const occurrenceWeekdayIndex = (startsAt: string) =>
-  new Date(startsAt).getDay();
+const occurrenceWeekdayIndex = (startsAt: string, timeZone: string) =>
+  new Date(startsAt).toLocaleString("en-US", { timeZone, weekday: "short" });
 
-const occurrenceTimeKey = (startsAt: string) => {
-  const date = new Date(startsAt);
-  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
-};
+const occurrenceTimeKey = (startsAt: string, timeZone: string) =>
+  new Date(startsAt).toLocaleString("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  });
 
 export const getSharedOccurrenceTiming = (
   occurrences: TeamScheduleOccurrence[],
+  timeZone = "UTC",
 ): SharedOccurrenceTiming => {
   if (occurrences.length === 0) {
     return { sharedWeekday: null, sharedTime: null };
   }
 
   const weekdayIndexes = occurrences.map((occurrence) =>
-    occurrenceWeekdayIndex(occurrence.startsAt),
+    occurrenceWeekdayIndex(occurrence.startsAt, timeZone),
   );
   const timeKeys = occurrences.map((occurrence) =>
-    occurrenceTimeKey(occurrence.startsAt),
+    occurrenceTimeKey(occurrence.startsAt, timeZone),
   );
   const sharedWeekday = weekdayIndexes.every(
     (weekday) => weekday === weekdayIndexes[0],
   )
-    ? occurrenceWeekdayLabel(occurrences[0].startsAt)
+    ? occurrenceWeekdayLabel(occurrences[0].startsAt, timeZone)
     : null;
   const sharedTime = timeKeys.every((time) => time === timeKeys[0])
-    ? occurrenceTimeLabel(occurrences[0].startsAt)
+    ? occurrenceTimeLabel(occurrences[0].startsAt, timeZone)
     : null;
 
   return { sharedWeekday, sharedTime };
@@ -224,20 +247,22 @@ export const getSharedOccurrenceTiming = (
 export const formatOccurrenceRowLabel = (
   occurrence: TeamScheduleOccurrence,
   shared: SharedOccurrenceTiming,
+  timeZone = "UTC",
 ) => {
   if (!shared.sharedWeekday && !shared.sharedTime) {
-    return formatOccurrenceTiming(occurrence);
+    return formatOccurrenceTiming(occurrence, timeZone);
   }
 
   const date = new Date(occurrence.startsAt);
   const parts: string[] = [];
 
   if (!shared.sharedWeekday) {
-    parts.push(occurrenceWeekdayLabel(occurrence.startsAt));
+    parts.push(occurrenceWeekdayLabel(occurrence.startsAt, timeZone));
   }
 
   parts.push(
     date.toLocaleString(undefined, {
+      timeZone,
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -245,7 +270,7 @@ export const formatOccurrenceRowLabel = (
   );
 
   if (!shared.sharedTime) {
-    parts.push(occurrenceTimeLabel(occurrence.startsAt));
+    parts.push(occurrenceTimeLabel(occurrence.startsAt, timeZone));
   }
 
   if (parts.length === 1) return parts[0];
@@ -255,10 +280,17 @@ export const formatOccurrenceRowLabel = (
 
 export const getOccurrenceDate = (
   occurrence: Pick<TeamScheduleOccurrence, "serviceDate" | "occurrenceId" | "startsAt">,
-) =>
-  occurrence.serviceDate ||
-  occurrence.occurrenceId.match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1] ||
-  occurrence.startsAt.slice(0, 10);
+  timeZone = "UTC",
+) => {
+  const storedDate =
+    occurrence.serviceDate ||
+    occurrence.occurrenceId.match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
+  if (storedDate) return storedDate;
+  const startsAt = new Date(occurrence.startsAt);
+  return Number.isNaN(startsAt.getTime())
+    ? ""
+    : calendarDateInTimeZone(startsAt, timeZone);
+};
 
 /** YYYY-MM-DD for `date` in `timeZone` (en-CA is ISO-like and stable). */
 export const calendarDateInTimeZone = (date: Date, timeZone: string): string =>
@@ -292,13 +324,10 @@ export const isOccurrenceOnCalendarDay = (
  */
 export const isOccurrenceToday = (
   occurrence: Pick<TeamScheduleOccurrence, "startsAt">,
+  timeZone = "UTC",
   referenceDate: Date = new Date(),
 ): boolean =>
-  isOccurrenceOnCalendarDay(
-    occurrence,
-    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    referenceDate,
-  );
+  isOccurrenceOnCalendarDay(occurrence, timeZone, referenceDate);
 
 /**
  * The occurrence the operator is most likely to work next: the earliest one that
@@ -482,7 +511,7 @@ export const generateScheduleOccurrences = ({
         if (cursor.getDay() !== service.dayOfWeek) continue;
         if (!withinServiceBounds(cursor)) continue;
         const serviceDate = formatPlainDate(cursor);
-        const startsAt = serviceDateTime(serviceDate, service.time, timeZone);
+        const startsAt = serviceDateTimeInTimeZone(serviceDate, service.time, timeZone);
         if (startsAt) pushOccurrence(startsAt, serviceDate);
       }
       continue;
@@ -499,7 +528,7 @@ export const generateScheduleOccurrences = ({
         const day = days.find((item) => item.day === cursor.getDay());
         if (day) {
           const serviceDate = formatPlainDate(cursor);
-          const startsAt = serviceDateTime(serviceDate, day.time, timeZone);
+          const startsAt = serviceDateTimeInTimeZone(serviceDate, day.time, timeZone);
           if (startsAt) pushOccurrence(startsAt, serviceDate);
         }
       }
@@ -528,7 +557,7 @@ export const generateScheduleOccurrences = ({
         )
           continue;
         const serviceDate = formatPlainDate(occurrenceDate);
-        const startsAt = serviceDateTime(serviceDate, service.time, timeZone);
+        const startsAt = serviceDateTimeInTimeZone(serviceDate, service.time, timeZone);
         if (startsAt) pushOccurrence(startsAt, serviceDate);
       }
     }
