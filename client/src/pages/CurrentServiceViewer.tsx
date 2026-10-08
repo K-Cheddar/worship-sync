@@ -515,7 +515,7 @@ const CurrentServiceViewerToolbar = ({
   <div
     role="toolbar"
     aria-label="Current service toolbar"
-    className="relative left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
+    className="sticky top-0 z-30 left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
   >
     <div className="order-1 shrink-0">
       <Button

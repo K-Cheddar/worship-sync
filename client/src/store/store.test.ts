@@ -1983,7 +1983,12 @@ describe("store module", () => {
     jest.useFakeTimers();
     const { store, itemSlice, db: dbA, postMessage, setGlobalDb } =
       loadStoreWithItemPersistence();
-    dbA.get.mockResolvedValue(createSongDoc({ _rev: "1-song" }));
+    dbA.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      }
+      return createSongDoc({ _rev: "1-song", _id: id });
+    });
     dbA.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
     const dbB = { get: jest.fn(), put: jest.fn() };
 
