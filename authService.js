@@ -1741,12 +1741,13 @@ const upsertSmsConsent = async (
 
 const recordAdminSmsConsent = async ({
   churchId,
-  phoneNumber,
+  memberId,
+  phoneNumberSnapshot,
   source,
   consentedAt,
   recordedByUid,
 }) => {
-  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumberSnapshot);
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
   if (!consentId) throw httpError(400, "A valid mobile number is required.");
   const recordedAt = nowIso();
@@ -1764,6 +1765,16 @@ const recordAdminSmsConsent = async ({
     recordedByUid,
     consentVersion: SMS_CONSENT_VERSION,
     consentText: SMS_CONSENT_TEXT,
+    verificationCodeHash: null,
+    verificationCodeSalt: null,
+    verificationExpiresAt: null,
+    verificationChallengeId: null,
+    verificationCancellationTokenHash: null,
+    verificationCancellationExpiresAt: null,
+    verificationAttempts: 0,
+    lastCancelledVerificationChallengeId: null,
+    lastCancelledVerificationTokenHash: null,
+    lastCancelledVerificationTokenExpiresAt: null,
     createdAt: recordedAt,
     updatedAt: recordedAt,
   };
@@ -1779,11 +1790,25 @@ const recordAdminSmsConsent = async ({
 
   if (db) {
     return db.runTransaction(async (transaction) => {
+      const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
-      const snapshot = await transaction.get(consentRef);
-      const existing = snapshot.exists ? snapshot.data() : null;
+      const [memberSnapshot, consentSnapshot] = await Promise.all([
+        transaction.get(memberRef),
+        transaction.get(consentRef),
+      ]);
+      const member = memberSnapshot.exists ? memberSnapshot.data() : null;
+      if (!member || member.churchId !== churchId) throw httpError(404, "Roster member not found.");
+      if (member.archivedAt) throw httpError(409, "Archived roster members cannot be opted in to SMS.");
+      if (normalizeUsPhoneNumber(member.phoneNumber) !== normalizedPhoneNumber) {
+        throw httpError(409, "This member's mobile number changed. Reload the member and try again.");
+      }
+      const existing = consentSnapshot.exists ? consentSnapshot.data() : null;
       protectExistingConsent(existing);
-      transaction.set(consentRef, { ...record, createdAt: existing?.createdAt || recordedAt }, { merge: true });
+      transaction.set(
+        consentRef,
+        { ...record, createdAt: existing?.createdAt || recordedAt },
+        { merge: true },
+      );
       return { consentId, record: { ...record, createdAt: existing?.createdAt || recordedAt } };
     });
   }
@@ -1791,6 +1816,12 @@ const recordAdminSmsConsent = async ({
   return withSmsConsentMutationLock(consentId, async () => {
     const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
     protectExistingConsent(existing);
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    if (!member || member.churchId !== churchId) throw httpError(404, "Roster member not found.");
+    if (member.archivedAt) throw httpError(409, "Archived roster members cannot be opted in to SMS.");
+    if (normalizeUsPhoneNumber(member.phoneNumber) !== normalizedPhoneNumber) {
+      throw httpError(409, "This member's mobile number changed. Reload the member and try again.");
+    }
     const nextRecord = { ...record, createdAt: existing?.createdAt || recordedAt };
     await setDoc(COLLECTIONS.smsConsents, consentId, nextRecord, { merge: true });
     return { consentId, record: nextRecord };
@@ -7849,27 +7880,30 @@ export const authHandlers = {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, churchId);
       const memberId = String(req.body?.memberId || "").trim();
+      const phoneNumberSnapshot = String(req.body?.phoneNumberSnapshot || "").trim();
       const source = String(req.body?.source || "").trim();
       const consentedAt = String(req.body?.consentedAt || "").trim();
       if (req.body?.confirmed !== true) {
         throw httpError(400, "Confirm that the person agreed to receive WorshipSync SMS messages.");
       }
       if (!memberId) throw httpError(400, "Choose a roster member.");
+      if (!normalizeUsPhoneNumber(phoneNumberSnapshot)) {
+        throw httpError(400, "A valid mobile number is required.");
+      }
       if (!["admin_verbal", "admin_signed_form"].includes(source)) {
         throw httpError(400, "Choose verbal consent or a signed form.");
       }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(consentedAt) || Number.isNaN(Date.parse(`${consentedAt}T00:00:00Z`)) || new Date(`${consentedAt}T00:00:00Z`).toISOString().slice(0, 10) !== consentedAt) {
         throw httpError(400, "Enter the date consent was obtained.");
       }
-      const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
-      if (!member || member.churchId !== churchId) {
-        throw httpError(404, "Roster member not found.");
+      if (consentedAt > nowIso().slice(0, 10)) {
+        throw httpError(400, "The consent date cannot be in the future.");
       }
-      const phoneNumber = normalizeUsPhoneNumber(member.phoneNumber);
-      if (!phoneNumber) throw httpError(400, "Add a valid mobile number before recording consent.");
+      const phoneNumber = normalizeUsPhoneNumber(phoneNumberSnapshot);
       const result = await recordAdminSmsConsent({
         churchId,
-        phoneNumber,
+        memberId,
+        phoneNumberSnapshot,
         source,
         consentedAt,
         recordedByUid: admin.user.uid,

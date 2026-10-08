@@ -11717,20 +11717,21 @@ test("admin-recorded SMS consent preserves the church-scoped consent contract an
       { firstName: "Invalid", lastName: "Phone" },
       { firstName: "Web", lastName: "Consent" },
       { firstName: "Opted", lastName: "Out" },
+      { firstName: "Archived", lastName: "Member" },
     ],
   });
-  const members = [memberIds.Verbal, memberIds.Signed, memberIds.Missing, memberIds.Invalid, memberIds.Web, memberIds.Opted];
+  const members = [memberIds.Verbal, memberIds.Signed, memberIds.Missing, memberIds.Invalid, memberIds.Web, memberIds.Opted, memberIds.Archived];
   const phones = [
-    "+19545551240", "+19545551241", "", "555", "+19545551244", "+19545551245",
+    "+19545551240", "+19545551241", "", "555", "+19545551244", "+19545551245", "+19545551246",
   ];
   await Promise.all(members.map((memberId, index) =>
     setDoc("teamRosterMembers", memberId, { phoneNumber: phones[index] }, { merge: true }),
   ));
-  const requestConsent = (memberId, source = "admin_verbal", consentedAt = "2026-10-01", using = context, confirmed = true) =>
+  const requestConsent = (memberId, source = "admin_verbal", consentedAt = "2026-10-01", using = context, confirmed = true, phoneNumberSnapshot = phones[members.indexOf(memberId)]) =>
     callHandler(authHandlers.recordMemberSmsConsent, {
       context: using,
       params: { churchId: context.churchId },
-      body: { memberId, source, consentedAt, confirmed },
+      body: { memberId, phoneNumberSnapshot, source, consentedAt, confirmed },
     });
 
   const verbal = await requestConsent(members[0]);
@@ -11743,8 +11744,43 @@ test("admin-recorded SMS consent preserves the church-scoped consent contract an
   assert.ok(verbalRecord.consentVersion);
   assert.ok(verbalRecord.consentText);
 
+  const pendingPhone = phones[1];
+  const pendingConsentId = smsConsentIdForChurchPhone(context.churchId, pendingPhone);
+  await setDoc("smsConsents", pendingConsentId, {
+    consentId: pendingConsentId,
+    churchId: context.churchId,
+    phoneNumber: pendingPhone,
+    status: "pending",
+    source: "web_form",
+    createdAt: "2026-09-01T12:00:00.000Z",
+    consentSubmittedAt: "2026-09-01T12:00:00.000Z",
+    verificationCodeHash: "obsolete-hash",
+    verificationCodeSalt: "obsolete-salt",
+    verificationExpiresAt: "2026-09-01T12:10:00.000Z",
+    verificationChallengeId: "obsolete-challenge",
+    verificationCancellationTokenHash: "obsolete-cancellation-hash",
+    verificationCancellationExpiresAt: "2026-09-01T12:10:00.000Z",
+    verificationAttempts: 2,
+    lastCancelledVerificationChallengeId: "old-challenge",
+    lastCancelledVerificationTokenHash: "old-cancellation-hash",
+    lastCancelledVerificationTokenExpiresAt: "2026-09-01T12:10:00.000Z",
+    verificationSentAt: "2026-09-01T12:00:05.000Z",
+  }, { merge: false });
   const signed = await requestConsent(members[1], "admin_signed_form");
   assert.equal(signed.statusCode, 200);
+  const signedRecord = await getDoc("smsConsents", pendingConsentId);
+  assert.equal(signedRecord.status, "opted_in");
+  assert.equal(signedRecord.source, "admin_signed_form");
+  assert.equal(signedRecord.createdAt, "2026-09-01T12:00:00.000Z");
+  assert.equal(signedRecord.consentSubmittedAt, "2026-09-01T12:00:00.000Z");
+  for (const field of [
+    "verificationCodeHash", "verificationCodeSalt", "verificationExpiresAt",
+    "verificationChallengeId", "verificationCancellationTokenHash",
+    "verificationCancellationExpiresAt", "lastCancelledVerificationChallengeId",
+    "lastCancelledVerificationTokenHash", "lastCancelledVerificationTokenExpiresAt",
+  ]) assert.equal(signedRecord[field], null, field);
+  assert.equal(signedRecord.verificationAttempts, 0);
+  assert.equal(signedRecord.verificationSentAt, "2026-09-01T12:00:05.000Z");
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
   assert.equal(bootstrap.payload.smsEligibilityByMemberId[members[0]].status, "enabled");
   assert.equal(bootstrap.payload.smsEligibilityByMemberId[members[1]].eligible, true);
@@ -11752,9 +11788,17 @@ test("admin-recorded SMS consent preserves the church-scoped consent contract an
 
   assert.equal((await requestConsent(members[2])).statusCode, 400);
   assert.equal((await requestConsent(members[3])).statusCode, 400);
+  assert.equal((await requestConsent(members[0], "admin_verbal", "2099-01-01")).statusCode, 400);
   assert.equal((await requestConsent(members[2], "admin_verbal", "2026-10-01", context, false)).statusCode, 400);
+  await setDoc("teamRosterMembers", members[6], { archivedAt: "2026-09-30T12:00:00.000Z" }, { merge: true });
+  assert.equal((await requestConsent(members[6])).statusCode, 409);
+  await setDoc("teamRosterMembers", members[0], { phoneNumber: "+19545551299" }, { merge: true });
+  assert.equal((await requestConsent(members[0], "admin_verbal", "2026-10-01", context, true, phones[0])).statusCode, 409);
   await seedSmsConsentForServerTests({ churchId: context.churchId, phoneNumber: phones[5], status: "opted_out", optedOutAt: "2026-09-30T00:00:00.000Z" });
   assert.equal((await requestConsent(members[5], "admin_signed_form")).statusCode, 409);
+  const optedOutRecord = await getDoc("smsConsents", smsConsentIdForChurchPhone(context.churchId, phones[5]));
+  assert.equal(optedOutRecord.status, "opted_out");
+  assert.equal(optedOutRecord.optedOutAt, "2026-09-30T00:00:00.000Z");
 
   const webRecordId = smsConsentIdForChurchPhone(context.churchId, phones[4]);
   await setDoc("smsConsents", webRecordId, {

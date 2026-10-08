@@ -1156,7 +1156,10 @@ const MemberManager = ({
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
                   additionalItems={[
-                    ...(isChurchAdmin && isValidSmsPhone(editing.phoneNumber)
+                    ...(isChurchAdmin &&
+                      !editing.archivedAt &&
+                      data.smsEligibilityByMemberId?.[editing.memberId]?.status === "consent_needed" &&
+                      isValidSmsPhone(editing.phoneNumber)
                       ? [{ text: "Record SMS consent", onClick: () => setRecordingSmsConsentFor(editing) }]
                       : []),
                     {

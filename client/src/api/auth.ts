@@ -1061,7 +1061,7 @@ export const cancelSmsConsent = async (
 
 export const recordMemberSmsConsent = async (
   churchId: string,
-  body: { memberId: string; source: "admin_verbal" | "admin_signed_form"; consentedAt: string; confirmed: true },
+  body: { memberId: string; phoneNumberSnapshot: string; source: "admin_verbal" | "admin_signed_form"; consentedAt: string; confirmed: true },
 ) =>
   apiFetch<{ success: boolean; eligibility: SmsMemberEligibility }>(
     `api/sms-consent/${encodeURIComponent(churchId)}/admin-record`,

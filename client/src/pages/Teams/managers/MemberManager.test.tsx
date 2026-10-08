@@ -1147,6 +1147,7 @@ describe("MemberManager SMS consent recording", () => {
 
     await waitFor(() => expect(mockRecordMemberSmsConsent).toHaveBeenCalledWith("church-1", {
       memberId: member.memberId,
+      phoneNumberSnapshot: member.phoneNumber,
       source: "admin_signed_form",
       consentedAt: "2026-09-30",
       confirmed: true,
@@ -1168,6 +1169,26 @@ describe("MemberManager SMS consent recording", () => {
     renderManager({ data: joinedData({ members: [invalidMember] }) });
     await openMember(user, /Rae Kim/);
     await user.click(screen.getAllByRole("button", { name: "Member actions" }).at(-1)!);
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["enabled", "Enabled"],
+    ["opted_out", "Opted out"],
+  ] as const)("shows %s status without offering another consent record", async (status, label) => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    renderManager({
+      data: joinedData({
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status, eligible: status === "enabled", phoneNumber: member.phoneNumber },
+        },
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByRole("status")).toHaveTextContent(`SMS status: ${label}`);
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
     expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
   });
 });

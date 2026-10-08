@@ -34,6 +34,7 @@ const RecordSmsConsentModal = ({ churchId, member, onClose, onSaved }: Props) =>
     try {
       await recordMemberSmsConsent(churchId, {
         memberId: member.memberId,
+        phoneNumberSnapshot: member.phoneNumber || "",
         source,
         consentedAt,
         confirmed: true,
