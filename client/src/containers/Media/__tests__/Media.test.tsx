@@ -15,6 +15,7 @@ import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
 import { claimMediaUpload } from "../../../utils/mediaOperationClaims";
+import { MEDIA_LIBRARY_ROOT_VIEW } from "../../../utils/mediaFolderMutations";
 
 const mockDispatch = jest.fn();
 const mockDeleteMediaItemsFromPouch = jest.fn();
@@ -63,8 +64,21 @@ const mockUpdateSlideBackground = jest.fn((payload: any) => ({
   type: "item/updateSlideBackground",
   payload,
 }));
+const mockRepairPersistedMediaRouteFolders = jest.fn();
+const mockBroadcastRouteFolderDocs = jest.fn();
+let mockBroadcastTarget: { postMessage: jest.Mock } = { postMessage: jest.fn() };
 
 let mockState: any;
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
 
 const mockInitiateMediaList = jest.fn((payload: any) => ({
   type: "media/initiateMediaList",
@@ -280,6 +294,20 @@ jest.mock("../../../utils/mediaReferenceSweep", () => ({
     mockSweepMediaReferencesBeforeDelete(...args),
 }));
 
+jest.mock("../../../utils/controllerMediaRouteFolders", () => ({
+  repairPersistedMediaRouteFolders: (...args: unknown[]) =>
+    mockRepairPersistedMediaRouteFolders(...args),
+  broadcastControllerMediaRouteFoldersUpdate: (
+    docs: unknown[],
+    publishIfCurrent: () => boolean = () => true,
+  ) => {
+    mockBroadcastRouteFolderDocs(docs, publishIfCurrent);
+    if (publishIfCurrent()) {
+      mockBroadcastTarget.postMessage({ type: "update", data: { docs } });
+    }
+  },
+}));
+
 jest.mock("../../../utils/flushMediaLibraryDoc", () => ({
   deleteMediaItemAtRevisionFromPouch: (...args: unknown[]) =>
     mockDeleteMediaItemAtRevisionFromPouch(...args),
@@ -465,23 +493,25 @@ const renderMedia = async ({
   isMobile = false,
   isGuestSession = false,
   churchId = "church-1",
+  dbOverride,
 }: {
   isMobile?: boolean;
   isGuestSession?: boolean;
   churchId?: string;
+  dbOverride?: Record<string, unknown>;
 } = {}) => {
-  const db = {
+  const db = dbOverride ?? {
     get: jest.fn().mockResolvedValue({ list: [], folders: [] }),
     allDocs: jest.fn().mockResolvedValue({ rows: [] }),
   };
   const cloud = { image: jest.fn(), video: jest.fn() };
   const updater = new EventTarget();
 
-  const view = render(
+  const renderAtScope = (scopeDb: Record<string, unknown>, scopeChurchId: string) => (
     <ControllerInfoContext.Provider
       value={
         {
-          db,
+          db: scopeDb,
           cloud,
           updater,
           isMobile,
@@ -489,11 +519,12 @@ const renderMedia = async ({
         } as any
       }
     >
-      <GlobalInfoContext.Provider value={{ churchId } as any}>
+      <GlobalInfoContext.Provider value={{ churchId: scopeChurchId } as any}>
         <Media />
       </GlobalInfoContext.Provider>
-    </ControllerInfoContext.Provider>,
+    </ControllerInfoContext.Provider>
   );
+  const view = render(renderAtScope(db, churchId));
 
   await waitFor(() => {
     expect(mockGetCanvaStatus).toHaveBeenCalled();
@@ -505,7 +536,12 @@ const renderMedia = async ({
     });
   }
 
-  return { db, view };
+  return {
+    db,
+    view,
+    rerenderScope: (scopeDb: Record<string, unknown>, scopeChurchId: string) =>
+      view.rerender(renderAtScope(scopeDb, scopeChurchId)),
+  };
 };
 
 describe("Media", () => {
@@ -515,6 +551,9 @@ describe("Media", () => {
     mockTransfers.clear();
     mockTransferActionHandlers.clear();
     mockFlushMediaLibraryDocToPouch.mockResolvedValue({ ok: true });
+    mockRepairPersistedMediaRouteFolders.mockResolvedValue([]);
+    mockBroadcastRouteFolderDocs.mockClear();
+    mockBroadcastTarget = { postMessage: jest.fn() };
     mockDeleteMediaItemsFromPouch.mockImplementation(async (_db, ids: string[]) => ({
       deletedIds: ids,
       failed: [],
@@ -1426,6 +1465,227 @@ describe("Media", () => {
     expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalled();
     expect(mockDispatch).toHaveBeenCalledTimes(dispatchCountAfterUnmount);
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("finishes keep-contents persistence for A without publishing A state after switching to B", async () => {
+    const mediaA = { ...makeBaseState().media.list[0], id: "same-media", name: "A image", folderId: "same-folder" };
+    const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
+    mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "same-folder" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    const repair = deferred<any[]>();
+    mockRepairPersistedMediaRouteFolders.mockReturnValueOnce(repair.promise);
+    const { db: dbA, rerenderScope } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(dbA, new Set(["same-folder"]), MEDIA_LIBRARY_ROOT_VIEW));
+
+    const mediaB = { ...mediaA, name: "B image" };
+    const foldersB = [{ id: "same-folder", name: "B folder", parentId: null }];
+    mockState = makeBaseState({ media: { list: [mediaB], folders: foldersB } });
+    const dbB = { allDocs: jest.fn(), put: jest.fn() };
+    mockBroadcastTarget = { postMessage: jest.fn() };
+    rerenderScope(dbB, "church-2");
+    const dispatchCountAtB = mockDispatch.mock.calls.length;
+    const navigationCountAtB = mockNavigate.mock.calls.length;
+
+    await act(async () => {
+      repair.resolve([{ _id: "mediaRouteFolders:presentation", mediaRouteFolders: { "controller-default": "root" } }]);
+      await repair.promise;
+    });
+
+    expect(mockBroadcastTarget.postMessage).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("preferences/repairActiveMediaRouteFolders");
+    expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("preferences/setMediaRouteFolder");
+    expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.payload)).not.toContainEqual(expect.objectContaining({
+      list: expect.arrayContaining([expect.objectContaining({ name: "A image" })]),
+    }));
+    expect(mockNavigate).toHaveBeenCalledTimes(navigationCountAtB);
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
+      dbA,
+      expect.arrayContaining([expect.objectContaining({ id: "same-media", name: "A image", folderId: null })]),
+      [],
+      expect.any(Function),
+      expect.objectContaining({ list: [mediaA], folders: foldersA }),
+      expect.objectContaining({
+        allowOriginalOwnerPersistenceAfterScopeChange: true,
+        publishIfCurrent: expect.any(Function),
+      }),
+    );
+    await act(async () => {
+      await mockFlushMediaLibraryDocToPouch.mock.results.at(-1)?.value;
+    });
+    expect(dbB.allDocs).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+  });
+
+  it("keeps same-church keep-contents Redux, route broadcast, and persistence behavior", async () => {
+    const media = { ...makeBaseState().media.list[0], id: "kept-media", folderId: "folder-1" };
+    const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
+    mockState = makeBaseState({ media: { list: [media], folders } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    const docs = [{ _id: "mediaRouteFolders:presentation", controllerProfileId: "presentation", mediaRouteFolders: { "controller-default": MEDIA_LIBRARY_ROOT_VIEW } }];
+    mockRepairPersistedMediaRouteFolders.mockResolvedValueOnce(docs);
+    const { db } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+
+    await waitFor(() => expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
+      db,
+      [expect.objectContaining({ id: "kept-media", folderId: null })],
+      [],
+      expect.any(Function),
+      expect.objectContaining({ list: [media], folders }),
+      expect.objectContaining({ allowOriginalOwnerPersistenceAfterScopeChange: true }),
+    ));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "media/setMediaListAndFolders",
+      payload: expect.objectContaining({
+        list: [expect.objectContaining({ id: "kept-media", folderId: null })],
+        folders: [],
+      }),
+    }));
+    expect(mockBroadcastTarget.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "update",
+      data: expect.objectContaining({ docs }),
+    }));
+  });
+
+  it("continues subtree finalization in A after tombstone and provider cleanup while B is active", async () => {
+    const mediaA = {
+      ...makeBaseState().media.list[0],
+      id: "same-media",
+      name: "A image",
+      folderId: "same-folder",
+      source: "cloudinary" as const,
+      publicId: "a-asset",
+    };
+    const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
+    mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "same-folder" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    const cleanup = deferred<void>();
+    const flush = deferred<{ ok: true } | { ok: false; error: unknown }>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
+    mockFlushMediaLibraryDocToPouch.mockReturnValueOnce(flush.promise);
+    const dbA = { allDocs: jest.fn().mockResolvedValue({ rows: [] }), put: jest.fn() };
+    const { view, rerenderScope } = await renderMedia({ dbOverride: dbA });
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled());
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "a-asset"));
+
+    const dbB = { allDocs: jest.fn(), put: jest.fn() };
+    mockState = makeBaseState({ media: { list: [{ ...mediaA, name: "B image" }], folders: [{ ...foldersA[0], name: "B folder" }] } });
+    mockBroadcastTarget = { postMessage: jest.fn() };
+    rerenderScope(dbB, "church-2");
+    const dispatchCountAtB = mockDispatch.mock.calls.length;
+    const navigationCountAtB = mockNavigate.mock.calls.length;
+
+    await act(async () => {
+      cleanup.resolve();
+      await cleanup.promise;
+    });
+    await waitFor(() => expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
+      dbA,
+      [],
+      [],
+      expect.any(Function),
+      expect.objectContaining({ list: [], folders: foldersA }),
+      expect.objectContaining({ allowOriginalOwnerPersistenceAfterScopeChange: true }),
+    ));
+    expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(dbA, new Set(["same-folder"]), MEDIA_LIBRARY_ROOT_VIEW);
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    expect(mockGetTransfer(activityId)?.status).toBe("active");
+    expect(mockBroadcastTarget.postMessage).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("preferences/repairActiveMediaRouteFolders");
+    expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("media/setMediaListAndFolders");
+    expect(mockNavigate).toHaveBeenCalledTimes(navigationCountAtB);
+
+    await act(async () => flush.resolve({ ok: true }));
+    await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "complete",
+      phase: expect.objectContaining({ label: "Folder deletion complete" }),
+    })));
+    expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalledTimes(1);
+    expect(dbB.allDocs).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    expect(view.container).toBeInTheDocument();
+  });
+
+  it("keeps detached Activity failed when A folder finalization fails, then retries against A", async () => {
+    const mediaA = {
+      ...makeBaseState().media.list[0],
+      id: "same-media",
+      folderId: "same-folder",
+      source: "cloudinary" as const,
+      publicId: "a-asset",
+    };
+    const foldersA = [{ id: "same-folder", name: "A folder", parentId: null }];
+    mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "same-folder" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    mockFlushMediaLibraryDocToPouch
+      .mockResolvedValueOnce({ ok: false, error: new Error("folder write failed") })
+      .mockResolvedValueOnce({ ok: true });
+    const dbA = { allDocs: jest.fn().mockResolvedValue({ rows: [] }), put: jest.fn() };
+    const { view, rerenderScope } = await renderMedia({ dbOverride: dbA });
+    const cleanup = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockDeleteMediaItemAtRevisionFromPouch).toHaveBeenCalled());
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalled());
+    const dbB = { allDocs: jest.fn(), put: jest.fn() };
+    mockState = makeBaseState({ media: { list: [mediaA], folders: foldersA } });
+    mockBroadcastTarget = { postMessage: jest.fn() };
+    rerenderScope(dbB, "church-2");
+    const dispatchCountAtB = mockDispatch.mock.calls.length;
+    const navigationCountAtB = mockNavigate.mock.calls.length;
+    await act(async () => {
+      cleanup.resolve();
+      await cleanup.promise;
+    });
+
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "partial",
+      phase: expect.objectContaining({ label: "Folder finalization needs attention" }),
+      error: expect.objectContaining({ message: expect.stringContaining("folder write failed") }),
+    })));
+    expect(mockGetTransfer(activityId).phase.label).not.toBe("Folder deletion complete");
+    view.unmount();
+    await waitFor(() => expect(mockGetTransfer(activityId)?.actions).toEqual([
+      { key: "retry-cleanup", label: "Retry folder finalization" },
+      { key: "dismiss", label: "Dismiss" },
+    ]));
+
+    await act(async () => {
+      await mockTransferActionHandlers.get(`${activityId}:retry-cleanup`)?.();
+    });
+
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledTimes(2);
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls[0][0]).toBe(dbA);
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls[1][0]).toBe(dbA);
+    expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({
+      status: "complete",
+      phase: expect.objectContaining({ label: "Folder deletion complete" }),
+    }));
+    expect(mockBroadcastTarget.postMessage).not.toHaveBeenCalled();
+    expect(dbB.allDocs).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.slice(dispatchCountAtB).map(([action]) => action.type)).not.toContain("media/setMediaListAndFolders");
+    expect(mockNavigate).toHaveBeenCalledTimes(navigationCountAtB);
   });
 
   it("registers detached cleanup retry when upload cleanup failure settles after unmount", async () => {

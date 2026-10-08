@@ -4,10 +4,17 @@ import {
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
 } from "../types";
 import {
+  broadcastControllerMediaRouteFoldersUpdate,
   loadOrCreateControllerMediaRouteFolders,
   patchControllerMediaRouteFolder,
   repairPersistedMediaRouteFolders,
 } from "./controllerMediaRouteFolders";
+
+let mockBroadcastRef: { postMessage: jest.Mock } | undefined;
+jest.mock("../context/controllerInfo", () => ({
+  get globalBroadcastRef() { return mockBroadcastRef; },
+}));
+jest.mock("../context/globalInfo", () => ({ globalHostId: "current-host" }));
 
 const missing = { status: 404, name: "not_found" };
 function makeDb(seed: Record<string, Record<string, unknown>> = {}) {
@@ -30,6 +37,18 @@ function makeDb(seed: Record<string, Record<string, unknown>> = {}) {
 }
 
 describe("controller media route folder documents", () => {
+  it("does not broadcast an original owner's docs after the UI scope changes", () => {
+    const churchBBroadcast = { postMessage: jest.fn() };
+    mockBroadcastRef = churchBBroadcast;
+
+    broadcastControllerMediaRouteFoldersUpdate(
+      [{ _id: "mediaRouteFolders:presentation", controllerProfileId: "presentation", mediaRouteFolders: {} } as any],
+      () => false,
+    );
+
+    expect(churchBBroadcast.postMessage).not.toHaveBeenCalled();
+  });
+
   it("seeds independent profile docs from the legacy map once", async () => {
     const legacyMap = {
       "controller-item": "legacy-image",
