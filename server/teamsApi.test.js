@@ -4772,8 +4772,7 @@ test("service plan assignments expose only the selected plan's serving roster", 
     context: scopedManager,
     params: { planKey },
   });
-  assert.equal(scopedResult.statusCode, 200);
-  assert.deepEqual(scopedResult.payload.assignments, []);
+  assert.equal(scopedResult.statusCode, 403);
 });
 
 test("schedule assignment updates broadcast the new schedule over SSE", async (t) => {
@@ -7609,7 +7608,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     churchId: context.churchId,
     role: "member",
     appAccess: "view",
-    permissions: { teams: "view" },
+    permissions: { teams: "view", services: "view" },
   });
   const viewerPairing = await callHandler(
     authHandlers.createWorkstationPairing,
@@ -7637,13 +7636,19 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     headers: {},
     session: workstationSession,
   };
-  const viewerPlanKey = "svc-viewer@2026-07-27";
+  const viewerPlanDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(upcomingStartsAt));
+  const viewerPlanKey = `svc-viewer@${viewerPlanDate}`;
   const detailedViewerPlan = await callHandler(authHandlers.saveServicePlan, {
     context,
     params: { planKey: viewerPlanKey },
     body: {
       serviceId: "svc-viewer",
-      date: "2026-07-27",
+      date: viewerPlanDate,
       name: "Detailed Viewer Service",
       startsAt: upcomingStartsAt,
       timezone: "America/New_York",
@@ -7770,8 +7775,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(viewerRead.payload.publicUrls, undefined);
 
   // Services Edit deliberately includes the assigned names needed to work on
-  // a service plan, even when Teams access is None. This stays a plan-scoped
-  // projection and must not turn into access to private roster fields.
+  // Service Plan access remains independent from Teams access and does not
+  // include private roster fields.
   const servicesEditorContext = await createHumanContext("service_plan_services_editor", {
     churchId: context.churchId,
     role: "member",
@@ -7784,8 +7789,7 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   });
   assert.equal(servicesEditorRead.statusCode, 200);
   const servicesEditorElement = servicesEditorRead.payload.servicePlan.sections[0].elements[0];
-  assert.equal(servicesEditorElement.assignees[0].name, "Avery Stone");
-  assert.equal(servicesEditorElement.assignees[0].memberId, "viewer-member");
+  assert.equal(servicesEditorElement.assignees, undefined);
   const servicesEditorSerialized = JSON.stringify(servicesEditorRead.payload.servicePlan);
   for (const privateRosterValue of [
     "private@example.com",
@@ -7870,11 +7874,11 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   );
   assert.equal(teamsAuthorizedViewerPayload.statusCode, 200);
   const teamsAuthorizedSnapshot = teamsAuthorizedViewerPayload.payload.snapshot;
-  assert.equal(teamsAuthorizedSnapshot.servingTeams[0].members[0].memberName, "Avery Stone");
-  assert.equal(teamsAuthorizedSnapshot.servingTeams[0].members[0].profileImageUrl, "https://example.com/avery.jpg");
+  assert.equal(teamsAuthorizedSnapshot.roles[0].teamId, "viewer-worship");
+  assert.equal(JSON.stringify(teamsAuthorizedSnapshot).includes("private@example.com"), false);
+  assert.equal(JSON.stringify(teamsAuthorizedSnapshot).includes("private roster data"), false);
   const teamsAuthorizedItem = teamsAuthorizedSnapshot.service.sections[0].items[0];
-  assert.equal(teamsAuthorizedItem.microphoneAssignments[0].microphone.name, "Blue");
-  assert.equal(teamsAuthorizedItem.equipmentAssignments[0].equipment.name, "Red IEM");
+  assert.equal(teamsAuthorizedItem.teamNotes.length, 2);
   const publishedViewerPlan = await callHandler(authHandlers.publishServicePlan, {
     context,
     params: { planKey: viewerPlanKey },
@@ -16077,4 +16081,190 @@ test("concurrent team profile saves preserve each team slice and removal blocks 
   const afterRemoval = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   assert.equal(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "resurrect"), false);
   assert.ok(afterRemoval.qualifications.some(({ qualificationId }) => qualificationId === "av-concurrent"));
+});
+
+test("Services catalog reads follow Services grants while scoped Teams retain only planning catalogs", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("services_read_matrix_owner");
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    servicePlanMicrophones: [{ id: "mic-1", name: "Wireless" }],
+    serviceEquipment: [{ id: "iem-1", name: "IEM", category: "iem" }],
+  }, { merge: true });
+
+  const cases = [
+    ["none-none", { teams: "none", services: "none" }, false, false],
+    ["teams-view", { teams: "view", services: "none" }, false, true],
+    ["teams-edit", { teams: "edit", services: "none" }, false, true],
+    ["services-view", { teams: "none", services: "view" }, true, false],
+    ["services-edit", { teams: "none", services: "edit" }, true, false],
+    ["both-edit", { teams: "edit", services: "edit" }, true, true],
+  ];
+  for (const [name, permissions, canReadServicesCatalog, canReadTeamCatalog] of cases) {
+    const context = await createHumanContext(`services_read_${name}`, {
+      churchId: owner.churchId,
+      role: "member",
+      permissions,
+    });
+    const templateList = await callHandler(authHandlers.listServicePlanTemplates, { context });
+    const assignmentHistory = await callHandler(authHandlers.getServicePlanAssignmentHistory, { context });
+    const microphones = await callHandler(authHandlers.getServicePlanMicrophones, { context });
+    const equipment = await callHandler(authHandlers.getServiceEquipment, { context });
+    assert.equal(templateList.statusCode === 200, canReadServicesCatalog, `${name} templates`);
+    assert.equal(assignmentHistory.statusCode === 200, canReadServicesCatalog, `${name} history`);
+    assert.equal(microphones.statusCode === 200, canReadServicesCatalog || canReadTeamCatalog, `${name} microphones`);
+    assert.equal(equipment.statusCode === 200, canReadServicesCatalog || canReadTeamCatalog, `${name} equipment`);
+    if (!canReadServicesCatalog) {
+      const planList = await callHandler(authHandlers.listServicePlans, { context });
+      assert.equal(planList.statusCode, canReadTeamCatalog ? 200 : 403, `${name} team plan status`);
+      if (canReadTeamCatalog) {
+        assert.deepEqual(planList.payload.servicePlans, [], `${name} no unrelated plans`);
+      }
+      const deniedPlan = await callHandler(authHandlers.getServicePlan, {
+        context,
+        params: { planKey: "private@2026-10-11" },
+      });
+      assert.equal(deniedPlan.statusCode, 403, `${name} unrestricted plan detail`);
+    }
+  }
+
+  const admin = await createHumanContext("services_read_admin", {
+    churchId: owner.churchId,
+    role: "admin",
+    permissions: { teams: "none", services: "none" },
+  });
+  for (const handler of [
+    authHandlers.listServicePlanTemplates,
+    authHandlers.getServicePlanAssignmentHistory,
+    authHandlers.getServicePlanMicrophones,
+    authHandlers.getServiceEquipment,
+  ]) {
+    assert.equal((await callHandler(handler, { context: admin })).statusCode, 200);
+  }
+  const servicesEditor = await createHumanContext("services_read_mutation_allowed", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "none", services: "edit" },
+  });
+  assert.equal((await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context: servicesEditor,
+    body: { microphones: [], audiences: [] },
+  })).statusCode, 200);
+
+  const scoped = await createHumanContext("services_read_team_scope", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "none", services: "none", teamScopes: { "scoped-team": "view" } },
+  });
+  const scopedTemplates = await callHandler(authHandlers.listServicePlanTemplates, { context: scoped });
+  const scopedHistory = await callHandler(authHandlers.getServicePlanAssignmentHistory, { context: scoped });
+  assert.equal(scopedTemplates.statusCode, 403);
+  assert.equal(scopedHistory.statusCode, 403);
+  assert.equal((await callHandler(authHandlers.getServicePlanMicrophones, { context: scoped })).statusCode, 200);
+  assert.equal((await callHandler(authHandlers.getServiceEquipment, { context: scoped })).statusCode, 200);
+
+  const servicesViewer = await createHumanContext("services_read_mutation_denied", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "none", services: "view" },
+  });
+  const mutation = await callHandler(authHandlers.saveServicePlanMicrophones, {
+    context: servicesViewer,
+    body: { microphones: [], audiences: [] },
+  });
+  assert.equal(mutation.statusCode, 403);
+});
+
+test("team-scoped plan status does not expose unrelated plans or plan roster projections", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("scoped_service_plan_boundary");
+  const reader = await createHumanContext("scoped_service_plan_reader", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: {
+      teams: "none",
+      services: "none",
+      teamScopes: { [fixture.ids.worship]: "view" },
+    },
+  });
+  const ownPlanKey = "worship-service@2026-10-04";
+  const otherPlanKey = "av-service@2026-10-11";
+  await setDoc(COLLECTIONS.teamSchedules, `${fixture.ids.worship}_schedule`, {
+    occurrences: [{ serviceId: "worship-service", startsAt: "2026-10-04T15:00:00.000Z" }],
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teamSchedules, `${fixture.ids.av}_schedule`, {
+    occurrences: [{ serviceId: "av-service", startsAt: "2026-10-11T15:00:00.000Z" }],
+  }, { merge: true });
+  for (const [planKey, name] of [[ownPlanKey, "Worship plan"], [otherPlanKey, "Private AV plan"]]) {
+    await setDoc(COLLECTIONS.servicePlans, `${fixture.churchId}::${planKey}`, {
+      planKey,
+      churchId: fixture.churchId,
+      name,
+      date: planKey.split("@")[1],
+      sections: [{ id: "section", name: "Songs", elements: [{
+        id: "song", type: "song", title: "Private song", assignedName: "Private member",
+        assignedMemberId: "private-member", assignees: [{ memberId: "private-member" }],
+      }] }],
+    }, { merge: false });
+  }
+
+  const list = await callHandler(authHandlers.listServicePlans, { context: reader });
+  assert.equal(list.statusCode, 200, JSON.stringify(list.payload));
+  assert.deepEqual(list.payload.servicePlans, [{ planKey: ownPlanKey }]);
+  for (const handler of [
+    authHandlers.getServicePlan,
+    authHandlers.getServicePlanViewer,
+    authHandlers.getServicePlanPublicSnapshot,
+    authHandlers.getServicePlanAssignments,
+  ]) {
+    const result = await callHandler(handler, { context: reader, params: { planKey: ownPlanKey } });
+    assert.equal(result.statusCode, 403, `${handler.name}: ${JSON.stringify(result.payload)}`);
+    assert.equal(JSON.stringify(result.payload).includes("Private member"), false);
+  }
+
+  const servicesViewer = await createHumanContext("scoped_plan_explicit_services_view", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", services: "view", teamScopes: {} },
+  });
+  const serviceList = await callHandler(authHandlers.listServicePlans, { context: servicesViewer });
+  assert.equal(serviceList.statusCode, 200);
+  assert.ok(serviceList.payload.servicePlans.some((plan) => plan.planKey === otherPlanKey));
+  const servicePlan = await callHandler(authHandlers.getServicePlan, {
+    context: servicesViewer,
+    params: { planKey: ownPlanKey },
+  });
+  assert.equal(servicePlan.statusCode, 200);
+  assert.equal(JSON.stringify(servicePlan.payload).includes("Private member"), false);
+  assert.deepEqual(
+    servicePlan.payload.servicePlan.sections[0].elements[0],
+    { id: "song", type: "song", title: "Private song" },
+  );
+  const viewer = await callHandler(authHandlers.getServicePlanViewer, {
+    context: servicesViewer,
+    params: { planKey: ownPlanKey },
+  });
+  assert.equal(viewer.statusCode, 200);
+  assert.equal(JSON.stringify(viewer.payload).includes("Private member"), false);
+  assert.equal(JSON.stringify(viewer.payload).includes("private-member"), false);
+  const publicSnapshot = await callHandler(authHandlers.getServicePlanPublicSnapshot, {
+    context: servicesViewer,
+    params: { planKey: ownPlanKey },
+  });
+  assert.equal(publicSnapshot.statusCode, 200);
+  assert.equal(publicSnapshot.payload.snapshot, null);
+  const assignments = await callHandler(authHandlers.getServicePlanAssignments, {
+    context: servicesViewer,
+    params: { planKey: ownPlanKey },
+  });
+  assert.equal(assignments.statusCode, 200);
+  assert.deepEqual(assignments.payload.assignments, []);
+  const teamScheduleDenied = await callHandler(authHandlers.getTeamScheduleDetail, {
+    context: servicesViewer,
+    params: { scheduleId: `${fixture.ids.worship}_schedule` },
+  });
+  assert.equal(teamScheduleDenied.statusCode, 403);
+  const teamBootstrapDenied = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: servicesViewer,
+  });
+  assert.equal(teamBootstrapDenied.statusCode, 403);
 });

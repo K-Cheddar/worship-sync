@@ -1,11 +1,12 @@
 # Independent Controller and Services RTDB write authorization
 
-This repository does not contain or deploy Firebase Realtime Database rules. `firebase.json` configures Firestore only. The shared-data custom token now carries two minimal claims resolved by the server bootstrap:
+This repository does not contain or deploy Firebase Realtime Database rules. `firebase.json` configures Firestore only. The shared-data custom token carries independent claims resolved by the server bootstrap:
 
 - `controllerAccess`: `none`, `view`, `music`, or `full` (legacy `appAccess: "member"` resolves to `none`).
-- `servicesAccess`: `edit` when the member has Services edit, the existing global Teams edit compatibility grant, or admin role; otherwise the normalized Services view/none value.
+- `servicesAccess`: `edit` only when the member has Services edit or admin role; otherwise the normalized Services view/none value. Global Teams Edit does not grant Services access.
+- `sharedDataAuthVersion`: `2`, to let rules reject already-issued tokens with the legacy Teams-to-Services elevation.
 
-The token still contains the legacy `appAccess` claim for old clients. New RTDB rules must use `controllerAccess` and `servicesAccess` for authorization and must not infer Service-time rights from `appAccess`.
+The token still contains the legacy `appAccess` claim for old clients. RTDB rules must require `sharedDataAuthVersion === 2` and use `controllerAccess` and `servicesAccess` independently. Rules must not infer Services rights from `appAccess`, Teams permissions, or Controller access.
 
 ## Authorization boundaries
 
@@ -27,7 +28,7 @@ it does not provide field-level RTDB authorization.
 
 Update the Firebase Realtime Database rules for `churches/{churchId}/data` to enforce all of the following, using the existing verified session, church, and paired-device checks already in the deployed rules:
 
-- Service-management writes require the authenticated church scope and `auth.token.servicesAccess === "edit"`.
+- Service-management writes require the authenticated church scope, `auth.token.sharedDataAuthVersion === 2`, and `auth.token.servicesAccess === "edit"`.
 - `presentation` writes require the existing presentation/operator policy based on `auth.token.controllerAccess` (`music`/`full` retain current behavior); `none` and `view` are denied.
 - `timers` writes retain the current Controller/operator policy (`music`/`full` if that is the deployed rule today); Services edit must not grant timer writes.
 - Controller-owned timer/runtime/display fields in the shared `services` collection must remain writable for eligible `controllerAccess` operators while the overlay Service Times tool writes those fields there. Services management writes remain authorized by `servicesAccess`.
@@ -47,4 +48,6 @@ collection is fully separated while both kinds of writes share it.
 
 ## Deployment requirement
 
-Before production relies on this separation, the Firebase administrator must update the deployed RTDB rules to recognize the two claims above, run allow/deny checks for the three paths, and verify legacy `appAccess` clients still behave as intended during rollout. Until those rules are deployed, the client capability checks are UX guards only; the current deployed rules remain the security boundary and may still deny the Services write.
+Before production relies on this separation, deploy the RTDB rules first with a fail-closed `sharedDataAuthVersion === 2` check, then deploy the server that issues version 2 claims, then ensure clients refresh their shared-data custom token and sign in to the RTDB identity again. Deploying the rule gate first prevents legacy tokens from retaining the old Teams-to-Services elevation; writes may be temporarily denied until the server and clients are updated. Do not add a legacy fallback that treats Teams Edit or `appAccess` as Services Edit.
+
+After rollout, verify with decoded fresh tokens and real RTDB writes that (1) Teams Edit + Services None is denied on service-management fields, (2) Services Edit + Controller None can write service-management fields but not `presentation` or `timers`, and (3) Controller Music/Full + Services None retains only the existing Controller runtime operations. Verify display reads/writes and church/paired-device constraints remain unchanged. This repository does not contain the deployed rules or credentials, so production rule deployment and live allow/deny checks remain unverified here. Until they are deployed, the Firebase authorization issue is not fully resolved.

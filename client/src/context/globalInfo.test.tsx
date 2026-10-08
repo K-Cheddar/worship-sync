@@ -320,6 +320,7 @@ const TeamsLiveProbe = () => {
       <div data-testid="can-edit-worship">{String(context?.canEditTeam?.("worship"))}</div>
       <div data-testid="can-edit-av">{String(context?.canEditTeam?.("av"))}</div>
       <div data-testid="can-view-teams">{String(context?.canViewTeams)}</div>
+      <div data-testid="can-view-services">{String(context?.canViewServices)}</div>
       <div data-testid="can-edit-services">{String(context?.canEditServices)}</div>
       <div data-testid="broad-teams-read">{String(context?.hasBroadTeamsReadAccess)}</div>
   </div>;
@@ -584,6 +585,25 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     } finally {
       global.EventSource = original;
     }
+  });
+
+  it.each([
+    ["no grants", { teams: "none", services: "none", teamScopes: {} }, false],
+    ["Teams view only", { teams: "view", services: "none", teamScopes: {} }, false],
+    ["Teams edit only", { teams: "edit", services: "none", teamScopes: {} }, false],
+    ["team scope only", { teams: "none", services: "none", teamScopes: { worship: "edit" } }, false],
+    ["Services view", { teams: "none", services: "view", teamScopes: {} }, true],
+    ["Services edit", { teams: "none", services: "edit", teamScopes: {} }, true],
+  ])("derives Services navigation independently for %s", async (_name, permissions, allowed) => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      role: "member",
+      permissions,
+    });
+    renderProvider(<TeamsLiveProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("can-view-services")).toHaveTextContent(String(allowed)),
+    );
   });
 
   it("derives scoped edit from legacy appAccess member bootstrap", async () => {

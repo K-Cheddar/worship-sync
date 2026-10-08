@@ -1357,10 +1357,17 @@ export const setDoc = async (
  * The in-memory store shallow-merges, so it already behaved this way — which is
  * exactly why the difference is invisible to a test suite that runs in memory.
  */
-const updateDocFields = async (collectionName, id, data) => {
+const updateDocFields = async (
+  collectionName,
+  id,
+  data,
+  { transaction = null } = {},
+) => {
   const db = requireFirestore();
   if (db) {
-    await db.collection(collectionName).doc(id).update(data);
+    const ref = db.collection(collectionName).doc(id);
+    if (transaction) transaction.update(ref, data);
+    else await ref.update(data);
     return;
   }
   const store = collectionMap[collectionName];
@@ -1389,13 +1396,14 @@ const updateDocMapKeys = async (
   collectionName,
   id,
   field,
-  { set = {}, remove = [], fields = {} } = {},
+  { set = {}, remove = [], removePaths = [], fields = {}, transaction = null } = {},
 ) => {
   const setEntries = Object.entries(set);
   const fieldEntries = Object.entries(fields);
   if (
     setEntries.length === 0 &&
     remove.length === 0 &&
+    removePaths.length === 0 &&
     fieldEntries.length === 0
   ) {
     return;
@@ -1409,11 +1417,13 @@ const updateDocMapKeys = async (
     remove.forEach((key) =>
       args.push(new FieldPath(field, key), FieldValue.delete()),
     );
+    removePaths.forEach((path) =>
+      args.push(new FieldPath(field, ...path), FieldValue.delete()),
+    );
     fieldEntries.forEach(([key, value]) => args.push(key, value));
-    await db
-      .collection(collectionName)
-      .doc(id)
-      .update(...args);
+    const ref = db.collection(collectionName).doc(id);
+    if (transaction) transaction.update(ref, ...args);
+    else await ref.update(...args);
     return;
   }
   const store = collectionMap[collectionName];
@@ -1425,6 +1435,14 @@ const updateDocMapKeys = async (
   });
   remove.forEach((key) => {
     delete nextMap[key];
+  });
+  removePaths.forEach((path) => {
+    let cursor = nextMap;
+    for (const key of path.slice(0, -1)) {
+      cursor = cursor?.[key];
+      if (!cursor || typeof cursor !== "object") return;
+    }
+    if (path.length) delete cursor[path[path.length - 1]];
   });
   store.set(id, { ...current, ...fields, [field]: nextMap });
 };
@@ -4988,7 +5006,7 @@ export const requireTeamsViewSession = async (req, churchId) => {
   ) {
     throw httpError(401, "Authentication required");
   }
-  // Humans with Teams/Services view grants, or booth workstations
+  // Humans with Teams view/edit or a current team scope, or booth workstations
   // (serviceWorkspaceAccess → teams view + services edit). Default
   // workstations stay out — roster endpoints carry member PII.
   if (bootstrap.churchId !== churchId || !hasTeamsViewPermission(bootstrap)) {
@@ -5015,11 +5033,9 @@ export const requireBroadTeamsViewSession = async (req, churchId) => {
   return bootstrap;
 };
 
-// Deliberately narrower than requireTeamsViewSession: also admits a paired
-// workstation with view-only `services` (default pairing), but only for
-// reading saved Service Plans. Prefer requireTeamsViewSession for
-// roster/schedule endpoints — those carry member PII.
-export const requireServicePlansViewSession = async (req, churchId) => {
+// Services access is independent of Teams access. This guard permits plan
+// content, while roster and schedule endpoints continue to use Teams guards.
+export const requireServicesViewSession = async (req, churchId) => {
   const bootstrap = await resolveRequestBootstrap(req);
   if (
     !bootstrap ||
@@ -5028,21 +5044,32 @@ export const requireServicePlansViewSession = async (req, churchId) => {
   ) {
     throw httpError(401, "Authentication required");
   }
-  const teamsPermission = bootstrap.permissions?.teams || "none";
   const servicesPermission = bootstrap.permissions?.services || "none";
   if (
     bootstrap.churchId !== churchId ||
     (bootstrap.role !== "admin" &&
-      teamsPermission !== "view" &&
-      teamsPermission !== "edit" &&
       servicesPermission !== "view" &&
-      servicesPermission !== "edit" &&
-      !hasAnyTeamScope(bootstrap.permissions))
+      servicesPermission !== "edit")
   ) {
-    throw httpError(403, "Service plans access required");
+    throw httpError(403, "Services access required");
   }
   return bootstrap;
 };
+
+export const requireServicesWorkspaceViewSession = async (req, churchId) => {
+  const bootstrap = await requireServicesViewSession(req, churchId);
+  if (
+    bootstrap.sessionKind === SESSION_KIND_WORKSTATION &&
+    !hasWorkstationServiceWorkspaceAccess(bootstrap)
+  ) {
+    throw httpError(403, "Services access required");
+  }
+  return bootstrap;
+};
+
+// Service Plan content is church-wide; team scopes do not authorize it.
+export const requireServicePlansViewSession = async (req, churchId) =>
+  requireServicesViewSession(req, churchId);
 
 const requireTeamsEditSession = async (req, churchId) => {
   const bootstrap = await requireHumanSession(req);
@@ -6517,6 +6544,8 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   readChurchPublicBrandingChrome,
   requireAdminSession,
   requireServicesEditSession,
+  requireServicesViewSession,
+  requireServicesWorkspaceViewSession,
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,

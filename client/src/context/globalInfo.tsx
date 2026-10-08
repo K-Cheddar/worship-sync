@@ -663,7 +663,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             (permissions.teams === "view" || permissions.teams === "edit"))))) &&
     hasBroadTeamsReadAccess;
   const canViewServices =
-    canViewTeams ||
+    role === "admin" ||
     canEditServices ||
     permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);

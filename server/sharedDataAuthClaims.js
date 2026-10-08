@@ -13,7 +13,6 @@ export const buildSharedDataWriteClaims = (bootstrap = {}) => {
   const servicesPermission = bootstrap.permissions?.services;
   const hasServicesEdit =
     bootstrap.role === "admin" ||
-    bootstrap.permissions?.teams === "edit" ||
     servicesPermission === "edit";
   const servicesAccess = hasServicesEdit
     ? "edit"
@@ -21,5 +20,5 @@ export const buildSharedDataWriteClaims = (bootstrap = {}) => {
       ? servicesPermission
       : "none";
 
-  return { controllerAccess, servicesAccess };
+  return { sharedDataAuthVersion: 2, controllerAccess, servicesAccess };
 };

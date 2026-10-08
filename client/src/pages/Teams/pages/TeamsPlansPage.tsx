@@ -318,11 +318,15 @@ const PlansOccurrenceTile = ({
  * Planning Center's Plans tab, which many users will already know.
  */
 const TeamsPlansPage = () => {
-  const { churchId, canEditServices, canEditTeams: canEditTeamsFromContext } =
+  const {
+    churchId,
+    canViewServices,
+    canEditServices,
+    canEditTeam: canEditTeamAccess,
+  } =
     useContext(GlobalInfoContext) || {};
   const {
     pageData,
-    canEditTeams,
     servicePlansRevision,
     upsertData,
     hydrateSchedules,
@@ -1060,15 +1064,13 @@ const TeamsPlansPage = () => {
       assignments,
       pageData.teams,
     );
-    const canEditPlan = Boolean(
-      canEditServices ?? canEditTeamsFromContext ?? canEditTeams,
-    );
+    const canEditPlan = Boolean(canEditServices);
 
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
         <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ServicePlanEditor
+            {canViewServices ? <ServicePlanEditor
               service={selection.service}
               occurrence={selection.occurrence}
               members={pageData.members}
@@ -1125,10 +1127,41 @@ const TeamsPlansPage = () => {
                     assignmentsStatus={assignmentsStatus}
                     showHeading={false}
                     canEdit={canEditPlan}
+                    canEditTeam={canEditTeamAccess}
                   />
                 </div>
               }
-            />
+            /> : (
+              <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+                <div>
+                  <h1 className="text-lg font-semibold text-white">
+                    {selection.service.name}
+                  </h1>
+                  <p className="text-sm text-gray-300">
+                    {new Date(selection.occurrence.startsAt).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={CalendarDays}
+                    onClick={openGeneratedSchedulePeriod}
+                  >
+                    View schedule
+                  </Button>
+                </div>
+                <WhosServingPanel
+                  assignmentTeams={assignmentTeams}
+                  onOpenSchedule={openSchedule}
+                  microphones={microphones}
+                  iemEquipment={iemEquipment}
+                  assignmentsStatus={assignmentsStatus}
+                  canEdit={canEditPlan}
+                  canEditTeam={canEditTeamAccess}
+                />
+              </section>
+            )}
           </div>
           {isDesktop ? (
             <aside
@@ -1163,6 +1196,7 @@ const TeamsPlansPage = () => {
                     microphones={microphones}
                     iemEquipment={iemEquipment}
                     assignmentsStatus={assignmentsStatus}
+                    canEditTeam={canEditTeamAccess}
                   />
                 </div>
               ) : (

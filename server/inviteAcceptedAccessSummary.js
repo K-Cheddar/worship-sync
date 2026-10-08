@@ -67,7 +67,7 @@ export const buildInviteAcceptedAccessLines = ({
   }
 
   const servicesLabel =
-    servicesAccess === "edit" || teamsAccess === "edit"
+    servicesAccess === "edit"
       ? "Edit services and plans"
       : servicesAccess === "view"
         ? "View services"

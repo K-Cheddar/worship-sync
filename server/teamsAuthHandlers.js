@@ -167,6 +167,8 @@ export const createTeamsAuthHandlers = ({
   // Church membership without any teams grant — the guard a volunteer passes.
   requireHumanSession,
   requireServicesEditSession,
+  requireServicesViewSession,
+  requireServicesWorkspaceViewSession,
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
@@ -199,12 +201,14 @@ export const createTeamsAuthHandlers = ({
     requireTeamsEditForTeamSession ||
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
+  const requireServicesView =
+    requireServicesViewSession || requireServicePlansViewSession || requireTeamsView;
+  const requireServicesWorkspaceView =
+    requireServicesWorkspaceViewSession || requireServicesView;
   const requireBroadTeamsView =
     requireBroadTeamsViewSession || requireAdminSession;
-  // Narrower than requireTeamsView: also admits a view-only paired
-  // workstation, but only for reading saved Service Plans (no roster PII).
   const requireServicePlansView =
-    requireServicePlansViewSession || requireTeamsView;
+    requireServicePlansViewSession || requireServicesView;
   const requireScheduleMicrophoneEdit =
     requireScheduleMicrophoneEditSession || requireTeamsEditForTeam;
   const sessionActorUid = (bootstrap) => {
@@ -2222,17 +2226,12 @@ export const createTeamsAuthHandlers = ({
     return safe;
   };
 
-  // Services editors may see the names assigned to a plan so they can work on
-  // its service content, even when they have no Teams workspace access. This
-  // is a narrow plan projection, not roster access: plan-only readers receive
-  // neither assignments in plan documents nor the separate assignments view.
-  // Teams viewers/editors and Services editors also receive the existing
-  // plan-related public team snapshot needed by the service viewer.
+  // Services readers receive plan content without team assignments. Full
+  // assignment projections remain limited to global Teams readers.
   const hasTeamsPlanAccess = (bootstrap) =>
     bootstrap?.role === "admin" ||
     bootstrap?.permissions?.teams === "view" ||
-    bootstrap?.permissions?.teams === "edit" ||
-    bootstrap?.permissions?.services === "edit";
+    bootstrap?.permissions?.teams === "edit";
 
   const isPlanOnlyReader = (bootstrap) =>
     bootstrap?.sessionKind === "workstation"
@@ -2259,6 +2258,39 @@ export const createTeamsAuthHandlers = ({
           : [],
       })),
     };
+  };
+
+  const getTeamScopedServicePlanKeys = async (churchId, reader) => {
+    const teams = await listTeamCollectionForChurch(
+      COLLECTIONS.teams,
+      "teamId",
+      churchId,
+    );
+    const requestedTeamIds = new Set(
+      reader?.role === "admin" ||
+        reader?.permissions?.teams === "view" ||
+        reader?.permissions?.teams === "edit"
+        ? teams.filter((team) => !team.archivedAt).map((team) => team.teamId)
+        : Object.keys(reader?.permissions?.teamScopes || {}),
+    );
+    const activeTeamIds = new Set(
+      teams
+        .filter((team) => !team.archivedAt && requestedTeamIds.has(team.teamId))
+        .map((team) => team.teamId),
+    );
+    const schedules = await listTeamCollectionForChurch(
+      COLLECTIONS.teamSchedules,
+      "scheduleId",
+      churchId,
+    );
+    return new Set(
+      schedules.flatMap((schedule) => {
+        if (schedule.archivedAt || !activeTeamIds.has(schedule.teamId)) return [];
+        return (schedule.occurrences || [])
+          .map(getServicePlanKeyForOccurrence)
+          .filter(Boolean);
+      }),
+    );
   };
 
   /** Whether this request may edit Teams data, as a boolean rather than a throw. */
@@ -3212,8 +3244,6 @@ export const createTeamsAuthHandlers = ({
       const nextQualifications = qualifications.filter(
         (qualification) => !teamOwnedQualifications.has(qualification),
       );
-      const nextMemberships = { ...(member.teamMemberships || {}) };
-      delete nextMemberships[teamId];
       const nextMemberIds = memberIds.filter((id) => id !== memberId);
       const nextTeam = {
         ...team,
@@ -3227,7 +3257,6 @@ export const createTeamsAuthHandlers = ({
         positionIds: nextPositionIds,
         ...(Object.hasOwn(member, "desiredPositionIds") ? { desiredPositionIds: nextDesiredPositionIds } : {}),
         qualifications: nextQualifications,
-        teamMemberships: nextMemberships,
         updatedAt: now,
         updatedByUid: adminUserId,
       };
@@ -3237,14 +3266,28 @@ export const createTeamsAuthHandlers = ({
           updatedAt: now,
           updatedByUid: adminUserId,
         }, { merge: true });
-        transaction.set(db.collection(COLLECTIONS.teamRosterMembers).doc(memberId), memberPatch, { merge: true });
+        await updateDocMapKeys(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          "teamMemberships",
+          {
+            remove: [teamId],
+            fields: memberPatch,
+            transaction,
+          },
+        );
       } else {
         await setDoc(COLLECTIONS.teams, teamId, {
           memberIds: nextMemberIds,
           updatedAt: now,
           updatedByUid: adminUserId,
         }, { merge: true });
-        await setDoc(COLLECTIONS.teamRosterMembers, memberId, memberPatch, { merge: true });
+        await updateDocMapKeys(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          "teamMemberships",
+          { remove: [teamId], fields: memberPatch },
+        );
       }
       return {
         team: nextTeam,
@@ -3615,14 +3658,30 @@ export const createTeamsAuthHandlers = ({
         ...(nextPositions ? { positionIds: replacePositionSlice(member.positionIds || [], nextPositions) } : {}),
         ...(nextDesired ? { desiredPositionIds: replacePositionSlice(member.desiredPositionIds || [], nextDesired) } : {}),
         ...(nextQualifications ? { qualifications: nextQualifications } : {}),
-        ...(nextMembership ? { teamMemberships: { ...(member.teamMemberships || {}), [teamId]: nextMembership } } : {}),
         updatedAt: now,
         updatedByUid: adminUserId,
       };
       if (transaction) {
-        transaction.set(db.collection(COLLECTIONS.teamRosterMembers).doc(memberId), memberPatch, { merge: true });
+        if (nextMembership) {
+          memberPatch.teamMemberships = {
+            ...(member.teamMemberships || {}),
+            [teamId]: nextMembership,
+          };
+        }
+        await updateDocFields(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          memberPatch,
+          { transaction },
+        );
       } else {
-        await setDoc(COLLECTIONS.teamRosterMembers, memberId, memberPatch, { merge: true });
+        if (nextMembership) {
+          memberPatch.teamMemberships = {
+            ...(member.teamMemberships || {}),
+            [teamId]: nextMembership,
+          };
+        }
+        await updateDocFields(COLLECTIONS.teamRosterMembers, memberId, memberPatch);
       }
       return memberPatch;
     };
@@ -3864,17 +3923,14 @@ export const createTeamsAuthHandlers = ({
       (teamId) => removedTeamIds.includes(teamId),
     );
     if (staleRoleTeamIds.length > 0) {
-      const teamMemberships = { ...(member.teamMemberships || {}) };
-      staleRoleTeamIds.forEach((teamId) => delete teamMemberships[teamId]);
-      await setDoc(
+      await updateDocMapKeys(
         COLLECTIONS.teamRosterMembers,
         memberId,
+        "teamMemberships",
         {
-          teamMemberships,
-          updatedAt: nowIso(),
-          updatedByUid: adminUserId,
+          remove: staleRoleTeamIds,
+          fields: { updatedAt: nowIso(), updatedByUid: adminUserId },
         },
-        { merge: true },
       );
       nextMember = await getTeamEntity("member", memberId);
     }
@@ -5157,8 +5213,9 @@ export const createTeamsAuthHandlers = ({
     const nextId = id || (portableCreateKey
       ? `${config.idPrefix}_${portableCreateKey.slice(0, 40)}`
       : createId(config.idPrefix));
+    let existing = null;
     if (id) {
-      await assertTeamEntityInChurch(kind, id, churchId, {
+      existing = await assertTeamEntityInChurch(kind, id, churchId, {
         active: false,
         label: kind,
       });
@@ -5203,7 +5260,27 @@ export const createTeamsAuthHandlers = ({
       });
       return { [config.idField]: nextId, ...saved };
     }
-    await setDoc(config.collection, nextId, doc, { merge: Boolean(id) });
+    if (kind === "member" && id && Object.hasOwn(payload, "teamMemberships")) {
+      // Reconcile explicit membership keys individually. Merge-set resurrects
+      // omitted keys, while whole-map update can overwrite another team's
+      // concurrently added membership.
+      const { teamMemberships, ...memberFields } = doc;
+      const previousMemberships = existing?.teamMemberships || {};
+      await updateDocMapKeys(
+        config.collection,
+        nextId,
+        "teamMemberships",
+        {
+          set: teamMemberships,
+          remove: Object.keys(previousMemberships).filter(
+            (teamId) => !Object.hasOwn(teamMemberships, teamId),
+          ),
+          fields: memberFields,
+        },
+      );
+    } else {
+      await setDoc(config.collection, nextId, doc, { merge: Boolean(id) });
+    }
     return {
       [config.idField]: nextId,
       ...(await getDoc(config.collection, nextId)),
@@ -5378,20 +5455,43 @@ export const createTeamsAuthHandlers = ({
       await Promise.all(
         members.map(async (member) => {
           let changed = false;
-          let nextTeamMemberships = member.teamMemberships || {};
           let nextQualifications = member.qualifications || [];
 
           if (kind === "role") {
-            nextTeamMemberships = Object.fromEntries(
-              Object.entries(nextTeamMemberships).map(
-                ([teamId, membership]) => {
-                  if (membership?.roleId !== id) return [teamId, membership];
-                  changed = true;
-                  const { roleId, ...rest } = membership;
-                  return [teamId, rest];
-                },
-              ),
-            );
+            const removeRoleFields = (current) =>
+              Object.entries(current?.teamMemberships || {})
+                .filter(([, membership]) => membership?.roleId === id)
+                .flatMap(([teamId]) => [
+                  [teamId, "roleId"],
+                  [teamId, "roleLabel"],
+                ]);
+            const removePaths = removeRoleFields(member);
+            if (removePaths.length === 0) return;
+            const db = requireFirestore();
+            if (db) {
+              await db.runTransaction(async (transaction) => {
+                const ref = db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId);
+                const snapshot = await transaction.get(ref);
+                if (!snapshot.exists) return;
+                const latest = { memberId: snapshot.id, ...snapshot.data() };
+                const currentPaths = removeRoleFields(latest);
+                if (currentPaths.length === 0) return;
+                await updateDocMapKeys(
+                  COLLECTIONS.teamRosterMembers,
+                  member.memberId,
+                  "teamMemberships",
+                  { removePaths: currentPaths, fields: touch, transaction },
+                );
+              });
+            } else {
+              await updateDocMapKeys(
+                COLLECTIONS.teamRosterMembers,
+                member.memberId,
+                "teamMemberships",
+                { removePaths, fields: touch },
+              );
+            }
+            return;
           }
 
           if (kind === "qualificationArea") {
@@ -5416,7 +5516,6 @@ export const createTeamsAuthHandlers = ({
             COLLECTIONS.teamRosterMembers,
             member.memberId,
             {
-              teamMemberships: nextTeamMemberships,
               qualifications: nextQualifications,
               ...touch,
             },
@@ -15649,25 +15748,42 @@ export const createTeamsAuthHandlers = ({
     async listServicePlans(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireServicePlansView(req, churchId);
+        let reader;
+        let servicesRead = true;
+        try {
+          reader = await requireServicesView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          servicesRead = false;
+          reader = await requireTeamsView(req, churchId);
+        }
+        const visiblePlanKeys = servicesRead
+          ? null
+          : await getTeamScopedServicePlanKeys(churchId, reader);
         const docs = await queryDocs(
           COLLECTIONS.servicePlans,
           [{ field: "churchId", value: churchId }],
           { limit: TEAM_COLLECTION_QUERY_LIMIT },
         );
-        // Lightweight projection for the Plans list — enough to show "does
-        // this date already have a plan" without shipping every plan's
-        // full section/element content down for a list view.
-        const servicePlans = docs.map((doc) => ({
-          planKey: doc.planKey,
-          serviceId: doc.serviceId,
-          serviceIds: doc.serviceIds,
-          groupId: doc.groupId,
-          date: doc.date,
-          name: doc.name,
-          startsAt: doc.startsAt,
-          published: Boolean(doc.published),
-        }));
+        const visibleDocs = docs.filter((doc) =>
+          servicesRead || visiblePlanKeys.has(doc.planKey),
+        );
+        // Services readers receive plan metadata. Team readers receive only
+        // plan keys for occurrences scheduled by their authorized teams.
+        const servicePlans = visibleDocs.map((doc) =>
+          servicesRead
+            ? {
+                planKey: doc.planKey,
+                serviceId: doc.serviceId,
+                serviceIds: doc.serviceIds,
+                groupId: doc.groupId,
+                date: doc.date,
+                name: doc.name,
+                startsAt: doc.startsAt,
+                published: Boolean(doc.published),
+              }
+            : { planKey: doc.planKey },
+        );
         return res.json({ success: true, servicePlans });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load service plans.");
@@ -16172,7 +16288,7 @@ export const createTeamsAuthHandlers = ({
     async listServicePlanTemplates(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicesWorkspaceView(req, churchId);
         const docs = await queryDocs(
           COLLECTIONS.servicePlanTemplates,
           [{ field: "churchId", value: churchId }],
@@ -16319,7 +16435,7 @@ export const createTeamsAuthHandlers = ({
     async getServicePlanAssignmentHistory(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicesWorkspaceView(req, churchId);
         const doc = await getDoc(
           COLLECTIONS.servicePlanAssignmentHistory,
           churchId,
@@ -16367,7 +16483,14 @@ export const createTeamsAuthHandlers = ({
     async getServicePlanMicrophones(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        // Team schedule workflows need this non-personal catalog to place
+        // equipment assignments. Services readers also use it in the editor.
+        try {
+          await requireServicesWorkspaceView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          await requireTeamsView(req, churchId);
+        }
         const church = await getDoc(COLLECTIONS.churches, churchId);
         const microphones = (
           Array.isArray(church?.servicePlanMicrophones)
@@ -16454,7 +16577,14 @@ export const createTeamsAuthHandlers = ({
     async getServiceEquipment(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        // Team schedule workflows need this non-personal catalog to place
+        // equipment assignments. Services readers also use it in the editor.
+        try {
+          await requireServicesWorkspaceView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          await requireTeamsView(req, churchId);
+        }
         const church = await getDoc(COLLECTIONS.churches, churchId);
         return res.json({
           success: true,

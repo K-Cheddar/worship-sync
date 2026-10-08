@@ -35,6 +35,21 @@ test("buildInviteAcceptedAccessLines labels member app and teams access", () => 
   );
 });
 
+test("Teams Edit is not summarized as Services Edit", () => {
+  assert.deepEqual(
+    buildInviteAcceptedAccessLines({
+      role: "member",
+      appAccess: "full",
+      permissions: { teams: "edit", services: "none", teamScopes: {} },
+    }),
+    [
+      "Controller: Full access",
+      "Teams: Edit all teams",
+      "Services: No service access",
+    ],
+  );
+});
+
 test("buildInviteAcceptedAccessLines includes named per-team edit scopes", () => {
   assert.deepEqual(
     buildInviteAcceptedAccessLines({

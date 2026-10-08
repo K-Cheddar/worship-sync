@@ -100,6 +100,25 @@ describe("WhosServingPanel", () => {
     expect(within(dialog).getByText("Lead")).toBeInTheDocument();
   });
 
+  it("shows schedule access without edit actions for a view-only team", () => {
+    const schedule = {
+      ...assignmentTeams[0],
+      unfilled: [{ ...assignmentTeams[0].filled[0], memberName: null }],
+    };
+    render(
+      <WhosServingPanel
+        assignmentTeams={[schedule]}
+        onOpenSchedule={jest.fn()}
+        canEditTeam={() => false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "View Media schedule" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Media schedule" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 unfilled")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Fill .* for Media/ })).not.toBeInTheDocument();
+  });
+
   it("puts microphone chips on a second line under the role and name", () => {
     render(
       <WhosServingPanel
