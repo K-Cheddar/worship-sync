@@ -3,7 +3,7 @@ import type {
   SongV2SlideDocument, SongV2Documents,
 } from "../types";
 import {
-  getSongV2ArrangementDocId, hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
+  getSongV2ArrangementDocId, getSongV2SlideDocId, hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
   SongV2DocumentError, type SongV2Snapshot,
 } from "./songPersistence";
 import { applyPouchAudit } from "./pouchAudit";
@@ -369,5 +369,43 @@ export async function createSongV2(db: PouchDB.Database, song: DBItem): Promise<
  */
 export async function resumeSongV2Write(db: PouchDB.Database, error: SongV2WriteError): Promise<SongV2WriteResult> {
   return execute(db, error.state);
+}
+
+/** Retries only known cleanup failures after confirming the current manifests still orphan them. */
+export async function reconcileSongV2Orphans(
+  db: PouchDB.Database,
+  songId: string,
+  documentIds: string[],
+): Promise<{ deleted: string[]; skipped: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
+  const snapshot = await loadSongV2Snapshot(db, songId);
+  const referenced = new Set<string>([
+    snapshot.root._id,
+    ...snapshot.root.arrangementIds.map(id => getSongV2ArrangementDocId(songId, id)),
+    ...snapshot.arrangements.flatMap(arrangement => arrangement.slideIds.map(id =>
+      getSongV2SlideDocId(songId, arrangement.arrangementId, id))),
+  ]);
+  const deleted: string[] = [];
+  const skipped: string[] = [];
+  const cleanupErrors: SongV2WriteProgress["cleanupErrors"] = [];
+  for (const documentId of [...new Set(documentIds)]) {
+    if (referenced.has(documentId)) { skipped.push(documentId); continue; }
+    try {
+      const current = await db.get(documentId) as Document;
+      if (current.songId !== songId ||
+        (current.docType !== "song-v2-arrangement" && current.docType !== "song-v2-slide")) {
+        skipped.push(documentId);
+        continue;
+      }
+      await db.remove(current._id, current._rev!);
+      deleted.push(documentId);
+    } catch (cause) {
+      if (typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404) {
+        skipped.push(documentId);
+      } else {
+        cleanupErrors.push({ documentId, cause });
+      }
+    }
+  }
+  return { deleted, skipped, cleanupErrors };
 }
 

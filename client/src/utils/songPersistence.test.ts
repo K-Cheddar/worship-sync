@@ -12,7 +12,7 @@ import {
   loadSong,
   saveSong,
   SongV2BaselineRequiredError,
-  SongV2WriteNotEnabledError,
+  SongV2VersionTransitionError,
   serializeSongToV2Documents,
 } from "./songPersistence";
 
@@ -576,6 +576,19 @@ describe("songPersistence", () => {
     expect(deleted).toBe(source);
   });
 
+  it("rejects a stale v1 editor save after a v2 root is published", async () => {
+    const source = song();
+    const { db, put } = makeDb(source);
+    const originalGet = db.get.bind(db);
+    const root = serializeSongToV2Documents(source).root;
+    jest.spyOn(db, "get").mockImplementation(async (id: string) =>
+      id === getSongV2RootDocId(source._id) ? root : originalGet(id),
+    );
+
+    await expect(saveSong(db, { ...source, name: "Stale edit" }, source)).rejects.toBeInstanceOf(SongV2VersionTransitionError);
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("requires the authored baseline before saving a hydrated v2 song", async () => {
     const source = song();
     const documents = serializeSongToV2Documents(source);
@@ -591,7 +604,7 @@ describe("songPersistence", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("blocks v2 deletion without removing a same-id legacy song", async () => {
+  it("logically deletes a v2 song and cleans its retained legacy document", async () => {
     const legacySong = song();
     const documents = serializeSongToV2Documents(legacySong);
     const { db, remove } = makeDb(
@@ -600,9 +613,8 @@ describe("songPersistence", () => {
     );
 
     await loadSong(db, legacySong._id);
-    await expect(deleteSong(db, legacySong._id)).rejects.toBeInstanceOf(
-      SongV2WriteNotEnabledError,
-    );
-    expect(remove).not.toHaveBeenCalled();
+    const deleted = await deleteSong(db, legacySong._id);
+    expect(deleted._id).toBe(legacySong._id);
+    expect(remove).toHaveBeenCalledWith(legacySong);
   });
 });

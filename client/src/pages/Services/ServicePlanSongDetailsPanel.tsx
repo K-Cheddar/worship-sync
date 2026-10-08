@@ -37,10 +37,10 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     onEditingChange?.(next);
   };
 
-  const persistSongPatch = useCallback(async (patch: ItemDetailsSavePayload & { songAudioPatch?: SongAudio | null }, baselineSong?: DBItem) => {
+  const persistSongPatch = useCallback(async (patch: Omit<ItemDetailsSavePayload, "name"> & { name?: string; songAudioPatch?: SongAudio | null }, baselineSong?: DBItem) => {
     if (!db) throw new Error("The song library is not available. Try again.");
     const existing = baselineSong ?? await loadSong(db, song._id);
-    const next: DBItem = { ...existing, name: patch.name };
+    const next: DBItem = { ...existing, name: patch.name ?? existing.name };
     if (patch.songMetadataPatch !== undefined) {
       if (patch.songMetadataPatch === null) next.songMetadata = undefined;
       else next.songMetadata = patch.songMetadataPatch;
@@ -69,7 +69,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     const previousAudio = baselineSong?.songAudio ?? song.songAudio;
     const audio = await uploadSongAudio({ churchId, songId: song._id, file, previousAudio });
     try {
-      await persistSongPatch({ name: song.name, songAudioPatch: audio }, baselineSong);
+      await persistSongPatch({ songAudioPatch: audio }, baselineSong);
     } catch (error) {
       if (!previousAudio || previousAudio.key !== audio.key) {
         try { await deleteSongAudioWithRetry({ churchId, songId: song._id, audio }); }
@@ -96,7 +96,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       ? baselineSong.songAudio ?? song.songAudio
       : song.songAudio;
     if (baselineSong.docType === "song-v2-root") {
-      await persistSongPatch({ name: baselineSong.name, songAudioPatch: null }, baselineSong);
+      await persistSongPatch({ songAudioPatch: null }, baselineSong);
       try {
         await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
       } catch (error) {
@@ -106,7 +106,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     }
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: song._id, audio }),
-      clearMetadata: () => persistSongPatch({ name: song.name, songAudioPatch: null }),
+      clearMetadata: () => persistSongPatch({ songAudioPatch: null }),
     });
   }, [churchId, db, persistSongPatch, song]);
 

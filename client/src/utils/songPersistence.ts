@@ -4,7 +4,6 @@ import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSl
 import {
   SongV2DocumentError,
   SongV2BaselineRequiredError,
-  SongV2WriteNotEnabledError,
   assertValidV2Root,
   buildSongV2LibraryProjection,
   getSongV2ArrangementDocId,
@@ -15,12 +14,45 @@ import {
 } from "./songV2Codec";
 export * from "./songV2Codec";
 
+export class SongV2VersionTransitionError extends Error {
+  readonly status = 409;
+  readonly code = "SONG_V2_VERSION_TRANSITION";
+  constructor(readonly songId: string) {
+    super(`Song ${songId} was migrated while it was open. Reload it before saving.`);
+    this.name = "SongV2VersionTransitionError";
+  }
+}
+
+export class SongV2DeletedError extends Error {
+  readonly status = 404;
+  constructor(readonly songId: string) {
+    super(`Song ${songId} has been deleted.`);
+    this.name = "SongV2DeletedError";
+  }
+}
+
+export type SongSaveDiagnostics = {
+  onCleanupErrors?: (errors: { documentId: string; cause: unknown }[]) => void;
+};
+
+const reportV2CleanupErrors = (
+  songId: string,
+  errors: { documentId: string; cause: unknown }[],
+  diagnostics?: SongSaveDiagnostics,
+) => {
+  if (errors.length === 0) return;
+  console.error(`Song ${songId} saved, but v2 child cleanup needs reconciliation:`, errors);
+  try { diagnostics?.onCleanupErrors?.(errors); }
+  catch (error) { console.error("Song cleanup diagnostic handler failed:", error); }
+};
+
 /** Resolves only the ordered arrangement manifest, never slide documents. */
 export async function loadSongV2LibraryProjection(
   db: PouchDB.Database,
   root: SongV2RootDocument,
 ): Promise<DBItem> {
   assertValidV2Root(root);
+  if (root.deletedAt) throw new SongV2DeletedError(root.songId);
   const arrangements = await getReferencedDocuments<SongV2ArrangementDocument>(
     db, root.arrangementIds.map((id) => getSongV2ArrangementDocId(root.songId, id)),
   );
@@ -104,6 +136,7 @@ export async function loadSongV2Snapshot(
 ): Promise<SongV2Snapshot> {
   const root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId));
   if (root.songId !== songId) throw new SongV2DocumentError("V2 snapshot song identity mismatch");
+  if (root.deletedAt) throw new SongV2DeletedError(songId);
   assertValidV2Root(root);
   const documents = await loadV2Documents(db, root);
   return {
@@ -132,6 +165,7 @@ export async function loadSong(
     getSongV2RootDocId(songId),
   );
   if (v2Root) {
+    if (v2Root.deletedAt) throw new SongV2DeletedError(songId);
     if (v2Root.songId !== songId) {
       throw new SongV2DocumentError(
         `Song ${songId} has an invalid schema v2 root document.`,
@@ -173,6 +207,7 @@ export async function saveSong(
   db: PouchDB.Database,
   song: DBItem,
   currentSong?: DBItem,
+  diagnostics?: SongSaveDiagnostics,
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
   if (song.docType === "song-v2-root" || isSongV2Root(currentSong)) {
@@ -184,7 +219,9 @@ export async function saveSong(
       throw new SongV2BaselineRequiredError(song._id);
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
+    const result = await saveSongV2FromBaseline(db, currentSong, song);
+    reportV2CleanupErrors(song._id, result.cleanupErrors, diagnostics);
+    return result.song;
   }
   const existing = currentSong ?? await loadSong(db, song._id);
   if (isSongV2Root(existing)) {
@@ -192,7 +229,9 @@ export async function saveSong(
       throw new SongV2BaselineRequiredError(song._id);
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    return (await saveSongV2FromBaseline(db, currentSong, song)).song;
+    const result = await saveSongV2FromBaseline(db, currentSong, song);
+    reportV2CleanupErrors(song._id, result.cleanupErrors, diagnostics);
+    return result.song;
   }
   if (existing.type !== "song") {
     throw new Error(`Document ${song._id} is not a song`);
@@ -210,11 +249,16 @@ export async function saveSong(
     if (value === undefined) delete persistedFields[key];
   }
   const persisted = applyPouchAudit(existing, normalized, { isNew: false });
+  // Recheck at the commit boundary: this editor may have stayed open while a
+  // migration published the authoritative root after the baseline was read.
+  if (await getOptionalDocument<SongV2RootDocument>(db, getSongV2RootDocId(song._id))) {
+    throw new SongV2VersionTransitionError(song._id);
+  }
   const result = await db.put(persisted);
   return normalizeItemSlides({ ...persisted, _rev: result.rev });
 }
 
-/** Tombstones the single song document and returns its prior value for cleanup. */
+/** Logically deletes v2 songs by publishing a root tombstone before child cleanup. */
 export async function deleteSong(
   db: PouchDB.Database,
   songId: string,
@@ -223,7 +267,73 @@ export async function deleteSong(
     db,
     getSongV2RootDocId(songId),
   );
-  if (v2Root) throw new SongV2WriteNotEnabledError(songId, "delete");
+  if (v2Root) {
+    let previousSong: DBItem;
+    if (!v2Root.deletedAt) {
+      previousSong = {
+        _id: songId,
+        _rev: v2Root._rev,
+        type: "song",
+        docType: "song-v2-root",
+        name: v2Root.name,
+        selectedArrangement: v2Root.selectedArrangement,
+        songAudio: v2Root.songAudio,
+        arrangements: [],
+      } as DBItem;
+      const tombstone = applyPouchAudit(v2Root, {
+        ...v2Root,
+        arrangementIds: [],
+        deletedAt: new Date().toISOString(),
+      }, { isNew: false });
+      await db.put(tombstone);
+    } else {
+      previousSong = {
+        _id: songId,
+        _rev: v2Root._rev,
+        type: "song",
+        docType: "song-v2-root",
+        name: v2Root.name,
+        selectedArrangement: v2Root.selectedArrangement,
+        arrangements: [],
+      } as DBItem;
+    }
+
+    // The retained tombstone keeps v2 authoritative even if either cleanup fails.
+    const encodedSongId = encodeURIComponent(songId);
+    const prefixes = [
+      `song-v2:arrangement:${encodedSongId}:`,
+      `song-v2:slide:${encodedSongId}:`,
+    ];
+    let cleanupCandidates: PouchDB.Core.RemoveDocument[] = [];
+    try {
+      const childRows = await Promise.all(prefixes.map(prefix => db.allDocs({
+        startkey: prefix,
+        endkey: `${prefix}\uffff`,
+        include_docs: true,
+      })));
+      cleanupCandidates = childRows.flatMap(result => result.rows.flatMap(row => {
+        const doc = row.doc as Record<string, unknown> | undefined;
+        return doc && doc.songId === songId &&
+          (doc.docType === "song-v2-arrangement" || doc.docType === "song-v2-slide")
+          ? [doc as unknown as PouchDB.Core.RemoveDocument]
+          : [];
+      }));
+    } catch (error) {
+      console.error("Could not inspect deleted song children for cleanup:", songId, error);
+    }
+    let legacy: DBItem | null = null;
+    try { legacy = await getOptionalDocument<DBItem>(db, songId); }
+    catch (error) { console.error("Could not inspect deleted song legacy document for cleanup:", songId, error); }
+    for (const child of cleanupCandidates) {
+      try { await db.remove(child); }
+      catch (error) { console.error("Could not clean deleted song v2 child:", child._id, error); }
+    }
+    if (legacy) {
+      try { await db.remove(legacy as PouchDB.Core.RemoveDocument); }
+      catch (error) { console.error("Could not clean deleted song legacy document:", songId, error); }
+    }
+    return previousSong;
+  }
   const document = (await db.get(songId)) as DBItem;
   if (document.type !== "song") {
     throw new Error(`Document ${songId} is not a song`);

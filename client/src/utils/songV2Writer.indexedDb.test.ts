@@ -2,8 +2,9 @@ import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import type { DBItem } from "../types";
-import { createSong, loadSong, loadSongV2Snapshot, saveSong, songToLibraryProjection } from "./songPersistence";
-import { createSongV2, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
+import { createSong, deleteSong, loadSong, loadSongV2Snapshot, saveSong, songToLibraryProjection, SongV2DeletedError } from "./songPersistence";
+import { createSongV2, reconcileSongV2Orphans, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
+import { persistLocalImageCloudCopy } from "./localImageAssets";
 
 const source = (): DBItem => ({
   _id: "real-song", name: "Song", type: "song", selectedArrangement: 0, slides: [],
@@ -434,6 +435,69 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     expect((await db.get("real-song"))._rev).toBe(persisted._rev);
     await expect(loadSongV2Snapshot(db, "real-song")).rejects.toMatchObject({ status: 404 });
     expect(await db.get("song-v2:slide:real-song:a:s1")).toEqual(expect.objectContaining({ id: "s1" }));
+  });
+
+  it("finalizes a local image cloud copy in the authoritative v2 slide without a legacy document", async () => {
+    const legacy = source();
+    legacy.arrangements[0].slides[0].boxes[0].mediaInfo = {
+      id: "asset-1", type: "image", background: "local-image://asset-1",
+      localImage: { id: "asset-1", storagePolicy: "local-only" },
+    } as never;
+    const persisted = await createSong(db, legacy);
+    await createSongV2(db, persisted);
+    await db.remove(persisted._id, persisted._rev!);
+
+    await persistLocalImageCloudCopy({
+      db, itemId: persisted._id, assetId: "asset-1", mediaId: "media-1",
+      url: "https://res.cloudinary.com/example/image/upload/asset-1.png",
+    });
+
+    const snapshot = await loadSongV2Snapshot(db, persisted._id);
+    expect(snapshot.slides[0].boxes[0].mediaInfo?.localImage).toEqual(expect.objectContaining({
+      id: "asset-1", storagePolicy: "local-and-cloud", cloudMediaId: "media-1",
+      cloudUrl: "https://res.cloudinary.com/example/image/upload/asset-1.png",
+    }));
+    await expect(db.get(persisted._id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("reconciles a known failed cleanup only while the child stays unreferenced", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const removedDraft = {
+      ...baseline.hydrated,
+      arrangements: [{ ...baseline.hydrated.arrangements[0], slides: baseline.hydrated.arrangements[0].slides.slice(1) }],
+    };
+    const candidate = baseline.slides[0]._id;
+    const remove = db.remove.bind(db);
+    jest.spyOn(db, "remove").mockImplementation(async (id, rev) => {
+      if (id === candidate) throw new Error("temporary cleanup failure");
+      return remove(id, rev);
+    });
+    const onCleanupErrors = jest.fn();
+    await expect(saveSong(db, removedDraft, baseline.hydrated, { onCleanupErrors })).resolves.toEqual(expect.objectContaining({
+      docType: "song-v2-root",
+    }));
+    expect(onCleanupErrors.mock.calls[0][0].map((error: { documentId: string }) => error.documentId)).toContain(candidate);
+    jest.spyOn(db, "remove").mockImplementation(remove);
+
+    await expect(reconcileSongV2Orphans(db, "real-song", [candidate])).resolves.toEqual({
+      deleted: [candidate], skipped: [], cleanupErrors: [],
+    });
+    await expect(db.get(candidate)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("deletes v2 songs with a retained root tombstone before child cleanup", async () => {
+    const legacy = await createSong(db, source());
+    await createSongV2(db, legacy);
+
+    const deleted = await deleteSong(db, legacy._id);
+
+    expect(deleted._id).toBe(legacy._id);
+    const tombstone = await db.get("song-v2:root:real-song");
+    expect(tombstone).toEqual(expect.objectContaining({ docType: "song-v2-root", deletedAt: expect.any(String), arrangementIds: [] }));
+    await expect(loadSong(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletedError);
+    await expect(db.get(legacy._id)).rejects.toMatchObject({ status: 404 });
+    await expect(db.get("song-v2:arrangement:real-song:a")).rejects.toMatchObject({ status: 404 });
   });
 });
 

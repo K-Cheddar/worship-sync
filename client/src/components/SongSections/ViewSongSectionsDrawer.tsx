@@ -263,7 +263,7 @@ const ViewSongSectionsDrawer = ({
       ? baselineSong.songAudio ?? song.songAudio
       : song.songAudio;
     if (baselineSong.docType === "song-v2-root") {
-      await persistSongPatch({ name: baselineSong.name, songAudioPatch: null }, baselineSong);
+      await persistSongPatch({ songAudioPatch: null }, baselineSong);
       try {
         await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
       } catch (error) {
