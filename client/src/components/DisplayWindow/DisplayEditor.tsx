@@ -19,6 +19,7 @@ import {
 } from "../../constants";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
 import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
+import LocalSourceStatus from "./LocalSourceStatus";
 
 type DraggableData = {
   node: HTMLElement;
@@ -55,6 +56,7 @@ type DisplayEditorProps = {
   activeVideoUrl?: string;
   isWindowVideoLoaded?: boolean;
   desiredCursorPosition?: number;
+  showLocalSourceStatus?: boolean;
 };
 
 const DisplayEditorComponent = ({
@@ -72,6 +74,7 @@ const DisplayEditorComponent = ({
   activeVideoUrl,
   isWindowVideoLoaded,
   desiredCursorPosition,
+  showLocalSourceStatus = false,
 }: DisplayEditorProps) => {
   const [boxWidth, setBoxWidth] = useState(`${box.width}%`);
   const [boxHeight, setBoxHeight] = useState(`${box.height}%`);
@@ -525,18 +528,24 @@ const DisplayEditorComponent = ({
       }}
     >
       {localImage.isLocalImage && localImage.status === "unavailable" ? (
-        <div
-          className="display-box-background absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black px-6 text-center text-white"
-          role="status"
-          style={{ fontSize: 16 }}
-        >
-          <p className="text-sm font-semibold">Local image unavailable</p>
-          <p className="text-xs text-neutral-300">
-            {localImage.isOwner
-              ? "Open this item on the source device and choose Relink."
-              : `Available on ${box.mediaInfo?.localImage?.ownerLabel || "the source device"} only.`}
-          </p>
-        </div>
+        showLocalSourceStatus ? (
+          <LocalSourceStatus
+            sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+            ownerLabel={
+              localImage.isOwner
+                ? undefined
+                : box.mediaInfo?.localImage?.ownerLabel
+            }
+            heading={
+              localImage.isOwner ? "Local image unavailable" : undefined
+            }
+            detail={
+              localImage.isOwner
+                ? "Open this item on this device and choose Relink."
+                : undefined
+            }
+          />
+        ) : null
       ) : background ||
         (localImage.isLocalImage && localImage.status === "loading") ? (
         <InstantImageSwap
@@ -554,6 +563,28 @@ const DisplayEditorComponent = ({
           alt={box.label ?? ""}
           holdWhileLoading={
             localImage.isLocalImage && localImage.status === "loading"
+          }
+        />
+      ) : null}
+      {showLocalSourceStatus &&
+      isVideoBg &&
+      box.mediaInfo?.localVideoFile &&
+      localVideoDisplay.isLocalVideoFile &&
+      localVideoDisplay.status === "unavailable" ? (
+        <LocalSourceStatus
+          sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
+          ownerLabel={
+            localVideoDisplay.isOwner
+              ? undefined
+              : box.mediaInfo.localVideoFile.ownerLabel
+          }
+          heading={
+            localVideoDisplay.isOwner ? "Local video unavailable" : undefined
+          }
+          detail={
+            localVideoDisplay.isOwner
+              ? "Open Media on this device and relink the file."
+              : undefined
           }
         />
       ) : null}
@@ -692,7 +723,8 @@ const areDisplayEditorPropsEqual = (
   prevProps.scaleFactor === nextProps.scaleFactor &&
   prevProps.activeVideoUrl === nextProps.activeVideoUrl &&
   prevProps.isWindowVideoLoaded === nextProps.isWindowVideoLoaded &&
-  prevProps.desiredCursorPosition === nextProps.desiredCursorPosition;
+  prevProps.desiredCursorPosition === nextProps.desiredCursorPosition &&
+  prevProps.showLocalSourceStatus === nextProps.showLocalSourceStatus;
 
 const DisplayEditor = memo(DisplayEditorComponent, areDisplayEditorPropsEqual);
 
