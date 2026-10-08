@@ -63,6 +63,7 @@ import type {
   TeamIntakePreview,
   TeamIntakeRecipient,
   SmsDeliveryAttempt,
+  SmsMemberEligibility,
   SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
@@ -1056,6 +1057,15 @@ export const cancelSmsConsent = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const recordMemberSmsConsent = async (
+  churchId: string,
+  body: { memberId: string; source: "admin_verbal" | "admin_signed_form"; consentedAt: string; confirmed: true },
+) =>
+  apiFetch<{ success: boolean; eligibility: SmsMemberEligibility }>(
+    `api/sms-consent/${encodeURIComponent(churchId)}/admin-record`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const updateHumanProfile = async (body: { displayName: string }) =>

@@ -41,6 +41,7 @@ import {
   SMS_CONSENT_VERSION,
   smsConsentIdForChurchPhone,
   smsConsentIdForLegacyPhone,
+  withSmsConsentMutationLock,
   verifySmsConsentCode,
 } from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
@@ -664,7 +665,6 @@ const collectionMap = {
 };
 
 const rateLimits = new Map();
-const smsConsentMutationQueues = new Map();
 const RATE_LIMIT_SWEEP_INTERVAL = 200;
 let rateLimitEnforcementCount = 0;
 
@@ -674,25 +674,6 @@ const sweepExpiredRateLimits = (now) => {
     const resetAt = Number(bucket?.resetAt || 0);
     if (blockedUntil <= now && resetAt <= now) {
       rateLimits.delete(bucketKey);
-    }
-  }
-};
-
-const withSmsConsentMutationLock = async (consentId, operation) => {
-  const previous = smsConsentMutationQueues.get(consentId) || Promise.resolve();
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  const current = previous.then(() => gate);
-  smsConsentMutationQueues.set(consentId, current);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (smsConsentMutationQueues.get(consentId) === current) {
-      smsConsentMutationQueues.delete(consentId);
     }
   }
 };
@@ -1755,6 +1736,64 @@ const upsertSmsConsent = async (
       { merge: false },
     );
     return { consentId, challenge, shouldSend: true };
+  });
+};
+
+const recordAdminSmsConsent = async ({
+  churchId,
+  phoneNumber,
+  source,
+  consentedAt,
+  recordedByUid,
+}) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) throw httpError(400, "A valid mobile number is required.");
+  const recordedAt = nowIso();
+  const record = {
+    consentId,
+    churchId,
+    phoneNumber: normalizedPhoneNumber,
+    phoneHash: hashValue(normalizedPhoneNumber),
+    status: "opted_in",
+    optedOut: false,
+    optedOutAt: null,
+    source,
+    consentedAt,
+    recordedAt,
+    recordedByUid,
+    consentVersion: SMS_CONSENT_VERSION,
+    consentText: SMS_CONSENT_TEXT,
+    createdAt: recordedAt,
+    updatedAt: recordedAt,
+  };
+  const db = requireFirestore();
+  const protectExistingConsent = (existing) => {
+    if (existing?.status === "opted_out" || existing?.optedOutAt || existing?.optedOut === true) {
+      throw httpError(409, "This phone number opted out. The person must text START to opt in again.");
+    }
+    if (existing?.status === "opted_in") {
+      throw httpError(409, "SMS consent is already recorded for this number.");
+    }
+  };
+
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(consentRef);
+      const existing = snapshot.exists ? snapshot.data() : null;
+      protectExistingConsent(existing);
+      transaction.set(consentRef, { ...record, createdAt: existing?.createdAt || recordedAt }, { merge: true });
+      return { consentId, record: { ...record, createdAt: existing?.createdAt || recordedAt } };
+    });
+  }
+
+  return withSmsConsentMutationLock(consentId, async () => {
+    const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+    protectExistingConsent(existing);
+    const nextRecord = { ...record, createdAt: existing?.createdAt || recordedAt };
+    await setDoc(COLLECTIONS.smsConsents, consentId, nextRecord, { merge: true });
+    return { consentId, record: nextRecord };
   });
 };
 
@@ -7798,6 +7837,66 @@ export const authHandlers = {
           statusCode >= 500
             ? "Could not confirm SMS signup cancellation. The verification code may remain usable until it expires."
             : error.message || "Could not confirm SMS signup cancellation.",
+      });
+    }
+  },
+
+  /** Church admins can record a member's verbal or signed-form consent. */
+  async recordMemberSmsConsent(req, res) {
+    try {
+      const churchId = String(req.params?.churchId || "").trim();
+      if (!churchId) throw httpError(400, "A church is required.");
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, churchId);
+      const memberId = String(req.body?.memberId || "").trim();
+      const source = String(req.body?.source || "").trim();
+      const consentedAt = String(req.body?.consentedAt || "").trim();
+      if (req.body?.confirmed !== true) {
+        throw httpError(400, "Confirm that the person agreed to receive WorshipSync SMS messages.");
+      }
+      if (!memberId) throw httpError(400, "Choose a roster member.");
+      if (!["admin_verbal", "admin_signed_form"].includes(source)) {
+        throw httpError(400, "Choose verbal consent or a signed form.");
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(consentedAt) || Number.isNaN(Date.parse(`${consentedAt}T00:00:00Z`)) || new Date(`${consentedAt}T00:00:00Z`).toISOString().slice(0, 10) !== consentedAt) {
+        throw httpError(400, "Enter the date consent was obtained.");
+      }
+      const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+      if (!member || member.churchId !== churchId) {
+        throw httpError(404, "Roster member not found.");
+      }
+      const phoneNumber = normalizeUsPhoneNumber(member.phoneNumber);
+      if (!phoneNumber) throw httpError(400, "Add a valid mobile number before recording consent.");
+      const result = await recordAdminSmsConsent({
+        churchId,
+        phoneNumber,
+        source,
+        consentedAt,
+        recordedByUid: admin.user.uid,
+      });
+      try {
+        await addSecurityEvent({
+          type: "sms_consent_recorded_by_admin",
+          churchId,
+          consentId: result.consentId,
+          memberId,
+          phoneHash: hashValue(phoneNumber),
+          source,
+          recordedByUid: admin.user.uid,
+        });
+      } catch (auditError) {
+        // The consent write is already durable; report success so the admin
+        // doesn't retry a completed write and see a misleading conflict.
+        console.error("Could not audit admin-recorded SMS consent.", auditError);
+      }
+      return res.json({ success: true, eligibility: { status: "enabled", eligible: true, phoneNumber } });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        errorMessage: statusCode >= 500
+          ? "Could not record SMS consent. Try again in a moment."
+          : error.message || "Could not record SMS consent.",
       });
     }
   },

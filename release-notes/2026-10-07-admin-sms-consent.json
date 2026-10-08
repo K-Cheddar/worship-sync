@@ -1,0 +1,7 @@
+{
+  "id": "admin-recorded-sms-consent",
+  "date": "2026-10-07",
+  "type": "improved",
+  "title": "Record volunteer SMS consent",
+  "description": "Church admins can record verbal or signed-form consent for a roster member and see their SMS eligibility update in Teams."
+}

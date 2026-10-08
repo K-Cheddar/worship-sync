@@ -19,6 +19,7 @@ const makeHarness = ({ valid = true } = {}) => {
   const consentB = smsConsentIdForChurchPhone("church_b", phone);
   docs.set(key("smsConsents", consentA), {
     consentId: consentA, churchId: "church_a", phoneNumber: phone, status: "opted_in",
+    source: "web_form", consentVersion: "version", consentText: "consent text",
     verifiedAt: "verified", consentedAt: "consented", createdAt: "created",
   });
   const handler = createSmsInboundWebhookHandler({
@@ -79,7 +80,7 @@ test("STOP opts out only the church identified by the receiving sender and dedup
   assert.equal(repeat.statusCode, 200);
 });
 
-test("START restores only a previously verified opt-in and HELP does not send an automatic reply", async () => {
+test("START restores a prior web opt-in and HELP does not send an automatic reply", async () => {
   const h = makeHarness();
   await h.invoke({ body: "STOP", sid: "SM_STOP" });
   await h.invoke({ body: "START", sid: "SM_START" });
@@ -88,6 +89,52 @@ test("START restores only a previously verified opt-in and HELP does not send an
   assert.equal(restored.optedOutAt, null);
   const help = await h.invoke({ body: "HELP", sid: "SM_HELP" });
   assert.equal(help.body, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>");
+  assert.equal(h.docs.get(h.key("smsConsents", h.consentA)).status, "opted_in");
+});
+
+test("START restores prior verbal or signed consent after STOP without an OTP verifiedAt", async () => {
+  for (const source of ["admin_verbal", "admin_signed_form"]) {
+    const h = makeHarness();
+    h.docs.set(h.key("smsConsents", h.consentA), {
+      ...h.docs.get(h.key("smsConsents", h.consentA)),
+      source,
+      verifiedAt: undefined,
+      recordedAt: "2026-09-20T12:00:00.000Z",
+      recordedByUid: "admin-1",
+    });
+    await h.invoke({ body: "STOP", sid: `${source}_STOP` });
+    await h.invoke({ body: "START", sid: `${source}_START` });
+    const restored = h.docs.get(h.key("smsConsents", h.consentA));
+    assert.equal(restored.status, "opted_in", source);
+    assert.equal(restored.verifiedAt, undefined, source);
+    assert.equal(restored.optInAgainSource, "twilio_inbound", source);
+  }
+});
+
+test("START does not restore a STOP record without complete prior consent evidence", async () => {
+  const h = makeHarness();
+  h.docs.set(h.key("smsConsents", h.consentA), {
+    ...h.docs.get(h.key("smsConsents", h.consentA)),
+    source: "admin_verbal",
+    verifiedAt: undefined,
+    recordedAt: "2026-09-20T12:00:00.000Z",
+    recordedByUid: "admin-1",
+    consentText: "",
+  });
+  await h.invoke({ body: "STOP", sid: "SM_NO_EVIDENCE_STOP" });
+  await h.invoke({ body: "START", sid: "SM_NO_EVIDENCE_START" });
+  assert.equal(h.docs.get(h.key("smsConsents", h.consentA)).status, "opted_out");
+});
+
+test("START remains compatible with legacy verified web consent without provenance fields", async () => {
+  const h = makeHarness();
+  const consent = h.docs.get(h.key("smsConsents", h.consentA));
+  delete consent.source;
+  delete consent.consentVersion;
+  delete consent.consentText;
+  h.docs.set(h.key("smsConsents", h.consentA), consent);
+  await h.invoke({ body: "STOP", sid: "SM_LEGACY_STOP" });
+  await h.invoke({ body: "START", sid: "SM_LEGACY_START" });
   assert.equal(h.docs.get(h.key("smsConsents", h.consentA)).status, "opted_in");
 });
 
