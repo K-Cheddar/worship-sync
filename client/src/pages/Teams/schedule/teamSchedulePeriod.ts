@@ -123,7 +123,7 @@ export const findInitialTeamSchedulePeriod = ({
   teamId,
   schedules = [],
   now = serverDate(),
-  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  timeZone = "UTC",
 }: {
   services: TeamService[];
   positions: TeamPosition[];

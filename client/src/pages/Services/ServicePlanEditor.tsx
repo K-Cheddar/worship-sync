@@ -60,6 +60,7 @@ import {
 import { cn } from "@/utils/cnHelper";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useChat } from "../../chat/ChatContext";
 import { useToast } from "../../context/toastContext";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateAllDocs } from "../../utils/dbUtils";
@@ -511,6 +512,7 @@ const ServicePlanEditor = ({
 }: ServicePlanEditorProps) => {
   const { churchId, userId, access, churchBranding, churchIntegrations, canUseTeamsLiveSync } =
     useContext(GlobalInfoContext) || {};
+  const churchTimeZone = useChat()?.context?.timeZone || "UTC";
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
     churchIntegrations?.planningCenter?.connected,
@@ -597,12 +599,12 @@ const ServicePlanEditor = ({
         planKey: sourcePlan?.planKey || planKey,
         startsAt: sourcePlan?.startsAt || occurrence.startsAt,
         timezone:
-          sourcePlan?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+          sourcePlan?.timezone || churchTimeZone,
         sections: nextSections,
         publicLive: sourcePlan?.publicLive,
       });
     },
-    [occurrence.startsAt, onPlanTimingChange, planKey],
+    [churchTimeZone, occurrence.startsAt, onPlanTimingChange, planKey],
   );
   // Do not expose the empty-plan actions until the first fetch has answered.
   // Otherwise a fast click can create a local draft that the initial response
@@ -968,7 +970,7 @@ const ServicePlanEditor = ({
   // save would let an editor working from another timezone silently shift the
   // wall-clock times public viewers see.
   const planTimezone =
-    plan?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    plan?.timezone || churchTimeZone;
 
   /** Best-effort: remembers any newly-typed "Assigned to" names for future
    * suggestions. Never blocks or fails the plan save itself. */

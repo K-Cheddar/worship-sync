@@ -82,7 +82,7 @@ export const listCurrentServiceOccurrences = (
     0,
     window.lookaheadDays ?? CURRENT_SERVICE_LOOKAHEAD_DAYS,
   );
-  const timeZone = window.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const timeZone = window.timeZone || "UTC";
   const startDate = calendarDateInTimeZone(
     new Date(nowMs - lookbackDays * DAY_MS),
     timeZone,

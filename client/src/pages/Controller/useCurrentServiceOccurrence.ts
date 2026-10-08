@@ -78,7 +78,7 @@ export const useCurrentServiceOccurrence = (
   services: TeamService[],
 ): CurrentServiceOccurrence => {
   const chat = useChat();
-  const serviceTimeZone = chat?.context?.timeZone;
+  const serviceTimeZone = chat?.context?.timeZone || "UTC";
   const authoritativeNowMs = useAuthoritativeServerNowMs();
   /** Anchored for the current server calendar-day context: the candidate
    * window shouldn't drift under a session that stays open through a service. */

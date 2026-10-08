@@ -1404,6 +1404,14 @@ app.get(
   authHandlers.getTeamsBootstrap,
 );
 app.get(
+  "/api/churches/:churchId/service-time-zone",
+  authHandlers.getChurchServiceTimeZone,
+);
+app.post(
+  "/api/churches/:churchId/service-time-zone",
+  authHandlers.updateChurchServiceTimeZone,
+);
+app.get(
   "/api/churches/:churchId/notification-intents",
   authHandlers.listIntents,
 );

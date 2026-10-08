@@ -1116,6 +1116,20 @@ export const listChurchMembers = async (churchId: string) =>
     `api/churches/${churchId}/members`,
   );
 
+export const getChurchServiceTimeZone = async (churchId: string) =>
+  apiFetch<{ success: boolean; serviceTimeZone: string; isConfigured: boolean }>(
+    `api/churches/${churchId}/service-time-zone`,
+  );
+
+export const updateChurchServiceTimeZone = async (
+  churchId: string,
+  serviceTimeZone: string,
+) =>
+  apiFetch<{ success: boolean; serviceTimeZone: string; isConfigured: boolean }>(
+    `api/churches/${churchId}/service-time-zone`,
+    { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
+  );
+
 export const listChurchInvites = async (churchId: string) =>
   apiFetch<{ success: boolean; invites: ChurchInviteRow[] }>(
     `api/churches/${churchId}/invites`,

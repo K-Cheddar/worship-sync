@@ -169,7 +169,7 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
     () =>
       listCurrentServiceOccurrences(services, nowMs, {
         lookaheadDays: VIEWER_OCCURRENCE_LOOKAHEAD_DAYS,
-        timeZone: chat?.context?.timeZone,
+        timeZone: chat?.context?.timeZone || "UTC",
       }),
     [chat?.context?.timeZone, nowMs, services],
   );

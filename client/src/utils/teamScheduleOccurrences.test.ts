@@ -142,6 +142,63 @@ describe("generateScheduleOccurrences", () => {
     ).toBe("2026-10-05");
   });
 
+  it("moves a nonexistent spring-forward service time to the first valid wall time", () => {
+    const [occurrence] = generateScheduleOccurrences({
+      services: [service({ dayOfWeek: 0, time: "02:30" })],
+      serviceIds: ["service"],
+      startDate: "2026-03-08",
+      endDate: "2026-03-08",
+      timeZone: "America/New_York",
+    });
+
+    expect(occurrence).toMatchObject({
+      serviceDate: "2026-03-08",
+      startsAt: "2026-03-08T07:30:00.000Z",
+    });
+  });
+
+  it("chooses the earlier instant for an ambiguous fall-back service time", () => {
+    const [occurrence] = generateScheduleOccurrences({
+      services: [service({ dayOfWeek: 0, time: "01:30" })],
+      serviceIds: ["service"],
+      startDate: "2026-11-01",
+      endDate: "2026-11-01",
+      timeZone: "America/New_York",
+    });
+
+    expect(occurrence).toMatchObject({
+      serviceDate: "2026-11-01",
+      startsAt: "2026-11-01T05:30:00.000Z",
+    });
+  });
+
+  it("generates a large recurring schedule within a bounded time", () => {
+    const services = Array.from({ length: 100 }, (_, index) =>
+      service({
+        serviceId: `service-${index}`,
+        dayOfWeek: (index % 7) as NonNullable<TeamService["dayOfWeek"]>,
+        time: `${String(6 + (index % 12)).padStart(2, "0")}:00`,
+      }),
+    );
+    const startedAt = Date.now();
+    const occurrences = generateScheduleOccurrences({
+      services,
+      serviceIds: services.map(({ serviceId }) => serviceId),
+      startDate: "2026-01-01",
+      endDate: "2035-12-31",
+      timeZone: "America/New_York",
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    if (process.env.WORSHIPSYNC_BENCHMARK_SCHEDULES === "1") {
+      console.info(
+        `Generated ${occurrences.length} occurrences for 100 services in ${elapsedMs} ms.`,
+      );
+    }
+    expect(occurrences.length).toBeGreaterThan(50_000);
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
   it("keeps historical occurrences for archived services and skips dates after archive", () => {
     const archivedService = service({
       serviceId: "retired",
@@ -320,6 +377,7 @@ describe("generateScheduleOccurrences", () => {
       serviceIds: ["first", "second"],
       startDate: "2026-07-05",
       endDate: "2026-07-05",
+      timeZone: "America/New_York",
     });
 
     expect(occurrences).toHaveLength(1);
@@ -330,7 +388,7 @@ describe("generateScheduleOccurrences", () => {
     expect(combined.serviceIds).toEqual(["first", "second"]);
     expect(combined.name).toBe("First Service & Second Service");
     expect(combined.startsAt).toBe(occurrences[0].startsAt);
-    expect(new Date(combined.startsAt).getHours()).toBe(9);
+    expect(combined.startsAt).toBe("2026-07-05T13:00:00.000Z");
     // Requirements are the union, keeping the larger count per position.
     expect(combined.positionRequirements).toEqual(
       expect.arrayContaining([

@@ -84,6 +84,7 @@ import {
   isValidPortableTimeZone,
   portableWallClockToIso,
 } from "./dataTransfer/time.js";
+import { invalidateChurchServiceTimeZone } from "./churchServiceTimeZone.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -15790,6 +15791,54 @@ export const createTeamsAuthHandlers = ({
     // from scratch or import, then edit) — separate from ServiceTime (the
     // recurring day/time/positions definition) and from the live PouchDB
     // outline it eventually gets pushed into.
+    async getChurchServiceTimeZone(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        try {
+          await requireServicesView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          await requireTeamsView(req, churchId);
+        }
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (!church) throw httpError(404, "Church settings were not found.");
+        const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
+        const serviceTimeZone = isConfigured ? church.serviceTimeZone : "UTC";
+        return res.json({ success: true, serviceTimeZone, isConfigured });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load the church service timezone.",
+        );
+      }
+    },
+
+    async updateChurchServiceTimeZone(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireServicesEdit(req, churchId);
+        const serviceTimeZone = String(req.body?.serviceTimeZone || "").trim();
+        if (!isValidPortableTimeZone(serviceTimeZone)) {
+          throw httpError(400, "Choose a valid IANA timezone.");
+        }
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (!church) throw httpError(404, "Church settings were not found.");
+        await updateDocFields(COLLECTIONS.churches, churchId, {
+          serviceTimeZone,
+        });
+        invalidateChurchServiceTimeZone(churchId);
+        return res.json({ success: true, serviceTimeZone, isConfigured: true });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update the church service timezone.",
+        );
+      }
+    },
+
     async listServicePlans(req, res) {
       try {
         const churchId = req.params.churchId;

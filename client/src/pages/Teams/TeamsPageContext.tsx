@@ -18,7 +18,6 @@ export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
   // clock when an operator opens Teams from another timezone.
   const serviceTimeZone =
     chat?.context?.timeZone ||
-    Intl.DateTimeFormat().resolvedOptions().timeZone ||
     "UTC";
   const domainResources = useTeamsDomainResources();
   const templatesLoaded = domainResources.templates.loaded;

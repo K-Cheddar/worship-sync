@@ -53,6 +53,7 @@ export const getCreateScheduleDefaultRange = ({
         occurrences: upcoming.period.occurrences,
         visibleStartDate: range.startDate,
         visibleEndDate: range.endDate,
+        timeZone,
       }).schedule
       : null;
     if (!coveredSchedule) return range;

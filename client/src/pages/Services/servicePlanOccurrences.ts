@@ -48,8 +48,7 @@ export const getOneTimeServiceOccurrence = (
 ): TeamScheduleOccurrence | null => {
   const isoDate = service.overrideDateTimeISO || service.dateTimeISO;
   if (!isoDate) return null;
-  const resolvedTimeZone =
-    timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const resolvedTimeZone = timeZone || "UTC";
   const date = calendarDateInTimeZone(new Date(isoDate), resolvedTimeZone);
   const [occurrence] = getServiceOccurrencesInRange({
     services,

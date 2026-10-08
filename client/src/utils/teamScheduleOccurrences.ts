@@ -36,8 +36,23 @@ const toOccurrence = (
   };
 };
 
-const wallClockPartsAt = (instant: number, timeZone: string) => {
-  const parts = new Intl.DateTimeFormat("en-US", {
+const MAX_TIME_ZONE_CACHE_ENTRIES = 12_000;
+const wallClockFormatterCache = new Map<string, Intl.DateTimeFormat>();
+const serviceDateOffsetsCache = new Map<string, number[]>();
+const serviceDateTimeCache = new Map<string, number | null>();
+
+const cacheValue = <T,>(cache: Map<string, T>, key: string, value: T): T => {
+  if (cache.size >= MAX_TIME_ZONE_CACHE_ENTRIES) {
+    cache.delete(cache.keys().next().value as string);
+  }
+  cache.set(key, value);
+  return value;
+};
+
+const wallClockFormatter = (timeZone: string) => {
+  const cached = wallClockFormatterCache.get(timeZone);
+  if (cached) return cached;
+  const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
     month: "2-digit",
@@ -46,8 +61,30 @@ const wallClockPartsAt = (instant: number, timeZone: string) => {
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(new Date(instant));
+  });
+  wallClockFormatterCache.set(timeZone, formatter);
+  return formatter;
+};
+
+const wallClockPartsAt = (instant: number, timeZone: string) => {
+  const parts = wallClockFormatter(timeZone).formatToParts(new Date(instant));
   return Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+};
+
+const getServiceDateOffsets = (date: string, timeZone: string, naive: number) => {
+  const key = `${timeZone}|${date}`;
+  const cached = serviceDateOffsetsCache.get(key);
+  if (cached) return cached;
+  const offsets = new Set<number>();
+  // Three samples cover the offset immediately around the date and both sides
+  // of a DST transition. Recurring services on the same date share this work.
+  for (const hours of [-36, 0, 36]) {
+    const sample = naive + hours * 60 * 60 * 1000;
+    const parts = wallClockPartsAt(sample, timeZone);
+    const wallClock = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+    offsets.add(Date.parse(`${wallClock}Z`) - sample);
+  }
+  return cacheValue(serviceDateOffsetsCache, key, [...offsets]);
 };
 
 /** Convert a service's local date and wall clock into an instant in its zone. */
@@ -59,24 +96,24 @@ const serviceDateTime = (
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
     return null;
   }
+  const cacheKey = `${timeZone}|${date}|${time}`;
+  const cached = serviceDateTimeCache.get(cacheKey);
+  if (cached !== undefined) return cached === null ? null : new Date(cached);
   const requested = `${date}T${time}:00`;
   const naive = Date.parse(`${requested}Z`);
   try {
-    const offsets = new Set<number>();
-    for (let hours = -36; hours <= 36; hours += 6) {
-      const sample = naive + hours * 60 * 60 * 1000;
-      const parts = wallClockPartsAt(sample, timeZone);
-      const wallClock = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
-      offsets.add(Date.parse(`${wallClock}Z`) - sample);
-    }
-    const candidates = [...offsets].map((offset) => naive - offset);
+    const offsets = getServiceDateOffsets(date, timeZone, naive);
+    const candidates = offsets.map((offset) => naive - offset);
     const exact = candidates
       .filter((instant) => {
         const parts = wallClockPartsAt(instant, timeZone);
         return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}` === requested;
       })
       .sort((left, right) => left - right);
-    if (exact.length) return new Date(exact[0]);
+    if (exact.length) {
+      cacheValue(serviceDateTimeCache, cacheKey, exact[0]);
+      return new Date(exact[0]);
+    }
 
     // Match the existing local Date behavior through a spring-forward gap by
     // moving the wall clock forward to the first valid time on the same date.
@@ -90,8 +127,10 @@ const serviceDateTime = (
       })
       .filter(({ wallClock }) => wallClock.slice(0, 10) === date && wallClock > requested)
       .sort((left, right) => left.wallClock.localeCompare(right.wallClock) || left.instant - right.instant)[0];
+    cacheValue(serviceDateTimeCache, cacheKey, forward?.instant ?? null);
     return forward ? new Date(forward.instant) : null;
   } catch {
+    cacheValue(serviceDateTimeCache, cacheKey, null);
     return null;
   }
 };
@@ -114,8 +153,9 @@ const nthWeekdayOfMonth = (
   return result.getMonth() === month ? result : null;
 };
 
-export const getDefaultScheduleRange = () => {
-  const now = new Date();
+export const getDefaultScheduleRange = (timeZone = "UTC") => {
+  const now =
+    parsePlainDate(calendarDateInTimeZone(new Date(), timeZone)) || new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   return {
@@ -372,7 +412,7 @@ export const generateScheduleOccurrences = ({
   serviceIds,
   startDate,
   endDate,
-  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  timeZone = "UTC",
 }: {
   services: TeamService[];
   serviceIds: string[];

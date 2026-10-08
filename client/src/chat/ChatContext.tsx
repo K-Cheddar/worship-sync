@@ -45,6 +45,7 @@ type ChatContextValue = {
   openChat: () => void;
   closeChat: () => void;
   context: ChatContextInfo | null;
+  refreshContext: () => Promise<void>;
   selectedDayKey: string;
   selectDay: (dayKey: string) => Promise<void>;
   messages: ChatMessage[];
@@ -249,7 +250,8 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         if (
           churchIdRef.current !== requestedChurchId ||
           contextRef.current !== requestedContext ||
-          nextContext.todayKey === requestedContext.todayKey
+          (nextContext.todayKey === requestedContext.todayKey &&
+            nextContext.timeZone === requestedContext.timeZone)
         ) {
           return;
         }
@@ -951,6 +953,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       openChat,
       closeChat,
       context,
+      refreshContext: synchronizeContext,
       selectedDayKey,
       selectDay,
       messages: messagesByDay[selectedDayKey] || [],
@@ -1001,6 +1004,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       editMessage,
       removeMessage,
       toggleReaction,
+      synchronizeContext,
       typingUsers,
       unreadCount,
       updateTypingDraft,

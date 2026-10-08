@@ -549,6 +549,7 @@ const ScheduleTab = ({
     occurrences: generatedPeriodOccurrences,
     visibleStartDate: periodRange.start,
     visibleEndDate: periodRange.end,
+    timeZone: serviceTimeZone,
     preferredScheduleId: periodScheduleSelection?.scope === periodSelectionScope
       ? periodScheduleSelection.scheduleId
       : selectedScheduleId,

@@ -1696,6 +1696,43 @@ test("generated grouped schedules validate and persist service-local dates", asy
   );
 });
 
+test("church service timezone is stored separately from Chat browser hints", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("church_service_timezone_setting");
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    churchId: context.churchId,
+    name: "Timezone Church",
+    otherSetting: "preserved",
+  });
+
+  const initial = await callHandler(authHandlers.getChurchServiceTimeZone, {
+    context,
+    params: { churchId: context.churchId },
+  });
+  assert.equal(initial.statusCode, 200);
+  assert.equal(initial.payload.serviceTimeZone, "UTC");
+  assert.equal(initial.payload.isConfigured, false);
+
+  const updated = await callHandler(authHandlers.updateChurchServiceTimeZone, {
+    context,
+    params: { churchId: context.churchId },
+    body: { serviceTimeZone: "America/New_York" },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.payload.serviceTimeZone, "America/New_York");
+  assert.equal(updated.payload.isConfigured, true);
+  const savedChurch = await getDoc(COLLECTIONS.churches, context.churchId);
+  assert.equal(savedChurch.serviceTimeZone, "America/New_York");
+  assert.equal(savedChurch.otherSetting, "preserved");
+
+  const invalid = await callHandler(authHandlers.updateChurchServiceTimeZone, {
+    context,
+    params: { churchId: context.churchId },
+    body: { serviceTimeZone: "Not/A_Timezone" },
+  });
+  assert.equal(invalid.statusCode, 400);
+});
+
 test("Services edit can change service plans without receiving Teams data", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("services_edit_permission");

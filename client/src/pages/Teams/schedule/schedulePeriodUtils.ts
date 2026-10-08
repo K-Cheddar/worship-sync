@@ -87,6 +87,7 @@ export const findReusablePeriodSchedule = ({
   visibleStartDate,
   visibleEndDate,
   preferredScheduleId,
+  timeZone = "UTC",
 }: {
   schedules: TeamScheduleSummary[];
   churchId: string;
@@ -97,8 +98,8 @@ export const findReusablePeriodSchedule = ({
   visibleStartDate?: string;
   visibleEndDate?: string;
   preferredScheduleId?: string;
+  timeZone?: string;
 }) => {
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const visibleDates = occurrences
     .map((occurrence) => calendarDateInTimeZone(new Date(occurrence.startsAt), timeZone))
     .sort();
