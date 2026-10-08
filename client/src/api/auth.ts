@@ -3096,6 +3096,8 @@ export const previewPortableImport = async (
       review: number;
       invalid: number;
     };
+    previewToken?: string;
+    previewCsvHash?: string;
   }>(`api/churches/${churchId}/data-transfer/preview`, {
     method: "POST",
     body: JSON.stringify({ type, csv, mapping, timeZone, ...options }),
@@ -3113,7 +3115,7 @@ export const commitPortableImport = async (
     expectedStateHash?: string;
   }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string> } = {},
 ) =>
   apiFetch<{
     success: boolean;

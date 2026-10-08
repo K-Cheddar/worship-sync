@@ -205,6 +205,8 @@ export const createTeamsAuthHandlers = ({
   // transactions. Serialize writes to one schedule so they retain the same
   // no-lost-update guarantee as Firestore transactions.
   const inMemoryScheduleSaveQueues = new Map();
+  const inMemoryPortableMemberQueues = new Map();
+  const inMemoryPortableMemberProgress = new Map();
   const portableCreateQueues = new Map();
   const enqueuePortableCreate = (key, task) => {
     const previous = portableCreateQueues.get(key) || Promise.resolve();
@@ -8897,15 +8899,135 @@ export const createTeamsAuthHandlers = ({
     return value;
   })(value));
   const memberImportStateHash = (member, teams, positions) => crypto.createHash("sha256").update(stablePortableJson({
-    member: member ? {
-      memberId: member.memberId, updatedAt: member.updatedAt || "", firstName: member.firstName, lastName: member.lastName,
-      title: member.title || "", email: member.email || "", phoneNumber: member.phoneNumber || "", notes: member.notes || "",
-      servingFrequency: member.servingFrequency || "", positionIds: member.positionIds || [], qualifications: member.qualifications || [],
-      teamMemberships: member.teamMemberships || {},
-    } : null,
+    // Include the complete member document so profile, availability,
+    // qualifications, and future fields all invalidate a stale preview.
+    member: member || null,
     teamIds: teams.filter((team) => (team.memberIds || []).includes(member?.memberId)).map((team) => team.teamId).sort(),
-    positions: positions.filter((position) => (member?.positionIds || []).includes(position.positionId)).map(({ positionId, teamId, name }) => ({ positionId, teamId, name })).sort((a, b) => a.positionId.localeCompare(b.positionId)),
+    positions: positions.filter((position) => (member?.positionIds || []).includes(position.positionId)).sort((a, b) => a.positionId.localeCompare(b.positionId)),
   })).digest("hex");
+  const enqueuePortableMemberMutation = (key, task) => {
+    const previous = inMemoryPortableMemberQueues.get(key) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryPortableMemberQueues.set(key, settled);
+    void settled.finally(() => {
+      if (inMemoryPortableMemberQueues.get(key) === settled) inMemoryPortableMemberQueues.delete(key);
+    });
+    return run;
+  };
+  const commitPortableMemberUpdate = async ({
+    churchId, memberId, expectedStateHash, payload, requestedTeamIds, activeTeamIds = [], positionIds, adminUserId,
+  }) => {
+    const db = requireFirestore?.();
+    const stale = () => httpError(409, "This member or its team assignments changed after preview. Preview the file again.");
+    if (db?.runTransaction) {
+      return db.runTransaction(async (transaction) => {
+        const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+        const memberSnapshot = await transaction.get(memberRef);
+        const existing = memberSnapshot.exists ? { memberId, ...memberSnapshot.data() } : null;
+        const membershipQuery = db.collection(COLLECTIONS.teams)
+          .where("memberIds", "array-contains", memberId);
+        const currentPositionIds = existing?.positionIds || [];
+        const relevantPositionIds = [...new Set([...currentPositionIds, ...(positionIds || [])])];
+        const [membershipSnapshot, desiredTeamSnapshots, positionSnapshots] = await Promise.all([
+          transaction.get(membershipQuery),
+          Promise.all(requestedTeamIds.map((teamId) => transaction.get(db.collection(COLLECTIONS.teams).doc(teamId)))),
+          Promise.all(relevantPositionIds.map((positionId) => transaction.get(db.collection(COLLECTIONS.teamPositions).doc(positionId)))),
+        ]);
+        const teamsById = new Map();
+        membershipSnapshot.docs.forEach((doc) => {
+          const team = { teamId: doc.id, ...doc.data() };
+          if (team.churchId === churchId) teamsById.set(doc.id, team);
+        });
+        desiredTeamSnapshots.forEach((doc) => { if (doc.exists) teamsById.set(doc.id, { teamId: doc.id, ...doc.data() }); });
+        const teams = [...teamsById.values()];
+        const positions = positionSnapshots.filter((doc) => doc.exists).map((doc) => ({ positionId: doc.id, ...doc.data() }));
+        if (!existing || existing.churchId !== churchId || existing.archivedAt
+          || memberImportStateHash(existing, teams, positions) !== expectedStateHash) throw stale();
+        const positionTeamIds = positions.filter((item) => (positionIds || []).includes(item.positionId)).map((item) => item.teamId);
+        const desired = new Set([...requestedTeamIds, ...positionTeamIds]);
+        const selectedPositions = positions.filter((item) => (positionIds || []).includes(item.positionId));
+        if (selectedPositions.length !== new Set(positionIds || []).size
+          || selectedPositions.some((position) => position.churchId !== churchId || position.archivedAt || !desired.has(position.teamId))) throw stale();
+        if (requestedTeamIds.some((teamId) => !teams.some((team) => team.teamId === teamId && team.churchId === churchId))) throw stale();
+        if (activeTeamIds.some((teamId) => !teams.some((team) => team.teamId === teamId && !team.archivedAt))) throw stale();
+        const now = nowIso();
+        const memberDoc = { ...payload, memberId, churchId, updatedAt: now, updatedByUid: adminUserId };
+        transaction.set(memberRef, memberDoc, { merge: true });
+        const writeTeams = teams.filter((team) => desired.has(team.teamId) && !(team.memberIds || []).includes(memberId));
+        if (writeTeams.length >= 499)
+          throw httpError(400, "This member has too many team assignments to update in one import. Contact support for help.");
+        writeTeams.forEach((team) => transaction.set(db.collection(COLLECTIONS.teams).doc(team.teamId), {
+          memberIds: [...(team.memberIds || []), memberId], updatedAt: now, updatedByUid: adminUserId,
+        }, { merge: true }));
+        return {
+          member: { ...existing, ...memberDoc },
+          teams: writeTeams.map((team) => ({ ...team, memberIds: [...(team.memberIds || []), memberId] })),
+        };
+      });
+    }
+
+    // The local/test store has no transaction primitive. Serialize this narrow
+    // read-check-write path by church and member, then use the same add-only
+    // roster writes as normal member updates.
+    return enqueuePortableMemberMutation(`${churchId}:${memberId}`, async () => {
+      const progressKey = `${churchId}:${memberId}:${expectedStateHash}`;
+      let progress = inMemoryPortableMemberProgress.get(progressKey);
+      let datasets = await readPortableDatasets(churchId);
+      let existing = datasets.members.find((item) => item.memberId === memberId);
+      const currentHash = existing && memberImportStateHash(existing, datasets.teams, datasets.positions);
+      if (progress) {
+        if (currentHash !== progress.lastStateHash) {
+          inMemoryPortableMemberProgress.delete(progressKey);
+          throw stale();
+        }
+      } else if (!existing || existing.archivedAt || currentHash !== expectedStateHash) throw stale();
+      const positionTeamIds = datasets.positions.filter((item) => (positionIds || []).includes(item.positionId)).map((item) => item.teamId);
+      if (activeTeamIds.some((teamId) => !datasets.teams.some((team) => team.teamId === teamId && !team.archivedAt))) throw stale();
+      const desired = new Set([...requestedTeamIds, ...positionTeamIds]);
+      if (!progress) {
+        const saved = await upsertTeamEntity({ kind: "member", churchId, id: memberId, payload, adminUserId });
+        progress = { lastStateHash: null, desiredTeamIds: [...desired] };
+        datasets = await readPortableDatasets(churchId);
+        existing = datasets.members.find((item) => item.memberId === memberId);
+        progress.lastStateHash = memberImportStateHash(existing, datasets.teams, datasets.positions);
+        inMemoryPortableMemberProgress.set(progressKey, progress);
+      }
+      const changedTeams = [];
+      for (const teamId of progress.desiredTeamIds) {
+        const team = await getDoc(COLLECTIONS.teams, teamId);
+        if (!team || team.churchId !== churchId || (team.memberIds || []).includes(memberId)) continue;
+        await setDoc(COLLECTIONS.teams, teamId, {
+          memberIds: [...(team.memberIds || []), memberId], updatedAt: nowIso(), updatedByUid: adminUserId,
+        }, { merge: true });
+        changedTeams.push({ ...team, memberIds: [...(team.memberIds || []), memberId] });
+        datasets = await readPortableDatasets(churchId);
+        existing = datasets.members.find((item) => item.memberId === memberId);
+        progress.lastStateHash = memberImportStateHash(existing, datasets.teams, datasets.positions);
+        inMemoryPortableMemberProgress.set(progressKey, progress);
+      }
+      inMemoryPortableMemberProgress.delete(progressKey);
+      return { member: await getDoc(COLLECTIONS.teamRosterMembers, memberId), teams: changedTeams };
+    });
+  };
+  const portablePreviewSecret = process.env.AUTH_PORTABLE_IMPORT_PREVIEW_SECRET
+    || process.env.AUTH_SESSION_SECRET
+    || "dev-auth-secret";
+  const signPortablePreview = (payload) => {
+    const encoded = Buffer.from(stablePortableJson(payload)).toString("base64url");
+    const signature = crypto.createHmac("sha256", portablePreviewSecret).update(encoded).digest("base64url");
+    return `${encoded}.${signature}`;
+  };
+  const readPortablePreview = (token) => {
+    if (typeof token !== "string") return null;
+    const [encoded, signature, extra] = token.split(".");
+    if (!encoded || !signature || extra) return null;
+    const expected = crypto.createHmac("sha256", portablePreviewSecret).update(encoded).digest();
+    let received;
+    try { received = Buffer.from(signature, "base64url"); } catch { return null; }
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return null;
+    try { return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")); } catch { return null; }
+  };
   const portableResolutionId = (approved, field, referenceIndex = 0) => {
     if (Array.isArray(approved?.resolutions)) {
       return (
@@ -9839,7 +9961,7 @@ export const createTeamsAuthHandlers = ({
               const normalizedAfter = field === "email" ? normalizeMemberEmail(value) : field === "phone" ? normalizeMemberPhoneNumber(value) : value;
               if (String(normalizedBefore || "") !== String(normalizedAfter || "")) changes.push({ field: label, before: String(before), after: value });
             }
-            const targetMembershipTeams = usesDestinationTeam ? [destinationTeam] : matchedTeams;
+            const targetMembershipTeams = usesDestinationTeam ? (destinationTeam ? [destinationTeam] : []) : matchedTeams;
             targetMembershipTeams.filter((team) => !(team.memberIds || []).includes(match.memberId) && !match.teamMemberships?.[team.teamId])
               .forEach((team) => changes.push({ field: "Team membership", before: "", after: team.name }));
             if (record.positions !== undefined) {
@@ -9892,9 +10014,35 @@ export const createTeamsAuthHandlers = ({
           }
         });
         rows.sort((left, right) => left.row - right.row);
+        const previewToken = type === "members" ? signPortablePreview({
+          churchId,
+          type,
+          settings: {
+            mapping: req.body?.mapping || {},
+            destinationTeamId,
+            updateMode: previewUpdateMode,
+            clearBlankScalars: previewClearBlankScalars,
+            csvHash: crypto.createHash("sha256").update(String(req.body?.csv || "")).digest("hex"),
+          },
+          rows: rows.map(({ row, action, record, matchedId, candidates, issues, expectedStateHash }) => ({
+            row,
+            action,
+            recordHash: crypto.createHash("sha256").update(stablePortableJson(record || {})).digest("hex"),
+            matchedId,
+            candidates: (candidates || []).map(({ id, stateHash }) => ({ id, stateHash })),
+            issues: (issues || []).map((issue) => ({
+              field: issue.field,
+              referenceIndex: issue.referenceIndex,
+              candidateIds: (issue.candidates || []).map((candidate) => candidate.id),
+            })),
+            expectedStateHash,
+          })),
+        }) : undefined;
         return res.json({
           success: true,
           rows,
+          ...(previewToken ? { previewToken } : {}),
+          ...(type === "members" ? { previewCsvHash: crypto.createHash("sha256").update(String(req.body?.csv || "")).digest("hex") } : {}),
           issues: parsed.issues,
           summary: {
             total: parsed.totalRows,
@@ -9968,13 +10116,54 @@ export const createTeamsAuthHandlers = ({
         };
         const data = await readPortableDatasets(churchId);
         const destinationTeamId = String(req.body?.destinationTeamId || "").trim();
+        const updateMode = req.body?.updateMode === "replace" ? "replace" : "merge";
+        const clearBlankScalars = req.body?.clearBlankScalars === true;
+        const invalidPreviewRows = new Set();
+        if (type === "members") {
+          const preview = readPortablePreview(req.body?.previewToken);
+          if (!preview || preview.churchId !== churchId || preview.type !== type
+            || preview.settings?.destinationTeamId !== destinationTeamId
+            || preview.settings?.updateMode !== updateMode
+            || preview.settings?.clearBlankScalars !== clearBlankScalars
+            || stablePortableJson(preview.settings?.mapping || {}) !== stablePortableJson(req.body?.mapping || {})
+            || preview.settings?.csvHash !== String(req.body?.previewCsvHash || "")) {
+            throw httpError(409, "The import settings or preview changed. Review the file again before importing.");
+          }
+          const previewRows = new Map((preview.rows || []).map((row) => [Number(row.row), row]));
+          const seenRows = new Set();
+          approvedRows.forEach((approved) => {
+            const row = previewRows.get(Number(approved.row));
+            if (!row || seenRows.has(Number(approved.row))) {
+              invalidPreviewRows.add(Number(approved.row));
+              return;
+            }
+            seenRows.add(Number(approved.row));
+            const recordId = String(approved.recordId || "").trim();
+            const candidates = [
+              ...(row.matchedId ? [{ id: row.matchedId, stateHash: row.expectedStateHash }] : []),
+              ...(row.candidates || []).map((candidate) => ({ id: candidate.id, stateHash: candidate.stateHash })),
+            ];
+            const selectedCandidate = recordId ? candidates.find((candidate) => candidate.id === recordId) : null;
+            const resolutions = Array.isArray(approved.resolutions) ? approved.resolutions : [];
+            const validResolutions = resolutions.every((resolution) =>
+              (row.issues || []).some((issue) => issue.field === resolution.field
+                && Number(issue.referenceIndex || 0) === Number(resolution.referenceIndex || 0)
+                && (issue.candidateIds || []).includes(resolution.selectedId)),
+            );
+            const approvedRecord = approved.record || {};
+            const submittedRecordHash = crypto.createHash("sha256").update(stablePortableJson(approvedRecord)).digest("hex");
+            if (submittedRecordHash !== row.recordHash
+              || !["create", "update"].includes(approved.action)
+              || (recordId && !selectedCandidate)
+              || (recordId && approved.expectedStateHash !== selectedCandidate.stateHash)
+              || !validResolutions) invalidPreviewRows.add(Number(approved.row));
+          });
+        }
         const destinationTeam = destinationTeamId
           ? data.teams.find((item) => item.teamId === destinationTeamId && !item.archivedAt)
           : null;
         if (destinationTeamId && !destinationTeam)
           throw httpError(409, "The destination team is no longer active in this church. Preview the file again.");
-        const updateMode = req.body?.updateMode === "replace" ? "replace" : "merge";
-        const clearBlankScalars = req.body?.clearBlankScalars === true;
         const results = [];
         const replaceDatasetEntity = (key, idField, saved) => {
           const index = data[key].findIndex((item) => item[idField] === saved[idField]);
@@ -11180,6 +11369,8 @@ export const createTeamsAuthHandlers = ({
               continue;
             }
             if (type === "members") {
+              if (invalidPreviewRows.has(Number(row)))
+                throw httpError(409, "This row no longer matches the approved preview. Review the file again.");
               const id = String(approved.recordId || record.memberId || "").trim();
               const byId = id
                 ? data.members.find((item) => item.memberId === id)
@@ -11216,11 +11407,8 @@ export const createTeamsAuthHandlers = ({
                   409,
                   "This row no longer matches the preview. Preview it again.",
                 );
-              if (requestedAction === "update" && approved.expectedStateHash
-                && approved.expectedStateHash !== memberImportStateHash(existing, data.teams, data.positions))
-                throw httpError(409, "This member changed after preview. Preview the file again.");
               const hasPortableMembershipIds = record.teamIds !== undefined || record.positionIds !== undefined;
-              const usesDestinationTeam = !String(record.teams || "").trim() && !hasPortableMembershipIds && Boolean(destinationTeam);
+              const usesDestinationTeam = !String(record.teams || "").trim() && !hasPortableMembershipIds;
               if (!String(record.teams || "").trim() && !hasPortableMembershipIds && !destinationTeam)
                 throw httpError(400, "Choose a destination team for this member.");
               const teamNames = splitPortableReferences(record.teams, data.teams);
@@ -11352,27 +11540,44 @@ export const createTeamsAuthHandlers = ({
                 body,
                 churchId,
               );
-              const saved = await upsertTeamEntity({
-                kind: "member",
-                churchId,
-                id: existing?.memberId,
-                payload,
-                adminUserId: admin.user.uid,
-                ...(!existing && importKey ? { portableCreateKey: importKey } : {}),
-              });
-              const reconciled = await syncMemberTeamMembership({
-                req,
-                churchId,
-                member: saved,
-                positionIds: payload.positionIds,
-                requestedTeamIds,
-                adminUserId: admin.user.uid,
-              });
-              replaceDatasetEntity("members", "memberId", reconciled.member);
+              let importedMember;
+              if (existing) {
+                const reconciled = await commitPortableMemberUpdate({
+                  churchId,
+                  memberId: existing.memberId,
+                  expectedStateHash: approved.expectedStateHash,
+                  payload,
+                  requestedTeamIds,
+                  activeTeamIds: [...teamScope],
+                  positionIds: payload.positionIds,
+                  adminUserId: admin.user.uid,
+                });
+                importedMember = reconciled.member;
+                reconciled.teams.forEach((team) => replaceDatasetEntity("teams", "teamId", team));
+              } else {
+                const saved = await upsertTeamEntity({
+                  kind: "member",
+                  churchId,
+                  payload,
+                  adminUserId: admin.user.uid,
+                  ...(importKey ? { portableCreateKey: importKey } : {}),
+                });
+                const reconciled = await syncMemberTeamMembership({
+                  req,
+                  churchId,
+                  member: saved,
+                  positionIds: payload.positionIds,
+                  requestedTeamIds,
+                  adminUserId: admin.user.uid,
+                });
+                importedMember = reconciled.member;
+                reconciled.teams.forEach((team) => replaceDatasetEntity("teams", "teamId", team));
+              }
+              replaceDatasetEntity("members", "memberId", importedMember);
               results.push({
                 row,
                 status: existing && !alreadyCreated ? "updated" : "created",
-                id: reconciled.member.memberId,
+                id: importedMember.memberId,
               });
               continue;
             }

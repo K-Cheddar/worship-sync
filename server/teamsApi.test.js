@@ -40,6 +40,7 @@ const {
   setIntakeDigestSchedulingFailureForServerTests,
   setIntakeNotifyRecipientsForServerTests,
   setSendEmailForServerTests,
+  setAuthReadObserverForServerTests,
   setDoc,
 } = await import("../authService.js");
 import { createAppSessionGuards } from "./appSessionGuards.js";
@@ -307,6 +308,17 @@ const callHandler = async (
   );
   return res;
 };
+
+const previewMemberCsv = async (context, csv, settings = {}) => {
+  const inspected = await callHandler(authHandlers.inspectPortableImport, {
+    context, body: { type: "members", csv },
+  });
+  const preview = await callHandler(authHandlers.previewPortableImport, {
+    context, body: { type: "members", csv, mapping: inspected.payload.mapping, ...settings },
+  });
+  return { ...preview, previewCsv: csv, previewCsvHash: hashPortableCsv(csv), mapping: inspected.payload.mapping };
+};
+const hashPortableCsv = (csv) => createHash("sha256").update(csv).digest("hex");
 
 // positions are team-owned, so set up a team first, then its positions (with teamId),
 // then members, then attach the members to the team roster.
@@ -12546,6 +12558,7 @@ test("schedule assignment paths share requirement and implicit slot validation",
 test("portable CSV preview is read-only and commit never links imported members to accounts", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("data_transfer_import");
+  const { teamId } = await seedTeam(context, { teamName: "Worship" });
   const csv =
     "first_name,last_name,email\nJane,Volunteer,shared@example.com\nJohn,Volunteer,shared@example.com\n";
   const inspected = await callHandler(authHandlers.inspectPortableImport, {
@@ -12569,9 +12582,11 @@ test("portable CSV preview is read-only and commit never links imported members 
   assert.equal(aliased.payload.mapping.phone, "Mobile");
   const preview = await callHandler(authHandlers.previewPortableImport, {
     context,
-    body: { type: "members", csv, mapping: inspected.payload.mapping },
+    body: { type: "members", csv, mapping: inspected.payload.mapping, destinationTeamId: teamId },
   });
   assert.equal(preview.statusCode, 200);
+  assert.equal(preview.payload.previewToken.length > 0, true);
+  assert.equal(preview.payload.previewCsvHash, hashPortableCsv(csv));
   assert.equal(preview.payload.summary.create, 2);
   assert.equal(preview.payload.summary.update, 0);
   const before = await callHandler(authHandlers.getTeamsBootstrap, { context });
@@ -12585,6 +12600,10 @@ test("portable CSV preview is read-only and commit never links imported members 
     context,
     body: {
       type: "members",
+      previewToken: preview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: inspected.payload.mapping,
+      destinationTeamId: teamId,
       approvedRows: preview.payload.rows.map(
         ({ row, action, matchedId, record }) => ({
           row,
@@ -12595,6 +12614,7 @@ test("portable CSV preview is read-only and commit never links imported members 
       ),
     },
   });
+  console.log("DEBUG preview commit output", committed.payload);
   assert.equal(committed.statusCode, 200);
   assert.equal(committed.payload.summary.created, 2);
   const after = await callHandler(authHandlers.getTeamsBootstrap, { context });
@@ -12681,52 +12701,15 @@ test("portable create commits deduplicate safe entity identities across rows and
     1,
   );
 
-  const memberRows = [
-    {
-      row: 2,
-      action: "create",
-      record: {
-        firstName: "Alex",
-        lastName: "Same",
-        email: "alex@example.com",
-      },
-    },
-    {
-      row: 3,
-      action: "create",
-      record: {
-        firstName: "Alex",
-        lastName: "Same",
-        email: "alex@example.com",
-      },
-    },
-    {
-      row: 4,
-      action: "create",
-      record: {
-        firstName: "Alex",
-        lastName: "Same",
-        email: "alex2@example.com",
-      },
-    },
-    {
-      row: 5,
-      action: "create",
-      record: { firstName: "Alex", lastName: "Same" },
-    },
-    {
-      row: 6,
-      action: "create",
-      record: { firstName: "Alex", lastName: "Same" },
-    },
-  ];
+  const memberPreview = await previewMemberCsv(context, "First Name,Last Name,Email\nAlex,Same,alex@example.com\nAlex,Same,alex@example.com\nAlex,Same,alex2@example.com\nAlex,Same,\nAlex,Same,\n", { destinationTeamId: teamId });
+  const approvedMemberRows = memberPreview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash }));
   const firstMemberCommit = await callHandler(
     authHandlers.commitPortableImport,
-    { context, body: { type: "members", approvedRows: memberRows } },
+    { context, body: { type: "members", destinationTeamId: teamId, previewToken: memberPreview.payload.previewToken, previewCsvHash: memberPreview.previewCsvHash, mapping: memberPreview.mapping, approvedRows: approvedMemberRows } },
   );
   const retriedMemberCommit = await callHandler(
     authHandlers.commitPortableImport,
-    { context, body: { type: "members", approvedRows: memberRows } },
+    { context, body: { type: "members", destinationTeamId: teamId, previewToken: memberPreview.payload.previewToken, previewCsvHash: memberPreview.previewCsvHash, mapping: memberPreview.mapping, approvedRows: approvedMemberRows } },
   );
   assert.deepEqual(
     retriedMemberCommit.payload.results.map(({ id }) => id),
@@ -12751,20 +12734,22 @@ test("portable create commits deduplicate safe entity identities across rows and
   const existing = afterMembers.payload.members.find(
     (member) => member.email === "alex@example.com",
   );
+  const updatePreview = await previewMemberCsv(context, `First Name,Last Name,Email,WorshipSync Member ID\nAlex Updated,Same,alex@example.com,${existing.memberId}\n`, { destinationTeamId: teamId });
   const update = await callHandler(authHandlers.commitPortableImport, {
     context,
     body: {
       type: "members",
+      destinationTeamId: teamId,
+      previewToken: updatePreview.payload.previewToken,
+      previewCsvHash: updatePreview.previewCsvHash,
+      mapping: updatePreview.mapping,
       approvedRows: [
         {
           row: 2,
           action: "update",
           recordId: existing.memberId,
-          record: {
-            firstName: "Alex Updated",
-            lastName: "Same",
-            email: "alex@example.com",
-          },
+          record: updatePreview.payload.rows[0].record,
+          expectedStateHash: updatePreview.payload.rows[0].expectedStateHash,
         },
       ],
     },
@@ -12879,25 +12864,15 @@ test("portable create claims serialize concurrent retries and stay church-scoped
     1,
   );
 
-  const memberRows = [
-    {
-      row: 2,
-      action: "create",
-      record: {
-        firstName: "Casey",
-        lastName: "Concurrent",
-        email: "shared-concurrent@example.com",
-      },
-    },
-  ];
+  const memberPreview = await previewMemberCsv(churchA, "First Name,Last Name,Email\nCasey,Concurrent,shared-concurrent@example.com\n", { destinationTeamId: aTeam.teamId });
   await Promise.all([
     callHandler(authHandlers.commitPortableImport, {
       context: churchA,
-      body: { type: "members", approvedRows: memberRows },
+      body: { type: "members", destinationTeamId: aTeam.teamId, previewToken: memberPreview.payload.previewToken, previewCsvHash: memberPreview.previewCsvHash, mapping: memberPreview.mapping, approvedRows: memberPreview.payload.rows.map(({ row, action, record, matchedId }) => ({ row, action, record, recordId: matchedId || undefined })) },
     }),
     callHandler(authHandlers.commitPortableImport, {
       context: churchA,
-      body: { type: "members", approvedRows: memberRows },
+      body: { type: "members", destinationTeamId: aTeam.teamId, previewToken: memberPreview.payload.previewToken, previewCsvHash: memberPreview.previewCsvHash, mapping: memberPreview.mapping, approvedRows: memberPreview.payload.rows.map(({ row, action, record, matchedId }) => ({ row, action, record, recordId: matchedId || undefined })) },
     }),
   ]);
   const afterMembers = await callHandler(authHandlers.getTeamsBootstrap, {
@@ -12986,10 +12961,14 @@ test("portable create rows with stale natural matches require a fresh preview", 
       notes: "Keep this",
     },
   });
+  const memberPreview = await previewMemberCsv(context, "First Name,Last Name,Email,Notes\nTaylor,Member,taylor@example.com,Keep this\n");
   const memberImport = await callHandler(authHandlers.commitPortableImport, {
     context,
     body: {
       type: "members",
+      previewToken: memberPreview.payload.previewToken,
+      previewCsvHash: memberPreview.previewCsvHash,
+      mapping: memberPreview.mapping,
       approvedRows: [
         {
           row: 2,
@@ -13102,6 +13081,7 @@ test("portable member IDs only match records in the current church", async (t) =
   const targetChurch = await createAdminContext(
     "data_transfer_foreign_id_target",
   );
+  const localTeam = await seedTeam(targetChurch, { teamName: "Local" });
   const foreignMember = await callHandler(authHandlers.createTeamRosterMember, {
     context: sourceChurch,
     body: {
@@ -13127,7 +13107,7 @@ test("portable member IDs only match records in the current church", async (t) =
   });
   const preview = await callHandler(authHandlers.previewPortableImport, {
     context: targetChurch,
-    body: { type: "members", csv, mapping: inspected.payload.mapping },
+    body: { type: "members", csv, mapping: inspected.payload.mapping, destinationTeamId: localTeam.teamId },
   });
   assert.deepEqual(
     preview.payload.rows.map((row) => row.action),
@@ -13925,6 +13905,9 @@ test("portable member import resolves repeated team and position references inde
     context: target,
     body: {
       type: "members",
+      previewToken: preview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: inspected.payload.mapping,
       approvedRows: [
         {
           row: 2,
@@ -13944,6 +13927,9 @@ test("portable member import resolves repeated team and position references inde
     context: target,
     body: {
       type: "members",
+      previewToken: preview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: inspected.payload.mapping,
       approvedRows: [
         {
           row: 2,
@@ -14019,12 +14005,16 @@ test("portable member imports preserve unmapped positions and clear mapped blank
         type: "members",
         destinationTeamId: team.payload.team.teamId,
         updateMode,
+        previewToken: preview.payload.previewToken,
+        previewCsvHash: hashPortableCsv(csv),
+        mapping: inspected.payload.mapping,
         approvedRows: [
           {
             row: preview.payload.rows[0].row,
             action: "update",
             recordId: memberId,
             record: preview.payload.rows[0].record,
+            expectedStateHash: preview.payload.rows[0].expectedStateHash,
           },
         ],
       },
@@ -14095,6 +14085,9 @@ test("portable member imports preserve unmapped positions and clear mapped blank
     body: {
       type: "members",
       destinationTeamId: team.payload.team.teamId,
+      previewToken: createPreview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(createCsv),
+      mapping: createInspection.payload.mapping,
       approvedRows: [
         {
           row: createPreview.payload.rows[0].row,
@@ -14258,6 +14251,158 @@ test("generated ensure reuses semantically equivalent occurrences after service 
   assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
 });
 
+test("member preview settings and approved row content are bound to the server preview", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_preview_approval_binding");
+  const destination = await seedTeam(context, { teamName: "Worship", positions: [{ name: "Keys" }, { name: "Piano" }] });
+  const other = await seedTeam(context, { teamName: "Production" });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context, body: { firstName: "Jane", lastName: "Doe", email: "jane@example.com", positionIds: [destination.positionIds.Piano], teamIds: [destination.teamId] },
+  });
+  const csv = `First Name,Last Name,Email,WorshipSync Member ID\nJane,Doe,,${member.payload.member.memberId}\n`;
+  const preview = await previewMemberCsv(context, csv, { destinationTeamId: destination.teamId, updateMode: "merge", clearBlankScalars: false });
+  const approved = preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash }));
+  const commitWith = (options = {}) => callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "members", previewToken: preview.payload.previewToken,
+      previewCsvHash: options.previewCsvHash ?? preview.previewCsvHash,
+      mapping: options.mapping ?? preview.mapping,
+      destinationTeamId: options.destinationTeamId ?? destination.teamId,
+      updateMode: options.updateMode ?? "merge",
+      clearBlankScalars: options.clearBlankScalars ?? false,
+      approvedRows: options.approvedRows ?? approved,
+    },
+  });
+  for (const changedSettings of [
+    { updateMode: "replace" },
+    { destinationTeamId: other.teamId },
+    { clearBlankScalars: true },
+    { mapping: { firstName: "Last Name", lastName: "First Name", email: "Email", memberId: "WorshipSync Member ID" } },
+    { previewCsvHash: hashPortableCsv(csv.replace("Jane,Doe", "Janet,Doe")) },
+  ]) {
+    const rejected = await commitWith(changedSettings);
+    assert.equal(rejected.statusCode, 409);
+    assert.match(rejected.payload.errorMessage, /settings or preview changed/i);
+  }
+  const tamperedRows = approved.map((row) => ({ ...row, record: { ...row.record, email: "changed@example.com" } }));
+  const tampered = await commitWith({ approvedRows: tamperedRows });
+  assert.equal(tampered.payload.results[0].code, "stale_preview");
+  const saved = await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId);
+  assert.equal(saved.email, "jane@example.com");
+  assert.deepEqual(saved.positionIds, [destination.positionIds.Piano]);
+});
+
+test("a member changed after commit validation fails stale without blocking other rows", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_import_concurrent_edit");
+  const { teamId, positionIds } = await seedTeam(context, { teamName: "Worship", positions: [{ name: "Keys" }] });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context, body: { firstName: "Sam", lastName: "Singer", email: "sam@example.com", notes: "Original", teamIds: [teamId], positionIds: [positionIds.Keys], recurringAvailability: { weekdays: ["sunday"] } },
+  });
+  const csv = `First Name,Last Name,Email,Notes,WorshipSync Member ID\nSamuel,Singer,sam@example.com,Imported,${member.payload.member.memberId}\nTaylor,New,taylor@example.com,New member,\n`;
+  const preview = await previewMemberCsv(context, csv, { destinationTeamId: teamId });
+  const approvedRows = preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash }));
+  let memberQueries = 0;
+  setAuthReadObserverForServerTests(({ type, collectionName }) => {
+    if (type === "queryDocs" && collectionName === COLLECTIONS.teamRosterMembers && ++memberQueries === 2) {
+      void setDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId, { notes: "Concurrent edit" }, { merge: true });
+    }
+  });
+  let committed;
+  try {
+    committed = await callHandler(authHandlers.commitPortableImport, {
+      context, body: { type: "members", previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, destinationTeamId: teamId, approvedRows },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+  assert.equal(committed.payload.results.find((result) => result.row === 2).code, "stale_preview");
+  assert.equal(committed.payload.results.find((result) => result.row === 3).status, "created");
+  const saved = await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId);
+  assert.equal(saved.notes, "Concurrent edit");
+  assert.deepEqual(saved.positionIds, [positionIds.Keys]);
+  assert.deepEqual(saved.recurringAvailability, member.payload.member.recurringAvailability);
+  const retried = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, destinationTeamId: teamId, approvedRows },
+  });
+  assert.equal(retried.payload.results.find((result) => result.row === 2).code, "stale_preview");
+  assert.equal(retried.payload.results.find((result) => result.row === 3).status, "unchanged");
+  assert.equal((await callHandler(authHandlers.getTeamsBootstrap, { context })).payload.members.filter((item) => item.email === "taylor@example.com").length, 1);
+});
+
+test("team membership and position changes invalidate an approved member preview", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_import_team_position_stale");
+  const first = await seedTeam(context, { teamName: "Worship", positions: [{ name: "Keys" }] });
+  const other = await seedTeam(context, { teamName: "Production", positions: [{ name: "Camera" }] });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context, body: { firstName: "Alex", lastName: "Singer", teamIds: [first.teamId], positionIds: [first.positionIds.Keys] },
+  });
+  const csv = `First Name,Last Name,WorshipSync Member ID\nAlex,Updated,${member.payload.member.memberId}\n`;
+  const preview = await previewMemberCsv(context, csv, { destinationTeamId: first.teamId });
+  await setDoc(COLLECTIONS.teams, other.teamId, { memberIds: [member.payload.member.memberId] }, { merge: true });
+  const changedRoster = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", destinationTeamId: first.teamId, previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, approvedRows: preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash })) },
+  });
+  assert.equal(changedRoster.payload.results[0].code, "stale_preview");
+  const secondPreview = await previewMemberCsv(context, csv, { destinationTeamId: first.teamId });
+  await setDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId, { positionIds: [first.positionIds.Keys, other.positionIds.Camera] }, { merge: true });
+  const changedPositions = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", destinationTeamId: first.teamId, previewToken: secondPreview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: secondPreview.mapping, approvedRows: secondPreview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash })) },
+  });
+  assert.equal(changedPositions.payload.results[0].code, "stale_preview");
+});
+
+test("member import retry resumes roster synchronization after a partial in-memory write", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_import_partial_retry");
+  const { teamId } = await seedTeam(context, { teamName: "Worship" });
+  const { teamId: secondTeamId } = await seedTeam(context, { teamName: "Production" });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context, body: { firstName: "Jamie", lastName: "Member", email: "jamie@example.com", notes: "Keep", teamIds: [] },
+  });
+  const csv = `First Name,Last Name,Email,Notes,Teams,WorshipSync Member ID\nJamie,Updated,jamie@example.com,Imported,Worship; Production,${member.payload.member.memberId}\n`;
+  const preview = await previewMemberCsv(context, csv, { destinationTeamId: teamId });
+  const approvedRows = preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash }));
+  let memberDocReads = 0;
+  let failRosterRead = false;
+  setAuthReadObserverForServerTests(({ type, collectionName, id }) => {
+    if (type === "getDoc" && collectionName === COLLECTIONS.teamRosterMembers && id === member.payload.member.memberId) {
+      memberDocReads += 1;
+      if (memberDocReads === 2) failRosterRead = true;
+    }
+    if (failRosterRead && type === "getDoc" && collectionName === COLLECTIONS.teams && id === secondTeamId) {
+      failRosterRead = false;
+      throw new Error("Injected roster read failure");
+    }
+  });
+  let interrupted;
+  try {
+    interrupted = await callHandler(authHandlers.commitPortableImport, {
+      context, body: { type: "members", destinationTeamId: teamId, previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, approvedRows },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+  assert.equal(interrupted.payload.results[0].status, "failed");
+  const afterMemberWrite = await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId);
+  assert.equal(afterMemberWrite.lastName, "Updated");
+  assert.equal((await getDoc(COLLECTIONS.teams, teamId)).memberIds.includes(afterMemberWrite.memberId), true);
+  assert.equal((await getDoc(COLLECTIONS.teams, secondTeamId)).memberIds.includes(afterMemberWrite.memberId), false);
+
+  const retried = await callHandler(authHandlers.commitPortableImport, {
+    context, body: { type: "members", destinationTeamId: teamId, previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, approvedRows },
+  });
+  assert.equal(retried.payload.results[0].status, "updated");
+  assert.equal((await getDoc(COLLECTIONS.teams, teamId)).memberIds.includes(afterMemberWrite.memberId), true);
+  assert.equal((await getDoc(COLLECTIONS.teams, secondTeamId)).memberIds.includes(afterMemberWrite.memberId), true);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId)).notes, "Imported");
+});
+
 test("third-party member CSV categories add selected-team positions without clearing blanks", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("portable_categories_safe_merge");
@@ -14275,6 +14420,7 @@ test("third-party member CSV categories add selected-team positions without clea
       qualifications: [existingQualification],
     },
   });
+  await setDoc(COLLECTIONS.teamRosterMembers, existing.payload.member.memberId, { profileImageUrl: "https://example.com/member.png" }, { merge: true });
   const consentId = smsConsentIdForChurchPhone(context.churchId, "+15555550123");
   const consent = { churchId: context.churchId, phoneNumber: "+15555550123", status: "opted_out", optedOutAt: "2026-01-01T00:00:00.000Z" };
   await setDoc(COLLECTIONS.smsConsents, consentId, consent);
@@ -14306,6 +14452,9 @@ test("third-party member CSV categories add selected-team positions without clea
     context,
     body: {
       type: "members", destinationTeamId: destination.teamId, updateMode: "merge",
+      previewToken: preview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: inspected.payload.mapping,
       approvedRows: preview.payload.rows.map(({ row, action, matchedId, record, resolutions, expectedStateHash, sourceValues }) => ({
         row, action, recordId: matchedId || undefined, record, resolutions, expectedStateHash, sourceValues,
       })),
@@ -14321,6 +14470,7 @@ test("third-party member CSV categories add selected-team positions without clea
   const teams = await Promise.all([destination.teamId, otherTeam.teamId].map((teamId) => getDoc(COLLECTIONS.teams, teamId)));
   assert.equal(teams.every((team) => team.memberIds.includes(saved.memberId)), true);
   assert.deepEqual(saved.qualifications, existing.payload.member.qualifications);
+  assert.equal(saved.profileImageUrl, "https://example.com/member.png");
   const savedConsent = await getDoc(COLLECTIONS.smsConsents, consentId);
   assert.equal(savedConsent.status, consent.status);
   assert.equal(savedConsent.optedOutAt, consent.optedOutAt);
@@ -14334,6 +14484,9 @@ test("third-party member CSV categories add selected-team positions without clea
     context,
     body: {
       type: "members", destinationTeamId: destination.teamId,
+      previewToken: repeatedPreview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: inspected.payload.mapping,
       approvedRows: repeatedPreview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash, sourceValues }) => ({
         row, action, recordId: matchedId || undefined, record, expectedStateHash, sourceValues,
       })),
@@ -14351,6 +14504,9 @@ test("third-party member CSV categories add selected-team positions without clea
     context,
     body: {
       type: "members", destinationTeamId: destination.teamId, updateMode: "replace",
+      previewToken: replacePreview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(replaceCsv),
+      mapping: inspected.payload.mapping,
       approvedRows: replacePreview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash })),
     },
   });
@@ -14368,6 +14524,9 @@ test("third-party member CSV categories add selected-team positions without clea
     context,
     body: {
       type: "members", destinationTeamId: destination.teamId,
+      previewToken: stalePreview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: inspected.payload.mapping,
       approvedRows: stalePreview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash })),
     },
   });

@@ -34,6 +34,8 @@ type Preview = {
   rows: PortableImportRow[];
   issues: Array<{ row: number; code: string; message: string }>;
   summary: { total: number; create: number; update: number; review: number; invalid: number };
+  previewToken?: string;
+  previewCsvHash?: string;
 };
 
 const buttonClass = "min-h-10 justify-start";
@@ -58,8 +60,20 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   const mappings = inspection?.mapping || {};
   const needsDestinationTeam = type === "members" && !mappings.teams;
   const activeTeams = teams.filter((team) => !team.archivedAt);
+  const invalidatePreview = () => {
+    setPreview(null);
+    setRowChoices({});
+    setRelationshipChoices({});
+    setCommitResults([]);
+  };
   useEffect(() => {
-    if (open) setDestinationTeamId(initialTeamId || "");
+    if (open) {
+      setDestinationTeamId(initialTeamId || "");
+      setPreview(null);
+      setRowChoices({});
+      setRelationshipChoices({});
+      setCommitResults([]);
+    }
   }, [open, initialTeamId]);
   const selectedRows = useMemo(() => (preview?.rows || []).filter((row) => {
     const choice = rowChoices[row.row] || (row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : "skip");
@@ -81,12 +95,13 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
       setInspection(null);
-      setPreview(null);
+      invalidatePreview();
       setCsv("");
       setFileName("");
       setMessage("Choose a .csv file to continue.");
       return;
     }
+    invalidatePreview();
     setBusy("inspect");
     setMessage("");
     try {
@@ -95,7 +110,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       setFileName(file.name);
       setCsv(contents);
       setInspection(result);
-      setPreview(null);
+      invalidatePreview();
       setRowChoices({});
       setRelationshipChoices({});
       setCommitResults([]);
@@ -152,6 +167,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       });
       const result = await commitPortableImport(churchId, type, rows, undefined, {
         ...(destinationTeamId ? { destinationTeamId } : {}), updateMode, clearBlankScalars,
+        ...(type === "members" ? { previewCsvHash: preview.previewCsvHash, mapping: mappings } : {}),
+        ...(preview.previewToken ? { previewToken: preview.previewToken } : {}),
       });
       const resultByRow = new Map(commitResults.map((item) => [item.row, item]));
       result.results.forEach((item) => resultByRow.set(item.row, item));
@@ -227,12 +244,12 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
 
         {type === "members" && <div className="grid gap-2 rounded-lg border border-gray-700 bg-gray-950/40 p-3 sm:grid-cols-2">
           {(needsDestinationTeam || (type === "members" && mappings.teams)) && <label className="grid gap-1 text-sm text-gray-200">{needsDestinationTeam ? "Destination team" : "Team for blank Teams cells"} <span className="text-cyan-300">{needsDestinationTeam ? "Required when the CSV has no Teams column" : "Required for rows without team values; portable IDs keep their mapped teams"}</span>
-            <Select aria-label="Destination team" selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={destinationTeamId} onChange={setDestinationTeamId} options={[{ value: "", label: "Choose a team" }, ...activeTeams.map((team) => ({ value: team.teamId, label: team.name }))]} />
+            <Select aria-label="Destination team" selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={destinationTeamId} onChange={(value) => { setDestinationTeamId(value); invalidatePreview(); }} options={[{ value: "", label: "Choose a team" }, ...activeTeams.map((team) => ({ value: team.teamId, label: team.name }))]} />
           </label>}
           <label className="grid gap-1 text-sm text-gray-200">Update behavior
-            <Select aria-label="Update behavior" selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={updateMode} onChange={(value) => setUpdateMode(value === "replace" ? "replace" : "merge")} options={[{ value: "merge", label: "Merge existing information" }, { value: "replace", label: "Replace positions within the imported teams" }]} />
+            <Select aria-label="Update behavior" selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={updateMode} onChange={(value) => { setUpdateMode(value === "replace" ? "replace" : "merge"); invalidatePreview(); }} options={[{ value: "merge", label: "Merge existing information" }, { value: "replace", label: "Replace positions within the imported teams" }]} />
           </label>
-          <label className="flex items-center gap-2 text-sm text-gray-300 sm:col-span-2"><input type="checkbox" checked={clearBlankScalars} onChange={(event) => setClearBlankScalars(event.currentTarget.checked)} />Clear mapped scalar fields when cells are blank</label>
+          <label className="flex items-center gap-2 text-sm text-gray-300 sm:col-span-2"><input type="checkbox" checked={clearBlankScalars} onChange={(event) => { setClearBlankScalars(event.currentTarget.checked); invalidatePreview(); }} />Clear mapped scalar fields when cells are blank</label>
           <p className="text-xs text-gray-400 sm:col-span-2">Blank cells keep saved values by default. SMS consent stays unchanged. Timezone is shown for reference. Skill tiers need an area and level mapping before they can be applied.</p>
         </div>}
 
@@ -244,7 +261,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
               {PORTABLE_FIELD_ORDER[type].map((field) => (
                 <div key={field} className="grid gap-1 sm:grid-cols-[minmax(9rem,0.7fr)_minmax(0,1.3fr)] sm:items-center sm:gap-3">
                   <span className="text-sm text-gray-200">{PORTABLE_FIELD_LABELS[field] || field}{(type === "members" ? field === "name" ? !mappings.firstName || !mappings.lastName : ["firstName", "lastName"].includes(field) && !mappings.name : currentType.required.includes(field)) && <span className="ml-1 text-cyan-300">Required</span>}</span>
-                  <Select aria-label={`Column for ${PORTABLE_FIELD_LABELS[field] || field}`} selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={mappings[field] || ""} onChange={(value) => setInspection((current) => current ? { ...current, mapping: { ...current.mapping, [field]: value } } : current)} options={[{ value: "", label: "Ignore this field" }, ...inspection.headers.map((header) => ({ value: header, label: header }))]} />
+                  <Select aria-label={`Column for ${PORTABLE_FIELD_LABELS[field] || field}`} selectClassName="min-h-10 w-full rounded border border-gray-600 bg-gray-900 px-3 text-sm text-white" value={mappings[field] || ""} onChange={(value) => { setInspection((current) => current ? { ...current, mapping: { ...current.mapping, [field]: value } } : current); invalidatePreview(); }} options={[{ value: "", label: "Ignore this field" }, ...inspection.headers.map((header) => ({ value: header, label: header }))]} />
                 </div>
               ))}
             </div>
