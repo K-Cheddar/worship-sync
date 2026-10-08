@@ -115,12 +115,14 @@ jest.mock("../DisplayBox", () => ({
     prevBox,
     isPrev,
     isWindowVideoLoaded,
+    showLocalSourceStatus,
     onPaintReadyChange,
   }: {
     box: Box;
     prevBox?: Box;
     isPrev?: boolean;
     isWindowVideoLoaded?: boolean;
+    showLocalSourceStatus?: boolean;
     onPaintReadyChange?: (ready: boolean) => void;
   }) {
     useEffect(() => {
@@ -134,6 +136,7 @@ jest.mock("../DisplayBox", () => ({
         data-prev-words={prevBox?.words ?? ""}
         data-has-prev-box={prevBox ? "true" : "false"}
         data-video-loaded={isWindowVideoLoaded ? "true" : "false"}
+        data-local-source-status={showLocalSourceStatus ? "true" : "false"}
       />
     );
   },
@@ -148,7 +151,12 @@ jest.mock("../DisplayStreamText", () => ({
 }));
 jest.mock("../DisplayEditor", () => ({
   __esModule: true,
-  default: () => <div data-testid="display-editor-mock" />,
+  default: ({ showLocalSourceStatus }: { showLocalSourceStatus?: boolean }) => (
+    <div
+      data-testid="display-editor-mock"
+      data-local-source-status={showLocalSourceStatus ? "true" : "false"}
+    />
+  ),
 }));
 jest.mock("../LocalVideoInputView", () => ({
   __esModule: true,
@@ -620,6 +628,32 @@ describe("DisplayWindow core paths", () => {
   afterEach(() => {
     setServerTimeOffset(0);
     jest.useRealTimers();
+  });
+
+  it("enables local-source status only for an explicitly opted-in editor preview", () => {
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="editor"
+        boxes={[baseBox]}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByTestId("display-editor-mock")).toHaveAttribute(
+      "data-local-source-status",
+      "true",
+    );
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-local-source-status",
+      "false",
+    );
   });
 
   it("renders monitor mode through MonitorView with next-slide and clock/timer flags", () => {

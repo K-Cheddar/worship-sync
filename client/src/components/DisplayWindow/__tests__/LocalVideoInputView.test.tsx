@@ -34,6 +34,9 @@ jest.mock("../../../utils/localVideoInput", () => ({
   getAudioInputErrorMessage: jest.requireActual(
     "../../../utils/localVideoInput",
   ).getAudioInputErrorMessage,
+  getLocalVideoInputKindLabel: jest.requireActual(
+    "../../../utils/localVideoInput",
+  ).getLocalVideoInputKindLabel,
   getLocalVideoSourceErrorMessage: jest.requireActual(
     "../../../utils/localVideoInput",
   ).getLocalVideoSourceErrorMessage,
@@ -719,6 +722,40 @@ describe("LocalVideoInputView", () => {
     expect(video).toHaveClass("opacity-0");
   });
 
+  it.each([
+    ["device", "Video input · USB Capture"],
+    ["screen", "Screen share · USB Capture"],
+    ["window", "Window share · USB Capture"],
+  ] as const)("shows remote-owned %s sources only in an opted-in preview", (captureKind, label) => {
+    const remoteInput = {
+      ...input,
+      ownerDeviceId: "remote-device",
+      ownerLabel: "Streaming Computer",
+      captureKind,
+    };
+    const { rerender } = render(
+      <LocalVideoInputView
+        input={remoteInput}
+        captureEnabled={false}
+        showErrors
+      />,
+    );
+    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.getByTestId("local-video-input")).toHaveClass("bg-black");
+
+    rerender(
+      <LocalVideoInputView
+        input={remoteInput}
+        captureEnabled={false}
+        showErrors
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText("Available on Streaming Computer")).toBeInTheDocument();
+  });
+
   it("shows relayed frames until a direct output is ready", async () => {
     let onFrame: ((value: Blob | undefined) => void) | undefined;
     mockSubscribePreview.mockImplementation((_sourceId, callback) => {
@@ -757,29 +794,29 @@ describe("LocalVideoInputView", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows a remote-unavailable status without requesting local capture", () => {
+  it("shows an operator status for a remote-owned source without requesting local capture", () => {
     mockGetOrCreateDeviceId.mockReturnValue("remote-device");
-    render(<LocalVideoInputView input={input} />);
+    render(
+      <LocalVideoInputView input={input} showLocalSourceStatus showErrors />,
+    );
 
-    expect(screen.getByText("Video input unavailable")).toBeInTheDocument();
-    expect(
-      screen.getByText(/available only on Electron on Windows/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText("Video input · USB Capture")).toBeInTheDocument();
+    expect(screen.getByText("Available on Electron on Windows")).toBeInTheDocument();
     expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
   });
 
-  it("names a screen share in its remote-unavailable status", () => {
+  it("keeps screen-share labeling in its remote-owned status", () => {
     mockGetOrCreateDeviceId.mockReturnValue("remote-device");
     render(
       <LocalVideoInputView
         input={{ ...input, captureKind: "screen", deviceLabel: "Lyrics screen" }}
+        showLocalSourceStatus
+        showErrors
       />,
     );
 
-    expect(screen.getByText("Screen share unavailable")).toBeInTheDocument();
-    expect(
-      screen.getByText(/This share is available only on Electron on Windows/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Screen share · Lyrics screen")).toBeInTheDocument();
   });
 
   it("asks for a stopped browser share to be restarted while nothing is on screen", async () => {

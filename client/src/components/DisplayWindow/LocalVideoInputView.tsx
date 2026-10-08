@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoOff, VolumeX } from "lucide-react";
 import type { LocalVideoInputPresentation } from "../../types";
+import LocalSourceStatus from "./LocalSourceStatus";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import {
   getAudioInputErrorMessage,
+  getLocalVideoInputKindLabel,
   getLocalVideoSourceErrorMessage,
   isDesktopCaptureKind,
   isLocalVideoDeviceBusyError,
@@ -52,6 +54,7 @@ type LocalVideoInputViewProps = {
   receiveHighQuality?: boolean;
   publishPreview?: boolean;
   showErrors?: boolean;
+  showLocalSourceStatus?: boolean;
   transparentBackground?: boolean;
   outputId?: string;
   windowRole?: string;
@@ -128,6 +131,7 @@ const LocalVideoInputView = ({
   receiveHighQuality = false,
   publishPreview = false,
   showErrors = true,
+  showLocalSourceStatus = false,
   transparentBackground = false,
   outputId,
   windowRole,
@@ -807,7 +811,7 @@ const LocalVideoInputView = ({
   }, [onPaintReadyChange, paintReady]);
 
   if (!isLocal) {
-    if (!showErrors) {
+    if (!showErrors || !showLocalSourceStatus) {
       return (
         <div
           className={`absolute inset-0 ${transparentBackground ? "bg-transparent" : "bg-black"}`}
@@ -815,10 +819,11 @@ const LocalVideoInputView = ({
         />
       );
     }
+    const sourceKind = getLocalVideoInputKindLabel(input.captureKind);
     return (
-      <LocalVideoInputStatus
-        heading={unavailableHeading}
-        detail={`This ${isDesktopShare ? "share" : "input"} is available only on ${input.ownerLabel}. Open a selected display on that device.`}
+      <LocalSourceStatus
+        sourceLabel={`${sourceKind} · ${input.deviceLabel}`}
+        ownerLabel={input.ownerLabel}
         transparentBackground={transparentBackground}
       />
     );
