@@ -32,18 +32,32 @@ export class SongV2DeletedError extends Error {
 }
 
 export type SongSaveDiagnostics = {
-  onCleanupErrors?: (errors: { documentId: string; cause: unknown }[]) => void;
+  onCleanupErrors?: (errors: { documentId: string; revision?: string; cause: unknown }[]) => void;
 };
 
-const reportV2CleanupErrors = (
+const reportV2CleanupErrors = async (
+  db: PouchDB.Database,
   songId: string,
-  errors: { documentId: string; cause: unknown }[],
+  errors: { documentId: string; revision?: string; cause: unknown }[],
   diagnostics?: SongSaveDiagnostics,
-) => {
-  if (errors.length === 0) return;
-  console.error(`Song ${songId} saved, but v2 child cleanup needs reconciliation:`, errors);
-  try { diagnostics?.onCleanupErrors?.(errors); }
-  catch (error) { console.error("Song cleanup diagnostic handler failed:", error); }
+): Promise<void> => {
+  if (errors.length) {
+    console.error(`Song ${songId} saved, but v2 child cleanup needs reconciliation:`, errors);
+    try { diagnostics?.onCleanupErrors?.(errors); }
+    catch (error) { console.error("Song cleanup diagnostic handler failed:", error); }
+  }
+  try {
+    const { persistSongV2CleanupErrors, reconcileSongV2CleanupQueue } = await import("./songV2Writer");
+    await persistSongV2CleanupErrors(db, songId, errors);
+    const result = await reconcileSongV2CleanupQueue(db, songId);
+    if (result.cleanupErrors.length) {
+      console.error(`Song ${songId} has v2 child cleanup retries remaining:`, result.cleanupErrors);
+    }
+  } catch (error) {
+    // Cleanup is maintenance after a committed logical save. A queue or retry
+    // failure must stay observable without turning the song save into failure.
+    console.error(`Could not reconcile v2 child cleanup for ${songId}:`, error);
+  }
 };
 
 /** Resolves only the ordered arrangement manifest, never slide documents. */
@@ -173,6 +187,9 @@ export async function loadSong(
     }
     assertValidV2Root(v2Root);
     const snapshot = await loadV2Documents(db, v2Root);
+    // A later read after restart resumes persisted cleanup work, still with a
+    // bounded queue scan and without changing the logical read result.
+    await reportV2CleanupErrors(db, songId, []);
     return hydrateSongFromV2Documents(snapshot.root, snapshot.arrangements, snapshot.slides);
   }
   const document = (await db.get(songId)) as DBItem;
@@ -220,7 +237,7 @@ export async function saveSong(
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
     const result = await saveSongV2FromBaseline(db, currentSong, song);
-    reportV2CleanupErrors(song._id, result.cleanupErrors, diagnostics);
+    await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
     return result.song;
   }
   const existing = currentSong ?? await loadSong(db, song._id);
@@ -230,7 +247,7 @@ export async function saveSong(
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
     const result = await saveSongV2FromBaseline(db, currentSong, song);
-    reportV2CleanupErrors(song._id, result.cleanupErrors, diagnostics);
+    await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
     return result.song;
   }
   if (existing.type !== "song") {
@@ -279,7 +296,7 @@ export async function deleteSong(
         selectedArrangement: v2Root.selectedArrangement,
         songAudio: v2Root.songAudio,
         arrangements: [],
-      } as DBItem;
+      } as unknown as DBItem;
       const tombstone = applyPouchAudit(v2Root, {
         ...v2Root,
         arrangementIds: [],
@@ -295,7 +312,7 @@ export async function deleteSong(
         name: v2Root.name,
         selectedArrangement: v2Root.selectedArrangement,
         arrangements: [],
-      } as DBItem;
+      } as unknown as DBItem;
     }
 
     // The retained tombstone keeps v2 authoritative even if either cleanup fails.
@@ -324,14 +341,19 @@ export async function deleteSong(
     let legacy: DBItem | null = null;
     try { legacy = await getOptionalDocument<DBItem>(db, songId); }
     catch (error) { console.error("Could not inspect deleted song legacy document for cleanup:", songId, error); }
+    const cleanupErrors: { documentId: string; revision?: string; cause: unknown }[] = [];
     for (const child of cleanupCandidates) {
       try { await db.remove(child); }
-      catch (error) { console.error("Could not clean deleted song v2 child:", child._id, error); }
+      catch (cause) {
+        console.error("Could not clean deleted song v2 child:", child._id, cause);
+        cleanupErrors.push({ documentId: child._id, revision: child._rev, cause });
+      }
     }
     if (legacy) {
       try { await db.remove(legacy as PouchDB.Core.RemoveDocument); }
       catch (error) { console.error("Could not clean deleted song legacy document:", songId, error); }
     }
+    if (cleanupErrors.length) await reportV2CleanupErrors(db, songId, cleanupErrors);
     return previousSong;
   }
   const document = (await db.get(songId)) as DBItem;

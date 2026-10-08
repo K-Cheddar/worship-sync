@@ -1247,7 +1247,10 @@ listenerMiddleware.startListening({
       } catch (error) {
         if (
           (error as { status?: number })?.status === 409 ||
-          (error instanceof Error && error.name === "SongV2ConcurrentEditError")
+          (error instanceof Error && (
+            error.name === "SongV2ConcurrentEditError" ||
+            error.name === "SongV2VersionTransitionError"
+          ))
         ) {
           const latest = (await loadItemWithSongHydration(
             writeDatabase,
@@ -1264,6 +1267,9 @@ listenerMiddleware.startListening({
             )
           ) {
             listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
+            if (error instanceof Error && error.name === "SongV2VersionTransitionError") {
+              listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
+            }
           }
         }
         throw error;

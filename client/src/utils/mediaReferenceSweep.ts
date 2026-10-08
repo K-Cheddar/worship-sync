@@ -119,9 +119,11 @@ function sweepSlide(
   const mapBoxes = (boxes: Box[]) =>
     boxes.map((b) => resetBoxIfMatch(b, pb, deletedIds, deletedUrls));
   const boxes = mapBoxes(slide.boxes);
+  const boxesChanged = boxes.some((box, index) => box !== slide.boxes[index]);
   const mediaSourceMatches =
     slide.mediaSource?.kind === "local-video-input" &&
     deletedVideoSourceIds.has(slide.mediaSource.sourceId);
+  if (!boxesChanged && !mediaSourceMatches) return slide;
   const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
   const next: ItemSlideType = { ...clean, boxes };
   if (mediaSourceMatches) {
@@ -523,7 +525,9 @@ export async function sweepMediaReferencesBeforeDelete(
     }
     if (doc.docType === "song-v2-slide") {
       const swept = sweepSlide(doc as unknown as ItemSlideType, preferenceDefaultForItemType("song"), deletedIds, deletedUrls, deletedVideoSourceIds);
-      addIfChanged(doc, { ...doc, ...swept, updatedAt: new Date().toISOString() });
+      if (swept !== doc) {
+        addIfChanged(doc, { ...doc, ...swept, updatedAt: new Date().toISOString() });
+      }
       continue;
     }
 
