@@ -156,8 +156,19 @@ const generateServiceOccurrencesAround = (
   direction: "future" | "past",
 ) => {
   const today = calendarDateInTimeZone(now, timeZone);
-  const windowStart = direction === "future" ? today : shiftPlainDate(today, -400);
-  const windowEnd = direction === "future" ? shiftPlainDate(today, 400) : today;
+  // Weekly recurrences must be found within seven days. Monthly fifth-weekday
+  // recurrences can skip a month, so keep a year-sized bound for those. Anchor
+  // the bounded search at configured limits so a service starting or ending
+  // far from today remains discoverable without scanning an unbounded range.
+  const searchDays =
+    service.reccurence === "weekly" || service.reccurence === "multi_weekly"
+      ? 7
+      : 400;
+  const anchor = direction === "future"
+    ? [today, service.startDateISO || today].sort().at(-1) || today
+    : [today, service.endDateISO || today].sort()[0];
+  const windowStart = direction === "future" ? anchor : shiftPlainDate(anchor, -searchDays);
+  const windowEnd = direction === "future" ? shiftPlainDate(anchor, searchDays) : anchor;
   const startDate = [windowStart, service.startDateISO || windowStart].sort().at(-1) || windowStart;
   const endDate = [windowEnd, service.endDateISO || windowEnd].sort()[0];
   if (!startDate || !endDate || startDate > endDate) return [];

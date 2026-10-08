@@ -1725,7 +1725,7 @@ test("church service timezone is stored separately from Chat browser hints", asy
   assert.equal(updated.statusCode, 200);
   assert.equal(updated.payload.serviceTimeZone, "America/New_York");
   assert.equal(updated.payload.isConfigured, true);
-  assert.equal(updated.payload.legacyTimeZoneSuggestion, null);
+  assert.equal(updated.payload.legacyTimeZoneSuggestion, undefined);
   const savedChurch = await getDoc(COLLECTIONS.churches, context.churchId);
   assert.equal(savedChurch.serviceTimeZone, "America/New_York");
   assert.equal(savedChurch.otherSetting, "preserved");
@@ -1736,6 +1736,49 @@ test("church service timezone is stored separately from Chat browser hints", asy
     body: { serviceTimeZone: "Not/A_Timezone" },
   });
   assert.equal(invalid.statusCode, 400);
+});
+
+test("service timezone read grants only the requested permission axis", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("timezone_permission_matrix");
+  const cases = [
+    ["controller", "view", { teams: "none", services: "none" }, 200],
+    ["services", "member", { teams: "none", services: "view" }, 200],
+    ["teams", "member", { teams: "view", services: "none" }, 200],
+    ["no_access", "member", { teams: "none", services: "none" }, 403],
+  ];
+  const members = [];
+  for (const [name, appAccess, permissions] of cases) {
+    members.push(await createHumanContext(`timezone_matrix_${name}`, {
+      churchId: owner.churchId,
+      role: "member",
+      appAccess,
+      permissions,
+    }));
+  }
+  await setDoc(COLLECTIONS.churches, owner.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
+
+  for (const [index, [name, , , expectedStatus]] of cases.entries()) {
+    const member = members[index];
+    const timezone = await callHandler(authHandlers.getChurchServiceTimeZone, {
+      context: member,
+    });
+    assert.equal(timezone.statusCode, expectedStatus, name);
+    if (name === "controller") {
+      assert.equal(timezone.payload.serviceTimeZone, "America/New_York");
+      assert.equal(timezone.payload.legacyTimeZoneSuggestion, undefined);
+      assert.equal(
+        (await callHandler(authHandlers.getTeamsBootstrap, { context: member })).statusCode,
+        403,
+      );
+      assert.equal(
+        (await callHandler(authHandlers.listServicePlans, { context: member })).statusCode,
+        403,
+      );
+    }
+  }
 });
 
 test("Services edit can change service plans without receiving Teams data", async (t) => {
@@ -10724,6 +10767,41 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
   );
   assert.ok(saved.sentAt);
   assert.ok(occurrenceId);
+});
+
+test("assignment email uses the church timezone across UTC midnight", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("send_timezone_midnight");
+  const { scheduleId } = await seedAssignedSchedule(
+    context,
+    "timezone_midnight",
+    { serviceDate: "2026-10-10" },
+  );
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  await setDoc(COLLECTIONS.teamSchedules, scheduleId, {
+    occurrences: schedule.occurrences.map((occurrence) => ({
+      ...occurrence,
+      startsAt: "2026-10-11T03:30:00.000Z",
+    })),
+  }, { merge: true });
+
+  const sent = [];
+  setSendEmailForServerTests(async (message) => sent.push(message));
+  try {
+    const result = await callHandler(authHandlers.sendTeamSchedule, {
+      context,
+      params: { scheduleId },
+    });
+    assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].textBody, /Saturday, Oct 10, 11:30 PM EDT/);
+    assert.doesNotMatch(sent[0].textBody, /Sunday, Oct 11, 3:30 AM/);
+  } finally {
+    setSendEmailForServerTests(null);
+  }
 });
 
 test("sending reports who could not be reached instead of skipping quietly", async (t) => {

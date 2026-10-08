@@ -157,6 +157,40 @@ describe("serviceTimes", () => {
       expect(getNextOccurrenceForService(afterEnd, now)).toBeNull();
     });
 
+    it("finds a weekly occurrence when the configured start is over 400 days away", () => {
+      const now = new Date(2026, 0, 4, 9, 0, 0);
+      const service = createService({
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        startDateISO: "2027-08-01",
+      });
+
+      const result = getNextOccurrenceForService(service, now);
+
+      expect(result?.getFullYear()).toBe(2027);
+      expect(result?.getMonth()).toBe(7);
+      expect(result?.getDate()).toBe(1);
+      expect(result?.getHours()).toBe(10);
+    });
+
+    it("finds the last occurrence near an end date over 400 days in the past", () => {
+      const now = new Date(2026, 0, 4, 12, 0, 0);
+      const service = createService({
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        endDateISO: "2024-01-07",
+      });
+
+      const result = getMostRecentTargetTime(service, now);
+
+      expect(result?.getFullYear()).toBe(2024);
+      expect(result?.getMonth()).toBe(0);
+      expect(result?.getDate()).toBe(7);
+      expect(result?.getHours()).toBe(10);
+    });
+
     describe("multi_weekly", () => {
       it("returns the soonest upcoming day among the selected days", () => {
         // Wednesday 2026-01-07 at 09:00

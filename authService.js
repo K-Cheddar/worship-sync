@@ -556,6 +556,7 @@ export const readChurchPublicBrandingChrome = async (churchId) => {
 
 const memoryState = {
   churches: new Map(),
+  chatSettings: new Map(),
   users: new Map(),
   memberships: new Map(),
   invites: new Map(),
@@ -657,6 +658,7 @@ const updateChurchServiceTimes = async (churchId, update) => {
 
 const collectionMap = {
   [COLLECTIONS.churches]: memoryState.churches,
+  chatSettings: memoryState.chatSettings,
   [COLLECTIONS.users]: memoryState.users,
   [COLLECTIONS.memberships]: memoryState.memberships,
   [COLLECTIONS.invites]: memoryState.invites,

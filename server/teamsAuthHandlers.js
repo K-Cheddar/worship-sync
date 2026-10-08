@@ -406,16 +406,18 @@ export const createTeamsAuthHandlers = ({
   });
 
   /** Local date/time for an occurrence, as the reader would say it aloud. */
-  const formatAssignmentWhen = (startsAt) => {
+  const formatAssignmentWhen = (startsAt, timeZone) => {
     const parsed = startsAt ? new Date(startsAt) : null;
     if (!parsed || Number.isNaN(parsed.getTime()))
       return "Date to be confirmed";
     return parsed.toLocaleString("en-US", {
+      timeZone,
       weekday: "long",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZoneName: "short",
     });
   };
 
@@ -539,7 +541,12 @@ export const createTeamsAuthHandlers = ({
             ),
             assignments: ordered.map((entry) => ({
               serviceName: entry.serviceName,
-              when: formatAssignmentWhen(entry.startsAt),
+              when: formatAssignmentWhen(
+                entry.startsAt,
+                isValidPortableTimeZone(church?.serviceTimeZone)
+                  ? church.serviceTimeZone
+                  : "UTC",
+              ),
               positionName: entry.positionName,
               teamName: schedule.teamName || "",
             })),
@@ -15813,18 +15820,34 @@ export const createTeamsAuthHandlers = ({
     async getChurchServiceTimeZone(req, res) {
       try {
         const churchId = req.params.churchId;
+        let controllerOnlyRead = false;
         try {
           await requireServicesWorkspaceView(req, churchId);
         } catch (error) {
           if (error?.statusCode !== 403) throw error;
-          await requireTeamsView(req, churchId);
+          try {
+            await requireTeamsView(req, churchId);
+          } catch (teamsError) {
+            if (teamsError?.statusCode !== 403) throw teamsError;
+            const bootstrap = await requireHumanSession(req);
+            const controllerAccess =
+              bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
+            if (
+              bootstrap.churchId !== churchId ||
+              bootstrap.role !== "member" ||
+              !["full", "music", "view"].includes(controllerAccess)
+            ) {
+              throw teamsError;
+            }
+            controllerOnlyRead = true;
+          }
         }
         const church = await getDoc(COLLECTIONS.churches, churchId);
         if (!church) throw httpError(404, "Church settings were not found.");
         const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
         const serviceTimeZone = isConfigured ? church.serviceTimeZone : "UTC";
         let legacyTimeZoneSuggestion = null;
-        if (!isConfigured) {
+        if (!isConfigured && !controllerOnlyRead) {
           const legacyChatSettings = await getDoc("chatSettings", churchId);
           const legacyTimeZone = legacyChatSettings?.timeZone;
           if (isValidPortableTimeZone(legacyTimeZone)) {
@@ -15835,7 +15858,7 @@ export const createTeamsAuthHandlers = ({
           success: true,
           serviceTimeZone,
           isConfigured,
-          legacyTimeZoneSuggestion,
+          ...(controllerOnlyRead ? {} : { legacyTimeZoneSuggestion }),
         });
       } catch (error) {
         return sendTeamsJsonError(
