@@ -772,7 +772,7 @@ export const createNewItemInDb = async ({
       ...normalized,
       _id: response._id,
       name: response.name,
-    } as ItemState;
+    } as CreatedItemState;
   } catch (error) {
     if (!isPouchNotFoundError(error)) throw error;
     const now = new Date().toISOString();
@@ -782,7 +782,7 @@ export const createNewItemInDb = async ({
     // this resolution as their signal that a library reference is durable.
     if (newDoc.type === "song") {
       const saved = await createSong(db, newDoc);
-      return { ...item, ...saved, _rev: saved._rev } as ItemState;
+      return { ...item, ...saved, _rev: saved._rev } as CreatedItemState;
     } else {
       const doc = applyPouchAudit(null, newDoc, { isNew: true });
       await db.put(doc);
