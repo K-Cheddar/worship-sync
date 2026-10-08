@@ -2841,7 +2841,9 @@ export const submitInviteSmsConsent = async (
       | "verification_required"
       | "already_opted_in"
       | "opted_out"
-      | "verification_pending";
+      | "verification_pending"
+      | "delivery_uncertain";
+    deliveryStatus?: "sending" | "sent" | "failed" | "unknown";
     challengeId?: string;
     cancellationToken?: string;
   }>("api/invites/sms-consent", {
@@ -3081,6 +3083,7 @@ export const previewPortableImport = async (
   csv: string,
   mapping: Record<string, string>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean } = {},
 ) =>
   apiFetch<{
     success: boolean;
@@ -3095,7 +3098,7 @@ export const previewPortableImport = async (
     };
   }>(`api/churches/${churchId}/data-transfer/preview`, {
     method: "POST",
-    body: JSON.stringify({ type, csv, mapping, timeZone }),
+    body: JSON.stringify({ type, csv, mapping, timeZone, ...options }),
   });
 
 export const commitPortableImport = async (
@@ -3107,22 +3110,24 @@ export const commitPortableImport = async (
     recordId?: string;
     record: Record<string, string>;
     resolutions?: PortableImportResolution[];
+    expectedStateHash?: string;
   }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean } = {},
 ) =>
   apiFetch<{
     success: boolean;
     results: Array<{
       row: number;
-      status: "created" | "updated" | "failed";
+      status: "created" | "updated" | "unchanged" | "failed";
       id?: string;
       code?: string;
       message?: string;
     }>;
-    summary: { created: number; updated: number; failed: number };
+    summary: { created: number; updated: number; unchanged?: number; failed: number };
   }>(`api/churches/${churchId}/data-transfer/commit`, {
     method: "POST",
-    body: JSON.stringify({ type, approvedRows, timeZone }),
+    body: JSON.stringify({ type, approvedRows, timeZone, ...options }),
   });
 
 export const downloadPortableData = async (

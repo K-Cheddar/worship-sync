@@ -1671,6 +1671,7 @@ const upsertSmsConsent = async (
     lastCancelledVerificationTokenHash: null,
     lastCancelledVerificationTokenExpiresAt: null,
     verificationAttempts: 0,
+    verificationDeliveryStatus: "sending",
     updatedAt: submittedAt,
   };
   const expiredPendingReplacementFields = (existing) => {
@@ -1718,6 +1719,7 @@ const upsertSmsConsent = async (
           existing.source === source &&
           existing.inviteId === consentProvenance.inviteId &&
           existing.verificationChallengeId === challenge.challengeId &&
+          existing.verificationDeliveryStatus !== "failed" &&
           matchesSmsConsentCancellationCapability({
             churchId,
             phoneNumber: normalizedPhoneNumber,
@@ -1731,7 +1733,8 @@ const upsertSmsConsent = async (
           const challengeExpired =
             !existing.verificationCodeHash ||
             new Date(existing.verificationExpiresAt || "").getTime() <= Date.now();
-          if (challengeExpired) {
+          const deliveryFailed = existing.verificationDeliveryStatus === "failed";
+          if (challengeExpired || deliveryFailed) {
             transaction.set(consentRef, expiredPendingReplacementFields(existing), { merge: true });
             return { shouldSend: true, renewed: true };
           }
@@ -1787,6 +1790,7 @@ const upsertSmsConsent = async (
         existing.source === source &&
         existing.inviteId === consentProvenance.inviteId &&
         existing.verificationChallengeId === challenge.challengeId &&
+        existing.verificationDeliveryStatus !== "failed" &&
         matchesSmsConsentCancellationCapability({
           churchId,
           phoneNumber: normalizedPhoneNumber,
@@ -1802,7 +1806,8 @@ const upsertSmsConsent = async (
         const challengeExpired =
           !existing.verificationCodeHash ||
           new Date(existing.verificationExpiresAt || "").getTime() <= Date.now();
-        if (challengeExpired) {
+        const deliveryFailed = existing.verificationDeliveryStatus === "failed";
+        if (challengeExpired || deliveryFailed) {
           await setDoc(COLLECTIONS.smsConsents, consentId, expiredPendingReplacementFields(existing), {
             merge: true,
           });
@@ -1926,20 +1931,62 @@ const recordAdminSmsConsent = async ({
   });
 };
 
-const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
+const markSmsConsentChallengeSent = async ({ consentId, challengeId, provider, method }) => {
   const sentAt = nowIso();
-  await setDoc(
-    COLLECTIONS.smsConsents,
-    consentId,
-    {
+  const db = requireFirestore();
+  const patch = {
       verificationSentAt: sentAt,
       verificationProvider: provider || "sms",
       verificationMethod: method || "sms_otp",
+      verificationDeliveryStatus: "sent",
       updatedAt: sentAt,
-    },
-    { merge: true },
-  );
-  return sentAt;
+    };
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(ref);
+      const record = snapshot.exists ? snapshot.data() : null;
+      if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+      transaction.set(ref, patch, { merge: true });
+      return true;
+    });
+  }
+  return withSmsConsentMutationLock(consentId, async () => {
+    const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+    if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+    await setDoc(COLLECTIONS.smsConsents, consentId, patch, { merge: true });
+    return true;
+  });
+};
+
+const markInviteSmsChallengeDelivery = async ({ consentId, challengeId, status }) => {
+  const updatedAt = nowIso();
+  const patch = {
+    verificationDeliveryStatus: status,
+    ...(status === "failed" ? {
+      verificationCodeHash: null,
+      verificationCodeSalt: null,
+      verificationExpiresAt: null,
+    } : {}),
+    updatedAt,
+  };
+  const db = requireFirestore();
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(ref);
+      const record = snapshot.exists ? snapshot.data() : null;
+      if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+      transaction.set(ref, patch, { merge: true });
+      return true;
+    });
+  }
+  return withSmsConsentMutationLock(consentId, async () => {
+    const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+    if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+    await setDoc(COLLECTIONS.smsConsents, consentId, patch, { merge: true });
+    return true;
+  });
 };
 
 const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
@@ -7897,6 +7944,7 @@ export const authHandlers = {
         }
         await markSmsConsentChallengeSent({
           consentId,
+          challengeId: challenge.challengeId,
           provider: delivery?.provider,
           method: delivery?.method,
         });
@@ -8903,17 +8951,83 @@ export const authHandlers = {
           COLLECTIONS.churchMessagingConfigs,
           context.invite.churchId,
         );
-        const delivery = await sendSmsConsentVerificationCode({
-          phoneNumber: parsed.phoneNumber,
-          code: challenge.code,
-          challengeId: challenge.challengeId,
-          config: messagingConfig,
-        });
-        await markSmsConsentChallengeSent({
-          consentId,
-          provider: delivery?.provider,
-          method: delivery?.method,
-        });
+        try {
+          const delivery = await sendSmsConsentVerificationCode({
+            phoneNumber: parsed.phoneNumber,
+            code: challenge.code,
+            challengeId: challenge.challengeId,
+            config: messagingConfig,
+          });
+          if (["uncertain", "unknown"].includes(String(delivery?.outcome || delivery?.status || "").toLowerCase())) {
+            await markInviteSmsChallengeDelivery({
+              consentId,
+              challengeId: challenge.challengeId,
+              status: "unknown",
+            });
+            return res.status(202).json({
+              success: false,
+              outcome: "delivery_uncertain",
+              challengeId: challenge.challengeId,
+              cancellationToken: challenge.cancellationToken,
+              errorMessage: "The SMS provider outcome is uncertain. Check your messages before trying again, or continue without SMS.",
+            });
+          }
+          if (
+            String(delivery?.outcome || "").toLowerCase() === "failed" ||
+            String(delivery?.status || "").toLowerCase() === "failed"
+          ) {
+            const definitive = delivery?.definitive === true ||
+              String(delivery?.outcome || "").toLowerCase() === "failed" ||
+              String(delivery?.status || "").toLowerCase() === "failed";
+            await markInviteSmsChallengeDelivery({
+              consentId,
+              challengeId: challenge.challengeId,
+              status: definitive ? "failed" : "unknown",
+            });
+            return res.status(definitive ? 502 : 202).json({
+              success: false,
+              outcome: definitive ? "delivery_failed" : "delivery_uncertain",
+              challengeId: challenge.challengeId,
+              cancellationToken: challenge.cancellationToken,
+              errorMessage: definitive
+                ? "The SMS provider rejected the verification text. You can try sending a new code or continue without SMS."
+                : "The SMS provider outcome is uncertain. Check your messages before trying again, or continue without SMS.",
+            });
+          }
+          await markSmsConsentChallengeSent({
+            consentId,
+            challengeId: challenge.challengeId,
+            provider: delivery?.provider,
+            method: delivery?.method,
+          });
+        } catch (deliveryError) {
+          const providerErrorCode = String(deliveryError?.code || "");
+          const timeoutOrNetworkFailure =
+            deliveryError?.name === "AbortError" ||
+            /TIMEOUT|ETIMEDOUT|ECONNRESET|ECONNABORTED|EAI_AGAIN|ECONNREFUSED/i.test(providerErrorCode) ||
+            Number(deliveryError?.statusCode) === 408;
+          const definitive =
+            !timeoutOrNetworkFailure && (
+              deliveryError?.code === "sms_provider_not_configured" ||
+              Boolean(deliveryError?.statusCode >= 400 && deliveryError.statusCode < 500) ||
+              Boolean(providerErrorCode && /^\d{5}$/.test(providerErrorCode))
+            );
+          const outcome = definitive ? "delivery_failed" : "delivery_uncertain";
+          await markInviteSmsChallengeDelivery({
+            consentId,
+            challengeId: challenge.challengeId,
+            status: definitive ? "failed" : "unknown",
+          });
+          return res.status(definitive ? 502 : 202).json({
+            success: false,
+            outcome,
+            challengeId: challenge.challengeId,
+            cancellationToken: challenge.cancellationToken,
+            errorMessage: definitive
+              ? "The SMS provider rejected the verification text. You can try sending a new code or continue without SMS."
+              : "The SMS provider outcome is uncertain. Check your messages before trying again, or continue without SMS.",
+          });
+        }
       }
       if (!retry) {
         await addSecurityEvent({
@@ -8926,9 +9040,18 @@ export const authHandlers = {
           consentVersion: SMS_CONSENT_VERSION,
         });
       }
+      const currentConsent = !shouldSend
+        ? await getDoc(COLLECTIONS.smsConsents, consentId)
+        : null;
+      const deliveryStatus = shouldSend
+        ? "sent"
+        : currentConsent?.verificationDeliveryStatus || "unknown";
       return res.json({
         success: true,
-        outcome: "verification_required",
+        outcome: !shouldSend && deliveryStatus !== "sent"
+          ? "delivery_uncertain"
+          : "verification_required",
+        deliveryStatus,
         challengeId: challenge.challengeId,
         cancellationToken: challenge.cancellationToken,
       });

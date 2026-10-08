@@ -611,7 +611,7 @@ export type TeamsBootstrap = {
 
 export type PortableDataType = "members" | "teams" | "positions" | "services" | "schedules";
 export type PortableImportAction = "create" | "update" | "review" | "invalid";
-export type PortableImportCandidate = { id: string; name: string };
+export type PortableImportCandidate = { id: string; name: string; teamName?: string; stateHash?: string };
 export type PortableImportIssue = {
   field: string;
   code: string;
@@ -628,6 +628,9 @@ export type PortableImportRow = {
   matchedId: string | null;
   candidates: PortableImportCandidate[];
   issues: PortableImportIssue[];
+  changes?: Array<{ field: string; before: string; after: string }>;
+  expectedStateHash?: string;
+  sourceValues?: Record<string, string>;
 };
 
 export type TeamIntakeAvailabilityService = {

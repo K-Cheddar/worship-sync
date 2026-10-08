@@ -1041,7 +1041,7 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
-        listHeaderActions={<PortableDataActions type="members" onImported={onImported} />}
+        listHeaderActions={<PortableDataActions type="members" teams={data.teams} destinationTeamId={listFilters.teamIds.length === 1 ? listFilters.teamIds[0] : undefined} onImported={onImported} />}
         keepCreateActionVisible
         scrollableList
         listToolbar={

@@ -1,0 +1,7 @@
+{
+  "id": "member-csv-imports",
+  "date": "2026-10-08",
+  "type": "improved",
+  "title": "Safer member CSV imports",
+  "description": "Choose a destination team, review member changes, and merge updated CSV details while keeping unrelated team memberships and positions in place."
+}

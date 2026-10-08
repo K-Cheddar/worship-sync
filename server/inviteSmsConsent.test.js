@@ -111,11 +111,12 @@ const createFirestoreMock = () => {
 
 let sentCode = "";
 let sendCount = 0;
-setSmsConsentSenderForServerTests(({ code }) => {
+const defaultSmsConsentSender = ({ code }) => {
   sentCode = code;
   sendCount += 1;
   return { provider: "test", method: "sms_otp" };
-});
+};
+setSmsConsentSenderForServerTests(defaultSmsConsentSender);
 
 const setupAcceptedInvite = async ({
   label,
@@ -537,6 +538,96 @@ test("invitation cancellation is scoped to its own pending challenge and idempot
   await authHandlers.cancelInviteSmsConsent(createReq({ body: activeBody }), activeCancel);
   assert.deepEqual(activeCancel.payload, { success: true, cancelled: false });
   assert.equal((await getSmsConsentForServerTests(optedInInvite.churchId, activeBody.phoneNumber)).status, "opted_in");
+});
+
+test("an uncertain invitation SMS send remains durable and is never blindly retried", async (t) => {
+  if (authRuntimeInfo.hasFirestore) return t.skip("Uses in-memory auth storage only.");
+  const invite = await setupAcceptedInvite({ label: "uncertain-delivery" });
+  process.env.SMS_INVITE_CONSENT_ENABLED = "true";
+  sendCount = 0;
+  setSmsConsentSenderForServerTests(() => {
+    sendCount += 1;
+    throw Object.assign(new Error("socket timed out"), { code: "ETIMEDOUT" });
+  });
+  t.after(() => {
+    delete process.env.SMS_INVITE_CONSENT_ENABLED;
+    setVerifyIdTokenForServerTests(null);
+    setSmsConsentSenderForServerTests(defaultSmsConsentSender);
+  });
+  const body = consentBody({ invite, phoneNumber: "+12125550123", expectedRosterPhoneNumber: "+12125550123" });
+
+  const first = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), first);
+  assert.equal(first.statusCode, 202);
+  assert.equal(first.payload.outcome, "delivery_uncertain");
+  const record = await getSmsConsentForServerTests(invite.churchId, body.phoneNumber);
+  assert.equal(record.verificationDeliveryStatus, "unknown");
+  assert.ok(record.verificationCodeHash);
+
+  const retry = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), retry);
+  assert.equal(retry.payload.outcome, "delivery_uncertain");
+  assert.equal(sendCount, 1);
+});
+
+test("a definitive invitation SMS rejection can be safely retried with a fresh OTP", async (t) => {
+  if (authRuntimeInfo.hasFirestore) return t.skip("Uses in-memory auth storage only.");
+  const invite = await setupAcceptedInvite({ label: "definitive-delivery" });
+  process.env.SMS_INVITE_CONSENT_ENABLED = "true";
+  sendCount = 0;
+  setSmsConsentSenderForServerTests(() => {
+    sendCount += 1;
+    throw Object.assign(new Error("provider rejected request"), { statusCode: 400, code: "21614" });
+  });
+  t.after(() => {
+    delete process.env.SMS_INVITE_CONSENT_ENABLED;
+    setVerifyIdTokenForServerTests(null);
+    setSmsConsentSenderForServerTests(defaultSmsConsentSender);
+  });
+  const body = consentBody({ invite, phoneNumber: "+12125550123", expectedRosterPhoneNumber: "+12125550123" });
+
+  const failed = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), failed);
+  assert.equal(failed.statusCode, 502);
+  assert.equal(failed.payload.outcome, "delivery_failed");
+  const rejectedRecord = await getSmsConsentForServerTests(invite.churchId, body.phoneNumber);
+  assert.equal(rejectedRecord.verificationDeliveryStatus, "failed");
+  assert.equal(rejectedRecord.verificationCodeHash, null);
+
+  setSmsConsentSenderForServerTests(defaultSmsConsentSender);
+  const retried = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), retried);
+  assert.equal(retried.payload.outcome, "verification_required");
+  assert.equal(retried.payload.challengeId, body.challengeId);
+  assert.equal(sendCount, 2);
+  assert.equal((await getSmsConsentForServerTests(invite.churchId, body.phoneNumber)).verificationDeliveryStatus, "sent");
+});
+
+test("an explicitly uncertain provider result is persisted without another send", async (t) => {
+  if (authRuntimeInfo.hasFirestore) return t.skip("Uses in-memory auth storage only.");
+  const invite = await setupAcceptedInvite({ label: "uncertain-result" });
+  process.env.SMS_INVITE_CONSENT_ENABLED = "true";
+  sendCount = 0;
+  setSmsConsentSenderForServerTests(() => {
+    sendCount += 1;
+    return { outcome: "unknown", provider: "test", method: "sms_otp" };
+  });
+  t.after(() => {
+    delete process.env.SMS_INVITE_CONSENT_ENABLED;
+    setVerifyIdTokenForServerTests(null);
+    setSmsConsentSenderForServerTests(defaultSmsConsentSender);
+  });
+  const body = consentBody({ invite, phoneNumber: "+12125550123", expectedRosterPhoneNumber: "+12125550123" });
+
+  const first = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), first);
+  assert.equal(first.statusCode, 202);
+  assert.equal(first.payload.outcome, "delivery_uncertain");
+  assert.equal((await getSmsConsentForServerTests(invite.churchId, body.phoneNumber)).verificationDeliveryStatus, "unknown");
+  const retry = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), retry);
+  assert.equal(retry.payload.outcome, "delivery_uncertain");
+  assert.equal(sendCount, 1);
 });
 
 test("changed roster phone blocks both challenge creation and verification activation", async (t) => {
