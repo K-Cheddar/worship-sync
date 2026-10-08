@@ -4,7 +4,9 @@ import { MemoryRouter } from "react-router-dom";
 import InviteAccept from "../InviteAccept";
 import {
   acceptInvite,
+  cancelInviteSmsConsent,
   createHumanSession,
+  fetchInviteSmsContext,
   fetchInvitePreview,
   getAuthBootstrap,
   logoutSession,
@@ -23,6 +25,8 @@ const authenticateHumanWithFirebaseMock = jest.fn();
 
 const acceptInviteMock = jest.mocked(acceptInvite);
 const fetchInvitePreviewMock = jest.mocked(fetchInvitePreview);
+const fetchInviteSmsContextMock = jest.mocked(fetchInviteSmsContext);
+const cancelInviteSmsConsentMock = jest.mocked(cancelInviteSmsConsent);
 const createHumanSessionMock = jest.mocked(createHumanSession);
 const getAuthBootstrapMock = jest.mocked(getAuthBootstrap);
 const logoutSessionMock = jest.mocked(logoutSession);
@@ -57,6 +61,8 @@ jest.mock("../../api/auth", () => ({
   getAuthBootstrap: jest.fn(),
   logoutSession: jest.fn(),
   fetchInvitePreview: jest.fn(),
+  fetchInviteSmsContext: jest.fn(),
+  cancelInviteSmsConsent: jest.fn(),
   submitInviteSmsConsent: jest.fn(),
   verifyInviteSmsConsent: jest.fn(),
 }));
@@ -125,6 +131,8 @@ describe("InviteAccept", () => {
     getAuthBootstrapMock.mockReset();
     logoutSessionMock.mockReset();
     submitInviteSmsConsentMock.mockReset();
+    fetchInviteSmsContextMock.mockReset();
+    cancelInviteSmsConsentMock.mockReset();
     verifyInviteSmsConsentMock.mockReset();
     logoutSessionMock.mockResolvedValue({ success: true });
     createUserWithEmailAndPasswordMock.mockReset();
@@ -145,10 +153,15 @@ describe("InviteAccept", () => {
         success: true,
         churchName: "Test Church",
         smsInviteConsentEnabled: true,
-        rosterPhoneNumber: "+12125550123",
-        smsConsentStatus: "none",
       }),
     );
+    fetchInviteSmsContextMock.mockResolvedValue({
+      success: true,
+      smsInviteConsentEnabled: true,
+      rosterPhoneNumber: "+12125550123",
+      smsConsentStatus: "none",
+    });
+    cancelInviteSmsConsentMock.mockResolvedValue({ success: true, cancelled: true });
   });
 
   it("keeps Home available in the shared menu while accepting an invite", async () => {
@@ -534,10 +547,12 @@ describe("InviteAccept", () => {
     });
   });
 
-  it("shows the linked phone and leaves SMS unchecked without starting a challenge", async () => {
+  it("keeps roster phone details private until the invited identity is accepted", async () => {
     renderPage();
-    expect(await screen.findByText("+12125550123")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: /i agree to receive sms messages/i })).not.toBeChecked();
+    await waitFor(() => expect(fetchInvitePreviewMock).toHaveBeenCalledWith("invite-token"));
+    expect(screen.queryByText("+12125550123")).not.toBeInTheDocument();
+    expect(fetchInviteSmsContextMock).not.toHaveBeenCalled();
+    expect(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i })).not.toBeChecked();
     expect(screen.queryByLabelText(/mobile phone number/i)).not.toBeInTheDocument();
     expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
   });
@@ -551,6 +566,12 @@ describe("InviteAccept", () => {
     };
     setCurrentUser(signedInUser);
     acceptInviteMock.mockResolvedValue({ success: true });
+    fetchInviteSmsContextMock.mockResolvedValue({
+      success: true,
+      smsInviteConsentEnabled: true,
+      rosterPhoneNumber: "+12125550123",
+      smsConsentStatus: "opted_in",
+    });
     submitInviteSmsConsentMock.mockResolvedValue({
       success: true,
       outcome: "already_opted_in",
@@ -565,9 +586,9 @@ describe("InviteAccept", () => {
     await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
     await user.click(screen.getByRole("button", { name: /accept invite with this account/i }));
 
-    await waitFor(() => expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1));
-    expect(verifyInviteSmsConsentMock).not.toHaveBeenCalled();
     await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+    expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
+    expect(verifyInviteSmsConsentMock).not.toHaveBeenCalled();
     expect(acceptInviteMock).toHaveBeenCalledTimes(1);
   });
 
@@ -625,6 +646,49 @@ describe("InviteAccept", () => {
     expect(acceptInviteMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["123", ""])(
+    "shows inline validation for invalid or missing fallback phone (%s) and lets signup continue without SMS",
+    async (phoneDraft) => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    createUserWithEmailAndPasswordMock.mockImplementation(async () => {
+      setCurrentUser(signedInUser);
+      return { user: signedInUser };
+    });
+    fetchInviteSmsContextMock.mockResolvedValue({
+      success: true,
+      smsInviteConsentEnabled: true,
+      smsConsentStatus: "none",
+    });
+    createHumanSessionMock.mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "invalid-phone-pending",
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+    if (phoneDraft) await user.type(screen.getByLabelText(/mobile phone number/i), phoneDraft);
+    await user.type(screen.getByLabelText(/email/i), "invited@example.com");
+    await user.type(screen.getByLabelText(/^name/i), "Invited User");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
+    await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
+
+    expect(await screen.findByLabelText(/mobile phone number/i)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getAllByRole("alert").some((alert) => /enter a valid 10-digit u\.s\. mobile number/i.test(alert.textContent || ""))).toBe(true);
+    expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
+    expect(createHumanSessionMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /continue without sms/i }));
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+    expect(acceptInviteMock).toHaveBeenCalledTimes(1);
+    expect(signedInUser.delete).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["google", "microsoft"] as const)(
     "%s signup shares the invitation SMS flow and can skip after choosing to opt in",
     async (method) => {
@@ -658,6 +722,10 @@ describe("InviteAccept", () => {
       expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1);
       await user.click(screen.getByRole("button", { name: /continue without sms/i }));
       await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+      expect(cancelInviteSmsConsentMock).toHaveBeenCalledWith(expect.objectContaining({
+        challengeId: "c".repeat(32),
+        cancellationToken: "d".repeat(43),
+      }));
       expect(verifyInviteSmsConsentMock).not.toHaveBeenCalled();
       expect(acceptInviteMock).toHaveBeenCalledTimes(1);
     },
@@ -734,5 +802,41 @@ describe("InviteAccept", () => {
     await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
     expect(acceptInviteMock).toHaveBeenCalledTimes(1);
     expect(signedInUser.delete).not.toHaveBeenCalled();
+  });
+
+  it("retries cancellation with the same capability after an uncertain response", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    setCurrentUser(signedInUser);
+    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
+    window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
+      accepted: true,
+      token: "invite-token",
+      acceptedAt: Date.now(),
+      smsConsentChecked: true,
+      smsVerification: {
+        phoneNumber: "+12125550123",
+        expectedRosterPhoneNumber: "+12125550123",
+        challengeId: "g".repeat(32),
+        cancellationToken: "h".repeat(43),
+      },
+    }));
+    cancelInviteSmsConsentMock
+      .mockRejectedValueOnce(new Error("Network response was lost"))
+      .mockResolvedValueOnce({ success: true, cancelled: true });
+    createHumanSessionMock.mockRejectedValue(new Error("Session unavailable"));
+
+    renderPage({ initialEntry: "/invite" });
+    await user.click(await screen.findByRole("button", { name: /continue without sms/i }));
+    expect(await screen.findByText(/could not confirm sms signup cancellation/i)).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("worshipsync_invite_sms_cancel:invite-token")).toContain("gggg");
+    await user.click(screen.getByRole("button", { name: /continue without sms/i }));
+    await waitFor(() => expect(cancelInviteSmsConsentMock).toHaveBeenCalledTimes(2));
+    expect(cancelInviteSmsConsentMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ challengeId: "g".repeat(32) }));
+    expect(cancelInviteSmsConsentMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ challengeId: "g".repeat(32) }));
   });
 });

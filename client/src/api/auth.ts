@@ -2797,12 +2797,21 @@ export const fetchInvitePreview = async (token: string) =>
     success: boolean;
     churchName?: string;
     smsInviteConsentEnabled?: boolean;
-    rosterPhoneNumber?: string;
-    smsConsentStatus?: "none" | "pending" | "opted_in" | "opted_out";
   }>(
     `api/invites/preview?${new URLSearchParams({ token }).toString()}`,
     { method: "GET" },
   );
+
+export const fetchInviteSmsContext = async (body: { inviteToken: string; idToken: string }) =>
+  apiFetchWithoutAuthRecovery<{
+    success: boolean;
+    smsInviteConsentEnabled: boolean;
+    rosterPhoneNumber?: string;
+    smsConsentStatus: "none" | "pending" | "opted_in" | "opted_out";
+  }>("api/invites/sms-context", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const acceptInvite = async (body: JsonBody) =>
   apiFetch<{ success: boolean; email?: string; churchId?: string }>(
@@ -2856,6 +2865,19 @@ export const verifyInviteSmsConsent = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const cancelInviteSmsConsent = async (body: {
+  inviteToken: string;
+  idToken: string;
+  phoneNumber: string;
+  expectedRosterPhoneNumber: string;
+  challengeId: string;
+  cancellationToken: string;
+}) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean; cancelled: boolean }>(
+    "api/invites/sms-consent/cancel",
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const makeAdmin = async (churchId: string, userId: string) =>
