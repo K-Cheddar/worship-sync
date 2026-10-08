@@ -118,7 +118,13 @@ export const useTeamsDomainResources = () => {
   }, [churchId, commitResource]);
 
   const ensureLoaded = useCallback(() => load(false), [load]);
-  const refresh = useCallback(() => load(true), [load]);
+  const refresh = useCallback(async () => {
+    const pending = inFlightRef.current;
+    if (pending?.churchId === churchId) {
+      await pending.promise.catch(() => undefined);
+    }
+    await load(true);
+  }, [churchId, load]);
 
   const upsert = useCallback((template: ServicePlanTemplate) => {
     if (

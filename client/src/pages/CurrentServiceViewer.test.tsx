@@ -580,7 +580,7 @@ describe("CurrentServiceViewer", () => {
     );
   });
 
-  it("updates and removes the active plan from live events", async () => {
+  it("refreshes and removes the active plan from live events", async () => {
     const updatedPlan = { ...plan, name: "Updated live service" };
     jest
       .spyOn(Date, "now")
@@ -595,7 +595,7 @@ describe("CurrentServiceViewer", () => {
     expect(onMessage).toBeDefined();
 
     act(() => {
-      onMessage?.({ type: "service-plan-updated", servicePlan: updatedPlan });
+      onMessage?.({ type: "service-plan-updated", planKey: updatedPlan.planKey });
     });
     expect(await screen.findByRole("heading", { name: "Updated live service" })).toBeInTheDocument();
     await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(2));
@@ -660,7 +660,7 @@ describe("CurrentServiceViewer", () => {
 
     const onMessage = jest.mocked(useTeamsLiveSync).mock.calls[0]?.[1];
     act(() => {
-      onMessage?.({ type: "service-plan-updated", servicePlan: updatedPlan });
+      onMessage?.({ type: "service-plan-updated", planKey: updatedPlan.planKey });
     });
 
     expect(screen.getByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();

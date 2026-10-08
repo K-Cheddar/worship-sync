@@ -1124,6 +1124,7 @@ export const createTeamsAuthHandlers = ({
     groupId,
     occurrenceId,
     startsAt,
+    serviceDate,
     localParts,
     timeZone,
     servicesById,
@@ -1170,7 +1171,13 @@ export const createTeamsAuthHandlers = ({
           "A combined occurrence does not match its configured service group.",
         );
       }
-      if (occurrenceId !== `group:${groupId}@${startsAt.slice(0, 10)}`) {
+      const localOccurrenceId = `group:${groupId}@${localParts.date}`;
+      const legacyUtcOccurrenceId = `group:${groupId}@${startsAt.slice(0, 10)}`;
+      if (
+        (serviceDate && serviceDate !== localParts.date) ||
+        (occurrenceId !== localOccurrenceId &&
+          (serviceDate || occurrenceId !== legacyUtcOccurrenceId))
+      ) {
         throw httpError(400, "A combined occurrence has an invalid identity.");
       }
       return;
@@ -2278,16 +2285,25 @@ export const createTeamsAuthHandlers = ({
         .filter((team) => !team.archivedAt && requestedTeamIds.has(team.teamId))
         .map((team) => team.teamId),
     );
-    const schedules = await listTeamCollectionForChurch(
-      COLLECTIONS.teamSchedules,
-      "scheduleId",
-      churchId,
-    );
+    const [schedules, servicePlans] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamSchedules,
+        "scheduleId",
+        churchId,
+      ),
+      queryDocs(
+        COLLECTIONS.servicePlans,
+        [{ field: "churchId", value: churchId }],
+        { limit: TEAM_COLLECTION_QUERY_LIMIT },
+      ),
+    ]);
     return new Set(
       schedules.flatMap((schedule) => {
         if (schedule.archivedAt || !activeTeamIds.has(schedule.teamId)) return [];
         return (schedule.occurrences || [])
-          .map(getServicePlanKeyForOccurrence)
+          .map((occurrence) =>
+            getServicePlanKeyForOccurrence(occurrence, servicePlans),
+          )
           .filter(Boolean);
       }),
     );
@@ -4144,7 +4160,7 @@ export const createTeamsAuthHandlers = ({
     const lastAssignmentDateByMemberId = {};
     const occurrenceDateById = new Map(
       (Array.isArray(occurrences) ? occurrences : []).flatMap((occurrence) => {
-        const date = String(occurrence?.startsAt || "").slice(0, 10);
+        const date = occurrence?.serviceDate || String(occurrence?.startsAt || "").slice(0, 10);
         return occurrence?.occurrenceId && /^\d{4}-\d{2}-\d{2}$/.test(date)
           ? [[occurrence.occurrenceId, date]]
           : [];
@@ -5009,6 +5025,9 @@ export const createTeamsAuthHandlers = ({
           occurrence?.startsAt,
           "Service occurrence date",
         ),
+        ...(occurrence?.serviceDate
+          ? { serviceDate: assertPlainDate(occurrence.serviceDate, "Service calendar date") }
+          : {}),
         positionRequirements: sanitizePositionRequirements(
           occurrence?.positionRequirements,
         ),
@@ -5739,11 +5758,24 @@ export const createTeamsAuthHandlers = ({
     return { ...payload, iemAssignments };
   };
 
-  const getServicePlanKeyForOccurrence = (occurrence) => {
-    const date = String(occurrence?.startsAt || "").slice(0, 10);
+  const getServicePlanKeyForOccurrence = (occurrence, servicePlans = []) => {
+    const legacyGroupDate = String(occurrence?.occurrenceId || "")
+      .match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
+    const date = occurrence?.serviceDate || legacyGroupDate;
+    if (!date && occurrence?.startsAt) {
+      const matchingPlan = servicePlans.find(
+        (plan) =>
+          plan.startsAt === occurrence.startsAt &&
+          (occurrence.groupId
+            ? plan.groupId === occurrence.groupId
+            : plan.serviceId === occurrence.serviceId),
+      );
+      if (matchingPlan?.planKey) return matchingPlan.planKey;
+    }
+    const calendarDate = date || String(occurrence?.startsAt || "").slice(0, 10);
     return occurrence?.groupId
-      ? `group:${occurrence.groupId}@${date}`
-      : `${occurrence?.serviceId || ""}@${date}`;
+      ? `group:${occurrence.groupId}@${calendarDate}`
+      : `${occurrence?.serviceId || ""}@${calendarDate}`;
   };
 
   /**
@@ -5751,7 +5783,7 @@ export const createTeamsAuthHandlers = ({
    * Teams bootstrap, this contains no roster contact, availability, or schedule
    * data — only people assigned to the requested plan.
    */
-  const buildServicePlanAssignments = async (churchId, planKey) => {
+  const buildServicePlanAssignments = async (churchId, planKey, servicePlan) => {
     const [members, positions, teams, schedules] = await Promise.all([
       listTeamCollectionForChurch(
         COLLECTIONS.teamRosterMembers,
@@ -5781,7 +5813,12 @@ export const createTeamsAuthHandlers = ({
     return schedules.flatMap((schedule) => {
       if (schedule.archivedAt) return [];
       const occurrence = (schedule.occurrences || []).find(
-        (candidate) => getServicePlanKeyForOccurrence(candidate) === planKey,
+        (candidate) =>
+          getServicePlanKeyForOccurrence(candidate) === planKey ||
+          (candidate.startsAt === servicePlan?.startsAt &&
+            (candidate.groupId
+              ? candidate.groupId === servicePlan?.groupId
+              : candidate.serviceId === servicePlan?.serviceId)),
       );
       if (!occurrence) return [];
       const guestsById = new Map(
@@ -5808,6 +5845,7 @@ export const createTeamsAuthHandlers = ({
           if (!name) return [];
           return [
             {
+              teamId,
               teamName: teamById.get(teamId)?.name || "Team",
               role,
               name,
@@ -7423,8 +7461,8 @@ export const createTeamsAuthHandlers = ({
         currentServiceIds.size > 1 || otherServiceIds.size > 1;
       return (
         includesJoinedServices &&
-        String(current.startsAt).slice(0, 10) ===
-          String(other.startsAt).slice(0, 10)
+        (current.serviceDate || String(current.startsAt).slice(0, 10)) ===
+          (other.serviceDate || String(other.startsAt).slice(0, 10))
       );
     }
     return Boolean(options.schedulesOverlap);
@@ -8208,7 +8246,7 @@ export const createTeamsAuthHandlers = ({
     const occurrence = getScheduleOccurrencesForConflict(schedule).find(
       (item) => item.occurrenceId === occurrenceId,
     );
-    const occurrenceDate = String(occurrence?.startsAt || "").slice(0, 10);
+    const occurrenceDate = occurrence?.serviceDate || String(occurrence?.startsAt || "").slice(0, 10);
     // Most writes target one concrete service date. Query only that day; use
     // the wider custom schedule range only for legacy occurrences without time
     // details, whose conflict relation depends on overlapping parent ranges.
@@ -8636,7 +8674,7 @@ export const createTeamsAuthHandlers = ({
           }
         });
 
-        const serviceDate = String(change.serviceDate || occurrence.startsAt || "").slice(0, 10);
+        const serviceDate = String(change.serviceDate || occurrence.serviceDate || occurrence.startsAt || "").slice(0, 10);
         const normalized = normalizeScheduleAssignmentCell(desired);
         for (const memberId of desiredMemberIds) {
           const member = await assertTeamEntityInChurch("member", memberId, churchId, { label: "Member" });
@@ -9490,7 +9528,7 @@ export const createTeamsAuthHandlers = ({
         vacancySchedule.assignments[occurrenceId][cellKey] = clearedCell;
       else delete vacancySchedule.assignments[occurrenceId][cellKey];
     }
-    const serviceDate = String(occurrence.startsAt || "").slice(0, 10);
+    const serviceDate = occurrence.serviceDate || String(occurrence.startsAt || "").slice(0, 10);
     const validated = await buildValidatedScheduleAssignments({
       churchId,
       schedule: vacancySchedule,
@@ -11223,7 +11261,7 @@ export const createTeamsAuthHandlers = ({
                 const priorOccurrence = existing?.occurrences?.find(
                   (item) =>
                     item.occurrenceId === record.occurrenceId &&
-                    String(item.startsAt || "").slice(0, 10) === date,
+                    (item.serviceDate || String(item.startsAt || "").slice(0, 10)) === date,
                 );
                 const occurrenceId = String(
                   priorOccurrence?.occurrenceId ||
@@ -15045,6 +15083,7 @@ export const createTeamsAuthHandlers = ({
               normalizeShortText(occurrence.groupId, { max: 160 }) || undefined,
             occurrenceId: occurrence.occurrenceId,
             startsAt: occurrence.startsAt,
+            serviceDate: occurrence.serviceDate,
             localParts,
             timeZone,
             servicesById: activeServicesById,
@@ -15070,6 +15109,7 @@ export const createTeamsAuthHandlers = ({
               );
           return {
             ...occurrence,
+            serviceDate: getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date,
             ...(requirements.length
               ? { positionRequirements: requirements }
               : { positionRequirements: [] }),
@@ -15923,9 +15963,6 @@ export const createTeamsAuthHandlers = ({
       try {
         const churchId = req.params.churchId;
         const reader = await requireServicePlansView(req, churchId);
-        if (isPlanOnlyReader(reader)) {
-          return res.json({ success: true, assignments: [] });
-        }
         const planKey = decodeURIComponent(req.params.planKey);
         const servicePlan = await getDoc(
           COLLECTIONS.servicePlans,
@@ -15936,7 +15973,11 @@ export const createTeamsAuthHandlers = ({
         }
         return res.json({
           success: true,
-          assignments: await buildServicePlanAssignments(churchId, planKey),
+          assignments: await buildServicePlanAssignments(
+            churchId,
+            planKey,
+            servicePlan,
+          ),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -15997,7 +16038,7 @@ export const createTeamsAuthHandlers = ({
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
           saveOperationId: payload.saveOperationId,
         });
         await emitPublicServicePlanUpdated(
@@ -16098,10 +16139,11 @@ export const createTeamsAuthHandlers = ({
           const expectedOccurrenceId = groupId
             ? `group:${groupId}@${date}`
             : `${serviceId}@${startsAt}`;
+          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
           if (
             !occurrenceId ||
             occurrenceId !== expectedOccurrenceId ||
-            startsAt.slice(0, 10) !== date
+            localParts.date !== date
           ) {
             throw httpError(
               400,
@@ -16118,13 +16160,13 @@ export const createTeamsAuthHandlers = ({
               "Every target must use active service definitions.",
             );
           }
-          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
           assertOccurrenceServiceGroup({
             serviceId,
             serviceIds,
             groupId,
             occurrenceId,
             startsAt,
+            serviceDate: date,
             localParts,
             timeZone,
             servicesById,
@@ -16264,7 +16306,7 @@ export const createTeamsAuthHandlers = ({
           );
           if (plan)
             emitTeamsEvent(churchId, "service-plan-updated", {
-              servicePlan: withoutServicePlanSecrets(plan),
+              planKey: plan.planKey,
             });
         }
         return res.json({
@@ -16381,7 +16423,7 @@ export const createTeamsAuthHandlers = ({
           );
           template = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
         }
-        emitTeamsEvent(churchId, "service-plan-template-updated", { template });
+        emitTeamsEvent(churchId, "service-plan-template-updated", { templateId });
         return res.json({ success: true, template });
       } catch (error) {
         if (error?.servicePlanTemplateConflict) {
@@ -16680,7 +16722,7 @@ export const createTeamsAuthHandlers = ({
         });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
           servicePlan,
@@ -16877,7 +16919,7 @@ export const createTeamsAuthHandlers = ({
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
           { ...existing, published: true },
@@ -16924,7 +16966,7 @@ export const createTeamsAuthHandlers = ({
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
           servicePlan,

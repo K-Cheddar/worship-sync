@@ -35,4 +35,11 @@ describe("getServicePlanKey", () => {
     const nextWeek = occurrence({ startsAt: "2026-08-02T14:00:00.000Z" });
     expect(getServicePlanKey(thisWeek)).not.toBe(getServicePlanKey(nextWeek));
   });
+
+  it("uses the service calendar date when the UTC instant falls on the next day", () => {
+    expect(getServicePlanKey(occurrence({
+      startsAt: "2026-10-08T02:30:00.000Z",
+      serviceDate: "2026-10-07",
+    }))).toBe("service-1@2026-10-07");
+  });
 });

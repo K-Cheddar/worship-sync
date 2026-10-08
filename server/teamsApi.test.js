@@ -4760,7 +4760,7 @@ test("service plan assignments expose only the selected plan's serving roster", 
 
   assert.equal(result.statusCode, 200);
   assert.deepEqual(result.payload.assignments, [
-    { teamName: "Worship", role: "Keys", name: "Avery Stone" },
+    { teamId, teamName: "Worship", role: "Keys", name: "Avery Stone" },
   ]);
 
   const scopedManager = await createHumanContext("service_plan_assignments_scoped", {
@@ -7225,7 +7225,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     .events()
     .find((event) => event.type === "service-plan-updated");
   assert.ok(createEvent, "expected a service-plan-updated SSE event");
-  assert.equal(createEvent.servicePlan.planKey, planKey);
+  assert.equal(createEvent.planKey, planKey);
+  assert.equal(createEvent.servicePlan, undefined);
 
   const fetched = await callHandler(authHandlers.getServicePlan, {
     context,
@@ -7313,7 +7314,8 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     .filter((event) => event.type === "service-plan-updated")
     .at(-1);
   assert.equal(updateEvent.saveOperationId, "autosave-operation-0001");
-  assert.equal(updateEvent.servicePlan.lastSaveOperationId, undefined);
+  assert.equal(updateEvent.planKey, planKey);
+  assert.equal(updateEvent.servicePlan, undefined);
   const recovered = await callHandler(authHandlers.getServicePlan, {
     context,
     params: { planKey },
@@ -16189,7 +16191,18 @@ test("team-scoped plan status does not expose unrelated plans or plan roster pro
   const ownPlanKey = "worship-service@2026-10-04";
   const otherPlanKey = "av-service@2026-10-11";
   await setDoc(COLLECTIONS.teamSchedules, `${fixture.ids.worship}_schedule`, {
-    occurrences: [{ serviceId: "worship-service", startsAt: "2026-10-04T15:00:00.000Z" }],
+    occurrences: [{
+      occurrenceId: "worship-service@2026-10-05T02:30:00.000Z",
+      serviceId: "worship-service",
+      startsAt: "2026-10-05T02:30:00.000Z",
+    }],
+    assignments: {
+      "worship-service@2026-10-05T02:30:00.000Z": {
+        [`${fixture.ids.worship}_position::0`]: {
+          primaryMemberId: fixture.memberId,
+        },
+      },
+    },
   }, { merge: true });
   await setDoc(COLLECTIONS.teamSchedules, `${fixture.ids.av}_schedule`, {
     occurrences: [{ serviceId: "av-service", startsAt: "2026-10-11T15:00:00.000Z" }],
@@ -16200,6 +16213,9 @@ test("team-scoped plan status does not expose unrelated plans or plan roster pro
       churchId: fixture.churchId,
       name,
       date: planKey.split("@")[1],
+      ...(planKey === ownPlanKey
+        ? { startsAt: "2026-10-05T02:30:00.000Z", serviceId: "worship-service" }
+        : {}),
       sections: [{ id: "section", name: "Songs", elements: [{
         id: "song", type: "song", title: "Private song", assignedName: "Private member",
         assignedMemberId: "private-member", assignees: [{ memberId: "private-member" }],
@@ -16257,7 +16273,14 @@ test("team-scoped plan status does not expose unrelated plans or plan roster pro
     params: { planKey: ownPlanKey },
   });
   assert.equal(assignments.statusCode, 200);
-  assert.deepEqual(assignments.payload.assignments, []);
+  assert.deepEqual(assignments.payload.assignments, [{
+    teamId: fixture.ids.worship,
+    teamName: "worship",
+    role: "Lead",
+    name: "Worship Member",
+  }]);
+  assert.equal(JSON.stringify(assignments.payload).includes("private@example.com"), false);
+  assert.equal(JSON.stringify(assignments.payload).includes("Private roster note"), false);
   const teamScheduleDenied = await callHandler(authHandlers.getTeamScheduleDetail, {
     context: servicesViewer,
     params: { scheduleId: `${fixture.ids.worship}_schedule` },

@@ -461,6 +461,8 @@ export type TeamScheduleOccurrence = {
   serviceIds?: string[];
   name: string;
   startsAt: string;
+  /** Calendar date at the service location, independent of the UTC instant. */
+  serviceDate?: string;
   // optional per-date override of the service's position requirements. For a
   // combined occurrence this holds the union (max count per position) of its
   // grouped services so one set of cells covers them all.

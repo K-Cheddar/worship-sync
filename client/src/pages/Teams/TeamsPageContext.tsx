@@ -14,16 +14,20 @@ export const TeamsPageProvider = ({ children }: { children: ReactNode }) => {
   const domainResources = useTeamsDomainResources();
   const templatesLoaded = domainResources.templates.loaded;
   const refreshTemplates = domainResources.templates.refresh;
-  const { remove: removeTemplate, upsert: upsertTemplate } = domainResources.templates;
+  const { remove: removeTemplate } = domainResources.templates;
   const onTemplateEvent = useCallback((
     event: ServicePlanTemplateUpdatedEvent | ServicePlanTemplateRemovedEvent,
   ) => {
     if (event.type === "service-plan-template-updated") {
-      upsertTemplate(event.template);
+      if (templatesLoaded || domainResources.templates.loading) {
+        void refreshTemplates().catch((error: unknown) => {
+          console.error("Could not refresh service plan templates.", error);
+        });
+      }
     } else {
       removeTemplate(event.templateId);
     }
-  }, [removeTemplate, upsertTemplate]);
+  }, [domainResources.templates.loading, refreshTemplates, removeTemplate, templatesLoaded]);
   const onTemplateRecovery = useCallback(() => {
     if (!templatesLoaded) return;
     void refreshTemplates().catch((error: unknown) => {

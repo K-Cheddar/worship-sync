@@ -1121,6 +1121,7 @@ const ServicePlanEditor = ({
   autosaveRef.current = autosave;
   const isMountedRef = useRef(true);
   const resumeReconciliationInFlightRef = useRef<Promise<void> | null>(null);
+  const remotePlanFetchRequestRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1277,15 +1278,32 @@ const ServicePlanEditor = ({
   // replaced; the server's revision check turns that situation into a conflict.
   const liveSync = useTeamsLiveSync(churchId, (event) => {
     if (!isServicePlanUpdatedEvent(event)) return;
+    if (event.planKey !== planKeyRef.current) return;
     if (event.saveOperationId && event.saveOperationId === autosaveRef.current.getActiveOperationId()) {
       logAuthDiagnostic("debug", "service_plan_self_notification", {
         editorInstanceId: editorInstanceIdRef.current, operationId: event.saveOperationId,
-        churchId: churchIdRef.current, planKey: event.servicePlan.planKey,
-        revision: event.servicePlan.revision, eventAt: Date.now(), classification: "self_save",
+        churchId: churchIdRef.current, planKey: event.planKey,
+        eventAt: Date.now(), classification: "self_save",
       });
       return;
     }
-    applyRemoteServicePlan(event.servicePlan);
+    const churchIdAtStart = churchIdRef.current;
+    if (!churchIdAtStart) return;
+    const planKeyAtStart = event.planKey;
+    const requestId = ++remotePlanFetchRequestRef.current;
+    void getServicePlan(churchIdAtStart, planKeyAtStart)
+      .then(({ servicePlan }) => {
+        if (
+          !isMountedRef.current ||
+          requestId !== remotePlanFetchRequestRef.current ||
+          churchIdRef.current !== churchIdAtStart ||
+          planKeyRef.current !== planKeyAtStart
+        ) return;
+        if (servicePlan) applyRemoteServicePlan(servicePlan);
+      })
+      .catch((error: unknown) => {
+        console.error("Could not refresh the service plan after a live update:", error);
+      });
   }, Boolean(canUseTeamsLiveSync));
   liveSyncStateRef.current = liveSync.connectionState;
 

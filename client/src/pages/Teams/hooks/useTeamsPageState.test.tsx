@@ -333,7 +333,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     act(() => source.onmessage?.({
       data: JSON.stringify({
         type: "service-plan-template-updated",
-        template: { templateId: "template-1" },
+        templateId: "template-1",
       }),
     }));
     act(() => source.onmessage?.({
@@ -345,7 +345,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
 
     expect(onTemplateEvent).toHaveBeenNthCalledWith(1, {
       type: "service-plan-template-updated",
-      template: { templateId: "template-1" },
+      templateId: "template-1",
     });
     expect(onTemplateEvent).toHaveBeenNthCalledWith(2, {
       type: "service-plan-template-removed",

@@ -26,6 +26,7 @@ const toOccurrence = (
     serviceId: service.serviceId,
     name: service.name,
     startsAt: iso,
+    serviceDate: formatPlainDate(startsAt),
     ...(service.positionRequirements?.length
       ? {
           // Keep a schedule-time snapshot so every server-side slot check uses
@@ -159,6 +160,8 @@ export const formatOccurrenceRowLabel = (
 };
 
 export const getOccurrenceDate = (occurrence: TeamScheduleOccurrence) =>
+  occurrence.serviceDate ||
+  occurrence.occurrenceId.match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1] ||
   occurrence.startsAt.slice(0, 10);
 
 /** YYYY-MM-DD for `date` in `timeZone` (en-CA is ISO-like and stable). */
@@ -299,6 +302,7 @@ const mergeGroupedOccurrences = (
       serviceIds,
       name: names.join(" & "),
       startsAt: first.startsAt,
+      serviceDate: getOccurrenceDate(first),
       ...(requirements.length ? { positionRequirements: requirements } : {}),
     };
     return [combined];

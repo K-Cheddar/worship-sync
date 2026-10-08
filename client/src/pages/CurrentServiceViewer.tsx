@@ -400,24 +400,8 @@ const useCurrentServiceViewerData = (
         return;
       }
       if (isServicePlanUpdatedEvent(event)) {
-        const nextPlan = event.servicePlan;
-        planCacheRef.current.set(nextPlan.planKey, nextPlan);
-        if (nextPlan.planKey === activePlanKeyRef.current) {
+        if (event.planKey === activePlanKeyRef.current) {
           detailRequestIdRef.current += 1;
-          setPlanState((current) => {
-            const hasCurrentSnapshot =
-              current.kind !== "idle" &&
-              current.planKey === nextPlan.planKey &&
-              (current.kind === "loaded" || current.kind === "error");
-            return {
-              kind: "loaded",
-              planKey: nextPlan.planKey,
-              plan: nextPlan,
-              publicSnapshot: hasCurrentSnapshot
-                ? current.publicSnapshot
-                : null,
-            };
-          });
           void refresh({ force: true, preserveLoadedPlan: true });
         }
         return;

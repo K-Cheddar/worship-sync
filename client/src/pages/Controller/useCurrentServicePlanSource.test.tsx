@@ -623,16 +623,17 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.url).toBe("");
   });
 
-  it("rebuilds when the plan is updated elsewhere, without refetching it", async () => {
+  it("refetches a plan after its ID-only live change notification", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
 
     const editedPlan = { ...planFixture, name: "Sabbath Service (revised)" };
+    mockGetServicePlan.mockResolvedValue({ servicePlan: editedPlan });
     await act(async () => {
       mockLiveHandler?.({
         type: "service-plan-updated",
-        servicePlan: editedPlan,
+        planKey: editedPlan.planKey,
       });
     });
 
@@ -641,7 +642,7 @@ describe("useCurrentServicePlanSource", () => {
       editedPlan,
       expect.anything(),
     );
-    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
   });
 
   it("ignores plan updates for a different service", async () => {
@@ -652,7 +653,7 @@ describe("useCurrentServicePlanSource", () => {
     await act(async () => {
       mockLiveHandler?.({
         type: "service-plan-updated",
-        servicePlan: { ...planFixture, planKey: "service-9@2026-08-01" },
+        planKey: "service-9@2026-08-01",
       });
     });
 
@@ -866,7 +867,7 @@ describe("useCurrentServicePlanSource", () => {
     await act(async () => {
       mockLiveHandler?.({
         type: "service-plan-updated",
-        servicePlan: { ...planFixture, name: "Revised" },
+        planKey: planFixture.planKey,
       });
     });
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));

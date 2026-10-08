@@ -48,7 +48,6 @@ import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningI
 import type { PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
   chooseControllerServicePlanKey,
-  servicePlanToSummary,
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import { useActiveControllerId } from "../../context/activeController";
@@ -801,66 +800,16 @@ export const useCurrentServicePlanSource = () => {
         return;
       }
 
-      if (!isServicePlanUpdatedEvent(event)) return;
-      const isSelectedPlan =
-        event.servicePlan.planKey === selectedPlanKeyRef.current;
-      // Keep a stale plan-list response from undoing this direct SSE update.
-      planListRequestIdRef.current += 1;
-      planListActiveRequestIdRef.current = null;
-      setIsLoadingPlans(false);
-      // Only a selected-plan event supersedes the selected plan's detail and
-      // assignment request. Unrelated plan events update the summary list
-      // without stranding the selected preview in a loading state.
-      const generation = isSelectedPlan
-        ? ++generationRef.current
-        : generationRef.current;
-      setSavedPlans((current) => {
-        const summary = servicePlanToSummary(event.servicePlan);
-        const withoutUpdated = current.filter(
-          (plan) => plan.planKey !== summary.planKey,
-        );
-        return sortControllerServicePlans([...withoutUpdated, summary]);
+      if (
+        !isServicePlanUpdatedEvent(event) ||
+        event.planKey !== selectedPlanKeyRef.current
+      ) {
+        return;
+      }
+      void reconcileSelectedPlan({
+        refreshPlanList: true,
+        preserveOnFailure: true,
       });
-      if (!isSelectedPlan) return;
-      if (!churchId) return;
-      planRef.current = event.servicePlan;
-      void getServicePlanViewer(churchId, event.servicePlan.planKey)
-        .then((result) => {
-          if (
-            generation === generationRef.current &&
-            selectedPlanKeyRef.current === event.servicePlan.planKey
-          ) {
-            setSelectedPlanSnapshot(result.snapshot);
-          }
-        })
-        .catch(() => undefined);
-      void getServicePlanAssignments(churchId, event.servicePlan.planKey)
-        .then((result) =>
-          applyPlan(
-            event.servicePlan,
-            result.assignments,
-            () =>
-              generation === generationRef.current &&
-              selectedPlanKeyRef.current === event.servicePlan.planKey,
-          ),
-        )
-        .catch(() =>
-          applyPlan(
-            event.servicePlan,
-            [],
-            () =>
-              generation === generationRef.current &&
-              selectedPlanKeyRef.current === event.servicePlan.planKey,
-          ),
-        )
-        .finally(() => {
-          if (
-            generation === generationRef.current &&
-            selectedPlanKeyRef.current === event.servicePlan.planKey
-          ) {
-            setIsLoading(false);
-          }
-        });
     },
     [
       applyPlan,

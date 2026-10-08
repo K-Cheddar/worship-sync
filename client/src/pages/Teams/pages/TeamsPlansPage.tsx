@@ -25,6 +25,7 @@ import {
   getServiceEquipment,
   applyServicePlanTemplateBulk,
   listServicePlans,
+  getServicePlanAssignments,
   updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentIems,
 } from "../../../api/auth";
@@ -89,6 +90,7 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServicePlanningTeamAssignment } from "../../../types/servicePlanningImport";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
@@ -311,6 +313,55 @@ const PlansOccurrenceTile = ({
   );
 };
 
+const ServicePlanServingAssignments = ({
+  status,
+  assignments,
+}: {
+  status: "loading" | "ready" | "unavailable";
+  assignments: ServicePlanningTeamAssignment[];
+}) => {
+  if (status === "loading") {
+    return <p role="status" className="text-sm text-gray-400">Loading team assignments…</p>;
+  }
+  if (status === "unavailable") {
+    return <p role="status" className="text-sm text-amber-200">Team assignments are unavailable right now.</p>;
+  }
+  if (assignments.length === 0) {
+    return <p className="text-sm text-gray-400">No team members are assigned on this service date.</p>;
+  }
+
+  const grouped = new Map<string, ServicePlanningTeamAssignment[]>();
+  assignments.forEach((assignment) => {
+    const key = assignment.teamId || assignment.teamName;
+    const teamAssignments = grouped.get(key) || [];
+    teamAssignments.push(assignment);
+    grouped.set(key, teamAssignments);
+  });
+
+  return (
+    <div className="space-y-3">
+      {[...grouped.values()].map((teamAssignments, index) => (
+        <section key={`${teamAssignments[0].teamId || teamAssignments[0].teamName}-${index}`}>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-orange-300/90">
+            {teamAssignments[0].teamName}
+          </h4>
+          <ul className="mt-1 space-y-1">
+            {teamAssignments.map((assignment, rowIndex) => (
+              <li
+                key={`${assignment.role}-${assignment.name}-${rowIndex}`}
+                className="flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="truncate text-gray-300">{assignment.role}</span>
+                <span className="truncate text-gray-100">{assignment.name}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+};
+
 /**
  * Plans list: pick a date for a service and jump straight into building or
  * editing its order-of-service — no service/date-range/occurrence dropdown
@@ -331,6 +382,7 @@ const TeamsPlansPage = () => {
     upsertData,
     hydrateSchedules,
     hydratingScheduleIds,
+    hasTeamsWorkspaceAccess,
     trackTeamsSave,
     templates: templateResource,
   } = useTeamsPage();
@@ -408,11 +460,52 @@ const TeamsPlansPage = () => {
     service: TeamService;
     occurrence: TeamScheduleOccurrence;
   } | null>(null);
+  const selectedPlanKey = selection
+    ? getServicePlanKey(selection.occurrence)
+    : "";
+  const [planServingAssignments, setPlanServingAssignments] = useState<{
+    planKey: string;
+    status: "loading" | "ready" | "unavailable";
+    assignments: ServicePlanningTeamAssignment[];
+  } | null>(null);
   const [pendingPlanRestore, setPendingPlanRestore] =
     useState<TeamsPlansRestore | null>(null);
   const [openServingTabOnSelection, setOpenServingTabOnSelection] = useState(false);
   const [servingPanelOpen, setServingPanelOpen] = useState(true);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+
+  useEffect(() => {
+    if (!churchId || !selectedPlanKey || hasTeamsWorkspaceAccess !== false) {
+      setPlanServingAssignments(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setPlanServingAssignments({
+      planKey: selectedPlanKey,
+      status: "loading",
+      assignments: [],
+    });
+    getServicePlanAssignments(churchId, selectedPlanKey)
+      .then((result) => {
+        if (!cancelled) {
+          setPlanServingAssignments({
+            planKey: selectedPlanKey,
+            status: "ready",
+            assignments: result.assignments,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlanServingAssignments({
+            planKey: selectedPlanKey,
+            status: "unavailable",
+            assignments: [],
+          });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [churchId, hasTeamsWorkspaceAccess, selectedPlanKey]);
 
   useEffect(() => {
     if (!churchId || filtersHydratedForChurchId === churchId) return;
@@ -1065,6 +1158,9 @@ const TeamsPlansPage = () => {
       pageData.teams,
     );
     const canEditPlan = Boolean(canEditServices);
+    const serviceOnlyServingState = planServingAssignments?.planKey === selectedPlanKey
+      ? planServingAssignments
+      : { planKey: selectedPlanKey, status: "loading" as const, assignments: [] };
 
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
@@ -1108,28 +1204,35 @@ const TeamsPlansPage = () => {
               planNavigation={planNavigation}
               initialTab={openServingTabOnSelection ? "serving" : "plan"}
               mobileServingContent={
-                <div className="flex flex-col gap-3">
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      svg={CalendarDays}
-                      onClick={openGeneratedSchedulePeriod}
-                    >
-                      View schedule
-                    </Button>
+                hasTeamsWorkspaceAccess !== false ? (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={CalendarDays}
+                        onClick={openGeneratedSchedulePeriod}
+                      >
+                        View schedule
+                      </Button>
+                    </div>
+                    <WhosServingPanel
+                      assignmentTeams={assignmentTeams}
+                      onOpenSchedule={openSchedule}
+                      microphones={microphones}
+                      iemEquipment={iemEquipment}
+                      assignmentsStatus={assignmentsStatus}
+                      showHeading={false}
+                      canEdit={canEditPlan}
+                      canEditTeam={canEditTeamAccess}
+                    />
                   </div>
-                  <WhosServingPanel
-                    assignmentTeams={assignmentTeams}
-                    onOpenSchedule={openSchedule}
-                    microphones={microphones}
-                    iemEquipment={iemEquipment}
-                    assignmentsStatus={assignmentsStatus}
-                    showHeading={false}
-                    canEdit={canEditPlan}
-                    canEditTeam={canEditTeamAccess}
+                ) : (
+                  <ServicePlanServingAssignments
+                    status={serviceOnlyServingState.status}
+                    assignments={serviceOnlyServingState.assignments}
                   />
-                </div>
+                )
               }
             /> : (
               <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
@@ -1190,14 +1293,21 @@ const TeamsPlansPage = () => {
               </Button>
               {servingPanelOpen ? (
                 <div className="scrollbar-variable flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
-                  <WhosServingPanel
-                    assignmentTeams={assignmentTeams}
-                    onOpenSchedule={openSchedule}
-                    microphones={microphones}
-                    iemEquipment={iemEquipment}
-                    assignmentsStatus={assignmentsStatus}
-                    canEditTeam={canEditTeamAccess}
-                  />
+                  {hasTeamsWorkspaceAccess !== false ? (
+                    <WhosServingPanel
+                      assignmentTeams={assignmentTeams}
+                      onOpenSchedule={openSchedule}
+                      microphones={microphones}
+                      iemEquipment={iemEquipment}
+                      assignmentsStatus={assignmentsStatus}
+                      canEditTeam={canEditTeamAccess}
+                    />
+                  ) : (
+                    <ServicePlanServingAssignments
+                      status={serviceOnlyServingState.status}
+                      assignments={serviceOnlyServingState.assignments}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="flex h-full w-10 flex-col items-center py-3">

@@ -887,6 +887,7 @@ const scheduleOccurrenceDate = (
   const occurrence = schedule.occurrences?.find(
     (item) => item.occurrenceId === occurrenceId,
   );
+  if (occurrence?.serviceDate) return occurrence.serviceDate;
   if (occurrence?.startsAt) return occurrence.startsAt.slice(0, 10);
   const embeddedDate = occurrenceId.match(/(?:^|@)(\d{4}-\d{2}-\d{2})/);
   return embeddedDate?.[1];
