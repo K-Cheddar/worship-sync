@@ -54,6 +54,7 @@ export const useServicePlanOutlinePush = () => {
         throw new Error("Open or create an item list in the Controller first.");
       }
       const startingContext = contextRef.current;
+      const startingList = store.getState().undoable.present.itemList.list;
       // One run uses one mapping configuration even if integrations refresh
       // while the operator is watching the visible per-item progress.
       const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
@@ -67,7 +68,7 @@ export const useServicePlanOutlinePush = () => {
         && contextRef.current.customDocuments === startingContext.customDocuments;
       const planResult = planServicePlanOutlineItems({
         plan,
-        currentList,
+        currentList: startingList,
         songs,
         customDocuments,
         sectionRules: sectionRulesSnapshot,
@@ -91,12 +92,13 @@ export const useServicePlanOutlinePush = () => {
         if (!isContextCurrent()) {
           throw new Error("The selected outline changed before the service plan could be imported.");
         }
+        const destination = step.destination;
         let latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
-        if (!latestList.some((existing) => existing.type === "heading" && existing.listId === step.targetHeading.listId)) {
+        if (destination.kind === "heading" && !latestList.some((existing) => existing.type === "heading" && existing.listId === destination.listId)) {
           recordPlacementIssue({
             sectionName: step.sectionName,
-            headingName: step.targetHeading.name,
+            headingName: destination.name,
             reason: "heading-removed",
           });
           continue;
@@ -110,11 +112,11 @@ export const useServicePlanOutlinePush = () => {
         }
         latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === item.listId)) continue;
-        const placedList = insertServicePlanOutlineItem(latestList, item, step.targetHeading);
+        const placedList = insertServicePlanOutlineItem(latestList, item, destination);
         if (!placedList) {
           recordPlacementIssue({
             sectionName: step.sectionName,
-            headingName: step.targetHeading.name,
+            ...(destination.kind === "heading" ? { headingName: destination.name } : {}),
             reason: "heading-removed",
           });
           continue;
@@ -134,7 +136,7 @@ export const useServicePlanOutlinePush = () => {
         placementIssues,
       };
     },
-    [currentList, db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
+    [db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
   );
 
   return { pushPlanToOutline, selectedListName: selectedList?.name };

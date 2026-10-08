@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { normalizeUsPhoneNumber, smsConsentIdForChurchPhone } from "./smsConsent.js";
+import { normalizeUsPhoneNumber, smsConsentIdForChurchPhone, withSmsConsentMutationLock } from "./smsConsent.js";
 
 export const TWILIO_INBOUND_PATH = "/api/webhooks/twilio/sms-inbound";
 
@@ -21,6 +21,18 @@ export const normalizeTwilioSmsKeyword = (body = "") => {
   if (["START", "UNSTOP"].includes(keyword)) return "START";
   if (["HELP", "INFO"].includes(keyword)) return "HELP";
   return "OTHER";
+};
+
+const hasValidPriorConsentEvidence = (record) => {
+  const source = record?.source;
+  if (!record?.consentedAt) return false;
+  if (source === "admin_verbal" || source === "admin_signed_form") {
+    return Boolean(record.recordedAt && record.recordedByUid && record.consentVersion && record.consentText);
+  }
+  // `source` was added to the existing web flow after some verified records
+  // already existed. Keep those legacy OTP records valid for START.
+  if (source === "web_form" || !source) return Boolean(record.verifiedAt);
+  return false;
 };
 
 const asTwiml = (res) => {
@@ -95,7 +107,7 @@ export const createSmsInboundWebhookHandler = ({
           };
         } else if (
           keyword === "START" && existing?.status === "opted_out" &&
-          existing.consentedAt && existing.verifiedAt
+          hasValidPriorConsentEvidence(existing)
         ) {
           update = {
             status: "opted_in", optedOut: false, optedOutAt: null,
@@ -110,28 +122,30 @@ export const createSmsInboundWebhookHandler = ({
         });
       });
     } else {
-      const existingCommand = await getDoc(COLLECTIONS.smsInboundCommands, commandId);
-      if (!existingCommand) {
-        const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
-        if (keyword === "STOP") {
-          await setDoc(COLLECTIONS.smsConsents, consentId, {
-            consentId, churchId, phoneNumber: from, phoneHash: hashValue(from),
-            status: "opted_out", optedOut: true, optedOutAt: now,
-            optOutSource: "twilio_inbound", updatedAt: now, createdAt: existing?.createdAt || now,
-          }, { merge: true });
-        } else if (keyword === "START" && existing?.status === "opted_out" && existing.consentedAt && existing.verifiedAt) {
-          await setDoc(COLLECTIONS.smsConsents, consentId, {
-            status: "opted_in", optedOut: false, optedOutAt: null,
-            optedInAgainAt: now, optInAgainSource: "twilio_inbound", updatedAt: now,
-          }, { merge: true });
+      await withSmsConsentMutationLock(consentId, async () => {
+        const existingCommand = await getDoc(COLLECTIONS.smsInboundCommands, commandId);
+        if (!existingCommand) {
+          const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+          if (keyword === "STOP") {
+            await setDoc(COLLECTIONS.smsConsents, consentId, {
+              consentId, churchId, phoneNumber: from, phoneHash: hashValue(from),
+              status: "opted_out", optedOut: true, optedOutAt: now,
+              optOutSource: "twilio_inbound", updatedAt: now, createdAt: existing?.createdAt || now,
+            }, { merge: true });
+          } else if (keyword === "START" && existing?.status === "opted_out" && hasValidPriorConsentEvidence(existing)) {
+            await setDoc(COLLECTIONS.smsConsents, consentId, {
+              status: "opted_in", optedOut: false, optedOutAt: null,
+              optedInAgainAt: now, optInAgainSource: "twilio_inbound", updatedAt: now,
+            }, { merge: true });
+          }
+          await setDoc(COLLECTIONS.smsInboundCommands, commandId, {
+            commandId, churchId, messageSid,
+            fromHash: hashValue(from), toHash: hashValue(to), keyword,
+            result: keyword === "STOP" || keyword === "START" ? "applied" : "recorded",
+            createdAt: now,
+          }, { merge: false });
         }
-        await setDoc(COLLECTIONS.smsInboundCommands, commandId, {
-          commandId, churchId, messageSid,
-          fromHash: hashValue(from), toHash: hashValue(to), keyword,
-          result: keyword === "STOP" || keyword === "START" ? "applied" : "recorded",
-          createdAt: now,
-        }, { merge: false });
-      }
+      });
     }
     return asTwiml(res);
   } catch (error) {

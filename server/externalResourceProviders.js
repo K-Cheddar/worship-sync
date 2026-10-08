@@ -72,10 +72,14 @@ const googleDocumentCandidate = (url) => {
   const documentMatch = url.pathname.match(/^\/(document|spreadsheets|presentation)\/d\/([^/]+)/i);
   if (!documentMatch) return null;
   const [, kind, id] = documentMatch;
-  if (kind.toLowerCase() === "presentation") {
-    return `https://docs.google.com/presentation/d/${encodeURIComponent(id)}/export/pdf`;
-  }
-  return `https://docs.google.com/${kind.toLowerCase()}/d/${encodeURIComponent(id)}/export?format=pdf`;
+  return {
+    candidateUrl: kind.toLowerCase() === "presentation"
+      ? `https://docs.google.com/presentation/d/${encodeURIComponent(id)}/export/pdf`
+      : `https://docs.google.com/${kind.toLowerCase()}/d/${encodeURIComponent(id)}/export?format=pdf`,
+    retrievalStrategy: "get",
+    expectedMimeType: "application/pdf",
+    failureReason: "This Google document could not be exported for preview.",
+  };
 };
 
 const providerResolvers = [
@@ -88,6 +92,7 @@ const providerResolvers = [
         ? {
             candidateUrl: `https://www.youtube.com/watch?v=${mediaId}`,
             mediaId,
+            retrievalStrategy: "none",
           }
         : null;
     },
@@ -96,6 +101,7 @@ const providerResolvers = [
     provider: "dropbox",
     matches: (url) => DROPBOX_HOSTS.has(url.hostname.toLowerCase()),
     resolve: (url) => ({
+      retrievalStrategy: "get",
       candidateUrl: copyWithQuery(url, (params) => {
         params.delete("dl");
         params.set("raw", "1");
@@ -107,23 +113,25 @@ const providerResolvers = [
     matches: (url) => GOOGLE_DRIVE_HOSTS.has(url.hostname.toLowerCase()),
     resolve: (url) => {
       const documentCandidate = googleDocumentCandidate(url);
-      if (documentCandidate) return { candidateUrl: documentCandidate };
+      if (documentCandidate) return documentCandidate;
       if (url.hostname.toLowerCase() === "drive.google.com") {
         const fileId = googleDriveFileId(url);
         if (fileId) {
           return {
             candidateUrl: `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`,
             mediaId: fileId,
+            retrievalStrategy: "get",
           };
         }
       }
-      return { candidateUrl: url.toString() };
+      return { candidateUrl: url.toString(), retrievalStrategy: "get" };
     },
   },
   {
     provider: "onedrive",
     matches: (url) => ONEDRIVE_HOSTS.has(url.hostname.toLowerCase()),
     resolve: (url) => ({
+      retrievalStrategy: "get",
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
     }),
   },
@@ -131,6 +139,7 @@ const providerResolvers = [
     provider: "sharepoint",
     matches: (url) => isSharePointHost(url.hostname.toLowerCase()),
     resolve: (url) => ({
+      retrievalStrategy: "get",
       // Keep the tenant's path and every sharing token intact. SharePoint share
       // links can route through a viewer unless explicitly asked to download.
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
@@ -142,13 +151,14 @@ const providerResolvers = [
       BOX_HOSTS.has(url.hostname.toLowerCase()) ||
       url.hostname.toLowerCase().endsWith(".boxcloud.com"),
     resolve: (url) => ({
+      retrievalStrategy: "get",
       candidateUrl: copyWithQuery(url, (params) => params.set("download", "1")),
     }),
   },
 ];
 
 /**
- * Selects a provider strategy and produces the candidate URL to probe.
+ * Selects a provider strategy and produces the candidate URL to retrieve.
  * Provider resolvers only normalize public share URLs; they never carry
  * credentials or decide whether an upstream resource is previewable.
  */
@@ -159,5 +169,5 @@ export const resolveExternalResourceProvider = (value) => {
     const result = resolver.resolve(url);
     if (result) return { provider: resolver.provider, ...result };
   }
-  return { provider: "direct", candidateUrl: url.toString() };
+  return { provider: "direct", candidateUrl: url.toString(), retrievalStrategy: "metadata-probe" };
 };

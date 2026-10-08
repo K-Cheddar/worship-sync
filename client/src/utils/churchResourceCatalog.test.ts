@@ -82,12 +82,12 @@ describe("church resource catalog", () => {
     expect(resourceEntryKind(entry)).toBe("document");
   });
 
-  it("preserves the other kind for non-document external resources", () => {
+  it("preserves image classification for uploaded and external image resources", () => {
     const external = {
       id: "external-image-1",
       churchId: "church-1",
       name: "Service slide",
-      kind: "other" as const,
+      kind: "image" as const,
       sourceType: "external" as const,
       external: { url: "https://example.test/slide.png", mediaType: "image" },
       createdAt: "2026-09-21T00:00:00.000Z",
@@ -96,6 +96,11 @@ describe("church resource catalog", () => {
       updatedBy: "user-1",
     };
     const [entry] = buildChurchResourceLibraryEntries({ resources: [external], songs: [] });
-    expect(resourceEntryKind(entry)).toBe("other");
+    expect(resourceEntryKind(entry)).toBe("image");
+    const uploaded = { ...external, id: "uploaded-image", sourceType: undefined, external: undefined, kind: "image" as const, storage: {
+      key: "images/photo.png", fileName: "photo.png", contentType: "image/png", sizeBytes: 10, uploadedAt: "2026-09-21T00:00:00.000Z",
+    } } as never;
+    const [uploadedEntry] = buildChurchResourceLibraryEntries({ resources: [uploaded], songs: [] });
+    expect(resourceEntryKind(uploadedEntry)).toBe("image");
   });
 });

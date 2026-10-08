@@ -21,7 +21,9 @@ import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Input from "../components/Input/Input";
 import ConfirmDialog from "../components/Modal/ConfirmDialog";
-import ContentPreviewDialog from "../components/ContentPreview/ContentPreviewDialog";
+import ContentPreviewDialog, { type ContentPreviewNavigation } from "../components/ContentPreview/ContentPreviewDialog";
+import { createChurchResourcePreview, createSongAudioPreview, resolvePreviewSource } from "../components/ContentPreview/contentPreview";
+import { createPreviewSourceCache, type PreviewSourceCache } from "../components/ContentPreview/previewSourceCache";
 import { ExternalResourceDialog } from "./ExternalResourceDialog";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -137,6 +139,21 @@ const entrySource = (entry: ResourceLibraryEntry) =>
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
 
+const createLibraryPreview = (churchId: string, entry: ResourceLibraryEntry) => {
+  if (entry.source === "song-audio") {
+    return createSongAudioPreview(entry.audio, entry.songId, async () => ({
+      ...await getSongAudioUrl({ churchId, songId: entry.songId, audio: entry.audio, disposition: "inline" }),
+      mimeType: entry.audio.contentType, fileName: entry.audio.fileName, provider: "worshipsync", sourceKind: "file",
+    }));
+  }
+  const resource = entry.resource;
+  if (resource.sourceType === "external") return createChurchResourcePreview(resource);
+  return createChurchResourcePreview(resource, async () => ({
+    ...await getChurchResourceUrl({ churchId, resourceId: resource.id, disposition: "inline" }),
+    mimeType: resource.storage.contentType, fileName: resource.storage.fileName, provider: "worshipsync", sourceKind: "file",
+  }));
+};
+
 const ResourcePreview = ({
   churchId,
   entry,
@@ -144,6 +161,8 @@ const ResourcePreview = ({
   onDelete,
   canEdit,
   onClose,
+  navigation,
+  sourceCache,
 }: {
   churchId: string;
   entry: ResourceLibraryEntry;
@@ -151,8 +170,11 @@ const ResourcePreview = ({
   onDelete: (entry: ResourceLibraryEntry) => Promise<void>;
   canEdit: boolean;
   onClose: () => void;
+  navigation?: ContentPreviewNavigation;
+  sourceCache: PreviewSourceCache;
 }) => {
   const resource = entry.source === "church-resource" ? entry.resource : undefined;
+  const preview = useMemo(() => createLibraryPreview(churchId, entry), [churchId, entry]);
   const [error, setError] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(resourceEntryName(entry));
@@ -223,35 +245,17 @@ const ResourcePreview = ({
   const canDelete = canEdit && entry.source === "church-resource";
   const hasManagementActions = canDownload || canRename || canDelete;
   const showSecondaryInfo = Boolean(resource?.description || error || (editingName && resource));
+  const navigationBusy = editingName || savingName || downloading || deleting;
   return (
     <>
       <ContentPreviewDialog
-        resource={entry.source === "song-audio" ? {
-          id: entry.audio.id,
-          title: entry.audio.fileName,
-          mimeType: entry.audio.contentType,
-          fileName: entry.audio.fileName,
-          resolveSource: async () => {
-            const result = await getSongAudioUrl({ churchId, songId: entry.songId, audio: entry.audio, disposition: "inline" });
-            return { url: result.url, mimeType: entry.audio.contentType, fileName: entry.audio.fileName, provider: "worshipsync" };
-          },
-        } : resource ? {
-          id: resource.id,
-          title: resource.name,
-          ...(resource.sourceType === "external" ? {
-            url: resource.external.url,
-            provider: resource.external.provider,
-            mimeType: resource.external.mimeType,
-            fileName: resource.external.fileName,
-          } : {
-            mimeType: resource.storage.contentType,
-            fileName: resource.storage.fileName,
-            resolveSource: async () => {
-              const result = await getChurchResourceUrl({ churchId, resourceId: resource.id, disposition: "inline" });
-              return { url: result.url, mimeType: resource.storage.contentType, fileName: resource.storage.fileName, provider: "worshipsync" };
-            },
-          }),
-        } : null}
+        resource={preview}
+        navigation={navigation ? {
+          ...navigation,
+          onPrevious: navigationBusy ? undefined : navigation.onPrevious,
+          onNext: navigationBusy ? undefined : navigation.onNext,
+        } : undefined}
+        sourceCache={sourceCache}
         onClose={onClose}
         dialogLabel={resourceEntryName(entry)}
         metadata={`${typeLabel(entry)} · ${formatEntrySize(entry)} · Updated ${formatDate(entryUpdatedAt(entry))}`}
@@ -302,6 +306,9 @@ const ResourcesPage = () => {
   const canBrowse = access === "full" || access === "music" || access === "view";
   const canEdit = access === "full";
   const storageQuota = useChurchStorageQuota(churchId, canBrowse);
+  // A church switch is a cache ownership boundary; signed URLs never cross it.
+  const previewSources = useMemo(() => ({ churchId, cache: createPreviewSourceCache() }), [churchId]);
+  const sourceCache = previewSources.cache;
 
   useEffect(() => {
     if (!canBrowse) {
@@ -396,6 +403,18 @@ const ResourcesPage = () => {
     setSortDirection("asc");
   };
   const selectedEntry = entries.find((entry) => entryKey(entry) === selectedKey) || null;
+  const previewIndex = sortedEntries.findIndex((entry) => entryKey(entry) === selectedKey);
+
+  useEffect(() => {
+    if (!churchId || previewIndex < 0) return;
+    for (const index of [previewIndex - 1, previewIndex + 1]) {
+      const neighbor = sortedEntries[index];
+      if (neighbor) {
+        // Prepare descriptors only. A failed speculative request remains retryable.
+        void resolvePreviewSource(createLibraryPreview(churchId, neighbor), sourceCache).catch(() => {});
+      }
+    }
+  }, [churchId, previewIndex, sortedEntries, sourceCache]);
   const selectableEntries = entries.filter((entry) => entry.source === "church-resource");
   const selectedEntries = selectableEntries.filter((entry) => selectedResourceKeys.has(entryKey(entry)));
   const allSelectableEntriesSelected = selectableEntries.length > 0 && selectedEntries.length === selectableEntries.length;
@@ -655,7 +674,12 @@ const ResourcesPage = () => {
               </div>
             ) : null}
             {selectedEntry && churchId ? (
-              <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} onClose={() => setSelectedKey(null)} />
+              <ResourcePreview churchId={churchId} entry={selectedEntry} onRename={renameResource} onDelete={requestDelete} canEdit={canEdit} onClose={() => setSelectedKey(null)} sourceCache={sourceCache} navigation={previewIndex >= 0 ? {
+                index: previewIndex,
+                total: sortedEntries.length,
+                onPrevious: previewIndex > 0 ? () => setSelectedKey(entryKey(sortedEntries[previewIndex - 1])) : undefined,
+                onNext: previewIndex < sortedEntries.length - 1 ? () => setSelectedKey(entryKey(sortedEntries[previewIndex + 1])) : undefined,
+              } : undefined} />
             ) : null}
             {deleteCandidates?.length ? (
               <ConfirmDialog

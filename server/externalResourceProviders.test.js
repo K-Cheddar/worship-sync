@@ -47,6 +47,8 @@ test("normalizes supported provider share-link variants", () => {
     const resolved = resolveExternalResourceProvider(originalUrl);
     assert.equal(resolved.provider, provider);
     assert.equal(resolved.candidateUrl, candidateUrl);
+    assert.equal(resolved.retrievalStrategy,
+      provider === "youtube" ? "none" : provider === "direct" ? "metadata-probe" : "get");
     if (mediaId) assert.equal(resolved.mediaId, mediaId);
   }
 });
@@ -56,7 +58,24 @@ test("leaves unknown HTTPS resources for direct metadata detection", () => {
   assert.deepEqual(resolveExternalResourceProvider(originalUrl), {
     provider: "direct",
     candidateUrl: originalUrl,
+    retrievalStrategy: "metadata-probe",
   });
+});
+
+test("selects direct PDF GET strategies for native Google documents", () => {
+  for (const [url, expectedPath] of [
+    ["https://docs.google.com/document/d/doc-id/edit", "/document/d/doc-id/export?format=pdf"],
+    ["https://docs.google.com/spreadsheets/d/sheet-id/edit", "/spreadsheets/d/sheet-id/export?format=pdf"],
+    ["https://docs.google.com/presentation/d/slide-id/edit", "/presentation/d/slide-id/export/pdf"],
+  ]) {
+    assert.deepEqual(resolveExternalResourceProvider(url), {
+      provider: "google-drive",
+      candidateUrl: `https://docs.google.com${expectedPath}`,
+      retrievalStrategy: "get",
+      expectedMimeType: "application/pdf",
+      failureReason: "This Google document could not be exported for preview.",
+    });
+  }
 });
 
 test("does not treat lookalike hostnames as supported providers", () => {

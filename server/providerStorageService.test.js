@@ -1,3 +1,4 @@
+import mediaImageFormats from "../shared/mediaImageFormats.json" with { type: "json" };
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ChurchStorageQuotaError } from "./churchStorageQuota.js";
@@ -195,6 +196,309 @@ test("Cloudinary ownership rejects another or similarly named church folder", as
       (error) => error.statusCode === 403,
     );
   }
+});
+
+for (const folderMode of ["dynamic", "fixed"]) {
+  test(`Cloudinary ${folderMode} upload intent signs only server-owned fields`, async () => {
+    let signedParams;
+    let signedSecret;
+    let recorded;
+    let configCalls = 0;
+    const service = createProviderStorageService({
+      cloudinaryApiSecret: "server-secret",
+      cloudinaryClient: {
+        config: () => ({ api_key: "public-key" }),
+        api: { config: async (options) => {
+          configCalls += 1;
+          assert.deepEqual(options, { settings: true });
+          return { settings: { folder_mode: folderMode } };
+        } },
+        utils: { api_sign_request: (params, secret) => {
+          signedParams = params;
+          signedSecret = secret;
+          return "server-signature";
+        } },
+      },
+      storageQuota: createQuota({ recordUpload: async (value) => { recorded = value; } }),
+    });
+    const intent = await service.createCloudinaryImageUpload({
+      churchId: "church-1",
+      mediaId: "media-1",
+    });
+    const folder = "worship-sync/churches/church-1/media";
+    const expected = folderMode === "dynamic"
+      ? intent.fields.public_id
+      : `${folder}/${intent.fields.public_id}`;
+    assert.match(intent.uploadId, /^[0-9a-f-]{36}$/i);
+    assert.equal(intent.publicId, expected);
+    assert.equal(intent.uploadUrl, "https://api.cloudinary.com/v1_1/portable-media/image/upload");
+    assert.equal(signedSecret, "server-secret");
+    assert.deepEqual(signedParams, {
+      timestamp: Number(intent.fields.timestamp),
+      public_id: intent.fields.public_id,
+      overwrite: false,
+      allowed_formats: "avif,bmp,gif,heic,jpg,jxl,png,svg,tiff,webp,ico",
+      ...(folderMode === "dynamic" ? { asset_folder: folder } : { folder }),
+    });
+    assert.equal(intent.fields.allowed_formats, signedParams.allowed_formats);
+    assert.ok(signedParams.allowed_formats.split(",").includes("avif"));
+    for (const { cloudinaryFormat } of mediaImageFormats) {
+      assert.ok(signedParams.allowed_formats.split(",").includes(cloudinaryFormat));
+    }
+    for (const unsupported of ["pdf", "psd", "ai", "glb"]) {
+      assert.equal(signedParams.allowed_formats.split(",").includes(unsupported), false);
+    }
+    assert.equal("api_secret" in intent.fields, false);
+    assert.equal(intent.fields.api_key, "public-key");
+    assert.equal("upload_preset" in intent.fields, false);
+    assert.equal("folder" in intent.fields, folderMode === "fixed");
+    assert.equal("asset_folder" in intent.fields, folderMode === "dynamic");
+    assert.deepEqual(recorded, {
+      churchId: "church-1",
+      provider: "cloudinary",
+      uploadId: intent.uploadId,
+      mediaId: "media-1",
+      assetId: intent.publicId,
+      folderMode,
+      status: "waiting",
+    });
+    await service.createCloudinaryImageUpload({ churchId: "church-1", mediaId: "media-2" });
+    assert.equal(configCalls, 1);
+  });
+}
+
+test("Cloudinary signed intent rejects unavailable folder configuration", async () => {
+  let recorded = false;
+  const service = createProviderStorageService({
+    cloudinaryApiSecret: "server-secret",
+    cloudinaryClient: {
+      config: () => ({ api_key: "public-key" }),
+      api: { config: async () => ({ settings: {} }) },
+      utils: { api_sign_request: () => "signature" },
+    },
+    storageQuota: {
+      ...createQuota({ recordUpload: async () => { recorded = true; } }),
+      assertProviderUsageReady: async () => {},
+    },
+  });
+  await assert.rejects(
+    service.createCloudinaryImageUpload({ churchId: "church-1", mediaId: "media-1" }),
+    (error) => error.code === "CLOUDINARY_CONFIGURATION_UNAVAILABLE" && error.statusCode === 503,
+  );
+  assert.equal(recorded, false);
+});
+
+test("Cloudinary signed intent checks provider usage readiness before reading provider configuration", async () => {
+  let configCalls = 0;
+  let recorded = false;
+  const service = createProviderStorageService({
+    cloudinaryApiSecret: "server-secret",
+    cloudinaryClient: {
+      config: () => ({ api_key: "public-key" }),
+      api: { config: async () => { configCalls += 1; return { settings: { folder_mode: "dynamic" } }; } },
+      utils: { api_sign_request: () => "signature" },
+    },
+    storageQuota: {
+      ...createQuota({ recordUpload: async () => { recorded = true; } }),
+      assertProviderUsageReady: async () => {
+        const error = new Error("Provider storage usage must be reconciled first.");
+        error.statusCode = 503;
+        error.code = "CHURCH_PROVIDER_STORAGE_NOT_RECONCILED";
+        throw error;
+      },
+    },
+  });
+  await assert.rejects(
+    service.createCloudinaryImageUpload({ churchId: "church-1", mediaId: "media-1" }),
+    (error) => error.code === "CHURCH_PROVIDER_STORAGE_NOT_RECONCILED",
+  );
+  assert.equal(configCalls, 0);
+  assert.equal(recorded, false);
+});
+
+test("signed Cloudinary commit requires the recorded church and exact intended public ID", async () => {
+  let resourceCalls = 0;
+  const service = createProviderStorageService({
+    cloudinaryClient: { api: { resource: async () => { resourceCalls += 1; } } },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({
+        churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting",
+      }),
+      transitionProviderUpload: async ({ status }) => ({
+        upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true,
+      }),
+    },
+  });
+  await assert.rejects(
+    service.commitCloudinaryImage({ churchId: "church-2", uploadId: "upload-1", publicId: "image-1" }),
+    (error) => error.statusCode === 403,
+  );
+  await assert.rejects(
+    service.commitCloudinaryImage({ churchId: "church-1", uploadId: "upload-1", publicId: "other-image" }),
+    (error) => error.statusCode === 403,
+  );
+  assert.equal(resourceCalls, 0);
+});
+
+test("Cloudinary commit stops when cancellation wins the atomic claim", async () => {
+  let providerCalls = 0;
+  const service = createProviderStorageService({
+    cloudinaryClient: {
+      api: { resource: async () => { providerCalls += 1; } },
+      uploader: { add_context: async () => { providerCalls += 1; } },
+    },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({
+        churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting",
+      }),
+      transitionProviderUpload: async () => ({
+        upload: { churchId: "church-1", assetId: "image-1", status: "cancelling" },
+        transitioned: false,
+      }),
+    },
+  });
+
+  await assert.rejects(
+    service.commitCloudinaryImage({ churchId: "church-1", uploadId: "upload-1", publicId: "image-1" }),
+    (error) => error.statusCode === 409 && error.code === "CLOUDINARY_UPLOAD_NOT_COMMITTABLE",
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test("signed Cloudinary commit treats misplaced provider results as integration errors", async () => {
+  const service = createProviderStorageService({
+    cloudinaryClient: {
+      api: { resource: async () => ({
+        public_id: "image-1", asset_folder: "branding/church-1", bytes: 123,
+      }) },
+      uploader: { add_context: async () => {} },
+    },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({
+        churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting",
+      }),
+      transitionProviderUpload: async ({ status }) => ({
+        upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true,
+      }),
+    },
+  });
+  await assert.rejects(
+    service.commitCloudinaryImage({ churchId: "church-1", uploadId: "upload-1", publicId: "image-1" }),
+    (error) => error.code === "CLOUDINARY_MEDIA_FOLDER_MISMATCH" && error.statusCode >= 500,
+  );
+});
+
+test("signed Cloudinary commit validates the fixed-folder final public ID", async () => {
+  const expectedPublicId = "worship-sync/churches/church-1/media/worship-sync-image-1";
+  const service = createProviderStorageService({
+    cloudinaryClient: {
+      api: { resource: async () => ({
+        public_id: expectedPublicId,
+        folder: "worship-sync/churches/church-1/media",
+        bytes: 123,
+      }) },
+      uploader: { add_context: async () => {} },
+    },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({
+        churchId: "church-1", assetId: expectedPublicId, folderMode: "fixed", status: "waiting",
+      }),
+      transitionProviderUpload: async ({ status }) => ({
+        upload: { churchId: "church-1", assetId: expectedPublicId, status }, transitioned: true,
+      }),
+    },
+  });
+  const result = await service.commitCloudinaryImage({
+    churchId: "church-1", uploadId: "intent-1", publicId: expectedPublicId,
+  });
+  assert.equal(result.publicId, expectedPublicId);
+});
+
+test("signed Media commits reject Canva, profile, branding, and temporary-conversion assets", async () => {
+  for (const assetFolder of [
+    "worship-sync/canva/church-1",
+    "member-profiles/church-1",
+    "branding/church-1",
+    "temporary-conversions/church-1",
+  ]) {
+    const service = createProviderStorageService({
+      cloudinaryClient: {
+        api: { resource: async () => ({ public_id: "image-1", asset_folder: assetFolder, bytes: 123 }) },
+        uploader: { add_context: async () => {} },
+      },
+      storageQuota: {
+        ...createQuota(),
+        getProviderUpload: async () => ({ churchId: "church-1", assetId: "image-1", folderMode: "dynamic", status: "waiting" }),
+        transitionProviderUpload: async ({ status }) => ({
+          upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true,
+        }),
+      },
+    });
+    await assert.rejects(
+      service.commitCloudinaryImage({ churchId: "church-1", uploadId: "intent-1", publicId: "image-1" }),
+      (error) => error.code === "CLOUDINARY_MEDIA_FOLDER_MISMATCH",
+    );
+  }
+});
+
+test("signed Cloudinary commit rejects an unknown intent", async () => {
+  const service = createProviderStorageService({
+    storageQuota: { ...createQuota(), getProviderUpload: async () => null },
+  });
+  await assert.rejects(
+    service.commitCloudinaryImage({ churchId: "church-1", uploadId: "unknown", publicId: "image-1" }),
+    (error) => error.statusCode === 404 && error.code === "CLOUDINARY_UPLOAD_NOT_FOUND",
+  );
+});
+
+test("Cloudinary cancellation destroys only the exact uncommitted intent asset", async () => {
+  let destroyed = [];
+  let ledgerStatus = "waiting";
+  const service = createProviderStorageService({
+    cloudinaryClient: {
+      api: { resource: async (publicId) => ({ public_id: publicId, bytes: 100 }) },
+      uploader: { destroy: async (publicId) => {
+        destroyed.push(publicId);
+        return { result: "ok" };
+      } },
+    },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({ churchId: "church-1", assetId: "image-1", status: ledgerStatus }),
+      transitionProviderUpload: async ({ status }) => {
+        ledgerStatus = status;
+        return { upload: { churchId: "church-1", assetId: "image-1", status }, transitioned: true };
+      },
+    },
+  });
+  await assert.rejects(
+    service.cancelCloudinaryUpload({ churchId: "church-2", uploadId: "upload-1" }),
+    (error) => error.statusCode === 403,
+  );
+  assert.deepEqual(destroyed, []);
+  const result = await service.cancelCloudinaryUpload({ churchId: "church-1", uploadId: "upload-1" });
+  assert.deepEqual(result, { cancelled: true });
+  assert.deepEqual(destroyed, ["image-1"]);
+});
+
+test("Cloudinary cancellation never deletes an already committed intent", async () => {
+  let destroyed = 0;
+  const service = createProviderStorageService({
+    cloudinaryClient: { uploader: { destroy: async () => { destroyed += 1; } } },
+    storageQuota: {
+      ...createQuota(),
+      getProviderUpload: async () => ({ churchId: "church-1", assetId: "image-1", status: "committed" }),
+    },
+  });
+  assert.deepEqual(
+    await service.cancelCloudinaryUpload({ churchId: "church-1", uploadId: "intent-1" }),
+    { cancelled: false, committed: true },
+  );
+  assert.equal(destroyed, 0);
 });
 
 test("provider deletion failure does not release quota", async () => {

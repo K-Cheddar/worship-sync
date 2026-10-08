@@ -16,8 +16,11 @@ Assume every shared write can overlap with another writer or receive responses o
 ## Persist safely
 
 - Read mutable state inside the transaction or lock that commits it.
+- Treat imported or module-level mutable database/client handles as unsafe to dereference after an arbitrary async boundary unless their identity is intentionally revalidated. Capture the concrete datastore and owner scope when the operation starts; do not let a later church/database switch redirect an in-flight operation.
+- A mutation may correctly finish against its original database after the active scope changes, while its UI, Redux, or broadcast result must be suppressed. Keep persistence ownership and presentation ownership checks explicit and separate.
 - Replace a derived map only from the latest authoritative snapshot; preserve unrelated keys.
 - Use datastore transactions for cross-process/device contention. Add a scoped in-process queue only where the local store lacks transaction support.
+- Scope local serialization queues by datastore/tenant identity as well as document identity. Entity/document IDs alone are insufficient when IDs can repeat across tenants.
 - Keep authorization, ownership, and current-state validation at commit time.
 - Make retries safe: a repeated request must not duplicate, resurrect, or erase data.
 
@@ -37,5 +40,15 @@ Test the applicable cases:
 2. A clear/delete does not restore stale data or remove an unrelated key.
 3. A delayed older response cannot replace a newer optimistic update.
 4. A second client, window, or sync event receives a consistent final state when the feature is shared.
+
+For a database or tenant switch, also verify this controlled race:
+
+```text
+Begin write under database A.
+Pause it.
+Activate database B containing the same document ID.
+Resume A.
+Assert no read/write/broadcast/state commit targets B.
+```
 
 Run focused tests plus the relevant lint/type/build checks. For schedule-specific work, also use `$schedule-mutation-safety`.

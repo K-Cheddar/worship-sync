@@ -9,9 +9,11 @@ import {
 import type { RootState } from "../../store/store";
 import type { MediaType } from "../../types";
 import { createCloudinaryImageMediaItem } from "../../containers/Media/utils/cloudinaryMediaItem";
-import { uploadImageToCloudinary } from "../../containers/Media/utils/cloudinaryUpload";
+import { uploadImageToCloudinarySigned } from "../../containers/Media/utils/cloudinaryUpload";
 import {
+  cancelCloudinaryMediaUpload,
   commitCloudinaryMediaAsset,
+  createCloudinaryMediaUpload,
   deleteCloudinaryMediaAsset,
 } from "../../api/providerStorage";
 import {
@@ -75,6 +77,8 @@ const LocalImageUploadManager = () => {
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
   const { db, isGuestSession = false } =
     useContext(ControllerInfoContext) || {};
+  const activeScopeRef = useRef({ db, churchId });
+  activeScopeRef.current = { db, churchId };
   const dispatch = useDispatch();
   const mediaList = useSelector((state: RootState) => state.media.list);
   const mediaIsReady = useSelector(
@@ -92,7 +96,7 @@ const LocalImageUploadManager = () => {
     leaseOwnerId.current = `upload-manager-${generateRandomId()}`;
   }
   const retryTimer = useRef<number | undefined>(undefined);
-  const hasSweptWorkspace = useRef("");
+  const hasSweptWorkspace = useRef<{ db: PouchDB.Database; workspaceId: string } | null>(null);
 
   const processJob = useCallback(
     async (claimedJob: LocalImageUploadJob) => {
@@ -102,7 +106,9 @@ const LocalImageUploadManager = () => {
       if (!claimedJob.leaseOwnerId) return;
       let job = claimedJob;
       let cloudMedia = claimedJob.cloudMedia;
+      const resumedCloudCheckpoint = Boolean(claimedJob.cloudMedia);
       const jobLeaseOwnerId = claimedJob.leaseOwnerId;
+      let providerUploadId = claimedJob.providerUploadId;
       let leaseIsActive = true;
       processing.current.add(job.assetId);
       registerLocalImageUploadProcessing(job.assetId);
@@ -145,7 +151,10 @@ const LocalImageUploadManager = () => {
           !durableJob?.cancelRequested
         ) return false;
         try {
-          if (cloudMedia?.publicId) {
+          if (providerUploadId) {
+            const cleanup = await cancelCloudinaryMediaUpload(churchId, providerUploadId);
+            if (cleanup.committed) return false;
+          } else if (cloudMedia?.publicId) {
             await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
           }
         } catch (error) {
@@ -170,6 +179,8 @@ const LocalImageUploadManager = () => {
           progress: null,
           cancelRequested: true,
           cloudMedia: null,
+          providerUploadId: null,
+          providerExpectedPublicId: null,
           nextAttemptAt: 0,
           lastError: undefined,
         });
@@ -178,11 +189,50 @@ const LocalImageUploadManager = () => {
       };
       const cleanupCloudMedia = async (media?: MediaType) => {
         if (!media?.publicId) return;
-        await deleteCloudinaryMediaAsset(churchId, media.publicId);
+        if (providerUploadId) {
+          await cancelCloudinaryMediaUpload(churchId, providerUploadId);
+        } else {
+          await deleteCloudinaryMediaAsset(churchId, media.publicId);
+        }
       };
       try {
         const stored = await getLocalImage(job.assetId);
         if (await stopIfCancelled()) return;
+        if (!cloudMedia && providerUploadId) {
+          try {
+            const cleanup = await cancelCloudinaryMediaUpload(churchId, providerUploadId);
+            if (cleanup.committed) {
+              await updateClaimedJob({
+                status: "failed",
+                phase: "failed",
+                progress: null,
+                nextAttemptAt: 0,
+                lastError: "The cloud image was saved, but its local upload details are missing. Contact support before retrying.",
+                lastErrorCode: "CLOUDINARY_UPLOAD_ALREADY_COMMITTED",
+              });
+              return;
+            }
+          } catch (error) {
+            await updateClaimedJob({
+              status: "failed",
+              phase: "failed",
+              progress: null,
+              nextAttemptAt: 0,
+              lastError: error instanceof Error ? error.message : "The previous cloud upload could not be cleaned up.",
+              lastErrorCode:
+                typeof error === "object" && error !== null &&
+                typeof (error as { code?: unknown }).code === "string"
+                  ? (error as { code: string }).code
+                  : undefined,
+            });
+            return;
+          }
+          providerUploadId = undefined;
+          await updateClaimedJob({
+            providerUploadId: null,
+            providerExpectedPublicId: null,
+          });
+        }
         if (!stored?.blob) {
           await updateClaimedJob({
             status: "failed",
@@ -210,10 +260,19 @@ const LocalImageUploadManager = () => {
             });
             let lastPersistedAt = 0;
             let progressWrite = Promise.resolve();
-            const info = await uploadImageToCloudinary(
+            const intent = await createCloudinaryMediaUpload(churchId, job.mediaId);
+            providerUploadId = intent.uploadId;
+            if (!(await updateClaimedJob({
+              providerUploadId,
+              providerExpectedPublicId: intent.publicId,
+            }))) {
+              await cancelCloudinaryMediaUpload(churchId, providerUploadId);
+              return;
+            }
+            if (await stopIfCancelled()) return;
+            const info = await uploadImageToCloudinarySigned(
               file,
-              job.uploadPreset,
-              "portable-media",
+              intent,
               {
                 setXhr: (xhr) => registerLocalImageUploadRequest(job.assetId, xhr),
                 isCancelled: () => isLocalImageUploadCancellationRequested(job.assetId),
@@ -231,7 +290,6 @@ const LocalImageUploadManager = () => {
                   }).catch((error) => console.warn("Image upload progress could not be saved:", error));
                 },
               },
-              { assetFolder: `worship-sync/churches/${encodeURIComponent(churchId)}/media` },
             );
             await progressWrite;
             cloudMedia = {
@@ -247,6 +305,7 @@ const LocalImageUploadManager = () => {
               cloudMedia,
               nextAttemptAt: 0,
               lastError: undefined,
+              lastErrorCode: undefined,
             }))) {
               await cleanupCloudMedia(cloudMedia);
               return;
@@ -254,7 +313,8 @@ const LocalImageUploadManager = () => {
             if (await stopIfCancelled()) return;
           } catch (error) {
             if (await stopIfCancelled()) return;
-            const canRetry = attemptCount < MAX_LOCAL_IMAGE_AUTO_UPLOAD_ATTEMPTS;
+            const { terminal } = getCloudinaryCommitFailure(error);
+            const canRetry = !terminal && attemptCount < MAX_LOCAL_IMAGE_AUTO_UPLOAD_ATTEMPTS;
             const retryDelay = getLocalImageUploadRetryDelay(attemptCount);
             await updateClaimedJob({
               status: "failed",
@@ -263,6 +323,11 @@ const LocalImageUploadManager = () => {
               attemptCount,
               nextAttemptAt: canRetry ? Date.now() + retryDelay : 0,
               lastError: error instanceof Error ? error.message : "Upload failed.",
+              lastErrorCode:
+                typeof error === "object" && error !== null &&
+                typeof (error as { code?: unknown }).code === "string"
+                  ? (error as { code: string }).code
+                  : undefined,
             });
             return;
           } finally {
@@ -283,7 +348,10 @@ const LocalImageUploadManager = () => {
         if (!cloudMedia.providerStorage) {
           try {
             await updateClaimedJob({ phase: "committing", progress: 90 });
-            const committed = await commitCloudinaryMediaAsset(churchId, cloudMedia.publicId);
+            const committed = await commitCloudinaryMediaAsset(
+              churchId,
+              { ...(providerUploadId ? { uploadId: providerUploadId } : {}), publicId: cloudMedia.publicId },
+            );
             cloudMedia = { ...cloudMedia, providerStorage: committed.asset };
             if (!(await updateClaimedJob({
               status: "uploaded",
@@ -292,23 +360,67 @@ const LocalImageUploadManager = () => {
               cloudMedia,
               nextAttemptAt: 0,
               lastError: undefined,
+              lastErrorCode: undefined,
             }))) return;
           } catch (error) {
             const { quotaDenied, terminal } = getCloudinaryCommitFailure(error);
             if (quotaDenied) cloudMedia = undefined;
+            const attemptCount = job.attemptCount + 1;
+            const canRetry = !terminal && attemptCount < MAX_LOCAL_IMAGE_AUTO_UPLOAD_ATTEMPTS;
             await updateClaimedJob({
               status: "failed",
               phase: "failed",
               progress: null,
+              attemptCount,
               cloudMedia: cloudMedia ?? null,
-              nextAttemptAt: terminal ? 0 : Date.now() + OUTLINE_RETRY_MS,
+              nextAttemptAt: canRetry ? Date.now() + OUTLINE_RETRY_MS : 0,
               lastError: error instanceof Error ? error.message : "Image storage failed.",
+              lastErrorCode:
+                typeof error === "object" && error !== null &&
+                typeof (error as { code?: unknown }).code === "string"
+                  ? (error as { code: string }).code
+                  : undefined,
             });
             return;
           }
         }
         if (await stopIfCancelled()) return;
         await updateClaimedJob({ phase: "finalizing", progress: 95 });
+        if (activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+          if (resumedCloudCheckpoint) {
+            await updateClaimedJob({
+              status: "uploaded",
+              phase: "finalizing",
+              progress: 95,
+              cloudMedia,
+              nextAttemptAt: 0,
+            });
+            return;
+          }
+          try {
+            await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
+            await updateClaimedJob({
+              status: "cancelled",
+              phase: "cancelled",
+              progress: null,
+              cloudMedia: null,
+              providerUploadId: null,
+              providerExpectedPublicId: null,
+              nextAttemptAt: 0,
+              lastError: undefined,
+            });
+          } catch (error) {
+            await updateClaimedJob({
+              status: "failed",
+              phase: "failed",
+              progress: null,
+              cloudMedia,
+              nextAttemptAt: 0,
+              lastError: error instanceof Error ? error.message : "Church changed during upload; cloud cleanup needs attention.",
+            });
+          }
+          return;
+        }
         const localMedia =
           mediaByIdRef.current.get(job.assetId) ??
           Array.from(mediaByIdRef.current.values()).find(
@@ -342,6 +454,7 @@ const LocalImageUploadManager = () => {
               mediaId: cloudMedia.id,
               url: cloudMedia.background,
             });
+            if (activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) return;
             dispatchLocalImageCloudCopy(dispatch, {
               itemId: job.itemId,
               assetId: job.assetId,
@@ -368,6 +481,7 @@ const LocalImageUploadManager = () => {
           cancelRequested: false,
           nextAttemptAt: 0,
           lastError: undefined,
+          lastErrorCode: undefined,
         });
       } finally {
         window.clearInterval(heartbeat);
@@ -440,11 +554,31 @@ const LocalImageUploadManager = () => {
   }, [drainQueue]);
 
   useEffect(() => {
-    if (!db || !churchId || hasSweptWorkspace.current === churchId) return;
-    hasSweptWorkspace.current = churchId;
-    void cleanupOrphanedLocalImages({ db, workspaceId: churchId }).catch(
-      (error) => console.error("Local image orphan cleanup failed:", error),
-    );
+    if (!db || !churchId || (hasSweptWorkspace.current?.db === db && hasSweptWorkspace.current.workspaceId === churchId)) return;
+    let active = true;
+    let running = false;
+    const tryCleanup = async () => {
+      if (hasSweptWorkspace.current?.db === db && hasSweptWorkspace.current.workspaceId === churchId) return true;
+      if (running) return false;
+      running = true;
+      try {
+        const result = await cleanupOrphanedLocalImages({ db, workspaceId: churchId });
+        if (result === null || !active) return false;
+        if (active) hasSweptWorkspace.current = { db, workspaceId: churchId };
+        return true;
+      } catch (error) {
+        console.error("Local image orphan cleanup failed:", error);
+        return false;
+      } finally {
+        running = false;
+      }
+    };
+    void tryCleanup();
+    const interval = window.setInterval(() => { void tryCleanup(); }, 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
   }, [churchId, db]);
 
   return null;

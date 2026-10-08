@@ -31,6 +31,7 @@ import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import MediaModal from "./MediaModal";
 import MediaProviderRetryModal from "./MediaProviderRetryModal";
 import MediaLibraryGrid from "./MediaLibraryGrid";
+import MediaLibraryMediaVisual from "./MediaLibraryMediaVisual";
 import { useMediaLibraryController } from "./useMediaLibraryController";
 import type { MediaFolder, MediaType } from "../../types";
 import FloatingWindow, {
@@ -251,13 +252,13 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       >
         <div
           className={cn(
-            "mx-2 flex items-center border-b border-gray-500 bg-black/60 text-sm relative z-10 transition-all px-2",
+            "@container/sources-actions mx-2 flex items-center border-b border-gray-500 bg-black/60 text-sm relative z-10 transition-all px-2",
             c.isMediaExpanded ? "py-1 rounded-t-md" : "rounded-b-md py-0.5",
             "rounded-t-md mt-2",
           )}
         >
-          <h2 className="font-semibold">Sources</h2>
-          <div className="flex-1 flex items-center justify-center">
+          <h2 className="min-w-0 flex-1 font-semibold">Sources</h2>
+          <div className="flex shrink-0 items-center">
             <Button
               variant="tertiary"
               svg={c.isMediaExpanded ? ChevronDown : ChevronUp}
@@ -273,7 +274,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               }}
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
             <MediaAddControl>
               <MediaSourceAddMenu
                 onAddMedia={() => void c.requestMediaUpload()}
@@ -491,8 +492,14 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               ? `Are you sure you want to delete ${selectedCount} items`
               : "Are you sure you want to delete"
           }
-          imageUrl={
-            c.isDeletingMultiple ? undefined : c.mediaToDelete?.thumbnail
+          imagePreview={
+            !c.isDeletingMultiple && c.showDeleteModal && c.mediaToDelete ? (
+              <MediaLibraryMediaVisual
+                mediaItem={c.mediaToDelete}
+                imageAlt={c.mediaToDelete.name}
+                imageClassName="w-full h-full object-cover"
+              />
+            ) : undefined
           }
         />
 

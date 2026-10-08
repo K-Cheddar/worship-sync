@@ -32,7 +32,7 @@ import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
 import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
-import { resolveExternalContentPreviewSource, type ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
+import { createChurchResourcePreview, resolveExternalContentPreviewSource, type ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {
   addIemSlot,
@@ -1444,24 +1444,19 @@ const ServicePlanElementRow = ({
     const resolveSource = churchId && resourceId
       ? async () => {
           const resourceResult = await getChurchResource(churchId, resourceId);
+          const preview = createChurchResourcePreview(resourceResult.resource);
           if (resourceResult.resource.sourceType === "external") {
-            const resolved = await resolveExternalContentPreviewSource({
-              id: resourceResult.resource.id,
-              title: resourceResult.resource.name,
-              url: resourceResult.resource.external.url,
-              provider: resourceResult.resource.external.provider,
-              mimeType: resourceResult.resource.external.mimeType,
-              fileName: resourceResult.resource.external.fileName,
-            });
+            const resolved = await resolveExternalContentPreviewSource(preview);
             if (!resolved) throw new Error("This resource could not be resolved for preview.");
             return resolved;
           }
           const urlResult = await getChurchResourceUrl({ churchId, resourceId, disposition: "inline" });
           return {
             url: urlResult.url,
-            title: resourceResult.resource.name,
             mimeType: resourceResult.resource.storage.contentType,
             fileName: resourceResult.resource.storage.fileName,
+            provider: "worshipsync" as const,
+            sourceKind: "file" as const,
           };
         }
       : undefined;

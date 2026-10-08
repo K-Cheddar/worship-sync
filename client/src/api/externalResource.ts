@@ -10,35 +10,27 @@ export type ExternalResourceProvider =
   | "web"
   | "unknown";
 
-export type ExternalResourceMediaType =
-  | "image"
-  | "audio"
-  | "video"
-  | "document"
-  | "web"
-  | "unknown";
-
-export type ExternalResourcePreviewType =
-  | "image"
-  | "audio"
-  | "video"
-  | "document"
-  | "youtube"
-  | "web"
-  | "unsupported";
+export type ExternalResourceSourceKind = "file" | "web" | "youtube" | "unavailable";
 
 export type ExternalResourceResolution = {
   originalUrl: string;
-  externalUrl: string;
+  /** @deprecated Kept for existing external API consumers; use originalUrl. */
+  externalUrl?: string;
   provider: ExternalResourceProvider;
+  sourceKind: ExternalResourceSourceKind;
   title?: string;
   filename?: string;
   mimeType?: string;
-  mediaType: ExternalResourceMediaType;
-  previewType: ExternalResourcePreviewType;
   previewUrl: string | null;
-  requiresProxy: boolean;
-  canPreview: boolean;
+  expiresAt?: string;
+  /** @deprecated Use sourceKind and the client renderer selector. */
+  mediaType?: "image" | "audio" | "video" | "document" | "web" | "unknown";
+  /** @deprecated Use sourceKind and the client renderer selector. */
+  previewType?: "docx" | "text" | "image" | "audio" | "video" | "document" | "youtube" | "web" | "unsupported";
+  /** @deprecated Use sourceKind and the client renderer selector. */
+  requiresProxy?: boolean;
+  /** @deprecated Use sourceKind and the client renderer selector. */
+  canPreview?: boolean;
   mediaId?: string;
   reason?: string;
 };

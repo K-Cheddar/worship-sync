@@ -1,7 +1,7 @@
 {
   "id": "2026-10-06-media-activity-cloud-workflows",
-  "date": "2026-10-06",
+  "date": "2026-10-07",
   "type": "improved",
   "title": "Follow uploads and deletions in Activity",
-  "description": "Track Media and Resource uploads alongside deletions in Activity. Failed batches show a concise summary with expandable file details, and Activity stays easy to reopen while work is running or needs attention."
+  "description": "Track Media and Resource uploads and deletions in Activity, retry failed files after navigating away, and review clear batch summaries and file details."
 }

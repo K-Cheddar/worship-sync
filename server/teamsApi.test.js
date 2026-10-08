@@ -16,6 +16,7 @@ process.env.RESEND_API_KEY = "";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 
 import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
@@ -7761,30 +7762,20 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     viewerPayload.payload.snapshot.service.shareId,
     `current-service-viewer:${viewerPlanKey}`,
   );
-  assert.deepEqual(viewerPayload.payload.snapshot.roles, [{
-    positionId: "viewer-lead",
-    label: "Lead vocal",
-    teamId: "viewer-worship",
-    teamName: "Worship Team",
-  }]);
-  assert.deepEqual(viewerPayload.payload.snapshot.servingTeams[0].members[0], {
-    positionId: "viewer-lead",
-    positionName: "Lead vocal",
-    memberName: "Avery Stone",
-    profileImageUrl: "https://example.com/avery.jpg",
-    microphones: [{
-      id: "viewer-mic",
-      name: "Blue",
-      type: "Headset",
-      color: "#2563eb",
-    }],
-    equipment: [{
-      id: "viewer-iem",
-      name: "Red IEM",
-      category: "iem",
-      subtype: "wireless-beltpack",
-    }],
-  });
+  const serializedPlanOnlyViewer = JSON.stringify(viewerPayload.payload.snapshot);
+  for (const rosterValue of [
+    "Avery Stone",
+    "https://example.com/avery.jpg",
+    "viewer-member",
+    "viewer-mic",
+    "Blue",
+    "viewer-iem",
+    "Red IEM",
+  ]) {
+    assert.equal(serializedPlanOnlyViewer.includes(rosterValue), false, rosterValue);
+  }
+  assert.deepEqual(viewerPayload.payload.snapshot.roles ?? [], []);
+  assert.deepEqual(viewerPayload.payload.snapshot.servingTeams ?? [], []);
   const viewerItem = viewerPayload.payload.snapshot.service.sections[0].items[0];
   assert.deepEqual(viewerItem.teamNotes, [
     { label: "Worship Team", notes: richText("Team cue") },
@@ -7800,9 +7791,9 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     plan: viewerPayload.payload.plan.sections[0].elements[0],
     item: viewerItem,
   }));
-  assert.equal(viewerItem.creditName, "Avery Stone");
-  assert.equal(viewerItem.microphoneAssignments[0].microphone.name, "Blue");
-  assert.equal(viewerItem.equipmentAssignments[0].equipment.name, "Red IEM");
+  assert.equal(viewerItem.creditName, undefined);
+  assert.deepEqual(viewerItem.microphoneAssignments ?? [], []);
+  assert.deepEqual(viewerItem.equipmentAssignments ?? [], []);
   assert.deepEqual(viewerItem.resources, [{
     type: "url",
     title: "Service notes",
@@ -7821,6 +7812,17 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   ]) {
     assert.equal(serializedViewer.includes(privateValue), false);
   }
+  const teamsAuthorizedViewerPayload = await callHandler(
+    authHandlers.getServicePlanViewer,
+    { context: viewerContext, params: { planKey: viewerPlanKey } },
+  );
+  assert.equal(teamsAuthorizedViewerPayload.statusCode, 200);
+  const teamsAuthorizedSnapshot = teamsAuthorizedViewerPayload.payload.snapshot;
+  assert.equal(teamsAuthorizedSnapshot.servingTeams[0].members[0].memberName, "Avery Stone");
+  assert.equal(teamsAuthorizedSnapshot.servingTeams[0].members[0].profileImageUrl, "https://example.com/avery.jpg");
+  const teamsAuthorizedItem = teamsAuthorizedSnapshot.service.sections[0].items[0];
+  assert.equal(teamsAuthorizedItem.microphoneAssignments[0].microphone.name, "Blue");
+  assert.equal(teamsAuthorizedItem.equipmentAssignments[0].equipment.name, "Red IEM");
   const publishedViewerPlan = await callHandler(authHandlers.publishServicePlan, {
     context,
     params: { planKey: viewerPlanKey },
@@ -7836,16 +7838,12 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   );
   assert.equal(viewerPublicSnapshot.statusCode, 200);
   assert.deepEqual(
-    viewerPayload.payload.snapshot.roles,
+    teamsAuthorizedSnapshot.roles,
     viewerPublicSnapshot.payload.roles,
   );
   assert.deepEqual(
-    viewerPayload.payload.snapshot.servingTeams,
+    teamsAuthorizedSnapshot.servingTeams,
     viewerPublicSnapshot.payload.servingTeams,
-  );
-  assert.deepEqual(
-    viewerPayload.payload.snapshot.service.sections[0].items[0],
-    viewerPublicSnapshot.payload.service.sections[0].items[0],
   );
   assert.equal(
     viewerPublicSnapshot.payload.service.shareId,
@@ -11705,6 +11703,84 @@ test("individual intake SMS records one shared notification attempt and blocks d
   } finally {
     setSmsProviderForServerTests(null);
   }
+});
+
+test("admin-recorded SMS consent preserves the church-scoped consent contract and refreshes eligibility", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("admin_sms_consent");
+  const { memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [
+      { firstName: "Verbal", lastName: "Consent" },
+      { firstName: "Signed", lastName: "Consent" },
+      { firstName: "Missing", lastName: "Phone" },
+      { firstName: "Invalid", lastName: "Phone" },
+      { firstName: "Web", lastName: "Consent" },
+      { firstName: "Opted", lastName: "Out" },
+    ],
+  });
+  const members = [memberIds.Verbal, memberIds.Signed, memberIds.Missing, memberIds.Invalid, memberIds.Web, memberIds.Opted];
+  const phones = [
+    "+19545551240", "+19545551241", "", "555", "+19545551244", "+19545551245",
+  ];
+  await Promise.all(members.map((memberId, index) =>
+    setDoc("teamRosterMembers", memberId, { phoneNumber: phones[index] }, { merge: true }),
+  ));
+  const requestConsent = (memberId, source = "admin_verbal", consentedAt = "2026-10-01", using = context, confirmed = true) =>
+    callHandler(authHandlers.recordMemberSmsConsent, {
+      context: using,
+      params: { churchId: context.churchId },
+      body: { memberId, source, consentedAt, confirmed },
+    });
+
+  const verbal = await requestConsent(members[0]);
+  assert.equal(verbal.statusCode, 200, JSON.stringify(verbal.payload));
+  const verbalRecord = await getDoc("smsConsents", smsConsentIdForChurchPhone(context.churchId, phones[0]));
+  assert.equal(verbalRecord.source, "admin_verbal");
+  assert.equal(verbalRecord.consentedAt, "2026-10-01");
+  assert.equal(verbalRecord.recordedByUid, "teams_api_admin_admin_sms_consent");
+  assert.ok(verbalRecord.recordedAt);
+  assert.ok(verbalRecord.consentVersion);
+  assert.ok(verbalRecord.consentText);
+
+  const signed = await requestConsent(members[1], "admin_signed_form");
+  assert.equal(signed.statusCode, 200);
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(bootstrap.payload.smsEligibilityByMemberId[members[0]].status, "enabled");
+  assert.equal(bootstrap.payload.smsEligibilityByMemberId[members[1]].eligible, true);
+  assert.equal(bootstrap.payload.smsEligibilityByMemberId[members[2]].status, "no_mobile");
+
+  assert.equal((await requestConsent(members[2])).statusCode, 400);
+  assert.equal((await requestConsent(members[3])).statusCode, 400);
+  assert.equal((await requestConsent(members[2], "admin_verbal", "2026-10-01", context, false)).statusCode, 400);
+  await seedSmsConsentForServerTests({ churchId: context.churchId, phoneNumber: phones[5], status: "opted_out", optedOutAt: "2026-09-30T00:00:00.000Z" });
+  assert.equal((await requestConsent(members[5], "admin_signed_form")).statusCode, 409);
+
+  const webRecordId = smsConsentIdForChurchPhone(context.churchId, phones[4]);
+  await setDoc("smsConsents", webRecordId, {
+    consentId: webRecordId,
+    churchId: context.churchId,
+    phoneNumber: phones[4],
+    status: "opted_in",
+    source: "web_form",
+    consentedAt: "2026-09-29T12:00:00.000Z",
+    verifiedAt: "2026-09-29T12:00:00.000Z",
+    consentVersion: "existing-web-version",
+    consentText: "existing web consent text",
+  }, { merge: false });
+  assert.equal((await requestConsent(members[4], "admin_verbal")).statusCode, 409);
+  const unchangedWebRecord = await getDoc("smsConsents", webRecordId);
+  assert.equal(unchangedWebRecord.source, "web_form");
+  assert.equal(unchangedWebRecord.consentVersion, "existing-web-version");
+  assert.equal(unchangedWebRecord.consentText, "existing web consent text");
+
+  const editor = await createHumanContext("admin_sms_consent_editor", {
+    churchId: context.churchId,
+    role: "member",
+    permissions: { teams: "edit" },
+  });
+  const unauthorized = await requestConsent(members[0], "admin_verbal", "2026-10-01", editor);
+  assert.equal(unauthorized.statusCode, 403);
 });
 
 test("individual intake SMS records provider failure and blocks missing consent, disabled messaging, revoked requests, and closed forms", async (t) => {

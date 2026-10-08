@@ -52,7 +52,8 @@ export function parseMediaReplicationDoc(value: unknown): MediaReplicationChange
 export const isMediaLibraryV2 = async (db: PouchDB.Database) => {
   try {
     const meta = (await db.get(MEDIA_LIBRARY_META_ID)) as MediaLibraryMeta;
-    return meta.schemaVersion >= MEDIA_LIBRARY_SCHEMA_VERSION;
+    return Number.isSafeInteger(meta.schemaVersion) &&
+      meta.schemaVersion >= MEDIA_LIBRARY_SCHEMA_VERSION;
   } catch (error) {
     if (isPouchNotFound(error)) return false;
     throw error;

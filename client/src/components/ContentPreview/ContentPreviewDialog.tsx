@@ -2,6 +2,8 @@ import Spinner from "@/components/Spinner/Spinner";
 import {
   AudioLines,
   Copy,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Maximize2,
   Minimize2,
@@ -11,12 +13,13 @@ import {
   Image,
   Video,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Button from "../Button/Button";
 import Modal from "../Modal/Modal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../ui/DropdownMenu";
 import YouTubePlaylistPlayer from "../YouTubePlaylistPlayer/YouTubePlaylistPlayer";
+import DocxPreview from "./DocxPreview";
 import type { YouTubePlaylistEntry } from "../YouTubePlaylistPlayer/youtubePlaylist";
 import ServiceFlowRichText from "../ServiceFlowRichText/ServiceFlowRichText";
 import { isRichTextEmpty } from "../../types/richText";
@@ -26,11 +29,19 @@ import {
   getSafeHttpUrl,
   getYouTubePreviewVideoId,
   resolveContentPreviewResource,
-  resolveExternalContentPreviewSource,
+  resolvePreviewSource,
   type ContentPreviewKind,
   type ContentPreviewResource,
   type ContentPreviewResolvedSource,
 } from "./contentPreview";
+import { createPreviewSourceCache, type PreviewSourceCache } from "./previewSourceCache";
+
+export type ContentPreviewNavigation = {
+  index: number;
+  total: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+};
 
 type ContentPreviewDialogProps = {
   resource: ContentPreviewResource | null;
@@ -39,11 +50,14 @@ type ContentPreviewDialogProps = {
   metadata?: ReactNode;
   secondaryInfo?: ReactNode;
   menuActions?: ReactNode;
+  navigation?: ContentPreviewNavigation;
+  sourceCache?: PreviewSourceCache;
 };
 
 type RenderStatus = "loading" | "slow" | "ready" | "error";
 
 const EMBED_TIMEOUT_MS = 7000;
+const PREVIEW_FAILURE_TIMEOUT_MS = 30000;
 
 const errorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
@@ -86,13 +100,16 @@ const PreviewKindIcon = ({ kind }: { kind: ContentPreviewKind }) => {
       ? AudioLines
       : kind === "video" || kind === "youtube"
         ? Video
-        : kind === "document" || kind === "text"
+        : kind === "pdf" || kind === "docx" || kind === "text"
           ? FileText
           : FileQuestion;
   return <Icon className="size-5 shrink-0 text-cyan-300" aria-hidden />;
 };
 
-const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, secondaryInfo, menuActions }: ContentPreviewDialogProps) => {
+const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, secondaryInfo, menuActions, navigation, sourceCache }: ContentPreviewDialogProps) => {
+  const [localCache] = useState(createPreviewSourceCache);
+  const cache = sourceCache || localCache;
+  const [sourceResourceKey, setSourceResourceKey] = useState("");
   const [source, setSource] = useState<ContentPreviewResolvedSource | null>(null);
   const [resolvedText, setResolvedText] = useState("");
   const [resolving, setResolving] = useState(false);
@@ -106,31 +123,44 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   const actionGenerationRef = useRef(0);
 
   const resourceKey = resource
-    ? `${resource.id}:${resource.url || ""}:${resource.mediaId || ""}:${resource.mimeType || ""}`
+    ? resource.cacheKey || `${resource.id}:${resource.url || ""}:${resource.mediaId || ""}:${resource.mimeType || ""}:${resource.fileName || ""}`
     : "";
+  const currentResourceKey = useRef(resourceKey);
+  currentResourceKey.current = resourceKey;
   const resolution = useMemo(
-    () => resource ? resolveContentPreviewResource(resource, source) : null,
-    [resource, source],
+    () => resource ? resolveContentPreviewResource(resource, sourceResourceKey === resourceKey ? source : null) : null,
+    [resource, source, sourceResourceKey, resourceKey],
   );
   const kind = resolution?.renderer || "unsupported";
   const sourceUrl = resolution?.resolvedUrl || "";
   const externalUrl = resolution?.originalUrl || "";
   const title = resolution?.title || "Content preview";
   const metadataLabel = resolution
-    ? `${resolution.providerLabel} • ${getContentPreviewMediaLabel(resolution.mediaType)}`
+    ? `${resolution.providerLabel} • ${getContentPreviewMediaLabel(resolution.renderer)}`
     : "";
   const youtubeVideoId = resolution?.mediaId || (resource ? getYouTubePreviewVideoId(resource) : null);
   const canOpenExternally = Boolean(getSafeHttpUrl(externalUrl));
 
   useEffect(() => {
     actionGenerationRef.current += 1;
-    if (!resource) return;
+    if (!resource) {
+      setExpanded(false);
+      setSourceResourceKey("");
+      return;
+    }
 
     let active = true;
     const controller = new AbortController();
+    const resolutionTimer = window.setTimeout(() => {
+      active = false;
+      controller.abort();
+      setResolving(false);
+      setResolveError("The preview could not be prepared in time. Open or download the file to view it.");
+    }, PREVIEW_FAILURE_TIMEOUT_MS);
     const directUrl = getSafeHttpUrl(resource.url);
     setResolving(Boolean(directUrl && !resource.resolveSource));
     setSource(null);
+    setSourceResourceKey(resourceKey);
     setResolvedText("");
     setResolveError("");
     setActionError("");
@@ -138,14 +168,14 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     setOpeningExternal(false);
     setCopyingLink(false);
     setRenderStatus("loading");
-    setExpanded(false);
 
     if (!resource.resolveSource) {
+      if (!directUrl) window.clearTimeout(resolutionTimer);
       if (!directUrl && resource.textContent === undefined) {
         setResolveError("This resource does not contain a previewable link.");
       }
       if (directUrl) {
-        void resolveExternalContentPreviewSource(resource)
+        void resolvePreviewSource(resource, cache)
           .then((resolved) => {
             if (!active) return;
             if (!resolved) {
@@ -153,7 +183,7 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
               return;
             }
             setSource(resolved);
-            if ((resolved.mimeType || "").split(";", 1)[0].trim().toLowerCase() === "text/plain" && resolved.url) {
+            if (resolveContentPreviewResource(resource, resolved).renderer === "text" && resolved.url && resource.textContent === undefined) {
               return fetch(resolved.url, { credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal })
                 .then((response) => {
                   if (!response.ok) throw new Error("This text file could not be opened.");
@@ -171,10 +201,12 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
             }
           })
           .finally(() => {
+            window.clearTimeout(resolutionTimer);
             if (active) setResolving(false);
           });
       }
       return () => {
+        window.clearTimeout(resolutionTimer);
         active = false;
         controller.abort();
         actionGenerationRef.current += 1;
@@ -182,16 +214,17 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     }
 
     setResolving(true);
-    void resource.resolveSource()
+    void resolvePreviewSource(resource, cache)
       .then((resolved) => {
         if (!active) return;
+        if (!resolved) throw new Error("This resource could not be resolved for preview.");
         const safeUrl = getSafeHttpUrl(resolved.url);
         if (!safeUrl) {
           setResolveError("This resource returned an unsupported URL.");
           return;
         }
         setSource({ ...resolved, url: safeUrl });
-        if ((resolved.mimeType || resource.mimeType || "").split(";", 1)[0].trim().toLowerCase() === "text/plain") {
+        if (resolveContentPreviewResource(resource, resolved).renderer === "text" && resource.textContent === undefined) {
           return fetch(safeUrl, { credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal })
             .then((response) => {
               if (!response.ok) throw new Error("This text file could not be opened.");
@@ -204,15 +237,17 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         if (active) setResolveError(errorMessage(error, "This resource could not be opened."));
       })
       .finally(() => {
+        window.clearTimeout(resolutionTimer);
         if (active) setResolving(false);
       });
 
     return () => {
+      window.clearTimeout(resolutionTimer);
       active = false;
       controller.abort();
       actionGenerationRef.current += 1;
     };
-  }, [resource, resourceKey]);
+  }, [resource, resourceKey, cache]);
 
   useEffect(() => {
     if (!resource || resolving || resolveError) return;
@@ -230,12 +265,15 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
   useEffect(() => {
     if (
       !sourceUrl ||
-      !["web", "document", "youtube"].includes(kind) ||
+      !["web", "pdf", "docx", "youtube"].includes(kind) ||
       resolving ||
       resolveError ||
-      renderStatus !== "loading"
+      (renderStatus !== "loading" && renderStatus !== "slow")
     ) return;
-    const timer = window.setTimeout(() => setRenderStatus("slow"), EMBED_TIMEOUT_MS);
+    const timer = window.setTimeout(
+      () => setRenderStatus(renderStatus === "loading" ? "slow" : "error"),
+      renderStatus === "loading" ? EMBED_TIMEOUT_MS : PREVIEW_FAILURE_TIMEOUT_MS - EMBED_TIMEOUT_MS,
+    );
     return () => window.clearTimeout(timer);
   }, [kind, renderStatus, resolveError, resolving, sourceUrl]);
 
@@ -280,19 +318,26 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
     }
   };
 
-  const handleMediaError = () => setRenderStatus("error");
-  const handleMediaReady = () => setRenderStatus((current) => current === "error" ? current : "ready");
-  const waitingForSource = Boolean(resource?.url && resolving && !source && !resolveError);
+  const handleMediaError = useCallback(() => {
+    if (currentResourceKey.current === resourceKey) setRenderStatus("error");
+  }, [resourceKey]);
+  const handleMediaReady = useCallback(() => {
+    if (currentResourceKey.current === resourceKey) setRenderStatus((current) => current === "error" ? current : "ready");
+  }, [resourceKey]);
+  const switchingResource = sourceResourceKey !== resourceKey;
+  const waitingForSource = switchingResource || Boolean(resource && !source && !resolveError && (resource.url || resource.resolveSource));
   const showFallback = Boolean(resolveError) || (
-    !resolving && Boolean(resolution && !resolution.canPreview)
+    !resolving && Boolean(resolution && kind === "unsupported")
   ) || (!resolving && renderStatus === "error");
   const fallbackMessage = resolveError || (
-    resolution && !resolution.canPreview && resolution.reason
+    resolution?.reason
       ? resolution.reason
       : kind === "web"
       ? "This site doesn’t allow an embedded preview."
-      : kind === "document"
-        ? "This document can’t be previewed here."
+      : kind === "pdf" || kind === "docx"
+        ? "This document could not be loaded. Open or download the file to view it."
+        : kind === "unsupported" && resolution?.fileName
+          ? "This file format isn’t supported for preview."
         : "This resource can’t be previewed here."
   );
 
@@ -363,7 +408,14 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         </div>
       );
     }
-    if (kind === "document" || kind === "web") {
+    if (kind === "docx") {
+      return (
+        <div className={`h-full w-full ${renderStatus === "ready" ? "" : "invisible"}`}>
+          <DocxPreview key={`${resourceKey}:${sourceUrl}`} url={sourceUrl} onReady={handleMediaReady} onError={handleMediaError} />
+        </div>
+      );
+    }
+    if (kind === "pdf" || kind === "web") {
       return (
         <div data-testid="document-preview-container" className="relative h-full min-h-0 w-full bg-white">
           <iframe
@@ -395,6 +447,11 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
       contentPadding="p-0"
       headerAction={(
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          {navigation ? <div className="flex items-center gap-1" role="group" aria-label="Preview navigation">
+            <Button type="button" variant="tertiary" svg={ChevronLeft} aria-label="Previous resource" disabled={navigation.index <= 0 || !navigation.onPrevious} onClick={navigation.onPrevious} />
+            <span className="whitespace-nowrap text-xs text-gray-300" aria-live="polite">{navigation.index + 1} of {navigation.total}</span>
+            <Button type="button" variant="tertiary" svg={ChevronRight} aria-label="Next resource" disabled={navigation.index >= navigation.total - 1 || !navigation.onNext} onClick={navigation.onNext} />
+          </div> : null}
           <Button type="button" variant="tertiary" svg={expanded ? Minimize2 : Maximize2} aria-label={expanded ? "Exit expanded preview" : "Expand preview"} onClick={() => setExpanded((current) => !current)} />
           {canOpenExternally ? (
             <Button type="button" variant="tertiary" svg={ExternalLink} aria-label={openingExternal ? "Opening in new tab" : "Open in new tab"} title="Open in new tab" className="max-md:min-h-0" isLoading={openingExternal} disabled={openingExternal} onClick={() => void handleOpenExternal()} />
@@ -428,10 +485,10 @@ const ContentPreviewDialog = ({ resource, onClose, dialogLabel, metadata, second
         {metadata ? <span>· {metadata}</span> : null}
       </div>
       {secondaryInfo ? <div className="shrink-0 px-4 pb-2 text-xs text-gray-400">{secondaryInfo}</div> : null}
-      <div data-testid="preview-stage" className={`relative flex min-h-56 w-full items-center justify-center overflow-hidden ${expanded ? "min-h-0 flex-1" : "h-[min(65vh,42rem)]"} ${kind === "text" ? "bg-gray-900" : "bg-gray-950"}`}>
+      <div key={resourceKey} data-testid="preview-stage" className={`relative flex min-h-56 w-full items-center justify-center overflow-hidden ${expanded ? "min-h-0 flex-1" : "h-[min(65vh,42rem)]"} ${kind === "text" ? "bg-gray-900" : "bg-gray-950"}`}>
         {renderPreviewContent()}
-        {(resolving || waitingForSource || renderStatus === "loading" || renderStatus === "slow") && !showFallback ? (
-          <LoadingState slow={renderStatus === "slow"} label={resolving || waitingForSource ? "Preparing preview…" : kind === "web" ? "Loading embedded page…" : kind === "document" ? "Loading document…" : kind === "youtube" ? "Loading video player…" : `Loading ${kind}…`} />
+        {(resolving || waitingForSource || renderStatus === "loading" || renderStatus === "slow") && (switchingResource || !showFallback) ? (
+          <LoadingState slow={renderStatus === "slow"} label={resolving || waitingForSource ? "Preparing preview…" : kind === "web" ? "Loading embedded page…" : kind === "pdf" || kind === "docx" ? "Loading document…" : kind === "youtube" ? "Loading video player…" : `Loading ${kind}…`} />
         ) : null}
       </div>
     </Modal>

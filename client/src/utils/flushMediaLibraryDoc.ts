@@ -29,15 +29,16 @@ export async function deleteMediaItemAtRevisionFromPouch(
 ): Promise<"deleted" | "missing"> {
   if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
   const result = await removeMediaItemAtRevision(db, doc);
-  if (activeDb !== db) throw new Error(FLUSH_MEDIA_STALE_DB_MESSAGE);
   if (!result) return "missing";
-  safePostMessage({
-    type: "update",
-    data: {
-      docs: [{ _id: doc._id, id: doc.id, _deleted: true }],
-      hostId: globalHostId,
-    },
-  });
+  if (activeDb === db) {
+    safePostMessage({
+      type: "update",
+      data: {
+        docs: [{ _id: doc._id, id: doc.id, _deleted: true }],
+        hostId: globalHostId,
+      },
+    });
+  }
   return "deleted";
 }
 
@@ -46,6 +47,13 @@ export const FLUSH_MEDIA_NO_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: no database instance";
 export const FLUSH_MEDIA_STALE_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: database is no longer active";
+
+export type FlushMediaLibraryDocOptions = {
+  /** Allows a workflow already authorized under this concrete DB to finish its write after a scope switch. */
+  allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
+  /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
+  publishIfCurrent?: () => boolean;
+};
 
 /** Tombstone known v2 rows directly and publish those tombstones to other local controllers. */
 export async function deleteMediaItemsFromPouch(
@@ -60,8 +68,8 @@ export async function deleteMediaItemsFromPouch(
       continue;
     }
     try {
-      await removeMediaItem(db, id, () => activeDb === db);
-      if (activeDb !== db) {
+      const result = await removeMediaItem(db, id, () => activeDb === db);
+      if (activeDb !== db && !result) {
         failed.push({ id, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) });
         continue;
       }
@@ -90,12 +98,15 @@ export async function flushMediaLibraryDocToPouch(
   folders: MediaFolder[],
   getLatestState?: () => { list: MediaType[]; folders: MediaFolder[] },
   changeBase?: { list: MediaType[]; folders: MediaFolder[] },
+  options: FlushMediaLibraryDocOptions = {},
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (!db) {
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
   }
   const databaseIsActive = () => activeDb === db;
-  if (!databaseIsActive()) {
+  const canPersist = () => options.allowOriginalOwnerPersistenceAfterScopeChange || databaseIsActive();
+  const canPublish = () => databaseIsActive() && (options.publishIfCurrent?.() ?? true);
+  if (!canPersist()) {
     return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
   }
   try {
@@ -105,18 +116,18 @@ export async function flushMediaLibraryDocToPouch(
       return stateToPersist;
     };
     const changedDocs = changeBase
-      ? await persistMediaLibraryChanges(db, changeBase, readLatestState(), databaseIsActive)
+      ? await persistMediaLibraryChanges(db, changeBase, readLatestState(), canPersist)
       : await persistMediaLibrarySnapshot(
           db,
           list,
           folders,
           readLatestState,
-          databaseIsActive,
+          canPersist,
         );
     const { list: listToPersist } = stateToPersist;
     // The intended database was updated, but do not publish/cache its result
     // into a different church if the active database changed during the put.
-    if (!databaseIsActive()) return { ok: true };
+    if (!canPublish()) return { ok: true };
     if (changedDocs.length > 0) {
       safePostMessage({
         type: "update",
@@ -141,7 +152,7 @@ export async function flushMediaLibraryDocToPouch(
           await electronAPI.syncMediaCache([]);
         }
         const map = await electronAPI.getMediaCacheMap();
-        if (!databaseIsActive()) return { ok: true };
+        if (!canPublish()) return { ok: true };
         store.dispatch(setMediaCacheMap(map));
       } catch (error) {
         console.error(

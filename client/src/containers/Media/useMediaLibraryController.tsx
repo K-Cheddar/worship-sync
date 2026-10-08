@@ -142,6 +142,110 @@ import { replaceMediaReferencesInPresentation as replacePresentationMediaReferen
 
 const EMPTY_MEDIA_ROUTE_FOLDERS: Partial<Record<MediaRouteKey, string | null>> = {};
 
+type MediaActivityActions = NonNullable<ReturnType<typeof useOptionalTransferActions>>;
+
+function createMediaDeletionActivityHandoff(
+  activityId: string,
+  activityActions: MediaActivityActions | null,
+) {
+  let ownerActive = true;
+  let activityDismissed = false;
+  let detachedCleanupRetry: (() => void | Promise<void>) | undefined;
+  let detachedCleanupRetryLabel = "Retry cleanup";
+  let lastTransfer: Transfer | undefined;
+  const routeActions = new Map<string, () => void>();
+  const detachedActions = new Map<string, () => void>();
+
+  const replaceAction = (
+    registrations: Map<string, () => void>,
+    key: string,
+    handler?: () => void | Promise<void>,
+  ) => {
+    registrations.get(key)?.();
+    registrations.delete(key);
+    if (!handler) return;
+    const unregister = activityActions?.registerTransferAction(activityId, key, handler);
+    if (unregister) registrations.set(key, unregister);
+  };
+
+  const publish = (transfer: Transfer) => {
+    if (!ownerActive && (transfer.status === "active" || transfer.status === "queued")) return;
+    lastTransfer = transfer;
+    if (ownerActive) {
+      activityActions?.updateTransfer(transfer);
+      return;
+    }
+    if (activityDismissed) return;
+    activityActions?.updateTransfer({
+      ...transfer,
+      canCancel: false,
+      blocksUnload: false,
+      actions: [
+        ...(detachedCleanupRetry ? [{ key: "retry-cleanup", label: detachedCleanupRetryLabel }] : []),
+        { key: "dismiss", label: "Dismiss" },
+      ],
+    });
+  };
+
+  const publishRetired = () => {
+    if (!lastTransfer || ownerActive) return;
+    publish(lastTransfer);
+  };
+
+  const setDetachedCleanupRetry = (handler?: () => void | Promise<void>, label = "Retry cleanup") => {
+    const cleanupWasRequired = Boolean(detachedCleanupRetry);
+    detachedCleanupRetry = handler;
+    detachedCleanupRetryLabel = label;
+    if (!ownerActive) {
+      replaceAction(detachedActions, "retry-cleanup", handler);
+      if (activityDismissed && !cleanupWasRequired && handler) {
+        activityDismissed = false;
+        replaceAction(detachedActions, "dismiss", () => {
+          activityDismissed = true;
+          detachedActions.forEach((unregister) => unregister());
+          detachedActions.clear();
+          activityActions?.removeTransfer(activityId);
+        });
+      }
+      publishRetired();
+    }
+  };
+
+  const registerRouteAction = (key: string, handler: () => void | Promise<void>) => {
+    if (!ownerActive) return;
+    replaceAction(routeActions, key, handler);
+  };
+
+  const retire = () => {
+    if (!ownerActive) return;
+    ownerActive = false;
+    routeActions.forEach((unregister) => unregister());
+    routeActions.clear();
+    replaceAction(detachedActions, "retry-cleanup", detachedCleanupRetry);
+    replaceAction(detachedActions, "dismiss", () => {
+      activityDismissed = true;
+      detachedActions.forEach((unregister) => unregister());
+      detachedActions.clear();
+      activityActions?.removeTransfer(activityId);
+    });
+    if (lastTransfer) {
+      const wasActive = lastTransfer.status === "active" || lastTransfer.status === "queued";
+      publish({
+        ...lastTransfer,
+        ...(wasActive ? {
+          status: "failed",
+          phase: { key: "failed", label: "Media closed while deletion was pending" },
+          error: { message: "Reopen Media to inspect the library and retry any remaining work." },
+        } : {}),
+        canCancel: false,
+        blocksUnload: false,
+      });
+    }
+  };
+
+  return { publish, registerRouteAction, retire, setDetachedCleanupRetry };
+}
+
 export type MediaLibraryPageMode = "default" | "overlayController";
 export type MediaLibraryVariant = "default" | "panel";
 
@@ -167,6 +271,11 @@ export function useMediaLibraryController({
   const controllerBasePath = useControllerBasePath();
   const { showToast, removeToast } = useToast();
   const activityActions = useOptionalTransferActions();
+  const routeOwnedTransferDisposersRef = useRef(new Map<string, () => void>());
+  useEffect(() => () => {
+    routeOwnedTransferDisposersRef.current.forEach((dispose) => dispose());
+    routeOwnedTransferDisposersRef.current.clear();
+  }, []);
   const isPanelVariant = variant === "panel";
 
   const notifyMediaAction = useCallback(
@@ -210,6 +319,20 @@ export function useMediaLibraryController({
     isGuestSession = false,
   } = useContext(ControllerInfoContext) || {};
   const { access, churchId = "" } = useContext(GlobalInfoContext) || {};
+  const activeScopeRef = useRef({ db, churchId, active: true });
+  activeScopeRef.current = { db, churchId, active: true };
+  useEffect(() => {
+    activeScopeRef.current.active = true;
+    return () => { activeScopeRef.current.active = false; };
+  }, []);
+  const isCurrentUiScope = useCallback((scope: { db: typeof db; churchId: string }) =>
+    activeScopeRef.current.active &&
+    activeScopeRef.current.db === scope.db &&
+    activeScopeRef.current.churchId === scope.churchId,
+  []);
+  const isActiveMediaScope = useCallback(() =>
+    isCurrentUiScope({ db, churchId }),
+  [churchId, db, isCurrentUiScope]);
 
   const {
     list,
@@ -1074,10 +1197,13 @@ export function useMediaLibraryController({
           failed.push(row);
         }
       }
-      if (providerUsageChanged) onStorageUsageChanged?.();
+      if (
+        providerUsageChanged && activeScopeRef.current.active &&
+        activeScopeRef.current.db === db && activeScopeRef.current.churchId === churchId
+      ) onStorageUsageChanged?.();
       return failed;
     },
-    [churchId, onStorageUsageChanged],
+    [activeScopeRef, churchId, db, onStorageUsageChanged],
   );
 
   const deleteCanvaProvider = useCallback(
@@ -1161,6 +1287,7 @@ export function useMediaLibraryController({
 
   const commitCanvaReplacement = useCallback(
     async (oldMedia: MediaType, newMedia: MediaType) => {
+      if (!isActiveMediaScope()) throw new Error("Media changed while Canva import was running.");
       if (!db) throw new Error("Could not save Canva media replacement.");
       const folders = store.getState().media.folders;
       const currentList = getCurrentMediaList();
@@ -1181,12 +1308,14 @@ export function useMediaLibraryController({
         hasSupersededReferences: async (from, to) =>
           hasSupersededMediaReferences(db, from, to),
         flushMedia: (nextList, nextFolders) =>
-          flushMediaLibraryDocToPouch(db, nextList, nextFolders, () => ({
-            list: store.getState().media.list,
-            folders: store.getState().media.folders,
-          })),
+          flushMediaLibraryDocToPouch(db, nextList, nextFolders, () =>
+            isActiveMediaScope()
+              ? { list: store.getState().media.list, folders: store.getState().media.folders }
+              : { list: currentList, folders },
+          ),
         deleteProvider: deleteCanvaProvider,
         applyList: (nextList, nextFolders) => {
+          if (!isActiveMediaScope()) return;
           currentMediaListRef.current = nextList;
           dispatch(setMediaListAndFolders({
             list: nextList,
@@ -1194,12 +1323,14 @@ export function useMediaLibraryController({
           }));
         },
         applyLiveReferences: (replacement) => {
+          if (!isActiveMediaScope()) return;
           dispatch(replaceMediaReferencesInActiveItem(replacement));
           dispatch(replacePresentationMediaReferences(replacement));
           dispatch(replaceMediaReferencesInPreferences(replacement));
         },
         onCleanupFailure: showProviderCleanupRetry,
         canCommit: () => {
+          if (!isActiveMediaScope()) return false;
           const latest = getCurrentMediaList().find((mediaItem) => mediaItem.id === latestOldMedia.id);
           const latestSource = latest && getCanvaMediaSource(latest);
           return Boolean(latest && latest.updatedAt === latestOldMedia.updatedAt &&
@@ -1219,6 +1350,7 @@ export function useMediaLibraryController({
       deleteCanvaProvider,
       dispatch,
       getCurrentMediaList,
+      isActiveMediaScope,
       showProviderCleanupRetry,
       store,
     ],
@@ -1228,6 +1360,7 @@ export function useMediaLibraryController({
     async (
       rows: MediaType[],
       onProgress?: (event: { mediaId: string; phase: string; index: number; total: number }) => void,
+      shouldCommitRouteState: () => boolean = () => true,
     ): Promise<
       {
         phase: "sweep_failed" | "library_failed" | "ok";
@@ -1240,6 +1373,9 @@ export function useMediaLibraryController({
       if (!db) {
         return { phase: "library_failed", deletedRows: [], failedRows: rows, providerFailed: [] };
       }
+      const databaseAtStart = db;
+      const churchIdAtStart = churchId;
+      const isCurrentScope = () => shouldCommitRouteState() && activeScopeRef.current.db === databaseAtStart && activeScopeRef.current.churchId === churchIdAtStart;
       const deletedRows: MediaType[] = [];
       const failedRows: MediaType[] = [];
       const providerFailed: MediaType[] = [];
@@ -1264,7 +1400,7 @@ export function useMediaLibraryController({
           if (!authoritative) {
             // Another controller already removed this row. Never clean up a provider
             // asset using only the stale UI snapshot.
-            dispatch(removeMediaItemFromRemote(requestedRow.id));
+            if (isCurrentScope()) dispatch(removeMediaItemFromRemote(requestedRow.id));
             deletedRows.push(requestedRow);
             completed = true;
             break;
@@ -1302,12 +1438,12 @@ export function useMediaLibraryController({
             // A concurrent tombstone is idempotent. The reference sweep is safe to
             // keep, but cleanup data is not ours to infer from the old row.
             if (result === "missing") {
-              dispatch(removeMediaItemFromRemote(requestedRow.id));
+              if (isCurrentScope()) dispatch(removeMediaItemFromRemote(requestedRow.id));
               deletedRows.push(requestedRow);
               completed = true;
               break;
             }
-            dispatch(removeMediaItemFromRemote(requestedRow.id));
+            if (isCurrentScope()) dispatch(removeMediaItemFromRemote(requestedRow.id));
             deletedRows.push(authoritative.item);
             onProgress?.({ mediaId: requestedRow.id, phase: "Cleaning up cloud copy", index: rowIndex, total: rows.length });
             if (getCanvaMediaSource(authoritative.item)) {
@@ -1375,11 +1511,13 @@ export function useMediaLibraryController({
         providerFailed,
       };
     },
-    [db, deleteCanvaProvider, deleteFromProviders, dispatch, getCurrentMediaList],
+    [churchId, db, deleteCanvaProvider, deleteFromProviders, dispatch, getCurrentMediaList],
   );
 
   const handleDeleteFolderKeepContents = useCallback(
     async (folderId: string) => {
+      const operationScope = { db, churchId };
+      const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
       const target = folders.find((f) => f.id === folderId);
       const fallback =
         target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
@@ -1388,38 +1526,43 @@ export function useMediaLibraryController({
         new Set([folderId]),
         fallback,
       );
-      dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
-      for (const key of Object.keys(repairs) as MediaRouteKey[]) {
-        const folderId = repairs[key];
-        if (folderId !== undefined) {
-          dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId }));
+      const next = deleteFolderKeepContents(folderId, folders, list);
+      if (isOperationUiScopeCurrent()) {
+        dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
+        for (const key of Object.keys(repairs) as MediaRouteKey[]) {
+          const routeFolderId = repairs[key];
+          if (routeFolderId !== undefined) {
+            dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId: routeFolderId }));
+          }
         }
       }
       try {
-        if (!db) throw new Error("Media database is unavailable");
-        const docs = await repairPersistedMediaRouteFolders(db, new Set([folderId]), fallback);
-        broadcastControllerMediaRouteFoldersUpdate(docs);
+        if (!operationScope.db) throw new Error("Media database is unavailable");
+        const docs = await repairPersistedMediaRouteFolders(operationScope.db, new Set([folderId]), fallback);
+        broadcastControllerMediaRouteFoldersUpdate(docs, isOperationUiScopeCurrent);
       } catch (error) {
         console.error("Could not repair saved media folder selections", error);
-        showToast("Could not update saved Media folders. Check your connection and try again.", "error");
+        if (isOperationUiScopeCurrent()) {
+          showToast("Could not update saved Media folders. Check your connection and try again.", "error");
+        }
       }
-      const next = deleteFolderKeepContents(folderId, folders, list);
-      dispatch(setMediaListAndFolders(next));
-      void flushMediaLibraryDocToPouch(
-        db,
+      if (isOperationUiScopeCurrent()) dispatch(setMediaListAndFolders(next));
+      const flushResult = await flushMediaLibraryDocToPouch(
+        operationScope.db,
         next.list,
         next.folders,
-        () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
+        () => ({ list: next.list, folders: next.folders }),
         { list, folders },
-      ).then(
-        (r) => {
-          if (!r.ok) {
-            showToast(mediaLibraryFlushFailureMessage(r.error, "folder"), "error");
-          }
+        {
+          allowOriginalOwnerPersistenceAfterScopeChange: true,
+          publishIfCurrent: isOperationUiScopeCurrent,
         },
       );
+      if (!flushResult.ok && isOperationUiScopeCurrent()) {
+        showToast(mediaLibraryFlushFailureMessage(flushResult.error, "folder"), "error");
+      }
     },
-    [activeMediaRouteFolders, controllerProfile.id, db, dispatch, folders, list, showToast, store],
+    [activeMediaRouteFolders, controllerProfile.id, db, churchId, dispatch, folders, isCurrentUiScope, list, showToast],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -1448,6 +1591,8 @@ export function useMediaLibraryController({
 
   const handleDeleteFolderSubtree = useCallback(
     async (folderId: string) => {
+      const operationScope = { db, churchId };
+      const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
       const target = folders.find((f) => f.id === folderId);
       const subtree = collectSubtreeFolderIds(folderId, folders);
       const fallback =
@@ -1475,12 +1620,27 @@ export function useMediaLibraryController({
       let uploadCleanupRetry: (() => Promise<void>) | undefined;
       let uploadCleanupRows: MediaType[] = [];
       let folderFinalized = false;
-      const actionUnregisters: Array<() => void> = [];
+      let folderFinalizationError: string | undefined;
+      let ownerActive = true;
+      const activityHandoff = createMediaDeletionActivityHandoff(activityId, activityActions);
+      const retireOwner = () => {
+        if (!ownerActive) return;
+        ownerActive = false;
+        activityHandoff.retire();
+        routeOwnedTransferDisposersRef.current.delete(activityId);
+      };
+      routeOwnedTransferDisposersRef.current.set(activityId, retireOwner);
 
       const publish = (status: Transfer["status"], phase: string, error?: string) => {
         const complete = fileStates.filter((file) => file.status === "complete").length;
         const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
-        activityActions?.updateTransfer({
+        activityHandoff.setDetachedCleanupRetry(
+          uploadCleanupRetry || providerFailedRows.length || folderFinalizationError
+            ? retryDetachedCleanup
+            : undefined,
+          folderFinalizationError ? "Retry folder finalization" : "Retry cleanup",
+        );
+        activityHandoff.publish({
           id: activityId,
           type: "Media deletion",
           name: `Delete folder ${target?.name || "and contents"}`,
@@ -1495,57 +1655,82 @@ export function useMediaLibraryController({
           actions: status === "active"
             ? []
             : [
-                ...(uploadCleanupRetry || providerFailedRows.length ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+                ...(uploadCleanupRetry || providerFailedRows.length || folderFinalizationError
+                  ? [{ key: "retry-cleanup", label: folderFinalizationError ? "Retry folder finalization" : "Retry cleanup" }]
+                  : []),
                 ...(deleteFailedRows.length ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
                 { key: "dismiss", label: "Dismiss" },
               ],
         });
       };
       const register = (key: string, handler: () => void | Promise<void>) => {
-        const unregister = activityActions?.registerTransferAction(activityId, key, handler);
-        if (unregister) actionUnregisters.push(unregister);
+        activityHandoff.registerRouteAction(key, handler);
       };
       const finishFolderNavigation = () => {
+        if (!ownerActive || !isOperationUiScopeCurrent()) return;
         setFolderDeleteOpen(false);
         navigateToFolder(fallback);
       };
       const finalizeFolder = async () => {
-        if (folderFinalized) return;
-        dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
-        for (const key of Object.keys(repairs) as MediaRouteKey[]) {
-          const routeFolderId = repairs[key];
-          if (routeFolderId !== undefined) {
-            dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId: routeFolderId }));
+        const canUpdateRoute = () => ownerActive && isOperationUiScopeCurrent();
+        if (folderFinalized) return true;
+        if (canUpdateRoute()) {
+          dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
+          for (const key of Object.keys(repairs) as MediaRouteKey[]) {
+            const routeFolderId = repairs[key];
+            if (routeFolderId !== undefined) {
+              dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId: routeFolderId }));
+            }
           }
         }
+        let routeRepairError: unknown;
         try {
-          if (!db) throw new Error("Media database is unavailable");
-          const docs = await repairPersistedMediaRouteFolders(db, subtree, fallback);
-          broadcastControllerMediaRouteFoldersUpdate(docs);
+          if (!operationScope.db) throw new Error("Media database is unavailable");
+          const docs = await repairPersistedMediaRouteFolders(operationScope.db, subtree, fallback);
+          broadcastControllerMediaRouteFoldersUpdate(docs, isOperationUiScopeCurrent);
         } catch (error) {
+          routeRepairError = error;
           console.error("Could not repair saved media folder selections", error);
-          showToast("Could not update saved Media folders. Check your connection and try again.", "error");
         }
-        dispatch(setMediaListAndFolders({ list: getCurrentMediaList(), folders: next.folders }));
-        const flushResult = await flushMediaLibraryDocToPouch(
-          db,
-          getCurrentMediaList(),
-          next.folders,
-          () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
-          { list: getCurrentMediaList(), folders },
-        );
-        if (!flushResult.ok) {
-          showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
+        if (canUpdateRoute()) dispatch(setMediaListAndFolders({ list: next.list, folders: next.folders }));
+        try {
+          const flushResult = await flushMediaLibraryDocToPouch(
+            operationScope.db,
+            next.list,
+            next.folders,
+            () => ({ list: next.list, folders: next.folders }),
+            { list: next.list, folders },
+            {
+              allowOriginalOwnerPersistenceAfterScopeChange: true,
+              publishIfCurrent: isOperationUiScopeCurrent,
+            },
+          );
+          if (!flushResult.ok) throw flushResult.error;
+          if (routeRepairError) throw routeRepairError;
+          folderFinalized = true;
+          folderFinalizationError = undefined;
+          if (canUpdateRoute()) {
+            clearSelection();
+            dispatch(ActionCreators.clearHistory());
+          }
+          return true;
+        } catch (error) {
+          console.error("Could not finalize deleted Media folder", error);
+          folderFinalizationError = error instanceof Error
+            ? error.message
+            : "The original church folder data could not be finalized.";
+          activityHandoff.setDetachedCleanupRetry(retryDetachedCleanup, "Retry folder finalization");
+          if (canUpdateRoute()) {
+            showToast("Folder deletion still needs attention. Retry folder finalization from Activity.", "error");
+          }
+          return false;
         }
-        clearSelection();
-        dispatch(ActionCreators.clearHistory());
-        folderFinalized = true;
       };
       const runDeletionAttempt = async (
         targetRows: MediaType[],
         deletionClaim: ReturnType<typeof claimMediaDeletion>,
       ) => {
-        setPendingDeletionIds((current) => new Set([...current, ...targetRows.map((row) => row.id)]));
+        if (ownerActive) setPendingDeletionIds((current) => new Set([...current, ...targetRows.map((row) => row.id)]));
         try {
           publish("active", "Stopping cloud uploads for folder items");
           try {
@@ -1570,7 +1755,7 @@ export function useMediaLibraryController({
             const file = fileStates.find((candidate) => candidate.id === event.mediaId);
             if (file) { file.status = "active"; file.phase = event.phase; }
             publish("active", `${event.phase} · ${event.index + 1} of ${event.total}`);
-          });
+          }, () => ownerActive);
           const attemptedIds = new Set(targetRows.map((row) => row.id));
           const deletedIds = new Set(result.deletedRows.map((row) => row.id));
           const failedIds = new Set(result.failedRows.map((row) => row.id));
@@ -1608,19 +1793,25 @@ export function useMediaLibraryController({
           const completeCount = fileStates.filter((file) => file.status === "complete").length;
           const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length
             ? (completeCount ? "partial" : "failed")
-            : "complete";
-          const phase = providerFailedRows.length
+            : folderFinalizationError
+              ? (completeCount ? "partial" : "failed")
+              : "complete";
+          const phase = folderFinalizationError
+            ? "Folder finalization needs attention"
+            : providerFailedRows.length
             ? "Folder removed; cloud cleanup needs attention"
             : deleteFailedRows.length
               ? result.phase === "sweep_failed" ? "Media kept because references could not be cleaned" : "Some media could not be removed"
               : "Folder deletion complete";
-          const error = providerFailedRows.length
+          const error = folderFinalizationError
+            ? `Folder metadata or saved route folders could not be finalized: ${folderFinalizationError}`
+            : providerFailedRows.length
             ? `${providerFailedRows.length} cloud ${providerFailedRows.length === 1 ? "asset needs" : "assets need"} cleanup.`
             : deleteFailedRows.length
               ? `${deleteFailedRows.length} ${deleteFailedRows.length === 1 ? "item could" : "items could"} not be removed.`
               : undefined;
           publish(status, phase, error);
-          return deleteFailedRows.length === 0;
+          return deleteFailedRows.length === 0 && !folderFinalizationError;
         } catch (error) {
           const message = error instanceof Error ? error.message : "Media could not be deleted.";
           for (const row of targetRows) {
@@ -1635,15 +1826,86 @@ export function useMediaLibraryController({
           publish("failed", "Media could not be deleted", message);
           return false;
         } finally {
-          setPendingDeletionIds((current) => {
-            const pending = new Set(current);
-            targetRows.forEach((row) => pending.delete(row.id));
-            return pending;
-          });
+          if (ownerActive) {
+            setPendingDeletionIds((current) => {
+              const pending = new Set(current);
+              targetRows.forEach((row) => pending.delete(row.id));
+              return pending;
+            });
+          }
         }
       };
 
+      async function retryDetachedCleanup() {
+        if (folderFinalizationError) {
+          publish("active", "Retrying folder finalization");
+          const finalized = await finalizeFolder();
+          const stillNeedsAttention = Boolean(folderFinalizationError);
+          const stillHasProviderFailure = providerFailedRows.length > 0;
+          const status: Transfer["status"] = stillNeedsAttention
+            ? (fileStates.some((file) => file.status === "complete") ? "partial" : "failed")
+            : stillHasProviderFailure ? "partial" : "complete";
+          publish(
+            status,
+            stillNeedsAttention
+              ? "Folder finalization still needs attention"
+              : stillHasProviderFailure
+                ? "Folder removed; cloud cleanup needs attention"
+                : "Folder deletion complete",
+            folderFinalizationError
+              ? `Folder metadata or saved route folders could not be finalized: ${folderFinalizationError}`
+              : stillHasProviderFailure ? `${providerFailedRows.length} cloud assets still need cleanup.` : undefined,
+          );
+          if (finalized) finishFolderNavigation();
+          return;
+        }
+        if (uploadCleanupRetry) {
+          const retryCleanup = uploadCleanupRetry;
+          try {
+            await retryCleanup();
+            uploadCleanupRetry = undefined;
+            uploadCleanupRows = [];
+            for (const file of fileStates) {
+              if (file.phase === "Upload cleanup failed") {
+                file.phase = "Upload cleanup complete; reopen Media to retry deletion";
+                file.error = undefined;
+              }
+            }
+            publish("failed", "Upload cleanup complete; deletion was not resumed", "Reopen Media to retry deleting the folder items.");
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Cloud cleanup failed. Try again.";
+            publish("failed", "Upload cleanup still needs attention", message);
+          }
+          return;
+        }
+
+        const retryRows = providerFailedRows;
+        const stillFailed = await deleteFromProviders(retryRows);
+        const stillFailedIds = new Set(stillFailed.map((row) => row.id));
+        for (const row of retryRows) {
+          const file = fileStates.find((candidate) => candidate.id === row.id);
+          if (!file) continue;
+          file.status = "complete";
+          file.progress = 100;
+          file.phase = stillFailedIds.has(row.id) ? "Cloud cleanup failed" : "Cloud cleanup complete";
+          file.error = stillFailedIds.has(row.id) ? "Removed from Media; cloud storage still needs cleanup." : undefined;
+        }
+        providerFailedRows = stillFailed;
+        const hasFailure = stillFailed.length > 0 || deleteFailedRows.length > 0;
+        const completeCount = fileStates.filter((file) => file.status === "complete").length;
+        publish(
+          hasFailure ? (completeCount ? "partial" : "failed") : "complete",
+          stillFailed.length ? "Cloud cleanup still needs attention" : deleteFailedRows.length ? "Some media could not be removed" : "Folder deletion complete",
+          stillFailed.length ? `${stillFailed.length} cloud assets still need cleanup.` : deleteFailedRows.length ? `${deleteFailedRows.length} items could not be removed.` : undefined,
+        );
+      }
+
       register("retry-cleanup", async () => {
+        if (folderFinalizationError) {
+          await retryDetachedCleanup();
+          if (folderFinalized) finishFolderNavigation();
+          return;
+        }
         publish("active", "Retrying cloud cleanup");
         if (uploadCleanupRetry) {
           const retryRows = uploadCleanupRows;
@@ -1696,18 +1958,24 @@ export function useMediaLibraryController({
       });
       register("dismiss", () => {
         if (fileStates.some((file) => file.status === "active")) return;
-        actionUnregisters.forEach((unregister) => unregister());
+        retireOwner();
         activityActions?.removeTransfer(activityId);
       });
 
       if (removedRows.length === 0) {
-        await finalizeFolder();
-        return true;
+        const finalized = await finalizeFolder();
+        publish(
+          finalized ? "complete" : "failed",
+          finalized ? "Folder deletion complete" : "Folder finalization needs attention",
+          folderFinalizationError,
+        );
+        return ownerActive && finalized;
       }
       const deletionClaim = claimMediaDeletion(removedRows.map((row) => row.id));
       publish("active", "Stopping cloud uploads for folder items");
       try {
-        return await runDeletionAttempt(removedRows, deletionClaim);
+        const deleted = await runDeletionAttempt(removedRows, deletionClaim);
+        return ownerActive && deleted;
       } finally {
         deletionClaim.release();
       }
@@ -1717,13 +1985,13 @@ export function useMediaLibraryController({
       controllerProfile.id,
       list,
       db,
+      churchId,
       dispatch,
       activeMediaRouteFolders,
       removeMediaRowsAfterSweep,
       clearSelection,
       showToast,
-      store,
-      getCurrentMediaList,
+      isCurrentUiScope,
       activityActions,
       setPendingDeletionIds,
       deleteFromProviders,
@@ -1768,11 +2036,22 @@ export function useMediaLibraryController({
     let deleteFailedRows: MediaType[] = [];
     let uploadCleanupRetry: (() => Promise<void>) | undefined;
     let uploadCleanupRows: MediaType[] = [];
-    const actionUnregisters: Array<() => void> = [];
+    let ownerActive = true;
+    const activityHandoff = createMediaDeletionActivityHandoff(activityId, activityActions);
+    const retireOwner = () => {
+      if (!ownerActive) return;
+      ownerActive = false;
+      activityHandoff.retire();
+      routeOwnedTransferDisposersRef.current.delete(activityId);
+    };
+    routeOwnedTransferDisposersRef.current.set(activityId, retireOwner);
 
     const publish = (status: Transfer["status"], phase: string, error?: string) => {
       const complete = fileStates.filter((file) => file.status === "complete").length;
-          const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
+      const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
+      activityHandoff.setDetachedCleanupRetry(
+        uploadCleanupRetry || providerFailedRows.length ? retryDetachedCleanup : undefined,
+      );
       const transfer: Transfer = {
         id: activityId,
         type: "Media deletion",
@@ -1793,15 +2072,14 @@ export function useMediaLibraryController({
               { key: "dismiss", label: "Dismiss" },
             ],
       };
-      activityActions?.updateTransfer(transfer);
+      activityHandoff.publish(transfer);
     };
     const register = (key: string, handler: () => void | Promise<void>) => {
-      const unregister = activityActions?.registerTransferAction(activityId, key, handler);
-      if (unregister) actionUnregisters.push(unregister);
+      activityHandoff.registerRouteAction(key, handler);
     };
 
     const runDeletionAttempt = async (targetRows: MediaType[], deletionClaim: ReturnType<typeof claimMediaDeletion>) => {
-      setPendingDeletionIds((current) => new Set([...current, ...targetRows.map((row) => row.id)]));
+      if (ownerActive) setPendingDeletionIds((current) => new Set([...current, ...targetRows.map((row) => row.id)]));
       try {
         publish("active", "Stopping cloud uploads for selected items");
         try {
@@ -1829,7 +2107,7 @@ export function useMediaLibraryController({
             file.phase = event.phase;
           }
           publish("active", `${event.phase} · ${event.index + 1} of ${event.total}`);
-        });
+        }, () => ownerActive);
         const deletedIds = new Set(result.deletedRows.map((row) => row.id));
         const providerIds = new Set(result.providerFailed.map((row) => row.id));
         const failedIds = new Set(result.failedRows.map((row) => row.id));
@@ -1862,7 +2140,7 @@ export function useMediaLibraryController({
           ...deleteFailedRows.filter((row) => !attemptedIds.has(row.id)),
           ...result.failedRows,
         ];
-        if (result.deletedRows.length > 0) dispatch(ActionCreators.clearHistory());
+        if (result.deletedRows.length > 0 && ownerActive && activeScopeRef.current.db === db && activeScopeRef.current.churchId === churchId) dispatch(ActionCreators.clearHistory());
         const completeCount = fileStates.filter((file) => file.status === "complete").length;
         const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length
           ? (completeCount ? "partial" : "failed")
@@ -1891,13 +2169,56 @@ export function useMediaLibraryController({
         ];
         publish("failed", "Media could not be deleted", message);
       } finally {
-        setPendingDeletionIds((current) => {
-          const next = new Set(current);
-          targetRows.forEach((row) => next.delete(row.id));
-          return next;
-        });
+        if (ownerActive) {
+          setPendingDeletionIds((current) => {
+            const next = new Set(current);
+            targetRows.forEach((row) => next.delete(row.id));
+            return next;
+          });
+        }
       }
     };
+
+    async function retryDetachedCleanup() {
+      if (uploadCleanupRetry) {
+        try {
+          await uploadCleanupRetry();
+          uploadCleanupRetry = undefined;
+          uploadCleanupRows = [];
+          for (const file of fileStates) {
+            if (file.phase === "Upload cleanup failed") {
+              file.phase = "Upload cleanup complete; reopen Media to retry deletion";
+              file.error = undefined;
+            }
+          }
+          publish("failed", "Upload cleanup complete; deletion was not resumed", "Reopen Media to retry deleting these items.");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Cloud cleanup failed. Try again.";
+          publish("failed", "Upload cleanup still needs attention", message);
+        }
+        return;
+      }
+
+      const retryRows = providerFailedRows;
+      const stillFailed = await deleteFromProviders(retryRows);
+      const stillFailedIds = new Set(stillFailed.map((row) => row.id));
+      for (const row of retryRows) {
+        const file = fileStates.find((candidate) => candidate.id === row.id);
+        if (!file) continue;
+        file.status = "complete";
+        file.progress = 100;
+        file.phase = stillFailedIds.has(row.id) ? "Cloud cleanup failed" : "Cloud cleanup complete";
+        file.error = stillFailedIds.has(row.id) ? "Removed from Media; cloud storage still needs cleanup." : undefined;
+      }
+      providerFailedRows = stillFailed;
+      const hasFailure = stillFailed.length > 0 || deleteFailedRows.length > 0;
+      const completeCount = fileStates.filter((file) => file.status === "complete").length;
+      publish(
+        hasFailure ? (completeCount ? "partial" : "failed") : "complete",
+        stillFailed.length ? "Cloud cleanup still needs attention" : deleteFailedRows.length ? "Some media could not be removed" : "Deletion complete",
+        stillFailed.length ? `${stillFailed.length} cloud assets still need cleanup.` : deleteFailedRows.length ? `${deleteFailedRows.length} items could not be removed.` : undefined,
+      );
+    }
 
     register("retry-cleanup", async () => {
       publish("active", "Retrying cloud cleanup");
@@ -1947,11 +2268,11 @@ export function useMediaLibraryController({
     });
     register("dismiss", () => {
       if (fileStates.some((file) => file.status === "active")) return;
-      actionUnregisters.forEach((unregister) => unregister());
+      retireOwner();
       activityActions?.removeTransfer(activityId);
     });
 
-    setPendingDeletionIds((current) => new Set([...current, ...rows.map((row) => row.id)]));
+    if (ownerActive) setPendingDeletionIds((current) => new Set([...current, ...rows.map((row) => row.id)]));
     clearSelection();
     dismissDeleteModal();
     const deletionClaim = claimMediaDeletion(rows.map((row) => row.id));
@@ -2061,6 +2382,9 @@ export function useMediaLibraryController({
     ) => {
       const key = options.idempotencyKey;
       const create = async (): Promise<string> => {
+      if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        throw new Error("Media changed while Canva import was running. Reopen Media to create the custom item.");
+      }
       if (!db) throw new Error("The custom item could not be saved because Media is unavailable.");
       if (pages.length === 0) throw new Error("No imported media is available for the custom item.");
       // Prefer live list entries so refreshed Canva backgrounds are current.
@@ -2086,6 +2410,9 @@ export function useMediaLibraryController({
             mediaInfo: page,
           })),
         });
+        if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+          throw new Error("Media changed while Canva import was running. Reopen Media to create the custom item.");
+        }
         const listItem = {
           name: newItem.name,
           type: newItem.type,
@@ -2127,6 +2454,7 @@ export function useMediaLibraryController({
     },
     [
       allItemsList,
+      churchId,
       controllerBasePath,
       db,
       defaultFreeFormBackgroundBrightness,
@@ -2204,19 +2532,24 @@ export function useMediaLibraryController({
       dispatch(removeItemFromMediaList(mediaItem.id));
       throw new Error("Media storage is unavailable. The Canva media was not saved.");
     }
-    const result = await flushMediaLibraryDocToPouch(db, getCurrentMediaList(), store.getState().media.folders, () => ({
-      list: getCurrentMediaList(),
-      folders: store.getState().media.folders,
-    }));
+    const listAtStart = getCurrentMediaList();
+    const foldersAtStart = store.getState().media.folders;
+    const result = await flushMediaLibraryDocToPouch(db, listAtStart, foldersAtStart, () =>
+      isActiveMediaScope()
+        ? { list: getCurrentMediaList(), folders: store.getState().media.folders }
+        : { list: listAtStart, folders: foldersAtStart },
+    );
     if (!result.ok) {
       try {
         const persisted = await loadMediaLibrary(db);
         const persistedList = persisted.list;
         const persistedItem = persistedList.find((item) => item.id === mediaItem.id);
-        dispatch(setMediaListAndFolders({
-          list: [...persistedList],
-          folders: [...persisted.folders],
-        }));
+        if (isActiveMediaScope()) {
+          dispatch(setMediaListAndFolders({
+            list: [...persistedList],
+            folders: [...persisted.folders],
+          }));
+        }
         if (persistedItem) return persistedItem;
       } catch {
         // Keep the optimistic row and provider asset until persistence can be checked again.
@@ -2227,11 +2560,20 @@ export function useMediaLibraryController({
     return mediaItem;
   };
 
-  const addCanvaImage = async (info: mediaInfoType) => persistCanvaMedia(addNewBackground(info));
-  const addCanvaVideo = async (info: MuxUploadResult) => persistCanvaMedia(addMuxVideo(info));
+  const addCanvaImage = async (info: mediaInfoType) => {
+    if (!isActiveMediaScope()) throw new Error("Media changed while Canva import was running.");
+    return persistCanvaMedia(addNewBackground(info));
+  };
+  const addCanvaVideo = async (info: MuxUploadResult) => {
+    if (!isActiveMediaScope()) throw new Error("Media changed while Canva import was running.");
+    return persistCanvaMedia(addMuxVideo(info));
+  };
 
   const refreshCanvaImage = useCallback(
     async (info: mediaInfoType, mediaId: string) => {
+      if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        throw new Error("Media changed while Canva import was running.");
+      }
       const current = getCurrentMediaList().find(
         (mediaItem) => mediaItem.id === mediaId,
       );
@@ -2270,11 +2612,14 @@ export function useMediaLibraryController({
       await commitCanvaReplacement(current, nextMedia);
       return true;
     },
-    [churchId, cloud, commitCanvaReplacement, getCurrentMediaList],
+    [churchId, cloud, commitCanvaReplacement, db, getCurrentMediaList],
   );
 
   const refreshCanvaVideo = useCallback(
     async (info: MuxUploadResult, mediaId: string) => {
+      if (!activeScopeRef.current.active || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        throw new Error("Media changed while Canva import was running.");
+      }
       const current = getCurrentMediaList().find(
         (mediaItem) => mediaItem.id === mediaId,
       );
@@ -2310,7 +2655,7 @@ export function useMediaLibraryController({
       await commitCanvaReplacement(current, nextMedia);
       return true;
     },
-    [churchId, commitCanvaReplacement, getCurrentMediaList],
+    [churchId, commitCanvaReplacement, db, getCurrentMediaList],
   );
 
   const requestMediaUpload = useCallback(() => {

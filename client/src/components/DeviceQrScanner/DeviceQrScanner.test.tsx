@@ -2,13 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { DeviceQrScanner } from "./DeviceQrScanner";
 
 const createGeneratedQrPixels = (value: string, options: { scale?: number; padding?: number; inverted?: boolean } = {}) => {
-  // qr.js is the encoder used by react-qr-code; this keeps the invalid-payload
-  // regression test on the same QR format as the pairing screen.
+  // Use the same QR encoder as the pairing screen.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const QRCode = require("qr.js/lib/QRCode");
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const ErrorCorrectLevel = require("qr.js/lib/ErrorCorrectLevel");
-  const qrCode = new QRCode(-1, ErrorCorrectLevel.L);
+  const qrcode = require("qrcode-generator");
+  const qrCode = qrcode(0, "L");
   qrCode.addData(value);
   qrCode.make();
   const quietZone = 4;
@@ -23,7 +20,12 @@ const createGeneratedQrPixels = (value: string, options: { scale?: number; paddi
       const qrY = y - padding;
       const moduleX = Math.floor(qrX / scale) - quietZone;
       const moduleY = Math.floor(qrY / scale) - quietZone;
-      const dark = qrCode.modules[moduleY]?.[moduleX] === true;
+      const dark =
+        moduleX >= 0 &&
+        moduleY >= 0 &&
+        moduleX < qrCode.getModuleCount() &&
+        moduleY < qrCode.getModuleCount() &&
+        qrCode.isDark(moduleY, moduleX);
       const index = (y * size + x) * 4;
       const luminance = dark !== (options.inverted ?? false) ? 0 : 255;
       data[index] = luminance;

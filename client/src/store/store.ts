@@ -171,6 +171,7 @@ const cleanObject = (obj: Object) =>
 
 const writePendingTimersToStorageAndFirebase = async (
   state: RootState,
+  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteSharedData: boolean },
 ): Promise<boolean> => {
   const { timers, shouldUpdateTimers } = state.timers;
   if (!shouldUpdateTimers) return false;
@@ -183,17 +184,17 @@ const writePendingTimersToStorageAndFirebase = async (
     localStorage.removeItem("timerInfo");
   }
 
-  if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) {
+  if (!scope.db || !scope.churchId) {
     return false;
   }
 
-  if (!globalFireDbInfo.canWriteSharedData) {
+  if (!scope.canWriteSharedData) {
     return true;
   }
 
   const timersRef = ref(
-    globalFireDbInfo.db,
-    getChurchDataPath(globalFireDbInfo.churchId, "timers"),
+    scope.db,
+    getChurchDataPath(scope.churchId, "timers"),
   );
 
   try {
@@ -204,7 +205,7 @@ const writePendingTimersToStorageAndFirebase = async (
     await Promise.resolve(set(timersRef, cleanObject(mergedTimers)));
   } catch (error) {
     logFirebaseOperationFailure("timer_sync", timersRef.toString(), error, {
-      churchId: globalFireDbInfo.churchId,
+      churchId: scope.churchId,
       permissionDenied: isFirebasePermissionDenied(error),
     });
     throw error;
@@ -970,10 +971,12 @@ listenerMiddleware.startListening({
   },
 
   effect: async (_action, listenerApi) => {
+    const dbAtStart = db;
     if (itemSlice.actions.applyPersistedSongAudio.match(_action)) {
       listenerApi.cancelActiveListeners();
       return;
     }
+    if (!dbAtStart) return;
 
     let state = listenerApi.getState() as RootState;
     if (itemSlice.actions.setActiveItem.match(_action)) {
@@ -985,12 +988,12 @@ listenerMiddleware.startListening({
 
     // update Item
     const item = state.undoable.present.item;
-    if (!db) return;
+    if (!dbAtStart) return;
     const editorBaseline = item.baseItem;
     const usesV2Baseline = item.type === "song" && editorBaseline?.docType === "song-v2-root";
     let db_item: DBItem = usesV2Baseline
       ? editorBaseline
-      : await loadItemWithSongHydration(db, item._id);
+      : await loadItemWithSongHydration(dbAtStart, item._id);
     listenerApi.throwIfCancelled();
 
     const updatedAt = new Date().toISOString();
@@ -1037,7 +1040,7 @@ listenerMiddleware.startListening({
         const saveBaseline = usesV2Baseline
           ? editorBaseline
           : db_item.docType === "song-v2-root" ? undefined : db_item;
-        db_item = await saveSong(db, nextItem, saveBaseline);
+        db_item = await saveSong(dbAtStart, nextItem, saveBaseline);
       } catch (error) {
         if (!isListenerCancelledTaskError(error)) {
           console.error("Could not save active song draft", error);
@@ -1046,9 +1049,9 @@ listenerMiddleware.startListening({
             (error.name === "SongV2WriteError" && (error as Error & { status?: number }).status === 409)
           )) {
             try {
-              const remoteSong = await loadItemWithSongHydration(db, item._id);
+              const remoteSong = await loadItemWithSongHydration(dbAtStart, item._id);
               const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
-              if (latestItem._id === item._id && latestItem.listId === item.listId &&
+              if (db === dbAtStart && latestItem._id === item._id && latestItem.listId === item.listId &&
                 latestItem.baseItem === editorBaseline && !latestItem.hasRemoteUpdate) {
                 listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remoteSong));
               }
@@ -1064,11 +1067,12 @@ listenerMiddleware.startListening({
         // Doc came from db.get — always an update (legacy rows may lack createdAt).
         isNew: false,
       });
-      const result = await db.put(db_item);
+      const result = await dbAtStart.put(db_item);
       db_item = { ...db_item, _rev: result.rev };
     }
+    const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
+    if (db !== dbAtStart || latestItem._id !== item._id || latestItem.listId !== item.listId) return;
     if (usesV2Baseline) {
-      const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
       if (latestItem._id === item._id && latestItem.listId === item.listId &&
         latestItem.baseItem === editorBaseline) {
         const editorMatchesSubmitted = itemDocMatchesEditorState(item, latestItem);
@@ -1091,6 +1095,8 @@ listenerMiddleware.startListening({
       listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
       listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
     }
+    const activeState = (listenerApi.getState() as RootState).undoable.present.item;
+    if (db !== dbAtStart || activeState._id !== db_item._id) return;
 
     listenerApi.dispatch(upsertItemInAllDocs(
       db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
@@ -1110,6 +1116,7 @@ listenerMiddleware.startListening({
     }
 
     // Local machine updates
+    if (db !== dbAtStart) return;
     safePostMessage({
       type: "update",
       data: {
@@ -1376,7 +1383,7 @@ listenerMiddleware.startListening({
       // A newer local edit or remote hydrate may have landed while awaiting get.
       const latest = (listenerApi.getState() as RootState).undoable.present
         .itemList;
-      if (!latest.hasPendingUpdate || latest.list !== list) {
+      if (db !== dbAtStart || !latest.hasPendingUpdate || latest.list !== list) {
         return;
       }
 
@@ -1385,8 +1392,10 @@ listenerMiddleware.startListening({
       const result = await dbAtStart.put(db_itemList);
 
       // Only clear dirty after a successful write so failed puts can retry.
-      const afterPut = (listenerApi.getState() as RootState).undoable.present
-        .itemList;
+      if (db !== dbAtStart) return;
+      const afterPutState = (listenerApi.getState() as RootState).undoable.present;
+      if (afterPutState.itemLists.selectedList?._id !== selectedList._id) return;
+      const afterPut = afterPutState.itemList;
       if (afterPut.list === list && afterPut.hasPendingUpdate) {
         listenerApi.dispatch(itemListSlice.actions.setHasPendingUpdate(false));
       }
@@ -1433,7 +1442,8 @@ listenerMiddleware.startListening({
     const snapshot = (listenerApi.getState() as RootState).undoable.present
       .itemLists;
     const { currentLists, activeList, selectedIdByScope } = snapshot;
-    if (!db) return;
+    const dbAtStart = db;
+    if (!dbAtStart) return;
     // Selection can still be worth persisting when activeList is momentarily
     // empty; skip only when there is nothing at all to write.
     if (!activeList && currentLists.length === 0) return;
@@ -1447,16 +1457,17 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
 
-      const db_itemLists: DBItemLists = await db.get("ItemLists");
+      const db_itemLists: DBItemLists = await dbAtStart.get("ItemLists");
       db_itemLists.itemLists = [...currentLists];
       if (activeList) {
         db_itemLists.activeList = activeList;
       }
       db_itemLists.selectedIdByScope = { ...selectedIdByScope };
       db_itemLists.updatedAt = new Date().toISOString();
-      db.put(db_itemLists);
+      await dbAtStart.put(db_itemLists);
 
       // Local machine updates
+      if (db !== dbAtStart) return;
       safePostMessage({
         type: "update",
         data: {
@@ -1498,6 +1509,8 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
+    if (!dbAtStart) return;
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
         AUTOSAVE_DEBOUNCE_KEYS.allItems,
@@ -1507,16 +1520,18 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
 
+      if (db !== dbAtStart) return;
+
       // update ItemList
       const { list } = (listenerApi.getState() as RootState).allItems;
 
-      if (!db) return;
-      const db_allItems: DBAllItems = await db.get("allItems");
+      const db_allItems: DBAllItems = await dbAtStart.get("allItems");
       db_allItems.items = [...list];
       db_allItems.updatedAt = new Date().toISOString();
-      await db.put(db_allItems);
+      await dbAtStart.put(db_allItems);
 
       // Local machine updates
+      if (db !== dbAtStart) return;
       safePostMessage({
         type: "update",
         data: {
@@ -1553,6 +1568,8 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
+    if (!dbAtStart) return;
     const persistOutgoingSelection =
       overlaySlice.actions.selectOverlay.match(action);
 
@@ -1560,6 +1577,8 @@ listenerMiddleware.startListening({
     if (!persistOutgoingSelection) {
       await listenerApi.delay(1500);
     }
+
+    if (db !== dbAtStart) return;
 
     if (
       !(listenerApi.getState() as RootState).undoable.present.overlay
@@ -1584,8 +1603,6 @@ listenerMiddleware.startListening({
       listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
       return;
     }
-    if (!db) return;
-
     listenerApi.throwIfCancelled();
     overlayToPersist = readOverlayToPersist();
     if (!overlayToPersist?.id) {
@@ -1596,7 +1613,7 @@ listenerMiddleware.startListening({
     let persisted: DBOverlay | undefined;
     try {
       persisted = await listenerApi.pause(
-        persistExistingOverlayDoc(db, overlayToPersist),
+        persistExistingOverlayDoc(dbAtStart, overlayToPersist),
       );
     } catch (e) {
       if (isListenerCancelledTaskError(e)) {
@@ -1612,6 +1629,7 @@ listenerMiddleware.startListening({
     }
 
     listenerApi.throwIfCancelled();
+    if (db !== dbAtStart) return;
     listenerApi.dispatch(overlaySlice.actions.setHasPendingUpdate(false));
     listenerApi.dispatch(
       overlaySlice.actions.markOverlayPersisted(
@@ -1646,28 +1664,33 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
+    if (!dbAtStart) return;
     let state = listenerApi.getState() as RootState;
     if (itemListsSlice.actions.selectItemList.match(action)) {
       state = listenerApi.getOriginalState() as RootState;
     } else {
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
+      if (db !== dbAtStart) return;
     }
 
+    if (db !== dbAtStart) return;
     listenerApi.dispatch(overlaysSlice.actions.setHasPendingUpdate(false));
 
     // update ItemList
     const { list } = state.undoable.present.overlays;
     const { selectedList } = state.undoable.present.itemLists;
 
-    if (!db || !selectedList) return;
-    const db_itemList: DBItemListDetails = await db.get(selectedList._id);
+    if (!selectedList) return;
+    const db_itemList: DBItemListDetails = await dbAtStart.get(selectedList._id);
 
     db_itemList.overlays = list.map((overlay) => overlay.id);
     db_itemList.updatedAt = new Date().toISOString();
-    db.put(db_itemList);
+    await dbAtStart.put(db_itemList);
 
     // Local machine updates
+    if (db !== dbAtStart) return;
     safePostMessage({
       type: "update",
       data: {
@@ -1696,14 +1719,22 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchScope = {
+      db: globalFireDbInfo.db,
+      churchId: globalFireDbInfo.churchId,
+      canWriteSharedData: globalFireDbInfo.canWriteSharedData,
+    };
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
 
+    if (globalFireDbInfo.churchId !== churchScope.churchId) return;
+
     const didWriteRemote = await writePendingTimersToStorageAndFirebase(
       listenerApi.getState() as RootState,
+      churchScope,
     );
 
-    if (didWriteRemote) {
+    if (didWriteRemote && globalFireDbInfo.churchId === churchScope.churchId) {
       listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
     }
   },
@@ -1742,17 +1773,25 @@ listenerMiddleware.startListening({
     const { monitorInfo } = toLegacyPresentationShape(state.presentation);
     const itemId = monitorInfo.itemId ?? monitorInfo.timerId;
     if (!itemId) return;
+    const dbAtStart = db;
+    const fireDbAtStart = globalFireDbInfo.db;
+    const churchIdAtStart = globalFireDbInfo.churchId;
     const currentItem = state.undoable.present.item;
     let item: DBItem | null = null;
     if (currentItem._id === itemId && getActiveItemSlides(currentItem).length > 1) {
       item = currentItem as unknown as DBItem;
-    } else if (db) {
+    } else if (dbAtStart) {
       try {
-        item = await loadItemWithSongHydration(db, itemId);
+        item = await loadItemWithSongHydration(dbAtStart, itemId);
       } catch {
         return;
       }
     }
+    if (
+      db !== dbAtStart ||
+      globalFireDbInfo.db !== fireDbAtStart ||
+      globalFireDbInfo.churchId !== churchIdAtStart
+    ) return;
     if (!item) return;
     if (item.type !== "song") item = normalizeItemSlides(item);
     const slides = getActiveItemSlides(item);
@@ -1806,7 +1845,11 @@ listenerMiddleware.startListening({
   effect: async (_action, listenerApi) => {
     const preDelay = listenerApi.getState() as RootState;
     const snapshotCredits = preDelay.undoable.present.credits;
+    const dbAtStart = db;
     if (!snapshotCredits.isInitialized) return;
+    if (!dbAtStart) return;
+    const fireDbAtStart = globalFireDbInfo.db;
+    const fireChurchIdAtStart = globalFireDbInfo.churchId;
 
     const snapshotOutlineId =
       preDelay.undoable.present.itemLists.selectedList?._id ??
@@ -1822,6 +1865,7 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
       listenerApi.throwIfCancelled();
+      if (db !== dbAtStart || globalFireDbInfo.churchId !== fireChurchIdAtStart) return;
 
       const afterDelay = listenerApi.getState() as RootState;
       const currentOutlineId =
@@ -1838,8 +1882,8 @@ listenerMiddleware.startListening({
 
       const { list } = creditsForPersist;
 
-      const fireDb = globalFireDbInfo.db;
-      const fireChurchId = globalFireDbInfo.churchId;
+      const fireDb = fireDbAtStart;
+      const fireChurchId = fireChurchIdAtStart;
       const shouldSyncGlobalRtdbCredits =
         Boolean(fireDb) &&
         Boolean(fireChurchId) &&
@@ -1893,25 +1937,24 @@ listenerMiddleware.startListening({
         );
       }
 
-      if (!db) return;
-
       const now = new Date().toISOString();
       const creditIds = list.map((c) => c.id);
       const docsToBroadcast: DBCredits[] = [];
 
       try {
-        await ensureCreditsIndexDoc(db, snapshotOutlineId);
-        const db_credits: DBCredits = await db.get(
+        await ensureCreditsIndexDoc(dbAtStart, snapshotOutlineId);
+        const db_credits: DBCredits = await dbAtStart.get(
           getCreditsDocId(snapshotOutlineId),
         );
         db_credits.creditIds = creditIds;
         db_credits.updatedAt = now;
-        await db.put(db_credits);
+        await dbAtStart.put(db_credits);
         docsToBroadcast.push(db_credits);
       } catch (e) {
         console.error("credits index save failed", e);
       }
 
+      if (db !== dbAtStart || globalFireDbInfo.churchId !== fireChurchIdAtStart) return;
       safePostMessage({
         type: "update",
         data: {
@@ -1946,12 +1989,15 @@ listenerMiddleware.startListening({
   effect: async (_action, listenerApi) => {
     const stateBefore = listenerApi.getState() as RootState;
     const outlineId = stateBefore.undoable.present.itemLists.activeList?._id;
+    const dbAtStart = db;
+    const fireDbAtStart = globalFireDbInfo.db;
+    const churchIdAtStart = globalFireDbInfo.churchId;
 
-    if (!globalFireDbInfo.db || !globalFireDbInfo.churchId) return;
+    if (!fireDbAtStart || !churchIdAtStart) return;
 
     const publishedRef = ref(
-      globalFireDbInfo.db,
-      getChurchDataPath(globalFireDbInfo.churchId, "credits", "publishedList"),
+      fireDbAtStart,
+      getChurchDataPath(churchIdAtStart, "credits", "publishedList"),
     );
 
     if (!outlineId) {
@@ -1959,21 +2005,29 @@ listenerMiddleware.startListening({
       return;
     }
 
-    if (!db) return;
+    if (!dbAtStart) return;
+    const isCurrentScope = () =>
+      db === dbAtStart &&
+      globalFireDbInfo.db === fireDbAtStart &&
+      globalFireDbInfo.churchId === churchIdAtStart;
 
     try {
-      await migrateLegacyCreditsToActiveOutlineIfNeeded(db, outlineId);
-      await ensureCreditsIndexDoc(db, outlineId);
-      const creditsDoc = (await db.get(
+      await migrateLegacyCreditsToActiveOutlineIfNeeded(dbAtStart, outlineId);
+      if (!isCurrentScope()) return;
+      await ensureCreditsIndexDoc(dbAtStart, outlineId);
+      if (!isCurrentScope()) return;
+      const creditsDoc = (await dbAtStart.get(
         getCreditsDocId(outlineId),
       )) as DBCredits;
+      if (!isCurrentScope()) return;
       const creditIds = creditsDoc.creditIds ?? [];
-      const credits = await getCreditsByIds(db, outlineId, creditIds);
+      const credits = await getCreditsByIds(dbAtStart, outlineId, creditIds);
+      if (!isCurrentScope()) return;
       const visible = credits.filter((c) => !c.hidden).map((c) => ({ ...c }));
 
       const stillActive = (listenerApi.getState() as RootState).undoable.present
         .itemLists.activeList?._id;
-      if (stillActive !== outlineId) return;
+      if (!isCurrentScope() || stillActive !== outlineId) return;
 
       set(publishedRef, cleanObject(visible as unknown as object));
     } catch (e) {
@@ -2338,6 +2392,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
+    const fireDbAtStart = globalFireDbInfo.db;
+    const fireChurchIdAtStart = globalFireDbInfo.churchId;
+    if (!dbAtStart) return;
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
         AUTOSAVE_DEBOUNCE_KEYS.preferences,
@@ -2347,15 +2405,17 @@ listenerMiddleware.startListening({
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
 
+      if (db !== dbAtStart) return;
+
       const { preferences, monitorSettings, quickLinks } = (
         listenerApi.getState() as RootState
       ).undoable.present.preferences;
 
-      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
+      if (fireDbAtStart && fireChurchIdAtStart && globalFireDbInfo.churchId === fireChurchIdAtStart) {
         set(
           ref(
-            globalFireDbInfo.db,
-            getChurchDataPath(globalFireDbInfo.churchId, "monitorSettings"),
+            fireDbAtStart,
+            getChurchDataPath(fireChurchIdAtStart, "monitorSettings"),
           ),
           cleanObject({
             ...monitorSettings,
@@ -2363,8 +2423,7 @@ listenerMiddleware.startListening({
         );
       }
 
-      if (!db) return;
-      const pouchDb = db;
+      const pouchDb = dbAtStart;
       const now = new Date().toISOString();
 
       const getDoc = async (id: string) => {
@@ -2450,6 +2509,7 @@ listenerMiddleware.startListening({
           _rev: (monRes as { rev: string }).rev,
         } as DBMonitorSettingsDoc;
 
+        if (db !== dbAtStart) return;
         safePostMessage({
           type: "update",
           data: {
@@ -2472,7 +2532,7 @@ listenerMiddleware.startListening({
 
 // Media route navigation owns one small scoped document and does not autosave
 // the unrelated preferences cluster. Each action captures its profile ID.
-const mediaFolderSaveQueues = new Map<string, Promise<void>>();
+const mediaFolderSaveQueues = new WeakMap<PouchDB.Database, Map<string, Promise<void>>>();
 listenerMiddleware.startListening({
   actionCreator: preferencesSlice.actions.setMediaRouteFolder,
   effect: async (action, listenerApi) => {
@@ -2480,19 +2540,28 @@ listenerMiddleware.startListening({
     const { controllerProfileId, key, folderId } = action.payload;
     if ((listenerApi.getState() as RootState).undoable.present.preferences.mediaRouteFoldersControllerProfileId !== controllerProfileId) return;
     const id = getControllerMediaRouteFoldersDocId(controllerProfileId);
-    const previous = mediaFolderSaveQueues.get(id) ?? Promise.resolve();
+    const database = db;
+    if (!database) return;
+    let databaseQueues = mediaFolderSaveQueues.get(database);
+    if (!databaseQueues) {
+      databaseQueues = new Map();
+      mediaFolderSaveQueues.set(database, databaseQueues);
+    }
+    const previous = databaseQueues.get(id) ?? Promise.resolve();
     const save = previous.catch(() => undefined).then(async () => {
-      const saved = await patchControllerMediaRouteFolder(db!, controllerProfileId, key, folderId);
+      const saved = await patchControllerMediaRouteFolder(database, controllerProfileId, key, folderId);
+      const currentState = (listenerApi.getState() as RootState).undoable.present.preferences;
+      if (db !== database || currentState.mediaRouteFoldersControllerProfileId !== controllerProfileId) return;
       listenerApi.dispatch(preferencesSlice.actions.markMediaRouteFolderPersisted({ controllerProfileId, key, folderId }));
       safePostMessage({ type: "update", data: { docs: [saved], hostId: globalHostId } });
     });
-    mediaFolderSaveQueues.set(id, save);
+    databaseQueues.set(id, save);
     try {
       await save;
     } catch (error) {
       console.error("Could not save controller media folder selection", error);
     } finally {
-      if (mediaFolderSaveQueues.get(id) === save) mediaFolderSaveQueues.delete(id);
+      if (databaseQueues.get(id) === save) databaseQueues.delete(id);
     }
   },
 });
@@ -2523,8 +2592,12 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
+    if (!dbAtStart) return;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(1500);
+
+    if (db !== dbAtStart) return;
 
     listenerApi.dispatch(
       overlayTemplatesSlice.actions.setHasPendingUpdate(false),
@@ -2535,15 +2608,15 @@ listenerMiddleware.startListening({
       listenerApi.getState() as RootState
     ).undoable.present.overlayTemplates;
 
-    if (!db) return;
     try {
       const db_templates: DBOverlayTemplates =
-        await db.get("overlay-templates");
+        await dbAtStart.get("overlay-templates");
       db_templates.templatesByType = templatesByType;
       db_templates.defaultTemplateIdsByType = defaultTemplateIdsByType;
       db_templates.updatedAt = new Date().toISOString();
-      db.put(db_templates);
+      await dbAtStart.put(db_templates);
       // Local machine updates
+      if (db !== dbAtStart) return;
       safePostMessage({
         type: "update",
         data: {
@@ -2561,7 +2634,7 @@ listenerMiddleware.startListening({
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      await db.put(db_templates);
+      await dbAtStart.put(db_templates);
     }
   },
 });
@@ -2673,10 +2746,12 @@ listenerMiddleware.startListening({
           ),
         { applyLocally: false },
       );
+      if (globalFireDbInfo.churchId !== churchId) return;
       listenerApi.dispatch(
         syncServicesFromRemote(readFirebaseServices(result.snapshot.val())),
       );
     } catch (error) {
+      if (globalFireDbInfo.churchId !== churchId) return;
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       logFirebaseOperationFailure(
         "service_times_sync",
@@ -2718,6 +2793,8 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
         AUTOSAVE_DEBOUNCE_KEYS.serviceTimes,
@@ -2726,6 +2803,8 @@ listenerMiddleware.startListening({
     try {
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
+
+      if (db !== dbAtStart || globalFireDbInfo.churchId !== churchIdAtStart) return;
 
       // update service times
       const { list, isInitialized } = (listenerApi.getState() as RootState)
@@ -2738,13 +2817,14 @@ listenerMiddleware.startListening({
         return;
       }
 
-      if (db) {
+      if (dbAtStart) {
         try {
-          const db_services: DBServices = await db.get("services");
+          const db_services: DBServices = await dbAtStart.get("services");
           db_services.list = list;
           db_services.updatedAt = new Date().toISOString();
-          db.put(db_services);
+          await dbAtStart.put(db_services);
           // Local machine updates
+          if (db !== dbAtStart) return;
           safePostMessage({
             type: "update",
             data: {
@@ -2760,7 +2840,8 @@ listenerMiddleware.startListening({
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
-          db.put(db_services);
+          await dbAtStart.put(db_services);
+          if (db !== dbAtStart) return;
           safePostMessage({
             type: "update",
             data: {
@@ -2817,8 +2898,11 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     await syncPresentationSnapshot(listenerApi.getState() as RootState, action.type);
   },
 });
@@ -2838,7 +2922,9 @@ listenerMiddleware.startListening({
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     await listenerApi.delay(15);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     await syncPresentationSnapshot(
       listenerApi.getState() as RootState,
       action.type,
@@ -2858,7 +2944,9 @@ listenerMiddleware.startListening({
     return curr.isStreamTransmitting && !prev.isStreamTransmitting;
   },
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     await listenerApi.delay(15);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     await syncPresentationSnapshot(
       listenerApi.getState() as RootState,
       action.type,
@@ -2898,8 +2986,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     const info = action.payload as Presentation;
     const current = toLegacyPresentationShape(
@@ -2935,8 +3025,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     const info = action.payload as Presentation;
     const current = toLegacyPresentationShape(
@@ -2972,8 +3064,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     const info = action.payload as Presentation;
     const current = toLegacyPresentationShape(
@@ -2999,8 +3093,10 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action) => action.type === "debouncedUpdateOutputs",
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     listenerApi.dispatch(
       updateOutputsFromRemote(
         action.payload as Record<string, RemoteOutputState> | null,
@@ -3028,8 +3124,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(
       updateBibleDisplayInfoFromRemote(action.payload as BibleDisplayInfo),
@@ -3055,8 +3153,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(
       updateParticipantOverlayInfoFromRemote(action.payload as OverlayInfo),
@@ -3083,8 +3183,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(
       updateStbOverlayInfoFromRemote(action.payload as OverlayInfo),
@@ -3111,8 +3213,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(
       updateQrCodeOverlayInfoFromRemote(action.payload as OverlayInfo),
@@ -3139,8 +3243,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(
       updateImageOverlayInfoFromRemote(action.payload as OverlayInfo),
@@ -3167,8 +3273,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(
       updateFormattedTextDisplayInfoFromRemote(
@@ -3198,8 +3306,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     listenerApi.dispatch(
       updateBoardPostStreamInfoFromRemote(
         action.payload as Parameters<
@@ -3215,8 +3325,10 @@ listenerMiddleware.startListening({
   predicate: (action) =>
     action.type === "debouncedUpdateStreamItemContentBlocked",
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     listenerApi.dispatch(
       setStreamItemContentBlockedFromRemote(action.payload as boolean),
     );
@@ -3228,8 +3340,10 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action) => action.type === "debouncedUpdateMonitorBoardAliasId",
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     listenerApi.dispatch(
       setMonitorBoardAliasIdFromRemote(action.payload as string),
     );
@@ -3241,8 +3355,10 @@ listenerMiddleware.startListening({
 listenerMiddleware.startListening({
   predicate: (action) => action.type === "debouncedUpdateProjectorBoardAliasId",
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     listenerApi.dispatch(
       setProjectorBoardAliasIdFromRemote(action.payload as string),
     );
@@ -3261,8 +3377,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
     const services = action.payload as ServiceTime[];
 
     // Mirror shared-data updates into localStorage so guest monitor/projector/stream
@@ -3294,8 +3412,10 @@ listenerMiddleware.startListening({
   },
 
   effect: async (action, listenerApi) => {
+    const churchIdAtStart = globalFireDbInfo.churchId;
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
+    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
 
     listenerApi.dispatch(updateTimerFromRemote(action.payload as TimerInfo));
   },
@@ -3309,6 +3429,7 @@ listenerMiddleware.startListening({
     );
   },
   effect: async (action, listenerApi) => {
+    const dbAtStart = db;
     const currentState = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
     const currentSelectedOverlayId =
@@ -3423,10 +3544,10 @@ listenerMiddleware.startListening({
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
     }
 
-    if (db && changedOverlayDocs.length > 0) {
+    if (dbAtStart && changedOverlayDocs.length > 0) {
       for (const overlay of changedOverlayDocs) {
         try {
-          await listenerApi.pause(persistExistingOverlayDoc(db, overlay));
+          await listenerApi.pause(persistExistingOverlayDoc(dbAtStart, overlay));
         } catch (e) {
           if (isListenerCancelledTaskError(e)) {
             return;

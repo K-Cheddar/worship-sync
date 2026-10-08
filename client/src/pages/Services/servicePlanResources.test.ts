@@ -13,6 +13,7 @@ import {
   isServicePlanChurchResourceReference,
   normalizeServicePlanResourceForPreview,
 } from "./servicePlanResources";
+import { createChurchResourcePreview } from "../../components/ContentPreview/contentPreview";
 import { getServicePlanElementContentResources } from "../../types/servicePlan";
 import { plainTextToRichText } from "../../types/richText";
 
@@ -110,7 +111,8 @@ describe("service-plan content resources", () => {
     expect(getEffectiveServicePlanResourceDefinition(reference).label).toBe("File");
     expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "document" } as never).label).toBe("File");
     expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "audio" } as never).label).toBe("Audio");
-    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "image" } as never).label).toBe("Other");
+    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "image" } as never).label).toBe("Image");
+    expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "image" } as never).icon).toBeDefined();
     expect(getEffectiveServicePlanResourceDefinition(reference, { kind: "other" } as never).label).toBe("Other");
   });
 
@@ -120,7 +122,7 @@ describe("service-plan content resources", () => {
     [{ kind: "other", sourceType: "external", external: { url: "https://example.test/", mediaType: "web" } }, "Web link"],
     [{ kind: "other", sourceType: "external", external: { url: "https://media.example.test/file.mp4", mediaType: "video" } }, "Video"],
     [{ kind: "other", sourceType: "external", external: { url: "https://youtube.com/watch?v=abc", provider: "youtube", mediaType: "video" } }, "YouTube"],
-    [{ kind: "other", sourceType: "external", external: { url: "https://media.example.test/image.png", mediaType: "image" } }, "Other"],
+    [{ kind: "image", sourceType: "external", external: { url: "https://media.example.test/image.png", mediaType: "image" } }, "Image"],
     [{ kind: "other", sourceType: "external", external: { url: "https://example.test/unknown", provider: "unsupported" } }, "Other"],
   ] as const)("maps referenced ChurchResource metadata to %s", (churchResource, label) => {
     const reference = createServicePlanChurchResourceReference({ resourceId: "churchResource_1" });
@@ -150,6 +152,7 @@ describe("service-plan content resources", () => {
       createServicePlanChurchResourceReference({ resourceId: churchResource.id }),
       { churchResource },
     );
+    expect({ ...preview, id: churchResource.id }).toEqual(createChurchResourcePreview(churchResource));
     expect(preview).toMatchObject({
       title: "Shared guide",
       url: churchResource.external.url,

@@ -2,21 +2,22 @@ import { getExternalResourceResolution } from "../../api/auth";
 import { getApiBasePath } from "../../utils/environment";
 import { getYouTubeVideoReference } from "../../utils/youtube";
 import type { RichTextDocument } from "../../types/richText";
-import type {
-  ExternalResourceMediaType,
-  ExternalResourcePreviewType,
-} from "../../api/externalResource";
+import type { ExternalResourceSourceKind } from "../../api/externalResource";
+import type { ChurchResource } from "../../types/churchResource";
+import type { SongAudio } from "../../types";
+import type { PreviewSourceCache } from "./previewSourceCache";
 
-export type ContentPreviewKind =
+export type ContentPreviewRenderer =
   | "image"
   | "audio"
   | "video"
-  | "document"
-  | "youtube"
+  | "pdf"
+  | "docx"
   | "text"
+  | "youtube"
   | "web"
-  | "unknown"
   | "unsupported";
+export type ContentPreviewKind = ContentPreviewRenderer;
 
 export type ContentPreviewProvider =
   | "worshipsync"
@@ -37,13 +38,10 @@ export type ContentPreviewResolvedSource = {
   fileName?: string;
   title?: string;
   provider?: ContentPreviewProvider;
-  externalUrl?: string;
-  previewType?: ExternalResourcePreviewType;
-  mediaType?: ExternalResourceMediaType;
-  canPreview?: boolean;
-  requiresProxy?: boolean;
+  sourceKind?: ExternalResourceSourceKind;
   mediaId?: string;
   reason?: string;
+  expiresAt?: string;
 };
 
 export type ContentPreviewResolution = {
@@ -52,13 +50,10 @@ export type ContentPreviewResolution = {
   title: string;
   provider: ContentPreviewProvider;
   providerLabel: string;
-  mediaType: ContentPreviewKind;
   mimeType?: string;
-  renderer: ContentPreviewKind;
-  canPreview: boolean;
+  renderer: ContentPreviewRenderer;
   fileName?: string;
   mediaId?: string;
-  requiresProxy?: boolean;
   reason?: string;
 };
 
@@ -72,30 +67,80 @@ export type ContentPreviewResource = {
   url?: string;
   type?: string;
   provider?: string;
+  sourceKind?: ExternalResourceSourceKind;
   mediaId?: string;
   mimeType?: string;
   fileName?: string;
   textContent?: string;
   richTextContent?: RichTextDocument;
   resolveSource?: () => Promise<ContentPreviewResolvedSource>;
+  cacheKey?: string;
 };
+
+export const createChurchResourcePreview = (
+  resource: ChurchResource,
+  resolveSource?: () => Promise<ContentPreviewResolvedSource>,
+): ContentPreviewResource => resource.sourceType === "external"
+  ? {
+      id: resource.id,
+      cacheKey: JSON.stringify(["external", resource.churchId, resource.id, resource.contentVersion, resource.updatedAt, resource.external.url]),
+      title: resource.name,
+      url: resource.external.url,
+      provider: resource.external.provider,
+      mimeType: resource.external.mimeType,
+      fileName: resource.external.fileName,
+    }
+  : {
+      id: resource.id,
+      cacheKey: JSON.stringify(["upload", resource.churchId, resource.id, resource.contentVersion, resource.storage.key, resource.storage.uploadedAt, resource.storage.contentType, resource.storage.fileName, resource.storage.sizeBytes]),
+      title: resource.name,
+      provider: "worshipsync",
+      sourceKind: "file",
+      mimeType: resource.storage.contentType,
+      fileName: resource.storage.fileName,
+      ...(resolveSource ? { resolveSource } : {}),
+    };
+
+export const createSongAudioPreview = (
+  audio: SongAudio,
+  songId: string,
+  resolveSource: () => Promise<ContentPreviewResolvedSource>,
+): ContentPreviewResource => ({
+  id: audio.id,
+  cacheKey: JSON.stringify(["song-audio", songId, audio.id, audio.key, audio.uploadedAt, audio.contentType, audio.fileName, audio.sizeBytes]),
+  title: audio.fileName,
+  provider: "worshipsync",
+  sourceKind: "file",
+  mimeType: audio.contentType,
+  fileName: audio.fileName,
+  resolveSource,
+  type: `song-audio:${songId}`,
+});
 
 const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
-const MIME_KIND_BY_PREFIX: Array<[string, ContentPreviewKind]> = [
+const MIME_KIND_BY_PREFIX: Array<[string, ContentPreviewRenderer]> = [
   ["image/", "image"],
   ["audio/", "audio"],
   ["video/", "video"],
 ];
 
-const MIME_KIND_BY_VALUE: Record<string, ContentPreviewKind> = {
-  "application/pdf": "document",
-  "application/x-pdf": "document",
+const MIME_KIND_BY_VALUE: Record<string, ContentPreviewRenderer> = {
+  "application/pdf": "pdf",
+  "application/x-pdf": "pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
   "text/plain": "text",
   "text/markdown": "text",
+  "application/msword": "unsupported",
+  "application/vnd.ms-excel": "unsupported",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "unsupported",
+  "application/vnd.ms-powerpoint": "unsupported",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "unsupported",
+  "text/html": "web",
+  "application/xhtml+xml": "web",
 };
 
-const EXTENSION_KIND: Record<string, ContentPreviewKind> = {
+const EXTENSION_KIND: Record<string, ContentPreviewRenderer> = {
   avif: "image",
   gif: "image",
   jpeg: "image",
@@ -115,7 +160,13 @@ const EXTENSION_KIND: Record<string, ContentPreviewKind> = {
   mp4: "video",
   m4v: "video",
   ogv: "video",
-  pdf: "document",
+  pdf: "pdf",
+  docx: "docx",
+  doc: "unsupported",
+  xls: "unsupported",
+  xlsx: "unsupported",
+  ppt: "unsupported",
+  pptx: "unsupported",
   md: "text",
   txt: "text",
 };
@@ -133,22 +184,27 @@ const PROVIDER_LABELS: Record<ContentPreviewProvider, string> = {
   unknown: "Resource",
 };
 
-const MEDIA_KIND_LABELS: Record<ContentPreviewKind, string> = {
+const MEDIA_KIND_LABELS: Record<ContentPreviewRenderer, string> = {
   image: "Image",
   audio: "Audio",
   video: "Video",
-  document: "Document",
+  pdf: "PDF",
+  docx: "Document",
   youtube: "Video",
   text: "Text",
   web: "Web page",
-  unknown: "Resource",
   unsupported: "Resource",
 };
 
 const normalizedMimeType = (value?: string): string =>
   value?.split(";", 1)[0]?.trim().toLowerCase() || "";
 
-const kindForMimeType = (mimeType?: string): ContentPreviewKind | null => {
+const isGenericMimeType = (value?: string): boolean =>
+  ["application/octet-stream", "application/binary", "binary/octet-stream"].includes(
+    normalizedMimeType(value),
+  );
+
+const kindForMimeType = (mimeType?: string): ContentPreviewRenderer | null => {
   const normalized = normalizedMimeType(mimeType);
   if (!normalized) return null;
   if (MIME_KIND_BY_VALUE[normalized]) return MIME_KIND_BY_VALUE[normalized];
@@ -170,7 +226,7 @@ const pathFileName = (value?: string): string | null => {
 const extensionForFileName = (fileName?: string | null): string =>
   fileName?.toLowerCase().split(".").pop() || "";
 
-const kindForFileName = (fileName?: string | null): ContentPreviewKind | null =>
+const kindForFileName = (fileName?: string | null): ContentPreviewRenderer | null =>
   EXTENSION_KIND[extensionForFileName(fileName)] || null;
 
 const kindForUrlExtension = (value?: string): ContentPreviewKind | null => {
@@ -199,32 +255,46 @@ export const getContentPreviewFileName = (value?: string): string | null => {
   return fileName;
 };
 
-export const getContentPreviewKind = (
-  resource: ContentPreviewResource,
-  resolvedMimeType?: string,
-): ContentPreviewKind => {
-  if (resource.textContent !== undefined) return "text";
-
-  const provider = resource.provider?.trim().toLowerCase();
-  const type = resource.type?.trim().toLowerCase();
-  const mediaId = resource.mediaId?.trim() || "";
-  const youtube = resource.url ? getYouTubeVideoReference(resource.url) : null;
-  if (
-    (provider === "youtube" || type === "youtube" || Boolean(youtube)) &&
-    (YOUTUBE_VIDEO_ID_PATTERN.test(mediaId) || Boolean(youtube?.videoId))
-  ) {
-    return "youtube";
-  }
-
-  const mimeKind = kindForMimeType(resolvedMimeType || resource.mimeType);
-  if (mimeKind) return mimeKind;
-
-  if (["image", "audio", "video", "document", "text"].includes(type || "")) {
-    return type as ContentPreviewKind;
-  }
-
-  return kindForUrlExtension(resource.url) || (getSafeHttpUrl(resource.url) ? "web" : "unsupported");
+export const selectPreviewRenderer = ({
+  sourceKind,
+  mimeType,
+  fileName,
+  provider,
+  mediaId,
+  url,
+  textContent,
+}: {
+  sourceKind?: ExternalResourceSourceKind;
+  mimeType?: string;
+  fileName?: string | null;
+  provider?: string;
+  mediaId?: string;
+  url?: string;
+  textContent?: string;
+}): ContentPreviewRenderer => {
+  if (textContent !== undefined) return "text";
+  if (sourceKind === "unavailable") return "unsupported";
+  const youtube = provider?.toLowerCase() === "youtube" || Boolean(mediaId && YOUTUBE_VIDEO_ID_PATTERN.test(mediaId))
+    ? mediaId || (url ? getYouTubeVideoReference(url)?.videoId : undefined)
+    : undefined;
+  if (youtube && YOUTUBE_VIDEO_ID_PATTERN.test(youtube)) return "youtube";
+  const metadataRenderer = kindForMimeType(mimeType) || kindForFileName(fileName) || kindForUrlExtension(url);
+  if (metadataRenderer) return metadataRenderer;
+  if (sourceKind === "web") return "web";
+  if (sourceKind === "file" || sourceKind === "youtube") return "unsupported";
+  return getSafeHttpUrl(url) ? "web" : "unsupported";
 };
+
+export const getContentPreviewKind = (resource: ContentPreviewResource, resolvedMimeType?: string): ContentPreviewRenderer =>
+  selectPreviewRenderer({
+    sourceKind: resource.sourceKind || (resource.type === "youtube" ? "youtube" : undefined),
+    mimeType: resolvedMimeType || resource.mimeType,
+    fileName: resource.fileName,
+    provider: resource.provider,
+    mediaId: resource.mediaId,
+    url: resource.url,
+    textContent: resource.textContent,
+  });
 
 export const getYouTubePreviewVideoId = (
   resource: ContentPreviewResource,
@@ -309,23 +379,32 @@ export const resolveExternalContentPreviewSource = async (
   if (!resourceUrl || resource.resolveSource) return null;
 
   const resolved = await getExternalResourceResolution(resourceUrl);
-  const previewUrl = toAbsolutePreviewUrl(resolved.previewUrl || resolved.externalUrl);
+  const previewUrl = toAbsolutePreviewUrl(resolved.previewUrl || undefined);
   return {
-    url: previewUrl || resourceUrl,
+    url: previewUrl || "",
     originalUrl: resolved.originalUrl || resourceUrl,
-    externalUrl: resolved.externalUrl || resolved.originalUrl || resourceUrl,
     provider: resolved.provider,
+    sourceKind: resolved.sourceKind,
     title: resolved.title,
     mimeType: resolved.mimeType,
     fileName: resolved.filename,
-    previewType: resolved.previewType,
-    mediaType: resolved.mediaType,
-    canPreview: resolved.canPreview,
-    requiresProxy: resolved.requiresProxy,
     mediaId: resolved.mediaId,
     reason: resolved.reason,
+    expiresAt: resolved.expiresAt,
   };
 };
+
+export const resolvePreviewSource = (
+  resource: ContentPreviewResource,
+  cache: PreviewSourceCache,
+): Promise<ContentPreviewResolvedSource | null> => cache.resolve(
+  resource.cacheKey || JSON.stringify([resource.id, resource.url, resource.type, resource.mimeType, resource.fileName]),
+  async () => {
+    const source = await (resource.resolveSource ? resource.resolveSource() : resolveExternalContentPreviewSource(resource));
+    if (source?.url && !getSafeHttpUrl(source.url)) throw new Error("This resource returned an unsupported URL.");
+    return source;
+  },
+);
 
 export const resolveContentPreviewResource = (
   resource: ContentPreviewResource,
@@ -338,32 +417,40 @@ export const resolveContentPreviewResource = (
     : getSafeHttpUrl(source?.originalUrl)
       ? source?.originalUrl?.trim() || sourceUrl
       : sourceUrl;
-  const resolvedUrl = sourceUrl || originalUrl;
+  const resolvedUrl = source ? sourceUrl : originalUrl;
   const fileName = resource.fileName || source?.fileName;
-  const mimeType = normalizedMimeType(source?.mimeType || resource.mimeType) || undefined;
+  const resolvedMimeType = isGenericMimeType(source?.mimeType)
+    ? undefined
+    : normalizedMimeType(source?.mimeType);
+  const mimeType = resolvedMimeType || normalizedMimeType(resource.mimeType) || undefined;
   const candidate: ContentPreviewResource = {
     ...resource,
     url: resolvedUrl || resource.url,
     fileName,
     mimeType,
   };
-  const serverPreviewType = source?.previewType;
-  const mediaType = source?.mediaType
-    ? source.mediaType as ContentPreviewKind
-    : getContentPreviewKind(candidate, mimeType);
   const youtubeVideoId = source?.mediaId || getYouTubePreviewVideoId(candidate);
   const explicitProvider = resource.provider?.trim().toLowerCase();
   const normalizedExplicitProvider = isContentPreviewProvider(explicitProvider)
     ? explicitProvider
     : undefined;
   const sourceProvider = isContentPreviewProvider(source?.provider) ? source.provider : undefined;
+  const renderer = selectPreviewRenderer({
+    sourceKind: source?.sourceKind || resource.sourceKind || (youtubeVideoId ? "youtube" : undefined),
+    mimeType,
+    fileName,
+    provider: source?.provider || resource.provider,
+    mediaId: youtubeVideoId || undefined,
+    url: resolvedUrl || resource.url,
+    textContent: resource.textContent,
+  });
   const provider: ContentPreviewProvider = sourceProvider || (
     youtubeVideoId || explicitProvider === "youtube"
       ? "youtube"
       : normalizedExplicitProvider || (
           resource.resolveSource || explicitProvider?.startsWith("worshipsync")
             ? "worshipsync"
-            : mediaType === "web"
+            : renderer === "web"
               ? "web"
               : resolvedUrl
                 ? "direct"
@@ -373,11 +460,6 @@ export const resolveContentPreviewResource = (
   const normalizedProvider = isContentPreviewProvider(provider) ? provider : "unknown";
   const providerLabel = (sourceProvider ? PROVIDER_LABELS[sourceProvider] : null) ||
     getContentPreviewProviderLabel(provider, originalUrl || resolvedUrl || undefined);
-  const renderer = serverPreviewType || mediaType;
-  const canPreview = source?.canPreview ?? (mediaType !== "unsupported" && (
-    mediaType === "text" || Boolean(resolvedUrl)
-  ));
-
   return {
     originalUrl,
     resolvedUrl,
@@ -388,13 +470,10 @@ export const resolveContentPreviewResource = (
     }),
     provider: normalizedProvider,
     providerLabel,
-    mediaType,
     mimeType,
     renderer,
-    canPreview,
     ...(fileName ? { fileName } : {}),
     ...(youtubeVideoId ? { mediaId: youtubeVideoId } : {}),
-    ...(source?.requiresProxy !== undefined ? { requiresProxy: source.requiresProxy } : {}),
     ...(source?.reason ? { reason: source.reason } : {}),
   };
 };

@@ -50,6 +50,26 @@ export const smsConsentIdForChurchPhone = (churchId, phoneNumber) => {
   return `smsConsent_${crypto.createHash("sha256").update(key).digest("hex")}`;
 };
 
+const smsConsentMutationQueues = new Map();
+
+/** Serialize fallback-store mutations to one church-and-phone consent record. */
+export const withSmsConsentMutationLock = async (consentId, operation) => {
+  const previous = smsConsentMutationQueues.get(consentId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const current = previous.then(() => gate);
+  smsConsentMutationQueues.set(consentId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (smsConsentMutationQueues.get(consentId) === current) {
+      smsConsentMutationQueues.delete(consentId);
+    }
+  }
+};
+
 /** Legacy phone-global IDs are retained only for migration/audit inspection. */
 export const smsConsentIdForLegacyPhone = (phoneNumber) => {
   const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);

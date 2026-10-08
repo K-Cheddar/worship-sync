@@ -37,6 +37,26 @@ describe("FloatingWindow", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("supports minimized actions on touch without starting a drag", () => {
+    const onAction = jest.fn();
+    renderWindow(jest.fn(), {
+      initiallyMinimized: true,
+      defaultPosition: { x: 40, y: 40 },
+      minimizedActions: <button onClick={onAction}>Pause playback</button>,
+    });
+    const action = screen.getByRole("button", { name: "Pause playback" });
+    const windowEl = screen.getByTestId("floating-window");
+    const initialTop = windowEl.style.top;
+    fireEvent.touchStart(action, { touches: [{ clientX: 60, clientY: 60 }] });
+    fireEvent.touchMove(document, { touches: [{ clientX: 160, clientY: 160 }] });
+    fireEvent.touchEnd(document);
+    fireEvent.click(action);
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(windowEl).toHaveStyle({ left: "40px", top: initialTop });
+    expect(screen.getByRole("button", { name: "Restore window" })).toBeInTheDocument();
+  });
+
   it("exposes side and bottom resize handles below the title bar", () => {
     renderWindow();
 

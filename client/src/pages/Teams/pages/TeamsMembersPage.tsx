@@ -57,6 +57,7 @@ const TeamsMembersPage = () => {
       onArchived={() => void refresh()}
       onImported={() => void refresh()}
       onRemoved={(memberId) => removeData("members", "memberId", memberId)}
+      onSmsConsentRecorded={() => refresh()}
     />
   );
 };
