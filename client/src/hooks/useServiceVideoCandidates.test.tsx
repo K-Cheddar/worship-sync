@@ -89,6 +89,12 @@ const renderCandidates = (
       }
       const currentDoc = currentDocs.find((doc) => doc._id === id);
       if (currentDoc) return currentDoc;
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing"), {
+          status: 404,
+          name: "not_found",
+        });
+      }
       return {
         _id: id,
         items: (
