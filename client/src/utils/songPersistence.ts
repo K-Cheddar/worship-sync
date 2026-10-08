@@ -50,6 +50,9 @@ const reportV2CleanupErrors = async (
     const { persistSongV2CleanupErrors, reconcileSongV2CleanupQueue } = await import("./songV2Writer");
     await persistSongV2CleanupErrors(db, songId, errors);
     const result = await reconcileSongV2CleanupQueue(db, songId);
+    if (result.quarantined.length) {
+      console.warn(`Song ${songId} cleanup records were quarantined after their target revisions changed:`, result.quarantined);
+    }
     if (result.cleanupErrors.length) {
       console.error(`Song ${songId} has v2 child cleanup retries remaining:`, result.cleanupErrors);
     }
@@ -187,9 +190,6 @@ export async function loadSong(
     }
     assertValidV2Root(v2Root);
     const snapshot = await loadV2Documents(db, v2Root);
-    // A later read after restart resumes persisted cleanup work, still with a
-    // bounded queue scan and without changing the logical read result.
-    await reportV2CleanupErrors(db, songId, []);
     return hydrateSongFromV2Documents(snapshot.root, snapshot.arrangements, snapshot.slides);
   }
   const document = (await db.get(songId)) as DBItem;

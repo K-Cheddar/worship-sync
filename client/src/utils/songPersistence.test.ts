@@ -415,7 +415,7 @@ describe("songPersistence", () => {
       ["a-slide"],
       ["b-slide"],
     ]);
-    expect(db.allDocs).toHaveBeenCalledTimes(3);
+    expect(db.allDocs).toHaveBeenCalledTimes(2);
     expect(db.allDocs).toHaveBeenNthCalledWith(1, {
       keys: [
         getSongV2ArrangementDocId(source._id, "arr-a"),
