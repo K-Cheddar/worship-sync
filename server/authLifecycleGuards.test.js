@@ -120,6 +120,28 @@ test("workstation operator CSRF failures return a stable error code", async () =
   assert.equal(res.payload?.code, "AUTH_CSRF_MISMATCH");
 });
 
+test("recordMemberSmsConsent preserves the CSRF recovery contract", async () => {
+  const res = createRes();
+  await authHandlers.recordMemberSmsConsent(
+    createReq({
+      params: { churchId: "church_test" },
+      session: {
+        auth: { sessionKind: "workstation" },
+        csrfToken: "current-token",
+      },
+      headers: { "x-csrf-token": "stale-token" },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 403);
+  assert.deepEqual(res.payload, {
+    success: false,
+    errorMessage: "Could not verify this request.",
+    code: "AUTH_CSRF_MISMATCH",
+  });
+});
+
 test("every directly CSRF-protected auth mutation preserves the recovery contract", async (t) => {
   const mutations = Object.entries(authHandlers).filter(([, handler]) => /await assertCsrf\(req\)/.test(handler.toString()));
   assert.ok(mutations.length >= 30, "discover every protected handler rather than a fixed subset");
