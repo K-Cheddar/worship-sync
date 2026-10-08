@@ -14403,6 +14403,72 @@ test("member import retry resumes roster synchronization after a partial in-memo
   assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId)).notes, "Imported");
 });
 
+test("member import retry completes a partially persisted new member without replaying member fields", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_import_create_partial_retry");
+  const { teamId } = await seedTeam(context, { teamName: "Worship" });
+  const { teamId: otherTeamId, positionIds: otherPositions } = await seedTeam(context, {
+    teamName: "Production", positions: [{ name: "Camera" }],
+  });
+  const csv = "First Name,Last Name,Email,Notes\nCasey,Creator,casey.creator@example.com,Imported note\n";
+  const preview = await previewMemberCsv(context, csv, { destinationTeamId: teamId });
+  const approvedRows = preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({
+    row, action, recordId: matchedId || undefined, record, expectedStateHash,
+  }));
+  assert.equal(preview.payload.rows[0].action, "create", JSON.stringify(preview.payload.rows[0]));
+  let memberWasPersisted = false;
+  let failRosterRead = true;
+  setAuthReadObserverForServerTests(({ type, collectionName, id }) => {
+    if (type === "getDoc" && collectionName === COLLECTIONS.teamRosterMembers) memberWasPersisted = true;
+    if (failRosterRead && memberWasPersisted && type === "getDoc" && collectionName === COLLECTIONS.teams && id === teamId) {
+      failRosterRead = false;
+      throw new Error("Injected roster read failure");
+    }
+  });
+  let interrupted;
+  try {
+    interrupted = await callHandler(authHandlers.commitPortableImport, {
+      context,
+      body: { type: "members", destinationTeamId: teamId, previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, approvedRows },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+  assert.equal(interrupted.payload.results[0].status, "failed", JSON.stringify(interrupted.payload.results[0]));
+  const created = (await queryDocs(COLLECTIONS.teamRosterMembers, [
+    { field: "churchId", value: context.churchId },
+  ])).find((item) => item.email === "casey.creator@example.com");
+  assert.ok(created);
+  assert.ok(created._portableCreateKey);
+  assert.equal((await getDoc(COLLECTIONS.teams, teamId)).memberIds.includes(created.memberId), false);
+
+  // Simulate an administrator editing the newly created profile and adding a
+  // separate team assignment before the import retry runs.
+  await setDoc(COLLECTIONS.teamRosterMembers, created.memberId, {
+    notes: "Concurrent note", profileImageUrl: "https://example.com/casey.png",
+    positionIds: [otherPositions.Camera],
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teams, otherTeamId, { memberIds: [created.memberId] }, { merge: true });
+  const retried = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", destinationTeamId: teamId, previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, approvedRows },
+  });
+  assert.equal(retried.payload.results[0].status, "created");
+  assert.equal((await getDoc(COLLECTIONS.teams, teamId)).memberIds.includes(created.memberId), true);
+  assert.equal((await getDoc(COLLECTIONS.teams, otherTeamId)).memberIds.includes(created.memberId), true);
+  const afterRetry = await getDoc(COLLECTIONS.teamRosterMembers, created.memberId);
+  assert.equal(afterRetry.notes, "Concurrent note");
+  assert.equal(afterRetry.profileImageUrl, "https://example.com/casey.png");
+  assert.deepEqual(afterRetry.positionIds, [otherPositions.Camera]);
+
+  const repeated = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: { type: "members", destinationTeamId: teamId, previewToken: preview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: preview.mapping, approvedRows },
+  });
+  assert.equal(repeated.payload.results[0].status, "created");
+  assert.equal((await getDoc(COLLECTIONS.teams, otherTeamId)).memberIds.includes(created.memberId), true);
+});
+
 test("third-party member CSV categories add selected-team positions without clearing blanks", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("portable_categories_safe_merge");

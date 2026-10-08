@@ -9010,6 +9010,88 @@ export const createTeamsAuthHandlers = ({
       return { member: await getDoc(COLLECTIONS.teamRosterMembers, memberId), teams: changedTeams };
     });
   };
+  const reconcilePortableCreatedMemberMembership = async ({
+    churchId, memberId, createKey, teamIds, positionIds, adminUserId,
+  }) => {
+    const db = requireFirestore?.();
+    const stale = () => httpError(409, "This member creation or its intended team assignments changed. Preview the file again.");
+    const ledgerId = crypto.createHash("sha256")
+      .update(`${churchId}\u0000member\u0000${createKey}`)
+      .digest("hex");
+    const claimMatches = (claim) => claim
+      && claim.churchId === churchId
+      && claim.kind === "member"
+      && claim.createKey === createKey
+      && claim.entityId === memberId
+      && claim.entityCollection === COLLECTIONS.teamRosterMembers;
+
+    if (db?.runTransaction) {
+      return db.runTransaction(async (transaction) => {
+        const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+        const ledgerRef = db.collection(COLLECTIONS.portableImportCreates).doc(ledgerId);
+        const teamRefs = [...new Set(teamIds)].map((teamId) => db.collection(COLLECTIONS.teams).doc(teamId));
+        const positionRefs = [...new Set(positionIds)].map((positionId) => db.collection(COLLECTIONS.teamPositions).doc(positionId));
+        const [memberSnapshot, ledgerSnapshot, teamSnapshots, positionSnapshots] = await Promise.all([
+          transaction.get(memberRef),
+          transaction.get(ledgerRef),
+          Promise.all(teamRefs.map((ref) => transaction.get(ref))),
+          Promise.all(positionRefs.map((ref) => transaction.get(ref))),
+        ]);
+        const member = memberSnapshot.exists ? { memberId, ...memberSnapshot.data() } : null;
+        const claim = ledgerSnapshot.exists ? ledgerSnapshot.data() : null;
+        const teams = teamSnapshots.map((snapshot) => snapshot.exists
+          ? { teamId: snapshot.id, ...snapshot.data() }
+          : null);
+        const positions = positionSnapshots.map((snapshot) => snapshot.exists
+          ? { positionId: snapshot.id, ...snapshot.data() }
+          : null);
+        if (!member || member.churchId !== churchId || member.archivedAt
+          || member._portableCreateKey !== createKey || !claimMatches(claim)
+          || teams.some((team) => !team || team.churchId !== churchId || team.archivedAt)
+          || positions.some((position) => !position || position.churchId !== churchId || position.archivedAt
+            || !teamIds.includes(position.teamId))) throw stale();
+        const now = nowIso();
+        const changedTeams = teams.filter((team) => !(team.memberIds || []).includes(memberId));
+        if (changedTeams.length >= 499)
+          throw httpError(400, "This member has too many team assignments to update in one import. Contact support for help.");
+        changedTeams.forEach((team) => transaction.set(db.collection(COLLECTIONS.teams).doc(team.teamId), {
+          memberIds: [...(team.memberIds || []), memberId], updatedAt: now, updatedByUid: adminUserId,
+        }, { merge: true }));
+        return {
+          member,
+          teams: changedTeams.map((team) => ({ ...team, memberIds: [...(team.memberIds || []), memberId] })),
+        };
+      });
+    }
+
+    // The test/local store has no multi-document transaction. Serialize the
+    // claim check and idempotent, add-only roster repair per member. A retry
+    // re-reads every document and only fills assignments still missing.
+    return enqueuePortableMemberMutation(`${churchId}:${memberId}`, async () => {
+      const [member, claim] = await Promise.all([
+        getDoc(COLLECTIONS.teamRosterMembers, memberId),
+        getDoc(COLLECTIONS.portableImportCreates, ledgerId),
+      ]);
+      if (!member || member.churchId !== churchId || member.archivedAt
+        || member._portableCreateKey !== createKey || !claimMatches(claim)) throw stale();
+      const positions = await Promise.all([...new Set(positionIds)].map((positionId) =>
+        getDoc(COLLECTIONS.teamPositions, positionId)));
+      if (positions.some((position) => !position || position.churchId !== churchId || position.archivedAt
+        || !teamIds.includes(position.teamId))) throw stale();
+      const changedTeams = [];
+      for (const teamId of [...new Set(teamIds)]) {
+        const team = await getDoc(COLLECTIONS.teams, teamId);
+        if (!team || team.churchId !== churchId || team.archivedAt) throw stale();
+        if ((team.memberIds || []).includes(memberId)) continue;
+        const nextTeam = { ...team, memberIds: [...(team.memberIds || []), memberId], updatedAt: nowIso(), updatedByUid: adminUserId };
+        await setDoc(COLLECTIONS.teams, teamId, {
+          memberIds: nextTeam.memberIds, updatedAt: nextTeam.updatedAt, updatedByUid: nextTeam.updatedByUid,
+        }, { merge: true });
+        changedTeams.push(nextTeam);
+      }
+      return { member: await getDoc(COLLECTIONS.teamRosterMembers, memberId), teams: changedTeams };
+    });
+  };
   const portablePreviewSecret = process.env.AUTH_PORTABLE_IMPORT_PREVIEW_SECRET
     || process.env.AUTH_SESSION_SECRET
     || "dev-auth-secret";
@@ -11541,7 +11623,28 @@ export const createTeamsAuthHandlers = ({
                 churchId,
               );
               let importedMember;
-              if (existing) {
+              if (alreadyCreated) {
+                // The member document and its create claim were committed in
+                // the first stage. Retry only repairs this create's intended
+                // roster assignments; it must not replay row fields over an
+                // existing member edit or require an update preview hash.
+                const createTeamIds = [...new Set([
+                  ...importedTeamIds,
+                  ...resolvedPositionIds.map((positionId) =>
+                    data.positions.find((position) => position.positionId === positionId)?.teamId,
+                  ).filter(Boolean),
+                ])];
+                const reconciled = await reconcilePortableCreatedMemberMembership({
+                  churchId,
+                  memberId: existing.memberId,
+                  createKey: importKey,
+                  teamIds: createTeamIds,
+                  positionIds: resolvedPositionIds,
+                  adminUserId: admin.user.uid,
+                });
+                importedMember = reconciled.member;
+                reconciled.teams.forEach((team) => replaceDatasetEntity("teams", "teamId", team));
+              } else if (existing) {
                 const reconciled = await commitPortableMemberUpdate({
                   churchId,
                   memberId: existing.memberId,
