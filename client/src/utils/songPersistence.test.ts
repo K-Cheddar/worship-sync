@@ -415,7 +415,7 @@ describe("songPersistence", () => {
       ["a-slide"],
       ["b-slide"],
     ]);
-    expect(db.allDocs).toHaveBeenCalledTimes(2);
+    expect(db.allDocs).toHaveBeenCalledTimes(3);
     expect(db.allDocs).toHaveBeenNthCalledWith(1, {
       keys: [
         getSongV2ArrangementDocId(source._id, "arr-a"),
@@ -581,8 +581,8 @@ describe("songPersistence", () => {
     const { db, put } = makeDb(source);
     const originalGet = db.get.bind(db);
     const root = serializeSongToV2Documents(source).root;
-    jest.spyOn(db, "get").mockImplementation(async (id: string) =>
-      id === getSongV2RootDocId(source._id) ? root : originalGet(id),
+    jest.spyOn(db, "get").mockImplementation(
+      (async (id: string) => id === getSongV2RootDocId(source._id) ? root : originalGet(id)) as any,
     );
 
     await expect(saveSong(db, { ...source, name: "Stale edit" }, source)).rejects.toBeInstanceOf(SongV2VersionTransitionError);

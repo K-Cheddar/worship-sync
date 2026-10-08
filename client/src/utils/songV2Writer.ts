@@ -3,7 +3,7 @@ import type {
   SongV2SlideDocument, SongV2Documents,
 } from "../types";
 import {
-  getSongV2ArrangementDocId, getSongV2SlideDocId, hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
+  getSongV2ArrangementDocId, getSongV2RootDocId, getSongV2SlideDocId, hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
   SongV2DocumentError, type SongV2Snapshot,
 } from "./songPersistence";
 import { applyPouchAudit } from "./pouchAudit";
@@ -93,7 +93,7 @@ export type SongV2WriteProgress = {
   written: string[];
   created: string[];
   deleted: string[];
-  cleanupErrors: { documentId: string; cause: unknown }[];
+  cleanupErrors: { documentId: string; revision?: string; cause: unknown }[];
 };
 export type SongV2WriteResult = SongV2WriteProgress & {
   song: DBItem;
@@ -181,7 +181,7 @@ async function execute(db: PouchDB.Database, initial: WriteState): Promise<SongV
     } catch (cause) {
       if (step.kind === "put") throw new SongV2WriteError(doc._id, cause, state);
       // All references have already been removed; cleanup is not logical failure.
-      state.progress.cleanupErrors.push({ documentId: doc._id, cause });
+      state.progress.cleanupErrors.push({ documentId: doc._id, revision: doc._rev, cause });
     }
     state.steps.shift();
   }
@@ -267,6 +267,8 @@ export async function saveSongV2FromBaseline(
   const currentSlideDocs = [...current.slides];
   const recoveredArrangementIds = new Set<string>();
   const recoveredSlideIds = new Set<string>();
+  const adoptedArrangements: SongV2ArrangementDocument[] = [];
+  const adoptedSlides: SongV2SlideDocument[] = [];
 
   const checkDeletes = async <T extends Document>(kind: "arrangement" | "slide", deletes: T[], currentDocs: Map<string, T>, baselineDocsById: Map<string, T>) => {
     const classifications = new Map<string, "pending" | "already-applied">();
@@ -327,18 +329,27 @@ export async function saveSongV2FromBaseline(
       }
     }
   };
-  await checkCreateIds("arrangement", intent.arrangements.create, currentArrangements, recoveredArrangementIds, doc => currentArrangementDocs.push(doc));
-  await checkCreateIds("slide", intent.slides.create, currentSlides, recoveredSlideIds, doc => currentSlideDocs.push(doc));
+  await checkCreateIds("arrangement", intent.arrangements.create, currentArrangements, recoveredArrangementIds, doc => {
+    currentArrangementDocs.push(doc);
+    adoptedArrangements.push(doc);
+  });
+  await checkCreateIds("slide", intent.slides.create, currentSlides, recoveredSlideIds, doc => {
+    currentSlideDocs.push(doc);
+    adoptedSlides.push(doc);
+  });
 
-  const rebase = <T extends Document>(changes: Changes<T>, currentDocs: Map<string, T>, deleteStatus: Map<string, "pending" | "already-applied">): Changes<T> => ({
+  const rebase = <T extends Document>(changes: Changes<T>, currentDocs: Map<string, T>, deleteStatus: Map<string, "pending" | "already-applied">, adopted: T[]): Changes<T> => ({
     create: changes.create.filter(doc => !(doc.docType === "song-v2-arrangement" ? recoveredArrangementIds : recoveredSlideIds).has(doc._id)),
-    update: changes.update.filter(({ next }) => (next.docType === "song-v2-arrangement" ? arrangementUpdateStatus : slideUpdateStatus).get(next._id) === "pending").map(({ next }) => ({ current: currentDocs.get(next._id)!, next })),
+    update: [
+      ...changes.update.filter(({ next }) => (next.docType === "song-v2-arrangement" ? arrangementUpdateStatus : slideUpdateStatus).get(next._id) === "pending").map(({ next }) => ({ current: currentDocs.get(next._id)!, next })),
+      ...adopted.map(current => ({ current, next: changes.create.find(doc => doc._id === current._id)! })),
+    ],
     delete: changes.delete.filter(doc => deleteStatus.get(doc._id) === "pending").map(doc => currentDocs.get(doc._id)!),
   });
   const plan: SongV2ChangePlan = {
     ...(intent.root && rootClassification === "pending" ? { root: { current: current.root, next: intent.root.next } } : {}),
-    arrangements: rebase(intent.arrangements, currentArrangements, arrangementDeleteStatus),
-    slides: rebase(intent.slides, currentSlides, slideDeleteStatus),
+    arrangements: rebase(intent.arrangements, currentArrangements, arrangementDeleteStatus, adoptedArrangements),
+    slides: rebase(intent.slides, currentSlides, slideDeleteStatus, adoptedSlides),
   };
   return execute(db, { documents: { ...current, arrangements: currentArrangementDocs, slides: currentSlideDocs }, steps: buildSteps(plan), progress: emptyProgress() });
 }
@@ -375,7 +386,7 @@ export async function resumeSongV2Write(db: PouchDB.Database, error: SongV2Write
 export async function reconcileSongV2Orphans(
   db: PouchDB.Database,
   songId: string,
-  documentIds: string[],
+  candidates: Array<string | { documentId: string; revision?: string }>,
 ): Promise<{ deleted: string[]; skipped: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
   const snapshot = await loadSongV2Snapshot(db, songId);
   const referenced = new Set<string>([
@@ -387,7 +398,12 @@ export async function reconcileSongV2Orphans(
   const deleted: string[] = [];
   const skipped: string[] = [];
   const cleanupErrors: SongV2WriteProgress["cleanupErrors"] = [];
-  for (const documentId of [...new Set(documentIds)]) {
+  const uniqueCandidates = new Map<string, { documentId: string; revision?: string }>();
+  for (const candidate of candidates) {
+    const item = typeof candidate === "string" ? { documentId: candidate } : candidate;
+    uniqueCandidates.set(item.documentId, item);
+  }
+  for (const { documentId, revision } of uniqueCandidates.values()) {
     if (referenced.has(documentId)) { skipped.push(documentId); continue; }
     try {
       const current = await db.get(documentId) as Document;
@@ -396,7 +412,14 @@ export async function reconcileSongV2Orphans(
         skipped.push(documentId);
         continue;
       }
-      await db.remove(current._id, current._rev!);
+      // A revision captured from the failed cleanup is a deletion capability.
+      // Never substitute a newer revision: a writer may have adopted this
+      // orphan and be about to publish it from a manifest.
+      if (!revision || current._rev !== revision) {
+        skipped.push(documentId);
+        continue;
+      }
+      await db.remove(current._id, revision);
       deleted.push(documentId);
     } catch (cause) {
       if (typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404) {
@@ -407,5 +430,124 @@ export async function reconcileSongV2Orphans(
     }
   }
   return { deleted, skipped, cleanupErrors };
+}
+
+type SongV2CleanupQueueDocument = PouchDB.Core.Document<{
+  _rev?: string;
+  docType: "song-v2-cleanup";
+  songId: string;
+  documentId: string;
+  revision: string;
+}>;
+const cleanupQueuePrefix = (songId: string) => `song-v2:cleanup:${encodeURIComponent(songId)}:`;
+const cleanupQueueId = (songId: string, documentId: string) =>
+  `${cleanupQueuePrefix(songId)}${encodeURIComponent(documentId)}`;
+
+/** Stores failed child removals durably; callers treat queue failures as diagnostics. */
+export async function persistSongV2CleanupErrors(
+  db: PouchDB.Database,
+  songId: string,
+  errors: SongV2WriteProgress["cleanupErrors"],
+): Promise<void> {
+  for (const error of errors) {
+    if (!error.revision) continue;
+    const _id = cleanupQueueId(songId, error.documentId);
+    try {
+      let existing: SongV2CleanupQueueDocument | undefined;
+      try { existing = await db.get<SongV2CleanupQueueDocument>(_id); }
+      catch (cause) {
+        if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404)) throw cause;
+      }
+      await db.put({
+        ...(existing ?? {}), _id, ...(existing?._rev ? { _rev: existing._rev } : {}),
+        docType: "song-v2-cleanup", songId, documentId: error.documentId, revision: error.revision,
+      });
+    } catch (cause) {
+      console.error(`Could not persist cleanup retry for ${error.documentId}:`, cause);
+    }
+  }
+}
+
+/** Retries at most `limit` durable cleanup records with revision-checked deletes. */
+export async function reconcileSongV2CleanupQueue(
+  db: PouchDB.Database,
+  songId: string,
+  limit = 20,
+): Promise<{ deleted: string[]; retired: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
+  const prefix = cleanupQueuePrefix(songId);
+  const rows = await db.allDocs<SongV2CleanupQueueDocument>({
+    startkey: prefix, endkey: `${prefix}\uffff`, include_docs: true, limit: Math.max(0, limit),
+  });
+  const deleted: string[] = [];
+  const retired: string[] = [];
+  const cleanupErrors: SongV2WriteProgress["cleanupErrors"] = [];
+  let root: SongV2RootDocument | null = null;
+  try { root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId)); }
+  catch (cause) {
+    if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404)) throw cause;
+  }
+  if (root && (root.docType !== "song-v2-root" || root.songId !== songId)) {
+    throw new SongV2DocumentError(`Invalid v2 root while reconciling cleanup for ${songId}`);
+  }
+  const referenced = new Set<string>();
+  if (root && !root.deletedAt) {
+    if (!Array.isArray(root.arrangementIds)) {
+      throw new SongV2DocumentError(`Invalid arrangement manifest while reconciling cleanup for ${songId}`);
+    }
+    referenced.add(root._id);
+    for (const arrangementId of root.arrangementIds) {
+      const arrangementIdDoc = getSongV2ArrangementDocId(songId, arrangementId);
+      referenced.add(arrangementIdDoc);
+      try {
+        const arrangement = await db.get<SongV2ArrangementDocument>(arrangementIdDoc);
+        for (const slideId of arrangement.slideIds) {
+          referenced.add(getSongV2SlideDocId(songId, arrangementId, slideId));
+        }
+      } catch (cause) {
+        // Do not delete any child when the manifest could not be fully read.
+        // A failed read is not evidence that a child is unreferenced.
+        throw cause;
+      }
+    }
+  }
+  for (const row of rows.rows) {
+    const queueDoc = row.doc;
+    if (!queueDoc) continue;
+    try {
+      if (referenced.has(queueDoc.documentId)) {
+        await db.remove(queueDoc._id, queueDoc._rev!);
+        retired.push(queueDoc.documentId);
+        continue;
+      }
+      let target: Document;
+      try { target = await db.get(queueDoc.documentId) as Document; }
+      catch (cause) {
+        if (typeof cause === "object" && cause !== null && "status" in cause && cause.status === 404) {
+          await db.remove(queueDoc._id, queueDoc._rev!);
+          retired.push(queueDoc.documentId);
+          continue;
+        }
+        throw cause;
+      }
+      if (target.songId !== songId ||
+        (target.docType !== "song-v2-arrangement" && target.docType !== "song-v2-slide") ||
+        target._rev !== queueDoc.revision) {
+        // A newer child revision may be in the middle of orphan adoption. Keep
+        // the record for inspection and never broaden the deletion capability.
+        cleanupErrors.push({
+          documentId: queueDoc.documentId,
+          revision: queueDoc.revision,
+          cause: new Error("Cleanup retained the child because its revision changed after the failed removal."),
+        });
+        continue;
+      }
+      await db.remove(target._id, queueDoc.revision);
+      await db.remove(queueDoc._id, queueDoc._rev!);
+      deleted.push(target._id);
+    } catch (cause) {
+      cleanupErrors.push({ documentId: queueDoc.documentId, revision: queueDoc.revision, cause });
+    }
+  }
+  return { deleted, retired, cleanupErrors };
 }
 

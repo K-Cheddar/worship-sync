@@ -158,6 +158,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     isSectionLoading,
     restoreFocusToBox,
     hasRemoteUpdate,
+    remoteUpdateReason,
     hasPendingUpdate,
     songMetadata,
     songLinks,
@@ -315,7 +316,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
     remoteUpdateToastIdRef.current = showToast({
-      message: `Someone else updated this ${itemTypeLabel}.`,
+      message: remoteUpdateReason === "song-version-transition"
+        ? "This song was migrated while it was open. Copy any draft changes before reloading the current version."
+        : `Someone else updated this ${itemTypeLabel}.`,
       variant: "info",
       persist: true,
       showCloseButton: false,
@@ -330,7 +333,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Keep Editing Mine
+            {remoteUpdateReason === "song-version-transition" ? "Keep Draft Open" : "Keep Editing Mine"}
           </Button>
           <Button
             variant="cta"
@@ -341,7 +344,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Use Their Changes
+            {remoteUpdateReason === "song-version-transition" ? "Reload Migrated Song" : "Use Their Changes"}
           </Button>
         </div>
       ),
@@ -350,6 +353,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    remoteUpdateReason,
     hasPendingUpdate,
     itemTypeLabel,
     isLyricsEditorOpen,

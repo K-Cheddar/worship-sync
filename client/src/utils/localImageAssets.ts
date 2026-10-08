@@ -1285,7 +1285,7 @@ export const cleanupOrphanedLocalImages = async ({
   allDocs.rows.forEach((row) => {
     const v2Slide = row.doc as { docType?: string; boxes?: ItemSlideType["boxes"] } | undefined;
     if (v2Slide?.docType === "song-v2-slide") {
-      collectLocalImageAssetIds({ type: "free", slides: [{ boxes: v2Slide.boxes } as ItemSlideType] }).forEach((id) => referenced.add(id));
+      collectLocalImageAssetIds({ type: "free", arrangements: [], slides: [{ boxes: v2Slide.boxes } as ItemSlideType] }).forEach((id) => referenced.add(id));
     }
     const mediaItem = row.doc as (MediaType & { docType?: string }) | undefined;
     if (mediaItem?.docType === "mediaItem" && mediaItem.localImage?.id) {

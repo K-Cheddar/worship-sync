@@ -172,7 +172,7 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     });
     put.mockClear();
     const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
-    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([baseline.arrangements[0]._id]);
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([orphan._id, baseline.arrangements[0]._id]);
     expect(result.snapshot.slides.some(slide => slide._id === orphan._id)).toBe(true);
 
   });
@@ -200,7 +200,11 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     put.mockClear();
 
     const result = await saveSongV2FromBaseline(db, baseline.hydrated, local);
-    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([baseline.root._id]);
+    expect(put.mock.calls.map(([doc]) => doc._id)).toEqual([
+      "song-v2:slide:real-song:new:new-slide",
+      "song-v2:arrangement:real-song:new",
+      baseline.root._id,
+    ]);
     expect(result.song.arrangements.map(arrangement => arrangement.id)).toEqual(["a", "new"]);
     expect(result.song.arrangements[1].slides[0].id).toBe("new-slide");
   });
@@ -460,7 +464,7 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     await expect(db.get(persisted._id)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("reconciles a known failed cleanup only while the child stays unreferenced", async () => {
+  it("persists failed cleanup and retries it through the bounded durable queue", async () => {
     await createSongV2(db, source());
     const baseline = await loadSongV2Snapshot(db, "real-song");
     const removedDraft = {
@@ -469,8 +473,9 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     };
     const candidate = baseline.slides[0]._id;
     const remove = db.remove.bind(db);
+    let failCleanup = true;
     jest.spyOn(db, "remove").mockImplementation(async (id, rev) => {
-      if (id === candidate) throw new Error("temporary cleanup failure");
+      if (id === candidate && failCleanup) throw new Error("temporary cleanup failure");
       return remove(id, rev);
     });
     const onCleanupErrors = jest.fn();
@@ -478,12 +483,49 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
       docType: "song-v2-root",
     }));
     expect(onCleanupErrors.mock.calls[0][0].map((error: { documentId: string }) => error.documentId)).toContain(candidate);
-    jest.spyOn(db, "remove").mockImplementation(remove);
+    expect((await db.allDocs({ include_docs: true })).rows.some(row => (row.doc as any)?.docType === "song-v2-cleanup")).toBe(true);
+    failCleanup = false;
 
-    await expect(reconcileSongV2Orphans(db, "real-song", [candidate])).resolves.toEqual({
-      deleted: [candidate], skipped: [], cleanupErrors: [],
-    });
+    await loadSong(db, "real-song");
     await expect(db.get(candidate)).rejects.toMatchObject({ status: 404 });
+    expect((await db.allDocs({ include_docs: true })).rows.some(row => (row.doc as any)?.docType === "song-v2-cleanup")).toBe(false);
+  });
+
+  it("prevents reconciliation from deleting an orphan adopted during its manifest check", async () => {
+    await createSongV2(db, source());
+    const baseline = await loadSongV2Snapshot(db, "real-song");
+    const removedDraft = copy(baseline.hydrated);
+    removedDraft.arrangements[0].slides.shift();
+    const candidate = baseline.slides[0]._id;
+    const originalRemove = db.remove.bind(db);
+    jest.spyOn(db, "remove").mockImplementation(async (id, rev) => {
+      if (id === candidate) throw new Error("temporary cleanup failure");
+      return originalRemove(id, rev);
+    });
+    const removed = await saveSongV2(db, baseline, removedDraft);
+    const failedRevision = removed.cleanupErrors.find(error => error.documentId === candidate)?.revision;
+    expect(failedRevision).toBe(baseline.slides[0]._rev);
+    jest.spyOn(db, "remove").mockImplementation(originalRemove);
+
+    const afterRemoval = await loadSongV2Snapshot(db, "real-song");
+    const republish = copy(afterRemoval.hydrated);
+    republish.arrangements[0].slides.unshift(copy(baseline.hydrated.arrangements[0].slides[0]));
+    const originalGet = db.get.bind(db);
+    let adopted = false;
+    jest.spyOn(db, "get").mockImplementation((async (id: string) => {
+      if (id === candidate && !adopted) {
+        adopted = true;
+        const staleRevision = await originalGet(id);
+        await saveSongV2FromBaseline(db, afterRemoval.hydrated, republish);
+        return staleRevision;
+      }
+      return originalGet(id);
+    }) as any);
+
+    await expect(reconcileSongV2Orphans(db, "real-song", [{ documentId: candidate, revision: failedRevision }])).resolves.toEqual({
+      deleted: [], skipped: [], cleanupErrors: [expect.objectContaining({ documentId: candidate })],
+    });
+    expect((await loadSongV2Snapshot(db, "real-song")).slides.map(doc => doc._id)).toContain(candidate);
   });
 
   it("deletes v2 songs with a retained root tombstone before child cleanup", async () => {

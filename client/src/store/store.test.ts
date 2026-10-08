@@ -1782,6 +1782,54 @@ describe("store module", () => {
     expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2ConcurrentEditError" }));
   });
 
+  it("preserves an open v1 draft and surfaces a migration that wins at the commit check", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents } = require("../utils/songPersistence");
+    const authored: any = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "before", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const v2Docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "2-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "2-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "2-slide" }]),
+    ]);
+    let rootReads = 0;
+    db.get.mockImplementation(async (id: string) => {
+      if (id === physical.root._id) {
+        rootReads += 1;
+        if (rootReads >= 2) return v2Docs.get(id);
+        throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
+      }
+      if (id === authored._id) return authored;
+      const doc = v2Docs.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
+    });
+    (db as any).allDocs = jest.fn(async ({ keys }: { keys: string[] }) => ({
+      rows: keys.map(id => v2Docs.has(id) ? { id, doc: v2Docs.get(id) } : { id, error: "not_found" }),
+    }));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    store.dispatch(itemSlice.actions.setActiveItem(authored));
+    store.dispatch(itemSlice.actions._updateSlides([{
+      ...authored.arrangements[0].slides[0],
+      boxes: [{ ...authored.arrangements[0].slides[0].boxes[0], words: "draft from old editor" }],
+    }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const active = store.getState().undoable.present.item;
+    expect(db.put).not.toHaveBeenCalled();
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.hasRemoteUpdate).toBe(true);
+    expect(active.remoteUpdateReason).toBe("song-version-transition");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("draft from old editor");
+    expect(active.pendingRemoteItem.docType).toBe("song-v2-root");
+    expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2VersionTransitionError" }));
+  });
+
   it("retries a partial v2 autosave, advances the baseline, and clears dirty state", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, db } = loadStoreWithItemPersistence();

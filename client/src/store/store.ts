@@ -1046,6 +1046,7 @@ listenerMiddleware.startListening({
           console.error("Could not save active song draft", error);
           if (error instanceof Error && (
             error.name === "SongV2ConcurrentEditError" ||
+            error.name === "SongV2VersionTransitionError" ||
             (error.name === "SongV2WriteError" && (error as Error & { status?: number }).status === 409)
           )) {
             try {
@@ -1054,6 +1055,9 @@ listenerMiddleware.startListening({
               if (db === dbAtStart && latestItem._id === item._id && latestItem.listId === item.listId &&
                 latestItem.baseItem === editorBaseline && !latestItem.hasRemoteUpdate) {
                 listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remoteSong));
+                if (error instanceof Error && error.name === "SongV2VersionTransitionError") {
+                  listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
+                }
               }
             } catch (refreshError) {
               console.error("Could not load the conflicting song version", refreshError);

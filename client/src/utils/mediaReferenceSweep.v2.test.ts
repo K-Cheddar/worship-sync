@@ -79,12 +79,25 @@ describe("v2 media reference cleanup", () => {
 
     expect(result.ok).toBe(true);
     expect(put).toHaveBeenCalledWith(expect.objectContaining({ _id: v2Slide._id, _rev: "4-slide" }));
-    expect(byId.get(v2Slide._id).boxes[0]).toEqual(expect.objectContaining({
+    expect(byId.get(v2Slide._id)!.boxes[0]).toEqual(expect.objectContaining({
       background: newMedia.background,
       mediaInfo: newMedia,
       words: "Keep lyrics",
     }));
-    expect(byId.get(legacy._id).arrangements[0].slides[0].boxes[0].mediaInfo).toEqual(newMedia);
+    expect(byId.get(legacy._id)!.arrangements[0].slides[0].boxes[0].mediaInfo).toEqual(newMedia);
+  });
+
+  it("does not write unrelated v2 slides during media deletion", async () => {
+    const unrelated = {
+      ...slide("song-v2:slide:song-1:arr-1:unrelated", "song-v2-slide"),
+      boxes: [{ background: "other-image", mediaInfo: { id: "other", type: "image" }, words: "Leave me" }],
+    };
+    const { db, put } = dbWith([prefs, root, unrelated]);
+
+    const result = await sweepMediaReferencesBeforeDelete(db, new Set([oldMedia.id]), [oldMedia]);
+
+    expect(result.ok).toBe(true);
+    expect(put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: unrelated._id }));
   });
 
   it("rolls back v2 root and slide references if a later mixed-library write fails", async () => {
@@ -99,8 +112,8 @@ describe("v2 media reference cleanup", () => {
     const result = await replaceMediaReferencesForReplacement(db, { oldMedia, newMedia });
 
     expect(result).toMatchObject({ ok: false, rollbackStatus: "complete", failedDocIds: [legacy._id] });
-    expect(byId.get(root._id).background).toBe(oldMedia.background);
-    expect(byId.get(v2Slide._id).boxes[0]).toEqual(expect.objectContaining({
+    expect(byId.get(root._id)!.background).toBe(oldMedia.background);
+    expect(byId.get(v2Slide._id)!.boxes[0]).toEqual(expect.objectContaining({
       background: oldMedia.background,
       mediaInfo: oldMedia,
       words: "Keep lyrics",

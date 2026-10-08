@@ -386,6 +386,7 @@ export type ItemState = ItemProperties & {
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
   hasRemoteUpdate?: boolean;
+  remoteUpdateReason?: "song-version-transition" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */

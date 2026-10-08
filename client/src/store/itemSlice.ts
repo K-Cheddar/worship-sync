@@ -92,6 +92,7 @@ const initialState: ItemState = {
   isItemFormatting: false,
   hasPendingUpdate: false,
   hasRemoteUpdate: false,
+  remoteUpdateReason: null,
   baseItem: null,
   pendingRemoteItem: null,
   shouldSendTo: defaultShouldSendTo,
@@ -286,6 +287,7 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
     },
     replaceMediaReferencesInActiveItem: (
       state,
@@ -496,15 +498,20 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
     },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
       state.pendingRemoteItem = action.payload;
       state.hasRemoteUpdate = true;
     },
+    setRemoteUpdateReason: (state, action: PayloadAction<ItemState["remoteUpdateReason"]>) => {
+      state.remoteUpdateReason = action.payload ?? null;
+    },
     discardPendingRemoteItem: (state) => {
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
     },
     applyPendingRemoteItem: (state) => {
       if (!state.pendingRemoteItem) return;
@@ -515,6 +522,7 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+      state.remoteUpdateReason = null;
     },
     toggleBackgroundTargetSlideId: (state, action: PayloadAction<string>) => {
       if (!state.backgroundTargetSlideIds) state.backgroundTargetSlideIds = [];
