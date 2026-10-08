@@ -17,18 +17,6 @@ const READ_ONLY_MEMBER_FIELDS = [
 // userId and invitedAt stay omitted: the current Member editor uses them for
 // account-link controls, which scoped manager UI must separate from team
 // management before those controls can be exposed here.
-const MANAGER_MEMBER_FIELDS = [
-  "email",
-  "phoneNumber",
-  "birthDate",
-  "isMinor",
-  "servingFrequency",
-  "recurringAvailability",
-  "blockoutDates",
-  "notes",
-  "profileImagePublicId",
-  "serviceAvailability",
-];
 const QUALIFICATION_FIELDS = [
   "qualificationId",
   "areaId",
@@ -77,11 +65,22 @@ export const projectViewOnlySchedule = (schedule) => {
  * must receive the complete canonical active team set for this church.
  */
 export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
-  if (access?.viewAll === true) return data;
+  // Only Teams editors receive the raw church-wide projection. View-all users
+  // still need the same read projection used by scoped readers so private
+  // member fields and management-only schedule data do not cross the boundary.
+  if (access?.editAll === true) return data;
 
   const source = data && typeof data === "object" ? data : {};
-  const visibleTeamIds =
-    access?.viewTeamIds instanceof Set ? access.viewTeamIds : new Set();
+  const visibleTeamIds = access?.viewAll === true
+    ? new Set(
+        (Array.isArray(source.teams) ? source.teams : [])
+          .filter((team) => team && !team.archivedAt)
+          .map((team) => team.teamId || team.id)
+          .filter(Boolean),
+      )
+    : access?.viewTeamIds instanceof Set
+      ? access.viewTeamIds
+      : new Set();
   const editableTeamIds =
     access?.editTeamIds instanceof Set ? access.editTeamIds : new Set();
 
@@ -275,10 +274,6 @@ export const projectTeamsBootstrapForAccess = ({ data, access } = {}) => {
 
     if (isFullyEditable) {
       editableMemberIds.push(memberId);
-      Object.assign(
-        projected,
-        copyDefinedFields(member, MANAGER_MEMBER_FIELDS),
-      );
       projected.desiredPositionIds = (
         Array.isArray(member.desiredPositionIds)
           ? member.desiredPositionIds

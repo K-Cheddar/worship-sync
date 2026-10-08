@@ -4975,7 +4975,6 @@ const hasTeamsViewPermission = (bootstrap) => {
     bootstrap.role === "admin" ||
     teamsPermission === "view" ||
     teamsPermission === "edit" ||
-    bootstrap.permissions?.services === "edit" ||
     hasAnyTeamScope(bootstrap.permissions)
   );
 };
@@ -5009,10 +5008,7 @@ export const requireBroadTeamsViewSession = async (req, churchId) => {
   const bootstrap = await requireTeamsViewSession(req, churchId);
   if (
     bootstrap.role !== "admin" &&
-    bootstrap.permissions?.teams !== "view" &&
-    bootstrap.permissions?.teams !== "edit" &&
-    !(bootstrap.sessionKind === SESSION_KIND_HUMAN &&
-      bootstrap.permissions?.services === "edit")
+    bootstrap.permissions?.teams !== "edit"
   ) {
     throw httpError(403, "Teams access required");
   }
@@ -5071,7 +5067,6 @@ const requireServicesEditSession = async (req, churchId) => {
   if (
     bootstrap.churchId !== churchId ||
     (bootstrap.role !== "admin" &&
-      bootstrap.permissions?.teams !== "edit" &&
       bootstrap.permissions?.services !== "edit")
   ) {
     throw httpError(403, "Services edit access required");

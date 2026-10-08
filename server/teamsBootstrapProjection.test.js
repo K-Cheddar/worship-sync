@@ -272,16 +272,23 @@ test("admin and global Teams editor preserve the existing full bootstrap object"
   }
 });
 
-test("global Teams viewer preserves the existing full bootstrap object", () => {
+test("global Teams viewer receives a safe read-only bootstrap projection", () => {
   const access = resolveAccess({
     globalTeams: "view",
     teams: source.teams,
     members: source.members,
   });
-  assert.strictEqual(
-    projectTeamsBootstrapForAccess({ data: source, access }),
-    source,
-  );
+  const projected = projectTeamsBootstrapForAccess({ data: source, access });
+  assert.equal(projected.teams.length, 3);
+  assert.equal(projected.members[0].email, undefined);
+  assert.equal(projected.members[0].phoneNumber, undefined);
+  assert.equal(projected.members[0].birthDate, undefined);
+  assert.equal(projected.intakeForms, undefined);
+  assert.equal(projected.intakeSubmissions, undefined);
+  assert.equal(projected.intakeRecipients, undefined);
+  assert.equal(projected.smsEligibilityByMemberId, undefined);
+  assert.equal(projected.schedules[0].guests[0].email, undefined);
+  assert.equal(projected.schedules[0].responses, undefined);
 });
 
 test("scoped manager receives only the managed team's records and manager fields", () => {
@@ -342,11 +349,9 @@ test("scoped manager receives only the managed team's records and manager fields
   const worshipOnly = projected.members.find(
     ({ memberId }) => memberId === "worship-only",
   );
-  assert.equal(worshipOnly.email, "worship-only@example.test");
+  assert.equal(worshipOnly.email, undefined);
   assert.deepEqual(projected.editableMemberIds, ["worship-only"]);
-  assert.deepEqual(worshipOnly.serviceAvailability, {
-    "service-1": "unavailable",
-  });
+  assert.equal(worshipOnly.serviceAvailability, undefined);
   assert.deepEqual(
     worshipOnly.qualifications.map(({ qualificationId }) => qualificationId),
     ["qualification-worship"],
@@ -632,7 +637,7 @@ test("known archived ownership metadata does not block editability from the only
   });
   const [projectedMember] = projected.members;
   assert.ok(projected.editableMemberIds.includes(member.memberId));
-  assert.equal(projectedMember.email, member.email);
+  assert.equal(projectedMember.email, undefined);
   assert.deepEqual(projectedMember.positionIds, ["position-worship"]);
   assert.deepEqual(projectedMember.qualifications, []);
 });
@@ -880,6 +885,7 @@ test("desired Positions require their Team edit scope and stay hidden from read-
   const [richMember] = bothTeams.members;
   assert.ok(bothTeams.editableMemberIds.includes(member.memberId));
   assert.deepEqual(richMember.desiredPositionIds, ["position-av"]);
+  assert.equal(richMember.email, undefined);
 });
 
 test("malformed ownership containers and membership entries block rich projection", () => {

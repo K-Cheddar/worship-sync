@@ -9,7 +9,6 @@ const TeamsMembersPage = () => {
     refresh,
     canEditTeams,
     canEditTeam,
-    editableMemberIds,
   } =
     useTeamsPage();
   const editableTeamIds = new Set(
@@ -49,9 +48,7 @@ const TeamsMembersPage = () => {
       canEdit={canEditScopedMembers}
       canEditAllTeams={canEditTeams}
       canManageMemberLifecycle={canEditTeams}
-      canEditMember={(member) =>
-        canEditTeams || editableMemberIds.has(member.memberId)
-      }
+      canEditMember={() => canEditTeams}
       onSaved={(member, replaceId) =>
         upsertData("members", "memberId", member, replaceId)
       }

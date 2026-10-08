@@ -2230,8 +2230,7 @@ export const createTeamsAuthHandlers = ({
     bootstrap?.role === "admin" ||
     bootstrap?.permissions?.teams === "view" ||
     bootstrap?.permissions?.teams === "edit" ||
-    bootstrap?.permissions?.services === "edit" ||
-    Object.keys(bootstrap?.permissions?.teamScopes || {}).length > 0;
+    bootstrap?.permissions?.services === "edit";
 
   const isPlanOnlyReader = (bootstrap) =>
     bootstrap?.sessionKind === "workstation"
@@ -4203,15 +4202,6 @@ export const createTeamsAuthHandlers = ({
         ? []
         : canonical.members,
     });
-    // Temporary legacy compatibility: human Services editors already receive
-    // broad Teams reads. Keep this at the endpoint boundary, not in the canonical
-    // Teams resolver, and do not grant editing or broaden other Services levels.
-    if (
-      bootstrap.sessionKind === "human" &&
-      bootstrap.permissions?.services === "edit"
-    ) {
-      access.viewAll = true;
-    }
     if (!access.viewAll && access.viewTeamIds.size === 0) {
       throw httpError(403, "Teams access required");
     }
@@ -12081,7 +12071,7 @@ export const createTeamsAuthHandlers = ({
             data: await buildTeamsBootstrap(req.params.churchId, {
               scheduleMode,
               canonical,
-              includeAdministrativeTeamsData: access.viewAll,
+              includeAdministrativeTeamsData: access.editAll,
             }),
             access,
           }),
@@ -12294,6 +12284,36 @@ export const createTeamsAuthHandlers = ({
             ...(requestedTeamIds || []),
           ],
         );
+        const isGlobalTeamsEditor =
+          admin.role === "admin" || admin.permissions?.teams === "edit";
+        if (!isGlobalTeamsEditor) {
+          // Scoped managers edit Team-owned slices through this endpoint only
+          // when all of the member's Teams are within their edit scopes. They
+          // still cannot change church-wide identity, contact, privacy, or
+          // availability fields through the generic member editor.
+          const unchanged = (field, currentValue = existing[field]) =>
+            isDeepStrictEqual(payload[field], currentValue);
+          const restrictedFields = [
+            ["firstName", existing.firstName],
+            ["lastName", existing.lastName],
+            ["title", existing.title],
+            ["birthDate", existing.birthDate],
+            ["isMinor", isMinorFromBirthDate(existing.birthDate) ?? normalizeManualMinorStatus(existing.isMinor) ?? false],
+            ["servingFrequency", normalizeTeamMemberServingFrequency(existing.servingFrequency)],
+            ["blockoutDates", normalizeBlockoutDates(existing.blockoutDates)],
+            ["notes", normalizeLongText(existing.notes)],
+            ["profileImageUrl", existing.profileImageUrl],
+            ["profileImagePublicId", existing.profileImagePublicId],
+            ["email", existing.email],
+            ["phoneNumber", existing.phoneNumber],
+            ["recurringAvailability", existing.recurringAvailability],
+            ["serviceAvailability", existing.serviceAvailability],
+          ];
+          if (restrictedFields.some(([field, value]) =>
+            Object.hasOwn(payload, field) && !unchanged(field, value))) {
+            throw httpError(403, "Church-wide member fields require global Teams edit access.");
+          }
+        }
         const saved = await upsertTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
@@ -12421,7 +12441,11 @@ export const createTeamsAuthHandlers = ({
           teamId: team.teamId,
           memberId,
         });
-        return res.json({ success: true, team: result.team, member: result.member });
+        return res.json({
+          success: true,
+          team: result.team,
+          member: getSafeRosterMemberProjection(result.member, churchId),
+        });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not add this member to the team.");
       }
@@ -12451,7 +12475,7 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           team: result.team,
-          member: result.member,
+          member: getSafeRosterMemberProjection(result.member, churchId),
           preservedAssignmentCount: result.preservedAssignmentCount,
         });
       } catch (error) {
@@ -13417,11 +13441,9 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        let admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        // Linking an account changes identity and schedule delivery across the
+        // church. A selected-Team grant is not account-linking authority.
+        let admin = await requireTeamsEdit(req, req.params.churchId);
         const requestedUserId = normalizeShortText(req.body?.userId, {
           max: 160,
         });
@@ -13523,11 +13545,8 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        // Only church-wide Teams editors may detach account links.
+        const admin = await requireTeamsEdit(req, req.params.churchId);
         if (existing.userId && existing.userId !== admin.user.uid) {
           await requireAdminSession(req, req.params.churchId);
         }

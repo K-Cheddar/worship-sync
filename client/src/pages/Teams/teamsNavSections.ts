@@ -147,14 +147,16 @@ export const getAvailableTeamsNavSections = ({
   hasBroadTeamsReadAccess,
   canViewServices,
 }: TeamsNavCapabilities): TeamsNavSection[] => {
-  if (!hasTeamsWorkspaceAccess) return [];
+  if (!hasTeamsWorkspaceAccess && !canViewServices) return [];
 
   return [
-    ...teamsNavSections.filter(
-      (section) =>
-        hasBroadTeamsReadAccess ||
-        (section.routePath !== "forms" && section.routePath !== "messages"),
-    ),
+    ...(hasTeamsWorkspaceAccess
+      ? teamsNavSections.filter(
+          (section) =>
+            hasBroadTeamsReadAccess ||
+            (section.routePath !== "forms" && section.routePath !== "messages"),
+        )
+      : []),
     ...(canViewServices ? servicesNavSections : []),
   ];
 };

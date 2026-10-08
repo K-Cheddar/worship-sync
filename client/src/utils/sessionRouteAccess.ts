@@ -164,8 +164,12 @@ const hasTeamsViewAccess = (context: RouteSessionContext) =>
   context.role === "admin" ||
   context.permissions?.teams === "view" ||
   context.permissions?.teams === "edit" ||
-  context.permissions?.services === "edit" ||
   Object.keys(context.permissions?.teamScopes || {}).length > 0;
+
+const hasServicesWorkspaceAccess = (context: RouteSessionContext) =>
+  context.role === "admin" ||
+  context.permissions?.services === "view" ||
+  context.permissions?.services === "edit";
 
 const hasServicePlansViewAccess = (context: RouteSessionContext) =>
   hasTeamsViewAccess(context) ||
@@ -203,7 +207,8 @@ export const isRouteAllowedForSession = (
       ) &&
       !isTeamsWorkspacePath(pathname) &&
       !(
-        (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) ||
+        (pathname === CURRENT_SERVICE_PATH &&
+          (hasTeamsViewAccess(context) || hasServicesWorkspaceAccess(context))) ||
         (pathname === CURRENT_SERVICE_VIEW_PATH &&
           hasServicePlansViewAccess(context)) ||
         (hasTeamsViewAccess(context) &&

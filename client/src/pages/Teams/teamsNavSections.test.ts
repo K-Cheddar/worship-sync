@@ -77,13 +77,18 @@ describe("available Teams and Services sections", () => {
     expect(sections.some(({ routePath }) => routePath === "messages")).toBe(false);
   });
 
-  it("does not expose Teams sections until workspace access is established", () => {
+  it("shows only Services when Teams access is not established", () => {
     expect(
       getAvailableTeamsNavSections({
         hasTeamsWorkspaceAccess: false,
         hasBroadTeamsReadAccess: true,
         canViewServices: true,
       }),
-    ).toEqual([]);
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ routePath: "services" }),
+        expect.objectContaining({ routePath: "service-setup" }),
+      ]),
+    );
   });
 });

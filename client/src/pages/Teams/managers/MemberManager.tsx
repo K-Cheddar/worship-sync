@@ -204,7 +204,8 @@ const MemberManager = ({
    * (`createInvite`, `listChurchMembers` — both `requireAdminSession`). `canEdit`
    * includes Teams editors, so gating those controls on it alone would show a
    * non-admin an invite that 403s and a picker that is always empty.
-   * Self-claim and unlink stay on `canEdit`: their endpoints take teams-edit.
+   * Account linking stays on `canEditAllTeams`: scoped Team managers do not
+   * receive account-linking authority.
    */
   const isChurchAdmin = context?.role === "admin";
   const [isUpdatingLink, setIsUpdatingLink] = useState(false);
@@ -622,7 +623,7 @@ const MemberManager = ({
     action: "link" | "unlink",
     targetUserId?: string,
   ) => {
-    if (!canEdit || !canEditMember(member) || isUpdatingLink) return;
+    if (!canEditAllTeams || !canEditMember(member) || isUpdatingLink) return;
     setIsUpdatingLink(true);
     try {
       if (action === "link") {
@@ -1324,7 +1325,7 @@ const MemberManager = ({
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet
             while creating one. */}
-          {editing ? (
+          {editing && canEditAllTeams ? (
             <div className="flex flex-col gap-2 text-sm">
               <div className="flex flex-wrap items-center gap-3">
                 {/* Naming the other account would need it on the roster payload;
@@ -1442,7 +1443,7 @@ const MemberManager = ({
                   <Camera aria-hidden="true" size={22} />
                 </div>
               )}
-              <div className="flex flex-wrap gap-2">
+              {canEditAllTeams ? <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   variant="tertiary"
@@ -1471,8 +1472,8 @@ const MemberManager = ({
                     Remove
                   </Button>
                 ) : null}
-              </div>
-              <input
+              </div> : null}
+              {canEditAllTeams ? <input
                 ref={profileImageInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -1483,7 +1484,7 @@ const MemberManager = ({
                   event.target.value = "";
                   if (file) void uploadProfileImage(file);
                 }}
-              />
+              /> : null}
             </div>
           </div>
           <BirthDateField

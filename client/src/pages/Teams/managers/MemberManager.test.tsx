@@ -924,6 +924,23 @@ describe("MemberManager account linking", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not expose profile image or account-link controls to a scoped manager", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: linkableMembers(),
+      userId: "user-1",
+      role: "member",
+      canEditAllTeams: false,
+    });
+
+    await openMember(user, /Someone Else/);
+
+    expect(screen.queryByRole("button", { name: /This is me/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Unlink/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Choose image|Replace image/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove/i })).not.toBeInTheDocument();
+  });
+
   it("hides 'This is me' once the account has claimed another member", async () => {
     const user = userEvent.setup();
     // An account may hold at most one member per church, so the server would

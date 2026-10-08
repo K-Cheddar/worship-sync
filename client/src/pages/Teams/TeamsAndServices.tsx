@@ -327,8 +327,8 @@ const TeamsNoAccess = () => (
 );
 
 const TeamsAndServicesContent = () => {
-  const { accessDenied } = useTeamsPage();
-  return accessDenied ? <TeamsNoAccess /> : <TeamsAndServicesRoutes />;
+  const { accessDenied, canViewServices } = useTeamsPage();
+  return accessDenied && !canViewServices ? <TeamsNoAccess /> : <TeamsAndServicesRoutes />;
 };
 
 const TeamsAndServicesPage = () => (

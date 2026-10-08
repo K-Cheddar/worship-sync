@@ -559,14 +559,14 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
 
   it.each([
     ["admin", { ...loggedInHumanBootstrap, permissions: { teams: "none" } }, true],
-    ["Teams viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "view" } }, true],
+    ["Teams viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "view" } }, false],
     ["Teams editor", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "edit" } }, true],
-    ["Services editor", { ...loggedInHumanBootstrap, role: "member", permissions: { services: "edit" } }, true],
+    ["Services editor", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "none", services: "edit" } }, false],
     ["scoped manager", { ...loggedInHumanBootstrap, role: "member", permissions: { teamScopes: { worship: "edit" } } }, false],
     ["membership reader", { ...loggedInHumanBootstrap, role: "member", appAccess: "member", permissions: { teams: "none" } }, false],
     ["Services viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { services: "view" } }, false],
-    ["booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" }, device: { ...loggedInWorkstationBootstrap.device, serviceWorkspaceAccess: true } }, true],
-    ["normalized booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" } }, true],
+    ["booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" }, device: { ...loggedInWorkstationBootstrap.device, serviceWorkspaceAccess: true } }, false],
+    ["normalized booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" } }, false],
     ["default workstation", { ...loggedInWorkstationBootstrap, permissions: { services: "view" } }, false],
     ["display", loggedInDisplayBootstrap, false],
   ])("gates full Teams EventSource access for %s", async (_name, bootstrap, allowed) => {
@@ -607,10 +607,10 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(screen.getByTestId("broad-teams-read")).toHaveTextContent("false");
   });
 
-  it("keeps broad Teams read separate from transport eligibility", async () => {
+  it("keeps broad Teams edit separate from transport eligibility", async () => {
     const displayWithBroadPermission = {
       ...loggedInDisplayBootstrap,
-      permissions: { teams: "view" },
+      permissions: { teams: "edit" },
     };
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
       displayWithBroadPermission,

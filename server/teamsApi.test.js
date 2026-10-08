@@ -1631,7 +1631,7 @@ test("generated schedule ensure rejects inactive services and mismatched groups"
   assert.equal(wrongWeekday.statusCode, 400);
 });
 
-test("Services edit can change service plans but not team records", async (t) => {
+test("Services edit can change service plans without receiving Teams data", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("services_edit_permission");
   const servicesEditor = await createHumanContext(
@@ -1649,7 +1649,7 @@ test("Services edit can change service plans but not team records", async (t) =>
   const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context: servicesEditor,
   });
-  assert.equal(bootstrap.statusCode, 200);
+  assert.equal(bootstrap.statusCode, 403);
 
   const saved = await callHandler(authHandlers.saveServicePlan, {
     context: servicesEditor,
@@ -1668,6 +1668,18 @@ test("Services edit can change service plans but not team records", async (t) =>
     body: { name: "Blocked Team", memberIds: [] },
   });
   assert.equal(teamWrite.statusCode, 403);
+
+  const teamsEditor = await createHumanContext("teams_edit_no_services", {
+    churchId: adminContext.churchId,
+    role: "member",
+    permissions: { teams: "edit", services: "none" },
+  });
+  const deniedPlanWrite = await callHandler(authHandlers.saveServicePlan, {
+    context: teamsEditor,
+    params: { planKey: "teams-editor@2026-08-02" },
+    body: { serviceId: "service-1", date: "2026-08-02", sections: [] },
+  });
+  assert.equal(deniedPlanWrite.statusCode, 403);
 });
 
 test("removing admin access clears implicit Teams edit permission", async (t) => {
@@ -4750,6 +4762,18 @@ test("service plan assignments expose only the selected plan's serving roster", 
   assert.deepEqual(result.payload.assignments, [
     { teamName: "Worship", role: "Keys", name: "Avery Stone" },
   ]);
+
+  const scopedManager = await createHumanContext("service_plan_assignments_scoped", {
+    churchId: context.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [teamId]: "edit" } },
+  });
+  const scopedResult = await callHandler(authHandlers.getServicePlanAssignments, {
+    context: scopedManager,
+    params: { planKey },
+  });
+  assert.equal(scopedResult.statusCode, 200);
+  assert.deepEqual(scopedResult.payload.assignments, []);
 });
 
 test("schedule assignment updates broadcast the new schedule over SSE", async (t) => {
@@ -14255,7 +14279,7 @@ const assertSafeReadSchedule = (schedule) => {
   assert.ok(schedule.assignments);
 };
 
-test("effective Teams reads preserve full bootstrap for admin, global editor/viewer, and legacy Services editor", async (t) => {
+test("effective Teams reads keep private projections to Teams editors", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("global");
   const full = await callHandler(authHandlers.getTeamsBootstrap, {
@@ -14271,12 +14295,7 @@ test("effective Teams reads preserve full bootstrap for admin, global editor/vie
   assert.ok(full.payload.smsEligibilityByMemberId);
   assert.equal(full.payload.editableMemberIds, undefined);
   assert.equal(full.payload.members[0].email, "private@example.com");
-  for (const permissions of [
-    { teams: "edit" },
-    { teams: "view" },
-    // Explicit temporary compatibility; Services is absent from the pure resolver.
-    { teams: "none", services: "edit" },
-  ]) {
+  for (const permissions of [{ teams: "edit" }]) {
     const context = await createHumanContext(
       `effective_global_${permissions.teams}_${permissions.services || "none"}`,
       {
@@ -14321,6 +14340,31 @@ test("effective Teams reads preserve full bootstrap for admin, global editor/vie
   assert.equal((await callHandler(authHandlers.getTeamsBootstrap, {
     context: servicesViewer,
   })).statusCode, 403);
+  const servicesEditor = await createHumanContext("effective_services_editor", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "none", services: "edit" },
+  });
+  assert.equal((await callHandler(authHandlers.getTeamsBootstrap, {
+    context: servicesEditor,
+  })).statusCode, 403);
+  const teamsViewer = await createHumanContext("effective_teams_viewer", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: { teams: "view" },
+  });
+  const viewerBootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
+    context: teamsViewer,
+  });
+  assert.equal(viewerBootstrap.statusCode, 200);
+  assert.equal(viewerBootstrap.payload.teams.length, 3);
+  assert.equal(viewerBootstrap.payload.members[0].email, undefined);
+  assert.equal(viewerBootstrap.payload.members[0].phoneNumber, undefined);
+  assert.equal(viewerBootstrap.payload.intakeForms, undefined);
+  assert.equal(viewerBootstrap.payload.intakeSubmissions, undefined);
+  assert.equal(viewerBootstrap.payload.intakeRecipients, undefined);
+  assert.equal(viewerBootstrap.payload.smsEligibilityByMemberId, undefined);
+  assert.deepEqual(viewerBootstrap.payload.editableMemberIds, []);
 });
 
 test("effective Teams reads preserve booth bootstrap and reject a default workstation", async (t) => {
@@ -14358,7 +14402,16 @@ test("effective Teams reads preserve booth bootstrap and reject a default workst
       context,
     });
     assert.equal(result.statusCode, serviceWorkspaceAccess ? 200 : 403);
-    if (serviceWorkspaceAccess) assert.deepEqual(result.payload, full.payload);
+    if (serviceWorkspaceAccess) {
+      assert.equal(result.payload.teams.length, 3);
+      assert.equal(result.payload.members[0].email, undefined);
+      assert.equal(result.payload.intakeForms, undefined);
+      assert.equal(result.payload.smsEligibilityByMemberId, undefined);
+      result.payload.schedules.forEach((schedule) => {
+        assert.equal(schedule.guests[0].email, undefined);
+        assert.equal(schedule.responses, undefined);
+      });
+    }
     const detail = await callHandler(authHandlers.getTeamScheduleDetail, {
       context,
       params: { scheduleId: `${fixture.ids.worship}_schedule` },
@@ -14417,7 +14470,7 @@ test("effective Teams reads scope managers and reuse canonical member/team queri
   const managed = result.payload.members.find(
     (member) => member.memberId === fixture.memberId,
   );
-  assert.equal(managed.email, "private@example.com");
+  assert.equal(managed.email, undefined);
   assert.equal(managed.userId, undefined);
   assert.equal(managed.invitedAt, undefined);
   const shared = result.payload.members.find(
@@ -14709,9 +14762,9 @@ test("broad Teams read guard preserves global SSE access and denies scoped/roste
   const fixture = await seedEffectiveTeamsReadFixture("broad_guard");
   const cases = [
     ["admin", "admin", {}, true],
-    ["viewer", "member", { teams: "view" }, true],
+    ["viewer", "member", { teams: "view" }, false],
     ["editor", "member", { teams: "edit" }, true],
-    ["services_editor", "member", { services: "edit" }, true],
+    ["services_editor", "member", { services: "edit" }, false],
     ["services_viewer", "member", { services: "view" }, false],
     ["scoped", "member", { teamScopes: { [fixture.ids.worship]: "edit" } }, false],
     ["roster", "member", { teams: "none" }, false],
@@ -14735,7 +14788,7 @@ test("broad Teams read guard preserves global SSE access and denies scoped/roste
   await assert.rejects(requireBroadTeamsViewSession(createReq(), fixture.churchId), { statusCode: 401 });
 });
 
-test("broad Teams read guard retains booth SSE access and excludes default workstations", async (t) => {
+test("broad Teams stream guard excludes view-only booth and default workstations", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const owner = await createAdminContext("broad_guard_booth");
   for (const serviceWorkspaceAccess of [true, false]) {
@@ -14751,11 +14804,7 @@ test("broad Teams read guard retains booth SSE access and excludes default works
     }), redeemed);
     assert.equal(redeemed.statusCode, 200);
     const req = createReq({ session });
-    if (serviceWorkspaceAccess) {
-      assert.equal((await requireBroadTeamsViewSession(req, owner.churchId)).sessionKind, "workstation");
-    } else {
-      await assert.rejects(requireBroadTeamsViewSession(req, owner.churchId), { statusCode: 403 });
-    }
+    await assert.rejects(requireBroadTeamsViewSession(req, owner.churchId), { statusCode: 403 });
     await assert.rejects(requireBroadTeamsViewSession(req, "another-church"), { statusCode: 403 });
   }
 });
@@ -14770,9 +14819,9 @@ test("intake SMS history requires broad access even for a managed team's form", 
   }, { merge: false });
   for (const [name, role, permissions, allowed] of [
     ["admin", "admin", {}, true],
-    ["viewer", "member", { teams: "view" }, true],
+    ["viewer", "member", { teams: "view" }, false],
     ["editor", "member", { teams: "edit" }, true],
-    ["services_editor", "member", { services: "edit" }, true],
+    ["services_editor", "member", { services: "edit" }, false],
     ["scoped", "member", { teamScopes: { [fixture.ids.worship]: "edit" } }, false],
     ["roster", "member", { teams: "none" }, false],
   ]) {
@@ -14796,13 +14845,14 @@ test("intake SMS history requires broad access even for a managed team's form", 
   }
 });
 
-test("scoped and roster bootstrap skip intake and SMS consent reads while broad bootstrap retains them", async (t) => {
+test("only Teams editors load intake and SMS consent data during bootstrap", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("bootstrap_admin_reads");
   // A valid US number exercises the actual per-phone consent read.
   await setDoc(COLLECTIONS.teamRosterMembers, fixture.memberId, { phoneNumber: "+12125550123" }, { merge: true });
   for (const [name, permissions, administrative] of [
-    ["global", { teams: "view" }, true],
+    ["global_view", { teams: "view" }, false],
+    ["global_edit", { teams: "edit" }, true],
     ["scoped", { teamScopes: { [fixture.ids.worship]: "edit" } }, false],
     ["roster", { teams: "none" }, false],
   ]) {
@@ -15293,6 +15343,7 @@ test("scoped managers can mutate one Team roster without editing shared member r
   const addSarah = await run(authHandlers.addTeamRosterMember, manager, { memberId: linkedSarahId });
   assert.equal(addSarah.statusCode, 200);
   assert.equal(addSarah.payload.member.email, undefined);
+  assert.equal(addSarah.payload.member.phoneNumber, undefined);
   assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, linkedSarahId)).positionIds, [avPositionId]);
   assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, linkedSarahId)).teamMemberships, {});
   const accessAfterAdd = await callHandler(authHandlers.getTeamsBootstrap, { context: linkedSarah });
@@ -15353,16 +15404,20 @@ test("scoped managers can mutate one Team roster without editing shared member r
     churchId: fixture.churchId, role: "member",
     permissions: { teams: "none", teamScopes: { [fixture.ids.worship]: "edit", [fixture.ids.av]: "edit" } },
   });
+  const sharedBeforeScopedPrivateEdit = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
   const allowedFullUpdate = await callHandler(authHandlers.updateTeamRosterMember, {
     context: bothTeamManager,
     params: { memberId: fixture.sharedId },
     body: {
-      firstName: "Shared", lastName: "Member", phoneNumber: "+19545551234", notes: "updated by both-team manager",
+      firstName: "Shared", lastName: "Member", notes: "updated by both-team manager",
       positionIds: [`${fixture.ids.worship}_position`], desiredPositionIds: [], blockoutDates: [],
       teamMemberships: {}, qualifications: [],
     },
   });
-  assert.equal(allowedFullUpdate.statusCode, 200);
+  assert.equal(allowedFullUpdate.statusCode, 403, JSON.stringify(allowedFullUpdate.payload));
+  const afterScopedPrivateEdit = await getDoc(COLLECTIONS.teamRosterMembers, fixture.sharedId);
+  assert.equal(afterScopedPrivateEdit.phoneNumber, sharedBeforeScopedPrivateEdit.phoneNumber);
+  assert.equal(afterScopedPrivateEdit.notes, sharedBeforeScopedPrivateEdit.notes);
 
   const desiredInterestId = `${fixture.churchId}_desired_av_interest`;
   await setDoc(COLLECTIONS.teamRosterMembers, desiredInterestId, {
@@ -15420,6 +15475,53 @@ test("scoped managers can mutate one Team roster without editing shared member r
     body: { ...desiredInterestBody, firstName: "Taylor", lastName: "Injection" },
   });
   assert.equal(deniedInjection.statusCode, 403, JSON.stringify(deniedInjection.payload));
+
+  const scopedOnlyId = `${fixture.churchId}_scoped_only`;
+  await setDoc(COLLECTIONS.teamRosterMembers, scopedOnlyId, {
+    memberId: scopedOnlyId,
+    churchId: fixture.churchId,
+    firstName: "Scoped",
+    lastName: "Member",
+    email: "private@example.test",
+    phoneNumber: "+12125550123",
+    notes: "private note",
+    profileImageUrl: "https://images.example.test/member.jpg",
+    profileImagePublicId: "private/image-id",
+    positionIds: [`${fixture.ids.worship}_position`],
+    desiredPositionIds: [],
+    blockoutDates: [],
+    qualifications: [],
+    teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
+  }, { merge: false });
+  await setDoc(COLLECTIONS.teams, fixture.ids.worship, {
+    memberIds: [...new Set([...(await getDoc(COLLECTIONS.teams, fixture.ids.worship)).memberIds, scopedOnlyId])],
+  }, { merge: true });
+  const scopedBootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context: manager });
+  const scopedMember = scopedBootstrap.payload.members.find(({ memberId }) => memberId === scopedOnlyId);
+  assert.equal(scopedMember.email, undefined);
+  assert.equal(scopedMember.phoneNumber, undefined);
+  assert.equal(scopedMember.notes, undefined);
+  assert.equal(scopedMember.profileImagePublicId, undefined);
+  const scopedPrivateUpdate = await callHandler(authHandlers.updateTeamRosterMember, {
+    context: manager,
+    params: { memberId: scopedOnlyId },
+    body: {
+      firstName: "Scoped", lastName: "Member", email: "changed@example.com",
+      phoneNumber: "+12125550124", notes: "changed", positionIds: [`${fixture.ids.worship}_position`],
+      desiredPositionIds: [], blockoutDates: [], teamIds: [fixture.ids.worship],
+      teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } }, qualifications: [],
+    },
+  });
+  assert.equal(scopedPrivateUpdate.statusCode, 403, JSON.stringify(scopedPrivateUpdate.payload));
+  const linked = await callHandler(authHandlers.linkTeamRosterMember, {
+    context: manager, params: { memberId: scopedOnlyId }, body: {},
+  });
+  assert.equal(linked.statusCode, 403);
+  await setDoc(COLLECTIONS.teamRosterMembers, scopedOnlyId, { userId: "linked-user" }, { merge: true });
+  const unlinked = await callHandler(authHandlers.unlinkTeamRosterMember, {
+    context: manager, params: { memberId: scopedOnlyId },
+  });
+  assert.equal(unlinked.statusCode, 403);
 
   const allowedDesiredEdit = await callHandler(authHandlers.updateTeamRosterMember, {
     context: bothTeamManager,
@@ -15523,7 +15625,7 @@ test("archived member ownership is ignored, while unknown ownership fails closed
   assert.equal(bootstrap.statusCode, 200);
   assert.ok(bootstrap.payload.editableMemberIds.includes(memberId));
   const body = {
-    firstName: "Kevin", lastName: "Singer", email: "kevin-updated@example.test",
+    firstName: "Kevin", lastName: "Singer", email: "kevin@example.test",
     positionIds: [`${fixture.ids.worship}_position`], desiredPositionIds: [],
     blockoutDates: [], teamIds: [fixture.ids.worship],
     teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },

@@ -635,8 +635,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const canEditTeams = role === "admin" || permissions.teams === "edit";
-  // Teams edit remains a superset so existing editors keep service access.
-  const canEditServices = canEditTeams || permissions.services === "edit";
+  const canEditServices = role === "admin" || permissions.services === "edit";
   const canEditTeam = useCallback(
     (teamId: string) =>
       canEditTeams || permissions.teamScopes?.[teamId] === "edit",
@@ -651,14 +650,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     Object.keys(permissions.teamScopes || {}).length > 0;
   const canViewTeams =
     canEditTeams ||
-    canEditServices ||
     permissions.teams === "view" ||
     hasScopedTeamsAccess;
   const hasBroadTeamsReadAccess =
     role === "admin" ||
-    permissions.teams === "view" ||
-    permissions.teams === "edit" ||
-    (sessionKind === "human" && permissions.services === "edit");
+    permissions.teams === "edit";
   const canUseTeamsLiveSync =
     (sessionKind === "human" ||
       (sessionKind === "workstation" &&
@@ -666,7 +662,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           (permissions.services === "edit" &&
             (permissions.teams === "view" || permissions.teams === "edit"))))) &&
     hasBroadTeamsReadAccess;
-  const canViewServices = canViewTeams || permissions.services === "view";
+  const canViewServices =
+    canViewTeams ||
+    canEditServices ||
+    permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
