@@ -2222,10 +2222,12 @@ export const createTeamsAuthHandlers = ({
     return safe;
   };
 
-  // Service-plan readers without Teams access may read plan content, but they
-  // must not receive roster assignments embedded in a saved plan. This covers
-  // default paired workstations and human services:view readers. Booth
-  // workstations retain the existing Teams-backed plan behavior.
+  // Services editors may see the names assigned to a plan so they can work on
+  // its service content, even when they have no Teams workspace access. This
+  // is a narrow plan projection, not roster access: plan-only readers receive
+  // neither assignments in plan documents nor the separate assignments view.
+  // Teams viewers/editors and Services editors also receive the existing
+  // plan-related public team snapshot needed by the service viewer.
   const hasTeamsPlanAccess = (bootstrap) =>
     bootstrap?.role === "admin" ||
     bootstrap?.permissions?.teams === "view" ||
@@ -12259,6 +12261,10 @@ export const createTeamsAuthHandlers = ({
     async updateTeamRosterMember(req, res) {
       try {
         await assertCsrf(req);
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        if (admin.role !== "admin" && admin.permissions?.teams !== "edit") {
+          throw httpError(403, "Church-wide Teams edit access is required.");
+        }
         const existing = await assertTeamEntityInChurch(
           "member",
           req.params.memberId,
@@ -12273,47 +12279,6 @@ export const createTeamsAuthHandlers = ({
           req.body,
           req.params.churchId,
         );
-        const admin = await requireTeamsEditForTeamIds(
-          req,
-          req.params.churchId,
-          [
-            ...(await collectMemberTeamIds(existing, req.params.churchId)),
-            ...(await collectMemberTeamIds(payload, req.params.churchId)),
-            // Joining a team is an edit to that team's roster, so hold the
-            // request to the same bar as editing the team itself.
-            ...(requestedTeamIds || []),
-          ],
-        );
-        const isGlobalTeamsEditor =
-          admin.role === "admin" || admin.permissions?.teams === "edit";
-        if (!isGlobalTeamsEditor) {
-          // Scoped managers edit Team-owned slices through this endpoint only
-          // when all of the member's Teams are within their edit scopes. They
-          // still cannot change church-wide identity, contact, privacy, or
-          // availability fields through the generic member editor.
-          const unchanged = (field, currentValue = existing[field]) =>
-            isDeepStrictEqual(payload[field], currentValue);
-          const restrictedFields = [
-            ["firstName", existing.firstName],
-            ["lastName", existing.lastName],
-            ["title", existing.title],
-            ["birthDate", existing.birthDate],
-            ["isMinor", isMinorFromBirthDate(existing.birthDate) ?? normalizeManualMinorStatus(existing.isMinor) ?? false],
-            ["servingFrequency", normalizeTeamMemberServingFrequency(existing.servingFrequency)],
-            ["blockoutDates", normalizeBlockoutDates(existing.blockoutDates)],
-            ["notes", normalizeLongText(existing.notes)],
-            ["profileImageUrl", existing.profileImageUrl],
-            ["profileImagePublicId", existing.profileImagePublicId],
-            ["email", existing.email],
-            ["phoneNumber", existing.phoneNumber],
-            ["recurringAvailability", existing.recurringAvailability],
-            ["serviceAvailability", existing.serviceAvailability],
-          ];
-          if (restrictedFields.some(([field, value]) =>
-            Object.hasOwn(payload, field) && !unchanged(field, value))) {
-            throw httpError(403, "Church-wide member fields require global Teams edit access.");
-          }
-        }
         const saved = await upsertTeamEntity({
           kind: "member",
           churchId: req.params.churchId,

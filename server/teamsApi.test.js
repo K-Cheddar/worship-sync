@@ -7769,6 +7769,31 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(viewerRead.payload.servicePlan.publicTokenHash, undefined);
   assert.equal(viewerRead.payload.publicUrls, undefined);
 
+  // Services Edit deliberately includes the assigned names needed to work on
+  // a service plan, even when Teams access is None. This stays a plan-scoped
+  // projection and must not turn into access to private roster fields.
+  const servicesEditorContext = await createHumanContext("service_plan_services_editor", {
+    churchId: context.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", services: "edit" },
+  });
+  const servicesEditorRead = await callHandler(authHandlers.getServicePlan, {
+    context: servicesEditorContext,
+    params: { planKey: viewerPlanKey },
+  });
+  assert.equal(servicesEditorRead.statusCode, 200);
+  const servicesEditorElement = servicesEditorRead.payload.servicePlan.sections[0].elements[0];
+  assert.equal(servicesEditorElement.assignees[0].name, "Avery Stone");
+  assert.equal(servicesEditorElement.assignees[0].memberId, "viewer-member");
+  const servicesEditorSerialized = JSON.stringify(servicesEditorRead.payload.servicePlan);
+  for (const privateRosterValue of [
+    "private@example.com",
+    "+15555550123",
+    "private roster data",
+  ]) {
+    assert.equal(servicesEditorSerialized.includes(privateRosterValue), false, privateRosterValue);
+  }
   const viewerPayload = await callHandler(authHandlers.getServicePlanViewer, {
     context: planOnlyViewerContext,
     params: { planKey: viewerPlanKey },
@@ -15424,6 +15449,9 @@ test("scoped managers can mutate one Team roster without editing shared member r
     memberId: desiredInterestId, churchId: fixture.churchId,
     firstName: "Kevin", lastName: "Interest", email: "kevin@example.test",
     phoneNumber: "+15555550199", notes: "private note",
+    userId: `${fixture.churchId}_kevin_user`, linkedAt: "2026-06-01T12:00:00.000Z",
+    recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+    serviceAvailability: { "2026-07-12": "unavailable" },
     positionIds: [`${fixture.ids.worship}_position`],
     desiredPositionIds: [avPositionId],
     teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
@@ -15436,6 +15464,9 @@ test("scoped managers can mutate one Team roster without editing shared member r
   const desiredInterestBody = {
     firstName: "Kevin", lastName: "Interest", email: "kevin@example.test",
     phoneNumber: "+15555550199", notes: "private note",
+    userId: `${fixture.churchId}_kevin_user`, linkedAt: "2026-06-01T12:00:00.000Z",
+    recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+    serviceAvailability: { "2026-07-12": "unavailable" },
     positionIds: [`${fixture.ids.worship}_position`],
     desiredPositionIds: [avPositionId], blockoutDates: [],
     teamIds: [fixture.ids.worship],
@@ -15528,7 +15559,22 @@ test("scoped managers can mutate one Team roster without editing shared member r
     params: { memberId: desiredInterestId },
     body: desiredInterestBody,
   });
-  assert.equal(allowedDesiredEdit.statusCode, 200, JSON.stringify(allowedDesiredEdit.payload));
+  // A manager with edit access to every associated Team still cannot use the
+  // generic full-member endpoint as a read path for unchanged private fields.
+  assert.equal(allowedDesiredEdit.statusCode, 403, JSON.stringify(allowedDesiredEdit.payload));
+  assert.equal(allowedDesiredEdit.payload.member, undefined);
+  const unchangedPrivateMember = await getDoc(COLLECTIONS.teamRosterMembers, desiredInterestId);
+  assert.equal(unchangedPrivateMember.email, "kevin@example.test");
+  assert.equal(unchangedPrivateMember.phoneNumber, "+15555550199");
+  assert.equal(unchangedPrivateMember.notes, "private note");
+  assert.equal(unchangedPrivateMember.userId, `${fixture.churchId}_kevin_user`);
+  assert.equal(unchangedPrivateMember.linkedAt, "2026-06-01T12:00:00.000Z");
+  assert.deepEqual(unchangedPrivateMember.recurringAvailability, {
+    weeksOfMonth: [2, 4], includeLastWeekOfMonth: false,
+  });
+  assert.deepEqual(unchangedPrivateMember.serviceAvailability, {
+    "2026-07-12": "unavailable",
+  });
   const bothTeamsBootstrap = await callHandler(authHandlers.getTeamsBootstrap, {
     context: bothTeamManager,
   });
@@ -15583,7 +15629,7 @@ test("scoped managers can mutate one Team roster without editing shared member r
   assert.equal((await run(authHandlers.addTeamRosterMember, manager, { memberId: davidId })).statusCode, 403);
 });
 
-test("archived member ownership is ignored, while unknown ownership fails closed", async (t) => {
+test("scoped managers cannot use generic member updates regardless of stored ownership shape", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const fixture = await seedEffectiveTeamsReadFixture("archived_member_ownership");
   const manager = await createHumanContext("archived_member_ownership_manager", {
@@ -15634,7 +15680,8 @@ test("archived member ownership is ignored, while unknown ownership fails closed
   const allowed = await callHandler(authHandlers.updateTeamRosterMember, {
     context: manager, params: { memberId }, body,
   });
-  assert.equal(allowed.statusCode, 200, JSON.stringify(allowed.payload));
+  assert.equal(allowed.statusCode, 403, JSON.stringify(allowed.payload));
+  assert.equal(allowed.payload.member, undefined);
 
   await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
     teamMemberships: { "unknown-team": { teamId: "unknown-team" } },
@@ -15642,7 +15689,7 @@ test("archived member ownership is ignored, while unknown ownership fails closed
   const malformed = await callHandler(authHandlers.updateTeamRosterMember, {
     context: manager, params: { memberId }, body,
   });
-  assert.equal(malformed.statusCode, 409, JSON.stringify(malformed.payload));
+  assert.equal(malformed.statusCode, 403, JSON.stringify(malformed.payload));
 
   await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
     teamMemberships: { [fixture.ids.worship]: "malformed membership" },
@@ -15650,7 +15697,7 @@ test("archived member ownership is ignored, while unknown ownership fails closed
   const malformedMembership = await callHandler(authHandlers.updateTeamRosterMember, {
     context: manager, params: { memberId }, body,
   });
-  assert.equal(malformedMembership.statusCode, 409, JSON.stringify(malformedMembership.payload));
+  assert.equal(malformedMembership.statusCode, 403, JSON.stringify(malformedMembership.payload));
 
   await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
     teamMemberships: { [fixture.ids.worship]: { teamId: fixture.ids.worship } },
@@ -15659,7 +15706,7 @@ test("archived member ownership is ignored, while unknown ownership fails closed
   const malformedDesiredPositions = await callHandler(authHandlers.updateTeamRosterMember, {
     context: manager, params: { memberId }, body,
   });
-  assert.equal(malformedDesiredPositions.statusCode, 409, JSON.stringify(malformedDesiredPositions.payload));
+  assert.equal(malformedDesiredPositions.statusCode, 403, JSON.stringify(malformedDesiredPositions.payload));
 });
 
 test("team profile reads expose only the authorized shared-member slice", async (t) => {

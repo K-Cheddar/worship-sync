@@ -100,6 +100,34 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
+  it("allows Services Edit to open the read-only service viewer without Controller or Teams access", () => {
+    for (const sessionKind of ["human", "workstation"] as const) {
+      expect(
+        isRouteAllowedForSession("/current-service/view", {
+          sessionKind,
+          loginState: "success",
+          access: "none",
+          controllerAccess: "none",
+          permissions: { teams: "none", services: "edit" },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("continues to deny the service viewer without Teams or Services access", () => {
+    for (const sessionKind of ["human", "workstation"] as const) {
+      expect(
+        isRouteAllowedForSession("/current-service/view", {
+          sessionKind,
+          loginState: "success",
+          access: "none",
+          controllerAccess: "none",
+          permissions: { teams: "none", services: "none" },
+        }),
+      ).toBe(false);
+    }
+  });
+
   it("blocks the read-only current service viewer without service-plan access", () => {
     expect(
       isRouteAllowedForSession("/current-service/view", {

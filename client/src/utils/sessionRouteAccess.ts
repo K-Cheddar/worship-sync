@@ -173,7 +173,8 @@ const hasServicesWorkspaceAccess = (context: RouteSessionContext) =>
 
 const hasServicePlansViewAccess = (context: RouteSessionContext) =>
   hasTeamsViewAccess(context) ||
-  context.permissions?.services === "view";
+  context.permissions?.services === "view" ||
+  context.permissions?.services === "edit";
 
 export const isRouteAllowedForSession = (
   pathname: string,
