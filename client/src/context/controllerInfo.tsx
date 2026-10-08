@@ -109,6 +109,26 @@ export const setGlobalContentDatabase = (
   setActiveContentDatabase(owner, databaseInstance);
 };
 
+const cleanupMaintenanceRuns = new WeakMap<PouchDB.Database, { lastStartedAt: number; running?: Promise<void> }>();
+const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) => {
+  const state = cleanupMaintenanceRuns.get(db) ?? { lastStartedAt: 0 };
+  cleanupMaintenanceRuns.set(db, state);
+  if (state.running || (!force && Date.now() - state.lastStartedAt < 30_000)) return;
+  state.lastStartedAt = Date.now();
+  state.running = import("../utils/songV2Writer")
+    .then(({ reconcilePendingSongV2Cleanup }) => reconcilePendingSongV2Cleanup(db, 20))
+    .then((result) => {
+      if (result.quarantined.length) {
+        console.warn("Song cleanup records were quarantined after their target revisions changed:", result.quarantined);
+      }
+      if (result.cleanupErrors.length) {
+        console.error("Song cleanup maintenance left records for a later retry:", result.cleanupErrors);
+      }
+    })
+    .catch((error) => console.error("Could not run song cleanup maintenance:", error))
+    .finally(() => { state.running = undefined; });
+};
+
 const DEMO_DATABASE_KEY = "demo";
 const GUEST_DATABASE_NAME = "worship-sync-demo-guest";
 
@@ -276,6 +296,10 @@ const ControllerInfoProvider = ({ children }: any) => {
               updater.current.dispatchEvent(
                 new CustomEvent("update", { detail: event.change.docs })
               );
+              if ((event.change.docs as Array<{ docType?: string }> | undefined)
+                ?.some((doc) => doc.docType === "song-v2-cleanup")) {
+                scheduleSongV2CleanupMaintenance(localDb);
+              }
             }
           })
           .on("active", () => {
@@ -526,6 +550,7 @@ const ControllerInfoProvider = ({ children }: any) => {
             databaseKey: broadcastDatabaseKey,
             churchId: globalFireDbInfo.churchId || "",
           });
+          scheduleSongV2CleanupMaintenance(localDb, true);
           if (broadcastDatabaseKey) {
             updateGlobalBroadcast(broadcastDatabaseKey);
           }
@@ -634,6 +659,7 @@ const ControllerInfoProvider = ({ children }: any) => {
               databaseKey: activeDatabaseKey,
               churchId: globalFireDbInfo.churchId || "",
             });
+            scheduleSongV2CleanupMaintenance(localDb, true);
             if (broadcastDatabaseKey) {
               updateGlobalBroadcast(broadcastDatabaseKey);
             }

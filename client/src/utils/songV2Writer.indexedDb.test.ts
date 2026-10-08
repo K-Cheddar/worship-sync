@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import type { DBItem } from "../types";
 import { createSong, deleteSong, loadSong, loadSongV2Snapshot, saveSong, songToLibraryProjection, SongV2DeletedError } from "./songPersistence";
-import { createSongV2, reconcileSongV2Orphans, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
+import { createSongV2, persistSongV2CleanupErrors, reconcilePendingSongV2Cleanup, reconcileSongV2Orphans, saveSongV2, saveSongV2FromBaseline } from "./songV2Writer";
 import { persistLocalImageCloudCopy } from "./localImageAssets";
 
 const source = (): DBItem => ({
@@ -486,9 +486,36 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     expect((await db.allDocs({ include_docs: true })).rows.some(row => (row.doc as any)?.docType === "song-v2-cleanup")).toBe(true);
     failCleanup = false;
 
-    await loadSong(db, "real-song");
+    await reconcilePendingSongV2Cleanup(db, 20);
     await expect(db.get(candidate)).rejects.toMatchObject({ status: 404 });
     expect((await db.allDocs({ include_docs: true })).rows.some(row => (row.doc as any)?.docType === "song-v2-cleanup")).toBe(false);
+  });
+
+  it("quarantines stale entries so a bounded queue can reach later cleanup work", async () => {
+    await createSongV2(db, source());
+    const errors: { documentId: string; revision: string; cause: Error }[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      const documentId = `song-v2:slide:real-song:a:orphan-${index}`;
+      await db.put({
+        _id: documentId, docType: "song-v2-slide", songId: "real-song",
+        arrangementId: "a", id: `orphan-${index}`, boxes: [],
+      } as never);
+      errors.push({ documentId, revision: "stale-revision", cause: new Error("prior cleanup failed") });
+    }
+    await persistSongV2CleanupErrors(db, "real-song", errors);
+
+    const first = await reconcilePendingSongV2Cleanup(db, 20);
+    expect(first.quarantined).toHaveLength(20);
+    expect((await db.allDocs({
+      startkey: "song-v2:cleanup:", endkey: "song-v2:cleanup:\uffff", include_docs: true,
+    })).rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup")).toHaveLength(1);
+
+    const second = await reconcilePendingSongV2Cleanup(db, 20);
+    expect(second.quarantined).toHaveLength(1);
+    expect((await db.allDocs({
+      startkey: "song-v2:cleanup:", endkey: "song-v2:cleanup:\uffff", include_docs: true,
+    })).rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup")).toHaveLength(0);
+    expect((await db.allDocs({ include_docs: true })).rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup-quarantine")).toHaveLength(21);
   });
 
   it("prevents reconciliation from deleting an orphan adopted during its manifest check", async () => {
@@ -539,6 +566,32 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
     expect(tombstone).toEqual(expect.objectContaining({ docType: "song-v2-root", deletedAt: expect.any(String), arrangementIds: [] }));
     await expect(loadSong(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletedError);
     await expect(db.get(legacy._id)).rejects.toMatchObject({ status: 404 });
+    await expect(db.get("song-v2:arrangement:real-song:a")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("resumes failed tombstone cleanup without opening the deleted song", async () => {
+    const legacy = await createSong(db, source());
+    await createSongV2(db, legacy);
+    const childIds = new Set([
+      "song-v2:arrangement:real-song:a",
+      "song-v2:slide:real-song:a:s1",
+      "song-v2:slide:real-song:a:s2",
+      "song-v2:slide:real-song:a:s3",
+    ]);
+    const remove = db.remove.bind(db);
+    let failCleanup = true;
+    jest.spyOn(db, "remove").mockImplementation((async (idOrDoc: any, rev?: string) => {
+      const id = typeof idOrDoc === "string" ? idOrDoc : idOrDoc._id;
+      if (childIds.has(id) && failCleanup) throw new Error("temporary cleanup failure");
+      return (remove as any)(idOrDoc, rev);
+    }) as any);
+
+    await deleteSong(db, legacy._id);
+    failCleanup = false;
+    await expect(loadSong(db, legacy._id)).rejects.toBeInstanceOf(SongV2DeletedError);
+
+    const result = await reconcilePendingSongV2Cleanup(db, 20);
+    expect(result.deleted.sort()).toEqual([...childIds].sort());
     await expect(db.get("song-v2:arrangement:real-song:a")).rejects.toMatchObject({ status: 404 });
   });
 });

@@ -442,6 +442,8 @@ type SongV2CleanupQueueDocument = PouchDB.Core.Document<{
 const cleanupQueuePrefix = (songId: string) => `song-v2:cleanup:${encodeURIComponent(songId)}:`;
 const cleanupQueueId = (songId: string, documentId: string) =>
   `${cleanupQueuePrefix(songId)}${encodeURIComponent(documentId)}`;
+const cleanupQuarantineId = (songId: string, documentId: string, revision: string) =>
+  `song-v2:cleanup-quarantine:${encodeURIComponent(songId)}:${encodeURIComponent(documentId)}:${encodeURIComponent(revision)}`;
 
 /** Stores failed child removals durably; callers treat queue failures as diagnostics. */
 export async function persistSongV2CleanupErrors(
@@ -473,13 +475,14 @@ export async function reconcileSongV2CleanupQueue(
   db: PouchDB.Database,
   songId: string,
   limit = 20,
-): Promise<{ deleted: string[]; retired: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
+): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
   const prefix = cleanupQueuePrefix(songId);
   const rows = await db.allDocs<SongV2CleanupQueueDocument>({
     startkey: prefix, endkey: `${prefix}\uffff`, include_docs: true, limit: Math.max(0, limit),
   });
   const deleted: string[] = [];
   const retired: string[] = [];
+  const quarantined: string[] = [];
   const cleanupErrors: SongV2WriteProgress["cleanupErrors"] = [];
   let root: SongV2RootDocument | null = null;
   try { root = await db.get<SongV2RootDocument>(getSongV2RootDocId(songId)); }
@@ -532,13 +535,32 @@ export async function reconcileSongV2CleanupQueue(
       if (target.songId !== songId ||
         (target.docType !== "song-v2-arrangement" && target.docType !== "song-v2-slide") ||
         target._rev !== queueDoc.revision) {
-        // A newer child revision may be in the middle of orphan adoption. Keep
-        // the record for inspection and never broaden the deletion capability.
-        cleanupErrors.push({
-          documentId: queueDoc.documentId,
-          revision: queueDoc.revision,
-          cause: new Error("Cleanup retained the child because its revision changed after the failed removal."),
-        });
+        // A newer child revision may be in the middle of orphan adoption.
+        // Quarantine the stale token and remove it from the active queue.
+        const reason = target.songId !== songId ||
+          (target.docType !== "song-v2-arrangement" && target.docType !== "song-v2-slide")
+          ? "target identity or document type changed"
+          : "target revision changed after the failed removal";
+        const quarantineId = cleanupQuarantineId(songId, queueDoc.documentId, queueDoc.revision);
+        try {
+          await db.put({
+            _id: quarantineId,
+            docType: "song-v2-cleanup-quarantine",
+            songId,
+            documentId: queueDoc.documentId,
+            failedRevision: queueDoc.revision,
+            currentRevision: target._rev,
+            reason,
+            quarantinedAt: new Date().toISOString(),
+          });
+        } catch (cause) {
+          if (!(typeof cause === "object" && cause !== null && "status" in cause && cause.status === 409)) throw cause;
+          const existing = await db.get(quarantineId) as { docType?: string; documentId?: string; failedRevision?: string };
+          if (existing.docType !== "song-v2-cleanup-quarantine" ||
+            existing.documentId !== queueDoc.documentId || existing.failedRevision !== queueDoc.revision) throw cause;
+        }
+        await db.remove(queueDoc._id, queueDoc._rev!);
+        quarantined.push(queueDoc.documentId);
         continue;
       }
       await db.remove(target._id, queueDoc.revision);
@@ -548,6 +570,40 @@ export async function reconcileSongV2CleanupQueue(
       cleanupErrors.push({ documentId: queueDoc.documentId, revision: queueDoc.revision, cause });
     }
   }
-  return { deleted, retired, cleanupErrors };
+  return { deleted, retired, quarantined, cleanupErrors };
+}
+
+/** Processes a bounded batch across all songs, including tombstoned songs. */
+export async function reconcilePendingSongV2Cleanup(
+  db: PouchDB.Database,
+  limit = 20,
+): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
+  const boundedLimit = Math.max(0, limit);
+  const rows = await db.allDocs<SongV2CleanupQueueDocument>({
+    startkey: "song-v2:cleanup:",
+    endkey: "song-v2:cleanup:\uffff",
+    include_docs: true,
+    limit: boundedLimit,
+  });
+  const countsBySong = new Map<string, number>();
+  for (const row of rows.rows) {
+    if (row.doc?.docType !== "song-v2-cleanup") continue;
+    countsBySong.set(row.doc.songId, (countsBySong.get(row.doc.songId) ?? 0) + 1);
+  }
+  const result = { deleted: [] as string[], retired: [] as string[], quarantined: [] as string[], cleanupErrors: [] as SongV2WriteProgress["cleanupErrors"] };
+  for (const [songId, count] of countsBySong) {
+    try {
+      const songResult = await reconcileSongV2CleanupQueue(db, songId, count);
+      result.deleted.push(...songResult.deleted);
+      result.retired.push(...songResult.retired);
+      result.quarantined.push(...songResult.quarantined);
+      result.cleanupErrors.push(...songResult.cleanupErrors);
+    } catch (cause) {
+      result.cleanupErrors.push(...rows.rows.flatMap(row => row.doc?.songId === songId
+        ? [{ documentId: row.doc.documentId, revision: row.doc.revision, cause }]
+        : []));
+    }
+  }
+  return result;
 }
 

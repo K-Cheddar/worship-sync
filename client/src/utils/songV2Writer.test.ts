@@ -300,8 +300,8 @@ describe("isolated Song Schema v2 writer", () => {
     failures.set(snapshot.slides[3]._id, cause);
     const result = await saveSongV2(db, snapshot, desired);
     expect(result.cleanupErrors).toEqual([
-      { documentId: snapshot.arrangements[1]._id, cause },
-      { documentId: snapshot.slides[3]._id, cause },
+      { documentId: snapshot.arrangements[1]._id, revision: snapshot.arrangements[1]._rev, cause },
+      { documentId: snapshot.slides[3]._id, revision: snapshot.slides[3]._rev, cause },
     ]);
     expect(result.deleted).toEqual([snapshot.slides[4]._id, snapshot.slides[5]._id]);
     expect(docs.has(snapshot.arrangements[1]._id)).toBe(true);
