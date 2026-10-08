@@ -513,6 +513,20 @@ export async function sweepMediaReferencesBeforeDelete(
     )
       continue;
 
+    if (doc.docType === "song-v2-root") {
+      const root = doc as Record<string, unknown>;
+      const background = typeof root.background === "string" ? root.background : "";
+      if (background && matchesDeleted(deletedIds, deletedUrls, undefined, background)) {
+        addIfChanged(root, { ...root, background: preferenceDefaultForItemType("song").background, updatedAt: new Date().toISOString() });
+      }
+      continue;
+    }
+    if (doc.docType === "song-v2-slide") {
+      const swept = sweepSlide(doc as unknown as ItemSlideType, preferenceDefaultForItemType("song"), deletedIds, deletedUrls, deletedVideoSourceIds);
+      addIfChanged(doc, { ...doc, ...swept, updatedAt: new Date().toISOString() });
+      continue;
+    }
+
     const dtype = doc.type as string | undefined;
     if (dtype && ITEM_TYPES.includes(dtype as ItemType)) {
       const item = doc as unknown as DBItem;
@@ -765,6 +779,21 @@ export async function replaceMediaReferencesForReplacement(
       isControllerMediaRouteFoldersDocId(id) ||
       isMediaLibraryStorageDoc(doc, id)
     ) {
+      continue;
+    }
+
+    if (doc.docType === "song-v2-root") {
+      if (mediaReferenceMatches(replacement.oldMedia, undefined, String(doc.background || ""))) {
+        addIfChanged(doc, { ...doc, background: replacement.newMedia.background });
+      }
+      continue;
+    }
+    if (doc.docType === "song-v2-slide") {
+      const nextSlide = replaceMediaReferencesInItem(
+        { type: "free", slides: [doc as unknown as ItemSlideType] },
+        replacement,
+      ).slides?.[0];
+      if (nextSlide) addIfChanged(doc, { ...doc, ...nextSlide });
       continue;
     }
 

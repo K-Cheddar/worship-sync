@@ -25,7 +25,7 @@ import {
 } from "../ItemDetailsModal/ItemDetailsModal";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
 
-type PersistSongPatch = ItemDetailsSavePayload & {
+type PersistSongPatch = Omit<ItemDetailsSavePayload, "name"> & { name?: string } & {
   songAudioPatch?: SongAudio | null;
 };
 
@@ -95,7 +95,7 @@ const ViewSongSectionsDrawer = ({
       }
 
       const existing = baselineSong ?? await loadSong(db, song._id);
-      const next: DBItem = { ...existing, name: patch.name };
+      const next: DBItem = { ...existing, name: patch.name ?? existing.name };
 
       if (patch.songMetadataPatch !== undefined) {
         if (patch.songMetadataPatch === null) {
@@ -208,7 +208,6 @@ const ViewSongSectionsDrawer = ({
       });
       try {
         await persistSongPatch({
-          name: song.name,
           songAudioPatch: audio,
         }, baselineSong);
       } catch (error) {
@@ -250,7 +249,7 @@ const ViewSongSectionsDrawer = ({
       ? baselineSong.songAudio ?? song.songAudio
       : song.songAudio;
     if (baselineSong.docType === "song-v2-root") {
-      await persistSongPatch({ name: baselineSong.name, songAudioPatch: null }, baselineSong);
+      await persistSongPatch({ songAudioPatch: null }, baselineSong);
       try {
         await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
       } catch (error) {
@@ -267,7 +266,6 @@ const ViewSongSectionsDrawer = ({
         }),
       clearMetadata: () =>
         persistSongPatch({
-          name: song.name,
           songAudioPatch: null,
         }),
     });

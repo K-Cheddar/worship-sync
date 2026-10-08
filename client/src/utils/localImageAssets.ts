@@ -12,6 +12,7 @@ import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import { isRecognizedImageFile } from "./mediaFileTypes";
 import { isMediaLibraryV2 } from "./mediaDocUtils";
+import { isPouchNotFoundError, loadSong, saveSong } from "./songPersistence";
 
 const DB_NAME = "worshipsync-local-assets";
 const DB_VERSION = 4;
@@ -1155,7 +1156,18 @@ export const persistLocalImageReferencePatch = async ({
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const current: DBItem = await db.get(itemId);
+      let current: DBItem;
+      try {
+        current = await db.get(itemId) as DBItem;
+      } catch (error) {
+        if (!isPouchNotFoundError(error)) throw error;
+        current = await loadSong(db, itemId);
+      }
+      if (current.type === "song" || current.docType === "song-v2-root") {
+        current = current.docType === "song-v2-root" ? current : await loadSong(db, itemId);
+        const patched = updateLocalImageReferenceInItem(current, assetId, patch);
+        return await saveSong(db, patched, current);
+      }
       const patched = updateLocalImageReferenceInItem(current, assetId, patch);
       const next = applyPouchAudit(
         current,
@@ -1188,7 +1200,18 @@ export const persistLocalImageCloudCopy = async ({
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const current: DBItem = await db.get(itemId);
+      let current: DBItem;
+      try {
+        current = await db.get(itemId) as DBItem;
+      } catch (error) {
+        if (!isPouchNotFoundError(error)) throw error;
+        current = await loadSong(db, itemId);
+      }
+      if (current.type === "song" || current.docType === "song-v2-root") {
+        current = current.docType === "song-v2-root" ? current : await loadSong(db, itemId);
+        const patched = attachCloudCopyToLocalImageItem(current, assetId, { mediaId, url });
+        return await saveSong(db, patched, current);
+      }
       const patched = attachCloudCopyToLocalImageItem(current, assetId, {
         mediaId,
         url,
@@ -1260,6 +1283,10 @@ export const cleanupOrphanedLocalImages = async ({
   ]);
   const referenced = new Set<string>();
   allDocs.rows.forEach((row) => {
+    const v2Slide = row.doc as { docType?: string; boxes?: ItemSlideType["boxes"] } | undefined;
+    if (v2Slide?.docType === "song-v2-slide") {
+      collectLocalImageAssetIds({ type: "free", slides: [{ boxes: v2Slide.boxes } as ItemSlideType] }).forEach((id) => referenced.add(id));
+    }
     const mediaItem = row.doc as (MediaType & { docType?: string }) | undefined;
     if (mediaItem?.docType === "mediaItem" && mediaItem.localImage?.id) {
       referenced.add(mediaItem.localImage.id);

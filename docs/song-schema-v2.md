@@ -15,11 +15,13 @@ use that field to identify complete v1 song documents. Hydrating a v2 root
 creates an application-facing song with `type: "song"` while retaining the
 root `docType` as its storage-version marker.
 
-Presence of a v2 root currently enables v2 reads. Interactive saves of an
-already-v2-backed song now use the targeted writer and require the editor's
-authored baseline. Normal whole-song v2 deletion remains guarded. No normal
-application flow creates v2 documents; migration, shadow roots, and dual writes
-are not enabled.
+Presence of an active v2 root enables v2 reads. Interactive saves of an
+already-v2-backed song use the targeted writer and require the editor's authored
+baseline. A v1 editor that remains open through root publication receives a
+recoverable version-transition conflict. A root with `deletedAt` is a retained
+tombstone: it suppresses a same-ID v1 predecessor and is excluded from library
+reads. Normal application flows still do not create v2 roots; migration,
+shadow roots, and dual writes are not enabled.
 
 The legacy song `_rev` and v2 root `_rev` belong to different physical
 documents. They must never be mixed: in particular, a v2 root revision cannot
@@ -50,9 +52,9 @@ legacy songs, or legacy cleanup.
 
 > A normal edit must touch only the physical documents whose durable content changed.
 
-Normal `createSong` remains v1 and `deleteSong` retains its v2 guard. Normal
-`saveSong` supports v1 and already-v2-backed songs; v2 saves require an authored
-baseline. Migration, root publication, and legacy cleanup remain out of scope.
+Normal `createSong` remains v1. `saveSong` supports v1 and already-v2-backed
+songs; v2 saves require an authored baseline. A legacy save checks for v2
+activation immediately before its write and rejects stale v1 drafts with a 409.
 A root is still absent from legacy `type === "song"` scans.
 
 - `loadSongV2Snapshot(db, songId)` returns `{ root, arrangements, slides,
@@ -191,13 +193,16 @@ root, arrangement, and slide fields stay absent. Persisted monitor layout is
 retained when supplied, or structurally recovered from legacy monitor clones;
 the writer never calculates a new layout with DOM measurement.
 
-### Deletion and the remaining cutover boundary
+### Deletion
 
-Physical whole-song v2 deletion is deliberately deferred. Normal delete still
-rejects v2-backed songs. Migration must first define how deletion behaves when
-v1 and v2 coexist, then implement root-first deactivation and child cleanup.
-Library discovery is now v2-aware as described below. This phase does not migrate,
-create v2 roots for legacy songs, dual-write, or delete legacy songs.
+Deleting a v2 song writes a root tombstone with an empty arrangement manifest
+first. The tombstone is the logical deletion point and remains in place so the
+retained v1 copy cannot become authoritative again. Arrangement and slide
+documents, followed by the legacy predecessor, are cleanup work; failures are
+reported and can be retried by calling `deleteSong` again. Ordinary save calls
+log child cleanup failures and accept an `onCleanupErrors` diagnostic callback.
+`reconcileSongV2Orphans` retries only named failed child removals after reading
+the current manifests and confirming those IDs remain unreferenced.
 
 ## Library discovery and lazy slides
 
@@ -231,11 +236,12 @@ library state. Active-controller refresh also exact-loads before applying or buf
 remote slide content, including slide-only changes. Resource, audio, matching, and
 lyrics viewing paths use projection metadata and formatted lyrics directly.
 
-Normal `createSong` remains v1 and whole-song v2 deletion remains guarded by
-`SongV2WriteNotEnabledError`. Audio replacement writes the new root pointer
-before deleting the previous object. V2 removal clears the pointer before
-external cleanup so a root conflict preserves the previous object. This phase
-does not migrate songs, publish roots, dual-write, or delete predecessors.
+Normal `createSong` remains v1. Explicit v2 deletion retains a root tombstone
+and cleans its children after the logical removal. Audio replacement writes the
+new root pointer before deleting the previous object. V2 removal clears the
+pointer before external cleanup so a root conflict preserves the previous
+object. This phase does not automatically migrate songs, publish roots, or
+dual-write.
 
 ## Interactive editing and conflict isolation
 

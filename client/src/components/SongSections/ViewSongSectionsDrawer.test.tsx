@@ -322,7 +322,7 @@ describe("ViewSongSectionsDrawer", () => {
     await waitFor(() => expect(operations).toEqual(["delete", "persist"]));
   });
   it("attaches and removes v2 audio through targeted root saves", async () => {
-    const baseline = { ...song, docType: "song-v2-root" as const };
+    const baseline = { ...song, name: "Fresh name from another device", docType: "song-v2-root" as const };
     const replacementAudio = { ...song.songAudio!, id: "replacement", key: "replacement.mp3" };
     const operations: string[] = [];
     jest.spyOn(songPersistence, "loadSong").mockResolvedValue(baseline);
@@ -335,12 +335,16 @@ describe("ViewSongSectionsDrawer", () => {
       operations.push("delete");
       return { success: true };
     });
-    renderDrawer({ drawerSong: baseline });
+    renderDrawer({ drawerSong: song });
     fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
     fireEvent.change(screen.getByLabelText("Choose MP3"), {
       target: { files: [new File([new Uint8Array([1])], "replacement.mp3", { type: "audio/mpeg" })] },
     });
     await waitFor(() => expect(songPersistence.saveSong).toHaveBeenCalledTimes(1));
+    expect(songPersistence.saveSong).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
+      name: "Fresh name from another device",
+      songAudio: replacementAudio,
+    }), baseline);
     expect(mockUploadSongAudio).toHaveBeenCalledTimes(1);
     expect(operations).toEqual(["persist", "delete"]);
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));

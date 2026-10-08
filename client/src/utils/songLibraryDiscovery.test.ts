@@ -56,6 +56,13 @@ describe("song library discovery", () => {
     expect(discoverSongLibrary([orphan, ...docs.slides]).songs).toEqual([]);
   });
 
+  it("keeps a deleted v2 tombstone authoritative over a stale v1 copy", () => {
+    const docs = fixture();
+    const v1 = { _id: docs.root.songId, type: "song", name: "Stale" } as DBItem;
+    docs.root.deletedAt = "2026-10-07T00:00:00.000Z";
+    expect(discoverSongLibrary([v1, docs.root, ...docs.arrangements])).toEqual({ songs: [], diagnostics: [] });
+  });
+
   it.each([false, true])("gives v2 authority independent of scan order (%s)", (reverse) => {
     const docs = fixture();
     const v1 = { _id: docs.root.songId, type: "song", name: "Stale", background: "stale" } as DBItem;

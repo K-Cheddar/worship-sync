@@ -211,6 +211,8 @@ export type SongV2RootDocument = SongV2AuditFields & {
   shouldSkipTitle?: boolean;
   selectedArrangement: number;
   arrangementIds: string[];
+  /** A retained tombstone prevents a legacy predecessor from becoming authoritative again. */
+  deletedAt?: string;
   background?: string;
   shouldSendTo?: ShouldSendTo;
   songMetadata?: SongMetadata;

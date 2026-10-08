@@ -39,6 +39,7 @@ export function discoverSongLibrary(documents: unknown[]): {
     } catch { /* Invalid encoding is reported by root validation below. */ }
     songs.delete(physicalSongId);
     songs.delete(root.songId);
+    if (root.deletedAt) continue;
     try {
       if (root._id !== getSongV2RootDocId(root.songId)) throw new Error("Invalid root identity");
       songs.set(root.songId, buildSongV2LibraryProjection(root, arrangements.get(root.songId) ?? []));
