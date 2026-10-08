@@ -31,7 +31,9 @@ const hasValidPriorConsentEvidence = (record) => {
   }
   // `source` was added to the existing web flow after some verified records
   // already existed. Keep those legacy OTP records valid for START.
-  if (source === "web_form" || !source) return Boolean(record.verifiedAt);
+  if (source === "web_form" || source === "invite_signup" || !source) {
+    return Boolean(record.verifiedAt);
+  }
   return false;
 };
 

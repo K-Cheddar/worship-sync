@@ -2793,7 +2793,13 @@ export const resendChurchInvite = async (churchId: string, inviteId: string) =>
   );
 
 export const fetchInvitePreview = async (token: string) =>
-  apiFetch<{ success: boolean; churchName?: string }>(
+  apiFetch<{
+    success: boolean;
+    churchName?: string;
+    smsInviteConsentEnabled?: boolean;
+    rosterPhoneNumber?: string;
+    smsConsentStatus?: "none" | "pending" | "opted_in" | "opted_out";
+  }>(
     `api/invites/preview?${new URLSearchParams({ token }).toString()}`,
     { method: "GET" },
   );
@@ -2801,6 +2807,51 @@ export const fetchInvitePreview = async (token: string) =>
 export const acceptInvite = async (body: JsonBody) =>
   apiFetch<{ success: boolean; email?: string; churchId?: string }>(
     "api/invites/accept",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export type InviteSmsConsentRequest = {
+  inviteToken: string;
+  idToken: string;
+  phoneNumber: string;
+  expectedRosterPhoneNumber: string;
+  consent: true;
+  challengeId: string;
+  cancellationToken: string;
+};
+
+export const submitInviteSmsConsent = async (
+  body: InviteSmsConsentRequest,
+) =>
+  apiFetchWithoutAuthRecovery<{
+    success: boolean;
+    outcome:
+      | "verification_required"
+      | "already_opted_in"
+      | "opted_out"
+      | "verification_pending";
+    challengeId?: string;
+    cancellationToken?: string;
+  }>("api/invites/sms-consent", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const verifyInviteSmsConsent = async (
+  body: {
+    inviteToken: string;
+    idToken: string;
+    phoneNumber: string;
+    expectedRosterPhoneNumber: string;
+    code: string;
+    challengeId: string;
+  },
+) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean }>(
+    "api/invites/sms-consent/verify",
     {
       method: "POST",
       body: JSON.stringify(body),

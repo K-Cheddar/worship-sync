@@ -1802,6 +1802,8 @@ app.delete(
 );
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);
+app.post("/api/invites/sms-consent", authHandlers.submitInviteSmsConsent);
+app.post("/api/invites/sms-consent/verify", authHandlers.verifyInviteSmsConsent);
 app.post(
   "/api/churches/:churchId/members/:userId/make-admin",
   authHandlers.makeAdmin,

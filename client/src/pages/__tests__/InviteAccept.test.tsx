@@ -8,6 +8,8 @@ import {
   fetchInvitePreview,
   getAuthBootstrap,
   logoutSession,
+  submitInviteSmsConsent,
+  verifyInviteSmsConsent,
 } from "../../api/auth";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { createMockGlobalContext } from "../../test/mocks";
@@ -24,6 +26,8 @@ const fetchInvitePreviewMock = jest.mocked(fetchInvitePreview);
 const createHumanSessionMock = jest.mocked(createHumanSession);
 const getAuthBootstrapMock = jest.mocked(getAuthBootstrap);
 const logoutSessionMock = jest.mocked(logoutSession);
+const submitInviteSmsConsentMock = jest.mocked(submitInviteSmsConsent);
+const verifyInviteSmsConsentMock = jest.mocked(verifyInviteSmsConsent);
 
 type MockFirebaseUser = {
   email: string;
@@ -53,6 +57,8 @@ jest.mock("../../api/auth", () => ({
   getAuthBootstrap: jest.fn(),
   logoutSession: jest.fn(),
   fetchInvitePreview: jest.fn(),
+  submitInviteSmsConsent: jest.fn(),
+  verifyInviteSmsConsent: jest.fn(),
 }));
 
 jest.mock("../../firebase/apps", () => ({
@@ -118,6 +124,8 @@ describe("InviteAccept", () => {
     createHumanSessionMock.mockReset();
     getAuthBootstrapMock.mockReset();
     logoutSessionMock.mockReset();
+    submitInviteSmsConsentMock.mockReset();
+    verifyInviteSmsConsentMock.mockReset();
     logoutSessionMock.mockResolvedValue({ success: true });
     createUserWithEmailAndPasswordMock.mockReset();
     signOutMock.mockClear();
@@ -136,6 +144,9 @@ describe("InviteAccept", () => {
       Promise.resolve({
         success: true,
         churchName: "Test Church",
+        smsInviteConsentEnabled: true,
+        rosterPhoneNumber: "+12125550123",
+        smsConsentStatus: "none",
       }),
     );
   });
@@ -521,5 +532,207 @@ describe("InviteAccept", () => {
     await waitFor(() => {
       expect(acceptInviteMock).toHaveBeenCalled();
     });
+  });
+
+  it("shows the linked phone and leaves SMS unchecked without starting a challenge", async () => {
+    renderPage();
+    expect(await screen.findByText("+12125550123")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /i agree to receive sms messages/i })).not.toBeChecked();
+    expect(screen.queryByLabelText(/mobile phone number/i)).not.toBeInTheDocument();
+    expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the same SMS choice for an existing account and accepts an already active number", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    setCurrentUser(signedInUser);
+    acceptInviteMock.mockResolvedValue({ success: true });
+    submitInviteSmsConsentMock.mockResolvedValue({
+      success: true,
+      outcome: "already_opted_in",
+    });
+    createHumanSessionMock.mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "existing-user-pending",
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+    await user.click(screen.getByRole("button", { name: /accept invite with this account/i }));
+
+    await waitFor(() => expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1));
+    expect(verifyInviteSmsConsentMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+    expect(acceptInviteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a new email account opt in and activates consent only after the OTP succeeds", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    createUserWithEmailAndPasswordMock.mockImplementation(async () => {
+      setCurrentUser(signedInUser);
+      return { user: signedInUser };
+    });
+    acceptInviteMock.mockResolvedValue({ success: true, churchId: "church-1" });
+    submitInviteSmsConsentMock.mockResolvedValue({
+      success: true,
+      outcome: "verification_required",
+      challengeId: "a".repeat(32),
+      cancellationToken: "b".repeat(43),
+    });
+    verifyInviteSmsConsentMock.mockResolvedValue({ success: true });
+    createHumanSessionMock.mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "sms-email-pending",
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+    await user.type(screen.getByLabelText(/email/i), "invited@example.com");
+    await user.type(screen.getByLabelText(/^name/i), "Invited User");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
+    await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
+
+    const codeInput = await screen.findByLabelText(/verification code/i);
+    expect(submitInviteSmsConsentMock).toHaveBeenCalledWith(expect.objectContaining({
+      inviteToken: "invite-token",
+      idToken: "firebase-id-token",
+      phoneNumber: "+12125550123",
+      expectedRosterPhoneNumber: "+12125550123",
+      consent: true,
+    }));
+    expect(createHumanSessionMock).not.toHaveBeenCalled();
+
+    await user.type(codeInput, "123456");
+    await user.click(screen.getByRole("button", { name: /verify phone/i }));
+    await waitFor(() => expect(verifyInviteSmsConsentMock).toHaveBeenCalledWith(expect.objectContaining({
+      inviteToken: "invite-token",
+      phoneNumber: "+12125550123",
+      code: "123456",
+      challengeId: "a".repeat(32),
+    })));
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+    expect(acceptInviteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["google", "microsoft"] as const)(
+    "%s signup shares the invitation SMS flow and can skip after choosing to opt in",
+    async (method) => {
+      const user = userEvent.setup();
+      const signedInUser: MockFirebaseUser = {
+        email: "invited@example.com",
+        getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+        delete: jest.fn(() => Promise.resolve()),
+      };
+      authenticateHumanWithFirebaseMock.mockImplementation(async () => {
+        setCurrentUser(signedInUser);
+        return { status: "signed-in" };
+      });
+      acceptInviteMock.mockResolvedValue({ success: true });
+      submitInviteSmsConsentMock.mockResolvedValue({
+        success: true,
+        outcome: "verification_required",
+        challengeId: "c".repeat(32),
+        cancellationToken: "d".repeat(43),
+      });
+      createHumanSessionMock.mockResolvedValue({
+        success: true,
+        requiresEmailCode: true,
+        pendingAuthId: `${method}-pending`,
+      });
+
+      renderPage();
+      await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+      await user.click(screen.getByRole("button", { name: new RegExp(`continue with ${method}`, "i") }));
+      await screen.findByLabelText(/verification code/i);
+      expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1);
+      await user.click(screen.getByRole("button", { name: /continue without sms/i }));
+      await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+      expect(verifyInviteSmsConsentMock).not.toHaveBeenCalled();
+      expect(acceptInviteMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("recovers a pending SMS step after refresh without accepting the invite again", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    setCurrentUser(signedInUser);
+    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
+    window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
+      accepted: true,
+      token: "invite-token",
+      acceptedAt: Date.now(),
+      smsConsentChecked: true,
+      smsVerification: {
+        phoneNumber: "+12125550123",
+        expectedRosterPhoneNumber: "+12125550123",
+        challengeId: "e".repeat(32),
+        cancellationToken: "f".repeat(43),
+      },
+    }));
+    verifyInviteSmsConsentMock.mockResolvedValue({ success: true });
+    createHumanSessionMock.mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "recovered-sms-pending",
+    });
+
+    renderPage({ initialEntry: "/invite" });
+    await user.type(await screen.findByLabelText(/verification code/i), "654321");
+    await user.click(screen.getByRole("button", { name: /verify phone/i }));
+    await waitFor(() => expect(acceptInviteMock).not.toHaveBeenCalled());
+    await waitFor(() => expect(verifyInviteSmsConsentMock).toHaveBeenCalledWith(expect.objectContaining({
+      challengeId: "e".repeat(32),
+      code: "654321",
+    })));
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+  });
+
+  it("keeps an accepted invite and new account when SMS delivery fails", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    createUserWithEmailAndPasswordMock.mockImplementation(async () => {
+      setCurrentUser(signedInUser);
+      return { user: signedInUser };
+    });
+    acceptInviteMock.mockResolvedValue({ success: true });
+    submitInviteSmsConsentMock.mockRejectedValue(new Error("SMS verification is unavailable."));
+    createHumanSessionMock.mockResolvedValue({
+      success: true,
+      requiresEmailCode: true,
+      pendingAuthId: "delivery-failure-pending",
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+    await user.type(screen.getByLabelText(/email/i), "invited@example.com");
+    await user.type(screen.getByLabelText(/^name/i), "Invited User");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
+    await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
+
+    expect(await screen.findByText(/sms verification is unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue without sms/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /continue without sms/i }));
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+    expect(acceptInviteMock).toHaveBeenCalledTimes(1);
+    expect(signedInUser.delete).not.toHaveBeenCalled();
   });
 });

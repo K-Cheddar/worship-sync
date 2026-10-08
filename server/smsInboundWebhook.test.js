@@ -92,6 +92,22 @@ test("START restores a prior web opt-in and HELP does not send an automatic repl
   assert.equal(h.docs.get(h.key("smsConsents", h.consentA)).status, "opted_in");
 });
 
+test("START restores a verified invitation signup after STOP", async () => {
+  const h = makeHarness();
+  h.docs.set(h.key("smsConsents", h.consentA), {
+    ...h.docs.get(h.key("smsConsents", h.consentA)),
+    source: "invite_signup",
+    inviteId: "invite-1",
+    signupOrigin: "church_invitation",
+  });
+  await h.invoke({ body: "STOP", sid: "SM_INVITE_STOP" });
+  await h.invoke({ body: "START", sid: "SM_INVITE_START" });
+  const restored = h.docs.get(h.key("smsConsents", h.consentA));
+  assert.equal(restored.status, "opted_in");
+  assert.equal(restored.optInAgainSource, "twilio_inbound");
+  assert.equal(restored.inviteId, "invite-1");
+});
+
 test("START restores prior verbal or signed consent after STOP without an OTP verifiedAt", async () => {
   for (const source of ["admin_verbal", "admin_signed_form"]) {
     const h = makeHarness();
