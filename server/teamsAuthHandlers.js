@@ -10467,15 +10467,38 @@ export const createTeamsAuthHandlers = ({
         let teamsCreated = 0;
         const referencedTeamKeys = new Set();
         if (type === "members") {
-          // Reject stale updates before creating any team dependencies. The
-          // member writer still performs its transactional stale check at the
+          // Reject stale updates and new-member duplicates before creating any
+          // team dependencies. The row writer repeats these checks at the
           // point of mutation to cover edits that race this preflight.
           approvedRows.forEach((approved) => {
-            if (invalidPreviewRows.has(Number(approved.row)) || approved.action !== "update") return;
-            const memberId = String(approved.recordId || approved.record?.memberId || "").trim();
-            const member = data.members.find((item) => item.memberId === memberId);
-            if (!member || member.archivedAt
-              || memberImportStateHash(member, data.teams, data.positions) !== approved.expectedStateHash) {
+            if (invalidPreviewRows.has(Number(approved.row))) return;
+            const record = approved.record || {};
+            if (approved.action === "update") {
+              const memberId = String(approved.recordId || record.memberId || "").trim();
+              const member = data.members.find((item) => item.memberId === memberId);
+              if (!member || member.archivedAt
+                || memberImportStateHash(member, data.teams, data.positions) !== approved.expectedStateHash) {
+                invalidPreviewRows.add(Number(approved.row));
+              }
+              return;
+            }
+            if (approved.action !== "create") return;
+            if (String(approved.recordId || record.memberId || "").trim()) return;
+            const importedEmail = normalizePortableMatchValue(record.email);
+            const importedPhone = String(record.phone || "").replace(/\D/g, "");
+            if (!importedEmail && !importedPhone) return;
+            const importKey = portableCreateKey(approved);
+            const alreadyCreated = data.members.some((member) => member._portableCreateKey === importKey);
+            const exactMatchExists = data.members.some((member) => !member.archivedAt
+              && normalizePortableMatchValue(member.firstName) === normalizePortableMatchValue(record.firstName)
+              && normalizePortableMatchValue(member.lastName) === normalizePortableMatchValue(record.lastName)
+              && (!importedEmail || normalizePortableMatchValue(member.email) === importedEmail)
+              && (!importedPhone || String(member.phoneNumber || "").replace(/\D/g, "") === importedPhone)
+              && ["title", "email", "phoneNumber", "notes", "servingFrequency"].every((field) => {
+                const importedField = field === "phoneNumber" ? record.phone : record[field];
+                return importedField === undefined || String(member[field] || "") === String(importedField || "");
+              }));
+            if (exactMatchExists && !alreadyCreated) {
               invalidPreviewRows.add(Number(approved.row));
             }
           });

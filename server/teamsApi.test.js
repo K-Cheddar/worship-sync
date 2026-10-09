@@ -14415,6 +14415,43 @@ test("stale member updates do not create imported team or position dependencies"
   assert.equal(bootstrap.payload.positions.some((item) => item.name === "New Position"), false);
 });
 
+test("new-member duplicates are rejected before imported team and position dependencies are created", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_import_create_conflict_no_dependencies");
+  const csv = "First Name,Last Name,Email,Teams,Positions\nSam,Singer,sam@example.com,New Team,New Position";
+  const teamActions = [{ sourceValue: "New Team", action: "create", name: "New Team" }];
+  const pendingTeamId = `portable-pending-team-${createHash("sha256").update(`${hashPortableCsv(csv)}\u0000new team`).digest("hex").slice(0, 32)}`;
+  const positionActions = [{ teamId: pendingTeamId, sourceValue: "New Position", action: "create", name: "New Position" }];
+  const preview = await previewMemberCsv(context, csv, { teamActions, positionActions });
+  const duplicate = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Sam", lastName: "Singer", email: "sam@example.com" },
+  });
+
+  const committed = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "members",
+      teamActions,
+      positionActions,
+      previewToken: preview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: preview.mapping,
+      approvedRows: preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({
+        row, action, recordId: matchedId || undefined, record, expectedStateHash,
+      })),
+    },
+  });
+
+  assert.equal(committed.payload.results[0].status, "failed");
+  assert.equal(committed.payload.results[0].code, "stale_preview");
+  assert.equal(committed.payload.status, "failed");
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(bootstrap.payload.members.some((item) => item.memberId === duplicate.payload.member.memberId), true);
+  assert.equal(bootstrap.payload.teams.some((item) => item.name === "New Team"), false);
+  assert.equal(bootstrap.payload.positions.some((item) => item.name === "New Position"), false);
+});
+
 test("member import retry resumes roster synchronization after a partial in-memory write", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("member_import_partial_retry");

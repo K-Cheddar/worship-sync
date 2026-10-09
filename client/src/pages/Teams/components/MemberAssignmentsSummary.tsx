@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MemberListAssignment } from "../memberListAssignments";
 import {
   Popover,
@@ -54,6 +54,7 @@ const getAssignmentDisplay = (assignments: MemberListAssignment[]) => {
   });
 
   return {
+    groups: [...groups.values()],
     visibleGroups,
     hiddenGroups,
     hiddenPositionCount: hiddenGroups.reduce(
@@ -96,8 +97,79 @@ export const MemberAssignmentsDetails = ({
   memberName,
 }: MemberAssignmentsDetailsProps) => {
   const [open, setOpen] = useState(false);
-  const { visibleGroups, hiddenGroups, hiddenPositionCount } =
-    getAssignmentDisplay(assignments);
+  const assignmentTextRef = useRef<HTMLSpanElement>(null);
+  const [truncatedPositionKeys, setTruncatedPositionKeys] = useState<string[]>([]);
+  const { groups, visibleGroups, hiddenGroups } = useMemo(
+    () => getAssignmentDisplay(assignments),
+    [assignments],
+  );
+
+  const completeSummary = groups
+    .map(({ teamName, positionNames }) =>
+      positionNames.length > 0
+        ? `${teamName} · ${positionNames.join(", ")}`
+        : teamName,
+    )
+    .join(", ");
+
+  useLayoutEffect(() => {
+    const assignmentText = assignmentTextRef.current;
+    if (!assignmentText) return;
+
+    const updateTruncatedPositions = () => {
+      const rightEdge = assignmentText.getBoundingClientRect().right;
+      const nextKeys = Array.from(
+        assignmentText.querySelectorAll<HTMLElement>("[data-member-position]"),
+      )
+        .filter((position) => {
+          const rect = position.getBoundingClientRect();
+          return rect.width > 0 && rect.right > rightEdge + 0.5;
+        })
+        .map((position) => position.dataset.memberPosition || "")
+        .filter(Boolean);
+      setTruncatedPositionKeys((current) =>
+        current.length === nextKeys.length
+          && current.every((key, index) => key === nextKeys[index])
+          ? current
+          : nextKeys,
+      );
+    };
+
+    updateTruncatedPositions();
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateTruncatedPositions);
+    resizeObserver?.observe(assignmentText);
+    window.addEventListener("resize", updateTruncatedPositions);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateTruncatedPositions);
+    };
+  }, [visibleGroups]);
+
+  const hiddenByLimit = new Map(
+    hiddenGroups.map((group) => [group.teamId, { ...group, positionNames: [...group.positionNames] }]),
+  );
+  visibleGroups.forEach((group) => {
+    const truncatedNames = group.positionNames.filter((_, index) =>
+      truncatedPositionKeys.includes(JSON.stringify([group.teamId, index])),
+    );
+    if (!truncatedNames.length) return;
+    const hiddenGroup = hiddenByLimit.get(group.teamId) || {
+      teamId: group.teamId,
+      teamName: group.teamName,
+      positionNames: [],
+    };
+    truncatedNames.forEach((name) => {
+      if (!hiddenGroup.positionNames.includes(name)) hiddenGroup.positionNames.push(name);
+    });
+    hiddenByLimit.set(group.teamId, hiddenGroup);
+  });
+  const allHiddenGroups = [...hiddenByLimit.values()];
+  const hiddenPositionCount = allHiddenGroups.reduce(
+    (count, group) => count + group.positionNames.length,
+    0,
+  );
 
   if (assignments.length === 0) {
     return <p className="truncate text-xs leading-4 text-gray-500">No team assigned</p>;
@@ -105,10 +177,15 @@ export const MemberAssignmentsDetails = ({
 
   return (
     <div
-      className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs leading-4"
-      aria-label="Member assignments"
+      className="flex min-w-0 items-center gap-1 text-xs leading-4"
+      aria-label={`Member assignments: ${completeSummary}`}
+      title={completeSummary}
     >
-      <span className="min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap">
+      <span
+        ref={assignmentTextRef}
+        data-testid="member-assignment-text"
+        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+      >
         {visibleGroups.map((group, index) => (
           <span key={group.teamId}>
             {index > 0 ? <span className="text-gray-600">, </span> : null}
@@ -116,7 +193,16 @@ export const MemberAssignmentsDetails = ({
             {group.positionNames.length > 0 ? (
               <>
                 <span aria-hidden="true" className="text-gray-600"> · </span>
-                <span className="text-gray-400">{group.positionNames.join(", ")}</span>
+                <span className="text-gray-400">
+                  {group.positionNames.map((positionName, positionIndex) => (
+                    <span
+                      key={`${group.teamId}-${positionName}`}
+                      data-member-position={JSON.stringify([group.teamId, positionIndex])}
+                    >
+                      {positionIndex > 0 ? ", " : ""}{positionName}
+                    </span>
+                  ))}
+                </span>
               </>
             ) : null}
           </span>
@@ -130,7 +216,7 @@ export const MemberAssignmentsDetails = ({
               aria-haspopup="dialog"
               aria-label={`Show ${hiddenPositionCount} more positions for ${memberName}`}
               title={`Show ${hiddenPositionCount} more positions`}
-              className="inline-flex h-4 shrink-0 items-center rounded px-1 text-xs leading-4 text-gray-400 transition-colors hover:bg-gray-700/60 hover:text-gray-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-cyan-400"
+              className="inline-flex shrink-0 rounded px-1 text-xs leading-4 text-gray-400 transition-colors hover:bg-gray-700/60 hover:text-gray-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-cyan-400"
             >
               +{hiddenPositionCount} more
             </button>
@@ -143,7 +229,7 @@ export const MemberAssignmentsDetails = ({
           >
             <div className="space-y-2">
               <p className="text-xs font-semibold text-gray-300">More assignments</p>
-              <AssignmentLines groups={hiddenGroups} />
+              <AssignmentLines groups={allHiddenGroups} />
             </div>
           </PopoverContent>
         </Popover>

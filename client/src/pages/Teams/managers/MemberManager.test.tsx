@@ -1011,8 +1011,18 @@ describe("MemberManager roster contact information", () => {
     expect(memberRow).toHaveTextContent(
       "Media · Audio, Camera Operator, Livestream",
     );
-    const assignmentLine = within(memberRow).getByLabelText("Member assignments");
-    expect(assignmentLine).toHaveClass("whitespace-nowrap");
+    const assignmentLine = within(memberRow).getByLabelText(/Member assignments:/);
+    const assignmentText = within(assignmentLine).getByTestId("member-assignment-text");
+    expect(assignmentText).toHaveClass(
+      "min-w-0",
+      "overflow-hidden",
+      "text-ellipsis",
+      "whitespace-nowrap",
+    );
+    expect(assignmentLine).toHaveAttribute(
+      "title",
+      "Media · Audio, Camera Operator, Livestream, Producer, Stage Manager, Worship · Vocalist",
+    );
     expect(
       within(assignmentLine).getByRole("button", {
         name: "Show 3 more positions for Rae Kim",
