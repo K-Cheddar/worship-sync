@@ -4,6 +4,7 @@ import type { ContextType, SVGProps } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import TeamsAndServices from "./TeamsAndServices";
+import { TeamsPageProvider } from "./TeamsPageContext";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
@@ -571,14 +572,22 @@ describe("Teams", () => {
 
     render(
       <MemoryRouter>
-        <TeamsNavigationGuardProvider>
-          <TeamsMobileNavigation
-            menuItems={[
-              { text: "Home", to: "/" },
-              { text: "Changelog", onClick: onChangelog },
-            ]}
-          />
-        </TeamsNavigationGuardProvider>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext() as ContextType<typeof GlobalInfoContext>}
+        >
+          <ToastProvider>
+            <TeamsPageProvider>
+              <TeamsNavigationGuardProvider>
+                <TeamsMobileNavigation
+                  menuItems={[
+                    { text: "Home", to: "/" },
+                    { text: "Changelog", onClick: onChangelog },
+                  ]}
+                />
+              </TeamsNavigationGuardProvider>
+            </TeamsPageProvider>
+          </ToastProvider>
+        </GlobalInfoContext.Provider>
       </MemoryRouter>,
     );
 
@@ -592,6 +601,51 @@ describe("Teams", () => {
     await user.click(within(drawer).getByRole("button", { name: /^Changelog$/i }));
     expect(onChangelog).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog", { name: /^Menu$/i })).not.toBeInTheDocument();
+  });
+
+  it("filters the mobile navigation for membership-only access", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue({
+      ...asTeamsBootstrapResponse(baseBootstrap),
+      editableMemberIds: [],
+    });
+
+    render(
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              access: "member",
+              role: "member",
+              permissions: { teams: "none", services: "none", teamScopes: {} },
+              canViewTeams: false,
+              canEditTeams: false,
+              canEditTeam: jest.fn(() => false),
+              canViewTeam: jest.fn(() => false),
+              canViewServices: false,
+              hasBroadTeamsReadAccess: false,
+              canUseTeamsLiveSync: false,
+            }) as ContextType<typeof GlobalInfoContext>
+          }
+        >
+          <ToastProvider>
+            <TeamsPageProvider>
+              <TeamsNavigationGuardProvider>
+                <TeamsMobileNavigation menuItems={[]} />
+              </TeamsNavigationGuardProvider>
+            </TeamsPageProvider>
+          </ToastProvider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Open menu/i }));
+    const drawer = screen.getByRole("dialog", { name: /^Menu$/i });
+    expect(within(drawer).getByRole("link", { name: "Schedules" })).toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: "Members" })).toBeInTheDocument();
+    expect(within(drawer).queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
+    expect(within(drawer).queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
+    expect(within(drawer).queryByRole("link", { name: "Services" })).not.toBeInTheDocument();
   });
 
   it(
@@ -3484,6 +3538,131 @@ describe("Teams", () => {
     expect(screen.getByRole("menuitem", { name: "Schedule history" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Create schedule" })).not.toBeInTheDocument();
   });
+
+  it("lets a membership-only reader view safe Teams sections without edit or Services navigation", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue({
+      ...asTeamsBootstrapResponse(scheduleBootstrap),
+      editableMemberIds: [],
+    });
+    renderTeams("/teams-and-services/forms", {
+      access: "member",
+      role: "member",
+      permissions: { teams: "none", services: "none", teamScopes: {} },
+      canViewTeams: false,
+      canEditTeams: false,
+      canEditTeam: jest.fn(() => false),
+      canViewTeam: jest.fn(() => false),
+      canViewServices: false,
+      hasBroadTeamsReadAccess: false,
+      canUseTeamsLiveSync: false,
+    });
+    await waitForScheduleGrid();
+
+    expect(screen.getByRole("link", { name: "Members" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Positions" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Teams" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Team roles" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Qualifications" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Services" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Templates" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create schedule/i })).not.toBeInTheDocument();
+
+    await screen.findByRole("button", { name: /More schedule options/i });
+    await userEvent.setup().click(screen.getByRole("button", { name: /More schedule options/i }));
+    expect(screen.queryByRole("menuitem", { name: /Create schedule/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Send schedule/i })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "forms",
+    "messages",
+    "services",
+    "templates",
+    "microphones",
+    "service-setup",
+  ])("redirects a membership-only deep link to %s", async (section) => {
+    renderTeams(`/teams-and-services/${section}`, {
+      access: "member",
+      role: "member",
+      permissions: { teams: "none", services: "none", teamScopes: {} },
+      canViewTeams: false,
+      canEditTeams: false,
+      canEditTeam: jest.fn(() => false),
+      canViewTeam: jest.fn(() => false),
+      canViewServices: false,
+      hasBroadTeamsReadAccess: false,
+      canUseTeamsLiveSync: false,
+    });
+
+    expect(await screen.findByRole("heading", { name: "Schedules" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("teams-location")).toHaveTextContent(
+        "/teams-and-services/schedules",
+      ),
+    );
+  });
+
+  it("ignores a persisted Forms route for a membership-only reader", async () => {
+    window.localStorage.setItem(
+      "worshipSync:teamsAndServices:lastRoute",
+      "/teams-and-services/forms",
+    );
+    renderTeams("/teams-and-services", {
+      access: "member",
+      role: "member",
+      permissions: { teams: "none", services: "none", teamScopes: {} },
+      canViewTeams: false,
+      canEditTeams: false,
+      canEditTeam: jest.fn(() => false),
+      canViewTeam: jest.fn(() => false),
+      canViewServices: false,
+      hasBroadTeamsReadAccess: false,
+      canUseTeamsLiveSync: false,
+    });
+
+    await waitForTeamsBootstrap();
+    await waitFor(() =>
+      expect(screen.getByTestId("teams-location")).toHaveTextContent(
+        "/teams-and-services/schedules",
+      ),
+    );
+    expect(screen.queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
+  });
+
+  it.each(["member", "full"] as const)(
+    "shows a no-team-access state for a %s human after the authoritative bootstrap 403",
+    async (access) => {
+      mockGetTeamsBootstrap.mockRejectedValueOnce(
+        Object.assign(new Error("Forbidden"), { status: 403 }),
+      );
+      renderTeams("/teams-and-services", {
+        access,
+        role: access === "member" ? "member" : "volunteer",
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+        canViewTeams: false,
+        canEditTeams: false,
+        canEditTeam: jest.fn(() => false),
+        canViewTeam: jest.fn(() => false),
+        canViewServices: false,
+        hasBroadTeamsReadAccess: false,
+        canUseTeamsLiveSync: false,
+      });
+
+      expect(
+        await screen.findByRole("heading", { name: "No team access" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute(
+        "href",
+        "/home",
+      );
+      expect(
+        screen.queryByRole("link", { name: "Schedules" }),
+      ).not.toBeInTheDocument();
+      expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("keeps Messages in schedule overflow and opens Members beside the workspace on narrow layouts", async () => {
     const user = userEvent.setup();

@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
+import {
+  isValidChurchServiceTimeZone,
+  readChurchServiceTimeZone,
+} from "./churchServiceTimeZone.js";
 
 export const CHAT_MESSAGE_COLLECTION = "chatMessages";
-export const CHAT_SETTINGS_COLLECTION = "chatSettings";
 export const CHAT_MESSAGE_MAX_LENGTH = 1000;
 export const CHAT_RETENTION_DAYS = 365;
 export const CHAT_IMAGE_RETENTION_DAYS = 30;
@@ -65,16 +68,7 @@ export const isChatImageExpired = (attachment, currentMs = Date.now()) =>
   !timestampMs(attachment?.expiresAt) ||
   timestampMs(attachment.expiresAt) <= currentMs;
 
-export const isValidChatTimeZone = (value) => {
-  const timeZone = String(value || "").trim();
-  if (!timeZone || timeZone.length > 100) return false;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone }).format();
-    return true;
-  } catch {
-    return false;
-  }
-};
+export const isValidChatTimeZone = isValidChurchServiceTimeZone;
 
 const chatCalendarDayKey = (date, timeZone) => {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -279,7 +273,6 @@ export const createChatService = ({
   onAttachmentAborted = async () => {},
 } = {}) => {
   const memoryMessages = new Map();
-  const memorySettings = new Map();
   const memoryTyping = new Map();
   const memorySubscribers = new Map();
   const liveWatches = new Map();
@@ -331,34 +324,15 @@ export const createChatService = ({
     });
   };
 
-  const resolveTimeZone = async (churchId, hint) => {
-    const fallback = isValidChatTimeZone(hint) ? String(hint).trim() : "UTC";
-    const cached = memorySettings.get(churchId);
-    if (isValidChatTimeZone(cached)) return cached;
-    const db = getDb();
-    if (!db) {
-      memorySettings.set(churchId, fallback);
-      return fallback;
-    }
-
-    const ref = db.collection(CHAT_SETTINGS_COLLECTION).doc(churchId);
-    const existing = await ref.get();
-    if (existing.exists && isValidChatTimeZone(existing.data()?.timeZone)) {
-      const timeZone = existing.data().timeZone;
-      memorySettings.set(churchId, timeZone);
-      return timeZone;
-    }
-    await ref.set(
-      { churchId, timeZone: fallback, createdAt: now(), updatedAt: now() },
-      { merge: true },
-    );
-    memorySettings.set(churchId, fallback);
-    return fallback;
+  const resolveTimeZone = async (churchId) => {
+    // Chat consumes the same explicit church setting as schedules. A browser
+    // hint must never create the value used by the rest of the church.
+    return readChurchServiceTimeZone({ getFirestore, churchId });
   };
 
-  const getContext = async ({ churchId, session, timeZoneHint }) => {
+  const getContext = async ({ churchId, session }) => {
     const actor = actorFromSession(session);
-    const timeZone = await resolveTimeZone(churchId, timeZoneHint);
+    const timeZone = await resolveTimeZone(churchId);
     return {
       actorId: actor.actorId,
       actorName: actor.name,

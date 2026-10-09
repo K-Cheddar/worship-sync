@@ -205,11 +205,27 @@ export const createNotificationIntentHandlers = ({
   const messageFor = ({ intentType, church, schedule, occurrence, form, publicUrl, responseUrl, serviceName, positionName }) => {
     const churchName = normalize(church?.name) || "Your church";
     const currentServiceName = normalize(serviceName || occurrence?.name) || "an upcoming service";
-    const date = occurrence?.startsAt
-      ? new Date(occurrence.startsAt).toLocaleDateString("en-US", {
-          weekday: "short", month: "short", day: "numeric",
-        })
-      : "an upcoming date";
+    let date = "an upcoming date";
+    if (occurrence?.serviceDate && /^\d{4}-\d{2}-\d{2}$/.test(occurrence.serviceDate)) {
+      const [year, month, day] = occurrence.serviceDate.split("-").map(Number);
+      date = new Date(Date.UTC(year, month - 1, day, 12)).toLocaleDateString("en-US", {
+        timeZone: "UTC", weekday: "short", month: "short", day: "numeric",
+      });
+    } else if (occurrence?.startsAt) {
+      const startsAt = new Date(occurrence.startsAt);
+      if (!Number.isNaN(startsAt.getTime())) {
+        try {
+          date = startsAt.toLocaleDateString("en-US", {
+            timeZone: church?.serviceTimeZone || "UTC",
+            weekday: "short", month: "short", day: "numeric",
+          });
+        } catch {
+          date = startsAt.toLocaleDateString("en-US", {
+            timeZone: "UTC", weekday: "short", month: "short", day: "numeric",
+          });
+        }
+      }
+    }
     switch (intentType) {
       case "availability_request":
       case "availability_reminder":

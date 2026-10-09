@@ -2,13 +2,13 @@ import TeamRoleManager from "../managers/TeamRoleManager";
 import { useTeamsPage } from "../TeamsPageContext";
 
 const TeamsRolesPage = () => {
-  const { pageData, upsertData, removeData, refresh, canEditTeams } = useTeamsPage();
+  const { pageData, upsertData, removeData, refresh, canEditTeam } = useTeamsPage();
 
   return (
     <TeamRoleManager
       roles={pageData.teamRoles}
       teams={pageData.teams}
-      canEdit={canEditTeams}
+      canEditTeam={canEditTeam}
       onSaved={(role, replaceId) =>
         upsertData("teamRoles", "roleId", role, replaceId)
       }

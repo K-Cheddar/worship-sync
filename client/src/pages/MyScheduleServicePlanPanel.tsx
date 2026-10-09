@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useChat } from "../chat/ChatContext";
 import Spinner from "../components/Spinner/Spinner";
 import type { MyScheduleOccurrence } from "../api/auth";
 import { usePublicServiceFlow } from "../services/usePublicServiceFlow";
@@ -22,6 +23,7 @@ const MyScheduleServicePlanPanel = ({
   churchName = "",
   churchLogoUrl = "",
 }: MyScheduleServicePlanPanelProps) => {
+  const churchTimeZone = useChat()?.context?.timeZone || "UTC";
   // Prefer the detailed/team public token — never the simple/general link.
   const shareId = useMemo(() => {
     const teamUrl = occurrence.plan?.publicUrls?.team || "";
@@ -38,8 +40,9 @@ const MyScheduleServicePlanPanel = ({
       plan: occurrence.plan,
       churchName,
       churchLogoUrl,
+      timeZone: churchTimeZone,
     });
-  }, [churchLogoUrl, churchName, occurrence]);
+  }, [churchLogoUrl, churchName, churchTimeZone, occurrence]);
 
   if (!occurrence.plan) {
     return (

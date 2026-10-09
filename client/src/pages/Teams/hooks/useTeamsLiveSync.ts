@@ -1,30 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { getApiBasePath } from "../../../utils/environment";
 import type { TeamSchedule } from "../../../api/authTypes";
-import type {
-  ServicePlan,
-  ServicePlanTemplate,
-} from "../../../types/servicePlan";
-
 export type TeamsStreamEvent =
   | { type: "connected"; churchId?: string }
   | { type: "schedule-updated"; schedule: TeamSchedule }
   | { type: "schedule-removed"; scheduleId: string }
-  | { type: "service-plan-updated"; servicePlan: ServicePlan; saveOperationId?: string }
+  | { type: "service-plan-updated"; planKey: string; saveOperationId?: string }
   | { type: "service-plan-removed"; planKey: string }
-  | { type: "service-plan-template-updated"; template: ServicePlanTemplate }
+  | { type: "service-plan-template-updated"; templateId: string }
   | { type: "service-plan-template-removed"; templateId: string }
   | { type: string; [key: string]: unknown };
 
 export type ServicePlanUpdatedEvent = {
   type: "service-plan-updated";
-  servicePlan: ServicePlan;
+  planKey: string;
   saveOperationId?: string;
 };
 
 export type ServicePlanTemplateUpdatedEvent = {
   type: "service-plan-template-updated";
-  template: ServicePlanTemplate;
+  templateId: string;
 };
 
 export type ServicePlanTemplateRemovedEvent = {
@@ -48,20 +43,14 @@ export const isServicePlanUpdatedEvent = (
   event: TeamsStreamEvent,
 ): event is ServicePlanUpdatedEvent => {
   if (event.type !== "service-plan-updated") return false;
-  const servicePlan = (event as { servicePlan?: unknown }).servicePlan;
-  return Boolean(servicePlan) && typeof servicePlan === "object";
+  return typeof (event as { planKey?: unknown }).planKey === "string";
 };
 
 export const isServicePlanTemplateUpdatedEvent = (
   event: TeamsStreamEvent,
 ): event is ServicePlanTemplateUpdatedEvent => {
   if (event.type !== "service-plan-template-updated") return false;
-  const template = (event as { template?: unknown }).template;
-  return (
-    Boolean(template)
-    && typeof template === "object"
-    && typeof (template as ServicePlanTemplate).templateId === "string"
-  );
+  return typeof (event as { templateId?: unknown }).templateId === "string";
 };
 
 export const isServicePlanTemplateRemovedEvent = (
@@ -71,14 +60,16 @@ export const isServicePlanTemplateRemovedEvent = (
   && typeof (event as { templateId?: unknown }).templateId === "string";
 
 /**
+ * Requires the broad session capability: scoped readers use projected REST.
  * Subscribes to the church's Teams live channel (SSE). The server pushes
- * schedule mutations made by other admins so the scheduling grid collaborates
- * in real time. Mirrors `useBoardEventStream` — see server/teamsSse.js for the
+ * schedule documents and Services change notifications. Mirrors
+ * `useBoardEventStream` — see server/teamsSse.js for the
  * emitter and server.js for the `/api/churches/:churchId/teams/stream` route.
  */
 export const useTeamsLiveSync = (
   churchId: string | null | undefined,
   onMessage: (event: TeamsStreamEvent) => void,
+  canUseTeamsLiveSync: boolean,
 ) => {
   const onMessageRef = useRef(onMessage);
   const [connectionState, setConnectionState] =
@@ -96,7 +87,7 @@ export const useTeamsLiveSync = (
     setConnectionState("connecting");
     setReconnectVersion(0);
 
-    if (!churchId) {
+    if (!churchId || !canUseTeamsLiveSync) {
       setConnectionState("unavailable");
       return undefined;
     }
@@ -142,7 +133,7 @@ export const useTeamsLiveSync = (
       disposed = true;
       source.close();
     };
-  }, [churchId]);
+  }, [churchId, canUseTeamsLiveSync]);
 
   return { connectionState, reconnectVersion };
 };

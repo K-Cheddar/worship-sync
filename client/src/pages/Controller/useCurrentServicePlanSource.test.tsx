@@ -62,8 +62,8 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
 
 jest.mock("../Teams/hooks/useTeamsLiveSync", () => ({
   ...jest.requireActual("../Teams/hooks/useTeamsLiveSync"),
-  useTeamsLiveSync: (churchId: string | null, onMessage: (e: unknown) => void) => {
-    mockLiveHandler = churchId ? onMessage : null;
+  useTeamsLiveSync: (churchId: string | null, onMessage: (e: unknown) => void, enabled: boolean) => {
+    mockLiveHandler = churchId && enabled ? onMessage : null;
   },
 }));
 
@@ -265,6 +265,7 @@ const enabledGlobalInfo = {
   churchId: "church-1",
   canViewServices: true,
   canViewTeams: true,
+  canUseTeamsLiveSync: true,
   loginState: "success",
 };
 
@@ -622,16 +623,17 @@ describe("useCurrentServicePlanSource", () => {
     expect(store.getState().servicePlanningImport.url).toBe("");
   });
 
-  it("rebuilds when the plan is updated elsewhere, without refetching it", async () => {
+  it("refetches a plan after its ID-only live change notification", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
 
     const editedPlan = { ...planFixture, name: "Sabbath Service (revised)" };
+    mockGetServicePlan.mockResolvedValue({ servicePlan: editedPlan });
     await act(async () => {
       mockLiveHandler?.({
         type: "service-plan-updated",
-        servicePlan: editedPlan,
+        planKey: editedPlan.planKey,
       });
     });
 
@@ -640,21 +642,91 @@ describe("useCurrentServicePlanSource", () => {
       editedPlan,
       expect.anything(),
     );
-    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores plan updates for a different service", async () => {
+  it("loads newly created plans into the saved plans list from an unrelated update", async () => {
     const store = makeStore();
     renderHookWith(store, enabledGlobalInfo);
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
 
+    const newPlan = {
+      planKey: "service-3@2026-08-08",
+      serviceId: "service-3",
+      date: "2026-08-08",
+      name: "New Evening Service",
+    };
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [newPlan],
+    });
     await act(async () => {
       mockLiveHandler?.({
         type: "service-plan-updated",
-        servicePlan: { ...planFixture, planKey: "service-9@2026-08-01" },
+        planKey: newPlan.planKey,
       });
     });
 
+    await waitFor(() => expect(latestResult?.savedPlans).toContainEqual(newPlan));
+    expect(latestResult?.savedPlans).toContainEqual({
+      planKey: planFixture.planKey,
+      serviceId: planFixture.serviceId,
+      date: planFixture.date,
+      name: planFixture.name,
+    });
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+  });
+
+  it("refreshes an unselected plan summary without interrupting the selected preview", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const updatedPlan = {
+      planKey: "service-2@2026-08-01",
+      serviceId: "service-2",
+      date: "2026-08-01",
+      name: "Evening Service (revised)",
+    };
+    mockListServicePlans.mockResolvedValue({
+      servicePlans: [updatedPlan],
+    });
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: updatedPlan.planKey,
+      });
+    });
+
+    await waitFor(() => expect(latestResult?.savedPlans).toContainEqual(updatedPlan));
+    expect(latestResult?.selectedPlanKey).toBe(planFixture.planKey);
+    expect(mockGetServicePlan).toHaveBeenCalledTimes(1);
+    expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
+    expect(store.getState().servicePlanningImport.servicePlanKey).toBe(
+      planFixture.planKey,
+    );
+  });
+
+  it("refreshes saved summaries for a plan change outside the selected service", async () => {
+    const store = makeStore();
+    renderHookWith(store, enabledGlobalInfo);
+    await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1));
+
+    const planListCalls = mockListServicePlans.mock.calls.length;
+    await act(async () => {
+      mockLiveHandler?.({
+        type: "service-plan-updated",
+        planKey: "service-9@2026-08-01",
+      });
+    });
+
+    await waitFor(() =>
+      expect(mockListServicePlans).toHaveBeenCalledTimes(planListCalls + 1),
+    );
     expect(mockLoadPlanPreview).toHaveBeenCalledTimes(1);
   });
 
@@ -826,6 +898,13 @@ describe("useCurrentServicePlanSource", () => {
     expect(mockLiveHandler).toBeNull();
   });
 
+  it("loads existing Services data without full Teams live sync for scoped access", async () => {
+    const store = makeStore();
+    renderHookWith(store, { ...enabledGlobalInfo, canUseTeamsLiveSync: false });
+    await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalled());
+    expect(mockLiveHandler).toBeNull();
+  });
+
   it("does nothing for a guest session", async () => {
     const store = makeStore();
     renderHookWith(store, { ...enabledGlobalInfo, loginState: "guest" });
@@ -858,7 +937,7 @@ describe("useCurrentServicePlanSource", () => {
     await act(async () => {
       mockLiveHandler?.({
         type: "service-plan-updated",
-        servicePlan: { ...planFixture, name: "Revised" },
+        planKey: planFixture.planKey,
       });
     });
     await waitFor(() => expect(mockLoadPlanPreview).toHaveBeenCalledTimes(2));

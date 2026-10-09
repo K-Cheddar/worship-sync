@@ -9,6 +9,7 @@ import { ToastProvider } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
 import {
   getServicePlan,
+  getServicePlanAssignments,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
   getServiceEquipment,
@@ -35,6 +36,7 @@ jest.mock("../../../api/auth", () => ({
   // The nested ServicePlanEditor still uses this API outside the bulk flow.
   listServicePlanTemplates: jest.fn(),
   getServicePlan: jest.fn(),
+  getServicePlanAssignments: jest.fn(),
   getServicePlanAssignmentHistory: jest.fn(),
   saveServicePlan: jest.fn(),
   saveServicePlanAssignmentHistory: jest.fn(),
@@ -151,6 +153,7 @@ const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
 const mockUpdateTeamScheduleAssignmentMicrophones = jest.mocked(updateTeamScheduleAssignmentMicrophones);
 const mockUpdateTeamScheduleAssignmentIems = jest.mocked(updateTeamScheduleAssignmentIems);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
+const mockGetServicePlanAssignments = jest.mocked(getServicePlanAssignments);
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
@@ -228,6 +231,7 @@ describe("TeamsPlansPage", () => {
         members: [],
       },
       canEditTeams: true,
+      hasTeamsWorkspaceAccess: true,
       hydrateSchedules: mockHydrateSchedules,
       hydratingScheduleIds: [],
       upsertData: mockUpsertData,
@@ -236,6 +240,7 @@ describe("TeamsPlansPage", () => {
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetServicePlanAssignments.mockResolvedValue({ success: true, assignments: [] });
     mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
     mockSaveServicePlan.mockResolvedValue({
       success: true,
@@ -523,6 +528,44 @@ describe("TeamsPlansPage", () => {
     expect(screen.queryByRole("button", { name: /^Done$/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^Edit$/i }));
     expect(screen.getByRole("button", { name: /^Done$/i })).toBeInTheDocument();
+  });
+
+  it("shows Services-only users plan-scoped serving names without schedule access", async () => {
+    const user = userEvent.setup();
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [{
+        planKey: `easter@${oneTimePlainDate}`,
+        serviceId: "easter",
+        date: oneTimePlainDate,
+        name: "Easter Sunday",
+      }],
+    });
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: [{
+        teamId: "worship",
+        teamName: "Worship",
+        role: "Keys",
+        name: "Avery Stone",
+      }],
+    });
+    mockUseTeamsPage.mockReturnValue({
+      ...mockUseTeamsPage(),
+      hasTeamsWorkspaceAccess: false,
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Open plan for .*Easter Sunday/i }));
+    await user.click(await screen.findByRole("tab", { name: "People / Who's serving" }));
+
+    expect(await screen.findByText("Avery Stone")).toBeInTheDocument();
+    expect(screen.getByText("Worship")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View schedule" })).not.toBeInTheDocument();
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledWith(
+      "church-1",
+      `easter@${oneTimePlainDate}`,
+    );
   });
 
   it("opens the plan editor for a clicked date and can navigate back to the list", async () => {

@@ -50,6 +50,23 @@ it("filters past occurrences from the visible Upcoming range", () => {
   })).toEqual([occurrence]);
 });
 
+it("filters a UTC month-boundary occurrence by its stored church date", () => {
+  const churchOctoberOccurrence: TeamScheduleOccurrence = {
+    ...occurrence,
+    occurrenceId: "service@2026-11-01T00:30:00.000Z",
+    startsAt: "2026-11-01T00:30:00.000Z",
+    serviceDate: "2026-10-31",
+  };
+  expect(filterOccurrencesToRange([churchOctoberOccurrence], {
+    start: "2026-10-01",
+    end: "2026-10-31",
+  }, "America/New_York")).toEqual([churchOctoberOccurrence]);
+  expect(filterOccurrencesToRange([churchOctoberOccurrence], {
+    start: "2026-11-01",
+    end: "2026-11-30",
+  }, "America/New_York")).toEqual([]);
+});
+
 describe("findReusablePeriodSchedule", () => {
   it("reuses an exact generated-period schedule", () => {
     const generated = schedule({

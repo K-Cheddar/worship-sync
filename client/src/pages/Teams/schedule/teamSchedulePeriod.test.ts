@@ -99,13 +99,14 @@ describe("buildTeamSchedulePeriod", () => {
       teamId: "worship",
       startDate: "2026-10-01",
       endDate: "2026-10-31",
+      timeZone: "America/New_York",
     });
 
     expect(generated.serviceIds).toEqual(["worship-experience"]);
     expect(generated.occurrences).toHaveLength(5);
     expect(generated.occurrences.every((occurrence) => occurrence.serviceId === "worship-experience")).toBe(true);
     expect(generated.occurrences.every((occurrence) => occurrence.name === "Worship Experience")).toBe(true);
-    expect(generated.occurrences.every((occurrence) => new Date(occurrence.startsAt).getHours() === 11)).toBe(true);
+    expect(generated.occurrences.every((occurrence) => occurrence.startsAt.endsWith("T15:00:00.000Z"))).toBe(true);
     expect(generated.requirementsByOccurrence.get(generated.occurrences[0].occurrenceId)).toEqual([
       { positionId: "vocal", count: 1 },
     ]);

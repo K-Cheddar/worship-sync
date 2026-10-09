@@ -51,7 +51,7 @@ type QualificationManagerProps = {
   areas: TeamQualificationArea[];
   levels: TeamQualificationLevel[];
   teams: TeamRecord[];
-  canEdit: boolean;
+  canEditTeam: (teamId: string) => boolean;
   onAreaSaved: (area: TeamQualificationArea, replaceId?: string) => void;
   onLevelSaved: (level: TeamQualificationLevel, replaceId?: string) => void;
   onArchived: () => void;
@@ -62,7 +62,7 @@ const QualificationManager = ({
   areas,
   levels,
   teams,
-  canEdit,
+  canEditTeam,
   onAreaSaved,
   onLevelSaved,
   onArchived,
@@ -72,6 +72,10 @@ const QualificationManager = ({
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
   const activeTeams = useMemo(() => teams.filter(isActive), [teams]);
+  const editableTeams = useMemo(
+    () => activeTeams.filter((team) => canEditTeam(team.teamId)),
+    [activeTeams, canEditTeam],
+  );
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [editing, setEditing] = useState<TeamQualificationArea | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -116,6 +120,12 @@ const QualificationManager = ({
   );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
+  const creationTeamId = canEditTeam(teamId)
+    ? teamId
+    : editableTeams[0]?.teamId || "";
+  const canEditArea = editing
+    ? canEditTeam(editing.teamId)
+    : Boolean(creationTeamId && canEditTeam(creationTeamId));
   const teamAreas = areas.filter((area) =>
     (listFilters.teamIds.length === 0 || listFilters.teamIds.includes(area.teamId)) &&
     (listFilters.includeArchived || isActive(area)),
@@ -133,12 +143,17 @@ const QualificationManager = ({
       .sort((a, b) => a.rank - b.rank);
   }, [editing, levels]);
 
-  const levelCountByAreaId = useMemo(() => {
-    const counts = new Map<string, number>();
+  const levelsByAreaId = useMemo(() => {
+    const levelsByArea = new Map<string, TeamQualificationLevel[]>();
     levels.forEach((level) => {
-      counts.set(level.areaId, (counts.get(level.areaId) || 0) + 1);
+      const areaLevels = levelsByArea.get(level.areaId) || [];
+      areaLevels.push(level);
+      levelsByArea.set(level.areaId, areaLevels);
     });
-    return counts;
+    levelsByArea.forEach((areaLevels) => {
+      areaLevels.sort((a, b) => a.rank - b.rank);
+    });
+    return levelsByArea;
   }, [levels]);
 
   const resetLevelDrafts = (area: TeamQualificationArea) => {
@@ -166,7 +181,7 @@ const QualificationManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ teamId: teamId, name: "", description: "", icon: "" });
+    setDraft({ teamId: creationTeamId, name: "", description: "", icon: "" });
     setLevelDrafts({});
     setNewLevelName("");
     setNewLevelRank("1");
@@ -182,6 +197,7 @@ const QualificationManager = ({
   };
 
   const openAreaEditor = (area: TeamQualificationArea) => {
+    if (!canEditTeam(area.teamId)) return;
     setShowFilters(false);
     setEditing(area);
     setSelectedTeamId(area.teamId);
@@ -196,12 +212,13 @@ const QualificationManager = ({
   };
 
   const selectArea = (area: TeamQualificationArea) => {
+    if (!canEditTeam(area.teamId)) return;
     if (editing?.areaId === area.areaId) return;
     requestDiscardAction(() => openAreaEditor(area));
   };
 
   const confirmDelete = async () => {
-    if (!canEdit || !deleting) return;
+    if (!deleting || !canEditTeam(deleting.teamId)) return;
     const area = deleting;
     if (area.areaId.startsWith("local-")) {
       onAreaRemoved(area.areaId);
@@ -222,12 +239,12 @@ const QualificationManager = ({
   };
 
   const submitArea = async () => {
-    if (!canEdit) return;
-    const areaTeamId = editing?.teamId || teamId;
+    const areaTeamId = editing?.teamId || creationTeamId;
     if (!areaTeamId) {
       showToast("Create a team first, then add qualification areas.", "neutral");
       return;
     }
+    if (!canEditTeam(areaTeamId)) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.areaId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —
@@ -294,7 +311,7 @@ const QualificationManager = ({
       icon: editing.icon || "",
     })
     : JSON.stringify(draft) !==
-    JSON.stringify({ teamId, name: "", description: "", icon: "" });
+    JSON.stringify({ teamId: creationTeamId, name: "", description: "", icon: "" });
   const savedLevelDrafts = editing
     ? Object.fromEntries(
       levels
@@ -333,7 +350,7 @@ const QualificationManager = ({
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const saveLevel = async (levelId?: string) => {
-    if (!canEdit || !editing) return;
+    if (!canEditArea || !editing || !canEditTeam(editing.teamId)) return;
     const payload = levelId
       ? levelDrafts[levelId]
       : {
@@ -390,13 +407,15 @@ const QualificationManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
+          if (!creationTeamId) return;
           requestDiscardAction(() => {
             setShowFilters(false);
+            setSelectedTeamId(creationTeamId);
             reset();
             setShowCreate(true);
           });
         }}
-        canEdit={canEdit}
+        canEdit={Boolean(editableTeams.length)}
         keepCreateActionVisible
         title={editing ? "Edit qualification area" : "Create qualification area"}
         sectionTitle="Qualifications"
@@ -440,19 +459,36 @@ const QualificationManager = ({
                   <p className="text-sm text-gray-300">No matches.</p>
                 ) : null}
                 {filteredTeamAreas.map((area) => {
-                  const levelCount = levelCountByAreaId.get(area.areaId) || 0;
+                  const areaLevels = levelsByAreaId.get(area.areaId) || [];
                   return (
                     <EntityRow
                       key={area.areaId}
                       title={area.name}
                       icon={area.icon || "Award"}
-                      subtitle={
-                        area.description ||
-                        `${levelCount} level${levelCount === 1 ? "" : "s"}`
+                      details={
+                        <div className="mt-0.5 space-y-1">
+                          {area.description ? (
+                            <p className="text-xs text-gray-400">{area.description}</p>
+                          ) : null}
+                          <div className="text-xs">
+                            <p className="text-gray-500">Levels</p>
+                            {areaLevels.length > 0 ? (
+                              <ol className="flex flex-wrap gap-x-3 gap-y-0.5 text-gray-400">
+                                {areaLevels.map((level) => (
+                                  <li key={level.levelId}>
+                                    {level.rank} · {level.name}
+                                  </li>
+                                ))}
+                              </ol>
+                            ) : (
+                              <p className="text-gray-500">No levels yet.</p>
+                            )}
+                          </div>
+                        </div>
                       }
                       archived={Boolean(area.archivedAt)}
                       compact
-                      canEdit={canEdit}
+                      canEdit={canEditTeam(area.teamId)}
                       onTitleClick={() => selectArea(area)}
                     />
                   );
@@ -467,7 +503,7 @@ const QualificationManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditArea}
                   archiveLabel="Archive area"
                   deleteLabel="Delete area"
                   menuLabel="Qualification area actions"
@@ -475,6 +511,7 @@ const QualificationManager = ({
                     editing.archivedAt
                       ? undefined
                       : async () => {
+                        if (!canEditTeam(editing.teamId)) return;
                         const archivedArea = {
                           ...editing,
                           archivedAt: new Date().toISOString(),
@@ -508,14 +545,14 @@ const QualificationManager = ({
             onSave={() => void submitArea()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
-            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            disabled={!canEditArea || !draft.name.trim() || isSavingCurrent}
           />
         }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
           <span className="font-semibold text-gray-200">
-            {activeTeams.find((team) => team.teamId === (editing?.teamId || teamId))?.name ||
+            {activeTeams.find((team) => team.teamId === (editing?.teamId || creationTeamId))?.name ||
               "a team"}
           </span>
           .
@@ -535,7 +572,7 @@ const QualificationManager = ({
           }
         />
         {editing ? (
-          <fieldset className="space-y-2">
+          <fieldset disabled={!canEditArea} className="space-y-2">
             <legend className="p-1 text-sm font-semibold">Qualification levels</legend>
             <div className="space-y-2 rounded-md border border-gray-700 bg-gray-950/60 p-2">
               {areaLevels.length === 0 ? (
@@ -596,7 +633,7 @@ const QualificationManager = ({
                             : `Save ${level.name}`
                       }
                       aria-busy={levelSavingKey === `level:${level.levelId}` || undefined}
-                      disabled={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges}
+                      disabled={!canEditArea || levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges}
                       svg={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges ? undefined : Save}
                       onClick={() => void saveLevel(level.levelId)}
                     >
@@ -628,7 +665,7 @@ const QualificationManager = ({
                   variant="secondary"
                   svg={Plus}
                   aria-busy={levelSavingKey === "level:new" || undefined}
-                  disabled={levelSavingKey === "level:new" || !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))}
+                  disabled={!canEditArea || levelSavingKey === "level:new" || !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))}
                   onClick={() => void saveLevel()}
                 >
                   {levelSavingKey === "level:new" ? "Creating…" : "Add level"}

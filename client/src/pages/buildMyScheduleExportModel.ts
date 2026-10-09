@@ -12,6 +12,7 @@ import type {
  */
 export const buildMyScheduleExportModel = (
   occurrence: MyScheduleOccurrence,
+  timeZone = "UTC",
 ): ScheduleExportModel => {
   const me = occurrence.serving.find((person) => person.isMe);
   const columnOrder: string[] = [];
@@ -77,11 +78,13 @@ export const buildMyScheduleExportModel = (
   const rowLabel =
     startsAt && !Number.isNaN(startsAt.getTime())
       ? startsAt.toLocaleString(undefined, {
+          timeZone,
           weekday: "short",
           month: "short",
           day: "numeric",
           hour: "numeric",
           minute: "2-digit",
+          timeZoneName: "short",
         })
       : occurrence.date || "Date not set";
 
@@ -115,8 +118,9 @@ export const buildMyScheduleExportModel = (
  */
 export const buildMyScheduleExportModelForOccurrences = (
   occurrences: MyScheduleOccurrence[],
+  timeZone = "UTC",
 ): ScheduleExportModel => {
-  const models = occurrences.map(buildMyScheduleExportModel);
+  const models = occurrences.map((occurrence) => buildMyScheduleExportModel(occurrence, timeZone));
   const columnKeys: string[] = [];
   const columnLabels = new Map<string, string>();
 

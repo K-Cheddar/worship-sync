@@ -60,6 +60,7 @@ import {
 import { cn } from "@/utils/cnHelper";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import { useToast } from "../../context/toastContext";
 import { useDispatch, useSelector } from "../../hooks";
 import { updateAllDocs } from "../../utils/dbUtils";
@@ -96,6 +97,7 @@ import { ANIMATE_COLLAPSE_DURATION_MS } from "../../components/AnimateCollapse/A
 import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
+  calendarDateInTimeZone,
   formatOccurrenceRowLabel,
   getSharedOccurrenceTiming,
   isOccurrenceOnCalendarDay,
@@ -509,8 +511,9 @@ const ServicePlanEditor = ({
   onPlanTimingChange,
   templateResource,
 }: ServicePlanEditorProps) => {
-  const { churchId, userId, access, churchBranding, churchIntegrations } =
+  const { churchId, userId, access, churchBranding, churchIntegrations, canUseTeamsLiveSync } =
     useContext(GlobalInfoContext) || {};
+  const churchTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
     churchIntegrations?.planningCenter?.connected,
@@ -597,12 +600,12 @@ const ServicePlanEditor = ({
         planKey: sourcePlan?.planKey || planKey,
         startsAt: sourcePlan?.startsAt || occurrence.startsAt,
         timezone:
-          sourcePlan?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+          sourcePlan?.timezone || churchTimeZone,
         sections: nextSections,
         publicLive: sourcePlan?.publicLive,
       });
     },
-    [occurrence.startsAt, onPlanTimingChange, planKey],
+    [churchTimeZone, occurrence.startsAt, onPlanTimingChange, planKey],
   );
   // Do not expose the empty-plan actions until the first fetch has answered.
   // Otherwise a fast click can create a local draft that the initial response
@@ -968,7 +971,7 @@ const ServicePlanEditor = ({
   // save would let an editor working from another timezone silently shift the
   // wall-clock times public viewers see.
   const planTimezone =
-    plan?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    plan?.timezone || churchTimeZone;
 
   /** Best-effort: remembers any newly-typed "Assigned to" names for future
    * suggestions. Never blocks or fails the plan save itself. */
@@ -991,14 +994,14 @@ const ServicePlanEditor = ({
       serviceId: occurrence.serviceId,
       serviceIds: occurrence.serviceIds || [occurrence.serviceId],
       groupId: occurrence.groupId,
-      date: occurrence.startsAt.slice(0, 10),
+      date: occurrence.serviceDate || calendarDateInTimeZone(new Date(occurrence.startsAt), churchTimeZone),
       name: planName || occurrence.name,
       startsAt: occurrence.startsAt,
       timezone: planTimezone,
       sections,
       ...(sourceImport ? { sourceImport } : {}),
     };
-  }, [occurrence, planName, planTimezone, sections, sourceImport]);
+  }, [churchTimeZone, occurrence, planName, planTimezone, sections, sourceImport]);
 
   const saveAutosavePayload = useCallback(
     (payload: ServicePlanPayload, baseRevision: number, operationId?: string) => {
@@ -1121,6 +1124,7 @@ const ServicePlanEditor = ({
   autosaveRef.current = autosave;
   const isMountedRef = useRef(true);
   const resumeReconciliationInFlightRef = useRef<Promise<void> | null>(null);
+  const remotePlanFetchRequestRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1277,16 +1281,33 @@ const ServicePlanEditor = ({
   // replaced; the server's revision check turns that situation into a conflict.
   const liveSync = useTeamsLiveSync(churchId, (event) => {
     if (!isServicePlanUpdatedEvent(event)) return;
+    if (event.planKey !== planKeyRef.current) return;
     if (event.saveOperationId && event.saveOperationId === autosaveRef.current.getActiveOperationId()) {
       logAuthDiagnostic("debug", "service_plan_self_notification", {
         editorInstanceId: editorInstanceIdRef.current, operationId: event.saveOperationId,
-        churchId: churchIdRef.current, planKey: event.servicePlan.planKey,
-        revision: event.servicePlan.revision, eventAt: Date.now(), classification: "self_save",
+        churchId: churchIdRef.current, planKey: event.planKey,
+        eventAt: Date.now(), classification: "self_save",
       });
       return;
     }
-    applyRemoteServicePlan(event.servicePlan);
-  });
+    const churchIdAtStart = churchIdRef.current;
+    if (!churchIdAtStart) return;
+    const planKeyAtStart = event.planKey;
+    const requestId = ++remotePlanFetchRequestRef.current;
+    void getServicePlan(churchIdAtStart, planKeyAtStart)
+      .then(({ servicePlan }) => {
+        if (
+          !isMountedRef.current ||
+          requestId !== remotePlanFetchRequestRef.current ||
+          churchIdRef.current !== churchIdAtStart ||
+          planKeyRef.current !== planKeyAtStart
+        ) return;
+        if (servicePlan) applyRemoteServicePlan(servicePlan);
+      })
+      .catch((error: unknown) => {
+        console.error("Could not refresh the service plan after a live update:", error);
+      });
+  }, Boolean(canUseTeamsLiveSync));
   liveSyncStateRef.current = liveSync.connectionState;
 
   useEffect(() => {
@@ -2077,7 +2098,8 @@ const ServicePlanEditor = ({
   const anchorStartTime = sections?.[0]?.elements?.[0]?.startTime || "";
   const occurrenceTiming = formatOccurrenceRowLabel(
     occurrence,
-    getSharedOccurrenceTiming([occurrence]),
+    getSharedOccurrenceTiming([occurrence], churchTimeZone),
+    churchTimeZone,
   );
   // Starter actions stay available both before a plan exists and after every
   // section has been removed. A fresh "Start from scratch" draft still has one

@@ -41,7 +41,7 @@ it("keeps an edited team open and returns to its originating schedule only on Ba
           <Routes>
             <Route path={TEAMS_SECTION_PATHS.groups} element={<TeamManager
               teams={[team]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
-              data={data} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
+              data={data} canEditTeams canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
             />} />
             <Route path={TEAMS_SECTION_PATHS.schedules} element={<p>Schedule origin</p>} />
           </Routes>
@@ -81,7 +81,7 @@ it("keeps a legacy team icon until an icon is selected, then saves the structure
       <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
           <TeamManager teams={[legacyTeam]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
-            data={{ ...data, teams: [legacyTeam] }} canEdit onSaved={onSaved} onArchived={jest.fn()} onRemoved={jest.fn()} />
+            data={{ ...data, teams: [legacyTeam] }} canEditTeams canEditTeam={() => true} onSaved={onSaved} onArchived={jest.fn()} onRemoved={jest.fn()} />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
@@ -95,6 +95,8 @@ it("keeps a legacy team icon until an icon is selected, then saves the structure
   await user.click(screen.getByRole("button", { name: "Choose custom icon color" }));
   await user.clear(screen.getByRole("textbox", { name: "Choose custom icon color hex" }));
   await user.type(screen.getByRole("textbox", { name: "Choose custom icon color hex" }), "#22c55e");
+  // The compact color picker commits its controlled value after a short debounce.
+  await new Promise((resolve) => setTimeout(resolve, 200));
   await user.click(screen.getByRole("button", { name: "Save team" }));
 
   await waitFor(() => expect(updateTeam).toHaveBeenCalledWith("church-1", legacyTeam.teamId, expect.objectContaining({ icon })));
@@ -107,10 +109,10 @@ it("preserves an existing legacy icon when saving another team field", async () 
   jest.mocked(updateTeam).mockResolvedValue({ success: true, team: { ...legacyTeam, name: "Worship and Music" } } as never);
   render(
     <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
-      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
         <ToastProvider><TeamsNavigationGuardProvider>
           <TeamManager teams={[legacyTeam]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
-            data={{ ...data, teams: [legacyTeam] }} canEdit onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+            data={{ ...data, teams: [legacyTeam] }} canEditTeams canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
         </TeamsNavigationGuardProvider></ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,

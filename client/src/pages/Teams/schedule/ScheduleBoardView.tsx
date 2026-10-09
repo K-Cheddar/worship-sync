@@ -85,6 +85,7 @@ type ScheduleBoardViewProps = {
   groups: BoardOccurrenceGroup[];
   columns: ScheduleSlotColumn[];
   teamName: string;
+  timeZone: string;
   canEdit: boolean;
   nextUpcomingOccurrenceId: string | null;
   fillByOccurrence: Map<string, OccurrenceFill>;
@@ -125,6 +126,7 @@ const ScheduleBoardView = ({
   groups,
   columns,
   teamName,
+  timeZone,
   canEdit,
   nextUpcomingOccurrenceId,
   fillByOccurrence,
@@ -165,12 +167,12 @@ const ScheduleBoardView = ({
     });
     const additionalPositionOptions = getAdditionalPositionOptions(occurrence.occurrenceId);
     const serviceArchived = serviceArchivedById(group.serviceId);
-    const occurrenceTiming = formatOccurrenceTiming(occurrence);
+    const occurrenceTiming = formatOccurrenceTiming(occurrence, timeZone);
     const expanded = isExpanded(occurrence.occurrenceId);
     const fill = fillByOccurrence.get(occurrence.occurrenceId);
     const isNextUpcoming =
       occurrence.occurrenceId === nextUpcomingOccurrenceId;
-    const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
+    const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
     let markerBorderClassName = "border-transparent";
     if (isNextUpcoming) {
       markerBorderClassName = scheduleUpNextBorderClassName;

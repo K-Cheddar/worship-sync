@@ -40,7 +40,12 @@ const loadStoreWithPresentationSync = (
     firebaseDb?: string;
     firebaseReady?: boolean;
     realtimeConnected?: boolean;
-    canWriteSharedData?: boolean;
+    writeCapabilities?: Partial<{
+      presentation: boolean;
+      timers: boolean;
+      serviceRuntime: boolean;
+      serviceManagement: boolean;
+    }>;
   } = {},
 ) => {
   let storeModule: any;
@@ -71,7 +76,13 @@ const loadStoreWithPresentationSync = (
       options.firebaseReady === false
         ? false
         : options.realtimeConnected !== false,
-    canWriteSharedData: options.canWriteSharedData ?? true,
+    writeCapabilities: {
+      presentation: true,
+      timers: true,
+      serviceRuntime: true,
+      serviceManagement: true,
+      ...options.writeCapabilities,
+    },
   };
 
   jest.isolateModules(() => {
@@ -2922,7 +2933,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
-      canWriteSharedData: true,
+      writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
     };
 
     jest.isolateModules(() => {
@@ -3018,7 +3029,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
-      canWriteSharedData: true,
+      writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
     };
 
     jest.isolateModules(() => {
@@ -3127,7 +3138,7 @@ describe("store module", () => {
           db: "firebase-db",
           database: "main",
           churchId: "church-main",
-          canWriteSharedData: true,
+          writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
         },
         globalHostId: "host-123",
       }));
@@ -3248,7 +3259,7 @@ describe("store module", () => {
       timersSlice,
       setMock,
       runTransactionMock,
-    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: false } });
 
     store.dispatch(
       serviceTimesSlice.actions.initiateServices([
@@ -3292,6 +3303,159 @@ describe("store module", () => {
     expect(runTransactionMock).not.toHaveBeenCalled();
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
     expect(localStorage.getItem("timerInfo")).toContain("Display Timer");
+  });
+
+  it("lets a Controller-None Services editor persist service times without operator writes", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, timersSlice, presentationSlice, writePresentationSnapshotToFirebase, setMock, updateMock, runTransactionMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: true },
+      });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([]));
+    store.dispatch(serviceTimesSlice.actions.addService({
+      id: "service-plan",
+      name: "Planner edit",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:30:00.000Z",
+    }));
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "timer-1", hostId: "host-123", name: "Operator timer",
+      timerType: "timer", status: "stopped", isActive: false,
+      countdownTime: "00:05", duration: 5, remainingTime: 5,
+      showMinutesOnly: false, time: 100,
+    }));
+    store.dispatch(presentationSlice.actions.updateParticipantOverlayInfo({
+      id: "operator-overlay", name: "Operator overlay", duration: 10,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1600);
+    await writePresentationSnapshotToFirebase(store.getState());
+
+    expect(runTransactionMock).toHaveBeenCalledWith(
+      "churches/church-main/data/services", expect.any(Function), { applyLocally: false },
+    );
+    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("persists Controller Service Times countdown overrides for a runtime-only operator", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const {
+      store,
+      serviceTimesSlice,
+      refMock,
+      runTransactionMock,
+      updateMock,
+    } = loadStoreWithPresentationSync({
+      writeCapabilities: {
+        presentation: true,
+        timers: true,
+        serviceRuntime: true,
+        serviceManagement: false,
+      },
+    });
+    const scheduledService = {
+      id: "service-runtime",
+      name: "Sunday Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:00:00.000Z",
+    };
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([scheduledService]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-runtime",
+        changes: { overrideDateTimeISO: "2026-04-05T12:11:30.000Z" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(refMock).toHaveBeenCalledWith(
+      "firebase-db",
+      "churches/church-main/data/services",
+    );
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(runTransactionMock.mock.calls[0][1]([scheduledService])).toEqual([
+      expect.objectContaining({
+        ...scheduledService,
+        overrideDateTimeISO: "2026-04-05T12:11:30.000Z",
+      }),
+    ]);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("persists Service Times appearance updates for a runtime-only operator", async () => {
+    const { store, serviceTimesSlice, runTransactionMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: {
+          presentation: true,
+          timers: true,
+          serviceRuntime: true,
+          serviceManagement: false,
+        },
+      });
+    const scheduledService = {
+      id: "service-appearance",
+      name: "Sunday Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:00:00.000Z",
+    };
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([scheduledService]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-appearance",
+        changes: { color: "#ffcc00", background: "#101010" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(runTransactionMock.mock.calls[0][1]([scheduledService])).toEqual([
+      expect.objectContaining({
+        ...scheduledService,
+        color: "#ffcc00",
+        background: "#101010",
+      }),
+    ]);
+  });
+
+  it("does not persist service path changes when neither Controller nor Services grants write access", async () => {
+    const { store, serviceTimesSlice, runTransactionMock, setMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: {
+          presentation: false,
+          timers: false,
+          serviceRuntime: false,
+          serviceManagement: false,
+        },
+      });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([]));
+    store.dispatch(
+      serviceTimesSlice.actions.addService({
+        id: "denied-service",
+        name: "Denied Service",
+        timerType: "countdown",
+        reccurence: "one_time",
+        dateTimeISO: "2026-04-05T12:30:00.000Z",
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(runTransactionMock).not.toHaveBeenCalled();
+    expect(setMock).not.toHaveBeenCalled();
   });
 
   it("merges a service-time update into Firebase without replacing other services", async () => {
@@ -3759,7 +3923,7 @@ describe("store module", () => {
       writePresentationSnapshotToFirebase,
       presentationSlice,
       updateMock,
-    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: false } });
 
     store.dispatch(
       presentationSlice.actions.updateParticipantOverlayInfo({

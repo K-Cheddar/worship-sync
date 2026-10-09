@@ -1,5 +1,8 @@
 import type { TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
-import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
+import {
+  calendarDateInTimeZone,
+  generateScheduleOccurrences,
+} from "../../utils/teamScheduleOccurrences";
 
 /**
  * Every occurrence of `serviceId` within [startDate, endDate] — generated
@@ -13,11 +16,13 @@ export const getServiceOccurrencesInRange = ({
   serviceId,
   startDate,
   endDate,
+  timeZone,
 }: {
   services: TeamService[];
   serviceId: string;
   startDate: string;
   endDate: string;
+  timeZone?: string;
 }): TeamScheduleOccurrence[] => {
   if (!serviceId || !startDate || !endDate) return [];
   const all = generateScheduleOccurrences({
@@ -25,6 +30,7 @@ export const getServiceOccurrencesInRange = ({
     serviceIds: services.map((service) => service.serviceId),
     startDate,
     endDate,
+    timeZone,
   });
   return all.filter(
     (occurrence) =>
@@ -38,15 +44,18 @@ export const getServiceOccurrencesInRange = ({
 export const getOneTimeServiceOccurrence = (
   services: TeamService[],
   service: TeamService,
+  timeZone?: string,
 ): TeamScheduleOccurrence | null => {
   const isoDate = service.overrideDateTimeISO || service.dateTimeISO;
   if (!isoDate) return null;
-  const date = isoDate.slice(0, 10);
+  const resolvedTimeZone = timeZone || "UTC";
+  const date = calendarDateInTimeZone(new Date(isoDate), resolvedTimeZone);
   const [occurrence] = getServiceOccurrencesInRange({
     services,
     serviceId: service.serviceId,
     startDate: date,
     endDate: date,
+    timeZone: resolvedTimeZone,
   });
   return occurrence || null;
 };

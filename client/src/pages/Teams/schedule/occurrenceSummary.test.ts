@@ -226,7 +226,7 @@ describe("formatOccurrenceMessage", () => {
 
     expect(message).toBe(
       [
-        "Schedule for May 30, 2026",
+        "Schedule for Sat, May 30, 2026 at 2:00 PM UTC",
         "",
         "Director: Jahlani",
         "Camera Crew: Kevin, David",
@@ -264,7 +264,7 @@ describe("formatOccurrenceMessage", () => {
       }),
     ).toBe(
       [
-        "Schedule for May 30, 2026",
+        "Schedule for Sat, May 30, 2026 at 2:00 PM UTC",
         "",
         "Director: Jahlani",
         "Camera Crew: Kevin, David, Sam",

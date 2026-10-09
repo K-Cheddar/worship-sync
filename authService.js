@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { serializeAuthError } from "./server/authErrorResponse.js";
+import { buildSharedDataWriteClaims } from "./server/sharedDataAuthClaims.js";
 import crypto from "node:crypto";
 import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
@@ -216,15 +217,21 @@ const isInviteExpired = (invite, now = Date.now()) =>
 const sanitizeInviteWithEffectiveStatus = (invite, now = Date.now()) =>
   sanitizeInviteForClient({
     ...invite,
+    controllerAccess: normalizeControllerAccess(
+      invite.controllerAccess ?? invite.appAccess,
+      "view",
+    ),
+    appAccess: legacyAppAccessForController(
+      normalizeControllerAccess(invite.controllerAccess ?? invite.appAccess, "view"),
+    ),
     ...(invite.status === "pending" && isInviteExpired(invite, now)
       ? { status: "expired" }
       : {}),
   });
-// "member" is the narrowest tier: a volunteer who can see their own schedule
-// and nothing else. Strictly narrower than "view" — see client accessTiers.ts.
+// The persisted "member" value remains accepted as legacy appAccess data.
 const APP_ACCESS_VALUES = new Set(["full", "music", "view", "member"]);
 const TEAM_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
-const SERVICES_PERMISSION_VALUES = new Set(["none", "edit"]);
+const SERVICES_PERMISSION_VALUES = new Set(["none", "view", "edit"]);
 const DESKTOP_AUTH_PROVIDER_VALUES = new Set(["google", "microsoft"]);
 const DESKTOP_AUTH_STATUS_PENDING = "pending";
 const DESKTOP_AUTH_STATUS_AWAITING_EXCHANGE = "awaiting_exchange";
@@ -238,6 +245,19 @@ const normalizeAppAccess = (value, fallback = "view") => {
     .toLowerCase();
   return APP_ACCESS_VALUES.has(normalized) ? normalized : fallback;
 };
+// Legacy appAccess compatibility: older clients still read this field, so
+// membership writes mirror controllerAccess to full/music/view/member.
+const normalizeControllerAccess = (value, fallback = "view") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "member") return "none";
+  return ["none", "full", "music", "view"].includes(normalized)
+    ? normalized
+    : fallback;
+};
+const legacyAppAccessForController = (controllerAccess) =>
+  controllerAccess === "none" ? "member" : controllerAccess;
 const normalizeTeamPermission = (value, fallback = "none") => {
   const normalized = String(value || "")
     .trim()
@@ -271,28 +291,36 @@ const normalizeTeamScopes = (teamScopes) => {
       .filter(([teamId, permission]) => teamId && permission),
   );
 };
-/**
- * @param appAccess When "member", teams/services permissions are forced off.
- *   A schedule-only volunteer cannot reach those surfaces (the route allowlist
- *   refuses them), so retaining a grant would be a permission that reads as
- *   active in Account while doing nothing — and would quietly come back to life
- *   if their tier were later widened.
- */
 const normalizeMembershipPermissions = (
   permissions,
   role = "member",
-  appAccess,
 ) => {
   if (role === "admin") {
     return { teams: "edit", services: "edit", teamScopes: {} };
-  }
-  if (appAccess === "member") {
-    return { teams: "none", services: "none", teamScopes: {} };
   }
   return {
     teams: normalizeTeamPermission(permissions?.teams, "none"),
     services: normalizeServicesPermission(permissions?.services, "none"),
     teamScopes: normalizeTeamScopes(permissions?.teamScopes),
+  };
+};
+const normalizeMembershipPermissionsForChurch = async ({
+  permissions,
+  role,
+  churchId,
+}) => {
+  const normalized = normalizeMembershipPermissions(permissions, role);
+  const validScopes = await Promise.all(
+    Object.entries(normalized.teamScopes).map(async ([teamId, scope]) => {
+      const team = await getDoc(COLLECTIONS.teams, teamId);
+      return team && team.churchId === churchId && !team.archivedAt
+        ? [teamId, scope]
+        : null;
+    }),
+  );
+  return {
+    ...normalized,
+    teamScopes: Object.fromEntries(validScopes.filter(Boolean)),
   };
 };
 // Per-user notification preferences stored on the membership, one tri-state per
@@ -366,11 +394,15 @@ const validateUpdateInviteAccessPayload = (body) => {
   if (!role) {
     throw httpError(400, "Choose a valid role.");
   }
-  const appAccess = normalizeAppAccess(body.appAccess, "");
-  if (!appAccess) {
+  const hasControllerAccess = Object.prototype.hasOwnProperty.call(body, "controllerAccess");
+  const controllerAccess = normalizeControllerAccess(
+    hasControllerAccess ? body.controllerAccess : body.appAccess,
+    "",
+  );
+  if (!controllerAccess) {
     throw httpError(400, "Choose a valid access level.");
   }
-  if (role === "admin" && appAccess !== "full") {
+  if (role === "admin" && controllerAccess !== "full") {
     throw httpError(400, "Admins must keep full access.");
   }
   const permissions = body.permissions;
@@ -384,8 +416,9 @@ const validateUpdateInviteAccessPayload = (body) => {
   }
   return {
     role,
-    appAccess,
-    permissions: normalizeMembershipPermissions(permissions, role, appAccess),
+    controllerAccess,
+    appAccess: legacyAppAccessForController(controllerAccess),
+    permissions: normalizeMembershipPermissions(permissions, role),
   };
 };
 
@@ -524,6 +557,7 @@ export const readChurchPublicBrandingChrome = async (churchId) => {
 
 const memoryState = {
   churches: new Map(),
+  chatSettings: new Map(),
   users: new Map(),
   memberships: new Map(),
   invites: new Map(),
@@ -625,6 +659,7 @@ const updateChurchServiceTimes = async (churchId, update) => {
 
 const collectionMap = {
   [COLLECTIONS.churches]: memoryState.churches,
+  chatSettings: memoryState.chatSettings,
   [COLLECTIONS.users]: memoryState.users,
   [COLLECTIONS.memberships]: memoryState.memberships,
   [COLLECTIONS.invites]: memoryState.invites,
@@ -665,6 +700,8 @@ const collectionMap = {
 };
 
 const rateLimits = new Map();
+const smsConsentMutationQueues = new Map();
+const inviteMutationQueues = new Map();
 const RATE_LIMIT_SWEEP_INTERVAL = 200;
 let rateLimitEnforcementCount = 0;
 
@@ -674,6 +711,44 @@ const sweepExpiredRateLimits = (now) => {
     const resetAt = Number(bucket?.resetAt || 0);
     if (blockedUntil <= now && resetAt <= now) {
       rateLimits.delete(bucketKey);
+    }
+  }
+};
+
+const withSmsConsentMutationLock = async (consentId, operation) => {
+  const previous = smsConsentMutationQueues.get(consentId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const current = previous.then(() => gate);
+  smsConsentMutationQueues.set(consentId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (smsConsentMutationQueues.get(consentId) === current) {
+      smsConsentMutationQueues.delete(consentId);
+    }
+  }
+};
+
+const withInviteMutationLock = async (inviteId, operation) => {
+  const previous = inviteMutationQueues.get(inviteId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const current = previous.then(() => gate);
+  inviteMutationQueues.set(inviteId, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (inviteMutationQueues.get(inviteId) === current) {
+      inviteMutationQueues.delete(inviteId);
     }
   }
 };
@@ -1285,10 +1360,17 @@ export const setDoc = async (
  * The in-memory store shallow-merges, so it already behaved this way — which is
  * exactly why the difference is invisible to a test suite that runs in memory.
  */
-const updateDocFields = async (collectionName, id, data) => {
+const updateDocFields = async (
+  collectionName,
+  id,
+  data,
+  { transaction = null } = {},
+) => {
   const db = requireFirestore();
   if (db) {
-    await db.collection(collectionName).doc(id).update(data);
+    const ref = db.collection(collectionName).doc(id);
+    if (transaction) transaction.update(ref, data);
+    else await ref.update(data);
     return;
   }
   const store = collectionMap[collectionName];
@@ -1317,13 +1399,14 @@ const updateDocMapKeys = async (
   collectionName,
   id,
   field,
-  { set = {}, remove = [], fields = {} } = {},
+  { set = {}, remove = [], removePaths = [], fields = {}, transaction = null } = {},
 ) => {
   const setEntries = Object.entries(set);
   const fieldEntries = Object.entries(fields);
   if (
     setEntries.length === 0 &&
     remove.length === 0 &&
+    removePaths.length === 0 &&
     fieldEntries.length === 0
   ) {
     return;
@@ -1337,11 +1420,13 @@ const updateDocMapKeys = async (
     remove.forEach((key) =>
       args.push(new FieldPath(field, key), FieldValue.delete()),
     );
+    removePaths.forEach((path) =>
+      args.push(new FieldPath(field, ...path), FieldValue.delete()),
+    );
     fieldEntries.forEach(([key, value]) => args.push(key, value));
-    await db
-      .collection(collectionName)
-      .doc(id)
-      .update(...args);
+    const ref = db.collection(collectionName).doc(id);
+    if (transaction) transaction.update(ref, ...args);
+    else await ref.update(...args);
     return;
   }
   const store = collectionMap[collectionName];
@@ -1353,6 +1438,14 @@ const updateDocMapKeys = async (
   });
   remove.forEach((key) => {
     delete nextMap[key];
+  });
+  removePaths.forEach((path) => {
+    let cursor = nextMap;
+    for (const key of path.slice(0, -1)) {
+      cursor = cursor?.[key];
+      if (!cursor || typeof cursor !== "object") return;
+    }
+    if (path.length) delete cursor[path[path.length - 1]];
   });
   store.set(id, { ...current, ...fields, [field]: nextMap });
 };
@@ -2825,11 +2918,14 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
   const permissions = normalizeMembershipPermissions(
     invite.permissions,
     role,
-    invite.appAccess || "view",
   );
   const scopedTeamNames = await resolveScopedTeamNamesForInvite(invite);
   const accessLines = buildInviteAcceptedAccessLines({
     role,
+    controllerAccess: normalizeControllerAccess(
+      invite.controllerAccess ?? invite.appAccess,
+      "view",
+    ),
     appAccess: invite.appAccess || "view",
     permissions,
     scopedTeamNames,
@@ -2877,9 +2973,8 @@ const sendInviteAcceptedAdminNotifications = async ({ invite, user }) => {
  * parameter through which one could arrive — and the address it lands on is the
  * same inbox that received the link being redeemed.
  *
- * Grants the narrowest tier there is: `appAccess: "member"` forces
- * `teams: "none"` / `services: "none"`, so accepting produces an account that
- * can see its own schedule and nothing else. Self-service is only defensible
+ * Grants no Controller access. Teams and Services are normalized
+ * independently, so accepting does not mutate those permissions. Self-service is defensible
  * because of that ceiling — an owner already put this person on the roster with
  * this address, and the invite adds no access they were not already implicitly
  * given.
@@ -2911,8 +3006,9 @@ const sendRosterMemberInvite = async ({ churchId, member }) => {
     churchId,
     email,
     role: "member",
+    controllerAccess: "none",
     appAccess: "member",
-    permissions: normalizeMembershipPermissions(null, "member", "member"),
+    permissions: normalizeMembershipPermissions(null, "member"),
     memberId: member.memberId,
     status: "pending",
     tokenHash: hashValue(rawToken),
@@ -3580,11 +3676,19 @@ const buildHumanBootstrap = ({
   database: church.contentDatabaseKey,
   uploadPreset: church.cloudinaryUploadPreset || "bpqu4ma5",
   role: membership.role,
-  appAccess: membership.appAccess || "view",
+  controllerAccess: normalizeControllerAccess(
+    membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
+    "view",
+  ),
+  appAccess: legacyAppAccessForController(
+    normalizeControllerAccess(
+      membership.role === "admin" ? "full" : membership.controllerAccess ?? membership.appAccess,
+      "view",
+    ),
+  ),
   permissions: normalizeMembershipPermissions(
     membership.permissions,
     membership.role,
-    membership.appAccess || "view",
   ),
   notifications: normalizeMembershipNotifications(membership.notifications),
   // Which switches to render. Sent rather than derived client-side so the
@@ -4090,6 +4194,7 @@ const createChurchWithRootAdmin = async ({
     churchId,
     userId: uid,
     role: "admin",
+    controllerAccess: "full",
     appAccess: "full",
     permissions: normalizeMembershipPermissions(null, "admin"),
     status: "active",
@@ -4176,6 +4281,9 @@ const acceptInviteMembership = async ({ invite, user }) => {
         throw httpError(404, "Invite not found");
       }
       const inviteData = inviteSnap.data();
+      if (inviteData.churchId !== churchId) {
+        throw httpError(404, "Invite not found");
+      }
       if (inviteData.status !== "pending") {
         if (inviteData.status === "revoked") {
           throw httpError(400, "This invite was revoked.");
@@ -4186,6 +4294,26 @@ const acceptInviteMembership = async ({ invite, user }) => {
         transaction.update(inviteRef, { status: "expired" });
         return { expired: true };
       }
+
+      const acceptedControllerAccess = normalizeControllerAccess(
+        inviteData.controllerAccess ?? inviteData.appAccess,
+        "view",
+      );
+      const acceptedInvite = {
+        ...invite,
+        ...inviteData,
+        inviteId: invite.inviteId,
+        churchId,
+        role: inviteData.role,
+        controllerAccess: acceptedControllerAccess,
+        appAccess: legacyAppAccessForController(acceptedControllerAccess),
+        permissions: normalizeMembershipPermissions(
+          inviteData.permissions,
+          inviteData.role,
+        ),
+        createdAt: inviteData.createdAt || nowIso(),
+        createdByUid: inviteData.createdByUid,
+      };
 
       const userActiveMembershipsSnap = await transaction.get(
         db
@@ -4223,22 +4351,20 @@ const acceptInviteMembership = async ({ invite, user }) => {
           membershipId,
           churchId,
           userId: user.uid,
-          role: invite.role,
-          appAccess: invite.appAccess,
-          permissions: normalizeMembershipPermissions(
-            invite.permissions,
-            invite.role,
-          ),
+          role: acceptedInvite.role,
+          controllerAccess: acceptedInvite.controllerAccess,
+          appAccess: acceptedInvite.appAccess,
+          permissions: acceptedInvite.permissions,
           status: "active",
-          createdAt: invite.createdAt || nowIso(),
-          createdByUid: invite.createdByUid,
+          createdAt: acceptedInvite.createdAt,
+          createdByUid: acceptedInvite.createdByUid,
         },
         { merge: true },
       );
 
       const nextAdminCount =
         adminSnapshot.docs.some((doc) => doc.id === membershipId) ||
-        invite.role !== "admin"
+        acceptedInvite.role !== "admin"
           ? adminSnapshot.size
           : adminSnapshot.size + 1;
       transaction.update(churchRef, {
@@ -4250,15 +4376,27 @@ const acceptInviteMembership = async ({ invite, user }) => {
         status: "accepted",
         acceptedAt: nowIso(),
       });
-      return { expired: false };
+      return { expired: false, acceptedInvite };
     });
 
     if (transactionResult?.expired) {
       throw httpError(400, "This invite has expired");
     }
-  } else {
+    const acceptedInvite = transactionResult?.acceptedInvite;
+    if (!acceptedInvite) {
+      throw httpError(400, "This invite is not active");
+    }
+    await linkInvitedRosterMember({ invite: acceptedInvite, user });
+    return acceptedInvite;
+  }
+
+  const acceptedInvite = await withInviteMutationLock(invite.inviteId, async () => {
     const latestInvite = await getDoc(COLLECTIONS.invites, invite.inviteId);
-    if (!latestInvite || latestInvite.status !== "pending") {
+    if (
+      !latestInvite ||
+      latestInvite.churchId !== churchId ||
+      latestInvite.status !== "pending"
+    ) {
       if (latestInvite?.status === "revoked") {
         throw httpError(400, "This invite was revoked.");
       }
@@ -4273,6 +4411,27 @@ const acceptInviteMembership = async ({ invite, user }) => {
       );
       throw httpError(400, "This invite has expired");
     }
+
+    const acceptedControllerAccess = normalizeControllerAccess(
+      latestInvite.controllerAccess ?? latestInvite.appAccess,
+      "view",
+    );
+    const acceptedInvite = {
+      ...invite,
+      ...latestInvite,
+      inviteId: invite.inviteId,
+      churchId,
+      role: latestInvite.role,
+      controllerAccess: acceptedControllerAccess,
+      appAccess: legacyAppAccessForController(acceptedControllerAccess),
+      permissions: normalizeMembershipPermissions(
+        latestInvite.permissions,
+        latestInvite.role,
+      ),
+      createdAt: latestInvite.createdAt || nowIso(),
+      createdByUid: latestInvite.createdByUid,
+    };
+
     const activeRows = await queryDocs(
       COLLECTIONS.memberships,
       [
@@ -4292,6 +4451,7 @@ const acceptInviteMembership = async ({ invite, user }) => {
         inviteMembershipConflict.message,
       );
     }
+
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
@@ -4299,15 +4459,13 @@ const acceptInviteMembership = async ({ invite, user }) => {
         membershipId,
         churchId,
         userId: user.uid,
-        role: invite.role,
-        appAccess: invite.appAccess,
-        permissions: normalizeMembershipPermissions(
-          latestInvite.permissions,
-          latestInvite.role,
-        ),
+        role: acceptedInvite.role,
+        controllerAccess: acceptedInvite.controllerAccess,
+        appAccess: acceptedInvite.appAccess,
+        permissions: acceptedInvite.permissions,
         status: "active",
-        createdAt: invite.createdAt || nowIso(),
-        createdByUid: invite.createdByUid,
+        createdAt: acceptedInvite.createdAt,
+        createdByUid: acceptedInvite.createdByUid,
       },
       { merge: true },
     );
@@ -4331,9 +4489,11 @@ const acceptInviteMembership = async ({ invite, user }) => {
       { status: "accepted", acceptedAt: nowIso() },
       { merge: true },
     );
-  }
+    return acceptedInvite;
+  });
 
-  await linkInvitedRosterMember({ invite, user });
+  await linkInvitedRosterMember({ invite: acceptedInvite, user });
+  return acceptedInvite;
 };
 
 /**
@@ -4463,6 +4623,10 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
         throw httpError(404, "Membership not found");
       }
       const membershipData = membershipSnap.data();
+      const controllerAccess = normalizeControllerAccess(
+        membershipData.controllerAccess ?? membershipData.appAccess,
+        "full",
+      );
       const adminSnapshot = await transaction.get(
         db
           .collection(COLLECTIONS.memberships)
@@ -4476,7 +4640,8 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
       );
       transaction.update(membershipRef, {
         role: "member",
-        appAccess: normalizeAppAccess(membershipData.appAccess, "full"),
+        controllerAccess,
+        appAccess: legacyAppAccessForController(controllerAccess),
         permissions: normalizeMembershipPermissions(null, "member"),
       });
       transaction.update(churchRef, {
@@ -4490,12 +4655,17 @@ const demoteAdminMembership = async ({ churchId, userId }) => {
     if (!membership) {
       throw httpError(404, "Membership not found");
     }
+    const controllerAccess = normalizeControllerAccess(
+      membership.controllerAccess ?? membership.appAccess,
+      "full",
+    );
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
       {
         role: "member",
-        appAccess: normalizeAppAccess(membership.appAccess, "full"),
+        controllerAccess,
+        appAccess: legacyAppAccessForController(controllerAccess),
         permissions: normalizeMembershipPermissions(null, "member"),
       },
       { merge: true },
@@ -4551,6 +4721,7 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
         : adminSnapshot.size + 1;
       transaction.update(membershipRef, {
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
       });
@@ -4575,6 +4746,7 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
       membershipId,
       {
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
       },
@@ -4599,9 +4771,10 @@ const promoteAdminMembership = async ({ churchId, userId }) => {
 const updateMemberAccessSettings = async ({
   churchId,
   userId,
-  appAccess,
+  controllerAccess,
   permissions,
 }) => {
+  const appAccess = legacyAppAccessForController(controllerAccess);
   const membershipId = membershipIdFor({ churchId, userId });
   const db = requireFirestore();
   if (db) {
@@ -4617,7 +4790,7 @@ const updateMemberAccessSettings = async ({
       if (membershipData.status !== "active") {
         throw httpError(400, "Only active members can be updated.");
       }
-      transaction.update(membershipRef, { appAccess, permissions });
+      transaction.update(membershipRef, { controllerAccess, appAccess, permissions });
     });
   } else {
     const membership = await getDoc(COLLECTIONS.memberships, membershipId);
@@ -4630,7 +4803,7 @@ const updateMemberAccessSettings = async ({
     await setDoc(
       COLLECTIONS.memberships,
       membershipId,
-      { appAccess, permissions },
+      { controllerAccess, appAccess, permissions },
       { merge: true },
     );
   }
@@ -4681,6 +4854,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
           churchId: recoveryRequest.churchId,
           userId: recoveryRequest.requesterUid,
           role: "admin",
+          controllerAccess: "full",
           appAccess: "full",
           permissions: normalizeMembershipPermissions(null, "admin"),
           status: "active",
@@ -4719,6 +4893,7 @@ const approveRecoveryRequest = async (recoveryRequest) => {
         churchId: recoveryRequest.churchId,
         userId: recoveryRequest.requesterUid,
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
         status: "active",
@@ -4775,6 +4950,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
           churchId,
           userId,
           role: "admin",
+          controllerAccess: "full",
           appAccess: "full",
           permissions: normalizeMembershipPermissions(null, "admin"),
           status: "active",
@@ -4802,6 +4978,7 @@ const supportRecoverAdminMembership = async ({ churchId, userId }) => {
         churchId,
         userId,
         role: "admin",
+        controllerAccess: "full",
         appAccess: "full",
         permissions: normalizeMembershipPermissions(null, "admin"),
         status: "active",
@@ -5053,7 +5230,6 @@ const hasTeamsViewPermission = (bootstrap) => {
     bootstrap.role === "admin" ||
     teamsPermission === "view" ||
     teamsPermission === "edit" ||
-    bootstrap.permissions?.services === "edit" ||
     hasAnyTeamScope(bootstrap.permissions)
   );
 };
@@ -5067,7 +5243,7 @@ export const requireTeamsViewSession = async (req, churchId) => {
   ) {
     throw httpError(401, "Authentication required");
   }
-  // Humans with Teams/Services view grants, or booth workstations
+  // Humans with Teams view/edit or a current team scope, or booth workstations
   // (serviceWorkspaceAccess → teams view + services edit). Default
   // workstations stay out — roster endpoints carry member PII.
   if (bootstrap.churchId !== churchId || !hasTeamsViewPermission(bootstrap)) {
@@ -5082,11 +5258,21 @@ export const requireTeamsViewSession = async (req, churchId) => {
   return bootstrap;
 };
 
-// Deliberately narrower than requireTeamsViewSession: also admits a paired
-// workstation with view-only `services` (default pairing), but only for
-// reading saved Service Plans. Prefer requireTeamsViewSession for
-// roster/schedule endpoints — those carry member PII.
-export const requireServicePlansViewSession = async (req, churchId) => {
+// Full-document church-wide reads must not inherit selected-team access.
+export const requireBroadTeamsViewSession = async (req, churchId) => {
+  const bootstrap = await requireTeamsViewSession(req, churchId);
+  if (
+    bootstrap.role !== "admin" &&
+    bootstrap.permissions?.teams !== "edit"
+  ) {
+    throw httpError(403, "Teams access required");
+  }
+  return bootstrap;
+};
+
+// Services access is independent of Teams access. This guard permits plan
+// content, while roster and schedule endpoints continue to use Teams guards.
+export const requireServicesViewSession = async (req, churchId) => {
   const bootstrap = await resolveRequestBootstrap(req);
   if (
     !bootstrap ||
@@ -5095,21 +5281,32 @@ export const requireServicePlansViewSession = async (req, churchId) => {
   ) {
     throw httpError(401, "Authentication required");
   }
-  const teamsPermission = bootstrap.permissions?.teams || "none";
   const servicesPermission = bootstrap.permissions?.services || "none";
   if (
     bootstrap.churchId !== churchId ||
     (bootstrap.role !== "admin" &&
-      teamsPermission !== "view" &&
-      teamsPermission !== "edit" &&
       servicesPermission !== "view" &&
-      servicesPermission !== "edit" &&
-      !hasAnyTeamScope(bootstrap.permissions))
+      servicesPermission !== "edit")
   ) {
-    throw httpError(403, "Service plans access required");
+    throw httpError(403, "Services access required");
   }
   return bootstrap;
 };
+
+export const requireServicesWorkspaceViewSession = async (req, churchId) => {
+  const bootstrap = await requireServicesViewSession(req, churchId);
+  if (
+    bootstrap.sessionKind === SESSION_KIND_WORKSTATION &&
+    !hasWorkstationServiceWorkspaceAccess(bootstrap)
+  ) {
+    throw httpError(403, "Services access required");
+  }
+  return bootstrap;
+};
+
+// Service Plan content is church-wide; team scopes do not authorize it.
+export const requireServicePlansViewSession = async (req, churchId) =>
+  requireServicesViewSession(req, churchId);
 
 const requireTeamsEditSession = async (req, churchId) => {
   const bootstrap = await requireHumanSession(req);
@@ -5134,7 +5331,6 @@ const requireServicesEditSession = async (req, churchId) => {
   if (
     bootstrap.churchId !== churchId ||
     (bootstrap.role !== "admin" &&
-      bootstrap.permissions?.teams !== "edit" &&
       bootstrap.permissions?.services !== "edit")
   ) {
     throw httpError(403, "Services edit access required");
@@ -5150,16 +5346,28 @@ const requireServicesEditSession = async (req, churchId) => {
   return bootstrap;
 };
 
-const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
+export const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
   const bootstrap = await requireHumanSession(req);
-  if (
-    bootstrap.churchId !== churchId ||
-    (bootstrap.role !== "admin" &&
-      bootstrap.permissions?.teams !== "edit" &&
-      !hasTeamScope(bootstrap.permissions, teamId, "edit"))
-  ) {
+  if (bootstrap.churchId !== churchId) {
     throw httpError(403, "Teams edit access required");
   }
+
+  if (
+    bootstrap.role === "admin" ||
+    bootstrap.permissions?.teams === "edit"
+  ) {
+    return bootstrap;
+  }
+
+  if (!hasTeamScope(bootstrap.permissions, teamId, "edit")) {
+    throw httpError(403, "Teams edit access required");
+  }
+
+  const team = await getDoc(COLLECTIONS.teams, teamId);
+  if (!team || team.churchId !== churchId || team.archivedAt) {
+    throw httpError(403, "Teams edit access required");
+  }
+
   return bootstrap;
 };
 
@@ -5244,6 +5452,7 @@ export const seedActiveHumanBearerForServerTests = async ({
   churchName = "Human bearer test church",
   role = "admin",
   appAccess = "full",
+  controllerAccess,
   permissions,
 }) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
@@ -5279,7 +5488,8 @@ export const seedActiveHumanBearerForServerTests = async ({
       churchId,
       userId,
       role,
-      appAccess,
+      controllerAccess: normalizeControllerAccess(controllerAccess ?? appAccess),
+      appAccess: legacyAppAccessForController(normalizeControllerAccess(controllerAccess ?? appAccess)),
       permissions: normalizeMembershipPermissions(permissions, role),
       status: "active",
       createdAt: nowIso(),
@@ -5354,6 +5564,7 @@ export const seedPendingInviteForServerTests = async ({
   token = `invite-seed-${crypto.randomUUID()}`,
   role = "member",
   appAccess = "view",
+  controllerAccess,
   inviteId = createId("invite"),
   memberId = "",
   expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString(),
@@ -5399,7 +5610,8 @@ export const seedPendingInviteForServerTests = async ({
     ...(memberId ? { memberId } : {}),
     email: normalizedEmail,
     role,
-    appAccess,
+    controllerAccess: normalizeControllerAccess(controllerAccess ?? appAccess),
+    appAccess: legacyAppAccessForController(normalizeControllerAccess(controllerAccess ?? appAccess)),
     permissions: normalizeMembershipPermissions(permissions, role),
     status,
     tokenHash: hashValue(token),
@@ -6573,11 +6785,15 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   readChurchPublicBrandingChrome,
   requireAdminSession,
   requireServicesEditSession,
+  requireServicesViewSession,
+  requireServicesWorkspaceViewSession,
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  requireBroadTeamsViewSession,
+  resolveRequestBootstrap,
   getSessionActorUid,
   requireFirestore,
   saveNotificationEventIntents: (...args) =>
@@ -6844,6 +7060,7 @@ export const authHandlers = {
         churchId: bootstrap.churchId || null,
         database: bootstrap.database,
         appAccess: bootstrap.appAccess || "view",
+        ...buildSharedDataWriteClaims(bootstrap),
         role: bootstrap.role || null,
         deviceId: bootstrap.device?.deviceId || null,
         outputId: bootstrap.device?.outputId || null,
@@ -8304,6 +8521,21 @@ export const authHandlers = {
           }
           return {
             ...membership,
+            controllerAccess:
+              membership.role === "admin"
+                ? "full"
+                : normalizeControllerAccess(
+                    membership.controllerAccess ?? membership.appAccess,
+                    "view",
+                  ),
+            appAccess: legacyAppAccessForController(
+              membership.role === "admin"
+                ? "full"
+                : normalizeControllerAccess(
+                    membership.controllerAccess ?? membership.appAccess,
+                    "view",
+                  ),
+            ),
             permissions: normalizeMembershipPermissions(
               membership.permissions,
               membership.role,
@@ -8504,16 +8736,29 @@ export const authHandlers = {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
       const email = normalizeEmail(req.body?.email);
-      const role = req.body?.role || "admin";
-      const appAccess = req.body?.appAccess || "full";
-      const permissions = normalizeMembershipPermissions(
-        req.body?.permissions,
-        role,
-        appAccess,
-      );
       if (!email) {
         throw httpError(400, "Email is required.");
       }
+      const role = req.body?.role || "admin";
+      if (role !== "admin" && role !== "member") {
+        throw httpError(400, "Choose a valid role.");
+      }
+      const controllerAccess = normalizeControllerAccess(
+        req.body?.controllerAccess ?? req.body?.appAccess ?? "full",
+        "",
+      );
+      if (!controllerAccess) {
+        throw httpError(400, "Choose a valid Controller access level.");
+      }
+      if (role === "admin" && controllerAccess !== "full") {
+        throw httpError(400, "Admins must keep full access.");
+      }
+      const appAccess = legacyAppAccessForController(controllerAccess);
+      const permissions = await normalizeMembershipPermissionsForChurch({
+        permissions: req.body?.permissions,
+        role,
+        churchId: req.params.churchId,
+      });
       // Optional binding to a roster member. When present, accepting this
       // invite links that member record to the new account — the only path
       // besides a logged-in intake submission that may establish the link.
@@ -8584,6 +8829,7 @@ export const authHandlers = {
         churchId: req.params.churchId,
         email,
         role,
+        controllerAccess,
         appAccess,
         permissions,
         ...(memberId ? { memberId } : {}),
@@ -8685,38 +8931,61 @@ export const authHandlers = {
       if (!inviteId) {
         throw httpError(400, "Invite id is required.");
       }
-      const invite = await getDoc(COLLECTIONS.invites, inviteId);
-      if (!invite || invite.churchId !== req.params.churchId) {
-        throw httpError(404, "Invite not found.");
-      }
-      if (
-        invite.status !== "pending" &&
-        !(invite.status === "expired" || isInviteExpired(invite))
-      ) {
-        throw httpError(400, "Only pending invites can be updated.");
-      }
-      const { role, appAccess, permissions } =
+      const { role, controllerAccess, permissions } =
         validateUpdateInviteAccessPayload(req.body);
-      const updatedInvite = {
-        ...invite,
+      const buildAccessUpdate = async () => ({
         role,
-        appAccess,
-        permissions,
-      };
-      await setDoc(
-        COLLECTIONS.invites,
-        inviteId,
-        { role, appAccess, permissions },
-        { merge: true },
-      );
+        controllerAccess,
+        appAccess: legacyAppAccessForController(controllerAccess),
+        permissions: await normalizeMembershipPermissionsForChurch({
+          permissions,
+          role,
+          churchId: req.params.churchId,
+        }),
+      });
+      const db = requireFirestore();
+      let updatedInvite;
+      if (db) {
+        updatedInvite = await db.runTransaction(async (transaction) => {
+          const inviteRef = db.collection(COLLECTIONS.invites).doc(inviteId);
+          const inviteSnapshot = await transaction.get(inviteRef);
+          if (!inviteSnapshot.exists) {
+            throw httpError(404, "Invite not found.");
+          }
+          const currentInvite = inviteSnapshot.data();
+          if (currentInvite.churchId !== req.params.churchId) {
+            throw httpError(404, "Invite not found.");
+          }
+          if (currentInvite.status !== "pending") {
+            throw httpError(400, "Only pending invites can be updated.");
+          }
+          const accessUpdate = await buildAccessUpdate();
+          transaction.update(inviteRef, accessUpdate);
+          return { ...currentInvite, inviteId, ...accessUpdate };
+        });
+      } else {
+        updatedInvite = await withInviteMutationLock(inviteId, async () => {
+          const currentInvite = await getDoc(COLLECTIONS.invites, inviteId);
+          if (!currentInvite || currentInvite.churchId !== req.params.churchId) {
+            throw httpError(404, "Invite not found.");
+          }
+          if (currentInvite.status !== "pending") {
+            throw httpError(400, "Only pending invites can be updated.");
+          }
+          const accessUpdate = await buildAccessUpdate();
+          await setDoc(COLLECTIONS.invites, inviteId, accessUpdate, { merge: true });
+          return { ...currentInvite, inviteId, ...accessUpdate };
+        });
+      }
       await addSecurityEvent({
         type: "invite_access_updated",
         churchId: req.params.churchId,
         userId: admin.user.uid,
         inviteId,
-        email: invite.email || null,
-        appAccess,
-        permissions,
+        email: updatedInvite.email || null,
+        controllerAccess: updatedInvite.controllerAccess,
+        appAccess: updatedInvite.appAccess,
+        permissions: updatedInvite.permissions,
       });
       return res.json({
         success: true,
@@ -9233,14 +9502,18 @@ export const authHandlers = {
       }
       const user = await upsertProfileFromVerifiedToken(verified);
 
-      await acceptInviteMembership({ invite, user });
+      const acceptedInvite = await acceptInviteMembership({ invite, user });
       await addSecurityEvent({
         type: "invite_accepted",
-        churchId: invite.churchId,
+        churchId: acceptedInvite.churchId,
         userId: user.uid,
-        inviteId: invite.inviteId,
+        inviteId: acceptedInvite.inviteId,
+        role: acceptedInvite.role,
+        controllerAccess: acceptedInvite.controllerAccess,
+        appAccess: acceptedInvite.appAccess,
+        permissions: acceptedInvite.permissions,
       });
-      await sendInviteAcceptedAdminNotifications({ invite, user }).catch(
+      await sendInviteAcceptedAdminNotifications({ invite: acceptedInvite, user }).catch(
         (error) =>
           logAuthEvent("warn", "invite.accepted.notify.error", {
             churchId: invite.churchId,
@@ -9408,10 +9681,16 @@ export const authHandlers = {
     try {
       await assertCsrf(req);
       const admin = await requireAdminSession(req, req.params.churchId);
-      const appAccess = normalizeAppAccess(req.body?.appAccess, "");
-      if (!appAccess) {
+      const controllerAccess = normalizeControllerAccess(
+        Object.prototype.hasOwnProperty.call(req.body || {}, "controllerAccess")
+          ? req.body.controllerAccess
+          : req.body?.appAccess,
+        "",
+      );
+      if (!controllerAccess) {
         throw httpError(400, "Choose a valid access level.");
       }
+      const appAccess = legacyAppAccessForController(controllerAccess);
       const memberships = await listMembershipsForChurch(req.params.churchId);
       const targetMembership = memberships.find(
         (membership) =>
@@ -9421,18 +9700,18 @@ export const authHandlers = {
       if (!targetMembership) {
         throw httpError(404, "Membership not found");
       }
-      if (targetMembership.role === "admin" && appAccess !== "full") {
+      if (targetMembership.role === "admin" && controllerAccess !== "full") {
         throw httpError(400, "Admins must keep full access.");
       }
-      const permissions = normalizeMembershipPermissions(
-        req.body?.permissions,
-        targetMembership.role,
-        appAccess,
-      );
+      const permissions = await normalizeMembershipPermissionsForChurch({
+        permissions: req.body?.permissions,
+        role: targetMembership.role,
+        churchId: req.params.churchId,
+      });
       await updateMemberAccessSettings({
         churchId: req.params.churchId,
         userId: req.params.userId,
-        appAccess,
+        controllerAccess,
         permissions,
       });
       await addSecurityEvent({
@@ -9440,6 +9719,7 @@ export const authHandlers = {
         churchId: req.params.churchId,
         userId: admin.user.uid,
         targetUserId: req.params.userId,
+        controllerAccess,
         appAccess,
         permissions,
       });

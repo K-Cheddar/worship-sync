@@ -42,7 +42,7 @@ const CREATE_SAVING_KEY = "__create__";
 type TeamRoleManagerProps = {
   roles: TeamRole[];
   teams: TeamRecord[];
-  canEdit: boolean;
+  canEditTeam: (teamId: string) => boolean;
   onSaved: (role: TeamRole, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (roleId: string) => void;
@@ -51,7 +51,7 @@ type TeamRoleManagerProps = {
 const TeamRoleManager = ({
   roles,
   teams,
-  canEdit,
+  canEditTeam,
   onSaved,
   onArchived,
   onRemoved,
@@ -60,6 +60,10 @@ const TeamRoleManager = ({
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
   const activeTeams = useMemo(() => teams.filter(isActive), [teams]);
+  const editableTeams = useMemo(
+    () => activeTeams.filter((team) => canEditTeam(team.teamId)),
+    [activeTeams, canEditTeam],
+  );
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [editing, setEditing] = useState<TeamRole | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -91,6 +95,12 @@ const TeamRoleManager = ({
   );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
+  const creationTeamId = canEditTeam(teamId)
+    ? teamId
+    : editableTeams[0]?.teamId || "";
+  const canEditCurrent = editing
+    ? canEditTeam(editing.teamId)
+    : Boolean(creationTeamId && canEditTeam(creationTeamId));
   const teamRoles = roles.filter((role) =>
     (listFilters.teamIds.length === 0 || listFilters.teamIds.includes(role.teamId)) &&
     (listFilters.includeArchived || isActive(role)),
@@ -103,7 +113,7 @@ const TeamRoleManager = ({
   const reset = () => {
     setEditing(null);
     setShowCreate(false);
-    setDraft({ teamId: teamId, name: "", description: "", icon: "" });
+    setDraft({ teamId: creationTeamId, name: "", description: "", icon: "" });
   };
 
   const cancelEditing = () => {
@@ -115,6 +125,7 @@ const TeamRoleManager = ({
   };
 
   const openRoleEditor = (role: TeamRole) => {
+    if (!canEditTeam(role.teamId)) return;
     setShowFilters(false);
     setEditing(role);
     setSelectedTeamId(role.teamId);
@@ -128,12 +139,13 @@ const TeamRoleManager = ({
   };
 
   const selectRole = (role: TeamRole) => {
+    if (!canEditTeam(role.teamId)) return;
     if (editing?.roleId === role.roleId) return;
     requestDiscardAction(() => openRoleEditor(role));
   };
 
   const confirmDelete = async () => {
-    if (!canEdit || !deleting) return;
+    if (!deleting || !canEditTeam(deleting.teamId)) return;
     const role = deleting;
     if (role.roleId.startsWith("local-")) {
       onRemoved(role.roleId);
@@ -154,12 +166,12 @@ const TeamRoleManager = ({
   };
 
   const submit = async () => {
-    if (!canEdit) return;
-    const roleTeamId = editing?.teamId || teamId;
+    const roleTeamId = editing?.teamId || creationTeamId;
     if (!roleTeamId) {
       showToast("Create a team first, then add its roles.", "neutral");
       return;
     }
+    if (!canEditTeam(roleTeamId)) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.roleId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —
@@ -238,7 +250,7 @@ const TeamRoleManager = ({
         icon: editing.icon || "",
       })
       : JSON.stringify(draft) !==
-      JSON.stringify({ teamId, name: "", description: "", icon: "" });
+      JSON.stringify({ teamId: creationTeamId, name: "", description: "", icon: "" });
   useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
@@ -246,13 +258,15 @@ const TeamRoleManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
+          if (!creationTeamId) return;
           requestDiscardAction(() => {
             setShowFilters(false);
+            setSelectedTeamId(creationTeamId);
             reset();
             setShowCreate(true);
           });
         }}
-        canEdit={canEdit}
+        canEdit={Boolean(editableTeams.length)}
         keepCreateActionVisible
         title={editing ? "Edit role" : "Create role"}
         sectionTitle="Team roles"
@@ -301,7 +315,7 @@ const TeamRoleManager = ({
                     icon={role.icon || "ShieldCheck"}
                     archived={Boolean(role.archivedAt)}
                     compact
-                    canEdit={canEdit}
+                    canEdit={canEditTeam(role.teamId)}
                     onTitleClick={() => selectRole(role)}
                   />
                 ))}
@@ -315,7 +329,7 @@ const TeamRoleManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditCurrent}
                   archiveLabel="Archive role"
                   deleteLabel="Delete role"
                   menuLabel="Role actions"
@@ -323,6 +337,7 @@ const TeamRoleManager = ({
                     editing.archivedAt
                       ? undefined
                       : async () => {
+                        if (!canEditTeam(editing.teamId)) return;
                         const archivedRole = {
                           ...editing,
                           archivedAt: new Date().toISOString(),
@@ -352,14 +367,14 @@ const TeamRoleManager = ({
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
-            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            disabled={!canEditCurrent || !draft.name.trim() || isSavingCurrent}
           />
         }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
           <span className="font-semibold text-gray-200">
-            {activeTeams.find((team) => team.teamId === (editing?.teamId || teamId))?.name ||
+            {activeTeams.find((team) => team.teamId === (editing?.teamId || creationTeamId))?.name ||
               "a team"}
           </span>
           .

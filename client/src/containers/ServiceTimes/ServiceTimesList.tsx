@@ -5,6 +5,7 @@ import TimeAdjuster from "./TimeAdjuster";
 import NextServiceLiveCountdown from "./NextServiceLiveCountdown";
 import { getEffectiveTargetTime } from "../../utils/serviceTimes";
 import { serverDate } from "../../utils/serverTime";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 
 type Props = {
   services: ServiceTime[];
@@ -21,6 +22,8 @@ const ServiceTimesList = ({
   upcomingServiceTargetIso,
   canEdit = true,
 }: Props) => {
+  const { timeZone } = useChurchServiceTimeZone();
+  const serviceTimeZone = timeZone || "UTC";
   const [manualAdjustId, setManualAdjustId] = useState<string | null>(null);
 
   const toggleManualAdjust = (id: string) =>
@@ -31,14 +34,14 @@ const ServiceTimesList = ({
     return services
       .filter((s) => s.id !== upcomingService?.service.id)
       .sort((a, b) => {
-        const aNext = getEffectiveTargetTime(a, now);
-        const bNext = getEffectiveTargetTime(b, now);
+        const aNext = getEffectiveTargetTime(a, now, serviceTimeZone);
+        const bNext = getEffectiveTargetTime(b, now, serviceTimeZone);
         if (aNext && bNext) return aNext.getTime() - bNext.getTime();
         if (aNext) return -1;
         if (bNext) return 1;
         return 0;
       });
-  }, [services, upcomingService]);
+  }, [services, upcomingService, serviceTimeZone]);
 
   return (
     <section className="flex w-full shrink-0 flex-col gap-2 rounded-md border border-white/12 bg-black/30 p-4">
@@ -52,6 +55,7 @@ const ServiceTimesList = ({
               <p>Upcoming service</p>
               <ServiceItem
                 service={upcomingService.service}
+                timeZone={serviceTimeZone}
                 {...(canEdit ? { onEdit } : {})}
               />
               <NextServiceLiveCountdown
@@ -70,6 +74,7 @@ const ServiceTimesList = ({
                 <ServiceItem
                   key={s.id}
                   service={s}
+                  timeZone={serviceTimeZone}
                   {...(canEdit
                     ? { onEdit, onToggleAdjust: toggleManualAdjust }
                     : {})}

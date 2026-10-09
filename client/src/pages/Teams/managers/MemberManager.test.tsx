@@ -112,6 +112,11 @@ const renderManager = ({
   onTeamSaved = jest.fn(),
   userId = "",
   role = "admin",
+  canEdit = true,
+  canEditAllTeams = true,
+  canManageMemberLifecycle = true,
+  canEditMember,
+  initialEntry,
   onSmsConsentRecorded = jest.fn(),
 }: {
   data?: TeamsData;
@@ -120,10 +125,15 @@ const renderManager = ({
   userId?: string;
   /** Invite and the account picker call admin-only endpoints. */
   role?: string;
+  canEdit?: boolean;
+  canEditAllTeams?: boolean;
+  canManageMemberLifecycle?: boolean;
+  canEditMember?: (member: TeamRosterMember) => boolean;
+  initialEntry?: string | { pathname: string; state?: unknown };
   onSmsConsentRecorded?: jest.Mock;
 } = {}) => {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>
       <GlobalInfoContext.Provider
         value={
           { churchId: "church-1", userId, role } as ContextType<
@@ -137,7 +147,10 @@ const renderManager = ({
               members={data.members}
               positions={data.positions}
               data={data}
-              canEdit
+              canEdit={canEdit}
+              canEditAllTeams={canEditAllTeams}
+              canManageMemberLifecycle={canManageMemberLifecycle}
+              canEditMember={canEditMember}
               onSaved={onSaved}
               onTeamSaved={onTeamSaved}
               onArchived={jest.fn()}
@@ -234,6 +247,47 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("keeps church-level member lifecycle actions hidden from a scoped Team editor", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: joinedData(),
+      canEditAllTeams: false,
+      canManageMemberLifecycle: false,
+      canEditMember: () => true,
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByLabelText(/^First name/i)).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Member actions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Archive member")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delete member")).not.toBeInTheDocument();
+  });
+
+  it("preselects the source Team and requires roster ownership for scoped creation", async () => {
+    const user = userEvent.setup();
+    mockCreateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
+    });
+    renderManager({
+      data: buildData(),
+      canEditAllTeams: false,
+      initialEntry: {
+        pathname: TEAMS_SECTION_PATHS.members,
+        state: { teamsCreateMember: { teamId: worshipTeam.teamId } },
+      },
+    });
+    expect(await screen.findByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(worshipTeamCheckbox()).toBeChecked();
+    expect(within(teamsField()).queryByRole("checkbox", { name: /Media/ })).not.toBeInTheDocument();
+    await fillName(user);
+    await user.click(within(teamsField()).getByRole("button", { name: "Clear all" }));
+    expect(saveButton()).toBeDisabled();
+    await user.click(worshipTeamCheckbox());
+    expect(saveButton()).toBeEnabled();
+    await user.click(saveButton());
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledWith("church-1", expect.objectContaining({ teamIds: [worshipTeam.teamId] })));
+  });
+
   it("shows create, pending, and saved states after a successful member save", async () => {
     const user = userEvent.setup();
     let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
@@ -876,6 +930,23 @@ describe("MemberManager account linking", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not expose profile image or account-link controls to a scoped manager", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: linkableMembers(),
+      userId: "user-1",
+      role: "member",
+      canEditAllTeams: false,
+    });
+
+    await openMember(user, /Someone Else/);
+
+    expect(screen.queryByRole("button", { name: /This is me/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Unlink/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Choose image|Replace image/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove/i })).not.toBeInTheDocument();
+  });
+
   it("hides 'This is me' once the account has claimed another member", async () => {
     const user = userEvent.setup();
     // An account may hold at most one member per church, so the server would
@@ -1013,6 +1084,30 @@ describe("MemberManager roster contact information", () => {
     );
     expect(screen.getByText("JL")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Edit/ })).toHaveLength(2);
+  });
+
+  it("keeps a read-only projected roster visible without write controls", () => {
+    renderManager({ data: rosterWithAndWithoutContactInfo(), canEdit: false });
+
+    expect(screen.getByText("Has Email")).toBeInTheDocument();
+    expect(screen.getByText("Phone Only")).toBeInTheDocument();
+    expect(screen.getByText("No Contact")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create member" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Has Email/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Import|Export/i })).not.toBeInTheDocument();
+  });
+
+  it("shows shared members while granting edit actions only to server-authorized ids", () => {
+    const data = rosterWithAndWithoutContactInfo();
+    renderManager({
+      data,
+      canEditMember: (member) => member.memberId === "member-reachable",
+    });
+
+    expect(screen.getByText("Has Email")).toBeInTheDocument();
+    expect(screen.getByText("Phone Only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Edit Has Email/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Phone Only/i })).not.toBeInTheDocument();
   });
 
   it("offers contextual SMS opt-in link actions for a saved member", async () => {

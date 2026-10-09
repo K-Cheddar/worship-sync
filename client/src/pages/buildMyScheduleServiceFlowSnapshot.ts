@@ -11,11 +11,13 @@ export const buildMyScheduleServiceFlowSnapshot = ({
   plan,
   churchName = "",
   churchLogoUrl = "",
+  timeZone = "UTC",
 }: {
   occurrence: MyScheduleOccurrence;
   plan: MySchedulePlan;
   churchName?: string;
   churchLogoUrl?: string;
+  timeZone?: string;
 }): PublicServiceFlowSnapshot => {
   const startsAt =
     occurrence.startsAt ||
@@ -34,7 +36,7 @@ export const buildMyScheduleServiceFlowSnapshot = ({
       viewMode: "team",
       title: plan.name || occurrence.name || "Order of service",
       startsAt,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      timezone: timeZone,
       revision: 0,
       sections: plan.sections.map((section, sectionIndex) => ({
         id: `section-${sectionIndex}`,

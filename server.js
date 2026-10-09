@@ -25,7 +25,7 @@ import {
   queryDocs,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
-  requireTeamsViewSession,
+  requireBroadTeamsViewSession,
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
   setDoc,
@@ -1405,6 +1405,14 @@ app.get(
   authHandlers.getTeamsBootstrap,
 );
 app.get(
+  "/api/churches/:churchId/service-time-zone",
+  authHandlers.getChurchServiceTimeZone,
+);
+app.post(
+  "/api/churches/:churchId/service-time-zone",
+  authHandlers.updateChurchServiceTimeZone,
+);
+app.get(
   "/api/churches/:churchId/notification-intents",
   authHandlers.listIntents,
 );
@@ -1501,6 +1509,26 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/delete",
   authHandlers.deleteTeamRosterMember,
+);
+app.get(
+  "/api/churches/:churchId/teams/:teamId/roster-candidates",
+  authHandlers.searchTeamRosterCandidates,
+);
+app.get(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId/team-profile",
+  authHandlers.getTeamRosterMemberProfile,
+);
+app.patch(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId/team-profile",
+  authHandlers.updateTeamRosterMemberProfile,
+);
+app.post(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId",
+  authHandlers.addTeamRosterMember,
+);
+app.delete(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId",
+  authHandlers.removeTeamRosterMember,
 );
 app.get(
   "/api/churches/:churchId/my-team-assignments",
@@ -2859,11 +2887,9 @@ app.get(
       return;
     }
 
-    // Gate the stream behind the same Teams view permission getTeamsBootstrap
-    // requires — otherwise any app-session holder for the church (including
-    // users with no Teams access) could subscribe and receive schedule payloads.
+    // Full church-wide documents require broad access; scoped readers use REST.
     try {
-      await requireTeamsViewSession(req, churchId);
+      await requireBroadTeamsViewSession(req, churchId);
     } catch {
       res.status(403).json({ error: "Teams access required" });
       return;

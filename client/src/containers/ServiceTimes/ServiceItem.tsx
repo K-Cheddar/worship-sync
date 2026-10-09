@@ -10,6 +10,7 @@ type Props = {
   onEdit?: (id: string) => void;
   onToggleAdjust?: (id: string) => void;
   isAdjusting?: boolean;
+  timeZone?: string;
 };
 
 const ServiceItem = ({
@@ -17,6 +18,7 @@ const ServiceItem = ({
   onEdit,
   onToggleAdjust,
   isAdjusting = false,
+  timeZone = "UTC",
 }: Props) => {
   if (!service) return null;
 
@@ -58,7 +60,7 @@ const ServiceItem = ({
           <div className="truncate font-semibold text-gray-50">{service.name}</div>
           <div className="mt-1 text-sm leading-snug text-gray-400">
             {service.reccurence === "one_time" &&
-              formatOneTime(service.dateTimeISO)}
+              formatOneTime(service.dateTimeISO, timeZone)}
             {service.reccurence === "weekly" &&
               formatWeekly(
                 service.dayOfWeek,

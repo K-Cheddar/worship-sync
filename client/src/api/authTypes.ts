@@ -13,11 +13,12 @@ export type BirthDate = {
  * Shared auth API types (client). Server: authService.js.
  * Hash fields are never returned; lists are sanitized server-side.
  *
- * appAccess matches GlobalInfoContext AccessType ("full" | "music" | "view")
- * without importing context (avoids circular module graphs).
+ * controllerAccess is the normalized human Controller axis. appAccess remains
+ * a legacy membership alias during the rolling client compatibility window.
  */
 
 export type SessionKind = "human" | "workstation" | "display" | null;
+export type ControllerAccess = "none" | "view" | "music" | "full";
 export type ChurchStatus = "active" | "needs-admin";
 export type ChurchStorageQuota = {
   used: number;
@@ -133,6 +134,7 @@ export type AuthBootstrap = {
   csrfToken?: string | null;
   database?: string;
   uploadPreset?: string;
+  controllerAccess?: ControllerAccess;
   appAccess?: "full" | "music" | "view" | "member";
   permissions?: MemberPermissions;
   notifications?: MemberNotifications;
@@ -194,6 +196,7 @@ export type ChurchMemberRow = {
   userId: string;
   status: string;
   role?: string;
+  controllerAccess?: ControllerAccess;
   appAccess?: string;
   permissions?: MemberPermissions;
   user: AuthUserSummary | null;
@@ -204,6 +207,7 @@ export type ChurchInviteRow = {
   churchId: string;
   email: string;
   role: string;
+  controllerAccess?: ControllerAccess;
   appAccess: string;
   permissions?: MemberPermissions;
   status: string;
@@ -457,6 +461,8 @@ export type TeamScheduleOccurrence = {
   serviceIds?: string[];
   name: string;
   startsAt: string;
+  /** Calendar date at the service location, independent of the UTC instant. */
+  serviceDate?: string;
   // optional per-date override of the service's position requirements. For a
   // combined occurrence this holds the union (max count per position) of its
   // grouped services so one set of cells covers them all.
@@ -467,6 +473,7 @@ export type TeamScheduleOccurrence = {
 export type TeamSchedulePublicSnapshot = {
   success: boolean;
   churchName: string;
+  serviceTimeZone?: string;
   teamName: string;
   churchLogoUrl?: string;
   schedule: {
@@ -586,6 +593,7 @@ export const onlyHydratedSchedules = (
 ): TeamSchedule[] => schedules.filter(isHydratedSchedule);
 
 export type TeamsBootstrap = {
+  editableMemberIds?: string[];
   success: boolean;
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -643,6 +651,7 @@ export type TeamIntakeAvailabilityOccurrence = {
   serviceId: string;
   name: string;
   startsAt: string;
+  serviceDate?: string;
 };
 
 export type TeamIntakeFieldId =
@@ -884,6 +893,7 @@ export type TeamIntakeSubmission = {
 export type TeamIntakePreview = {
   success: boolean;
   churchName: string;
+  serviceTimeZone?: string;
   churchLogoUrl?: string;
   form: Pick<
     TeamIntakeForm,

@@ -127,6 +127,16 @@ jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 jest.mock("./extractPdfText", () => ({
   extractTextFromPdfFile: jest.fn(),
 }));
@@ -457,6 +467,32 @@ describe("ServicePlanEditor", () => {
       success: true,
       servicePlan: {} as ServicePlan,
     });
+  });
+
+  it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {
+    const localSaturdayOccurrence: TeamScheduleOccurrence = {
+      ...occurrence,
+      occurrenceId: "service-1@2026-10-04T03:30:00.000Z",
+      serviceId: "service-1",
+      startsAt: "2026-10-04T03:30:00.000Z",
+      serviceDate: "2026-10-03",
+    };
+    const user = userEvent.setup();
+    renderEditor({ occurrence: localSaturdayOccurrence });
+    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-10-03",
+        expect.anything(),
+      ),
+      { timeout: 2_500 },
+    );
+    const [, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(planKey).toBe("service-1@2026-10-03");
+    expect(body.date).toBe("2026-10-03");
+    expect(body.startsAt).toBe("2026-10-04T03:30:00.000Z");
+    expect(localSaturdayOccurrence.occurrenceId).toBe("service-1@2026-10-04T03:30:00.000Z");
   });
 
   describe("Equipment tab", () => {

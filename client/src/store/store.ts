@@ -161,7 +161,7 @@ const cleanObject = (obj: Object) =>
 
 const writePendingTimersToStorageAndFirebase = async (
   state: RootState,
-  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteSharedData: boolean },
+  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteTimers: boolean },
 ): Promise<boolean> => {
   const { timers, shouldUpdateTimers } = state.timers;
   if (!shouldUpdateTimers) return false;
@@ -178,7 +178,7 @@ const writePendingTimersToStorageAndFirebase = async (
     return false;
   }
 
-  if (!scope.canWriteSharedData) {
+  if (!scope.canWriteTimers) {
     return true;
   }
 
@@ -659,6 +659,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
 
 /** Clear a removed output's synced presentation state. */
 export const clearRemoteOutputState = async (outputId: string) => {
+  if (!globalFireDbInfo.writeCapabilities.presentation) return;
   if (!globalFireDbInfo.db || !globalFireDbInfo.churchId || !outputId) return;
   await set(
     ref(
@@ -686,7 +687,7 @@ export const writePresentationSnapshotToFirebase = async (
     state.presentation,
   );
   const churchId = globalFireDbInfo.churchId;
-  if (!globalFireDbInfo.canWriteSharedData) return true;
+  if (!globalFireDbInfo.writeCapabilities.presentation) return true;
   if (
     !globalFireDbInfo.db ||
     globalFireDbInfo.isConnected === false ||
@@ -1623,7 +1624,7 @@ listenerMiddleware.startListening({
     const churchScope = {
       db: globalFireDbInfo.db,
       churchId: globalFireDbInfo.churchId,
-      canWriteSharedData: globalFireDbInfo.canWriteSharedData,
+      canWriteTimers: globalFireDbInfo.writeCapabilities?.timers === true,
     };
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -2616,8 +2617,10 @@ listenerMiddleware.startListening({
       .undoable.present.serviceTimes.list;
     const localServices = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes.list;
-    const { db: firebaseDb, churchId, canWriteSharedData } = globalFireDbInfo;
-    if (!canWriteSharedData) return;
+    const { db: firebaseDb, churchId, writeCapabilities } = globalFireDbInfo;
+    // The legacy RTDB services collection stores both service definitions and
+    // Controller-owned timer/runtime state, so either authority may write it.
+    if (!writeCapabilities.serviceRuntime && !writeCapabilities.serviceManagement) return;
     if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       notifyPresentationSyncError(

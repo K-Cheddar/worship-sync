@@ -58,7 +58,7 @@ export const scheduleDateRangesOverlap = (
 export const scheduleOccurrencesConflict = (
   current?: TeamScheduleOccurrence | null,
   other?: TeamScheduleOccurrence | null,
-  options?: { schedulesOverlap?: boolean },
+  options?: { schedulesOverlap?: boolean; timeZone?: string },
 ) => {
   if (!current || !other) return false;
   if (
@@ -82,7 +82,8 @@ export const scheduleOccurrencesConflict = (
       currentServiceIds.size > 1 || otherServiceIds.size > 1;
     return (
       includesJoinedServices &&
-      getOccurrenceDate(current) === getOccurrenceDate(other)
+      getOccurrenceDate(current, options?.timeZone || "UTC") ===
+        getOccurrenceDate(other, options?.timeZone || "UTC")
     );
   }
   return Boolean(options?.schedulesOverlap);
@@ -95,6 +96,7 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
   schedules,
   teams,
   cellKey,
+  timeZone = "UTC",
 }: {
   schedule: TeamSchedule | null | undefined;
   occurrenceId: string;
@@ -103,6 +105,7 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
   teams: TeamRecord[];
   positionId?: string;
   cellKey?: string;
+  timeZone?: string;
 }): ScheduleAssignmentConflict[] => {
   if (!schedule || !memberId) return [];
   const currentOccurrence = scheduleOccurrencesForConflict(schedule).find(
@@ -118,6 +121,7 @@ export const findCrossTeamScheduleOccurrenceConflicts = ({
       (candidate) =>
         scheduleOccurrencesConflict(currentOccurrence, candidate, {
           schedulesOverlap: scheduleDateRangesOverlap(schedule, otherSchedule),
+          timeZone,
         }),
     );
     if (!otherOccurrence) return [];

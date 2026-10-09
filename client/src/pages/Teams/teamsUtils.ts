@@ -29,6 +29,7 @@ import type { TeamSchedulePayload } from "../../api/auth";
 import type { MonthWeekOrdinal, ServiceTime, Weekday } from "../../types";
 import generateRandomId from "../../utils/generateRandomId";
 import { formatPlainDate, parsePlainDate } from "../../utils/plainDate";
+import { calendarDateInTimeZone, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
 import { buildShareablePublicPathUrl } from "../../utils/environment";
 import { emptyData } from "./teamsConstants";
 import {
@@ -46,6 +47,17 @@ const normalizeRosterMember = (member: TeamRosterMember): TeamRosterMember => ({
   teamMemberships: member.teamMemberships || {},
   qualifications: member.qualifications || [],
   blockoutDates: member.blockoutDates || [],
+});
+
+export const normalizeSafeRosterMember = (
+  member: Pick<TeamRosterMember, "memberId" | "churchId" | "title" | "firstName" | "lastName" | "profileImageUrl">,
+): TeamRosterMember => normalizeRosterMember({
+  ...member,
+  positionIds: [],
+  desiredPositionIds: [],
+  teamMemberships: {},
+  qualifications: [],
+  blockoutDates: [],
 });
 
 const normalizeIntakeForm = (form: TeamIntakeForm): TeamIntakeForm => ({
@@ -196,18 +208,21 @@ export const buildTeamSchedulePublicUrl = (token: string): string =>
     `/teams/schedule/${encodeURIComponent(String(token || "").trim())}`,
   );
 
-export const formatShortOccurrenceDate = (startsAt: string) => {
+export const formatShortOccurrenceDate = (startsAt: string, timeZone = "UTC") => {
   const date = new Date(startsAt);
   const dateStr = date.toLocaleDateString(undefined, {
+    timeZone,
     weekday: "short",
     month: "short",
     day: "numeric",
     year: "numeric",
   });
   const timeStr = date.toLocaleTimeString(undefined, {
+    timeZone,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZoneName: "short",
   });
   return `${dateStr} @ ${timeStr}`;
 };
@@ -872,11 +887,13 @@ const dateOneMonthBefore = (value: string) => {
 const scheduleOccurrenceDate = (
   schedule: TeamSchedule | TeamScheduleSummary,
   occurrenceId: string,
+  timeZone: string,
 ) => {
   const occurrence = schedule.occurrences?.find(
     (item) => item.occurrenceId === occurrenceId,
   );
-  if (occurrence?.startsAt) return occurrence.startsAt.slice(0, 10);
+  if (occurrence?.startsAt) return getOccurrenceDate(occurrence, timeZone);
+  if (occurrence?.serviceDate) return occurrence.serviceDate;
   const embeddedDate = occurrenceId.match(/(?:^|@)(\d{4}-\d{2}-\d{2})/);
   return embeddedDate?.[1];
 };
@@ -893,6 +910,7 @@ export const getMemberServingHistories = (
   memberIds: string[],
   schedules: (TeamSchedule | TeamScheduleSummary)[],
   throughDate = formatPlainDate(new Date()),
+  timeZone = "UTC",
 ): Map<string, MemberServingHistory> => {
   const histories = new Map<string, MemberServingHistory>(
     memberIds.map((memberId) => [memberId, { recentAssignmentCount: 0 }]),
@@ -936,7 +954,7 @@ export const getMemberServingHistories = (
 
       Object.entries(schedule.assignments || {}).forEach(
         ([occurrenceId, row]) => {
-          const occurrenceDate = scheduleOccurrenceDate(schedule, occurrenceId);
+          const occurrenceDate = scheduleOccurrenceDate(schedule, occurrenceId, timeZone);
           if (!occurrenceDate || occurrenceDate > throughDate) return;
           Object.values(row || {}).forEach((cell) => {
             getCellMemberIds(cell).forEach((memberId) => {
@@ -1099,10 +1117,11 @@ export const isServiceActive = (
 
 export const formatServiceTiming = (
   service?: TeamService | ServiceTime | null,
+  timeZone = "UTC",
 ) => {
   if (!service) return "";
   if (service.reccurence === "one_time")
-    return formatOneTime(service.dateTimeISO);
+    return formatOneTime(service.dateTimeISO, timeZone);
   if (service.reccurence === "weekly")
     return formatWeekly(
       service.dayOfWeek,
@@ -1138,6 +1157,7 @@ export type IntakeAvailabilityServiceOption = {
 
 export const buildIntakeAvailabilityServiceOptions = (
   services: TeamService[],
+  timeZone = "UTC",
 ): IntakeAvailabilityServiceOption[] => {
   const seenGroupIds = new Set<string>();
 
@@ -1148,7 +1168,7 @@ export const buildIntakeAvailabilityServiceOptions = (
         {
           id: service.serviceId,
           label: service.name,
-          sublabel: formatServiceTiming(service),
+          sublabel: formatServiceTiming(service, timeZone),
           serviceIds: [service.serviceId],
         },
       ];
@@ -1165,7 +1185,7 @@ export const buildIntakeAvailabilityServiceOptions = (
         {
           id: service.serviceId,
           label: service.name,
-          sublabel: formatServiceTiming(service),
+          sublabel: formatServiceTiming(service, timeZone),
           serviceIds: [service.serviceId],
         },
       ];
@@ -1174,7 +1194,7 @@ export const buildIntakeAvailabilityServiceOptions = (
     const timingLabels = [
       ...new Set(
         groupServices
-          .map((item) => formatServiceTiming(item))
+          .map((item) => formatServiceTiming(item, timeZone))
           .filter((label): label is string => Boolean(label)),
       ),
     ];
@@ -1199,6 +1219,7 @@ export type ServiceDayShape = Pick<
 /** Weekdays (0=Sun) a service can occur on, derived from its recurrence. */
 export const getServiceWeekdays = (
   service: Partial<ServiceDayShape>,
+  timeZone = "UTC",
 ): number[] => {
   switch (service.reccurence) {
     case "weekly":
@@ -1209,7 +1230,7 @@ export const getServiceWeekdays = (
       return service.weekday == null ? [] : [service.weekday];
     case "one_time":
       return service.dateTimeISO
-        ? [new Date(service.dateTimeISO).getDay()]
+        ? [parsePlainDate(calendarDateInTimeZone(new Date(service.dateTimeISO), timeZone))?.getDay() ?? -1]
         : [];
     default:
       return [];
@@ -1225,14 +1246,19 @@ export const getServiceWeekdays = (
 export const canServicesShareDay = (
   a: Partial<ServiceDayShape>,
   b: Partial<ServiceDayShape>,
+  timeZone = "UTC",
 ): boolean => {
   const aDate =
-    a.reccurence === "one_time" ? a.dateTimeISO?.slice(0, 10) : undefined;
+    a.reccurence === "one_time" && a.dateTimeISO
+      ? calendarDateInTimeZone(new Date(a.dateTimeISO), timeZone)
+      : undefined;
   const bDate =
-    b.reccurence === "one_time" ? b.dateTimeISO?.slice(0, 10) : undefined;
+    b.reccurence === "one_time" && b.dateTimeISO
+      ? calendarDateInTimeZone(new Date(b.dateTimeISO), timeZone)
+      : undefined;
   if (aDate && bDate) return aDate === bDate;
-  const aWeekdays = new Set(getServiceWeekdays(a));
-  return getServiceWeekdays(b).some((weekday) => aWeekdays.has(weekday));
+  const aWeekdays = new Set(getServiceWeekdays(a, timeZone));
+  return getServiceWeekdays(b, timeZone).some((weekday) => aWeekdays.has(weekday));
 };
 
 export const toTeamService = (service: ServiceTime): TeamService => ({

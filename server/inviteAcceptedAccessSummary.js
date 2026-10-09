@@ -2,6 +2,7 @@ const APP_ACCESS_LABELS = {
   full: "Full access",
   music: "Music access",
   view: "View access",
+  none: "None",
 };
 
 const getEditableTeamScopeIds = (permissions) =>
@@ -17,6 +18,7 @@ const getEditableTeamScopeIds = (permissions) =>
  *
  * @param {{
  *   role?: string,
+ *   controllerAccess?: string,
  *   appAccess?: string,
  *   permissions?: { teams?: string, services?: string, teamScopes?: Record<string, string> },
  *   scopedTeamNames?: string[],
@@ -25,14 +27,19 @@ const getEditableTeamScopeIds = (permissions) =>
  */
 export const buildInviteAcceptedAccessLines = ({
   role,
+  controllerAccess,
   appAccess,
   permissions,
   scopedTeamNames = [],
 } = {}) => {
   const isAdmin = role === "admin";
+  const normalizedControllerAccess =
+    controllerAccess || (appAccess === "member" ? "none" : appAccess) || "full";
   const accessLabel = isAdmin
     ? "Admin"
-    : APP_ACCESS_LABELS[appAccess] || APP_ACCESS_LABELS.full;
+    : normalizedControllerAccess === "none"
+      ? "None"
+      : APP_ACCESS_LABELS[normalizedControllerAccess] || APP_ACCESS_LABELS.full;
   const teamsAccess = isAdmin ? "edit" : permissions?.teams || "none";
   const servicesAccess = isAdmin ? "edit" : permissions?.services || "none";
   const scopedIds = isAdmin ? [] : getEditableTeamScopeIds(permissions);
@@ -60,12 +67,14 @@ export const buildInviteAcceptedAccessLines = ({
   }
 
   const servicesLabel =
-    servicesAccess === "edit" || teamsAccess === "edit"
+    servicesAccess === "edit"
       ? "Edit services and plans"
-      : "No service editing";
+      : servicesAccess === "view"
+        ? "View services"
+        : "No service access";
 
   return [
-    `Access: ${accessLabel}`,
+    `${isAdmin ? "Role" : "Controller"}: ${accessLabel}`,
     `Teams: ${teamsLabel}`,
     `Services: ${servicesLabel}`,
   ];

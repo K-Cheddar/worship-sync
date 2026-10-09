@@ -27,6 +27,7 @@ import type {
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
+  ControllerAccess,
   AuthBootstrap,
   ChurchBranding,
   ChurchStorageQuotaUsage,
@@ -67,6 +68,7 @@ import type {
   SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
+  TeamMemberQualification,
   TeamSchedule,
   TeamScheduleAssignments,
   TeamScheduleCellAssignment,
@@ -1124,6 +1126,29 @@ export const listChurchMembers = async (churchId: string) =>
     `api/churches/${churchId}/members`,
   );
 
+export const getChurchServiceTimeZone = async (churchId: string) =>
+  apiFetch<{
+    success: boolean;
+    serviceTimeZone: string;
+    isConfigured: boolean;
+    legacyTimeZoneSuggestion?: string | null;
+  }>(
+    `api/churches/${churchId}/service-time-zone`,
+  );
+
+export const updateChurchServiceTimeZone = async (
+  churchId: string,
+  serviceTimeZone: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    serviceTimeZone: string;
+    isConfigured: boolean;
+  }>(
+    `api/churches/${churchId}/service-time-zone`,
+    { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
+  );
+
 export const listChurchInvites = async (churchId: string) =>
   apiFetch<{ success: boolean; invites: ChurchInviteRow[] }>(
     `api/churches/${churchId}/invites`,
@@ -1764,6 +1789,80 @@ export const deleteTeamRosterMember = async (
     },
   );
 
+export type TeamRosterCandidate = Pick<
+  TeamRosterMember,
+  "memberId" | "title" | "firstName" | "lastName" | "profileImageUrl"
+>;
+type SafeTeamRosterMemberProjection = TeamRosterCandidate & Pick<TeamRosterMember, "churchId">;
+
+export const searchTeamRosterCandidates = async (
+  churchId: string,
+  teamId: string,
+  query: string,
+) => apiFetch<{ candidates: TeamRosterCandidate[] }>(
+  `api/churches/${churchId}/teams/${teamId}/roster-candidates?q=${encodeURIComponent(query)}`,
+);
+
+export const addTeamRosterMemberToTeam = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<{ success: boolean; team: TeamRecord; member: SafeTeamRosterMemberProjection }>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
+  { method: "POST", body: JSON.stringify({}) },
+);
+
+export const removeTeamRosterMemberFromTeam = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<{
+  success: boolean;
+  team: TeamRecord;
+  member: SafeTeamRosterMemberProjection;
+  preservedAssignmentCount: number;
+}>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
+  { method: "DELETE" },
+);
+
+export type TeamMemberProfile = Pick<
+  TeamRosterMember,
+  "memberId" | "title" | "firstName" | "lastName" | "profileImageUrl"
+>;
+export type TeamMemberTeamProfile = {
+  teamId: string;
+  positionIds: string[];
+  desiredPositionIds: string[];
+  membership: { roleId?: string; isTeamLead: boolean };
+  qualifications: TeamMemberQualification[];
+};
+export type TeamMemberTeamProfilePatch = Partial<
+  Pick<TeamMemberTeamProfile, "positionIds" | "desiredPositionIds" | "qualifications">
+> & { membership?: { roleId?: string | null; isTeamLead?: boolean } };
+export type TeamMemberTeamProfileResponse = {
+  member: TeamMemberProfile;
+  teamProfile: TeamMemberTeamProfile;
+};
+
+export const getTeamRosterMemberProfile = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<TeamMemberTeamProfileResponse>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}/team-profile`,
+);
+
+export const updateTeamRosterMemberProfile = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+  body: TeamMemberTeamProfilePatch,
+) => apiFetch<{ success: boolean } & TeamMemberTeamProfileResponse>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}/team-profile`,
+  { method: "PATCH", body: JSON.stringify(body) },
+);
+
 export type MyScheduleServing = {
   /** Set only for this person's own rows; others are name-only by design. */
   memberId: string;
@@ -1844,6 +1943,7 @@ export type MyScheduleOccurrence = {
 export const getMyTeamAssignments = async (churchId: string) =>
   apiFetch<{
     success: boolean;
+    serviceTimeZone?: string;
     member: TeamRosterMember | null;
     occurrences: MyScheduleOccurrence[];
   }>(`api/churches/${churchId}/my-team-assignments`);
@@ -1874,6 +1974,7 @@ export const getAssignmentResponseContext = async (token: string) =>
   apiFetch<{
     success: boolean;
     churchName: string;
+    serviceTimeZone?: string;
     firstName: string;
     assignments: AssignmentResponseSlot[];
   }>(`api/team-schedule-response?${new URLSearchParams({ token }).toString()}`);
@@ -2745,7 +2846,8 @@ export const inviteTeamRosterMember = async (
     email,
     memberId,
     role: "member",
-    // The narrowest tier: their own schedule, no operator surfaces.
+    // No Controller access; roster-derived Teams reads remain independent.
+    controllerAccess: "none",
     appAccess: "member",
     permissions: { teams: "none", services: "none" },
   });
@@ -2912,14 +3014,18 @@ export const removeChurchMember = async (churchId: string, userId: string) =>
 export const updateChurchMemberAccess = async (
   churchId: string,
   userId: string,
-  appAccess: "full" | "music" | "view" | "member",
+  controllerAccess: ControllerAccess,
   permissions: MemberPermissions,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
     {
       method: "POST",
-      body: JSON.stringify({ appAccess, permissions }),
+      body: JSON.stringify({
+        controllerAccess,
+        appAccess: controllerAccess === "none" ? "member" : controllerAccess,
+        permissions,
+      }),
     },
   );
 

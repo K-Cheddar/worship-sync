@@ -90,6 +90,8 @@ export type OverlaySyncPlanItem = {
 };
 
 export type ServicePlanningTeamAssignment = {
+  /** Team identity is included by the plan-specific Services read projection. */
+  teamId?: string;
   teamName: string;
   role: string;
   name: string;

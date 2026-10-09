@@ -1,14 +1,32 @@
 import {
   compareServicesByScheduleOrder,
-  getClosestUpcomingService,
-  getDisplayedUpcomingService,
-  getEffectiveTargetTime,
-  getMostRecentTargetTime,
-  getNextOccurrenceForService,
-  getUpcomingServiceRefreshDelay,
+  getClosestUpcomingService as getClosestUpcomingServiceInZone,
+  getDisplayedUpcomingService as getDisplayedUpcomingServiceInZone,
+  getEffectiveTargetTime as getEffectiveTargetTimeInZone,
+  getMostRecentTargetTime as getMostRecentTargetTimeInZone,
+  getNextOccurrenceForService as getNextOccurrenceForServiceInZone,
+  getUpcomingServiceRefreshDelay as getUpcomingServiceRefreshDelayInZone,
   sortServicesByScheduleOrder,
 } from "./serviceTimes";
 import type { ServiceTime } from "../types";
+
+const testTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const getClosestUpcomingService = (services: ServiceTime[], now?: Date) =>
+  getClosestUpcomingServiceInZone(services, now, testTimeZone);
+const getDisplayedUpcomingService = (
+  services: ServiceTime[], now?: Date, graceMs?: number,
+  options?: { keepRecentlyElapsedDuringGrace?: boolean },
+) => getDisplayedUpcomingServiceInZone(services, now, graceMs, options, testTimeZone);
+const getEffectiveTargetTime = (service: ServiceTime, now?: Date) =>
+  getEffectiveTargetTimeInZone(service, now, testTimeZone);
+const getMostRecentTargetTime = (service: ServiceTime, now?: Date) =>
+  getMostRecentTargetTimeInZone(service, now, testTimeZone);
+const getNextOccurrenceForService = (service: ServiceTime, now?: Date) =>
+  getNextOccurrenceForServiceInZone(service, now, testTimeZone);
+const getUpcomingServiceRefreshDelay = (
+  services: ServiceTime[], now?: Date, graceMs?: number,
+  options?: { keepRecentlyElapsedDuringGrace?: boolean },
+) => getUpcomingServiceRefreshDelayInZone(services, now, graceMs, options, testTimeZone);
 
 const createService = (overrides: Partial<ServiceTime>): ServiceTime => ({
   id: "svc-1",
@@ -137,6 +155,40 @@ describe("serviceTimes", () => {
       expect(nextBounded?.getDate()).toBe(18);
       // Next Sunday (Jan 11) falls after the inclusive end date.
       expect(getNextOccurrenceForService(afterEnd, now)).toBeNull();
+    });
+
+    it("finds a weekly occurrence when the configured start is over 400 days away", () => {
+      const now = new Date(2026, 0, 4, 9, 0, 0);
+      const service = createService({
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        startDateISO: "2027-08-01",
+      });
+
+      const result = getNextOccurrenceForService(service, now);
+
+      expect(result?.getFullYear()).toBe(2027);
+      expect(result?.getMonth()).toBe(7);
+      expect(result?.getDate()).toBe(1);
+      expect(result?.getHours()).toBe(10);
+    });
+
+    it("finds the last occurrence near an end date over 400 days in the past", () => {
+      const now = new Date(2026, 0, 4, 12, 0, 0);
+      const service = createService({
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        endDateISO: "2024-01-07",
+      });
+
+      const result = getMostRecentTargetTime(service, now);
+
+      expect(result?.getFullYear()).toBe(2024);
+      expect(result?.getMonth()).toBe(0);
+      expect(result?.getDate()).toBe(7);
+      expect(result?.getHours()).toBe(10);
     });
 
     describe("multi_weekly", () => {

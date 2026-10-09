@@ -1,13 +1,16 @@
 import MemberManager from "../managers/MemberManager";
 import { useTeamsPage } from "../TeamsPageContext";
-import { canEditRosterMember } from "../teamsUtils";
 
 const TeamsMembersPage = () => {
-  const { pageData, upsertData, removeData, refresh, canEditTeams, canEditTeam } =
+  const {
+    pageData,
+    upsertData,
+    removeData,
+    refresh,
+    canEditTeams,
+    canEditTeam,
+  } =
     useTeamsPage();
-  const positionTeamById = new Map(
-    pageData.positions.map((position) => [position.positionId, position.teamId]),
-  );
   const editableTeamIds = new Set(
     pageData.teams
       .filter((team) => canEditTeam(team.teamId))
@@ -34,22 +37,18 @@ const TeamsMembersPage = () => {
         );
         return area ? editableTeamIds.has(area.teamId) : false;
       }),
-      members: pageData.members.filter((member) =>
-        canEditRosterMember({
-          member,
-          positionTeamById,
-          canEditTeams,
-          editableTeamIds,
-        }),
-      ),
+      members: pageData.members,
     };
 
   return (
     <MemberManager
-      members={managerData.members}
-      positions={managerData.positions}
-      data={managerData}
+      members={pageData.members}
+      positions={canEditScopedMembers ? managerData.positions : pageData.positions}
+      data={canEditScopedMembers ? managerData : pageData}
       canEdit={canEditScopedMembers}
+      canEditAllTeams={canEditTeams}
+      canManageMemberLifecycle={canEditTeams}
+      canEditMember={() => canEditTeams}
       onSaved={(member, replaceId) =>
         upsertData("members", "memberId", member, replaceId)
       }

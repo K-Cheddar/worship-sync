@@ -1,6 +1,6 @@
 import type { TeamScheduleOccurrence, TeamService } from "../api/authTypes";
 import type { ServiceTime } from "../types";
-import { generateScheduleOccurrences } from "./teamScheduleOccurrences";
+import { calendarDateInTimeZone, generateScheduleOccurrences } from "./teamScheduleOccurrences";
 import { serverDate } from "./serverTime";
 
 export const CURRENT_SERVICE_RUN_WINDOW_MS = 3 * 60 * 60 * 1000;
@@ -11,6 +11,7 @@ export const CURRENT_SERVICE_RECENT_GRACE_MS = 90 * 60 * 1000;
 export type CurrentServiceOccurrenceWindow = {
   lookbackDays?: number;
   lookaheadDays?: number;
+  timeZone?: string;
 };
 
 export type CurrentServiceResolutionReason =
@@ -38,13 +39,8 @@ const compareOccurrences = (
   return timeDifference || left.occurrenceId.localeCompare(right.occurrenceId);
 };
 
-const localDayKey = (timestampMs: number): string => {
-  const date = new Date(timestampMs);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+const serviceDayKey = (timestampMs: number, timeZone: string): string =>
+  calendarDateInTimeZone(new Date(timestampMs), timeZone);
 
 const sortedFiniteOccurrences = (
   occurrences: TeamScheduleOccurrence[],
@@ -81,17 +77,21 @@ export const listCurrentServiceOccurrences = (
     0,
     window.lookaheadDays ?? CURRENT_SERVICE_LOOKAHEAD_DAYS,
   );
-  const startDate = new Date(nowMs - lookbackDays * DAY_MS)
-    .toISOString()
-    .slice(0, 10);
-  const endDate = new Date(nowMs + lookaheadDays * DAY_MS)
-    .toISOString()
-    .slice(0, 10);
+  const timeZone = window.timeZone || "UTC";
+  const startDate = calendarDateInTimeZone(
+    new Date(nowMs - lookbackDays * DAY_MS),
+    timeZone,
+  );
+  const endDate = calendarDateInTimeZone(
+    new Date(nowMs + lookaheadDays * DAY_MS),
+    timeZone,
+  );
   return generateScheduleOccurrences({
     services: activeServices,
     serviceIds: activeServices.map((service) => service.serviceId),
     startDate,
     endDate,
+    timeZone,
   })
     .filter((occurrence) => Number.isFinite(occurrenceTime(occurrence)))
     .sort((left, right) => occurrenceTime(left) - occurrenceTime(right));
@@ -141,9 +141,10 @@ export const pickCurrentServiceOccurrence = (
 export const resolveCurrentServiceOccurrence = (
   occurrences: TeamScheduleOccurrence[],
   nowMs = serverDate().getTime(),
+  timeZone = "UTC",
 ): CurrentServiceResolution => {
   const sortedOccurrences = sortedFiniteOccurrences(occurrences);
-  const todayKey = localDayKey(nowMs);
+  const todayKey = serviceDayKey(nowMs, timeZone);
 
   const inProgress = sortedOccurrences
     .filter((occurrence) => {
@@ -161,7 +162,7 @@ export const resolveCurrentServiceOccurrence = (
   const upcomingToday = sortedOccurrences.find(
     (occurrence) =>
       occurrenceTime(occurrence) > nowMs &&
-      localDayKey(occurrenceTime(occurrence)) === todayKey,
+        serviceDayKey(occurrenceTime(occurrence), timeZone) === todayKey,
   );
   if (upcomingToday) {
     return { occurrence: upcomingToday, reason: "upcoming-today" };
@@ -171,7 +172,7 @@ export const resolveCurrentServiceOccurrence = (
     .filter((occurrence) => {
       const endsAt = occurrenceTime(occurrence) + CURRENT_SERVICE_RUN_WINDOW_MS;
       return (
-        localDayKey(occurrenceTime(occurrence)) === todayKey &&
+        serviceDayKey(occurrenceTime(occurrence), timeZone) === todayKey &&
         nowMs >= endsAt &&
         nowMs <= endsAt + CURRENT_SERVICE_RECENT_GRACE_MS
       );
@@ -201,8 +202,9 @@ export const findCurrentServiceOccurrence = (
 export const getCurrentServiceResolutionRecheckAtMs = (
   occurrences: TeamScheduleOccurrence[],
   nowMs = serverDate().getTime(),
+  timeZone = "UTC",
 ): number | null => {
-  const resolution = resolveCurrentServiceOccurrence(occurrences, nowMs);
+  const resolution = resolveCurrentServiceOccurrence(occurrences, nowMs, timeZone);
   const futureStarts = sortedFiniteOccurrences(occurrences)
     .map(occurrenceTime)
     .filter((startsAt) => startsAt > nowMs);

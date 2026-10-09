@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import PositionManager from "./PositionManager";
@@ -12,13 +12,14 @@ import {
 } from "../../../api/auth";
 import type { TeamPosition, TeamRecord } from "../../../api/authTypes";
 import type { TeamsData } from "../types";
-import { buildGroupsReturnTo, TEAMS_RETURN_STORAGE_KEY, TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
+import { buildGroupsReturnTo, TEAMS_POSITION_EDIT_SEARCH_PARAM, TEAMS_RETURN_STORAGE_KEY, TEAMS_SECTION_PATHS } from "../teamsReturnNavigation";
 
 jest.mock("../../../api/auth", () => ({
   archiveTeamPosition: jest.fn(),
   createTeamPosition: jest.fn(),
   deleteTeamPosition: jest.fn(),
   getServicePlanMicrophones: jest.fn().mockResolvedValue({ microphones: [] }),
+  getServiceEquipment: jest.fn().mockResolvedValue({ equipment: [] }),
   updateTeamPosition: jest.fn(),
 }));
 
@@ -41,6 +42,36 @@ const data: TeamsData = {
   intakeForms: [], intakeSubmissions: [], intakeRecipients: [],
 };
 const returnTo = buildGroupsReturnTo(team.teamId);
+const avTeam: TeamRecord = {
+  churchId: "church-1", teamId: "team-av", name: "AV", memberIds: [],
+};
+const avPosition: TeamPosition = {
+  churchId: "church-1", teamId: avTeam.teamId,
+  positionId: "position-camera", name: "Camera",
+};
+const worshipSecondPosition: TeamPosition = {
+  ...position, positionId: "position-vocal-2", name: "Keys",
+};
+
+const renderScopedManager = (
+  positions: TeamPosition[],
+  teams: TeamRecord[],
+  initialEntry: string = TEAMS_SECTION_PATHS.positions,
+) => render(
+  <MemoryRouter initialEntries={[initialEntry]}>
+    <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+      <ToastProvider>
+        <TeamsNavigationGuardProvider>
+          <PositionManager
+            positions={positions} teams={teams} data={{ ...data, positions, teams }}
+            canEditTeam={(teamId) => teamId === team.teamId}
+            onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} onReordered={jest.fn()}
+          />
+        </TeamsNavigationGuardProvider>
+      </ToastProvider>
+    </GlobalInfoContext.Provider>
+  </MemoryRouter>,
+);
 
 const LocationProbe = () => {
   const location = useLocation();
@@ -53,7 +84,7 @@ const renderManager = () => render(
       <ToastProvider>
         <TeamsNavigationGuardProvider>
           <PositionManager
-            positions={[position]} teams={[team]} data={data} canEdit
+            positions={[position]} teams={[team]} data={data} canEditTeam={() => true}
             onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} onReordered={jest.fn()}
           />
           <LocationProbe />
@@ -93,7 +124,7 @@ describe("PositionManager return navigation", () => {
           <ToastProvider>
             <TeamsNavigationGuardProvider>
               <PositionManager
-                positions={[position]} teams={[team]} data={data} canEdit
+                positions={[position]} teams={[team]} data={data} canEditTeam={() => true}
                 onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} onReordered={jest.fn()}
               />
               <LocationProbe />
@@ -178,4 +209,72 @@ describe("PositionManager return navigation", () => {
     await user.click(screen.getAllByRole("button", { name: "Back to teams" }).at(-1)!);
     expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
   }, 20_000);
+
+  it("keeps AV visible and read-only while create defaults to Worship", async () => {
+    const user = userEvent.setup();
+    const created = { ...position, positionId: "new-worship-position", name: "New keys" };
+    jest.mocked(createTeamPosition).mockResolvedValue({ success: true, position: created } as never);
+    renderScopedManager([avPosition, position], [avTeam, team]);
+
+    expect(screen.getByRole("button", { name: "Edit Vocal" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit Camera" })).not.toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Create position" })[0]);
+    expect(screen.getAllByText("Worship", { exact: true })).not.toHaveLength(0);
+    await user.type(screen.getByLabelText(/^Name:?$/), "New keys");
+    await user.click(screen.getAllByRole("button", { name: "Create position" }).at(-1)!);
+
+    await waitFor(() => expect(createTeamPosition).toHaveBeenCalledWith("church-1", expect.objectContaining({ teamId: team.teamId })));
+  });
+
+  it("does not open a read-only AV position from an edit deep link", async () => {
+    renderScopedManager(
+      [position, avPosition],
+      [team, avTeam],
+      `${TEAMS_SECTION_PATHS.positions}?${TEAMS_POSITION_EDIT_SEARCH_PARAM}=${avPosition.positionId}`,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Positions" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("");
+    expect(screen.queryByRole("heading", { name: "Edit position" })).not.toBeInTheDocument();
+  });
+
+  it("hides create and edit controls for a roster-only reader", () => {
+    render(
+      <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.positions]}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+          <ToastProvider><TeamsNavigationGuardProvider>
+            <PositionManager
+              positions={[position, avPosition]} teams={[team, avTeam]}
+              data={{ ...data, positions: [position, avPosition], teams: [team, avTeam] }}
+              canEditTeam={() => false} onSaved={jest.fn()} onArchived={jest.fn()}
+              onRemoved={jest.fn()} onReordered={jest.fn()}
+            />
+          </TeamsNavigationGuardProvider></ToastProvider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    const list = within(screen.getByTestId("teams-create-panel-list"));
+    expect(list.queryByRole("button", { name: "Create position" })).not.toBeInTheDocument();
+    expect(list.queryByRole("button", { name: "Edit Vocal" })).not.toBeInTheDocument();
+    expect(list.queryByRole("button", { name: "Edit Camera" })).not.toBeInTheDocument();
+    expect(list.getByText("Vocal")).toBeInTheDocument();
+    expect(list.getByText("Camera")).toBeInTheDocument();
+  });
+
+  it("shows reorder handles only for the selected editable team", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderScopedManager([position, worshipSecondPosition, avPosition], [avTeam, team]);
+    await user.click(screen.getByRole("button", { name: "Filter positions" }));
+    await user.click(screen.getByRole("checkbox", { name: "Worship" }));
+    await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+    expect(screen.getByRole("button", { name: "Drag to reorder Vocal" })).toBeInTheDocument();
+    unmount();
+
+    renderScopedManager([position, worshipSecondPosition, avPosition], [avTeam, team]);
+    await user.click(screen.getByRole("button", { name: "Filter positions" }));
+    await user.click(screen.getByRole("checkbox", { name: "AV" }));
+    await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+    expect(screen.queryByRole("button", { name: "Drag to reorder Camera" })).not.toBeInTheDocument();
+  });
 });

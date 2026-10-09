@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { TeamRosterMember } from "../../../api/authTypes";
 import ScheduleTab from "../schedule/ScheduleTab";
 import { useTeamsPage } from "../TeamsPageContext";
-import { buildTeamsMemberEditPath, canEditRosterMember } from "../teamsUtils";
+import { buildTeamsMemberEditPath } from "../teamsUtils";
 import {
   buildTeamsReturnNavigationState,
   persistTeamsReturnTo,
@@ -27,7 +27,9 @@ const TeamsSchedulesPage = () => {
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
+    editableMemberIds,
     refresh,
+    serviceTimeZone,
   } = useTeamsPage();
   const selectedSchedule = pageData.schedules.find(
     (schedule) => schedule.scheduleId === selectedScheduleId,
@@ -35,13 +37,6 @@ const TeamsSchedulesPage = () => {
   const canEditSelectedSchedule = selectedSchedule
     ? canEditTeam(selectedSchedule.teamId)
     : canEditAnyTeam;
-  const positionTeamById = useMemo(
-    () =>
-      new Map(
-        pageData.positions.map((position) => [position.positionId, position.teamId]),
-      ),
-    [pageData.positions],
-  );
   const editableTeamIds = useMemo(
     () =>
       new Set(
@@ -53,13 +48,8 @@ const TeamsSchedulesPage = () => {
   );
   const canEditMember = useCallback(
     (member: TeamRosterMember) =>
-      canEditRosterMember({
-        member,
-        positionTeamById,
-        canEditTeams,
-        editableTeamIds,
-      }),
-    [canEditTeams, editableTeamIds, positionTeamById],
+      canEditTeams || editableMemberIds.has(member.memberId),
+    [canEditTeams, editableMemberIds],
   );
   const handleEditMember = useCallback(
     (memberId: string, returnTo: TeamsReturnTo) => {
@@ -74,6 +64,7 @@ const TeamsSchedulesPage = () => {
   return (
     <ScheduleTab
       data={pageData}
+      serviceTimeZone={serviceTimeZone}
       canEdit={canEditTeams || canEditSelectedSchedule}
       // Drives the default team filter: someone scoped to a single team gets
       // their schedules narrowed for them on first visit.

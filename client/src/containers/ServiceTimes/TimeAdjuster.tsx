@@ -8,6 +8,7 @@ import { serverDate } from "../../utils/serverTime";
 import { Plus, RotateCcw, Timer, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
+import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 
 type Props = {
   serviceId: string;
@@ -30,6 +31,7 @@ const formatMmSs = (totalSeconds: number) => {
 
 const TimeAdjuster = ({ serviceId }: Props) => {
   const headingId = useId();
+  const serviceTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
   const dispatch = useDispatch();
   const services = useSelector(
     (s: RootState) => s.undoable.present.serviceTimes.list
@@ -57,7 +59,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
   const adjustTime = (deltaSeconds: number) => {
     if (!service) return;
 
-    const currentNext = getEffectiveTargetTime(service);
+    const currentNext = getEffectiveTargetTime(service, serverDate(), serviceTimeZone);
     if (!currentNext) return;
 
     const newOverrideTime = new Date(

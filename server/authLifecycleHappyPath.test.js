@@ -12,9 +12,13 @@ import assert from "node:assert/strict";
 
 const {
   authHandlers,
+  COLLECTIONS,
   canSeedHumanBearerAuthForServerTests,
+  getDoc,
+  setDoc,
   seedActiveHumanBearerForServerTests,
   seedPendingInviteForServerTests,
+  setSendEmailForServerTests,
   setVerifyIdTokenForServerTests,
 } = await import("../authService.js");
 
@@ -135,17 +139,116 @@ test("getInvitePreview returns church name for a pending invite", async (t) => {
   assert.equal(res.payload?.churchName, churchName);
 });
 
-test("acceptInvite creates membership when idToken email matches", async (t) => {
+test("Controller None invite preserves independent permissions through acceptance and bootstrap", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
 
   const email = "accept-invitee@example.com";
-  const { token, churchId } = await seedPendingInviteForServerTests({
-    churchId: "happy_invite_accept_church",
-    churchName: "Happy Accept Church",
-    email,
-    token: "happy-accept-token-1",
-    role: "member",
-    appAccess: "view",
+  const churchId = "happy_invite_accept_church";
+  const teamId = "happy_invite_worship_team";
+  const secondTeamId = "happy_invite_av_team";
+  await setDoc(COLLECTIONS.teams, teamId, {
+    teamId,
+    churchId,
+    name: "Worship",
+    memberIds: [],
+  });
+  await setDoc(COLLECTIONS.teams, secondTeamId, {
+    teamId: secondTeamId,
+    churchId,
+    name: "AV",
+    memberIds: [],
+  });
+  await setDoc(COLLECTIONS.teams, "happy_invite_foreign_team", {
+    teamId: "happy_invite_foreign_team",
+    churchId: "another_church",
+    name: "Foreign team",
+    memberIds: [],
+  });
+  const accessAdminSession = createSession();
+  const { humanApiToken: accessAdminToken } =
+    await seedActiveHumanBearerForServerTests({
+      req: createReq({ session: accessAdminSession }),
+      userId: "happy_admin_member_scope_update",
+      email: "happy-admin-member-scope-update@example.com",
+      churchId,
+      role: "admin",
+      appAccess: "full",
+    });
+  const accessAdminMe = createRes();
+  await authHandlers.getAuthMe(
+    createReq({
+      session: accessAdminSession,
+      headers: { authorization: `Bearer ${accessAdminToken}` },
+    }),
+    accessAdminMe,
+  );
+  const accessAdminContext = {
+    churchId,
+    session: accessAdminSession,
+    headers: {
+      authorization: `Bearer ${accessAdminToken}`,
+      "x-csrf-token": String(accessAdminMe.payload?.csrfToken || ""),
+    },
+  };
+  let inviteToken = "";
+  setSendEmailForServerTests(async (payload) => {
+    if (inviteToken) return;
+    inviteToken = decodeURIComponent(
+      `${payload.textBody} ${payload.htmlBody}`.match(
+        /invite\?token=([^&\s"')]+)/,
+      )[1],
+    );
+  });
+  const createdInvite = await callHandler(authHandlers.createInvite, {
+    context: accessAdminContext,
+    params: { churchId },
+    body: {
+      email,
+      role: "member",
+      controllerAccess: "none",
+      appAccess: "full",
+      permissions: {
+        teams: "none",
+        services: "view",
+        teamScopes: { [teamId]: "edit", [secondTeamId]: "edit" },
+      },
+    },
+  });
+  assert.equal(createdInvite.statusCode, 200);
+  const inviteId = createdInvite.payload?.invite?.inviteId;
+  assert.ok(inviteId);
+  assert.ok(inviteToken);
+  const pendingInvite = await getDoc(COLLECTIONS.invites, inviteId);
+  assert.deepEqual(pendingInvite?.permissions, {
+    teams: "none",
+    services: "view",
+    teamScopes: { [teamId]: "edit", [secondTeamId]: "edit" },
+  });
+
+  const updatedInvite = await callHandler(authHandlers.updateInviteAccess, {
+    context: accessAdminContext,
+    params: { inviteId },
+    body: {
+      role: "member",
+      controllerAccess: "none",
+      appAccess: "full",
+      permissions: {
+        teams: "none",
+        services: "view",
+        teamScopes: {
+          [teamId]: "edit",
+          [secondTeamId]: "edit",
+          "foreign-or-stale-team": "edit",
+          happy_invite_foreign_team: "edit",
+        },
+      },
+    },
+  });
+  assert.equal(updatedInvite.statusCode, 200);
+  assert.deepEqual(updatedInvite.payload?.invite?.permissions, {
+    teams: "none",
+    services: "view",
+    teamScopes: { [teamId]: "edit", [secondTeamId]: "edit" },
   });
 
   setVerifyIdTokenForServerTests(async (idToken) => {
@@ -158,18 +261,156 @@ test("acceptInvite creates membership when idToken email matches", async (t) => 
   });
 
   try {
+    const session = createSession();
     const res = createRes();
     await authHandlers.acceptInvite(
-      createReq({ body: { token, idToken: "test-id-token" } }),
+      createReq({ session, body: { token: inviteToken, idToken: "test-id-token" } }),
       res,
     );
     assert.equal(res.statusCode, 200);
     assert.equal(res.payload?.success, true);
     assert.equal(res.payload?.email, email);
     assert.equal(res.payload?.churchId, churchId);
+
+    const acceptedMembership = await getDoc(
+      COLLECTIONS.memberships,
+      `${churchId}_firebase_uid_accept_1`,
+    );
+    assert.deepEqual(acceptedMembership?.permissions, {
+      teams: "none",
+      services: "view",
+      teamScopes: { [teamId]: "edit", [secondTeamId]: "edit" },
+    });
+    assert.equal(acceptedMembership?.controllerAccess, "none");
+    assert.equal(acceptedMembership?.appAccess, "member");
+    const memberUpdate = await callHandler(authHandlers.updateMemberAccess, {
+      context: accessAdminContext,
+      params: { userId: "firebase_uid_accept_1" },
+      body: {
+        controllerAccess: "none",
+        appAccess: "full",
+        permissions: {
+          teams: "none",
+          services: "view",
+          teamScopes: {
+            [teamId]: "edit",
+            [secondTeamId]: "edit",
+            "foreign-or-stale-team": "edit",
+            happy_invite_foreign_team: "edit",
+          },
+        },
+      },
+    });
+    assert.equal(memberUpdate.statusCode, 200);
+    const updatedMembership = await getDoc(
+      COLLECTIONS.memberships,
+      `${churchId}_firebase_uid_accept_1`,
+    );
+    assert.deepEqual(updatedMembership?.permissions, {
+      teams: "none",
+      services: "view",
+      teamScopes: { [teamId]: "edit", [secondTeamId]: "edit" },
+    });
+    session.auth = {
+      sessionKind: "human",
+      userId: "firebase_uid_accept_1",
+      churchId,
+    };
+    const bootstrapRes = createRes();
+    await authHandlers.getAuthMe(createReq({ session }), bootstrapRes);
+    assert.deepEqual(bootstrapRes.payload?.permissions, {
+      teams: "none",
+      services: "view",
+      teamScopes: { [teamId]: "edit", [secondTeamId]: "edit" },
+    });
+    assert.equal(bootstrapRes.payload?.controllerAccess, "none");
+    assert.equal(bootstrapRes.payload?.appAccess, "member");
+    const unchecked = await callHandler(authHandlers.updateMemberAccess, {
+      context: accessAdminContext,
+      params: { userId: "firebase_uid_accept_1" },
+      body: {
+        appAccess: "member",
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+      },
+    });
+    assert.equal(unchecked.statusCode, 200);
+    assert.deepEqual(
+      (await getDoc(
+        COLLECTIONS.memberships,
+        `${churchId}_firebase_uid_accept_1`,
+      ))?.permissions,
+      { teams: "none", services: "none", teamScopes: {} },
+    );
   } finally {
     setVerifyIdTokenForServerTests(null);
+    setSendEmailForServerTests(null);
   }
+});
+
+test("pending invite access updates race safely with acceptance", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("invite_access_race");
+  const email = "invite-access-race@example.com";
+  const token = "invite-access-race-token";
+  const { inviteId } = await seedPendingInviteForServerTests({
+    churchId: context.churchId,
+    email,
+    token,
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: {} },
+  });
+  setVerifyIdTokenForServerTests(async () => ({
+    uid: "invite_access_race_user",
+    email,
+    name: "Race Recipient",
+  }));
+  const sentEmails = [];
+  setSendEmailForServerTests(async (message) => {
+    sentEmails.push(message);
+  });
+
+  const updatePromise = callHandler(authHandlers.updateInviteAccess, {
+    context,
+    params: { inviteId },
+    body: {
+      role: "member",
+      controllerAccess: "none",
+      permissions: { teams: "none", services: "edit", teamScopes: {} },
+    },
+  });
+  const acceptResponse = createRes();
+  const acceptPromise = authHandlers.acceptInvite(
+    createReq({ body: { token, idToken: "race-id-token" } }),
+    acceptResponse,
+  );
+  const [updateResponse] = await Promise.all([updatePromise, acceptPromise]);
+
+  assert.equal(acceptResponse.statusCode, 200);
+  const acceptedInvite = await getDoc(COLLECTIONS.invites, inviteId);
+  const acceptedMembership = await getDoc(
+    COLLECTIONS.memberships,
+    `${context.churchId}_invite_access_race_user`,
+  );
+  assert.equal(acceptedInvite?.status, "accepted");
+  assert.equal(acceptedMembership?.controllerAccess, "none");
+  assert.equal(acceptedMembership?.appAccess, "member");
+  assert.deepEqual(acceptedMembership?.permissions, acceptedInvite?.permissions);
+  if (updateResponse.statusCode === 200) {
+    assert.equal(acceptedMembership?.permissions?.services, "edit");
+  } else {
+    assert.equal(updateResponse.statusCode, 400);
+    assert.equal(acceptedMembership?.permissions?.services, "none");
+  }
+
+  const notification = sentEmails.find((message) =>
+    String(message.subject || "").includes("accepted a WorshipSync invite"),
+  );
+  assert.ok(notification, "acceptance should notify the church admin");
+  const acceptedServicesLine =
+    acceptedMembership?.permissions?.services === "edit"
+      ? "Services: Edit services and plans"
+      : "Services: No service access";
+  assert.ok(String(notification.textBody).includes(acceptedServicesLine));
 });
 
 test("acceptInvite rejects when idToken email does not match the invite", async (t) => {
@@ -634,4 +875,75 @@ test("display create then redeem issues a credential", async (t) => {
   assert.equal(redeemRes.payload?.success, true);
   assert.ok(redeemRes.payload?.credential);
   assert.ok(redeemRes.payload?.device);
+});
+
+test("bootstrap normalizes legacy appAccess and prefers explicit controllerAccess", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  for (const [index, appAccess, expected] of [
+    [0, "member", "none"],
+    [1, "view", "view"],
+    [2, "music", "music"],
+    [3, "full", "full"],
+  ]) {
+    const userId = `legacy_access_${index}`;
+    const churchId = `legacy_access_church_${index}`;
+    const session = createSession();
+    const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+      req: createReq({ session }),
+      userId,
+      email: `legacy-${index}@example.com`,
+      churchId,
+      role: "member",
+      appAccess,
+      permissions: {
+        teams: "none",
+        services: "view",
+        teamScopes: { worship: "edit" },
+      },
+    });
+    if (index === 0) {
+      await setDoc(COLLECTIONS.memberships, `${churchId}_${userId}`, {
+        controllerAccess: "none",
+        appAccess: "full",
+      }, { merge: true });
+    }
+    const bootstrap = createRes();
+    await authHandlers.getAuthMe(createReq({
+      session,
+      headers: { authorization: `Bearer ${humanApiToken}` },
+    }), bootstrap);
+    assert.equal(bootstrap.statusCode, 200);
+    assert.equal(bootstrap.payload?.controllerAccess, expected);
+    assert.deepEqual(bootstrap.payload?.permissions, {
+      teams: "none",
+      services: "view",
+      teamScopes: { worship: "edit" },
+    });
+    if (index === 0) assert.equal(bootstrap.payload?.appAccess, "member");
+  }
+
+  const adminUserId = "legacy_access_admin";
+  const adminChurchId = "legacy_access_admin_church";
+  const adminSession = createSession();
+  const { humanApiToken } = await seedActiveHumanBearerForServerTests({
+    req: createReq({ session: adminSession }),
+    userId: adminUserId,
+    email: "legacy-admin@example.com",
+    churchId: adminChurchId,
+    role: "admin",
+    controllerAccess: "none",
+    permissions: { teams: "none", services: "none", teamScopes: { worship: "edit" } },
+  });
+  const adminBootstrap = createRes();
+  await authHandlers.getAuthMe(createReq({
+    session: adminSession,
+    headers: { authorization: `Bearer ${humanApiToken}` },
+  }), adminBootstrap);
+  assert.equal(adminBootstrap.payload?.controllerAccess, "full");
+  assert.deepEqual(adminBootstrap.payload?.permissions, {
+    teams: "edit",
+    services: "edit",
+    teamScopes: {},
+  });
 });

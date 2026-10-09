@@ -80,6 +80,7 @@ import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { useTeamsPage } from "../TeamsPageContext";
 import {
   intakeSubmissionNeedsAction,
   selectIntakeExactMemberMatch,
@@ -222,6 +223,7 @@ const IntakeManager = ({
 }: IntakeManagerProps) => {
   const visibleForms = displayForms ?? forms;
   const context = useContext(GlobalInfoContext);
+  const { serviceTimeZone } = useTeamsPage();
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
@@ -413,14 +415,15 @@ const IntakeManager = ({
             services: services.filter(isActive),
             startDate: draft.startDate,
             endDate: draft.endDate,
+            timeZone: serviceTimeZone,
           })
         : [],
-    [draft.endDate, draft.startDate, services],
+    [draft.endDate, draft.startDate, serviceTimeZone, services],
   );
 
   const availabilityServiceOptions = useMemo(
-    () => buildIntakeAvailabilityServiceOptions(applicableServices),
-    [applicableServices],
+    () => buildIntakeAvailabilityServiceOptions(applicableServices, serviceTimeZone),
+    [applicableServices, serviceTimeZone],
   );
 
   const selectedAvailabilityServiceOptionIds = useMemo(() => {
@@ -446,6 +449,7 @@ const IntakeManager = ({
         services,
         startDate,
         endDate,
+        timeZone: serviceTimeZone,
       }).map((service) => service.serviceId),
     );
     return availabilityServices.filter((item) =>
@@ -489,11 +493,13 @@ const IntakeManager = ({
             serviceIds,
             startDate: draft.startDate,
             endDate: draft.endDate,
+            timeZone: serviceTimeZone,
           }).map((occurrence) => ({
             occurrenceId: occurrence.occurrenceId,
             serviceId: occurrence.serviceId,
             name: occurrence.name,
             startsAt: occurrence.startsAt,
+            serviceDate: occurrence.serviceDate,
           }))
         : [];
     return {
@@ -569,8 +575,8 @@ const IntakeManager = ({
   activeSelectedFormIdRef.current = activeSelectedFormId;
   churchIdRef.current = churchId;
   const upcomingAvailabilitySuggestion = useMemo(
-    () => getUpcomingAvailabilitySuggestion({ services, forms }),
-    [forms, services],
+    () => getUpcomingAvailabilitySuggestion({ services, forms, timeZone: serviceTimeZone }),
+    [forms, serviceTimeZone, services],
   );
 
   const openUpcomingAvailabilityDraft = () => {
@@ -964,7 +970,7 @@ const IntakeManager = ({
       })
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
       .map(({ name, startsAt }) =>
-        startsAt ? `${name} · ${formatShortOccurrenceDate(startsAt)}` : name,
+        startsAt ? `${name} · ${formatShortOccurrenceDate(startsAt, serviceTimeZone)}` : name,
       );
 
   const copyPublicUrl = async (url: string) => {
@@ -2051,7 +2057,7 @@ const IntakeManager = ({
                       <ul className="mt-1 space-y-0.5 text-sm text-gray-200">
                         {upcomingAvailabilitySuggestion.missingOccurrences.slice(0, 3).map((occurrence) => (
                           <li key={occurrence.occurrenceId}>
-                            {occurrence.name} · {new Date(occurrence.startsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            {occurrence.name} · {formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)}
                           </li>
                         ))}
                         {upcomingAvailabilitySuggestion.occurrenceCount > 3 ? (

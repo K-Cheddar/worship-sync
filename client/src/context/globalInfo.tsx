@@ -67,6 +67,7 @@ import type {
   EmailCodeChallengeFields,
   MemberNotifications,
   MemberPermissions,
+  ControllerAccess,
   NotificationCategory,
   NotificationPreference,
 } from "../api/authTypes";
@@ -77,6 +78,7 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
+import { normalizeControllerAccess } from "../utils/accessTiers";
 import {
   AUTH_SIGN_IN_AGAIN_MESSAGE,
   AUTH_VERIFY_DEVICE_MESSAGE,
@@ -324,7 +326,7 @@ type ChurchIntegrationsStatus = "loading" | "ready";
 type CurrentServiceWorkspaceStatus = "loading" | "ready";
 export type HumanAuthMethod = "password" | "google" | "microsoft";
 
-export type AccessType = "full" | "music" | "view" | "member";
+export type AccessType = ControllerAccess;
 type GlobalInfoContextType = {
   authenticateHumanWithFirebase: ({
     method,
@@ -425,9 +427,15 @@ type GlobalInfoContextType = {
   contentHiddenByOutput?: Record<string, { hidden: boolean; confirmed: boolean }>;
   hostId: string;
   activeInstances: Instance[];
+  /** @deprecated Controller compatibility alias. New authorization uses controllerAccess. */
   access: AccessType;
+  controllerAccess: ControllerAccess;
   permissions: MemberPermissions;
   canViewTeams: boolean;
+  /** Broad Teams read boundary for sections that include church-wide data. */
+  hasBroadTeamsReadAccess: boolean;
+  /** Full church-wide SSE access; selected-team and roster-derived reads use REST. */
+  canUseTeamsLiveSync: boolean;
   canEditTeams: boolean;
   canEditServices: boolean;
   /**
@@ -489,7 +497,14 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
 type globalFireBaseInfoType = {
   db: Database | undefined;
   isConnected: boolean;
-  canWriteSharedData: boolean;
+  writeCapabilities: {
+    presentation: boolean;
+    timers: boolean;
+    /** Controller/operator writes for service timer and display runtime state. */
+    serviceRuntime: boolean;
+    /** Services-management writes for service definitions and planning data. */
+    serviceManagement: boolean;
+  };
   user: string;
   database: string;
   churchId: string;
@@ -498,7 +513,12 @@ type globalFireBaseInfoType = {
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   isConnected: false,
-  canWriteSharedData: false,
+  writeCapabilities: {
+    presentation: false,
+    timers: false,
+    serviceRuntime: false,
+    serviceManagement: false,
+  },
   user: "Demo",
   database: "demo",
   churchId: "",
@@ -615,8 +635,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   const [activeInstances, setActiveInstances] = useState<Instance[]>([]);
   const canEditTeams = role === "admin" || permissions.teams === "edit";
-  // Teams edit remains a superset so existing editors keep service access.
-  const canEditServices = canEditTeams || permissions.services === "edit";
+  const canEditServices = role === "admin" || permissions.services === "edit";
   const canEditTeam = useCallback(
     (teamId: string) =>
       canEditTeams || permissions.teamScopes?.[teamId] === "edit",
@@ -631,10 +650,22 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     Object.keys(permissions.teamScopes || {}).length > 0;
   const canViewTeams =
     canEditTeams ||
-    canEditServices ||
     permissions.teams === "view" ||
     hasScopedTeamsAccess;
-  const canViewServices = canViewTeams || permissions.services === "view";
+  const hasBroadTeamsReadAccess =
+    role === "admin" ||
+    permissions.teams === "edit";
+  const canUseTeamsLiveSync =
+    (sessionKind === "human" ||
+      (sessionKind === "workstation" &&
+        (device?.serviceWorkspaceAccess === true ||
+          (permissions.services === "edit" &&
+            (permissions.teams === "view" || permissions.teams === "edit"))))) &&
+    hasBroadTeamsReadAccess;
+  const canViewServices =
+    role === "admin" ||
+    canEditServices ||
+    permissions.services === "view";
   const pendingLinkCredentialRef = useRef<AuthCredential | null>(null);
   const instanceRef = useRef<ReturnType<typeof ref> | null>(null);
   const hasRehydratedTimersRef = useRef(false);
@@ -894,7 +925,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "";
       globalFireDbInfo.database = "";
       globalFireDbInfo.churchId = "";
-      globalFireDbInfo.canWriteSharedData = false;
+      globalFireDbInfo.writeCapabilities = {
+        presentation: false,
+        timers: false,
+        serviceRuntime: false,
+        serviceManagement: false,
+      };
       return;
     }
 
@@ -923,7 +959,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     setUser(toolbarDisplayName);
     setDatabase(bootstrap.database || "demo");
     setUploadPreset(bootstrap.uploadPreset || "bpqu4ma5");
-    setAccess((bootstrap.appAccess as AccessType) || "view");
+    const normalizedControllerAccess = normalizeControllerAccess(
+      bootstrap.controllerAccess ?? bootstrap.appAccess,
+    );
+    setAccess(normalizedControllerAccess);
     setPermissions(bootstrap.permissions || { teams: "none" });
     setChurchId(bootstrap.churchId || "");
     setChurchName(bootstrap.churchName?.trim() || "");
@@ -951,15 +990,27 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.setItem("user", toolbarDisplayName);
     localStorage.setItem("database", bootstrap.database || "demo");
     localStorage.setItem("upload_preset", bootstrap.uploadPreset || "bpqu4ma5");
-    localStorage.setItem("access", (bootstrap.appAccess as AccessType) || "view");
+    localStorage.setItem("access", normalizedControllerAccess);
+    localStorage.setItem("controllerAccess", normalizedControllerAccess);
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
-    globalFireDbInfo.canWriteSharedData =
-      (bootstrap.sessionKind === "human" ||
-        bootstrap.sessionKind === "workstation") &&
-      (bootstrap.appAccess || "view") !== "view" &&
-      (bootstrap.appAccess || "view") !== "member";
+    const hasSharedWriteSession =
+      bootstrap.sessionKind === "human" || bootstrap.sessionKind === "workstation";
+    const canWriteControllerData =
+      hasSharedWriteSession &&
+      (normalizedControllerAccess === "music" ||
+        normalizedControllerAccess === "full");
+    globalFireDbInfo.writeCapabilities = {
+      presentation: canWriteControllerData,
+      timers: canWriteControllerData,
+      serviceRuntime: canWriteControllerData,
+      serviceManagement:
+        hasSharedWriteSession &&
+        (bootstrap.role === "admin" ||
+          bootstrap.permissions?.teams === "edit" ||
+          bootstrap.permissions?.services === "edit"),
+    };
     if (bootstrap.sessionKind === "human") {
       const humanUser = getHumanAuth().currentUser;
       if (humanUser) {
@@ -1476,7 +1527,12 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "Demo";
       globalFireDbInfo.database = "demo";
       globalFireDbInfo.churchId = "";
-      globalFireDbInfo.canWriteSharedData = false;
+      globalFireDbInfo.writeCapabilities = {
+        presentation: false,
+        timers: false,
+        serviceRuntime: false,
+        serviceManagement: false,
+      };
       dispatch({ type: "RESET" });
       navigate(nextPath, { replace: true });
     },
@@ -3222,8 +3278,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       hostId,
       activeInstances,
       access,
+      controllerAccess: access,
       permissions,
       canViewTeams,
+      hasBroadTeamsReadAccess,
+      canUseTeamsLiveSync,
       canEditTeams,
       canEditServices,
       canViewServices,
@@ -3295,6 +3354,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       access,
       permissions,
       canViewTeams,
+      hasBroadTeamsReadAccess,
+      canUseTeamsLiveSync,
       canEditTeams,
       canEditServices,
       canViewServices,

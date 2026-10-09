@@ -74,6 +74,7 @@ const ScheduleEditForm = ({
   activeTeams,
   seedSchedules,
   churchId,
+  serviceTimeZone,
   canEdit,
   onDraftChange,
   onDraftFlush,
@@ -207,12 +208,14 @@ const ScheduleEditForm = ({
       services,
       positions,
       schedules: seedSchedules,
+      timeZone: serviceTimeZone,
     });
     const serviceIds = getCreateScheduleDefaultServiceIds({
       teamId,
       schedules: seedSchedules,
       services,
       range,
+      timeZone: serviceTimeZone,
     });
     setDraft((current) => ({
       ...current,
@@ -230,8 +233,9 @@ const ScheduleEditForm = ({
         serviceIds: draft.serviceIds,
         startDate: draft.startDate || "",
         endDate: draft.endDate || "",
+        timeZone: serviceTimeZone,
       }),
-    [draft.endDate, draft.serviceIds, draft.startDate, services],
+    [draft.endDate, draft.serviceIds, draft.startDate, serviceTimeZone, services],
   );
 
   const serviceOptions = useMemo(() => {
@@ -241,13 +245,14 @@ const ScheduleEditForm = ({
           services: services.filter(isActive),
           startDate: draft.startDate,
           endDate: draft.endDate,
+          timeZone: serviceTimeZone,
         }).map((service) => service.serviceId)
         : [],
     );
 
     return services.map((service) => ({
       id: service.serviceId,
-      label: [service.name, formatServiceTiming(service)]
+      label: [service.name, formatServiceTiming(service, serviceTimeZone)]
         .filter(Boolean)
         .join(" - "),
       archived: Boolean(service.archivedAt),
@@ -260,7 +265,7 @@ const ScheduleEditForm = ({
         !serviceIdsWithOccurrences.has(service.serviceId),
       unavailableLabel: "no occurrences in this range",
     }));
-  }, [draft.endDate, draft.startDate, services]);
+  }, [draft.endDate, draft.startDate, serviceTimeZone, services]);
 
   const saveSchedule = async (confirmedOccurrenceConflictFingerprint?: string) => {
     if (!canEdit) return;
@@ -290,6 +295,7 @@ const ScheduleEditForm = ({
           serviceIds: draftForSave.serviceIds,
           startDate: draftForSave.startDate || "",
           endDate: draftForSave.endDate || "",
+          timeZone: serviceTimeZone,
         });
       // Creating a schedule (including a copy): remap the draft's assignments
       // onto the freshly generated occurrences by service + chronological index,

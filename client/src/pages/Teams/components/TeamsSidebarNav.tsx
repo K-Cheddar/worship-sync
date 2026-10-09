@@ -2,11 +2,10 @@ import { NavLink } from "react-router-dom";
 import Icon from "../../../components/Icon/Icon";
 import { cn } from "@/utils/cnHelper";
 import {
-  servicesNavSections,
-  teamsNavSections,
   type TeamsNavSection,
 } from "../teamsNavSections";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { useTeamsPage } from "../TeamsPageContext";
 
 type TeamsSidebarNavProps = {
   /** Called after a section link is chosen (e.g. close the mobile drawer). */
@@ -107,42 +106,57 @@ const TeamsSidebarNav = ({
   className,
   collapsed = false,
   scrollable = true,
-}: TeamsSidebarNavProps) => (
-  <nav
-    className={cn(
-      "flex flex-col",
-      scrollable && "min-h-0 flex-1",
-      className,
-    )}
-    aria-label="Teams and Services sections"
-  >
-    <div
+}: TeamsSidebarNavProps) => {
+  const { availableNavSections } = useTeamsPage();
+  const serviceSections = availableNavSections.filter(
+    (section) => section.domain === "services",
+  );
+  const teamSections = availableNavSections.filter(
+    (section) => section.domain === "teams",
+  );
+
+  return (
+    <nav
       className={cn(
-        scrollable && "min-h-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-variable",
-        collapsed ? "p-0" : "p-px",
+        "flex flex-col",
+        scrollable && "min-h-0 flex-1",
+        className,
       )}
+      aria-label="Teams and Services sections"
     >
-      <SectionGroup
-        label="Services"
-        sections={servicesNavSections}
-        onNavigate={onNavigate}
-        collapsed={collapsed}
-      />
       <div
         className={cn(
-          "border-gray-700",
-          collapsed ? "mt-3 border-t pt-3" : "mt-4 border-t pt-2",
+          scrollable && "min-h-0 flex-1 overflow-x-hidden overflow-y-auto scrollbar-variable",
+          collapsed ? "p-0" : "p-px",
         )}
       >
-        <SectionGroup
-          label="Teams"
-          sections={teamsNavSections}
-          onNavigate={onNavigate}
-          collapsed={collapsed}
-        />
+        {serviceSections.length > 0 ? (
+          <SectionGroup
+            label="Services"
+            sections={serviceSections}
+            onNavigate={onNavigate}
+            collapsed={collapsed}
+          />
+        ) : null}
+        {teamSections.length > 0 ? (
+          <div
+            className={cn(
+              "border-gray-700",
+              serviceSections.length > 0 &&
+                (collapsed ? "mt-3 border-t pt-3" : "mt-4 border-t pt-2"),
+            )}
+          >
+            <SectionGroup
+              label="Teams"
+              sections={teamSections}
+              onNavigate={onNavigate}
+              collapsed={collapsed}
+            />
+          </div>
+        ) : null}
       </div>
-    </div>
-  </nav>
-);
+    </nav>
+  );
+};
 
 export default TeamsSidebarNav;

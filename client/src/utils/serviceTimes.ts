@@ -1,12 +1,14 @@
 import {
-  MonthWeekOrdinal,
-  MultiWeeklyDay,
   RecurrenceType,
   ServiceTime,
-  Weekday,
 } from "../types";
-import { parsePlainDate } from "./plainDate";
+import { formatPlainDate, parsePlainDate } from "./plainDate";
 import { serverDate } from "./serverTime";
+import type { TeamService } from "../api/authTypes";
+import {
+  calendarDateInTimeZone,
+  generateScheduleOccurrences,
+} from "./teamScheduleOccurrences";
 
 type ServiceScheduleSortShape = Pick<
   ServiceTime,
@@ -123,12 +125,13 @@ const getMostRecentServiceWithinGrace = (
   services: ServiceTime[],
   now: Date,
   graceMs: number,
+  timeZone: string,
 ): { service: ServiceTime; nextAt: Date } | null => {
   if (graceMs <= 0) return null;
 
   let bestRecent: { service: ServiceTime; nextAt: Date } | null = null;
   for (const service of services) {
-    const target = getMostRecentTargetTime(service, now);
+    const target = getMostRecentTargetTime(service, now, timeZone);
     if (!target) continue;
     const ageMs = now.getTime() - target.getTime();
     if (ageMs < 0 || ageMs > graceMs) continue;
@@ -139,307 +142,74 @@ const getMostRecentServiceWithinGrace = (
   return bestRecent;
 };
 
-function parseTimeToDate(base: Date, hhmm: string): Date | null {
-  const [hh, mm] = hhmm.split(":").map((x) => parseInt(x, 10));
-  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
-  const d = new Date(base);
-  d.setHours(hh, mm, 0, 0);
-  return d;
-}
-
-// Parse a date-only string ("YYYY-MM-DD") as local start-of-day / end-of-day.
-// new Date("YYYY-MM-DD") is UTC midnight and breaks in non-UTC timezones.
-const parseStartOfDay = (dateStr?: string): Date | null => {
-  if (!dateStr) return null;
-  return parsePlainDate(dateStr) ?? null;
+const shiftPlainDate = (value: string, days: number) => {
+  const date = parsePlainDate(value);
+  if (!date) return "";
+  date.setDate(date.getDate() + days);
+  return formatPlainDate(date);
 };
 
-const parseEndOfDay = (dateStr?: string): Date | null => {
-  if (!dateStr) return null;
-  const parsed = parsePlainDate(dateStr);
-  if (!parsed) return null;
-  parsed.setHours(23, 59, 59, 999);
-  return parsed;
-};
-
-const isBeforeServiceStart = (date: Date, startDateISO?: string) => {
-  const start = parseStartOfDay(startDateISO);
-  return Boolean(start && date < start);
-};
-
-const isAfterServiceEnd = (date: Date, endDateISO?: string) => {
-  const end = parseEndOfDay(endDateISO);
-  return Boolean(end && date > end);
-};
-
-const clipOccurrenceToBounds = (
-  date: Date | null,
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null => {
-  if (!date) return null;
-  if (isBeforeServiceStart(date, startDateISO)) return null;
-  if (isAfterServiceEnd(date, endDateISO)) return null;
-  return date;
-};
-
-function getNextWeekly(
+const generateServiceOccurrencesAround = (
+  service: ServiceTime,
   now: Date,
-  dayOfWeek: Weekday,
-  time: string,
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null {
-  const currentDow = now.getDay();
-  const daysUntil = (dayOfWeek - currentDow + 7) % 7;
-  const candidate = new Date(now);
-  candidate.setDate(now.getDate() + daysUntil);
-  const atTime = parseTimeToDate(candidate, time);
-  if (!atTime) return null;
-  // If today and time already passed, move to next week
-  if (daysUntil === 0 && atTime <= now) {
-    atTime.setDate(atTime.getDate() + 7);
-  }
-  // Advance until on or after the optional start bound.
-  while (isBeforeServiceStart(atTime, startDateISO)) {
-    atTime.setDate(atTime.getDate() + 7);
-  }
-  return clipOccurrenceToBounds(atTime, startDateISO, endDateISO);
-}
-
-function getNthWeekdayOfMonth(
-  year: number,
-  monthIndex0: number,
-  ordinal: MonthWeekOrdinal,
-  weekday: Weekday,
-): Date | null {
-  // Find first occurrence of weekday in the month
-  const firstOfMonth = new Date(year, monthIndex0, 1);
-  const firstDow = firstOfMonth.getDay();
-  const delta = (weekday - firstDow + 7) % 7;
-  const firstWeekday = new Date(year, monthIndex0, 1 + delta);
-
-  // ordinal 5 means last occurrence (if exists)
-  if (ordinal === 5) {
-    const nextMonth = new Date(year, monthIndex0 + 1, 1);
-    const lastDayPrevMonth = new Date(nextMonth.getTime() - 1);
-    // Walk back to the desired weekday
-    const diff = (lastDayPrevMonth.getDay() - weekday + 7) % 7;
-    const lastWeekday = new Date(
-      lastDayPrevMonth.getFullYear(),
-      lastDayPrevMonth.getMonth(),
-      lastDayPrevMonth.getDate() - diff,
-    );
-    return lastWeekday;
-  }
-
-  const date = new Date(firstWeekday);
-  date.setDate(firstWeekday.getDate() + (ordinal - 1) * 7);
-  // Ensure still in the same month
-  if (date.getMonth() !== monthIndex0) return null;
-  return date;
-}
-
-function getNextMonthly(
-  now: Date,
-  ordinal: MonthWeekOrdinal,
-  weekday: Weekday,
-  time: string,
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null {
-  const tryMonth = (y: number, m: number): Date | null => {
-    const day = getNthWeekdayOfMonth(y, m, ordinal, weekday);
-    if (!day) return null;
-    return parseTimeToDate(day, time);
-  };
-
-  let year = now.getFullYear();
-  let month = now.getMonth();
-  // Search a generous window so start bounds far in the future still resolve.
-  for (let i = 0; i < 24; i += 1) {
-    const candidate = tryMonth(year, month);
-    if (
-      candidate &&
-      candidate > now &&
-      !isBeforeServiceStart(candidate, startDateISO)
-    ) {
-      return clipOccurrenceToBounds(candidate, startDateISO, endDateISO);
-    }
-    month += 1;
-    if (month > 11) {
-      month = 0;
-      year += 1;
-    }
-  }
-  return null;
-}
-
-const getNextMultiWeekly = (
-  now: Date,
-  daysOfWeek: MultiWeeklyDay[],
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null => {
-  if (daysOfWeek.length === 0) return null;
-
-  let best: Date | null = null;
-  const currentDow = now.getDay();
-
-  for (const { day, time } of daysOfWeek) {
-    const daysUntil = (day - currentDow + 7) % 7;
-    const candidate = new Date(now);
-    candidate.setDate(now.getDate() + daysUntil);
-    const atTime = parseTimeToDate(candidate, time);
-    if (!atTime) continue;
-    if (daysUntil === 0 && atTime <= now) {
-      atTime.setDate(atTime.getDate() + 7);
-    }
-    while (isBeforeServiceStart(atTime, startDateISO)) {
-      atTime.setDate(atTime.getDate() + 7);
-    }
-    if (isAfterServiceEnd(atTime, endDateISO)) continue;
-    if (!best || atTime < best) best = atTime;
-  }
-  return best;
-};
-
-const getPreviousMultiWeekly = (
-  now: Date,
-  daysOfWeek: MultiWeeklyDay[],
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null => {
-  if (daysOfWeek.length === 0) return null;
-  const end = parseEndOfDay(endDateISO);
-  const reference = end && now > end ? end : now;
-  const currentDow = reference.getDay();
-  let best: Date | null = null;
-
-  for (const { day, time } of daysOfWeek) {
-    const daysSince = (currentDow - day + 7) % 7;
-    const candidate = new Date(reference);
-    candidate.setDate(reference.getDate() - daysSince);
-    const atTime = parseTimeToDate(candidate, time);
-    if (!atTime) continue;
-    if (daysSince === 0 && atTime > reference) {
-      atTime.setDate(atTime.getDate() - 7);
-    }
-    if (isBeforeServiceStart(atTime, startDateISO)) continue;
-    if (isAfterServiceEnd(atTime, endDateISO)) continue;
-    if (!best || atTime > best) best = atTime;
-  }
-  return best;
-};
-
-const getPreviousWeekly = (
-  now: Date,
-  dayOfWeek: Weekday,
-  time: string,
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null => {
-  const end = parseEndOfDay(endDateISO);
-  const reference = end && now > end ? end : now;
-  const currentDow = reference.getDay();
-  const daysSince = (currentDow - dayOfWeek + 7) % 7;
-  const candidate = new Date(reference);
-  candidate.setDate(reference.getDate() - daysSince);
-  const atTime = parseTimeToDate(candidate, time);
-  if (!atTime) return null;
-  if (daysSince === 0 && atTime > reference) {
-    atTime.setDate(atTime.getDate() - 7);
-  }
-  return clipOccurrenceToBounds(atTime, startDateISO, endDateISO);
-};
-
-const getPreviousMonthly = (
-  now: Date,
-  ordinal: MonthWeekOrdinal,
-  weekday: Weekday,
-  time: string,
-  startDateISO?: string,
-  endDateISO?: string,
-): Date | null => {
-  const end = parseEndOfDay(endDateISO);
-  const reference = end && now > end ? end : now;
-  const tryMonth = (y: number, m: number): Date | null => {
-    const day = getNthWeekdayOfMonth(y, m, ordinal, weekday);
-    if (!day) return null;
-    return parseTimeToDate(day, time);
-  };
-
-  let year = reference.getFullYear();
-  let month = reference.getMonth();
-  for (let i = 0; i < 24; i += 1) {
-    const candidate = tryMonth(year, month);
-    if (
-      candidate &&
-      candidate <= reference &&
-      !isAfterServiceEnd(candidate, endDateISO) &&
-      !isBeforeServiceStart(candidate, startDateISO)
-    ) {
-      return candidate;
-    }
-    month -= 1;
-    if (month < 0) {
-      month = 11;
-      year -= 1;
-    }
-  }
-  return null;
+  timeZone: string,
+  direction: "future" | "past",
+) => {
+  const today = calendarDateInTimeZone(now, timeZone);
+  // Weekly recurrences must be found within seven days. Monthly fifth-weekday
+  // recurrences can skip a month, so keep a year-sized bound for those. Anchor
+  // the bounded search at configured limits so a service starting or ending
+  // far from today remains discoverable without scanning an unbounded range.
+  const searchDays =
+    service.reccurence === "weekly" || service.reccurence === "multi_weekly"
+      ? 7
+      : 400;
+  const anchor = direction === "future"
+    ? [today, service.startDateISO || today].sort().at(-1) || today
+    : [today, service.endDateISO || today].sort()[0];
+  const windowStart = direction === "future" ? anchor : shiftPlainDate(anchor, -searchDays);
+  const windowEnd = direction === "future" ? shiftPlainDate(anchor, searchDays) : anchor;
+  const startDate = [windowStart, service.startDateISO || windowStart].sort().at(-1) || windowStart;
+  const endDate = [windowEnd, service.endDateISO || windowEnd].sort()[0];
+  if (!startDate || !endDate || startDate > endDate) return [];
+  const teamService = {
+    ...service,
+    serviceId: service.id,
+    churchId: "",
+  } as TeamService;
+  return generateScheduleOccurrences({
+    services: [teamService],
+    serviceIds: [service.id],
+    startDate,
+    endDate,
+    timeZone,
+  });
 };
 
 export function getNextOccurrenceForService(
   service: ServiceTime,
   now = serverDate(),
+  timeZone = "UTC",
 ): Date | null {
   if (service.reccurence === "one_time") {
     if (!service.dateTimeISO) return null;
     const dt = new Date(service.dateTimeISO);
     return dt > now ? dt : null;
   }
-  if (service.reccurence === "weekly") {
-    if (service.dayOfWeek == null || !service.time) return null;
-    return getNextWeekly(
-      now,
-      service.dayOfWeek,
-      service.time,
-      service.startDateISO,
-      service.endDateISO,
-    );
-  }
-  if (service.reccurence === "monthly") {
-    if (service.ordinal == null || service.weekday == null || !service.time)
-      return null;
-    return getNextMonthly(
-      now,
-      service.ordinal,
-      service.weekday,
-      service.time,
-      service.startDateISO,
-      service.endDateISO,
-    );
-  }
-  if (service.reccurence === "multi_weekly") {
-    if (!service.daysOfWeek?.length) return null;
-    return getNextMultiWeekly(
-      now,
-      service.daysOfWeek,
-      service.startDateISO,
-      service.endDateISO,
-    );
-  }
-  return null;
+  const occurrence = generateServiceOccurrencesAround(service, now, timeZone, "future")
+    .filter((item) => Date.parse(item.startsAt) > now.getTime())
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))[0];
+  return occurrence ? new Date(occurrence.startsAt) : null;
 }
 
 export function getClosestUpcomingService(
   services: ServiceTime[],
   now = serverDate(),
+  timeZone = "UTC",
 ): { service: ServiceTime; nextAt: Date } | null {
   let best: { service: ServiceTime; nextAt: Date } | null = null;
   for (const s of services) {
-    const nextAt = getEffectiveTargetTime(s, now);
+    const nextAt = getEffectiveTargetTime(s, now, timeZone);
     if (!nextAt) continue;
     if (!best || nextAt < best.nextAt) {
       best = { service: s, nextAt };
@@ -458,6 +228,7 @@ export function getClosestUpcomingService(
 export function getEffectiveTargetTime(
   service: ServiceTime,
   now = serverDate(),
+  timeZone = "UTC",
 ): Date | null {
   // If there's an override, use it (if it's in the future)
   if (service.overrideDateTimeISO) {
@@ -468,12 +239,13 @@ export function getEffectiveTargetTime(
   }
 
   // Otherwise, use the calculated next occurrence
-  return getNextOccurrenceForService(service, now);
+  return getNextOccurrenceForService(service, now, timeZone);
 }
 
 export function getMostRecentTargetTime(
   service: ServiceTime,
   now = serverDate(),
+  timeZone = "UTC",
 ): Date | null {
   let recentOverride: Date | null = null;
   if (service.overrideDateTimeISO) {
@@ -489,36 +261,11 @@ export function getMostRecentTargetTime(
       const dt = new Date(service.dateTimeISO);
       recentScheduled = dt <= now ? dt : null;
     }
-  } else if (service.reccurence === "weekly") {
-    if (service.dayOfWeek != null && service.time) {
-      recentScheduled = getPreviousWeekly(
-        now,
-        service.dayOfWeek,
-        service.time,
-        service.startDateISO,
-        service.endDateISO,
-      );
-    }
-  } else if (service.reccurence === "monthly") {
-    if (service.ordinal != null && service.weekday != null && service.time) {
-      recentScheduled = getPreviousMonthly(
-        now,
-        service.ordinal,
-        service.weekday,
-        service.time,
-        service.startDateISO,
-        service.endDateISO,
-      );
-    }
-  } else if (service.reccurence === "multi_weekly") {
-    if (service.daysOfWeek?.length) {
-      recentScheduled = getPreviousMultiWeekly(
-        now,
-        service.daysOfWeek,
-        service.startDateISO,
-        service.endDateISO,
-      );
-    }
+  } else if (service.reccurence) {
+    const occurrence = generateServiceOccurrencesAround(service, now, timeZone, "past")
+      .filter((item) => Date.parse(item.startsAt) <= now.getTime())
+      .sort((a, b) => Date.parse(b.startsAt) - Date.parse(a.startsAt))[0];
+    recentScheduled = occurrence ? new Date(occurrence.startsAt) : null;
   }
 
   if (!recentOverride) return recentScheduled;
@@ -531,9 +278,10 @@ export function getDisplayedUpcomingService(
   now = serverDate(),
   graceMs = 0,
   options: DisplayedUpcomingServiceOptions = {},
+  timeZone = "UTC",
 ): { service: ServiceTime; nextAt: Date } | null {
-  const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs);
-  const futureUpcoming = getClosestUpcomingService(services, now);
+  const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs, timeZone);
+  const futureUpcoming = getClosestUpcomingService(services, now, timeZone);
 
   if (options.keepRecentlyElapsedDuringGrace && bestRecent) {
     if (!futureUpcoming) {
@@ -556,14 +304,16 @@ export function getUpcomingServiceRefreshDelay(
   now = serverDate(),
   graceMs = 0,
   options: DisplayedUpcomingServiceOptions = {},
+  timeZone = "UTC",
 ): number | null {
-  const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs);
-  const futureUpcoming = getClosestUpcomingService(services, now);
+  const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs, timeZone);
+  const futureUpcoming = getClosestUpcomingService(services, now, timeZone);
   const displayedService = getDisplayedUpcomingService(
     services,
     now,
     graceMs,
     options,
+    timeZone,
   );
   if (!displayedService) return null;
 
