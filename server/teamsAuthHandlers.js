@@ -8898,6 +8898,29 @@ export const createTeamsAuthHandlers = ({
     if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
     return value;
   })(value));
+  const portableMemberImportBatchIdentity = ({
+    churchId, csvHash, mapping, destinationTeamId, updateMode, clearBlankScalars,
+    teamActions, positionActions,
+  }) => crypto.createHash("sha256").update(stablePortableJson([
+    churchId,
+    "members",
+    String(csvHash || ""),
+    mapping || {},
+    String(destinationTeamId || "").trim(),
+    updateMode === "replace" ? "replace" : "merge",
+    clearBlankScalars === true,
+    teamActions || [],
+    positionActions || [],
+  ])).digest("hex");
+  const portableMemberTeamCreateKey = (batchIdentity, action) => crypto.createHash("sha256")
+    .update(`${batchIdentity}\u0000member-import-team\u0000${stablePortableJson([normalizePortableMatchValue(action.sourceValue)])}\u0000${normalizePortableMatchValue(action.name)}`)
+    .digest("hex");
+  const portableMemberPositionCreateKey = (churchId, batchIdentity, teamId, sourceValue, name) => crypto.createHash("sha256")
+    .update(`${churchId}\u0000member-import-position\u0000${batchIdentity}\u0000${teamId}\u0000${normalizePortableMatchValue(sourceValue)}\u0000${normalizePortableMatchValue(name)}`)
+    .digest("hex");
+  const legacyPortableMemberPositionCreateKey = (churchId, teamId, name) => crypto.createHash("sha256")
+    .update(`${churchId}\u0000member-import-position\u0000${teamId}\u0000${normalizePortableMatchValue(name)}`)
+    .digest("hex");
   const memberImportStateHash = (member, teams, positions) => crypto.createHash("sha256").update(stablePortableJson({
     // Include the complete member document so profile, availability,
     // qualifications, and future fields all invalidate a stale preview.
@@ -9278,11 +9301,35 @@ export const createTeamsAuthHandlers = ({
         const positionActionsByKey = new Map(positionActions.map((action) => [
           positionActionKey(action?.teamId, action?.sourceValue), action,
         ]));
+        const createBatchIdentity = portableMemberImportBatchIdentity({
+          churchId,
+          csvHash: sourceCsvHash,
+          mapping: req.body?.mapping || {},
+          destinationTeamId,
+          updateMode: previewUpdateMode,
+          clearBlankScalars: previewClearBlankScalars,
+          teamActions,
+          positionActions,
+        });
+        const teamCreateKey = (action) => portableMemberTeamCreateKey(createBatchIdentity, action);
+        const positionCreateKey = (teamId, sourceValue, name) =>
+          portableMemberPositionCreateKey(churchId, createBatchIdentity, teamId, sourceValue, name);
+        const createdTeamForAction = (action) => records.teams.find((item) =>
+          item.churchId === churchId && !item.archivedAt
+          && item._portableCreateKey === teamCreateKey(action));
+        const getPositionActionEntry = (teamId, sourceValue) => {
+          const direct = positionActionsByKey.get(positionActionKey(teamId, sourceValue));
+          if (direct) return { decisionTeamId: teamId, action: direct };
+          const createdTeamAction = [...teamActionsByKey.values()].find((action) =>
+            action?.action === "create" && createdTeamForAction(action)?.teamId === teamId);
+          if (!createdTeamAction) return null;
+          const decisionTeamId = pendingTeamId(createdTeamAction.sourceValue);
+          const action = positionActionsByKey.get(positionActionKey(decisionTeamId, sourceValue));
+          return action ? { decisionTeamId, action } : null;
+        };
         const destinationTeam = destinationTeamId
           ? records.teams.find((item) => item.teamId === destinationTeamId && !item.archivedAt)
           : null;
-        if (destinationTeamId && !destinationTeam)
-          throw httpError(400, "Choose an active team in this church.");
         const mapped = mappedPortableRows({
           parsed,
           type,
@@ -9444,6 +9491,11 @@ export const createTeamsAuthHandlers = ({
                   if (planned.action === "create") {
                     const name = String(planned.name || "").trim();
                     if (!name) throw httpError(400, "Enter a name for the new team.");
+                    const alreadyCreated = createdTeamForAction(planned);
+                    if (alreadyCreated) {
+                      matchedTeams.push(alreadyCreated);
+                      return;
+                    }
                     if (records.teams.some((item) => item.churchId === churchId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name)))
                       throw httpError(409, `A team named "${name}" already exists or is archived. Choose an active match or a different name.`);
                     const virtualId = pendingTeamId(sourceValue);
@@ -9497,6 +9549,35 @@ export const createTeamsAuthHandlers = ({
             const positionCandidates = usesDestinationTeam
               ? records.positions.filter((item) => item.teamId === destinationTeam?.teamId)
               : records.positions.filter((item) => targetTeamIds.includes(item.teamId));
+            if (!allSourceTeamsIgnored && String(record.positions || "").trim()) {
+              splitPortableReferences(record.positions, positionCandidates).forEach((name) => {
+                targetTeamIds.forEach((teamId) => {
+                  const entry = getPositionActionEntry(teamId, name);
+                  if (!entry) return;
+                  usedPositionActionKeys.add(positionActionKey(entry.decisionTeamId, name));
+                  if (entry.action.action !== "create") return;
+                  const plannedTeamAction = [...teamActionsByKey.values()].find((action) =>
+                    action?.action === "create" && pendingTeamId(action.sourceValue) === entry.decisionTeamId);
+                  const ownerTeam = records.teams.find((item) => item.teamId === teamId && !item.archivedAt)
+                    || (plannedTeamAction && createdTeamForAction(plannedTeamAction));
+                  const ownerTeamId = ownerTeam?.teamId || teamId;
+                  const nameToCreate = String(entry.action.name || "").trim();
+                  if (!nameToCreate) throw httpError(400, "Enter a name for the new position.");
+                  const createKeys = [
+                    positionCreateKey(ownerTeamId, name, nameToCreate),
+                    legacyPortableMemberPositionCreateKey(churchId, ownerTeamId, nameToCreate),
+                  ];
+                  const alreadyCreated = records.positions.some((position) =>
+                    createKeys.includes(position._portableCreateKey)
+                    && position.churchId === churchId && position.teamId === ownerTeamId && !position.archivedAt);
+                  if (!alreadyCreated && records.positions.some((position) =>
+                    position.churchId === churchId && position.teamId === ownerTeamId
+                    && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(nameToCreate))) {
+                    throw httpError(409, `A position named "${nameToCreate}" already exists in ${ownerTeam?.name || "the selected team"}. Choose an existing position instead.`);
+                  }
+                });
+              });
+            }
             const meaningfulPositionIds = positionIdParts.some(Boolean) ? record.positionIds : "";
             if (!allSourceTeamsIgnored) referenceIssue("positions", record.positions, positionCandidates, "positionId", "position", meaningfulPositionIds, targetTeamIds.length === 1 ? targetTeamIds[0] : "");
             if (!allSourceTeamsIgnored && !String(record.positions || "").trim()) {
@@ -9554,20 +9635,26 @@ export const createTeamsAuthHandlers = ({
             }
             for (const issue of issues.filter((item) => item.field === "positions" && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(item.code))) {
               const scopedActionEntries = (issue.teamOptions || []).map((option) => ({
-                teamId: option.teamId,
-                key: positionActionKey(option.teamId, issue.referenceValue),
-                action: positionActionsByKey.get(positionActionKey(option.teamId, issue.referenceValue)),
+                ...getPositionActionEntry(option.teamId, issue.referenceValue),
+                ownerTeamId: option.teamId,
               })).filter((entry) => entry.action);
-              const actionTeamId = issue.teamId || (scopedActionEntries.length === 1 ? scopedActionEntries[0].teamId : "");
-              const actionKey = actionTeamId ? positionActionKey(actionTeamId, issue.referenceValue) : "";
-              const positionAction = actionTeamId ? positionActionsByKey.get(actionKey) : null;
+              const scopedIssueAction = issue.teamId
+                ? getPositionActionEntry(issue.teamId, issue.referenceValue)
+                : null;
+              const selectedActionEntry = scopedIssueAction || (scopedActionEntries.length === 1 ? scopedActionEntries[0] : null);
+              const actionTeamId = selectedActionEntry?.decisionTeamId || "";
+              const actionKey = selectedActionEntry ? positionActionKey(actionTeamId, issue.referenceValue) : "";
+              const positionAction = selectedActionEntry?.action || null;
               if (!positionAction) continue;
               usedPositionActionKeys.add(actionKey);
               if (positionAction.action === "ignore" && ignoredSourceTeamOptions.some((option) => option.teamId === actionTeamId)) {
                 issues.splice(issues.indexOf(issue), 1);
                 continue;
               }
+               const plannedTeamAction = [...teamActionsByKey.values()].find((action) =>
+                 action?.action === "create" && pendingTeamId(action.sourceValue) === actionTeamId);
                const team = records.teams.find((item) => item.teamId === actionTeamId && !item.archivedAt)
+                 || (plannedTeamAction && createdTeamForAction(plannedTeamAction))
                  || [...teamActionsByKey.values()].map((action) => action.action === "create"
                    ? { teamId: pendingTeamId(action.sourceValue), churchId, name: String(action.name || "").trim(), memberIds: [], _portablePending: true }
                    : null).find((item) => item?.teamId === actionTeamId);
@@ -9580,7 +9667,14 @@ export const createTeamsAuthHandlers = ({
               } else if (positionAction.action === "create") {
                 const name = String(positionAction.name || "").trim();
                 if (!name) throw httpError(400, "Enter a name for the new position.");
-                const duplicate = records.positions.some((item) => item.teamId === team.teamId
+                const createKeys = [
+                  positionCreateKey(team.teamId, issue.referenceValue, name),
+                  legacyPortableMemberPositionCreateKey(churchId, team.teamId, name),
+                ];
+                const alreadyCreated = records.positions.some((item) =>
+                  createKeys.includes(item._portableCreateKey)
+                  && item.churchId === churchId && item.teamId === team.teamId && !item.archivedAt);
+                const duplicate = !alreadyCreated && records.positions.some((item) => item.teamId === team.teamId
                   && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
                 if (duplicate) throw httpError(409, `A position named "${name}" already exists in ${team.name}. Choose an existing position instead.`);
               } else if (positionAction.action !== "ignore") {
@@ -10200,11 +10294,19 @@ export const createTeamsAuthHandlers = ({
             candidates: rowCandidates,
           });
           if (type === "members" && issues.some((issue) => issue.code === "source_inactive") && action !== "invalid") action = "review";
-          if (type === "members" && issues.some((issue) => issue.code === "required" && issue.field === "team") && action !== "invalid") action = "review";
+          const hasRequiredMemberNames = Boolean(record.firstName && record.lastName);
+          const hasHardMemberInputError = issues.some((issue) =>
+            ["invalid_value", "archive_import_unsupported", "archived_match", "column_count_mismatch", "unclosed_quote", "missing_header"].includes(issue.code)
+            || (issue.code === "required" && issue.field !== "team"));
+          if (type === "members" && hasRequiredMemberNames && !hasHardMemberInputError
+            && issues.some((issue) => issue.code === "required" && issue.field === "team")) action = "review";
           if (type === "members" && issues.some((issue) => issue.code === "missing_reference" && ["teams", "positions"].includes(issue.field)) && action !== "invalid") action = "review";
+          if (type === "members" && !hasHardMemberInputError
+            && issues.some((issue) => issue.code === "foreign_or_unknown_reference_id" && ["teams", "positions"].includes(issue.field))) action = "review";
           const changes = [];
           let expectedStateHash;
           if (type === "members" && match) {
+            const matchPositionIdParts = String(record.positionIds || "").split(LIST_DELIMITER).map((value) => value.trim());
             expectedStateHash = memberImportStateHash(match, records.teams, records.positions);
             const scalarFields = [["First name", "firstName"], ["Last name", "lastName"], ["Title", "title"], ["Email", "email"], ["Phone", "phone"], ["Notes", "notes"], ["Serving frequency", "servingFrequency"]];
             for (const [label, field] of scalarFields) {
@@ -10219,28 +10321,67 @@ export const createTeamsAuthHandlers = ({
             const targetMembershipTeams = usesDestinationTeam ? (destinationTeam ? [destinationTeam] : []) : matchedTeams;
             targetMembershipTeams.filter((team) => !(team.memberIds || []).includes(match.memberId) && !match.teamMemberships?.[team.teamId])
               .forEach((team) => changes.push({ field: "Team membership", before: "", after: team.name }));
-            if (record.positions !== undefined && !allSourceTeamsIgnored) {
+            const hasPositionInput = record.positions !== undefined || matchPositionIdParts.some(Boolean);
+            if (hasPositionInput && !allSourceTeamsIgnored) {
               const importedPositionNames = splitPortableReferences(record.positions, records.positions);
               const targetTeamIds = usesDestinationTeam
-                ? [destinationTeam.teamId]
+                ? destinationTeam ? [destinationTeam.teamId] : []
                 : matchedTeams.map((team) => team.teamId);
               const existingScoped = records.positions.filter((position) => (match.positionIds || []).includes(position.positionId) && targetTeamIds.includes(position.teamId));
-              const resolved = importedPositionNames.flatMap((name) => {
-                const scopes = targetTeamIds;
-                return scopes.flatMap((scopedTeamId) => {
-                  const planned = scopedTeamId ? positionActionsByKey.get(positionActionKey(scopedTeamId, name)) : null;
-                  if (planned?.action === "ignore") return [];
-                  if (planned?.action === "match") return records.positions.filter((position) => position.positionId === planned.positionId && !position.archivedAt);
-                  if (planned?.action === "create") return [{ positionId: `pending:${positionActionKey(scopedTeamId, name)}`, teamId: scopedTeamId, name: planned.name }];
-                  return records.positions.filter((position) => !position.archivedAt && position.teamId === scopedTeamId && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(name));
-                });
-              }).filter((position, index, all) => all.findIndex((item) => item.positionId === position.positionId) === index);
+              const resolved = importedPositionNames.length
+                ? importedPositionNames.flatMap((name, referenceIndex) => {
+                    const actionEntries = targetTeamIds
+                      .map((teamId) => ({ ownerTeamId: teamId, ...getPositionActionEntry(teamId, name) }))
+                      .filter((entry) => entry.action);
+                    if (actionEntries.length === 1) {
+                      const entry = actionEntries[0];
+                      if (entry.action.action === "ignore") return [];
+                      const pendingTeamAction = [...teamActionsByKey.values()].find((action) =>
+                        action?.action === "create" && pendingTeamId(action.sourceValue) === entry.decisionTeamId);
+                      const resolvedTeam = pendingTeamAction
+                        ? createdTeamForAction(pendingTeamAction)
+                        : records.teams.find((team) => team.teamId === entry.ownerTeamId);
+                      const owningTeamId = resolvedTeam?.teamId || entry.ownerTeamId;
+                      if (entry.action.action === "match") {
+                        return records.positions.filter((position) => position.positionId === entry.action.positionId
+                          && position.teamId === owningTeamId && !position.archivedAt);
+                      }
+                      if (entry.action.action === "create") {
+                        const nameToCreate = String(entry.action.name || "").trim();
+                        const createKeys = [
+                          positionCreateKey(owningTeamId, name, nameToCreate),
+                          legacyPortableMemberPositionCreateKey(churchId, owningTeamId, nameToCreate),
+                        ];
+                        const existingByKey = records.positions.find((position) =>
+                          createKeys.includes(position._portableCreateKey)
+                          && position.churchId === churchId && position.teamId === owningTeamId && !position.archivedAt);
+                        if (existingByKey) return [existingByKey];
+                        if (records.positions.some((position) => position.churchId === churchId
+                          && position.teamId === owningTeamId
+                          && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(nameToCreate))) {
+                          throw httpError(409, `A position named "${nameToCreate}" now exists. Choose the existing position or use a different name.`);
+                        }
+                        return [{ positionId: `pending:${positionActionKey(entry.decisionTeamId, name)}`, teamId: entry.ownerTeamId, name: nameToCreate }];
+                      }
+                      return [];
+                    }
+                    if (actionEntries.length > 1) return [];
+                    const selectedId = matchPositionIdParts[referenceIndex] || "";
+                    return targetTeamIds.flatMap((teamId) => records.positions.filter((position) => !position.archivedAt
+                      && position.teamId === teamId
+                      && (!selectedId || position.positionId === selectedId)
+                      && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(name)));
+                  })
+                : matchPositionIdParts.filter(Boolean).flatMap((positionId) =>
+                    records.positions.filter((position) => position.positionId === positionId
+                      && targetTeamIds.includes(position.teamId) && !position.archivedAt));
+              const uniqueResolved = resolved.filter((position, index, all) => all.findIndex((item) => item.positionId === position.positionId) === index);
               const hasIgnoredPosition = importedPositionNames.some((name) => {
-                return targetTeamIds.some((teamId) => positionActionsByKey.get(positionActionKey(teamId, name))?.action === "ignore");
+                return targetTeamIds.some((teamId) => getPositionActionEntry(teamId, name)?.action.action === "ignore");
               });
               const afterPositions = previewUpdateMode === "replace" && !hasIgnoredPosition
-                ? resolved
-                : [...existingScoped, ...resolved.filter((position) => !existingScoped.some((item) => item.positionId === position.positionId))];
+                ? uniqueResolved
+                : [...existingScoped, ...uniqueResolved.filter((position) => !existingScoped.some((item) => item.positionId === position.positionId))];
               existingScoped.filter((position) => !afterPositions.some((item) => item.positionId === position.positionId)).forEach((position) => changes.push({ field: "Position", before: position.name, after: "" }));
               afterPositions.filter((position) => !existingScoped.some((item) => item.positionId === position.positionId)).forEach((position) => changes.push({ field: "Position", before: "", after: position.name }));
             }
@@ -10357,11 +10498,20 @@ export const createTeamsAuthHandlers = ({
         };
         const requestedTeamActions = Array.isArray(req.body?.teamActions) ? req.body.teamActions : [];
         const requestedPositionActions = Array.isArray(req.body?.positionActions) ? req.body.positionActions : [];
-        const createBatchIdentity = crypto.createHash("sha256")
-          .update(JSON.stringify(stablePortableValue(type === "members"
-            ? [churchId, type, String(req.body?.previewCsvHash || ""), req.body?.mapping || {}, String(req.body?.destinationTeamId || "").trim(), req.body?.updateMode === "replace" ? "replace" : "merge", req.body?.clearBlankScalars === true, requestedTeamActions, requestedPositionActions]
-            : [churchId, type, approvedRows])))
-          .digest("hex");
+        const createBatchIdentity = type === "members"
+          ? portableMemberImportBatchIdentity({
+              churchId,
+              csvHash: req.body?.previewCsvHash,
+              mapping: req.body?.mapping || {},
+              destinationTeamId: req.body?.destinationTeamId,
+              updateMode: req.body?.updateMode,
+              clearBlankScalars: req.body?.clearBlankScalars,
+              teamActions: requestedTeamActions,
+              positionActions: requestedPositionActions,
+            })
+          : crypto.createHash("sha256")
+              .update(JSON.stringify(stablePortableValue([churchId, type, approvedRows])))
+              .digest("hex");
         const portableCreateKey = (approved) => {
           const record = approved.record && typeof approved.record === "object"
             ? approved.record
@@ -10516,9 +10666,7 @@ export const createTeamsAuthHandlers = ({
           const ids = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim()).filter(Boolean);
           (refs.length ? refs : ids).forEach((sourceValue) => referencedTeamKeys.add(teamActionKey(sourceValue)));
         });
-        const teamCreateKey = (action) => crypto.createHash("sha256")
-          .update(`${createBatchIdentity}\u0000member-import-team\u0000${teamActionKey(action.sourceValue)}\u0000${normalizePortableMatchValue(action.name)}`)
-          .digest("hex");
+        const teamCreateKey = (action) => portableMemberTeamCreateKey(createBatchIdentity, action);
         for (const action of requestedTeamActions) {
           const key = teamActionKey(action.sourceValue);
           if (!referencedTeamKeys.has(key)) continue;
@@ -10565,9 +10713,8 @@ export const createTeamsAuthHandlers = ({
             && teamActionIds.get(teamActionKey(action.sourceValue)) === teamId);
           return createAction ? positionActionMap.get(positionActionKey(pendingTeamId(createAction.sourceValue), sourceValue)) : null;
         };
-        const positionCreateKey = (teamId, name) => crypto.createHash("sha256")
-          .update(`${churchId}\u0000member-import-position\u0000${teamId}\u0000${normalizePortableMatchValue(name)}`)
-          .digest("hex");
+        const positionCreateKey = (teamId, sourceValue, name) =>
+          portableMemberPositionCreateKey(churchId, createBatchIdentity, teamId, sourceValue, name);
         const resolveApprovedPosition = async (teamId, sourceValue) => {
           const action = getPositionAction(teamId, sourceValue);
           if (!action) return null;
@@ -10583,14 +10730,15 @@ export const createTeamsAuthHandlers = ({
           }
           if (action.action !== "create") throw httpError(400, "Choose how to handle each missing position.");
           const name = String(action.name || "").trim();
-          const createKey = positionCreateKey(actualTeamId, name);
-          const existingByKey = data.positions.find((item) => item._portableCreateKey === createKey);
+          const createKey = positionCreateKey(actualTeamId, sourceValue, name);
+          const legacyCreateKey = legacyPortableMemberPositionCreateKey(churchId, actualTeamId, name);
+          const existingByKey = data.positions.find((item) =>
+            [createKey, legacyCreateKey].includes(item._portableCreateKey));
           if (existingByKey && existingByKey.churchId === churchId && existingByKey.teamId === actualTeamId && !existingByKey.archivedAt)
             return existingByKey.positionId;
           const sameName = data.positions.filter((item) => item.churchId === churchId && item.teamId === actualTeamId
             && !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
-          if (sameName.length === 1) return sameName[0].positionId;
-          if (sameName.length > 1) throw httpError(409, `More than one position named "${name}" exists in ${team.name}. Choose a specific match.`);
+          if (sameName.length) throw httpError(409, `A position named "${name}" now exists in ${team.name}. Review the position mapping before continuing.`);
           if (data.positions.some((item) => item.churchId === churchId && item.teamId === actualTeamId
             && item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name)))
             throw httpError(409, `An archived position named "${name}" exists in ${team.name}. Choose a different name.`);
@@ -11954,13 +12102,14 @@ export const createTeamsAuthHandlers = ({
               const desiredTeamIds = new Set([...priorTeamIds, ...importedTeamIds]);
               const hasIgnoredPosition = ignoredTeamKeys.size > 0 || targetPositionTeamIds.some((teamId) => positionNames.some((name) => getPositionAction(teamId, name)?.action === "ignore"));
               const currentPositionIds = existing?.positionIds || [];
+              const blankPositionsWithoutIds = !String(record.positions || "").trim() && !positionIdParts.some(Boolean);
               const preservedPositionIds = currentPositionIds.filter((positionId) => {
                 const position = data.positions.find((item) => item.positionId === positionId);
                 return !position || !teamScope.has(position.teamId);
               });
-              const positionsWereMapped = record.positions !== undefined;
-              const blankPositionsReplace = positionsWereMapped && !String(record.positions || "").trim() && updateMode === "replace";
-              const nextPositionIds = !positionsWereMapped || (!String(record.positions || "").trim() && updateMode === "merge")
+              const positionsWereMapped = record.positions !== undefined || positionIdParts.some(Boolean);
+              const blankPositionsReplace = positionsWereMapped && blankPositionsWithoutIds && updateMode === "replace";
+              const nextPositionIds = !positionsWereMapped || (blankPositionsWithoutIds && updateMode === "merge")
                 ? currentPositionIds
                 : updateMode === "replace" && !hasIgnoredPosition
                   ? [...preservedPositionIds, ...resolvedPositionIds]
@@ -12087,7 +12236,11 @@ export const createTeamsAuthHandlers = ({
         const teamsCreatedCount = requestedTeamActions.filter((action) => action.action === "create"
           && teamActionIds.get(teamActionKey(action.sourceValue))).length;
         const positionsCreatedCount = requestedPositionActions.filter((action) => action.action === "create"
-          && data.positions.some((position) => position._portableCreateKey === positionCreateKey(resolvePositionTeamId(action.teamId), action.name))).length;
+          && data.positions.some((position) => position._portableCreateKey === positionCreateKey(
+            resolvePositionTeamId(action.teamId), action.sourceValue, action.name,
+          ) || position._portableCreateKey === legacyPortableMemberPositionCreateKey(
+            churchId, resolvePositionTeamId(action.teamId), action.name,
+          ))).length;
         const hasCreatedDependencies = teamsCreatedCount > 0 || positionsCreatedCount > 0;
         return res.json({
           success: failed === 0,

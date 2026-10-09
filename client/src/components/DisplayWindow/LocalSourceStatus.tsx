@@ -10,7 +10,7 @@ type LocalSourceStatusProps = {
 const LocalSourceStatus = ({
   sourceLabel,
   ownerLabel,
-  heading = "Local source active",
+  heading = "Local source on another device",
   detail,
   transparentBackground = false,
 }: LocalSourceStatusProps) => (

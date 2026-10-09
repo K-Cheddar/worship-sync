@@ -68,6 +68,29 @@ import Checkbox from "../components/Checkbox/Checkbox";
 
 const INVITE_TOKEN_STORAGE_KEY = "worshipsync_pending_invite_token";
 const INVITE_RECOVERY_STORAGE_KEY = "worshipsync_invite_recovery";
+const INVITE_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+
+const getValidatedRecoveredInviteToken = () => {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.sessionStorage.getItem(INVITE_RECOVERY_STORAGE_KEY);
+    if (!raw) return "";
+    const recovery = JSON.parse(raw) as Partial<InviteRecoveryState>;
+    const acceptedAt = Number(recovery.acceptedAt);
+    const age = Date.now() - acceptedAt;
+    if (
+      recovery.accepted === true &&
+      typeof recovery.token === "string" &&
+      recovery.token.trim() &&
+      Number.isFinite(acceptedAt) &&
+      age >= 0 &&
+      age <= INVITE_RECOVERY_TTL_MS
+    ) return recovery.token;
+  } catch {
+    // A malformed recovery record cannot supply an invite credential.
+  }
+  return "";
+};
 
 type InviteRecoveryState = {
   accepted: true;
@@ -75,7 +98,7 @@ type InviteRecoveryState = {
   acceptedAt: number;
   smsConsentChecked?: boolean;
   smsPhoneConfirmed?: string;
-  smsDeliveryState?: "sending" | "sent" | "failed" | "uncertain";
+  smsDeliveryState?: "sending" | "sent" | "failed" | "uncertain" | "expired";
   smsVerification?: {
     phoneNumber: string;
     expectedRosterPhoneNumber: string;
@@ -166,7 +189,7 @@ const InviteAccept = () => {
     if (typeof window === "undefined") {
       return "";
     }
-    return window.sessionStorage.getItem(INVITE_TOKEN_STORAGE_KEY) || "";
+    return window.sessionStorage.getItem(INVITE_TOKEN_STORAGE_KEY) || getValidatedRecoveredInviteToken();
   }, [searchParams]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -202,6 +225,17 @@ const InviteAccept = () => {
   const [smsVerificationCode, setSmsVerificationCode] = useState("");
   const [smsErrorMessage, setSmsErrorMessage] = useState("");
   const [isSmsWorking, setIsSmsWorking] = useState(false);
+  const smsOperationInFlightRef = useRef(false);
+  const beginSmsOperation = () => {
+    if (smsOperationInFlightRef.current) return false;
+    smsOperationInFlightRef.current = true;
+    setIsSmsWorking(true);
+    return true;
+  };
+  const endSmsOperation = () => {
+    smsOperationInFlightRef.current = false;
+    setIsSmsWorking(false);
+  };
   const smsIntentTokenRef = useRef(token);
   const passwordStrengthDescId = useId();
 
@@ -535,21 +569,29 @@ const InviteAccept = () => {
     setSmsErrorMessage("This mobile number changed. Review the updated number before trying SMS signup again.");
   };
 
-  const startInviteSmsVerification = async (idToken: string) => {
+  const startInviteSmsVerification = async (
+    idToken: string,
+    options: { forceNewChallenge?: boolean; operationAlreadyStarted?: boolean } = {},
+  ) => {
     if (!token) throw new Error("This invite link is missing its token.");
+    if (!options.operationAlreadyStarted && !beginSmsOperation()) return false;
     const currentRosterPhoneNumber = rosterPhoneNumberRef.current || rosterPhoneNumber;
-    const phoneNumber = smsVerification?.phoneNumber || currentRosterPhoneNumber || smsPhoneNumber.trim();
+    const phoneNumber = (!options.forceNewChallenge ? smsVerification?.phoneNumber : "") || currentRosterPhoneNumber || smsPhoneNumber.trim();
     if (!isValidInviteSmsPhone(phoneNumber)) {
       setSmsErrorMessage("Enter a valid 10-digit U.S. mobile number, or continue without SMS.");
       setNeedsSessionRetry(true);
+      if (!options.operationAlreadyStarted) endSmsOperation();
       return false;
     }
     if (!smsVerification && smsPhoneConfirmed !== phoneNumber) {
       setSmsErrorMessage("Review and confirm this exact mobile number before requesting a verification code.");
       setNeedsSessionRetry(true);
+      if (!options.operationAlreadyStarted) endSmsOperation();
       return false;
     }
-    const capability = smsVerification || createSmsConsentCapabilities();
+    const capability = !options.forceNewChallenge && smsVerification
+      ? smsVerification
+      : createSmsConsentCapabilities();
     const intent = {
       phoneNumber,
       expectedRosterPhoneNumber:
@@ -644,24 +686,40 @@ const InviteAccept = () => {
       const outcome = typeof error === "object" && error !== null && "details" in error
         ? (error as { details?: { outcome?: string } }).details?.outcome
         : undefined;
-      const deliveryState = outcome === "delivery_failed" ? "failed" : "uncertain";
-      setSmsDeliveryState(deliveryState);
-      persistInviteRecovery(token, {
-        smsConsentChecked: true,
-        smsVerification: intent,
-        smsPhoneConfirmed,
-        smsDeliveryState: deliveryState,
-      });
-      setSmsErrorMessage(
-        deliveryState === "failed" && error instanceof Error
-          ? error.message
-          : "The SMS delivery result is uncertain. Check your messages before trying again, or continue without SMS.",
-      );
+      if (outcome === "rejected_before_send") {
+        setSmsVerification(null);
+        setSmsDeliveryState(undefined);
+        persistInviteRecovery(token, { smsConsentChecked: true, smsPhoneConfirmed });
+        setSmsErrorMessage(error instanceof Error ? error.message : "SMS verification could not start. Review the number and try again.");
+      } else {
+        const details = typeof error === "object" && error !== null && "details" in error
+          ? (error as { details?: { challengeId?: string; cancellationToken?: string } }).details
+          : undefined;
+        const deliveryState = outcome === "delivery_failed" ? "failed" : "uncertain";
+        const retainedIntent = {
+          ...intent,
+          ...(details?.challengeId ? { challengeId: details.challengeId } : {}),
+          ...(details?.cancellationToken ? { cancellationToken: details.cancellationToken } : {}),
+        };
+        setSmsVerification(retainedIntent);
+        setSmsDeliveryState(deliveryState);
+        persistInviteRecovery(token, {
+          smsConsentChecked: true,
+          smsVerification: retainedIntent,
+          smsPhoneConfirmed,
+          smsDeliveryState: deliveryState,
+        });
+        setSmsErrorMessage(
+          deliveryState === "failed" && error instanceof Error
+            ? error.message
+            : "The SMS delivery result is uncertain. Check your messages before trying again, or continue without SMS.",
+        );
+      }
       setNeedsSessionRetry(true);
       setStatusMessage("");
       return false;
     } finally {
-      setIsSmsWorking(false);
+      if (!options.operationAlreadyStarted) endSmsOperation();
     }
   };
 
@@ -686,9 +744,40 @@ const InviteAccept = () => {
     }
   };
 
+  const retryInviteSmsVerification = async (forceNewChallenge = false) => {
+    if (!beginSmsOperation()) return;
+    try {
+      const currentUser = getHumanAuth().currentUser;
+      if (!currentUser) {
+        setSmsErrorMessage("Sign in again to continue SMS signup.");
+        return;
+      }
+      const idToken = await currentUser.getIdToken(true);
+      const shouldContinue = await startInviteSmsVerification(idToken, {
+        forceNewChallenge,
+        operationAlreadyStarted: true,
+      });
+      if (shouldContinue) {
+        try {
+          await startSessionAfterInvite(idToken);
+        } catch (error) {
+          handleSessionStartFailure(error);
+        }
+      }
+    } catch (error) {
+      setSmsErrorMessage(error instanceof Error ? error.message : "Could not retry SMS verification.");
+    } finally {
+      endSmsOperation();
+    }
+  };
+
   const handleVerifyInviteSmsConsent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isSmsWorking || !smsVerification || !token) return;
+    if (smsOperationInFlightRef.current || !smsVerification) return;
+    if (!token) {
+      setSmsErrorMessage("This invite recovery is missing its token. Reopen the original invitation link to continue.");
+      return;
+    }
     if (!/^\d{6}$/.test(smsVerificationCode)) {
       setSmsErrorMessage("Enter the 6-digit verification code we sent you.");
       return;
@@ -698,7 +787,7 @@ const InviteAccept = () => {
       setSmsErrorMessage("Sign in again to finish verifying your phone.");
       return;
     }
-    setIsSmsWorking(true);
+    if (!beginSmsOperation()) return;
     setSmsErrorMessage("");
     let idToken = "";
     try {
@@ -715,7 +804,6 @@ const InviteAccept = () => {
       setSmsVerificationCode("");
       setSmsConsentStatus("opted_in");
       persistInviteRecovery(token, { smsConsentChecked: true });
-      setIsSmsWorking(false);
       try {
         await startSessionAfterInvite(idToken);
       } catch (error) {
@@ -726,69 +814,90 @@ const InviteAccept = () => {
         await refreshInviteSmsPhone(idToken);
         return;
       }
+      const code = typeof error === "object" && error !== null && "details" in error
+        ? (error as { details?: { code?: string } }).details?.code
+        : undefined;
+      if (code === "sms_challenge_expired" || code === "sms_challenge_unavailable") {
+        setSmsDeliveryState("expired");
+        persistInviteRecovery(token, {
+          smsConsentChecked: true,
+          smsVerification,
+          smsPhoneConfirmed,
+          smsDeliveryState: "expired",
+        });
+      }
       setSmsErrorMessage(
         error instanceof Error
           ? error.message
           : "Could not verify your SMS consent. You can continue without SMS or try again.",
       );
     } finally {
-      setIsSmsWorking(false);
+      endSmsOperation();
     }
   };
 
   const handleContinueWithoutSms = async () => {
-    const pendingChallenge = smsVerification;
-    let cancellationUncertain = false;
-    let cancellationUnconfirmed = false;
-    if (pendingChallenge && token) {
-      try {
-        const currentUser = getHumanAuth().currentUser;
-        if (!currentUser) throw new Error("Sign in again to cancel SMS verification.");
-        const idToken = await currentUser.getIdToken(true);
-        const cancellation = await cancelInviteSmsConsent({
-          inviteToken: token,
-          idToken,
-          phoneNumber: pendingChallenge.phoneNumber,
-          expectedRosterPhoneNumber: pendingChallenge.expectedRosterPhoneNumber,
-          challengeId: pendingChallenge.challengeId,
-          cancellationToken: pendingChallenge.cancellationToken,
-        });
-        if (!cancellation.cancelled) {
-          setSmsErrorMessage("This verification is no longer active, or SMS signup was already completed. You can continue without SMS.");
-        }
-        window.sessionStorage.removeItem(`worshipsync_invite_sms_cancel:${token}`);
-        window.sessionStorage.removeItem(INVITE_TOKEN_STORAGE_KEY);
-      } catch (error) {
-        const explicitlyNotCancelled = typeof error === "object" && error !== null && "details" in error &&
-          (error as { details?: { cancelled?: boolean } }).details?.cancelled === false;
-        if (explicitlyNotCancelled) {
-          cancellationUnconfirmed = true;
+    if (!beginSmsOperation()) return;
+    try {
+      const pendingChallenge = smsVerification;
+      let cancellationUncertain = false;
+      let cancellationUnconfirmed = false;
+      if (pendingChallenge && !token) {
+        setSmsErrorMessage("This invite recovery is missing its token, so SMS signup cannot be cancelled. Reopen the original invitation link to continue safely.");
+        return;
+      }
+      if (pendingChallenge && token) {
+        try {
+          const currentUser = getHumanAuth().currentUser;
+          if (!currentUser) throw new Error("Sign in again to cancel SMS verification.");
+          const idToken = await currentUser.getIdToken(true);
+          const cancellation = await cancelInviteSmsConsent({
+            inviteToken: token,
+            idToken,
+            phoneNumber: pendingChallenge.phoneNumber,
+            expectedRosterPhoneNumber: pendingChallenge.expectedRosterPhoneNumber,
+            challengeId: pendingChallenge.challengeId,
+            cancellationToken: pendingChallenge.cancellationToken,
+          });
+          if (!cancellation.cancelled) {
+            setSmsErrorMessage("This verification is no longer active, or SMS signup was already completed. You can continue without SMS.");
+          }
           window.sessionStorage.removeItem(`worshipsync_invite_sms_cancel:${token}`);
           window.sessionStorage.removeItem(INVITE_TOKEN_STORAGE_KEY);
-          setSmsErrorMessage("This verification is no longer active, or SMS signup was already completed. You can continue without SMS.");
-        } else {
-          cancellationUncertain = true;
-          // Keep the exact capability for an idempotent retry if the response was lost.
-          window.sessionStorage.setItem(INVITE_TOKEN_STORAGE_KEY, token);
-          window.sessionStorage.setItem(
-            `worshipsync_invite_sms_cancel:${token}`,
-            JSON.stringify(pendingChallenge),
-          );
-          setSmsErrorMessage("Could not confirm SMS signup cancellation. You can continue without SMS; the code may remain usable until it expires.");
+        } catch (error) {
+          const explicitlyNotCancelled = typeof error === "object" && error !== null && "details" in error &&
+            (error as { details?: { cancelled?: boolean } }).details?.cancelled === false;
+          if (explicitlyNotCancelled) {
+            cancellationUnconfirmed = true;
+            window.sessionStorage.removeItem(`worshipsync_invite_sms_cancel:${token}`);
+            window.sessionStorage.removeItem(INVITE_TOKEN_STORAGE_KEY);
+            setSmsErrorMessage("This verification is no longer active, or SMS signup was already completed. You can continue without SMS.");
+          } else {
+            cancellationUncertain = true;
+            // Keep the exact capability for an idempotent retry if the response was lost.
+            window.sessionStorage.setItem(INVITE_TOKEN_STORAGE_KEY, token);
+            window.sessionStorage.setItem(
+              `worshipsync_invite_sms_cancel:${token}`,
+              JSON.stringify(pendingChallenge),
+            );
+            setSmsErrorMessage("Could not confirm SMS signup cancellation. You can continue without SMS; the code may remain usable until it expires.");
+          }
         }
       }
+      setSmsConsentChecked(false);
+      if (!cancellationUncertain) setSmsVerification(null);
+      setSmsVerificationCode("");
+      if (!pendingChallenge && !cancellationUnconfirmed) setSmsErrorMessage("");
+      if (token) persistInviteRecovery(token, {
+        smsConsentChecked: false,
+        ...(cancellationUncertain && pendingChallenge
+          ? { smsVerification: pendingChallenge, smsCancellationPending: true }
+          : {}),
+      });
+      await handleContinueSignIn();
+    } finally {
+      endSmsOperation();
     }
-    setSmsConsentChecked(false);
-    if (!cancellationUncertain) setSmsVerification(null);
-    setSmsVerificationCode("");
-    if (!pendingChallenge && !cancellationUnconfirmed) setSmsErrorMessage("");
-    if (token) persistInviteRecovery(token, {
-      smsConsentChecked: false,
-      ...(cancellationUncertain && pendingChallenge
-        ? { smsVerification: pendingChallenge, smsCancellationPending: true }
-        : {}),
-    });
-    await handleContinueSignIn();
   };
 
   const handleSessionStartFailure = (error: unknown) => {
@@ -972,6 +1081,9 @@ const InviteAccept = () => {
     void handleCreateAccountAndAccept();
   };
 
+  const showSmsConsentPanel = smsInviteConsentEnabled &&
+    (!inviteAccepted || (smsConsentChecked && smsConsentStatus === "none" && !smsVerification));
+
   return (
     <AuthScreenMain>
       <div className="w-full max-w-md rounded-2xl border border-gray-500 bg-gray-800 p-6">
@@ -991,14 +1103,12 @@ const InviteAccept = () => {
         {errorMessage && (
           <p className="mt-3 text-sm text-red-400">{errorMessage}</p>
         )}
-        {smsErrorMessage && !smsVerification ? (
+        {smsErrorMessage && !smsVerification && !showSmsConsentPanel ? (
           <p className="mt-3 text-sm text-amber-100" role="alert">
             {smsErrorMessage}
           </p>
         ) : null}
-
-        {smsInviteConsentEnabled &&
-        (!inviteAccepted || (smsConsentChecked && smsConsentStatus === "none" && !smsVerification)) ? (
+        {showSmsConsentPanel ? (
           <div className="mt-4 space-y-3 rounded-lg border border-gray-600/80 bg-gray-900/40 p-3">
             <p className="text-sm font-medium text-gray-100">
               Volunteer text updates (optional)
@@ -1076,6 +1186,8 @@ const InviteAccept = () => {
                 ? `The SMS provider did not confirm delivery. If a code arrives at ${smsVerification.phoneNumber}, enter it here. Do not request another code yet.`
                 : smsDeliveryState === "failed"
                   ? `The provider rejected the previous send. Retry to request a new code for ${smsVerification.phoneNumber}, or continue without SMS.`
+                  : smsDeliveryState === "expired"
+                    ? `This verification code expired or is no longer available. Request a new code for ${smsVerification.phoneNumber}, or continue without SMS.`
                   : `Enter the verification code sent to ${smsVerification.phoneNumber} to finish opting in.`}
             </p>
             {smsErrorMessage ? (
@@ -1093,26 +1205,16 @@ const InviteAccept = () => {
               }}
               required
             />
-            {smsDeliveryState === "failed" ? (
+            {smsDeliveryState === "failed" || smsDeliveryState === "expired" ? (
               <Button
                 type="button"
                 variant="tertiary"
                 className="w-full justify-center"
                 isLoading={isSmsWorking}
                 disabled={isSmsWorking || isSaving}
-                onClick={() => {
-                  const currentUser = getHumanAuth().currentUser;
-                  if (!currentUser) {
-                    setSmsErrorMessage("Sign in again to continue SMS signup.");
-                    return;
-                  }
-                  setIsSmsWorking(true);
-                  void currentUser.getIdToken(true).then(startInviteSmsVerification).catch((error) => {
-                    setSmsErrorMessage(error instanceof Error ? error.message : "Could not retry SMS verification.");
-                  }).finally(() => setIsSmsWorking(false));
-                }}
+                onClick={() => void retryInviteSmsVerification(smsDeliveryState === "expired")}
               >
-                Retry SMS verification
+                {smsDeliveryState === "expired" ? "Request a new code" : "Retry SMS verification"}
               </Button>
             ) : null}
             <Button
@@ -1128,6 +1230,7 @@ const InviteAccept = () => {
               type="button"
               variant="secondary"
               className="w-full justify-center whitespace-normal text-center"
+              isLoading={isSmsWorking}
               disabled={isSmsWorking || isSaving}
               onClick={() => void handleContinueWithoutSms()}
             >
@@ -1148,19 +1251,7 @@ const InviteAccept = () => {
                     setSmsErrorMessage("Sign in again to continue SMS signup.");
                     return;
                   }
-                  setIsSmsWorking(true);
-                  void currentUser.getIdToken(true).then(async (idToken) => {
-                    const shouldContinue = await startInviteSmsVerification(idToken);
-                    if (shouldContinue) {
-                      try {
-                        await startSessionAfterInvite(idToken);
-                      } catch (error) {
-                        handleSessionStartFailure(error);
-                      }
-                    }
-                  }).catch((error) => {
-                    setSmsErrorMessage(error instanceof Error ? error.message : "Could not retry SMS signup.");
-                  }).finally(() => setIsSmsWorking(false));
+                  void retryInviteSmsVerification();
                 }}
               >
                 {smsPhoneConfirmed === (rosterPhoneNumber || smsPhoneNumber.trim()) ? "Send verification code" : "Review mobile number"}
@@ -1171,7 +1262,7 @@ const InviteAccept = () => {
                 variant="secondary"
                 className="w-full justify-center"
                 onClick={() => void handleContinueWithoutSms()}
-                isLoading={isSaving}
+                isLoading={isSaving || isSmsWorking}
                 disabled={isSaving || isSmsWorking}
               >
                 Continue without SMS
@@ -1181,15 +1272,7 @@ const InviteAccept = () => {
               <Button
                 variant="secondary"
                 className="w-full justify-center"
-                onClick={() => {
-                  const currentUser = getHumanAuth().currentUser;
-                  if (currentUser) {
-                    setIsSmsWorking(true);
-                    void currentUser.getIdToken(true).then(startInviteSmsVerification).catch((error) => {
-                      setSmsErrorMessage(error instanceof Error ? error.message : "Could not retry SMS verification.");
-                    }).finally(() => setIsSmsWorking(false));
-                  }
-                }}
+                onClick={() => void retryInviteSmsVerification()}
                 isLoading={isSmsWorking}
                 disabled={isSaving || isSmsWorking}
               >

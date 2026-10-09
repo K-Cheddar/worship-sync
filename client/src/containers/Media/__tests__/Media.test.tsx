@@ -1556,6 +1556,110 @@ describe("Media", () => {
     }));
   });
 
+  it("keeps concurrent media changes when keep-contents finalization resumes", async () => {
+    const baseMedia = makeBaseState().media.list[0];
+    const original = { ...baseMedia, id: "kept-media", name: "Original name", folderId: "folder-1" };
+    const removedBeforeFinalize = { ...baseMedia, id: "removed-before-finalize", folderId: null };
+    const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
+    mockState = makeBaseState({ media: { list: [original, removedBeforeFinalize], folders } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    const repair = deferred<any[]>();
+    mockRepairPersistedMediaRouteFolders.mockReturnValueOnce(repair.promise);
+    const { db } = await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(
+      db, new Set(["folder-1"]), MEDIA_LIBRARY_ROOT_VIEW,
+    ));
+
+    const renamed = { ...original, name: "Concurrent rename" };
+    const addedDuringRepair = { ...baseMedia, id: "added-during-repair", name: "Concurrent addition", folderId: "folder-1" };
+    const outsideEdit = { ...baseMedia, id: "outside", name: "Edited outside item" };
+    mockState = makeBaseState({ media: { list: [renamed, addedDuringRepair, outsideEdit], folders } });
+    await act(async () => {
+      repair.resolve([]);
+      await repair.promise;
+    });
+
+    const finalAction = mockDispatch.mock.calls.map(([action]) => action)
+      .filter((action) => action.type === "media/setMediaListAndFolders").at(-1);
+    expect(finalAction.payload).toEqual({
+      list: [
+        expect.objectContaining({ id: "kept-media", name: "Concurrent rename", folderId: null }),
+        expect.objectContaining({ id: "added-during-repair", name: "Concurrent addition", folderId: null }),
+        expect.objectContaining({ id: "outside", name: "Edited outside item" }),
+      ],
+      folders: [],
+    });
+    expect(finalAction.payload.list).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "removed-before-finalize" }),
+    ]));
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
+      db,
+      finalAction.payload.list,
+      [],
+      expect.any(Function),
+      expect.objectContaining({ list: [original, removedBeforeFinalize], folders }),
+      expect.objectContaining({ publishIfCurrent: expect.any(Function) }),
+    );
+  });
+
+  it("preserves concurrent edits, removals, additions, and child folders during subtree finalization", async () => {
+    const baseMedia = makeBaseState().media.list[0];
+    const target = { ...baseMedia, id: "subtree-target", name: "Target", folderId: "parent", publicId: "target-asset" };
+    const editedOutside = { ...baseMedia, id: "outside-edited", name: "Before", folderId: "outside-folder" };
+    const removedOutside = { ...baseMedia, id: "outside-removed", folderId: null };
+    const folders = [
+      { id: "parent", name: "Parent", parentId: null },
+      { id: "child", name: "Child", parentId: "parent" },
+      { id: "outside-folder", name: "Outside", parentId: null },
+    ];
+    mockState = makeBaseState({ media: { list: [target, editedOutside, removedOutside], folders } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-default": "parent" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    const cleanup = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(cleanup.promise);
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Delete folder and contents" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalled());
+
+    const renamedOutside = { ...editedOutside, name: "Changed while cleaning" };
+    const addedOutside = { ...baseMedia, id: "added-outside", name: "New outside item", folderId: "outside-folder" };
+    const addedInside = { ...baseMedia, id: "added-inside", name: "New item in deleted folder", folderId: "child" };
+    const concurrentChild = { id: "concurrent-child", name: "Added child folder", parentId: "child" };
+    const concurrentNested = { id: "concurrent-nested", name: "Nested concurrent folder", parentId: "concurrent-child" };
+    const latestFolders = [...folders, concurrentChild, concurrentNested];
+    mockState = makeBaseState({ media: { list: [renamedOutside, addedOutside, addedInside], folders: latestFolders } });
+
+    await act(async () => {
+      cleanup.resolve();
+      await cleanup.promise;
+    });
+
+    const finalAction = mockDispatch.mock.calls.map(([action]) => action)
+      .filter((action) => action.type === "media/setMediaListAndFolders").at(-1);
+    expect(finalAction.payload.list).toEqual([
+      expect.objectContaining({ id: "outside-edited", name: "Changed while cleaning", folderId: "outside-folder" }),
+      expect.objectContaining({ id: "added-outside", name: "New outside item", folderId: "outside-folder" }),
+      expect.objectContaining({ id: "added-inside", name: "New item in deleted folder", folderId: null }),
+    ]);
+    expect(finalAction.payload.folders).toEqual([
+      expect.objectContaining({ id: "outside-folder", parentId: null }),
+      expect.objectContaining({ id: "concurrent-child", parentId: null }),
+      expect.objectContaining({ id: "concurrent-nested", parentId: "concurrent-child" }),
+    ]);
+    expect(finalAction.payload.list).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "subtree-target" }),
+      expect.objectContaining({ id: "outside-removed" }),
+    ]));
+  });
+
   it("continues subtree finalization in A after tombstone and provider cleanup while B is active", async () => {
     const mediaA = {
       ...makeBaseState().media.list[0],
@@ -1598,9 +1702,11 @@ describe("Media", () => {
       [],
       [],
       expect.any(Function),
-      expect.objectContaining({ list: [], folders: foldersA }),
+      expect.objectContaining({ list: [mediaA], folders: foldersA }),
       expect.objectContaining({ allowOriginalOwnerPersistenceAfterScopeChange: true }),
     ));
+    const getAStateForPersistence = mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[3] as () => { list: unknown[]; folders: unknown[] };
+    expect(getAStateForPersistence()).toEqual({ list: [], folders: [] });
     expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledWith(dbA, new Set(["same-folder"]), MEDIA_LIBRARY_ROOT_VIEW);
     const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
     expect(mockGetTransfer(activityId)?.status).toBe("active");

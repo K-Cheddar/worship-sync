@@ -242,7 +242,11 @@ describe("PortableDataImportDialog import flow", () => {
     jest.mocked(previewPortableImport)
       .mockResolvedValueOnce({ success: true, rows: [row], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } })
       .mockResolvedValueOnce({ success: true, rows: [resolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 } })
-      .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 } });
+      .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "approved-token", previewCsvHash: "a".repeat(64) })
+      .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "refreshed-token", previewCsvHash: "a".repeat(64) });
+    jest.mocked(commitPortableImport)
+      .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "failed", code: "stale_preview", message: "Review the file again." }], summary: { created: 0, updated: 0, failed: 1 } })
+      .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "created", id: "member-1" }], summary: { created: 1, updated: 0, failed: 0, teamsCreated: 1, positionsCreated: 1 } });
     const file = new File(["First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator"], "people.csv", { type: "text/csv" });
     Object.defineProperty(file, "text", { value: async () => "First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator" });
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} destinationTeamId="team-1" />);
@@ -266,6 +270,24 @@ describe("PortableDataImportDialog import flow", () => {
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
     expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
+
+    await user.click(screen.getByRole("button", { name: "Import 1 member" }));
+    expect(await screen.findByRole("button", { name: "Review changes again" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review changes again" }));
+    await waitFor(() => expect(previewPortableImport).toHaveBeenCalledTimes(4));
+    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
+    await user.click(await screen.findByRole("button", { name: "Import 1 member" }));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledTimes(2));
+    expect(jest.mocked(commitPortableImport).mock.calls[0][4]).toEqual(expect.objectContaining({
+      previewToken: "approved-token",
+      teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }],
+      positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
+    }));
+    expect(jest.mocked(commitPortableImport).mock.calls[1][4]).toEqual(expect.objectContaining({
+      previewToken: "refreshed-token",
+      teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }],
+      positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
+    }));
   });
 
   it("highlights the unresolved owning-team field when continuing position review", async () => {

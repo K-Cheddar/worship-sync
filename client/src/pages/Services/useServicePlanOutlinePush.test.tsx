@@ -76,6 +76,7 @@ describe("useServicePlanOutlinePush", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockState.undoable.present.itemList.list = [worshipHeading];
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-1", name: "Sunday" };
     mockState.allItems.list = [];
   });
 
@@ -295,6 +296,24 @@ describe("useServicePlanOutlinePush", () => {
 
     expect(mockPlanOutline).toHaveBeenCalledWith(expect.objectContaining({ currentList: latestList }));
     expect(mockDispatch).toHaveBeenCalledWith(updateItemList([welcomeHeading, existing, expect.objectContaining({ listId: "el-welcome::attachment:legacy-song-0-library" }), nextHeading]));
+  });
+
+  it("rejects a captured push when Redux switches outlines before React rerenders", async () => {
+    const song: ServiceItem = { _id: "song-1", name: "Song", type: "song", listId: "song-link" };
+    setPlannedItems([song]);
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    const previouslyCapturedPush = result.current.pushPlanToOutline;
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-2", name: "Other outline" };
+    mockState.undoable.present.itemList.list = [
+      { _id: "other-heading", name: "Other", type: "heading", listId: "other-heading" },
+    ];
+
+    await expect(previouslyCapturedPush({} as ServicePlan)).rejects.toThrow(
+      "The selected outline changed before the service plan could be imported.",
+    );
+
+    expect(mockPlanOutline).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: updateItemList.type }));
   });
 
   it("appends unmatched sections at the absolute outline end in plan order", async () => {
