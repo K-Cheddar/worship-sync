@@ -8930,16 +8930,6 @@ export const createTeamsAuthHandlers = ({
       normalizePortableMatchValue(name),
     ]))
     .digest("hex");
-  const hasPortableDependencyMarker = (entity, idField, idPrefix) => {
-    const key = String(entity?._portableCreateKey || "");
-    return /^[a-f0-9]{64}$/i.test(key) && entity?.[idField] === `${idPrefix}_${key.slice(0, 40)}`;
-  };
-  // Older dependency keys hashed the full import settings. If those settings
-  // changed after a partial import, reuse only an active, ID-verified portable
-  // entity with the same destination name and owner scope.
-  const legacyPortableMemberPositionCreateKey = (churchId, teamId, name) => crypto.createHash("sha256")
-    .update(`${churchId}\u0000member-import-position\u0000${teamId}\u0000${normalizePortableMatchValue(name)}`)
-    .digest("hex");
   const memberImportStateHash = (member, teams, positions) => crypto.createHash("sha256").update(stablePortableJson({
     // Include the complete member document so profile, availability,
     // qualifications, and future fields all invalidate a stale preview.
@@ -9325,16 +9315,10 @@ export const createTeamsAuthHandlers = ({
           portableMemberPositionCreateKey(churchId, sourceCsvHash, teamId, name);
         const createdTeamForAction = (action) => records.teams.find((item) =>
           item.churchId === churchId && !item.archivedAt
-          && item._portableCreateKey === teamCreateKey(action)) || records.teams.find((item) =>
-          item.churchId === churchId && !item.archivedAt
-          && hasPortableDependencyMarker(item, "teamId", "team")
-          && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(action.name));
+          && item._portableCreateKey === teamCreateKey(action));
         const createdPositionForAction = (teamId, name) => records.positions.find((item) =>
           item.churchId === churchId && item.teamId === teamId && !item.archivedAt
-          && (item._portableCreateKey === positionCreateKey(teamId, name)
-            || item._portableCreateKey === legacyPortableMemberPositionCreateKey(churchId, teamId, name)
-            || (hasPortableDependencyMarker(item, "positionId", "position")
-              && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name))));
+          && item._portableCreateKey === positionCreateKey(teamId, name));
         const getPositionActionEntry = (teamId, sourceValue) => {
           const direct = positionActionsByKey.get(positionActionKey(teamId, sourceValue));
           if (direct) return { decisionTeamId: teamId, action: direct };
@@ -10686,10 +10670,7 @@ export const createTeamsAuthHandlers = ({
             if (!name) throw httpError(400, "Enter a name for the new team.");
             const createKey = teamCreateKey(action);
             const existingByKey = data.teams.find((item) => item._portableCreateKey === createKey
-              && item.churchId === churchId && !item.archivedAt) || data.teams.find((item) =>
-              item.churchId === churchId && !item.archivedAt
-              && hasPortableDependencyMarker(item, "teamId", "team")
-              && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
+              && item.churchId === churchId && !item.archivedAt);
             if (existingByKey) {
               teamActionIds.set(key, existingByKey.teamId);
               continue;
@@ -10721,10 +10702,7 @@ export const createTeamsAuthHandlers = ({
           portableMemberPositionCreateKey(churchId, sourceCsvHash, teamId, name);
         const createdPositionForAction = (teamId, name) => data.positions.find((item) =>
           item.churchId === churchId && item.teamId === teamId && !item.archivedAt
-          && (item._portableCreateKey === positionCreateKey(teamId, name)
-            || item._portableCreateKey === legacyPortableMemberPositionCreateKey(churchId, teamId, name)
-            || (hasPortableDependencyMarker(item, "positionId", "position")
-              && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name))));
+          && item._portableCreateKey === positionCreateKey(teamId, name));
         const resolveApprovedPosition = async (teamId, sourceValue) => {
           const action = getPositionAction(teamId, sourceValue);
           if (!action) return null;

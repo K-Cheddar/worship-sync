@@ -638,11 +638,20 @@ export async function persistMediaLibraryChanges(
   for (const [id, current] of list) {
     const folderId = current.folderId;
     if (!folderId || !deletedFolderIds.has(folderId)) continue;
-    const folderIdAfter = afterItems.get(id)?.folderId;
-    if (folderIdAfter && !deletedFolderIds.has(folderIdAfter) && survivingFoldersById.has(folderIdAfter)) {
-      const moved = { ...current, folderId: folderIdAfter };
-      list.set(id, moved);
-      continue;
+    const beforeItem = beforeItems.get(id);
+    const afterItem = afterItems.get(id);
+    const folderIdAfter = afterItem?.folderId;
+    const hasLocalFolderChange = Boolean(afterItem)
+      && JSON.stringify(beforeItem?.folderId) !== JSON.stringify(folderIdAfter);
+    if (hasLocalFolderChange) {
+      if (folderIdAfter === null || folderIdAfter === undefined) {
+        list.set(id, { ...current, folderId: null });
+        continue;
+      }
+      if (!deletedFolderIds.has(folderIdAfter) && survivingFoldersById.has(folderIdAfter)) {
+        list.set(id, { ...current, folderId: folderIdAfter });
+        continue;
+      }
     }
     const survivingAncestor = findSurvivingFolderAncestor(
       folderId,

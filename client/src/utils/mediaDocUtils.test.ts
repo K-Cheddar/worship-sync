@@ -388,6 +388,27 @@ describe("v2 media repository", () => {
     expect(docs.get("media-folders").folders).toEqual([originalParent, latestParent]);
   });
 
+  it("ignores a stale local media folder assignment when the persisted item moved into the deleted folder", async () => {
+    const staleFolder = folder("stale-folder", null);
+    const survivingParent = folder("surviving-parent", null);
+    const deletedFolder = folder("deleted-folder", survivingParent.id);
+    const reduxItem = { ...media("remotely-moved-media"), folderId: staleFolder.id };
+    const persistedItem = { ...reduxItem, folderId: deletedFolder.id };
+    const { db, docs } = makePersistedDb(
+      [staleFolder, survivingParent, deletedFolder],
+      [persistedItem],
+    );
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [reduxItem], folders: [staleFolder, survivingParent, deletedFolder] },
+      { list: [reduxItem], folders: [staleFolder, survivingParent] },
+    );
+
+    expect(docs.get(mediaItemDocId(reduxItem.id))?.folderId).toBe(survivingParent.id);
+    expect(docs.get("media-folders").folders).toEqual([staleFolder, survivingParent]);
+  });
+
   it("moves PouchDB-only media from a deleted root folder to the library root", async () => {
     const target = folder("deleted-root", null);
     const pouchOnlyMedia = { ...media("pouch-only-root-media"), folderId: target.id };
