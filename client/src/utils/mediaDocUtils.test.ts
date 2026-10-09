@@ -18,6 +18,11 @@ import { MEDIA_LIBRARY_ROOT_VIEW } from "./mediaFolderMutations";
 import type { DBMedia, MediaFolder, MediaType } from "../types";
 
 const pouchNotFound = () => Object.assign(new Error("missing"), { status: 404 });
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+};
 
 describe("normalizeMediaDoc", () => {
   it("fills folders and fixes orphan folderId", () => {
@@ -234,6 +239,115 @@ describe("v2 media repository", () => {
       { ...concurrentChild, parentId: parent.id },
     ]);
     expect(docs.get("media-folders").folders.some((saved: MediaFolder) => saved.id === target.id)).toBe(false);
+  });
+
+  it("uses the deleted folder's latest persisted parent when finalization starts", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", originalParent.id);
+    const movedTarget = { ...target, parentId: latestParent.id };
+    const concurrentChild = folder("concurrent", target.id);
+    const { db, docs } = makePersistedDb([
+      originalParent,
+      latestParent,
+      movedTarget,
+      concurrentChild,
+    ]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [originalParent, latestParent, target] },
+      { list: [], folders: [originalParent, latestParent] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      originalParent,
+      latestParent,
+      { ...concurrentChild, parentId: latestParent.id },
+    ]);
+  });
+
+  it("recomputes the replacement parent from the latest revision after a folder conflict", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", originalParent.id);
+    const concurrentChild = folder("concurrent", target.id);
+    const { db, docs } = makePersistedDb([originalParent, latestParent, target]);
+    const put = db.put as jest.Mock;
+    const firstWriteStarted = deferred<void>();
+    const allowFirstWriteToConflict = deferred<void>();
+    put.mockImplementationOnce(async () => {
+      firstWriteStarted.resolve();
+      await allowFirstWriteToConflict.promise;
+      throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
+    });
+
+    const persistence = persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [originalParent, latestParent, target] },
+      { list: [], folders: [originalParent, latestParent] },
+    );
+    await firstWriteStarted.promise;
+    docs.set("media-folders", {
+      ...docs.get("media-folders"),
+      folders: [
+        originalParent,
+        latestParent,
+        { ...target, parentId: latestParent.id },
+        concurrentChild,
+      ],
+      _rev: "2",
+    });
+    allowFirstWriteToConflict.resolve();
+    await persistence;
+
+    expect(put).toHaveBeenCalledTimes(2);
+    expect(put.mock.calls[1][0]).toEqual(expect.objectContaining({
+      _rev: "2",
+      folders: [
+        originalParent,
+        latestParent,
+        { ...concurrentChild, parentId: latestParent.id },
+      ],
+    }));
+    expect(docs.get("media-folders").folders).toEqual([
+      originalParent,
+      latestParent,
+      { ...concurrentChild, parentId: latestParent.id },
+    ]);
+  });
+
+  it("traverses the latest parent chain when multiple deleted ancestors contain a child", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted-root", originalParent.id);
+    const deletedChild = folder("deleted-child", target.id);
+    const deletedGrandchild = folder("deleted-grandchild", deletedChild.id);
+    const survivingFolder = folder("surviving", deletedGrandchild.id);
+    const latestTarget = { ...target, parentId: latestParent.id };
+    const { db, docs } = makePersistedDb([
+      originalParent,
+      latestParent,
+      latestTarget,
+      deletedChild,
+      deletedGrandchild,
+      survivingFolder,
+    ]);
+
+    await persistMediaLibraryChanges(
+      db,
+      {
+        list: [],
+        folders: [originalParent, latestParent, target, deletedChild, deletedGrandchild],
+      },
+      { list: [], folders: [originalParent, latestParent] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      originalParent,
+      latestParent,
+      { ...survivingFolder, parentId: latestParent.id },
+    ]);
   });
 
   it("persists a concurrent child of a deleted root folder at the library root", async () => {

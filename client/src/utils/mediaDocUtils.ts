@@ -254,8 +254,10 @@ type FolderParentReconciliation = {
 function reconcileFolderParentsAfterDeletion(
   folders: MediaFolder[],
   reconciliation: FolderParentReconciliation,
+  latestPersistedFolders: MediaFolder[],
 ): MediaFolder[] {
   const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+  const latestPersistedFoldersById = new Map(latestPersistedFolders.map((folder) => [folder.id, folder]));
   const originalFoldersById = new Map(reconciliation.originalFolders.map((folder) => [folder.id, folder]));
   const createsCycle = (folderId: string, parentId: string) => {
     const seen = new Set<string>();
@@ -274,8 +276,10 @@ function reconcileFolderParentsAfterDeletion(
     let currentId: string | null = removedParentId;
     while (currentId && !seen.has(currentId)) {
       seen.add(currentId);
+      const latest = latestPersistedFoldersById.get(currentId);
       const original = originalFoldersById.get(currentId);
-      const candidateId = original?.parentId;
+      const latestParentId = latest?.parentId;
+      const candidateId = latestParentId === null ? null : latestParentId || original?.parentId;
       if (!candidateId) return null;
       if (
         reconciliation.deletedFolderIds.has(candidateId) ||
@@ -322,7 +326,8 @@ async function saveMediaFolderChanges(
       if (!isPouchNotFound(error)) throw error;
     }
     if (!canCommit()) return undefined;
-    const currentById = new Map((existing.folders || []).map((folder) => [folder.id, folder]));
+    const persistedFolders = existing.folders || [];
+    const currentById = new Map(persistedFolders.map((folder) => [folder.id, folder]));
     for (const [id, folder] of afterById) {
       const previous = beforeById.get(id);
       if (!previous) {
@@ -350,7 +355,11 @@ async function saveMediaFolderChanges(
     }
     const mergedFolders = [...currentById.values()];
     const folders = folderParentReconciliation
-      ? reconcileFolderParentsAfterDeletion(mergedFolders, folderParentReconciliation)
+      ? reconcileFolderParentsAfterDeletion(
+          mergedFolders,
+          folderParentReconciliation,
+          persistedFolders,
+        )
       : mergedFolders;
     if (JSON.stringify(existing.folders || []) === JSON.stringify(folders)) return undefined;
     try {
@@ -555,14 +564,9 @@ export async function persistMediaLibraryChanges(
     deletedFolderIds,
     originalFolders: before.folders,
   };
-  const reconciledFolders = reconcileFolderParentsAfterDeletion(
-    [...folders.values()],
-    folderParentReconciliation,
-  );
-
   const merged = normalizeMediaDoc({
     list: [...list.values()],
-    folders: reconciledFolders,
+    folders: [...folders.values()],
   });
   return persistMediaStateChanges(
     db,
