@@ -367,6 +367,71 @@ describe("v2 media repository", () => {
     expect(docs.get("media-folders").folders).not.toContainEqual(expect.objectContaining({ id: target.id }));
   });
 
+  it("rehomes PouchDB-only media through deleted nested folders using the latest parent chain", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", latestParent.id);
+    const nestedDeleted = folder("nested-deleted", target.id);
+    const pouchOnlyMedia = { ...media("pouch-only-media"), folderId: nestedDeleted.id };
+    const { db, docs } = makePersistedDb(
+      [originalParent, latestParent, target, nestedDeleted],
+      [pouchOnlyMedia],
+    );
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [originalParent, latestParent, { ...target, parentId: originalParent.id }, nestedDeleted] },
+      { list: [], folders: [originalParent, latestParent] },
+    );
+
+    expect(docs.get(mediaItemDocId(pouchOnlyMedia.id))?.folderId).toBe(latestParent.id);
+    expect(docs.get("media-folders").folders).toEqual([originalParent, latestParent]);
+  });
+
+  it("moves PouchDB-only media from a deleted root folder to the library root", async () => {
+    const target = folder("deleted-root", null);
+    const pouchOnlyMedia = { ...media("pouch-only-root-media"), folderId: target.id };
+    const { db, docs } = makePersistedDb([target], [pouchOnlyMedia]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [target] },
+      { list: [], folders: [] },
+    );
+
+    expect(docs.get(mediaItemDocId(pouchOnlyMedia.id))?.folderId).toBeNull();
+    expect(docs.get("media-folders").folders).toEqual([]);
+  });
+
+  it("preserves a concurrent valid media move when the rehome write gets a 409", async () => {
+    const parent = folder("ancestor", null);
+    const target = folder("deleted", parent.id);
+    const outside = folder("outside", null);
+    const item = { ...media("moving-media"), folderId: target.id };
+    const { db, docs } = makePersistedDb([parent, target, outside], [item]);
+    const put = db.put as jest.Mock;
+    put.mockImplementationOnce(async () => {
+      docs.set(mediaItemDocId(item.id), {
+        ...item,
+        folderId: outside.id,
+        _id: mediaItemDocId(item.id),
+        docType: "mediaItem",
+        _rev: "2",
+      });
+      throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
+    });
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [item], folders: [parent, target, outside] },
+      { list: [{ ...item, folderId: parent.id }], folders: [parent, outside] },
+    );
+
+    expect(docs.get(mediaItemDocId(item.id))?.folderId).toBe(outside.id);
+    expect(docs.get("media-folders").folders).toEqual([parent, outside]);
+    expect(put).toHaveBeenCalledTimes(2);
+  });
+
   it("uses a surviving ancestor when a concurrent folder's parent was removed remotely", async () => {
     const ancestor = folder("ancestor", null);
     const remotelyRemovedParent = folder("remote-parent", ancestor.id);

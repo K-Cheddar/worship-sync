@@ -20,6 +20,8 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 
 For a substantial review involving async work, persistence, imports, previews, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for recurring failure shapes and adversarial scenarios; it supplements this workflow rather than replacing it.
 
+For substantial stateful changes, also complete the two independent passes in [adversarial stateful review](references/adversarial-stateful-review.md). Derive scenarios from the workflow contract before using existing tests to judge coverage. Use only the relevant domain matrix linked from that reference for Media persistence, CSV import, or invitation/SMS recovery; unrelated changes do not require those matrices. Keep isolated, low-risk edits lightweight.
+
 ### Required specialized guidance
 
 When applicable, load and apply the deeper domain guidance:
@@ -158,7 +160,9 @@ State unresolved intent or assumptions used in the review.
 
 State required verification not completed separately from optional additional-confidence checks. A required gap prevents a `Ready` conclusion and a `COMPLETE` implementation claim.
 
-For substantial reviews, include concise evidence in this section: the invariant protected, the concrete failure scenario traced, the relevant producer/consumer/mutation paths inspected, tests that cover the transition (if any), and remaining gaps. This belongs in the existing output, not a separate report. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
+For substantial stateful reviews, include a compact evidence table here for only the highest-risk scenarios. Each row must name an invariant, concrete interleaving or recovery sequence, code path/symbols inspected, and the specific test that controls the critical transition—or state that coverage is missing or was not run. Mark each `Pass`, `Finding`, or `Unverified`; do not use empty checkboxes or treat test titles as evidence. Distinguish a confirmed defect from a theoretical risk or a coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
+
+State the review scope: **fix verification** checks the reported defect; **workflow review** checks affected end-to-end paths and related failure scenarios; **production-readiness review** checks release-critical branch scope, required checks, unresolved findings, and regression risk. A passing focused review supports only its stated scope. Do not call a branch production-ready unless that broader review and its verification were actually performed; say explicitly when tests, CI, builds, or runtime reproduction were not performed.
 
 ### Pattern / learning opportunities
 
@@ -167,6 +171,8 @@ Identify reusable enforcement or documentation opportunities. Follow `.agents/en
 ### Final readiness
 
 Choose exactly one: `Ready`, `Ready with minor follow-up`, or `Not ready`.
+
+Readiness applies to the stated review scope; it is not a production-readiness claim unless the review explicitly covered that scope.
 
 For substantial reviews, append this completion checklist and justify each `Not applicable`. Any relevant `No` prevents a final `Ready` conclusion.
 

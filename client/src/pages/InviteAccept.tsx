@@ -280,6 +280,11 @@ const InviteAccept = () => {
       setSmsPhoneConfirmed("");
       setSmsDeliveryState(undefined);
       setSmsVerification(null);
+      setSmsInviteConsentEnabled(false);
+      setRosterPhoneNumber("");
+      rosterPhoneNumberRef.current = "";
+      setSmsConsentStatus("none");
+      smsConsentStatusRef.current = "none";
       return;
     }
     if (token) {
@@ -370,14 +375,6 @@ const InviteAccept = () => {
     }
     let cancelled = false;
     setInviteChurchName(undefined);
-    setSmsInviteConsentEnabled(false);
-    setRosterPhoneNumber("");
-    rosterPhoneNumberRef.current = "";
-    setSmsConsentStatus("none");
-    smsConsentStatusRef.current = "none";
-    setSmsPhoneNumber("");
-    setSmsPhoneConfirmed("");
-    setSmsDeliveryState(undefined);
     void fetchInvitePreview(token)
       .then((data) => {
         if (cancelled) {
@@ -576,7 +573,9 @@ const InviteAccept = () => {
     if (!token) throw new Error("This invite link is missing its token.");
     if (!options.operationAlreadyStarted && !beginSmsOperation()) return false;
     const currentRosterPhoneNumber = rosterPhoneNumberRef.current || rosterPhoneNumber;
-    const phoneNumber = (!options.forceNewChallenge ? smsVerification?.phoneNumber : "") || currentRosterPhoneNumber || smsPhoneNumber.trim();
+    const phoneNumber = options.forceNewChallenge
+      ? currentRosterPhoneNumber || smsVerification?.phoneNumber || smsPhoneNumber.trim()
+      : smsVerification?.phoneNumber || currentRosterPhoneNumber || smsPhoneNumber.trim();
     if (!isValidInviteSmsPhone(phoneNumber)) {
       setSmsErrorMessage("Enter a valid 10-digit U.S. mobile number, or continue without SMS.");
       setNeedsSessionRetry(true);
