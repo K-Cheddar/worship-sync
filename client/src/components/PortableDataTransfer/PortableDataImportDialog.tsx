@@ -273,9 +273,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       setApprovedTeamRows(initialTeamRows);
       setTeamStep(Object.keys(initialTeamChoices).length > 0);
       setPositionStep(Object.keys(initialTeamChoices).length === 0 && Object.keys(initialPositionChoices).length > 0);
-      if (!approvedTeamActions.length) setApprovedPositionActions([]);
-      if (!approvedTeamActions.length) setApprovedPositionRows({});
-      setApprovedTeamActions((current) => current.filter((action) => initialTeamChoices[teamChoiceKey(action.sourceValue)]));
+      // Keep the exact decisions that were signed into this successful preview.
+      // Filtering them here would make the next commit disagree with its token.
       setCommitResults((current) => current.filter((item) => item.status !== "failed"));
       setExplicitSkips({});
       setRowChoices(Object.fromEntries(result.rows.map((row) => [row.row, successfulRows.has(row.row) ? "skip" : row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip"])));

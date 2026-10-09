@@ -740,7 +740,7 @@ describe("LocalVideoInputView", () => {
         showErrors
       />,
     );
-    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
     expect(screen.getByTestId("local-video-input")).toHaveClass("bg-black");
 
     rerender(
@@ -751,7 +751,7 @@ describe("LocalVideoInputView", () => {
         showLocalSourceStatus
       />,
     );
-    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
     expect(screen.getByText(label)).toBeInTheDocument();
     expect(screen.getByText("Available on Streaming Computer")).toBeInTheDocument();
   });
@@ -800,7 +800,7 @@ describe("LocalVideoInputView", () => {
       <LocalVideoInputView input={input} showLocalSourceStatus showErrors />,
     );
 
-    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
     expect(screen.getByText("Video input · USB Capture")).toBeInTheDocument();
     expect(screen.getByText("Available on Electron on Windows")).toBeInTheDocument();
     expect(mockAcquireWarmCapture).not.toHaveBeenCalled();

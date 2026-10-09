@@ -1515,7 +1515,9 @@ export function useMediaLibraryController({
     async (folderId: string) => {
       const operationScope = { db, churchId };
       const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
-      const target = folders.find((f) => f.id === folderId);
+      const mediaAtStart = store.getState().media;
+      const changeBase = { list: mediaAtStart.list, folders: mediaAtStart.folders };
+      const target = changeBase.folders.find((f) => f.id === folderId);
       const fallback =
         target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
@@ -1523,7 +1525,7 @@ export function useMediaLibraryController({
         new Set([folderId]),
         fallback,
       );
-      const next = deleteFolderKeepContents(folderId, folders, list);
+      const next = deleteFolderKeepContents(folderId, changeBase.folders, changeBase.list);
       if (isOperationUiScopeCurrent()) {
         dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
         for (const key of Object.keys(repairs) as MediaRouteKey[]) {
@@ -1543,13 +1545,19 @@ export function useMediaLibraryController({
           showToast("Could not update saved Media folders. Check your connection and try again.", "error");
         }
       }
-      if (isOperationUiScopeCurrent()) dispatch(setMediaListAndFolders(next));
+      const getFinalState = () => {
+        if (!isOperationUiScopeCurrent()) return next;
+        const latest = store.getState().media;
+        return deleteFolderKeepContents(folderId, latest.folders, latest.list);
+      };
+      const finalState = getFinalState();
+      if (isOperationUiScopeCurrent()) dispatch(setMediaListAndFolders(finalState));
       const flushResult = await flushMediaLibraryDocToPouch(
         operationScope.db,
-        next.list,
-        next.folders,
-        () => ({ list: next.list, folders: next.folders }),
-        { list, folders },
+        finalState.list,
+        finalState.folders,
+        getFinalState,
+        changeBase,
         {
           allowOriginalOwnerPersistenceAfterScopeChange: true,
           publishIfCurrent: isOperationUiScopeCurrent,
@@ -1559,7 +1567,7 @@ export function useMediaLibraryController({
         showToast(mediaLibraryFlushFailureMessage(flushResult.error, "folder"), "error");
       }
     },
-    [activeMediaRouteFolders, controllerProfile.id, db, churchId, dispatch, folders, isCurrentUiScope, list, showToast],
+    [activeMediaRouteFolders, controllerProfile.id, db, churchId, dispatch, isCurrentUiScope, showToast, store],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -1590,8 +1598,10 @@ export function useMediaLibraryController({
     async (folderId: string) => {
       const operationScope = { db, churchId };
       const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
-      const target = folders.find((f) => f.id === folderId);
-      const subtree = collectSubtreeFolderIds(folderId, folders);
+      const mediaAtStart = store.getState().media;
+      const changeBase = { list: mediaAtStart.list, folders: mediaAtStart.folders };
+      const target = changeBase.folders.find((f) => f.id === folderId);
+      const subtree = collectSubtreeFolderIds(folderId, changeBase.folders);
       const fallback =
         target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
       const repairs = getMediaRouteFolderRepairs(
@@ -1600,10 +1610,11 @@ export function useMediaLibraryController({
         fallback,
       );
 
-      const next = deleteFolderAndSubtree(folderId, folders, list);
-      const removedRows = list.filter((m) =>
+      const next = deleteFolderAndSubtree(folderId, changeBase.folders, changeBase.list);
+      const removedRows = changeBase.list.filter((m) =>
         next.removedMediaIds.includes(m.id),
       );
+      const deletedMediaIds = new Set<string>();
       const activityId = `media-folder-delete-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
       const fileStates: TransferFileActivity[] = removedRows.map((row) => ({
         id: row.id,
@@ -1689,14 +1700,35 @@ export function useMediaLibraryController({
           routeRepairError = error;
           console.error("Could not repair saved media folder selections", error);
         }
-        if (canUpdateRoute()) dispatch(setMediaListAndFolders({ list: next.list, folders: next.folders }));
+        const applyDeletionToLatest = (latest: { list: MediaType[]; folders: MediaFolder[] }) => {
+          const foldersAfter = latest.folders
+            .filter((folder) => !subtree.has(folder.id))
+            .map((folder) => folder.parentId && subtree.has(folder.parentId)
+              ? { ...folder, parentId: fallback }
+              : folder);
+          const remainingFolderIds = new Set(foldersAfter.map((folder) => folder.id));
+          const listAfter = latest.list
+            .filter((item) => !deletedMediaIds.has(item.id))
+            .map((item) => item.folderId && subtree.has(item.folderId)
+              ? { ...item, folderId: null }
+              : item.folderId && !remainingFolderIds.has(item.folderId)
+                ? { ...item, folderId: null }
+                : item);
+          return { list: listAfter, folders: foldersAfter };
+        };
+        const finalState = applyDeletionToLatest(
+          canUpdateRoute() ? store.getState().media : changeBase,
+        );
+        if (canUpdateRoute()) dispatch(setMediaListAndFolders(finalState));
         try {
           const flushResult = await flushMediaLibraryDocToPouch(
             operationScope.db,
-            next.list,
-            next.folders,
-            () => ({ list: next.list, folders: next.folders }),
-            { list: next.list, folders },
+            finalState.list,
+            finalState.folders,
+            () => canUpdateRoute()
+              ? applyDeletionToLatest(store.getState().media)
+              : finalState,
+            changeBase,
             {
               allowOriginalOwnerPersistenceAfterScopeChange: true,
               publishIfCurrent: isOperationUiScopeCurrent,
@@ -1757,6 +1789,7 @@ export function useMediaLibraryController({
           const deletedIds = new Set(result.deletedRows.map((row) => row.id));
           const failedIds = new Set(result.failedRows.map((row) => row.id));
           const providerIds = new Set(result.providerFailed.map((row) => row.id));
+          result.deletedRows.forEach((row) => deletedMediaIds.add(row.id));
           for (const row of targetRows) {
             const file = fileStates.find((candidate) => candidate.id === row.id);
             if (!file) continue;
@@ -1978,9 +2011,7 @@ export function useMediaLibraryController({
       }
     },
     [
-      folders,
       controllerProfile.id,
-      list,
       db,
       churchId,
       dispatch,
@@ -1994,6 +2025,7 @@ export function useMediaLibraryController({
       deleteFromProviders,
       setFolderDeleteOpen,
       navigateToFolder,
+      store,
     ],
   );
 

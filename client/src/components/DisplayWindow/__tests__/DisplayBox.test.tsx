@@ -219,7 +219,7 @@ describe("DisplayBox", () => {
         showLocalSourceStatus
       />,
     );
-    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
     expect(screen.getByText("Local image · Welcome.png")).toBeInTheDocument();
     expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
   });
@@ -233,7 +233,7 @@ describe("DisplayBox", () => {
     const { rerender } = render(
       <DisplayBox box={localVideoBox} width={100} showBackground index={0} />,
     );
-    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
 
     rerender(
       <DisplayBox
@@ -263,7 +263,7 @@ describe("DisplayBox", () => {
         showLocalSourceStatus
       />,
     );
-    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
 
     setLocalVideoFileResolution({
       isLocalVideoFile: false,
@@ -280,7 +280,7 @@ describe("DisplayBox", () => {
         showLocalSourceStatus
       />,
     );
-    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
   });
 
   it("does not mark a playable video unavailable when only its local thumbnail is missing", () => {
@@ -303,7 +303,7 @@ describe("DisplayBox", () => {
         showLocalSourceStatus
       />,
     );
-    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
   });
 
   it("keeps unavailable local images terminal and paint-ready", () => {

@@ -122,7 +122,7 @@ export async function updateMediaItem(
 async function updateMediaItemWithDocument(
   db: PouchDB.Database,
   id: string,
-  patch: Partial<MediaType>,
+  patch: Partial<MediaType> | ((current: MediaItemDoc | undefined) => Partial<MediaType>),
   canCommit: () => boolean,
   allowCreate: boolean,
 ): Promise<{ response: PouchDB.Core.Response; doc?: MediaItemDoc } | undefined> {
@@ -138,8 +138,9 @@ async function updateMediaItemWithDocument(
     }
     if (!canCommit()) return undefined;
     if (!current && !allowCreate) return undefined;
-    const doc = { ...current, ...patch, _id, id, docType: "mediaItem" } as MediaItemDoc;
-    for (const [key, value] of Object.entries(patch)) {
+    const patchForCurrent = typeof patch === "function" ? patch(current) : patch;
+    const doc = { ...current, ...patchForCurrent, _id, id, docType: "mediaItem" } as MediaItemDoc;
+    for (const [key, value] of Object.entries(patchForCurrent)) {
       if (value === undefined) delete (doc as unknown as Record<string, unknown>)[key];
     }
     if (current) {
@@ -244,6 +245,67 @@ export async function saveMediaFolders(
   return db.put({ ...existing, _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: [...folders] });
 }
 
+async function saveMediaFolderChanges(
+  db: PouchDB.Database,
+  before: MediaFolder[],
+  after: MediaFolder[],
+  canCommit: () => boolean,
+) {
+  if (!canCommit()) return undefined;
+  await requireMediaLibraryV2(db);
+  const beforeById = new Map(before.map((folder) => [folder.id, folder]));
+  const afterById = new Map(after.map((folder) => [folder.id, folder]));
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let existing: Partial<MediaFoldersDoc> = {};
+    try {
+      existing = (await db.get(MEDIA_FOLDERS_ID)) as MediaFoldersDoc;
+    } catch (error) {
+      if (!isPouchNotFound(error)) throw error;
+    }
+    if (!canCommit()) return undefined;
+    const currentById = new Map((existing.folders || []).map((folder) => [folder.id, folder]));
+    for (const [id, folder] of afterById) {
+      const previous = beforeById.get(id);
+      if (!previous) {
+        if (!currentById.has(id)) currentById.set(id, folder);
+        continue;
+      }
+      const current = currentById.get(id);
+      if (!current) continue;
+      const merged = { ...current } as Record<string, unknown>;
+      const keys = new Set([...Object.keys(previous), ...Object.keys(folder)] as (keyof MediaFolder)[]);
+      for (const key of keys) {
+        const beforeValue = previous[key];
+        const afterValue = folder[key];
+        if (JSON.stringify(beforeValue) === JSON.stringify(afterValue)) continue;
+        const currentValue = current[key];
+        if (JSON.stringify(currentValue) !== JSON.stringify(beforeValue)
+          && JSON.stringify(currentValue) !== JSON.stringify(afterValue)) continue;
+        if (afterValue === undefined) delete merged[key];
+        else merged[key] = afterValue;
+      }
+      currentById.set(id, merged as unknown as MediaFolder);
+    }
+    for (const id of beforeById.keys()) {
+      if (!afterById.has(id)) currentById.delete(id);
+    }
+    const folders = [...currentById.values()];
+    if (JSON.stringify(existing.folders || []) === JSON.stringify(folders)) return undefined;
+    try {
+      const response = await db.put({
+        ...existing,
+        _id: MEDIA_FOLDERS_ID,
+        docType: "mediaFolders",
+        folders,
+      });
+      return { response, folders };
+    } catch (error) {
+      if (!isPouchConflict(error) || attempt === 2) throw error;
+    }
+  }
+  return undefined;
+}
+
 /** Persist only rows changed between Redux snapshots using v2 item and folder documents. */
 export async function persistMediaStateChanges(
   db: PouchDB.Database,
@@ -266,17 +328,26 @@ export async function persistMediaStateChanges(
       if (!canCommit()) return changedDocs;
       const canCommitItem = () => canCommit() && (rowCommitGuards.canCommitItem?.(id) ?? true);
       if (!canCommitItem()) continue;
-      const patch: Record<string, unknown> = {};
       const keys = new Set([...Object.keys(previous || {}), ...Object.keys(item)] as (keyof MediaType)[]);
-      for (const key of keys) {
-        if (JSON.stringify(previous?.[key]) !== JSON.stringify(item[key])) {
-          patch[key] = item[key];
+      const patch = (currentDoc?: MediaItemDoc): Partial<MediaType> => {
+        if (!previous) return currentDoc ? {} : item;
+        const current = currentDoc as unknown as Partial<MediaType> | undefined;
+        const changes: Partial<MediaType> = {};
+        for (const key of keys) {
+          const beforeValue = previous[key];
+          const afterValue = item[key];
+          if (JSON.stringify(beforeValue) === JSON.stringify(afterValue)) continue;
+          const currentValue = current?.[key];
+          if (JSON.stringify(currentValue) !== JSON.stringify(beforeValue)
+            && JSON.stringify(currentValue) !== JSON.stringify(afterValue)) continue;
+          (changes as Record<string, unknown>)[key] = afterValue;
         }
-      }
+        return changes;
+      };
       const result = await updateMediaItemWithDocument(
         db,
         id,
-        patch as Partial<MediaType>,
+        patch,
         canCommitItem,
         !previous,
       );
@@ -305,9 +376,9 @@ export async function persistMediaStateChanges(
     if (!canCommit()) return changedDocs;
     const canCommitFolders = () => canCommit() && (rowCommitGuards.canCommitFolders?.() ?? true);
     const result = canCommitFolders()
-      ? await saveMediaFolders(db, after.folders, canCommitFolders)
+      ? await saveMediaFolderChanges(db, before.folders, after.folders, canCommitFolders)
       : undefined;
-    if (result) changedDocs.push({ _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: after.folders });
+    if (result) changedDocs.push({ _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: result.folders });
   }
   return changedDocs;
 }
@@ -345,10 +416,20 @@ export async function persistMediaLibraryChanges(
   const list = new Map(latest.list.map((item) => [item.id, item]));
   const beforeItems = new Map(before.list.map((item) => [item.id, item]));
   const afterItems = new Map(after.list.map((item) => [item.id, item]));
+  const beforeFolders = new Map(before.folders.map((folder) => [folder.id, folder]));
+  const afterFolders = new Map(after.folders.map((folder) => [folder.id, folder]));
+  const deletedFolderIds = new Set([...beforeFolders.keys()].filter((id) => !afterFolders.has(id)));
   for (const [id, item] of afterItems) {
     const previous = beforeItems.get(id);
     if (!previous) {
-      list.set(id, item);
+      const current = list.get(id);
+      if (!current) list.set(id, item);
+      else if (current.folderId && deletedFolderIds.has(current.folderId)) {
+        const rehomed = { ...current };
+        if (item.folderId) rehomed.folderId = item.folderId;
+        else delete rehomed.folderId;
+        list.set(id, rehomed);
+      }
       continue;
     }
     const current = list.get(id);
@@ -356,9 +437,14 @@ export async function persistMediaLibraryChanges(
     const merged = { ...current } as Record<string, unknown>;
     const keys = new Set([...Object.keys(previous), ...Object.keys(item)]);
     for (const key of keys) {
-      if (JSON.stringify(previous[key as keyof MediaType]) !== JSON.stringify(item[key as keyof MediaType])) {
-        if (item[key as keyof MediaType] === undefined) delete merged[key];
-        else merged[key] = item[key as keyof MediaType];
+        const previousValue = previous[key as keyof MediaType];
+        const nextValue = item[key as keyof MediaType];
+        if (JSON.stringify(previousValue) !== JSON.stringify(nextValue)) {
+          const currentValue = current[key as keyof MediaType];
+          if (JSON.stringify(currentValue) !== JSON.stringify(previousValue)
+            && JSON.stringify(currentValue) !== JSON.stringify(nextValue)) continue;
+          if (nextValue === undefined) delete merged[key];
+          else merged[key] = nextValue;
       }
     }
     list.set(id, merged as unknown as MediaType);
@@ -368,12 +454,16 @@ export async function persistMediaLibraryChanges(
   }
 
   const folders = new Map(latest.folders.map((folder) => [folder.id, folder]));
-  const beforeFolders = new Map(before.folders.map((folder) => [folder.id, folder]));
-  const afterFolders = new Map(after.folders.map((folder) => [folder.id, folder]));
   for (const [id, folder] of afterFolders) {
     const previous = beforeFolders.get(id);
     if (!previous) {
-      folders.set(id, folder);
+      const current = folders.get(id);
+      if (!current) folders.set(id, folder);
+      else if (current.parentId && deletedFolderIds.has(current.parentId)) {
+        const rehomed = { ...current };
+        rehomed.parentId = folder.parentId ?? null;
+        folders.set(id, rehomed);
+      }
       continue;
     }
     const current = folders.get(id);
@@ -381,9 +471,14 @@ export async function persistMediaLibraryChanges(
     const merged = { ...current } as Record<string, unknown>;
     const keys = new Set([...Object.keys(previous), ...Object.keys(folder)]);
     for (const key of keys) {
-      if (JSON.stringify(previous[key as keyof MediaFolder]) !== JSON.stringify(folder[key as keyof MediaFolder])) {
-        if (folder[key as keyof MediaFolder] === undefined) delete merged[key];
-        else merged[key] = folder[key as keyof MediaFolder];
+      const previousValue = previous[key as keyof MediaFolder];
+      const nextValue = folder[key as keyof MediaFolder];
+      if (JSON.stringify(previousValue) !== JSON.stringify(nextValue)) {
+        const currentValue = current[key as keyof MediaFolder];
+        if (JSON.stringify(currentValue) !== JSON.stringify(previousValue)
+          && JSON.stringify(currentValue) !== JSON.stringify(nextValue)) continue;
+        if (nextValue === undefined) delete merged[key];
+        else merged[key] = nextValue;
       }
     }
     folders.set(id, merged as unknown as MediaFolder);

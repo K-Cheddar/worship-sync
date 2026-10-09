@@ -12,13 +12,13 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 1. Establish intended behavior from the task or PR description, acceptance criteria, AGENTS.md, and applicable domain guidance.
 2. Compare the implementation with its declared Before / After Behavior and unchanged adjacent behavior.
 3. Inspect the complete diff.
-4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests.
+4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
 5. Search for duplicated solutions and existing abstractions that should have been reused.
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
 
-For a substantial review involving async work, persistence, uploads, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for the recurring shapes; it supplements this workflow rather than replacing it.
+For a substantial review involving async work, persistence, imports, previews, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for recurring failure shapes and adversarial scenarios; it supplements this workflow rather than replacing it.
 
 ### Required specialized guidance
 
@@ -37,12 +37,15 @@ When applicable, load and apply the deeper domain guidance:
 | --- | --- |
 | Identity | What stable owner started the work (church, controller profile, service, route, item, media asset, token, or another scope)? What happens if it changes before an await, queued callback, debounce, retry, provider result, or live event settles? An entity/document ID alone is insufficient when it can repeat across owners. |
 | Lifetime | Can the creating component or route unmount while work continues? Can a longer-lived owner such as TransferProvider retain its callbacks? Are retry/cancel/dismiss actions valid after unmount? Does cleanup stop the operation or deliberately transfer its ownership? |
-| Persistence | Which concrete database, document, and revision belong to each async operation? Is a mutable imported/global DB handle reread after an await, debounce, queue, or callback? Are writes, Redux commits, and broadcasts scoped to the original owner? May a write finish against the original DB while its UI result is suppressed after a scope change? |
+| Persistence and publication | Which concrete database, document, and revision belong to each async operation? Is a mutable imported/global DB handle reread after an await, debounce, queue, or callback? At completion, which values must come from a fresh authoritative read, and how are unrelated concurrent changes preserved? Are writes, Redux commits, and broadcasts scoped to the original owner? May a write finish against the original DB while its UI result is suppressed after a scope change? |
 | Retry/durable step | Which steps committed durably? Which side effects may have succeeded despite a lost response? Does retry resume from the last durable checkpoint, or can it duplicate upload/send/create/delete work? |
 | Compatibility | Can older WorshipSync data or jobs enter this code? Does the client reject a durable shape still supported by server/storage? Is migration complete, partial, absent, malformed, or temporarily unreadable? |
 | Destructive/schema | For delete, cleanup, archive, or other destructive work, is the authoritative schema definitely known? Does absent or uncertain schema status preserve data rather than delete it? |
+| Input and decision path | How do blank, absent, alternate, or normalized representations flow from input to validation and final mutation? Are valid outcomes and intermediate states handled by every consumer? If there is a preview or approval step, does commit apply the same ownership/resolution rules and all approved choices? |
 | Contract round trip | Trace enums, resource types, statuses, wire fields, and provider metadata through `creation -> normalization -> persistence -> API read -> client model -> filtering/presentation`. Does the value survive every step? |
 | Validate/use | Can the resource later used differ from the one validated or authorized, and is later use bound to that validation? Consider metadata probe -> proxy GET, permission check -> delayed mutation, signed token -> response type, and preview classification -> actual content. |
+
+For import, preview, or other approval workflows, compare preview and commit as one contract. Check the same resolution and ownership rules, and account for every addition, replacement, preservation, and removal in Merge and Replace modes separately where both exist. Verify that signed or server-validated preview decisions remain bound to the committed settings. On retry after partial success, include IDs and resources created by earlier steps and prove that prior approvals are retained or deliberately refreshed without rejecting valid newly created entities. An omitted destructive consequence in preview is a correctness defect even if commit itself is valid.
 
 For retryable UI flows, identify the source of truth at each stage:
 
@@ -52,6 +55,8 @@ For retryable UI flows, identify the source of truth at each stage:
 - On Retry, does Retry consume those edits or the retained runtime?
 
 If UI state can diverge from a retained runtime after failure, either synchronize the runtime deliberately or freeze the UI for that batch. When the failed UI remains editable, require a transition test that changes a selection, name, or option between failure and retry and proves which values Retry uses.
+
+For user-triggered async flows, follow the operator path through immediate pending feedback and duplicate-action protection, success, partial success, definitive versus uncertain errors, terminal states such as expiration, retry/cancel, and recovery after refresh or remount when relevant. Check that every recoverable failure exposes an accessible next action, that uncertain external side effects cannot be repeated unsafely, and that status wording is supported by an observable signal rather than inferred from an attempted request.
 
 For every globally visible operation whose local owner can unmount, write a retirement matrix before accepting the lifecycle design:
 
@@ -124,7 +129,11 @@ For async work, identity-tracking refs/state, promises, debounces/autosaves, ret
 - Could a same-entity event invalidate an in-flight load without replacing it?
 - Can stale completion overwrite or suppress newer state?
 - Are previous-entity decisions accidentally based on current-entity refs or state?
+- Does a delayed whole-list/document replacement use a start-time snapshot that can erase unrelated changes made while it was pending?
+- Does an operation combine identity captured by React with collections read later from Redux or another source, and can selection change before rerender?
 - Does the test reproduce the production transition and meaningful values?
+
+Construct at least one concrete adversarial transition for each relevant failure mechanism, using the reference examples as prompts. Trace the production code path to the expected behavior; a general question, a happy-path test, or a list of risks without a traced outcome does not satisfy this pass. When one instance is found, use its mechanism to search targeted sibling paths before concluding.
 
 For React code, also review unnecessary derived state; effects used for derivation instead of render or event logic; dependencies; stale closures; async cancellation and races; state ownership; unnecessary rerenders in live paths; unstable objects/functions in hot paths; duplicated local/remote state; cleanup; accessibility; reuse of existing primitives; and mobile behavior.
 
@@ -148,6 +157,8 @@ State unresolved intent or assumptions used in the review.
 ### Verification gaps
 
 State required verification not completed separately from optional additional-confidence checks. A required gap prevents a `Ready` conclusion and a `COMPLETE` implementation claim.
+
+For substantial reviews, include concise evidence in this section: the invariant protected, the concrete failure scenario traced, the relevant producer/consumer/mutation paths inspected, tests that cover the transition (if any), and remaining gaps. This belongs in the existing output, not a separate report. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
 
 ### Pattern / learning opportunities
 
