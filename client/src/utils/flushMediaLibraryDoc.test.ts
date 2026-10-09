@@ -381,6 +381,47 @@ describe("flushMediaLibraryDocToPouch", () => {
     expect(persisted.get("media-folders")).toEqual(expect.objectContaining({ folders: [concurrentFolder] }));
   });
 
+  it("reconciles PouchDB-only child folders when folder finalization is retried", async () => {
+    const parent = { id: "ancestor", name: "Ancestor", parentId: null, createdAt: "1", updatedAt: "1" };
+    const target = { id: "deleted", name: "Deleted", parentId: "ancestor", createdAt: "1", updatedAt: "1" };
+    const concurrentChild = { id: "concurrent", name: "Created during deletion", parentId: "deleted", createdAt: "2", updatedAt: "2" };
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-library-meta", { _id: "media-library-meta", docType: "mediaLibraryMeta", schemaVersion: 2 }],
+      ["media-folders", { _id: "media-folders", docType: "mediaFolders", folders: [parent, target], _rev: "1" }],
+    ]);
+    let folderPutCount = 0;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        const doc = persisted.get(id);
+        if (doc) return { ...doc };
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      allDocs: jest.fn(async () => ({ rows: [] })),
+      put: jest.fn(async (doc: Record<string, unknown>) => {
+        if (folderPutCount++ === 0) throw new Error("temporary folder write failure");
+        persisted.set(String(doc._id), { ...doc, _rev: "2" });
+        return { ok: true, id: doc._id, rev: "2" };
+      }),
+      remove: jest.fn(),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+    const before = { list: [], folders: [parent, target] };
+    const after = { list: [], folders: [parent] };
+
+    await expect(flushMediaLibraryDocToPouch(db, after.list, after.folders, () => after, before))
+      .resolves.toEqual({ ok: false, error: expect.objectContaining({ message: "temporary folder write failure" }) });
+
+    persisted.set("media-folders", {
+      _id: "media-folders", docType: "mediaFolders", folders: [parent, target, concurrentChild], _rev: "1",
+    });
+    await expect(flushMediaLibraryDocToPouch(db, after.list, after.folders, () => after, before))
+      .resolves.toEqual({ ok: true });
+
+    expect(persisted.get("media-folders")).toEqual(expect.objectContaining({
+      folders: [parent, { ...concurrentChild, parentId: parent.id }],
+    }));
+  });
+
   it("does not write when the supplied database is no longer active", async () => {
     const staleDb = {
       get: jest.fn(),

@@ -14,6 +14,7 @@ import {
   updateMediaItem,
   wouldExceedMaxFolderDepth,
 } from "./mediaDocUtils";
+import { MEDIA_LIBRARY_ROOT_VIEW } from "./mediaFolderMutations";
 import type { DBMedia, MediaFolder, MediaType } from "../types";
 
 const pouchNotFound = () => Object.assign(new Error("missing"), { status: 404 });
@@ -63,6 +64,47 @@ describe("v2 media repository", () => {
     id, name, type: "image", path: "", createdAt: "1", updatedAt: "1",
     format: "png", height: 1, width: 1, publicId: id, background: `/${id}`, thumbnail: "",
   });
+
+  const folder = (id: string, parentId: string | null): MediaFolder => ({
+    id, name: `Folder ${id}`, parentId, createdAt: `created-${id}`, updatedAt: `updated-${id}`,
+  });
+
+  const makePersistedDb = (folders: MediaFolder[], items: MediaType[] = []) => {
+    const docs = new Map<string, any>([
+      ["media-library-meta", { _id: "media-library-meta", docType: "mediaLibraryMeta", schemaVersion: 2 }],
+      ["media-folders", { _id: "media-folders", docType: "mediaFolders", folders, _rev: "1" }],
+      ...items.map((item) => [mediaItemDocId(item.id), {
+        ...item, _id: mediaItemDocId(item.id), docType: "mediaItem", _rev: "1",
+      }] as [string, any]),
+    ]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        const doc = docs.get(id);
+        if (doc) return { ...doc };
+        throw pouchNotFound();
+      }),
+      allDocs: jest.fn(async () => ({
+        rows: [...docs.entries()]
+          .filter(([id]) => id.startsWith("media-item:"))
+          .map(([id, doc]) => ({ id, doc: { ...doc } })),
+      })),
+      put: jest.fn(async (doc: any) => {
+        const id = String(doc._id);
+        const current = docs.get(id);
+        if (current && current._rev !== doc._rev) {
+          throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
+        }
+        const rev = String(Number(current?._rev ?? 0) + 1);
+        docs.set(id, { ...doc, _rev: rev });
+        return { ok: true, id, rev };
+      }),
+      remove: jest.fn(async (doc: any) => {
+        docs.delete(String(doc._id));
+        return { ok: true };
+      }),
+    } as unknown as PouchDB.Database;
+    return { db, docs };
+  };
 
   it("loads every v2 item by prefix, filters unrelated docs, and never reads legacy after activation", async () => {
     const rows = [
@@ -173,6 +215,150 @@ describe("v2 media repository", () => {
     expect(persisted.get(mediaItemDocId("known"))?.folderId).toBeNull();
     expect(persisted.get(mediaItemDocId("remote"))?.folderId).toBeNull();
     expect(db.remove).not.toHaveBeenCalled();
+  });
+
+  it("rehomes a PouchDB-only child when its parent folder is deleted", async () => {
+    const parent = folder("ancestor", null);
+    const target = folder("deleted", parent.id);
+    const concurrentChild = { ...folder("concurrent", target.id), name: "Created in another controller" };
+    const { db, docs } = makePersistedDb([parent, target, concurrentChild]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [parent, target] },
+      { list: [], folders: [parent] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      parent,
+      { ...concurrentChild, parentId: parent.id },
+    ]);
+    expect(docs.get("media-folders").folders.some((saved: MediaFolder) => saved.id === target.id)).toBe(false);
+  });
+
+  it("persists a concurrent child of a deleted root folder at the library root", async () => {
+    const target = folder("deleted-root", null);
+    const concurrentChild = folder("concurrent", target.id);
+    const { db, docs } = makePersistedDb([target, concurrentChild]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [target] },
+      { list: [], folders: [] },
+    );
+
+    const savedChild = docs.get("media-folders").folders.find((saved: MediaFolder) => saved.id === concurrentChild.id);
+    expect(savedChild?.parentId).toBeNull();
+    expect(savedChild?.parentId).not.toBe(MEDIA_LIBRARY_ROOT_VIEW);
+    expect(docs.get("media-folders").folders).not.toContainEqual(expect.objectContaining({ id: target.id }));
+  });
+
+  it("uses a surviving ancestor when a concurrent folder's parent was removed remotely", async () => {
+    const ancestor = folder("ancestor", null);
+    const remotelyRemovedParent = folder("remote-parent", ancestor.id);
+    const target = folder("deleted", null);
+    const concurrentChild = folder("concurrent", remotelyRemovedParent.id);
+    const { db, docs } = makePersistedDb([ancestor, target, concurrentChild]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [ancestor, remotelyRemovedParent, target] },
+      { list: [], folders: [ancestor, remotelyRemovedParent] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      ancestor,
+      { ...concurrentChild, parentId: ancestor.id },
+    ]);
+    expect(docs.get("media-folders").folders).not.toContainEqual(
+      expect.objectContaining({ id: remotelyRemovedParent.id }),
+    );
+  });
+
+  it("preserves nested concurrent folders while rehoming only the direct child", async () => {
+    const parent = folder("ancestor", null);
+    const target = folder("deleted", parent.id);
+    const concurrentChild = folder("concurrent", target.id);
+    const nestedChild = folder("nested", concurrentChild.id);
+    const { db, docs } = makePersistedDb([parent, target, concurrentChild, nestedChild]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [parent, target] },
+      { list: [], folders: [parent] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      parent,
+      { ...concurrentChild, parentId: parent.id },
+      nestedChild,
+    ]);
+  });
+
+  it("falls back to root when rehoming to an ancestor would create a cycle", async () => {
+    const parent = folder("ancestor", null);
+    const target = folder("deleted", parent.id);
+    const concurrentChild = folder("concurrent", target.id);
+    const movedParent = { ...parent, parentId: concurrentChild.id };
+    const { db, docs } = makePersistedDb([movedParent, target, concurrentChild]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [parent, target] },
+      { list: [], folders: [parent] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      { ...movedParent, parentId: concurrentChild.id },
+      { ...concurrentChild, parentId: null },
+    ]);
+  });
+
+  it("keeps a concurrent valid folder move made before a folder-document conflict", async () => {
+    const parent = folder("ancestor", null);
+    const target = folder("deleted", parent.id);
+    const outside = folder("outside", null);
+    const concurrentChild = folder("concurrent", target.id);
+    const { db, docs } = makePersistedDb([parent, target, outside, concurrentChild]);
+    const put = db.put as jest.Mock;
+    put.mockImplementationOnce(async (doc: any) => {
+      docs.set("media-folders", {
+        ...docs.get("media-folders"),
+        folders: [parent, target, outside, { ...concurrentChild, parentId: outside.id }],
+        _rev: "2",
+      });
+      throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
+    });
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [parent, target, outside] },
+      { list: [], folders: [parent, outside] },
+    );
+
+    expect(docs.get("media-folders").folders).toEqual([
+      parent,
+      outside,
+      { ...concurrentChild, parentId: outside.id },
+    ]);
+    expect(put).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps media assigned to a concurrent folder that survives subtree deletion", async () => {
+    const parent = folder("ancestor", null);
+    const target = folder("deleted", parent.id);
+    const concurrentChild = folder("concurrent", target.id);
+    const item = { ...media("concurrent-media"), folderId: concurrentChild.id };
+    const { db, docs } = makePersistedDb([parent, target, concurrentChild], [item]);
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [], folders: [parent, target] },
+      { list: [], folders: [parent] },
+    );
+
+    expect(docs.get(mediaItemDocId(item.id))).toEqual(expect.objectContaining(item));
+    expect(docs.get("media-folders").folders).toContainEqual({ ...concurrentChild, parentId: parent.id });
   });
 
   it("broadcasts the complete saved item when optional fields are removed", async () => {

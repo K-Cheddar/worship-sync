@@ -245,11 +245,70 @@ export async function saveMediaFolders(
   return db.put({ ...existing, _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: [...folders] });
 }
 
+type FolderParentReconciliation = {
+  deletedFolderIds: ReadonlySet<string>;
+  originalFolders: MediaFolder[];
+};
+
+/** Keep surviving folder parents valid after a deletion, using the deleted tree to find an ancestor. */
+function reconcileFolderParentsAfterDeletion(
+  folders: MediaFolder[],
+  reconciliation: FolderParentReconciliation,
+): MediaFolder[] {
+  const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+  const originalFoldersById = new Map(reconciliation.originalFolders.map((folder) => [folder.id, folder]));
+  const createsCycle = (folderId: string, parentId: string) => {
+    const seen = new Set<string>();
+    let currentId: string | null = parentId;
+    while (currentId) {
+      if (currentId === folderId || seen.has(currentId)) return true;
+      seen.add(currentId);
+      const current = foldersById.get(currentId);
+      if (!current) return true;
+      currentId = current.parentId;
+    }
+    return false;
+  };
+  const findSurvivingAncestor = (removedParentId: string, folderId: string) => {
+    const seen = new Set<string>();
+    let currentId: string | null = removedParentId;
+    while (currentId && !seen.has(currentId)) {
+      seen.add(currentId);
+      const original = originalFoldersById.get(currentId);
+      const candidateId = original?.parentId;
+      if (!candidateId) return null;
+      if (
+        reconciliation.deletedFolderIds.has(candidateId) ||
+        !foldersById.has(candidateId) ||
+        createsCycle(folderId, candidateId)
+      ) {
+        currentId = candidateId;
+        continue;
+      }
+      return candidateId;
+    }
+    return null;
+  };
+
+  let changed = false;
+  const reconciled = folders.map((folder) => {
+    const parentId = folder.parentId;
+    if (parentId == null) return folder;
+    if (!reconciliation.deletedFolderIds.has(parentId) && foldersById.has(parentId)) return folder;
+    const nextParentId = findSurvivingAncestor(parentId, folder.id);
+    if (nextParentId === parentId) return folder;
+    changed = true;
+    return { ...folder, parentId: nextParentId };
+  });
+  return changed ? reconciled : folders;
+}
+
 async function saveMediaFolderChanges(
   db: PouchDB.Database,
   before: MediaFolder[],
   after: MediaFolder[],
   canCommit: () => boolean,
+  folderParentReconciliation?: FolderParentReconciliation,
 ) {
   if (!canCommit()) return undefined;
   await requireMediaLibraryV2(db);
@@ -289,7 +348,10 @@ async function saveMediaFolderChanges(
     for (const id of beforeById.keys()) {
       if (!afterById.has(id)) currentById.delete(id);
     }
-    const folders = [...currentById.values()];
+    const mergedFolders = [...currentById.values()];
+    const folders = folderParentReconciliation
+      ? reconcileFolderParentsAfterDeletion(mergedFolders, folderParentReconciliation)
+      : mergedFolders;
     if (JSON.stringify(existing.folders || []) === JSON.stringify(folders)) return undefined;
     try {
       const response = await db.put({
@@ -316,6 +378,7 @@ export async function persistMediaStateChanges(
     canCommitItem?: (id: string) => boolean;
     canCommitFolders?: () => boolean;
   } = {},
+  folderParentReconciliation?: FolderParentReconciliation,
 ) {
   if (!canCommit()) return [];
   await requireMediaLibraryV2(db);
@@ -376,7 +439,13 @@ export async function persistMediaStateChanges(
     if (!canCommit()) return changedDocs;
     const canCommitFolders = () => canCommit() && (rowCommitGuards.canCommitFolders?.() ?? true);
     const result = canCommitFolders()
-      ? await saveMediaFolderChanges(db, before.folders, after.folders, canCommitFolders)
+      ? await saveMediaFolderChanges(
+          db,
+          before.folders,
+          after.folders,
+          canCommitFolders,
+          folderParentReconciliation,
+        )
       : undefined;
     if (result) changedDocs.push({ _id: MEDIA_FOLDERS_ID, docType: "mediaFolders", folders: result.folders });
   }
@@ -459,11 +528,6 @@ export async function persistMediaLibraryChanges(
     if (!previous) {
       const current = folders.get(id);
       if (!current) folders.set(id, folder);
-      else if (current.parentId && deletedFolderIds.has(current.parentId)) {
-        const rehomed = { ...current };
-        rehomed.parentId = folder.parentId ?? null;
-        folders.set(id, rehomed);
-      }
       continue;
     }
     const current = folders.get(id);
@@ -487,11 +551,27 @@ export async function persistMediaLibraryChanges(
     if (!afterFolders.has(id)) folders.delete(id);
   }
 
+  const folderParentReconciliation = {
+    deletedFolderIds,
+    originalFolders: before.folders,
+  };
+  const reconciledFolders = reconcileFolderParentsAfterDeletion(
+    [...folders.values()],
+    folderParentReconciliation,
+  );
+
   const merged = normalizeMediaDoc({
     list: [...list.values()],
-    folders: [...folders.values()],
+    folders: reconciledFolders,
   });
-  return persistMediaStateChanges(db, latest, merged, canCommit);
+  return persistMediaStateChanges(
+    db,
+    latest,
+    merged,
+    canCommit,
+    {},
+    folderParentReconciliation,
+  );
 }
 
 const MEDIA_MAX_FOLDER_DEPTH = 8;

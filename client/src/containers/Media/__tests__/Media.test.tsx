@@ -1633,7 +1633,8 @@ describe("Media", () => {
     const addedOutside = { ...baseMedia, id: "added-outside", name: "New outside item", folderId: "outside-folder" };
     const addedInside = { ...baseMedia, id: "added-inside", name: "New item in deleted folder", folderId: "child" };
     const concurrentChild = { id: "concurrent-child", name: "Added child folder", parentId: "child" };
-    const latestFolders = [...folders, concurrentChild];
+    const concurrentNested = { id: "concurrent-nested", name: "Nested concurrent folder", parentId: "concurrent-child" };
+    const latestFolders = [...folders, concurrentChild, concurrentNested];
     mockState = makeBaseState({ media: { list: [renamedOutside, addedOutside, addedInside], folders: latestFolders } });
 
     await act(async () => {
@@ -1650,7 +1651,8 @@ describe("Media", () => {
     ]);
     expect(finalAction.payload.folders).toEqual([
       expect.objectContaining({ id: "outside-folder", parentId: null }),
-      expect.objectContaining({ id: "concurrent-child", parentId: MEDIA_LIBRARY_ROOT_VIEW }),
+      expect.objectContaining({ id: "concurrent-child", parentId: null }),
+      expect.objectContaining({ id: "concurrent-nested", parentId: "concurrent-child" }),
     ]);
     expect(finalAction.payload.list).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "subtree-target" }),

@@ -1602,8 +1602,8 @@ export function useMediaLibraryController({
       const changeBase = { list: mediaAtStart.list, folders: mediaAtStart.folders };
       const target = changeBase.folders.find((f) => f.id === folderId);
       const subtree = collectSubtreeFolderIds(folderId, changeBase.folders);
-      const fallback =
-        target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
+      const persistedFallbackParentId = target?.parentId ?? null;
+      const fallback = persistedFallbackParentId ?? MEDIA_LIBRARY_ROOT_VIEW;
       const repairs = getMediaRouteFolderRepairs(
         activeMediaRouteFolders,
         subtree,
@@ -1704,7 +1704,7 @@ export function useMediaLibraryController({
           const foldersAfter = latest.folders
             .filter((folder) => !subtree.has(folder.id))
             .map((folder) => folder.parentId && subtree.has(folder.parentId)
-              ? { ...folder, parentId: fallback }
+              ? { ...folder, parentId: persistedFallbackParentId }
               : folder);
           const remainingFolderIds = new Set(foldersAfter.map((folder) => folder.id));
           const listAfter = latest.list
