@@ -58,7 +58,7 @@ type TeamManagerProps = {
   onSaved: (team: TeamRecord, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (teamId: string) => void;
-  onImported?: () => void;
+  onImported?: () => void | Promise<void>;
 };
 
 const TeamManager = ({

@@ -4,6 +4,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import type { ServiceItem } from "../../types";
 import type { ServicePlan } from "../../types/servicePlan";
+import { plainTextToRichText } from "../../types/richText";
 import { upsertItemInAllItemsList } from "../../store/allItemsSlice";
 import { updateItemList } from "../../store/itemListSlice";
 import { useServicePlanOutlinePush } from "./useServicePlanOutlinePush";
@@ -17,7 +18,7 @@ const worshipHeading: ServiceItem = {
   listId: "heading-worship-list",
 };
 const mockState = {
-  allItems: { list: [], isAllItemsLoading: false },
+  allItems: { list: [] as ServiceItem[], isAllItemsLoading: false },
   allDocs: {
     allSongDocs: [],
     allFreeFormDocs: [{ _id: "custom-doc-1", name: "Welcome Slides", type: "free" }],
@@ -63,7 +64,7 @@ const setPlannedItems = (items: ServiceItem[], skippedTitles: string[] = []) => 
       planned: { listId: item.listId, kind: "song", songId: item._id, songName: item.name },
       element: { element: { id: item.listId, title: { blocks: [] }, type: "song" }, title: item.name, planned: [], hasUnresolvedAttachment: false },
       sectionName: "Worship",
-      targetHeading: { listId: worshipHeading.listId, name: worshipHeading.name },
+      destination: { kind: "heading", listId: worshipHeading.listId, name: worshipHeading.name },
     }) as never),
     skippedTitles,
     placementIssues: [],
@@ -75,6 +76,8 @@ describe("useServicePlanOutlinePush", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockState.undoable.present.itemList.list = [worshipHeading];
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-1", name: "Sunday" };
+    mockState.allItems.list = [];
   });
 
   it("does not send title-only Service Plan rows to allItems", async () => {
@@ -259,6 +262,116 @@ describe("useServicePlanOutlinePush", () => {
     });
 
     expect(mockDispatch).toHaveBeenCalledWith(updateItemList([worshipHeading, existing, song, nextHeading]));
+  });
+
+  it("plans the first sync from the current Redux outline when the rendered list is stale", async () => {
+    const song: ServiceItem = { _id: "song-1", name: "Welcome song", type: "song", listId: "library-song-1" };
+    mockState.allItems.list = [song];
+    const welcomeHeading: ServiceItem = { _id: "heading-welcome", name: "Welcome", type: "heading", listId: "heading-welcome" };
+    const nextHeading: ServiceItem = { _id: "praise", name: "Praise & Worship", type: "heading", listId: "heading-praise" };
+    const existing: ServiceItem = { _id: "existing", name: "Existing", type: "song", listId: "existing" };
+    const latestList = [welcomeHeading, existing, nextHeading];
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    // Redux advances before React renders again; the hook's captured selector value is stale.
+    mockState.undoable.present.itemList.list = latestList;
+    const bridge = jest.requireActual<typeof import("./servicePlanOutlineBridge")>("./servicePlanOutlineBridge");
+    mockPlanOutline.mockImplementation((args) => bridge.planServicePlanOutlineItems({ ...args, songs: [song] }));
+    mockBuildItem.mockImplementation((args) => bridge.buildServicePlanOutlineItem(args));
+    const plan = {
+      sections: [{
+        id: "section-welcome",
+        name: "Welcome",
+        elements: [{
+          id: "el-welcome",
+          type: "song",
+          title: plainTextToRichText("Welcome song"),
+          songRef: { kind: "library", songId: song._id, songName: song.name },
+        }],
+      }],
+    } as ServicePlan;
+
+    await act(async () => {
+      await result.current.pushPlanToOutline(plan);
+    });
+
+    expect(mockPlanOutline).toHaveBeenCalledWith(expect.objectContaining({ currentList: latestList }));
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([welcomeHeading, existing, expect.objectContaining({ listId: "el-welcome::attachment:legacy-song-0-library" }), nextHeading]));
+  });
+
+  it("rejects a captured push when Redux switches outlines before React rerenders", async () => {
+    const song: ServiceItem = { _id: "song-1", name: "Song", type: "song", listId: "song-link" };
+    setPlannedItems([song]);
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    const previouslyCapturedPush = result.current.pushPlanToOutline;
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-2", name: "Other outline" };
+    mockState.undoable.present.itemList.list = [
+      { _id: "other-heading", name: "Other", type: "heading", listId: "other-heading" },
+    ];
+
+    await expect(previouslyCapturedPush({} as ServicePlan)).rejects.toThrow(
+      "The selected outline changed before the service plan could be imported.",
+    );
+
+    expect(mockPlanOutline).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: updateItemList.type }));
+  });
+
+  it("appends unmatched sections at the absolute outline end in plan order", async () => {
+    const firstSong: ServiceItem = { _id: "song-first", name: "Video intro", type: "song", listId: "library-first" };
+    const secondSong: ServiceItem = { _id: "song-second", name: "Feature song", type: "song", listId: "library-second" };
+    mockState.allItems.list = [firstSong, secondSong];
+    const trailingItem: ServiceItem = { _id: "existing", name: "Existing tail", type: "song", listId: "existing" };
+    mockState.undoable.present.itemList.list = [worshipHeading, trailingItem];
+    const { result } = renderHook(() => useServicePlanOutlinePush());
+    const bridge = jest.requireActual<typeof import("./servicePlanOutlineBridge")>("./servicePlanOutlineBridge");
+    mockPlanOutline.mockImplementation((args) => bridge.planServicePlanOutlineItems({ ...args, songs: [firstSong, secondSong] }));
+    mockBuildItem.mockImplementation((args) => bridge.buildServicePlanOutlineItem(args));
+    const plan = {
+      sections: [
+        {
+          id: "section-special-feature",
+          name: "Special Feature",
+          elements: [{
+            id: "el-video-intro",
+            type: "song",
+            title: plainTextToRichText(firstSong.name),
+            songRef: { kind: "library", songId: firstSong._id, songName: firstSong.name },
+          }],
+        },
+        {
+          id: "section-feature-song",
+          name: "Feature Song",
+          elements: [{
+            id: "el-feature-song",
+            type: "song",
+            title: plainTextToRichText(secondSong.name),
+            songRef: { kind: "library", songId: secondSong._id, songName: secondSong.name },
+          }],
+        },
+      ],
+    } as ServicePlan;
+
+    await act(async () => {
+      await result.current.pushPlanToOutline(plan);
+    });
+
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([
+      worshipHeading,
+      trailingItem,
+      expect.objectContaining({ _id: firstSong._id }),
+    ]));
+    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([
+      worshipHeading,
+      trailingItem,
+      expect.objectContaining({ _id: firstSong._id }),
+      expect.objectContaining({ _id: secondSong._id }),
+    ]));
+    expect(mockState.undoable.present.itemList.list.map((item) => item.name)).toEqual([
+      "Worship",
+      "Existing tail",
+      "Video intro",
+      "Feature song",
+    ]);
   });
 
   it("places scripture and custom-document references under the same heading", async () => {

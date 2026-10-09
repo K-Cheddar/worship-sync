@@ -590,8 +590,8 @@ describe("buildServicePlanOutlineItems", () => {
       }],
     });
 
-    expect(result.steps.map((step) => step.targetHeading)).toEqual([
-      { listId: "heading-praise-id", name: "Praise & Worship" },
+    expect(result.steps.map((step) => step.destination)).toEqual([
+      { kind: "heading", listId: "heading-praise-id", name: "Praise & Worship" },
     ]);
     expect(result.steps.every((step) => step.planned.listId === "el-song::attachment:legacy-song-0-library")).toBe(true);
   });
@@ -603,7 +603,11 @@ describe("buildServicePlanOutlineItems", () => {
       currentList: [worshipHeading],
       songs: librarySongs,
     });
-    expect(result.steps[0].targetHeading.listId).toBe(worshipHeading.listId);
+    expect(result.steps[0].destination).toEqual({
+      kind: "heading",
+      listId: worshipHeading.listId,
+      name: worshipHeading.name,
+    });
     expect(result.placementIssues).toEqual([]);
   });
 
@@ -627,7 +631,7 @@ describe("buildServicePlanOutlineItems", () => {
     }]);
   });
 
-  it("reports an unmapped section without appending its items", () => {
+  it("appends an unmatched section to the actual outline end without a placement warning", () => {
     const similarlyNamedHeading: ServiceItem = {
       _id: "heading-announcements",
       name: "Announcements & Notices",
@@ -636,14 +640,48 @@ describe("buildServicePlanOutlineItems", () => {
     };
     const result = planServicePlanOutlineItems({
       plan: { ...basePlan, sections: [{ ...basePlan.sections[0], name: "Announcements" }] },
-      currentList: [similarlyNamedHeading],
+      currentList: [similarlyNamedHeading, { _id: "existing", name: "Existing", type: "song", listId: "existing" }],
       songs: librarySongs,
     });
-    expect(result.steps).toEqual([]);
-    expect(result.placementIssues).toEqual([{
-      sectionName: "Announcements",
-      reason: "no-matching-heading",
-    }]);
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].destination).toEqual({ kind: "outline-end" });
+    expect(result.steps[0].planned.listId).toBe("el-song::attachment:legacy-song-0-library");
+    expect(result.placementIssues).toEqual([]);
+  });
+
+  it("keeps all unmatched actionable items and sections in Service Plan order at the outline end", () => {
+    const firstSection = {
+      ...basePlan.sections[0],
+      id: "section-special",
+      name: "Special Feature",
+      elements: [
+        { ...basePlan.sections[0].elements[0], id: "special-one" },
+        { ...basePlan.sections[0].elements[0], id: "special-two" },
+      ],
+    };
+    const secondSection = {
+      ...basePlan.sections[0],
+      id: "section-other",
+      name: "Other Unmatched",
+      elements: [{ ...basePlan.sections[0].elements[0], id: "other-one" }],
+    };
+    const result = planServicePlanOutlineItems({
+      plan: { ...basePlan, sections: [firstSection, secondSection] },
+      currentList: [worshipHeading, { _id: "last-heading", name: "Message", type: "heading", listId: "last-heading" }],
+      songs: librarySongs,
+    });
+
+    expect(result.steps.map((step) => step.destination)).toEqual([
+      { kind: "outline-end" },
+      { kind: "outline-end" },
+      { kind: "outline-end" },
+    ]);
+    expect(result.steps.map((step) => step.planned.listId)).toEqual([
+      "special-one::attachment:legacy-song-0-library",
+      "special-two::attachment:legacy-song-0-library",
+      "other-one::attachment:legacy-song-0-library",
+    ]);
+    expect(result.placementIssues).toEqual([]);
   });
 
   it("keeps plan order when sections resolve to different or shared heading occurrences", () => {
@@ -665,7 +703,11 @@ describe("buildServicePlanOutlineItems", () => {
       currentList: [worshipHeading, messageHeading],
       songs: [secondSong],
     });
-    expect(result.steps.map((step) => step.targetHeading.listId)).toEqual([
+    expect(result.steps.map((step) => step.destination)).toEqual([
+      { kind: "heading", listId: worshipHeading.listId, name: worshipHeading.name },
+      { kind: "heading", listId: messageHeading.listId, name: messageHeading.name },
+    ]);
+    expect(result.steps.map((step) => step.destination.kind === "heading" ? step.destination.listId : null)).toEqual([
       worshipHeading.listId,
       messageHeading.listId,
     ]);
@@ -680,7 +722,7 @@ describe("buildServicePlanOutlineItems", () => {
       songs: [secondSong],
       sectionRules: sharedHeadingRules,
     });
-    expect(sharedResult.steps.map((step) => step.targetHeading.listId)).toEqual([
+    expect(sharedResult.steps.map((step) => step.destination.kind === "heading" ? step.destination.listId : null)).toEqual([
       worshipHeading.listId,
       worshipHeading.listId,
     ]);

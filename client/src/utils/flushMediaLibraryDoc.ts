@@ -48,6 +48,17 @@ export const FLUSH_MEDIA_NO_DB_MESSAGE =
 export const FLUSH_MEDIA_STALE_DB_MESSAGE =
   "flushMediaLibraryDocToPouch: database is no longer active";
 
+export type FlushMediaLibraryDocOptions = {
+  /** Allows a workflow already authorized under this concrete DB to finish its write after a scope switch. */
+  allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
+  /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
+  publishIfCurrent?: () => boolean;
+  /** Media rows relocated only because their folder is being deleted with Keep Contents. */
+  automaticMediaRehomeIds?: ReadonlySet<string>;
+  /** Child folders relocated only because their parent is being deleted with Keep Contents. */
+  automaticFolderRehomeIds?: ReadonlySet<string>;
+};
+
 /** Tombstone known v2 rows directly and publish those tombstones to other local controllers. */
 export async function deleteMediaItemsFromPouch(
   db: PouchDB.Database,
@@ -91,12 +102,15 @@ export async function flushMediaLibraryDocToPouch(
   folders: MediaFolder[],
   getLatestState?: () => { list: MediaType[]; folders: MediaFolder[] },
   changeBase?: { list: MediaType[]; folders: MediaFolder[] },
+  options: FlushMediaLibraryDocOptions = {},
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   if (!db) {
     return { ok: false, error: new Error(FLUSH_MEDIA_NO_DB_MESSAGE) };
   }
   const databaseIsActive = () => activeDb === db;
-  if (!databaseIsActive()) {
+  const canPersist = () => options.allowOriginalOwnerPersistenceAfterScopeChange || databaseIsActive();
+  const canPublish = () => databaseIsActive() && (options.publishIfCurrent?.() ?? true);
+  if (!canPersist()) {
     return { ok: false, error: new Error(FLUSH_MEDIA_STALE_DB_MESSAGE) };
   }
   try {
@@ -106,18 +120,25 @@ export async function flushMediaLibraryDocToPouch(
       return stateToPersist;
     };
     const changedDocs = changeBase
-      ? await persistMediaLibraryChanges(db, changeBase, readLatestState(), databaseIsActive)
+      ? await persistMediaLibraryChanges(
+          db,
+          changeBase,
+          readLatestState(),
+          canPersist,
+          options.automaticMediaRehomeIds,
+          options.automaticFolderRehomeIds,
+        )
       : await persistMediaLibrarySnapshot(
           db,
           list,
           folders,
           readLatestState,
-          databaseIsActive,
+          canPersist,
         );
     const { list: listToPersist } = stateToPersist;
     // The intended database was updated, but do not publish/cache its result
     // into a different church if the active database changed during the put.
-    if (!databaseIsActive()) return { ok: true };
+    if (!canPublish()) return { ok: true };
     if (changedDocs.length > 0) {
       safePostMessage({
         type: "update",
@@ -142,7 +163,7 @@ export async function flushMediaLibraryDocToPouch(
           await electronAPI.syncMediaCache([]);
         }
         const map = await electronAPI.getMediaCacheMap();
-        if (!databaseIsActive()) return { ok: true };
+        if (!canPublish()) return { ok: true };
         store.dispatch(setMediaCacheMap(map));
       } catch (error) {
         console.error(

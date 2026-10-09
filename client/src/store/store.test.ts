@@ -130,10 +130,11 @@ const loadStoreWithMediaPersistence = () => {
     remove: jest.fn(),
     allDocs: jest.fn(),
   };
+  let activeDb: any = db;
 
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
-      globalDb: db,
+      get globalDb() { return activeDb; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -157,6 +158,7 @@ const loadStoreWithMediaPersistence = () => {
     mediaSlice: mediaSliceModule.mediaItemsSlice,
     db,
     postMessage,
+    setGlobalDb: (next: unknown) => { activeDb = next; },
   };
 };
 
@@ -1138,6 +1140,228 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledTimes(2);
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:media-a", name: "After A" }));
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:media-b", name: "After B" }));
+  });
+
+  it("serializes overlapping media saves and acknowledges only the exact persisted revision", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    let finishFirstPut: (() => void) | undefined;
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-1", {
+        _id: "media-item:media-1", _rev: "1-a", docType: "mediaItem", id: "media-1", name: "A",
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementation((doc: Record<string, unknown>) => {
+      if (doc.name === "B") {
+        // The document is committed while the first save acknowledgment is delayed.
+        persisted.set(String(doc._id), { ...doc, _rev: "2-b" });
+        return new Promise((resolve) => {
+          finishFirstPut = () => resolve({ ok: true, id: doc._id, rev: "2-b" });
+        }) as any;
+      }
+      persisted.set(String(doc._id), { ...doc, _rev: "3-c" });
+      return Promise.resolve({ ok: true, id: doc._id, rev: "3-c" }) as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "media-1", name: "A" }], folders: [] }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "B" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "C" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    finishFirstPut?.();
+    for (let turn = 0; turn < 30; turn += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put.mock.calls[0][0]).toEqual(expect.objectContaining({ name: "B" }));
+    expect(db.put.mock.calls[1][0]).toEqual(expect.objectContaining({ _rev: "2-b", name: "C" }));
+    expect(persisted.get("media-item:media-1")?.name).toBe("C");
+    expect(postMessage.mock.calls.map(([message]) => message.data.docs[0].name)).toEqual(["B", "C"]);
+    expect(store.getState().media.list[0].name).toBe("C");
+  });
+
+  it("keeps a newer media edit pending when the overlapping earlier write fails", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    let failFirstPut: (() => void) | undefined;
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-1", {
+        _id: "media-item:media-1", _rev: "1-a", docType: "mediaItem", id: "media-1", name: "A",
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      failFirstPut = () => reject(new Error("write failed"));
+    }) as any);
+    db.put.mockImplementation((doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "2-c" });
+      return Promise.resolve({ ok: true, id: doc._id, rev: "2-c" }) as any;
+    });
+    const logError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "media-1", name: "A" }], folders: [] }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "B" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "C" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    failFirstPut?.();
+    for (let turn = 0; turn < 30; turn += 1) await Promise.resolve();
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put.mock.calls[1][0]).toEqual(expect.objectContaining({ _rev: "1-a", name: "C" }));
+    expect(persisted.get("media-item:media-1")?.name).toBe("C");
+    expect(postMessage.mock.calls.map(([message]) => message.data.docs[0].name)).toEqual(["C"]);
+    expect(store.getState().media.list[0].name).toBe("C");
+    logError.mockRestore();
+  });
+
+  it("confirms an ambiguous media write before persisting a later edit", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-item:media-1", {
+        _id: "media-item:media-1", _rev: "1-a", docType: "mediaItem", id: "media-1", name: "A",
+      }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementationOnce((doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "2-b" });
+      return Promise.reject(new Error("write acknowledgment was lost")) as any;
+    });
+    db.put.mockImplementation((doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "3-c" });
+      return Promise.resolve({ ok: true, id: doc._id, rev: "3-c" }) as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "media-1", name: "A" }], folders: [] }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "B" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "media-1", patch: { name: "C" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put.mock.calls.map(([doc]) => doc.name)).toEqual(["B", "C"]);
+    expect(db.put.mock.calls[1][0]._rev).toBe("2-b");
+    expect(persisted.get("media-item:media-1")?.name).toBe("C");
+    expect(postMessage.mock.calls.map(([message]) => message.data.docs[0].name)).toEqual(["B", "C"]);
+  });
+
+  it("confirms an ambiguous folder write before persisting a later edit", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db, postMessage } = loadStoreWithMediaPersistence();
+    const folderA = { id: "folder-1", name: "A", parentId: null, createdAt: "1", updatedAt: "1" };
+    const folderB = { ...folderA, name: "B", updatedAt: "2" };
+    const folderC = { ...folderA, name: "C", updatedAt: "3" };
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-folders", { _id: "media-folders", _rev: "1-f", docType: "mediaFolders", folders: [folderA] }],
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persisted.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    db.allDocs.mockResolvedValue({ rows: [...persisted.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    db.put.mockImplementationOnce((doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "2-b" });
+      return Promise.reject(new Error("folder write acknowledgment was lost")) as any;
+    });
+    db.put.mockImplementation((doc: Record<string, unknown>) => {
+      persisted.set(String(doc._id), { ...doc, _rev: "3-c" });
+      return Promise.resolve({ ok: true, id: doc._id, rev: "3-c" }) as any;
+    });
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [], folders: [folderA] }));
+    store.dispatch(mediaSlice.actions.setMediaListAndFolders({ list: [], folders: [folderB] }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    store.dispatch(mediaSlice.actions.setMediaListAndFolders({ list: [], folders: [folderC] }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put.mock.calls.map(([doc]) => (doc.folders as typeof folderA[])[0].name)).toEqual(["B", "C"]);
+    expect(db.put.mock.calls[1][0]._rev).toBe("2-b");
+    expect((persisted.get("media-folders")?.folders as typeof folderA[])[0].name).toBe("C");
+    expect(postMessage.mock.calls.map(([message]) => message.data.docs[0].folders[0].name)).toEqual(["B", "C"]);
+  });
+
+  it("keeps an in-flight media write scoped to its original database after a church switch", async () => {
+    jest.useFakeTimers();
+    const { store, mediaSlice, db: dbA, postMessage, setGlobalDb } = loadStoreWithMediaPersistence();
+    let finishAWrite: (() => void) | undefined;
+    const persistedA = new Map<string, Record<string, unknown>>([
+      ["media-item:shared-id", {
+        _id: "media-item:shared-id", _rev: "1-a", docType: "mediaItem", id: "shared-id", name: "Church A",
+      }],
+    ]);
+    dbA.get.mockImplementation(async (id: string) => {
+      if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+      const doc = persistedA.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("missing"), { status: 404 });
+    });
+    dbA.allDocs.mockResolvedValue({ rows: [...persistedA.values()].map((doc) => ({ id: doc._id, doc })) } as any);
+    dbA.put.mockImplementation((doc: Record<string, unknown>) => new Promise((resolve) => {
+      finishAWrite = () => {
+        persistedA.set(String(doc._id), { ...doc, _rev: "2-a" });
+        resolve({ ok: true, id: doc._id, rev: "2-a" });
+      };
+    }) as any);
+    const dbB = { get: jest.fn(), put: jest.fn(), remove: jest.fn(), allDocs: jest.fn() };
+
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "shared-id", name: "Church A" }], folders: [] }));
+    store.dispatch(mediaSlice.actions.updateMediaItemFields({ id: "shared-id", patch: { name: "Church A edit" } }));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(dbA.put).toHaveBeenCalledTimes(1);
+
+    store.dispatch({ type: "RESET" });
+    setGlobalDb(dbB);
+    store.dispatch(mediaSlice.actions.initiateMediaFromDoc({ list: [{ id: "shared-id", name: "Church B" }], folders: [] }));
+    finishAWrite?.();
+    await flushListenerEffects();
+
+    expect(persistedA.get("media-item:shared-id")?.name).toBe("Church A edit");
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    expect(store.getState().media.list[0].name).toBe("Church B");
+    expect(postMessage).not.toHaveBeenCalled();
   });
 
   it("persists a newer edit after an earlier media write finishes in flight", async () => {

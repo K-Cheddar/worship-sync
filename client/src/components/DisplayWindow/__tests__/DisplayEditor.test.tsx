@@ -3,9 +3,16 @@ import userEvent from "@testing-library/user-event";
 import DisplayEditor from "../DisplayEditor";
 import type { Box, MediaType } from "../../../types";
 import type { LocalImageResolution } from "../../../hooks/useLocalImageUrl";
+import type { LocalVideoFileResolution } from "../../../hooks/useLocalVideoFileUrl";
 
 const mockShowToast = jest.fn();
 const mockUseCachedMediaUrl = jest.fn((url?: string) => url);
+let mockLocalVideoResolution: LocalVideoFileResolution = {
+  isLocalVideoFile: false,
+  isOwner: false,
+  status: "not-local" as const,
+  url: undefined as string | undefined,
+};
 
 let latestRndProps: any = null;
 
@@ -31,10 +38,7 @@ jest.mock("../../../hooks/useLocalImageUrl", () => ({
 }));
 
 jest.mock("../../../hooks/useLocalVideoFileUrl", () => ({
-  useLocalVideoFileUrl: () => ({
-    isLocalVideoFile: false,
-    url: undefined,
-  }),
+  useLocalVideoFileUrl: () => mockLocalVideoResolution,
 }));
 
 jest.mock("react-rnd", () => ({
@@ -76,6 +80,12 @@ describe("DisplayEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     latestRndProps = null;
+    mockLocalVideoResolution = {
+      isLocalVideoFile: false,
+      isOwner: false,
+      status: "not-local",
+      url: undefined,
+    };
     mockUseLocalImageUrl.mockReturnValue({
       isLocalImage: false,
       isOwner: false,
@@ -497,13 +507,83 @@ describe("DisplayEditor", () => {
         }}
         width={960}
         index={0}
+        showLocalSourceStatus
       />,
     );
 
-    expect(screen.getByText("Local image unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+    expect(screen.getByText("Local image · welcome.png")).toBeInTheDocument();
+    expect(screen.getByText("Available on Lobby PC")).toBeInTheDocument();
+  });
+
+  it("shows unavailable local video only for the opted-in editor preview", () => {
+    mockLocalVideoResolution = {
+      isLocalVideoFile: true,
+      isOwner: false,
+      status: "unavailable",
+      url: undefined,
+    };
+    const videoBox = {
+      ...baseBox,
+      background: "local-video-file://video-1",
+      mediaInfo: {
+        path: "",
+        createdAt: "",
+        updatedAt: "",
+        format: "mp4",
+        height: 1080,
+        width: 1920,
+        name: "welcome.mp4",
+        publicId: "video-1",
+        type: "video",
+        id: "video-1",
+        background: "local-video-file://video-1",
+        thumbnail: "",
+        source: "local",
+        localVideoFile: {
+          id: "video-1",
+          ownerDeviceId: "other-device",
+          ownerLabel: "Streaming Computer",
+          fileName: "welcome.mp4",
+          contentType: "video/mp4",
+          storagePolicy: "local-only" as const,
+        },
+      } satisfies MediaType,
+    };
+    const { rerender } = render(
+      <DisplayEditor box={videoBox} width={960} index={0} />,
+    );
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
+    rerender(
+      <DisplayEditor
+        box={{ ...videoBox, words: "owner unavailable" }}
+        width={960}
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Local video · welcome.mp4")).toBeInTheDocument();
+    expect(screen.getByText("Available on Streaming Computer")).toBeInTheDocument();
+
+    mockLocalVideoResolution = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "unavailable",
+      url: undefined,
+    };
+    rerender(
+      <DisplayEditor
+        box={videoBox}
+        width={960}
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Local video unavailable")).toBeInTheDocument();
     expect(
-      screen.getByText(/Available on Lobby PC only/i),
+      screen.getByText("Open Media on this device and relink the file."),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Available on Streaming Computer")).not.toBeInTheDocument();
   });
 
   it("hides the editor box outline when requested", () => {

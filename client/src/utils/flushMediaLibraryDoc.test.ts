@@ -52,6 +52,40 @@ describe("flushMediaLibraryDocToPouch", () => {
     });
   });
 
+  it("finishes a captured owner's folder write after a switch without publishing into the new scope", async () => {
+    const dbA = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      allDocs: jest.fn().mockResolvedValue({ rows: [] }),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-folder" }),
+    } as unknown as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    mockGlobalDb = dbB;
+    mockBroadcastRef = { postMessage: jest.fn() };
+
+    const result = await flushMediaLibraryDocToPouch(
+      dbA,
+      [],
+      [{ id: "folder-a", name: "A folder", parentId: null, createdAt: "now", updatedAt: "now" }],
+      () => ({ list: [], folders: [{ id: "folder-a", name: "A folder", parentId: null, createdAt: "now", updatedAt: "now" }] }),
+      { list: [], folders: [] },
+      {
+        allowOriginalOwnerPersistenceAfterScopeChange: true,
+        publishIfCurrent: () => false,
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(dbA.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "media-folders",
+      folders: [{ id: "folder-a", name: "A folder", parentId: null, createdAt: "now", updatedAt: "now" }],
+    }));
+    expect(mockBroadcastRef.postMessage).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
   it("writes only v2 documents through the database instance supplied by the caller", async () => {
     const db = {
       get: jest.fn(async (id: string) => {
@@ -276,6 +310,116 @@ describe("flushMediaLibraryDocToPouch", () => {
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:canva-page", name: "Newer page revision" }));
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "media-item:ordinary-upload" }));
     expect(db.put).not.toHaveBeenCalledWith(expect.objectContaining({ _id: "media" }));
+  });
+
+  it("merges folder finalization with the latest Pouch items without resurrecting remote deletions", async () => {
+    const media = (id: string, name: string, folderId: string | null): MediaType => ({
+      id, name, folderId: folderId || undefined, type: "image", path: "", createdAt: "", updatedAt: "",
+      format: "", height: 0, width: 0, publicId: id, background: "", thumbnail: "",
+    });
+    const stableBefore = media("stable", "Original", "folder");
+    const targetBefore = media("already-tombstoned", "Target", "folder");
+    const remotelyDeletedBefore = media("deleted-remotely", "Remote deletion", "folder");
+    const reduxStable = media("stable", "Redux snapshot", null);
+    const reduxAddition = media("concurrent-addition", "Older Redux copy", null);
+    const reduxRemoteDelete = media("deleted-remotely", "Remote deletion", null);
+    const concurrentFolder = {
+      id: "concurrent-folder", name: "Concurrent folder", parentId: null, createdAt: "now", updatedAt: "now",
+    };
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-library-meta", { _id: "media-library-meta", docType: "mediaLibraryMeta", schemaVersion: 2 }],
+      ["media-folders", {
+        _id: "media-folders", docType: "mediaFolders", folders: [
+          { id: "folder", name: "Deleted folder", parentId: null }, { ...concurrentFolder, parentId: "folder" },
+        ],
+      }],
+      ["media-item:stable", { ...media("stable", "Pouch newer name", "folder"), _id: "media-item:stable", docType: "mediaItem" }],
+      ["media-item:concurrent-addition", { ...media("concurrent-addition", "Pouch latest addition", "folder"), _id: "media-item:concurrent-addition", docType: "mediaItem" }],
+    ]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        const doc = persisted.get(id);
+        if (doc) return { ...doc };
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      allDocs: jest.fn(async () => ({ rows: [...persisted.entries()]
+        .filter(([id]) => id.startsWith("media-item:"))
+        .map(([id, doc]) => ({ id, doc: { ...doc } })) })),
+      put: jest.fn(async (doc: Record<string, unknown>) => {
+        persisted.set(String(doc._id), { ...doc });
+        return { ok: true, id: doc._id, rev: "2-current" };
+      }),
+      remove: jest.fn(async (doc: Record<string, unknown>) => {
+        persisted.delete(String(doc._id));
+        return { ok: true, id: doc._id };
+      }),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+
+    const result = await flushMediaLibraryDocToPouch(
+      db,
+      [reduxStable, reduxAddition, reduxRemoteDelete],
+      [concurrentFolder],
+      () => ({ list: [reduxStable, reduxAddition, reduxRemoteDelete], folders: [concurrentFolder] }),
+      {
+        list: [stableBefore, targetBefore, remotelyDeletedBefore],
+        folders: [{ id: "folder", name: "Deleted folder", parentId: null, createdAt: "now", updatedAt: "now" }],
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(persisted.get("media-item:stable")).toEqual(expect.objectContaining({
+      name: "Pouch newer name",
+      folderId: null,
+    }));
+    expect(persisted.get("media-item:concurrent-addition")).toEqual(expect.objectContaining({
+      name: "Pouch latest addition",
+      folderId: null,
+    }));
+    expect(persisted.has("media-item:already-tombstoned")).toBe(false);
+    expect(persisted.has("media-item:deleted-remotely")).toBe(false);
+    expect(persisted.get("media-folders")).toEqual(expect.objectContaining({ folders: [concurrentFolder] }));
+  });
+
+  it("reconciles PouchDB-only child folders when folder finalization is retried", async () => {
+    const parent = { id: "ancestor", name: "Ancestor", parentId: null, createdAt: "1", updatedAt: "1" };
+    const target = { id: "deleted", name: "Deleted", parentId: "ancestor", createdAt: "1", updatedAt: "1" };
+    const concurrentChild = { id: "concurrent", name: "Created during deletion", parentId: "deleted", createdAt: "2", updatedAt: "2" };
+    const persisted = new Map<string, Record<string, unknown>>([
+      ["media-library-meta", { _id: "media-library-meta", docType: "mediaLibraryMeta", schemaVersion: 2 }],
+      ["media-folders", { _id: "media-folders", docType: "mediaFolders", folders: [parent, target], _rev: "1" }],
+    ]);
+    let folderPutCount = 0;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        const doc = persisted.get(id);
+        if (doc) return { ...doc };
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      allDocs: jest.fn(async () => ({ rows: [] })),
+      put: jest.fn(async (doc: Record<string, unknown>) => {
+        if (folderPutCount++ === 0) throw new Error("temporary folder write failure");
+        persisted.set(String(doc._id), { ...doc, _rev: "2" });
+        return { ok: true, id: doc._id, rev: "2" };
+      }),
+      remove: jest.fn(),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+    const before = { list: [], folders: [parent, target] };
+    const after = { list: [], folders: [parent] };
+
+    await expect(flushMediaLibraryDocToPouch(db, after.list, after.folders, () => after, before))
+      .resolves.toEqual({ ok: false, error: expect.objectContaining({ message: "temporary folder write failure" }) });
+
+    persisted.set("media-folders", {
+      _id: "media-folders", docType: "mediaFolders", folders: [parent, target, concurrentChild], _rev: "1",
+    });
+    await expect(flushMediaLibraryDocToPouch(db, after.list, after.folders, () => after, before))
+      .resolves.toEqual({ ok: true });
+
+    expect(persisted.get("media-folders")).toEqual(expect.objectContaining({
+      folders: [parent, { ...concurrentChild, parentId: parent.id }],
+    }));
   });
 
   it("does not write when the supplied database is no longer active", async () => {

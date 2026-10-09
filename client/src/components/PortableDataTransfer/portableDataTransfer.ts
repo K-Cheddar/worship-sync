@@ -14,14 +14,14 @@ export const PORTABLE_DATA_TYPES: Array<{
 ];
 
 export const PORTABLE_FIELD_LABELS: Record<string, string> = {
-  firstName: "First name", lastName: "Last name", title: "Title", email: "Email", phone: "Phone", teams: "Teams", positions: "Positions", notes: "Notes", servingFrequency: "Serving frequency", archived: "Archived", memberId: "WorshipSync Member ID", teamIds: "WorshipSync Team IDs", positionIds: "WorshipSync Position IDs",
+  firstName: "First name", lastName: "Last name", title: "Title", email: "Email", phone: "Phone", teams: "Teams", positions: "Positions / Categories", notes: "Notes", servingFrequency: "Serving frequency", archived: "Archived", memberId: "WorshipSync Member ID", teamIds: "WorshipSync Team IDs", positionIds: "WorshipSync Position IDs", status: "Source status", smsOptIn: "Source SMS opt-in", timezone: "Source timezone", skillTiers: "Skill tiers (not applied)",
   name: "Name / person", description: "Description", usesMicrophones: "Uses microphones", usesIems: "Uses IEMs", team: "Team", group: "Group", order: "Order", positionId: "WorshipSync Position ID", teamId: "WorshipSync Team ID", icon: "Icon",
   recurrence: "Recurrence", time: "Time", date: "Date", daysOfWeek: "Days of week", startDate: "Start date", endDate: "End date", weekOrdinal: "Week ordinal", weekday: "Weekday", combinedGroup: "Combined group", position: "Position", requiredSlots: "Required slots", serviceId: "WorshipSync Service ID",
   startTime: "Start time", slot: "Slot", person: "Person", assignmentType: "Assignment type", guest: "Guest", scheduleId: "WorshipSync Schedule ID", occurrenceId: "WorshipSync Occurrence ID",
 };
 
 export const PORTABLE_FIELD_ORDER: Record<PortableDataType, string[]> = {
-  members: ["firstName", "lastName", "name", "title", "email", "phone", "teams", "positions", "notes", "servingFrequency", "archived", "memberId", "teamIds", "positionIds"],
+  members: ["firstName", "lastName", "name", "title", "email", "phone", "teams", "positions", "notes", "servingFrequency", "archived", "memberId", "teamIds", "positionIds", "status", "smsOptIn", "timezone", "skillTiers"],
   teams: ["name", "description", "usesMicrophones", "usesIems", "archived", "teamId", "icon"],
   positions: ["name", "team", "description", "group", "order", "archived", "positionId", "teamId"],
   services: ["name", "recurrence", "time", "date", "daysOfWeek", "startDate", "endDate", "weekOrdinal", "weekday", "combinedGroup", "position", "requiredSlots", "archived", "serviceId", "positionId"],

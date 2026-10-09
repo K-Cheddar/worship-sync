@@ -41,6 +41,7 @@ import {
   SMS_CONSENT_VERSION,
   smsConsentIdForChurchPhone,
   smsConsentIdForLegacyPhone,
+  withSmsConsentMutationLock,
   verifySmsConsentCode,
 } from "./server/smsConsent.js";
 import { ensureWorshipSyncContentDatabase } from "./server/couchContentDatabase.js";
@@ -664,7 +665,6 @@ const collectionMap = {
 };
 
 const rateLimits = new Map();
-const smsConsentMutationQueues = new Map();
 const RATE_LIMIT_SWEEP_INTERVAL = 200;
 let rateLimitEnforcementCount = 0;
 
@@ -674,25 +674,6 @@ const sweepExpiredRateLimits = (now) => {
     const resetAt = Number(bucket?.resetAt || 0);
     if (blockedUntil <= now && resetAt <= now) {
       rateLimits.delete(bucketKey);
-    }
-  }
-};
-
-const withSmsConsentMutationLock = async (consentId, operation) => {
-  const previous = smsConsentMutationQueues.get(consentId) || Promise.resolve();
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  const current = previous.then(() => gate);
-  smsConsentMutationQueues.set(consentId, current);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (smsConsentMutationQueues.get(consentId) === current) {
-      smsConsentMutationQueues.delete(consentId);
     }
   }
 };
@@ -1661,7 +1642,13 @@ const addSecurityEvent = async (event) => {
 const upsertSmsConsent = async (
   churchId,
   phoneNumber,
-  { challengeId, cancellationToken } = {},
+  {
+    challengeId,
+    cancellationToken,
+    source = "web_form",
+    consentProvenance = {},
+    preserveExistingActive = false,
+  } = {},
 ) => {
   const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumber);
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
@@ -1684,22 +1671,75 @@ const upsertSmsConsent = async (
     lastCancelledVerificationTokenHash: null,
     lastCancelledVerificationTokenExpiresAt: null,
     verificationAttempts: 0,
+    verificationDeliveryStatus: "sending",
     updatedAt: submittedAt,
+  };
+  const expiredPendingReplacementFields = (existing) => {
+    const newConsentSubmission =
+      existing.source !== source ||
+      existing.inviteId !== consentProvenance.inviteId ||
+      existing.userId !== consentProvenance.userId;
+    return {
+      ...(newConsentSubmission
+        ? { previousConsentSubmission: {
+            source: existing.source || null,
+            inviteId: existing.inviteId || null,
+            consentSubmittedAt: existing.consentSubmittedAt || null,
+            consentText: existing.consentText || null,
+            consentVersion: existing.consentVersion || null,
+          } }
+        : {}),
+      source,
+      ...consentProvenance,
+      consentVersion: newConsentSubmission ? SMS_CONSENT_VERSION : existing.consentVersion || SMS_CONSENT_VERSION,
+      consentText: newConsentSubmission ? SMS_CONSENT_TEXT : existing.consentText || SMS_CONSENT_TEXT,
+      consentSubmittedAt: newConsentSubmission ? submittedAt : existing.consentSubmittedAt || submittedAt,
+      ...challengeFields,
+    };
   };
   const db = requireFirestore();
 
   if (db) {
-    await db.runTransaction(async (transaction) => {
+    const transactionResult = await db.runTransaction(async (transaction) => {
       const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
       const snapshot = await transaction.get(consentRef);
       const existing = snapshot.exists ? snapshot.data() : null;
-      if (existing?.status === "opted_out" || existing?.optedOutAt) {
+      if (existing?.status === "opted_out" || existing?.optedOutAt || existing?.optedOut === true) {
         throw httpError(400, "This phone number has opted out of SMS.");
       }
       if (existing?.status === "opted_in") {
+        if (preserveExistingActive) return { alreadyOptedIn: true };
         // Anonymous resubmission may rotate the challenge, but not the verified snapshot.
         transaction.set(consentRef, challengeFields, { merge: true });
-        return;
+        return { shouldSend: true };
+      }
+      if (existing?.status === "pending") {
+        const matchingInviteRetry =
+          preserveExistingActive &&
+          existing.source === source &&
+          existing.inviteId === consentProvenance.inviteId &&
+          existing.verificationChallengeId === challenge.challengeId &&
+          existing.verificationDeliveryStatus !== "failed" &&
+          matchesSmsConsentCancellationCapability({
+            churchId,
+            phoneNumber: normalizedPhoneNumber,
+            challengeId: challenge.challengeId,
+            cancellationToken: challenge.cancellationToken,
+            storedHash: existing.verificationCancellationTokenHash,
+            expiresAt: existing.verificationCancellationExpiresAt,
+          });
+        if (matchingInviteRetry) return { shouldSend: false, retry: true };
+        if (preserveExistingActive) {
+          const challengeExpired =
+            !existing.verificationCodeHash ||
+            new Date(existing.verificationExpiresAt || "").getTime() <= Date.now();
+          const deliveryFailed = existing.verificationDeliveryStatus === "failed";
+          if (challengeExpired || deliveryFailed) {
+            transaction.set(consentRef, expiredPendingReplacementFields(existing), { merge: true });
+            return { shouldSend: true, renewed: true };
+          }
+          throw httpError(409, "SMS verification is already in progress for this number.");
+        }
       }
       transaction.set(consentRef, {
         consentId,
@@ -1707,7 +1747,8 @@ const upsertSmsConsent = async (
         phoneNumber: normalizedPhoneNumber,
         phoneHash: hashValue(normalizedPhoneNumber),
         status: "pending",
-        source: "web_form",
+        source,
+        ...consentProvenance,
         consentVersion: SMS_CONSENT_VERSION,
         consentText: SMS_CONSENT_TEXT,
         consentSubmittedAt: submittedAt,
@@ -1717,21 +1758,63 @@ const upsertSmsConsent = async (
         createdAt: existing?.createdAt || submittedAt,
         ...challengeFields,
       });
+      return { shouldSend: true };
     });
-    return { consentId, challenge, shouldSend: true };
+    return {
+      consentId,
+      challenge,
+      shouldSend: transactionResult?.shouldSend === true,
+      alreadyOptedIn: transactionResult?.alreadyOptedIn === true,
+      retry: transactionResult?.retry === true,
+    };
   }
 
   return withSmsConsentMutationLock(consentId, async () => {
     const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
-    if (existing?.status === "opted_out" || existing?.optedOutAt) {
+    if (existing?.status === "opted_out" || existing?.optedOutAt || existing?.optedOut === true) {
       throw httpError(400, "This phone number has opted out of SMS.");
     }
     if (existing?.status === "opted_in") {
+      if (preserveExistingActive) {
+        return { consentId, challenge: null, shouldSend: false, alreadyOptedIn: true };
+      }
       // Keep the in-memory fallback aligned with the transactional path above.
       await setDoc(COLLECTIONS.smsConsents, consentId, challengeFields, {
         merge: true,
       });
       return { consentId, challenge, shouldSend: true };
+    }
+    if (existing?.status === "pending") {
+      const matchingInviteRetry =
+        preserveExistingActive &&
+        existing.source === source &&
+        existing.inviteId === consentProvenance.inviteId &&
+        existing.verificationChallengeId === challenge.challengeId &&
+        existing.verificationDeliveryStatus !== "failed" &&
+        matchesSmsConsentCancellationCapability({
+          churchId,
+          phoneNumber: normalizedPhoneNumber,
+          challengeId: challenge.challengeId,
+          cancellationToken: challenge.cancellationToken,
+          storedHash: existing.verificationCancellationTokenHash,
+          expiresAt: existing.verificationCancellationExpiresAt,
+        });
+      if (matchingInviteRetry) {
+        return { consentId, challenge, shouldSend: false, retry: true };
+      }
+      if (preserveExistingActive) {
+        const challengeExpired =
+          !existing.verificationCodeHash ||
+          new Date(existing.verificationExpiresAt || "").getTime() <= Date.now();
+        const deliveryFailed = existing.verificationDeliveryStatus === "failed";
+        if (challengeExpired || deliveryFailed) {
+          await setDoc(COLLECTIONS.smsConsents, consentId, expiredPendingReplacementFields(existing), {
+            merge: true,
+          });
+          return { consentId, challenge, shouldSend: true, renewed: true };
+        }
+        throw httpError(409, "SMS verification is already in progress for this number.");
+      }
     }
     await setDoc(
       COLLECTIONS.smsConsents,
@@ -1742,7 +1825,8 @@ const upsertSmsConsent = async (
         phoneNumber: normalizedPhoneNumber,
         phoneHash: hashValue(normalizedPhoneNumber),
         status: "pending",
-        source: "web_form",
+        source,
+        ...consentProvenance,
         consentVersion: SMS_CONSENT_VERSION,
         consentText: SMS_CONSENT_TEXT,
         consentSubmittedAt: submittedAt,
@@ -1758,20 +1842,151 @@ const upsertSmsConsent = async (
   });
 };
 
-const markSmsConsentChallengeSent = async ({ consentId, provider, method }) => {
-  const sentAt = nowIso();
-  await setDoc(
-    COLLECTIONS.smsConsents,
+const recordAdminSmsConsent = async ({
+  churchId,
+  memberId,
+  phoneNumberSnapshot,
+  source,
+  consentedAt,
+  recordedByUid,
+}) => {
+  const normalizedPhoneNumber = normalizeUsPhoneNumber(phoneNumberSnapshot);
+  const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
+  if (!consentId) throw httpError(400, "A valid mobile number is required.");
+  const recordedAt = nowIso();
+  const record = {
     consentId,
-    {
+    churchId,
+    phoneNumber: normalizedPhoneNumber,
+    phoneHash: hashValue(normalizedPhoneNumber),
+    status: "opted_in",
+    optedOut: false,
+    optedOutAt: null,
+    source,
+    consentedAt,
+    recordedAt,
+    recordedByUid,
+    consentVersion: SMS_CONSENT_VERSION,
+    consentText: SMS_CONSENT_TEXT,
+    verificationCodeHash: null,
+    verificationCodeSalt: null,
+    verificationExpiresAt: null,
+    verificationChallengeId: null,
+    verificationCancellationTokenHash: null,
+    verificationCancellationExpiresAt: null,
+    verificationAttempts: 0,
+    lastCancelledVerificationChallengeId: null,
+    lastCancelledVerificationTokenHash: null,
+    lastCancelledVerificationTokenExpiresAt: null,
+    createdAt: recordedAt,
+    updatedAt: recordedAt,
+  };
+  const db = requireFirestore();
+  const protectExistingConsent = (existing) => {
+    if (existing?.status === "opted_out" || existing?.optedOutAt || existing?.optedOut === true) {
+      throw httpError(409, "This phone number opted out. The person must text START to opt in again.");
+    }
+    if (existing?.status === "opted_in") {
+      throw httpError(409, "SMS consent is already recorded for this number.");
+    }
+  };
+
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+      const consentRef = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const [memberSnapshot, consentSnapshot] = await Promise.all([
+        transaction.get(memberRef),
+        transaction.get(consentRef),
+      ]);
+      const member = memberSnapshot.exists ? memberSnapshot.data() : null;
+      if (!member || member.churchId !== churchId) throw httpError(404, "Roster member not found.");
+      if (member.archivedAt) throw httpError(409, "Archived roster members cannot be opted in to SMS.");
+      if (normalizeUsPhoneNumber(member.phoneNumber) !== normalizedPhoneNumber) {
+        throw httpError(409, "This member's mobile number changed. Reload the member and try again.");
+      }
+      const existing = consentSnapshot.exists ? consentSnapshot.data() : null;
+      protectExistingConsent(existing);
+      transaction.set(
+        consentRef,
+        { ...record, createdAt: existing?.createdAt || recordedAt },
+        { merge: true },
+      );
+      return { consentId, record: { ...record, createdAt: existing?.createdAt || recordedAt } };
+    });
+  }
+
+  return withSmsConsentMutationLock(consentId, async () => {
+    const existing = await getDoc(COLLECTIONS.smsConsents, consentId);
+    protectExistingConsent(existing);
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    if (!member || member.churchId !== churchId) throw httpError(404, "Roster member not found.");
+    if (member.archivedAt) throw httpError(409, "Archived roster members cannot be opted in to SMS.");
+    if (normalizeUsPhoneNumber(member.phoneNumber) !== normalizedPhoneNumber) {
+      throw httpError(409, "This member's mobile number changed. Reload the member and try again.");
+    }
+    const nextRecord = { ...record, createdAt: existing?.createdAt || recordedAt };
+    await setDoc(COLLECTIONS.smsConsents, consentId, nextRecord, { merge: true });
+    return { consentId, record: nextRecord };
+  });
+};
+
+const markSmsConsentChallengeSent = async ({ consentId, challengeId, provider, method }) => {
+  const sentAt = nowIso();
+  const db = requireFirestore();
+  const patch = {
       verificationSentAt: sentAt,
       verificationProvider: provider || "sms",
       verificationMethod: method || "sms_otp",
+      verificationDeliveryStatus: "sent",
       updatedAt: sentAt,
-    },
-    { merge: true },
-  );
-  return sentAt;
+    };
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(ref);
+      const record = snapshot.exists ? snapshot.data() : null;
+      if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+      transaction.set(ref, patch, { merge: true });
+      return true;
+    });
+  }
+  return withSmsConsentMutationLock(consentId, async () => {
+    const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+    if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+    await setDoc(COLLECTIONS.smsConsents, consentId, patch, { merge: true });
+    return true;
+  });
+};
+
+const markInviteSmsChallengeDelivery = async ({ consentId, challengeId, status }) => {
+  const updatedAt = nowIso();
+  const patch = {
+    verificationDeliveryStatus: status,
+    ...(status === "failed" ? {
+      verificationCodeHash: null,
+      verificationCodeSalt: null,
+      verificationExpiresAt: null,
+    } : {}),
+    updatedAt,
+  };
+  const db = requireFirestore();
+  if (db) {
+    return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.smsConsents).doc(consentId);
+      const snapshot = await transaction.get(ref);
+      const record = snapshot.exists ? snapshot.data() : null;
+      if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+      transaction.set(ref, patch, { merge: true });
+      return true;
+    });
+  }
+  return withSmsConsentMutationLock(consentId, async () => {
+    const record = await getDoc(COLLECTIONS.smsConsents, consentId);
+    if (record?.status !== "pending" || record.verificationChallengeId !== challengeId) return false;
+    await setDoc(COLLECTIONS.smsConsents, consentId, patch, { merge: true });
+    return true;
+  });
 };
 
 const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
@@ -1779,8 +1994,17 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
   if (!consentId) throw httpError(400, "A church is required for SMS consent.");
   const db = requireFirestore();
-  const invalid = () => {
-    throw httpError(400, "That verification code is not valid or has expired.");
+  const throwVerificationFailure = (reason) => {
+    if (reason === "expired") {
+      throw httpError(409, "That verification code expired. Request a new code or continue without SMS.", "sms_challenge_expired");
+    }
+    if (reason === "locked" || reason === "max_attempts") {
+      throw httpError(409, "This verification code can no longer be used. Request a new code or continue without SMS.", "sms_challenge_unavailable");
+    }
+    if (reason === "unavailable") {
+      throw httpError(409, "This verification code is no longer available. Request a new code or continue without SMS.", "sms_challenge_unavailable");
+    }
+    throw httpError(400, "That verification code is not valid.", "sms_code_invalid");
   };
 
   if (db) {
@@ -1811,8 +2035,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
           );
         }
         return {
-          status:
-            attempts >= SMS_CONSENT_MAX_ATTEMPTS ? "max_attempts" : "invalid",
+          status: attempts >= SMS_CONSENT_MAX_ATTEMPTS ? "max_attempts" : result.reason,
         };
       }
       const verifiedAt = nowIso();
@@ -1836,7 +2059,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
       return { status: "verified", verifiedAt };
     });
 
-    if (transactionResult.status !== "verified") invalid();
+    if (transactionResult.status !== "verified") throwVerificationFailure(transactionResult.status);
     const { verifiedAt } = transactionResult;
     return { consentId, verifiedAt };
   }
@@ -1864,7 +2087,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
           { merge: true },
         );
       }
-      invalid();
+      throwVerificationFailure(result.reason);
     }
     const verifiedAt = nowIso();
     await setDoc(
@@ -5140,6 +5363,7 @@ export const seedPendingInviteForServerTests = async ({
   role = "member",
   appAccess = "view",
   inviteId = createId("invite"),
+  memberId = "",
   expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString(),
   createdByUid = "user_invite_seed",
   permissions,
@@ -5180,6 +5404,7 @@ export const seedPendingInviteForServerTests = async ({
   const invite = {
     inviteId,
     churchId,
+    ...(memberId ? { memberId } : {}),
     email: normalizedEmail,
     role,
     appAccess,
@@ -5199,6 +5424,7 @@ export const seedRosterMemberForServerTests = async ({
   memberId = createId("member"),
   churchId = "church_roster_seed_test",
   userId = "",
+  phoneNumber = "",
   invitedAt,
 } = {}) => {
   if (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT !== "1") {
@@ -5215,6 +5441,7 @@ export const seedRosterMemberForServerTests = async ({
     memberId,
     churchId,
     userId,
+    ...(phoneNumber ? { phoneNumber } : {}),
     ...(invitedAt ? { invitedAt } : {}),
   };
   await setDoc(COLLECTIONS.teamRosterMembers, memberId, member, {
@@ -6443,6 +6670,57 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   validateReplacementCandidate: (...args) =>
     teamsAuthHandlers.validateReplacementCandidate(...args),
 });
+
+const isInviteSmsConsentEnabled = () =>
+  process.env.SMS_INVITE_CONSENT_ENABLED === "true";
+
+const getAcceptedInviteSmsContext = async ({ inviteToken, idToken }) => {
+  if (!isInviteSmsConsentEnabled()) {
+    throw httpError(503, "SMS signup from invitations is not available yet.");
+  }
+  const token = String(inviteToken || "").trim();
+  const identityToken = String(idToken || "").trim();
+  if (!token || !identityToken) {
+    throw httpError(401, "Sign in with the invited email address to continue.");
+  }
+  const invite = await findDocByTokenHash(COLLECTIONS.invites, token);
+  if (!invite || invite.status !== "accepted") {
+    throw httpError(409, "Accept the church invite before signing up for SMS.");
+  }
+  const verified = await verifyIdToken(identityToken);
+  if (normalizeEmail(verified.email || "") !== invite.email) {
+    throw httpError(403, "This invite is for a different email address.");
+  }
+  const membership = await getDoc(
+    COLLECTIONS.memberships,
+    membershipIdFor({ churchId: invite.churchId, userId: verified.uid }),
+  );
+  if (!membership || membership.status !== "active") {
+    throw httpError(403, "Join the church before signing up for SMS.");
+  }
+
+  const memberId = String(invite.memberId || "").trim();
+  const member = memberId
+    ? await getDoc(COLLECTIONS.teamRosterMembers, memberId)
+    : null;
+  const linkedMember =
+    member &&
+    member.churchId === invite.churchId &&
+    (!member.userId || member.userId === verified.uid) &&
+    !member.archivedAt
+      ? member
+      : null;
+  const rosterPhoneNumber = normalizeUsPhoneNumber(
+    linkedMember?.phoneNumber || "",
+  ) || "";
+
+  return {
+    invite,
+    user: { uid: verified.uid, email: invite.email },
+    memberId: linkedMember ? memberId : "",
+    rosterPhoneNumber,
+  };
+};
 
 export const authHandlers = {
   handleSmsStatusWebhook: smsStatusWebhookHandler,
@@ -7674,6 +7952,7 @@ export const authHandlers = {
         }
         await markSmsConsentChallengeSent({
           consentId,
+          challengeId: challenge.challengeId,
           provider: delivery?.provider,
           method: delivery?.method,
         });
@@ -7798,6 +8077,70 @@ export const authHandlers = {
           statusCode >= 500
             ? "Could not confirm SMS signup cancellation. The verification code may remain usable until it expires."
             : error.message || "Could not confirm SMS signup cancellation.",
+      });
+    }
+  },
+
+  /** Church admins can record a member's verbal or signed-form consent. */
+  async recordMemberSmsConsent(req, res) {
+    try {
+      const churchId = String(req.params?.churchId || "").trim();
+      if (!churchId) throw httpError(400, "A church is required.");
+      await assertCsrf(req);
+      const admin = await requireAdminSession(req, churchId);
+      const memberId = String(req.body?.memberId || "").trim();
+      const phoneNumberSnapshot = String(req.body?.phoneNumberSnapshot || "").trim();
+      const source = String(req.body?.source || "").trim();
+      const consentedAt = String(req.body?.consentedAt || "").trim();
+      if (req.body?.confirmed !== true) {
+        throw httpError(400, "Confirm that the person agreed to receive WorshipSync SMS messages.");
+      }
+      if (!memberId) throw httpError(400, "Choose a roster member.");
+      if (!normalizeUsPhoneNumber(phoneNumberSnapshot)) {
+        throw httpError(400, "A valid mobile number is required.");
+      }
+      if (!["admin_verbal", "admin_signed_form"].includes(source)) {
+        throw httpError(400, "Choose verbal consent or a signed form.");
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(consentedAt) || Number.isNaN(Date.parse(`${consentedAt}T00:00:00Z`)) || new Date(`${consentedAt}T00:00:00Z`).toISOString().slice(0, 10) !== consentedAt) {
+        throw httpError(400, "Enter the date consent was obtained.");
+      }
+      if (consentedAt > nowIso().slice(0, 10)) {
+        throw httpError(400, "The consent date cannot be in the future.");
+      }
+      const phoneNumber = normalizeUsPhoneNumber(phoneNumberSnapshot);
+      const result = await recordAdminSmsConsent({
+        churchId,
+        memberId,
+        phoneNumberSnapshot,
+        source,
+        consentedAt,
+        recordedByUid: admin.user.uid,
+      });
+      try {
+        await addSecurityEvent({
+          type: "sms_consent_recorded_by_admin",
+          churchId,
+          consentId: result.consentId,
+          memberId,
+          phoneHash: hashValue(phoneNumber),
+          source,
+          recordedByUid: admin.user.uid,
+        });
+      } catch (auditError) {
+        // The consent write is already durable; report success so the admin
+        // doesn't retry a completed write and see a misleading conflict.
+        console.error("Could not audit admin-recorded SMS consent.", auditError);
+      }
+      return res.json({ success: true, eligibility: { status: "enabled", eligible: true, phoneNumber } });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        ...(error.code ? { code: error.code } : {}),
+        errorMessage: statusCode >= 500
+          ? "Could not record SMS consent. Try again in a moment."
+          : error.message || "Could not record SMS consent.",
       });
     }
   },
@@ -8493,11 +8836,400 @@ export const authHandlers = {
       return res.json({
         success: true,
         churchName,
+        smsInviteConsentEnabled: isInviteSmsConsentEnabled(),
       });
     } catch (error) {
       return res.status(error.statusCode || 500).json({
         success: false,
         errorMessage: error.message || "Could not load invite details",
+      });
+    }
+  },
+
+  /** Returns SMS details only after the invited account has accepted the invite. */
+  async getInviteSmsContext(req, res) {
+    try {
+      const context = await getAcceptedInviteSmsContext({
+        inviteToken: req.body?.inviteToken,
+        idToken: req.body?.idToken,
+      });
+      const consent = context.rosterPhoneNumber
+        ? await getDoc(
+            COLLECTIONS.smsConsents,
+            smsConsentIdForChurchPhone(context.invite.churchId, context.rosterPhoneNumber),
+          )
+        : null;
+      const consentStatus =
+        consent?.status === "opted_out" || consent?.optedOutAt || consent?.optedOut === true
+          ? "opted_out"
+          : consent?.status === "opted_in"
+            ? "opted_in"
+            : consent?.status === "pending" && consent.verificationCodeHash &&
+                new Date(consent.verificationExpiresAt || "").getTime() > Date.now()
+              ? "pending"
+              : "none";
+      return res.json({
+        success: true,
+        smsInviteConsentEnabled: true,
+        ...(context.rosterPhoneNumber ? { rosterPhoneNumber: context.rosterPhoneNumber } : {}),
+        smsConsentStatus: consentStatus,
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        errorMessage: statusCode >= 500
+          ? "Could not load SMS signup details. You can continue without SMS or try again."
+          : error.message || "Could not load SMS signup details.",
+      });
+    }
+  },
+
+  /** Invitation signup uses the same church-and-phone consent record as every other path. */
+  async submitInviteSmsConsent(req, res) {
+    let deliveryMayHaveOccurred = false;
+    let activeChallenge = null;
+    let pendingChallengeCancellation = null;
+    try {
+      const parsed = parseSmsConsentBody(req.body);
+      if (!parsed.ok) throw httpError(400, parsed.errorMessage);
+      const context = await getAcceptedInviteSmsContext({
+        inviteToken: req.body?.inviteToken,
+        idToken: req.body?.idToken,
+      });
+      const expectedRosterPhone = normalizeUsPhoneNumber(
+        req.body?.expectedRosterPhoneNumber || "",
+      ) || "";
+      if (context.rosterPhoneNumber !== expectedRosterPhone) {
+        throw httpError(409, "This mobile number changed. Reload the invite and review it before opting in.");
+      }
+      if (context.rosterPhoneNumber && parsed.phoneNumber !== context.rosterPhoneNumber) {
+        throw httpError(409, "Use the mobile number saved for this church invitation.");
+      }
+      enforceRateLimit({
+        scope: "invite-sms-consent-ip",
+        key: `${getClientIp(req)}:${hashValue(req.body?.inviteToken || "")}`,
+        limit: 5,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 30 * 60 * 1000,
+      });
+      enforceRateLimit({
+        scope: "sms-consent-phone",
+        key: `${context.invite.churchId}:${hashValue(parsed.phoneNumber)}`,
+        limit: 3,
+        windowMs: 60 * 60 * 1000,
+        blockMs: 60 * 60 * 1000,
+      });
+
+      const existingConsent = await getDoc(
+        COLLECTIONS.smsConsents,
+        smsConsentIdForChurchPhone(context.invite.churchId, parsed.phoneNumber),
+      );
+      if (existingConsent?.status === "opted_out" || existingConsent?.optedOutAt || existingConsent?.optedOut === true) {
+        return res.json({ success: true, outcome: "opted_out" });
+      }
+      if (existingConsent?.status === "opted_in") {
+        return res.json({ success: true, outcome: "already_opted_in" });
+      }
+      if (
+        existingConsent?.status === "pending" &&
+        existingConsent.verificationCodeHash &&
+        new Date(existingConsent.verificationExpiresAt || "").getTime() > Date.now() &&
+        (existingConsent.source !== "invite_signup" ||
+          existingConsent.inviteId !== context.invite.inviteId ||
+          existingConsent.userId !== context.user.uid)
+      ) {
+        return res.json({ success: true, outcome: "verification_pending" });
+      }
+
+      const { consentId, challenge, shouldSend, retry, alreadyOptedIn } = await upsertSmsConsent(
+        context.invite.churchId,
+        parsed.phoneNumber,
+        {
+          ...parsed,
+          source: "invite_signup",
+          consentProvenance: {
+            inviteId: context.invite.inviteId,
+            memberId: context.memberId || null,
+            signupOrigin: "church_invitation",
+            rosterPhoneSnapshot: context.rosterPhoneNumber || null,
+            userId: context.user.uid,
+          },
+          preserveExistingActive: true,
+        },
+      );
+      if (alreadyOptedIn) {
+        return res.json({ success: true, outcome: "already_opted_in" });
+      }
+      activeChallenge = challenge || null;
+      pendingChallengeCancellation = challenge ? {
+        churchId: context.invite.churchId,
+        phoneNumber: parsed.phoneNumber,
+        challengeId: challenge.challengeId,
+        cancellationToken: challenge.cancellationToken,
+      } : null;
+      // A retry can refer to a challenge delivered by an earlier request. If
+      // anything later fails, keep the client from treating it as safe to resend.
+      deliveryMayHaveOccurred = Boolean(!shouldSend && challenge);
+      if (shouldSend && challenge) {
+        const messagingConfig = await getDoc(
+          COLLECTIONS.churchMessagingConfigs,
+          context.invite.churchId,
+        );
+        try {
+          deliveryMayHaveOccurred = true;
+          const delivery = await sendSmsConsentVerificationCode({
+            phoneNumber: parsed.phoneNumber,
+            code: challenge.code,
+            challengeId: challenge.challengeId,
+            config: messagingConfig,
+          });
+          if (["uncertain", "unknown"].includes(String(delivery?.outcome || delivery?.status || "").toLowerCase())) {
+            await markInviteSmsChallengeDelivery({
+              consentId,
+              challengeId: challenge.challengeId,
+              status: "unknown",
+            });
+            return res.status(202).json({
+              success: false,
+              outcome: "delivery_uncertain",
+              challengeId: challenge.challengeId,
+              cancellationToken: challenge.cancellationToken,
+              errorMessage: "The SMS provider outcome is uncertain. Check your messages before trying again, or continue without SMS.",
+            });
+          }
+          if (
+            String(delivery?.outcome || "").toLowerCase() === "failed" ||
+            String(delivery?.status || "").toLowerCase() === "failed"
+          ) {
+            const definitive = delivery?.definitive === true ||
+              String(delivery?.outcome || "").toLowerCase() === "failed" ||
+              String(delivery?.status || "").toLowerCase() === "failed";
+            await markInviteSmsChallengeDelivery({
+              consentId,
+              challengeId: challenge.challengeId,
+              status: definitive ? "failed" : "unknown",
+            });
+            return res.status(definitive ? 502 : 202).json({
+              success: false,
+              outcome: definitive ? "delivery_failed" : "delivery_uncertain",
+              challengeId: challenge.challengeId,
+              cancellationToken: challenge.cancellationToken,
+              errorMessage: definitive
+                ? "The SMS provider rejected the verification text. You can try sending a new code or continue without SMS."
+                : "The SMS provider outcome is uncertain. Check your messages before trying again, or continue without SMS.",
+            });
+          }
+          await markSmsConsentChallengeSent({
+            consentId,
+            challengeId: challenge.challengeId,
+            provider: delivery?.provider,
+            method: delivery?.method,
+          });
+        } catch (deliveryError) {
+          const providerErrorCode = String(deliveryError?.code || "");
+          const timeoutOrNetworkFailure =
+            deliveryError?.name === "AbortError" ||
+            /TIMEOUT|ETIMEDOUT|ECONNRESET|ECONNABORTED|EAI_AGAIN|ECONNREFUSED/i.test(providerErrorCode) ||
+            Number(deliveryError?.statusCode) === 408;
+          const definitive =
+            !timeoutOrNetworkFailure && (
+              deliveryError?.code === "sms_provider_not_configured" ||
+              Boolean(deliveryError?.statusCode >= 400 && deliveryError.statusCode < 500) ||
+              Boolean(providerErrorCode && /^\d{5}$/.test(providerErrorCode))
+            );
+          const outcome = definitive ? "delivery_failed" : "delivery_uncertain";
+          await markInviteSmsChallengeDelivery({
+            consentId,
+            challengeId: challenge.challengeId,
+            status: definitive ? "failed" : "unknown",
+          });
+          return res.status(definitive ? 502 : 202).json({
+            success: false,
+            outcome,
+            challengeId: challenge.challengeId,
+            cancellationToken: challenge.cancellationToken,
+            errorMessage: definitive
+              ? "The SMS provider rejected the verification text. You can try sending a new code or continue without SMS."
+              : "The SMS provider outcome is uncertain. Check your messages before trying again, or continue without SMS.",
+          });
+        }
+      }
+      if (!retry) {
+        await addSecurityEvent({
+          type: "sms_consent_verification_requested",
+          churchId: context.invite.churchId,
+          consentId,
+          phoneHash: hashValue(parsed.phoneNumber),
+          source: "invite_signup",
+          inviteId: context.invite.inviteId,
+          consentVersion: SMS_CONSENT_VERSION,
+        });
+      }
+      const currentConsent = !shouldSend
+        ? await getDoc(COLLECTIONS.smsConsents, consentId)
+        : null;
+      const deliveryStatus = shouldSend
+        ? "sent"
+        : currentConsent?.verificationDeliveryStatus || "unknown";
+      return res.json({
+        success: true,
+        outcome: !shouldSend && deliveryStatus !== "sent"
+          ? "delivery_uncertain"
+          : "verification_required",
+        deliveryStatus,
+        challengeId: challenge.challengeId,
+        cancellationToken: challenge.cancellationToken,
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      if (!deliveryMayHaveOccurred && pendingChallengeCancellation) {
+        try {
+          const cancellation = await cancelSmsConsentVerification(pendingChallengeCancellation);
+          if (!cancellation.confirmed) {
+            console.warn("Could not clear an undelivered SMS verification challenge after a pre-send failure.");
+          }
+        } catch (cancellationError) {
+          console.error("Could not clear an undelivered SMS verification challenge after a pre-send failure.", cancellationError);
+        }
+      }
+      const outcome = deliveryMayHaveOccurred ? "delivery_uncertain" : "rejected_before_send";
+      return res.status(statusCode).json({
+        success: false,
+        outcome,
+        ...(deliveryMayHaveOccurred && activeChallenge
+          ? {
+              challengeId: activeChallenge.challengeId,
+              cancellationToken: activeChallenge.cancellationToken,
+            }
+          : {}),
+        errorMessage:
+          deliveryMayHaveOccurred || statusCode >= 500
+            ? "Could not start SMS verification. You can continue without SMS or try again later."
+            : error.message || "Could not start SMS verification.",
+      });
+    }
+  },
+
+  async cancelInviteSmsConsent(req, res) {
+    try {
+      const parsed = parseSmsConsentCancellationBody(req.body);
+      if (!parsed.ok) throw httpError(400, parsed.errorMessage);
+      const context = await getAcceptedInviteSmsContext({
+        inviteToken: req.body?.inviteToken,
+        idToken: req.body?.idToken,
+      });
+      const expectedRosterPhone = normalizeUsPhoneNumber(
+        req.body?.expectedRosterPhoneNumber || "",
+      ) || "";
+      if (
+        context.rosterPhoneNumber !== expectedRosterPhone ||
+        (expectedRosterPhone && parsed.phoneNumber !== expectedRosterPhone)
+      ) {
+        throw httpError(409, "This mobile number changed. Reload the invite before continuing.");
+      }
+      const consentId = smsConsentIdForChurchPhone(context.invite.churchId, parsed.phoneNumber);
+      const consent = await getDoc(COLLECTIONS.smsConsents, consentId);
+      if (
+        consent?.source !== "invite_signup" ||
+        consent?.inviteId !== context.invite.inviteId ||
+        consent?.userId !== context.user.uid ||
+        consent?.rosterPhoneSnapshot !== (context.rosterPhoneNumber || null) ||
+        consent?.status !== "pending"
+      ) {
+        return res.json({ success: true, cancelled: false });
+      }
+      const result = await cancelSmsConsentVerification({
+        churchId: context.invite.churchId,
+        phoneNumber: parsed.phoneNumber,
+        challengeId: parsed.challengeId,
+        cancellationToken: parsed.cancellationToken,
+      });
+      if (result.confirmed && !result.alreadyCancelled) {
+        await addSecurityEvent({
+          type: "sms_consent_verification_cancelled",
+          churchId: context.invite.churchId,
+          consentId,
+          phoneHash: hashValue(parsed.phoneNumber),
+          source: "invite_signup",
+          inviteId: context.invite.inviteId,
+        });
+      }
+      return res.json({ success: true, cancelled: result.confirmed });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        cancelled: false,
+        errorMessage: statusCode >= 500
+          ? "Could not confirm SMS signup cancellation. You can continue without SMS or retry."
+          : error.message || "Could not confirm SMS signup cancellation.",
+      });
+    }
+  },
+
+  async verifyInviteSmsConsent(req, res) {
+    try {
+      const parsed = parseSmsConsentVerificationBody(req.body);
+      if (!parsed.ok) throw httpError(400, parsed.errorMessage);
+      const context = await getAcceptedInviteSmsContext({
+        inviteToken: req.body?.inviteToken,
+        idToken: req.body?.idToken,
+      });
+      const expectedRosterPhone = normalizeUsPhoneNumber(
+        req.body?.expectedRosterPhoneNumber || "",
+      ) || "";
+      if (context.rosterPhoneNumber !== expectedRosterPhone) {
+        throw httpError(409, "This mobile number changed. Reload the invite and review it before opting in.");
+      }
+      if (context.rosterPhoneNumber && parsed.phoneNumber !== context.rosterPhoneNumber) {
+        throw httpError(409, "Use the mobile number saved for this church invitation.");
+      }
+      const consentId = smsConsentIdForChurchPhone(
+        context.invite.churchId,
+        parsed.phoneNumber,
+      );
+      const consent = await getDoc(COLLECTIONS.smsConsents, consentId);
+      if (
+        consent?.source !== "invite_signup" ||
+        consent?.inviteId !== context.invite.inviteId ||
+        consent?.userId !== context.user.uid ||
+        consent?.rosterPhoneSnapshot !== (context.rosterPhoneNumber || null)
+      ) {
+        throw httpError(409, "This SMS verification is no longer available. Start again from the invitation.");
+      }
+      enforceRateLimit({
+        scope: "sms-consent-verify-ip",
+        key: `${getClientIp(req)}:${hashValue(parsed.phoneNumber)}`,
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+        blockMs: 15 * 60 * 1000,
+      });
+      const result = await verifySmsConsent(
+        context.invite.churchId,
+        parsed.phoneNumber,
+        parsed.code,
+        parsed.challengeId,
+      );
+      await addSecurityEvent({
+        type: "sms_consent_verified",
+        churchId: context.invite.churchId,
+        consentId: result.consentId,
+        phoneHash: hashValue(parsed.phoneNumber),
+        source: "invite_signup",
+        inviteId: context.invite.inviteId,
+        verificationMethod: "sms_otp",
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        ...(error.code ? { code: error.code } : {}),
+        errorMessage:
+          statusCode >= 500
+            ? "Could not verify SMS consent right now. You can continue without SMS or try again."
+            : error.message || "That verification code is not valid or has expired.",
       });
     }
   },

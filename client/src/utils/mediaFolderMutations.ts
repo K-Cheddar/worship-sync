@@ -114,7 +114,10 @@ export function moveMediaToFolder(
   list: MediaType[],
 ): MediaType[] {
   const t = new Date().toISOString();
-  return list.map((m) =>
-    mediaIds.has(m.id) ? { ...m, folderId: targetFolderId, updatedAt: t } : m,
-  );
+  return list.map((m) => {
+    if (!mediaIds.has(m.id)) return m;
+    const moved = { ...m, folderId: targetFolderId, updatedAt: t };
+    delete moved._keepContentsRehomeOperationId;
+    return moved;
+  });
 }

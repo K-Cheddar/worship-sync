@@ -1166,6 +1166,8 @@ export type MediaType = {
   canvaSource?: CanvaMediaSource;
   /** App media library folder; root / unset = null */
   folderId?: string | null;
+  /** Temporary ownership marker for a Keep Contents folder relocation. */
+  _keepContentsRehomeOperationId?: string;
   cloudUploadRequest?: MediaCloudUploadRequest | null;
 };
 
@@ -1175,6 +1177,8 @@ export type MediaFolder = {
   parentId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Temporary ownership marker for a Keep Contents folder relocation. */
+  _keepContentsRehomeOperationId?: string;
 };
 
 /** Last media folder when editing a specific item kind on `/controller/item/...`. */

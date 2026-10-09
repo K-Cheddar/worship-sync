@@ -1939,6 +1939,7 @@ listenerMiddleware.startListening({
 
 // handle updating media
 type PendingMediaPersistenceState = Pick<RootState["media"], "list" | "folders">;
+const mediaSaveQueues = new WeakMap<PouchDB.Database, Promise<void>>();
 let pendingMediaPersistence: {
   db: PouchDB.Database;
   state: PendingMediaPersistenceState;
@@ -2002,7 +2003,9 @@ listenerMiddleware.startListening({
       };
       if (!mediaSaveIsCurrent()) return;
 
-      try {
+      const previousSave = mediaSaveQueues.get(dbAtStart) ?? Promise.resolve();
+      const queuedSave = previousSave.catch(() => undefined).then(async () => {
+        if (!mediaSaveIsCurrent()) return;
         const latestMedia = (listenerApi.getState() as RootState).media;
         const remoteChanges = { itemIds: new Set<string>(), folderIds: new Set<string>() };
         baseline.inFlightRemoteChanges ??= new Set();
@@ -2022,25 +2025,67 @@ listenerMiddleware.startListening({
           // do affect which rows are still authoritative for broadcast/cache.
           if (!mediaSaveIsCurrent()) return;
           const currentMedia = (listenerApi.getState() as RootState).media;
+          const committedItems = new Map<string, Record<string, unknown>>();
+          const committedItemDeletes = new Set<string>();
+          let committedFolders: typeof baseline.state.folders | undefined;
+          changedDocs.forEach((value) => {
+            if (!value || typeof value !== "object") return;
+            const doc = value as Record<string, unknown>;
+            if (doc._id === "media-folders" && Array.isArray(doc.folders)) {
+              committedFolders = doc.folders as typeof baseline.state.folders;
+              return;
+            }
+            if (typeof doc._id !== "string" || !doc._id.startsWith("media-item:")) return;
+            const id = doc._id.slice("media-item:".length);
+            if (doc._deleted === true) {
+              committedItemDeletes.add(id);
+              return;
+            }
+            const row = { ...doc };
+            delete row._id;
+            delete row._rev;
+            delete row.docType;
+            committedItems.set(id, row);
+          });
           const rebaseCommittedRows = <T extends { id: string }>(
-            committedRows: T[],
+            acknowledgedRows: T[],
+            persistedRows: Map<string, Record<string, unknown>>,
+            deletedIds: Set<string>,
             authoritativeRows: T[],
-            changedIds: Set<string>,
+            remoteChangedIds: Set<string>,
           ) => {
-            const rows = new Map(committedRows.map((row) => [row.id, row]));
+            const rows = new Map(acknowledgedRows.map((row) => [row.id, row]));
             const authoritativeById = new Map(authoritativeRows.map((row) => [row.id, row]));
-            changedIds.forEach((id) => {
+            persistedRows.forEach((row, id) => {
+              if (!remoteChangedIds.has(id)) rows.set(id, row as T);
+            });
+            deletedIds.forEach((id) => {
+              if (!remoteChangedIds.has(id)) rows.delete(id);
+            });
+            remoteChangedIds.forEach((id) => {
               const row = authoritativeById.get(id);
               if (row) rows.set(id, row);
               else rows.delete(id);
             });
             return [...rows.values()];
           };
-          // Advance through the committed snapshot, while retaining remote wins
-          // that arrived during the Pouch write. New local edits remain pending.
+          // Advance only rows Pouch actually committed. Newer local edits stay
+          // dirty against the acknowledged value and are saved by the next queue entry.
           baseline.state = {
-            list: rebaseCommittedRows(latestMedia.list, currentMedia.list, remoteChanges.itemIds),
-            folders: rebaseCommittedRows(latestMedia.folders, currentMedia.folders, remoteChanges.folderIds),
+            list: rebaseCommittedRows(
+              baseline.state.list,
+              committedItems,
+              committedItemDeletes,
+              currentMedia.list,
+              remoteChanges.itemIds,
+            ),
+            folders: rebaseCommittedRows(
+              committedFolders ?? baseline.state.folders,
+              new Map(),
+              new Set(),
+              currentMedia.folders,
+              remoteChanges.folderIds,
+            ),
           };
           if (
             JSON.stringify(baseline.state.list) === JSON.stringify(currentMedia.list) &&
@@ -2096,6 +2141,10 @@ listenerMiddleware.startListening({
             delete baseline.inFlightRemoteChanges;
           }
         }
+      });
+      mediaSaveQueues.set(dbAtStart, queuedSave.then(() => undefined, () => undefined));
+      try {
+        await queuedSave;
       } catch (error) {
         console.error(
           "Failed to persist media library to PouchDB (debounced listener):",

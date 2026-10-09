@@ -50,15 +50,30 @@ export const useServicePlanOutlinePush = () => {
       onItemAdded?: (item: ServiceItem) => Promise<void> | void,
       shouldContinue: () => boolean = () => true,
     ): Promise<ServicePlanOutlinePushResult> => {
-      if (!selectedList) {
+      const stateAtStart = store.getState().undoable.present;
+      const selectedListAtStart = stateAtStart.itemLists.selectedList;
+      if (!selectedListAtStart) {
         throw new Error("Open or create an item list in the Controller first.");
       }
-      const startingContext = contextRef.current;
+      if (selectedList?._id !== selectedListAtStart._id) {
+        throw new Error("The selected outline changed before the service plan could be imported.");
+      }
+      const startingContext = {
+        ...contextRef.current,
+        selectedList: selectedListAtStart,
+        db,
+        bibleDb,
+        songs,
+        customDocuments,
+      };
+      const startingList = stateAtStart.itemList.list;
       // One run uses one mapping configuration even if integrations refresh
       // while the operator is watching the visible per-item progress.
       const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
       const isContextCurrent = () =>
         isSourcePlanCurrent()
+        &&
+        store.getState().undoable.present.itemLists.selectedList?._id === startingContext.selectedList._id
         &&
         contextRef.current.selectedList?._id === startingContext.selectedList?._id
         && contextRef.current.db === startingContext.db
@@ -67,7 +82,7 @@ export const useServicePlanOutlinePush = () => {
         && contextRef.current.customDocuments === startingContext.customDocuments;
       const planResult = planServicePlanOutlineItems({
         plan,
-        currentList,
+        currentList: startingList,
         songs,
         customDocuments,
         sectionRules: sectionRulesSnapshot,
@@ -91,12 +106,13 @@ export const useServicePlanOutlinePush = () => {
         if (!isContextCurrent()) {
           throw new Error("The selected outline changed before the service plan could be imported.");
         }
+        const destination = step.destination;
         let latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === step.planned.listId)) continue;
-        if (!latestList.some((existing) => existing.type === "heading" && existing.listId === step.targetHeading.listId)) {
+        if (destination.kind === "heading" && !latestList.some((existing) => existing.type === "heading" && existing.listId === destination.listId)) {
           recordPlacementIssue({
             sectionName: step.sectionName,
-            headingName: step.targetHeading.name,
+            headingName: destination.name,
             reason: "heading-removed",
           });
           continue;
@@ -110,22 +126,34 @@ export const useServicePlanOutlinePush = () => {
         }
         latestList = store.getState().undoable.present.itemList.list;
         if (latestList.some((existing) => existing.listId === item.listId)) continue;
-        const placedList = insertServicePlanOutlineItem(latestList, item, step.targetHeading);
+        const placedList = insertServicePlanOutlineItem(latestList, item, destination);
         if (!placedList) {
           recordPlacementIssue({
             sectionName: step.sectionName,
-            headingName: step.targetHeading.name,
+            ...(destination.kind === "heading" ? { headingName: destination.name } : {}),
             reason: "heading-removed",
           });
           continue;
         }
+        if (!isContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
         dispatch(updateItemList(placedList));
         if (db && item.type === "bible") {
+          if (!isContextCurrent()) {
+            throw new Error("The selected outline changed before the service plan could be imported.");
+          }
           dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
         }
         items.push(item);
         await onItemAdded?.(item);
+        if (!isContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
         await delay(OUTLINE_STEP_DELAY_MS);
+        if (!isContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
       }
       return {
         items,
@@ -134,7 +162,7 @@ export const useServicePlanOutlinePush = () => {
         placementIssues,
       };
     },
-    [currentList, db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
+    [db, bibleDb, customDocuments, dispatch, selectedList, songs, store, sectionRules],
   );
 
   return { pushPlanToOutline, selectedListName: selectedList?.name };

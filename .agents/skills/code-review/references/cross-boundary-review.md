@@ -33,3 +33,29 @@ Use these recurring shapes to identify where a review must follow work beyond th
 **Review questions:** Can the resource, MIME type, redirect target, range response, permission, token, or preview classification change between validation and use? Is the actual use bound to the validated identity and result?
 
 **Regression test:** Make the probe/permission step and later GET/mutation disagree or change across a controlled boundary. Assert the operation rejects or safely handles the mismatch, including redirects and range behavior where relevant.
+
+## Input -> normalize -> decide -> commit
+
+**Failure mechanism:** A valid input representation is recognized at one stage but dropped by a later branch that checks only a different representation, or validation reports a missing prerequisite and downstream code still dereferences it.
+
+**Review questions:** Trace a representative input field from parsing through normalization, validation, preview, and persistence. Which representations are supported (including blank, absent, ID-only, or alternate-column forms)? Does every consumer use the normalized value? Can an invalid intermediate state reach code that assumes validation succeeded?
+
+**Regression test:** Import an ID-only value with no mapped display name and assert the resolved ID survives the commit. Separately, omit a required destination and assert preview returns a recoverable validation issue without dereferencing a missing entity or aborting unrelated rows.
+
+## Preview -> approve -> commit -> retry
+
+**Failure mechanism:** Preview and commit resolve ownership or matching entities differently, hide a destructive consequence, or lose approved decisions when a prior durable step partially succeeded and the user retries.
+
+**Review questions:** Do preview and commit share the same team/owner resolution? Are additions, replacements, preserved entries, and removals represented for both Merge and Replace? Are signed preview settings still the settings committed? After partial success, does re-preview retain approved actions and accept IDs/resources created by the earlier step?
+
+**Regression test:** Give two teams same-named positions and choose one owning team; compare the preview with the actual Replace mutation. Then let team/position creation succeed before a later step fails, re-preview, and assert prior approvals, signature/settings, and newly created IDs remain valid.
+
+## Async outcome -> operator recovery
+
+**Failure mechanism:** A valid server outcome is ignored, or a terminal/uncertain async state leaves the operator without a safe action or with misleading status text.
+
+**Review questions:** Enumerate the response outcomes the server may validly return, including already-completed or concurrent outcomes. Does each caller consume them? After each request boundary, is pending state immediate and duplicate activation controlled? Can the operator recover from expiration, partial failure, refresh/remount, or interruption? Is a claim such as “active” backed by an actual running signal?
+
+**Regression test:** Make the server return an already-opted-in result during a concurrent consent update and assert the caller follows the idempotent success path. Exercise a delivered code expiring and assert a replacement action is available. Hold a multi-request action pending and assert the UI immediately shows progress and blocks duplicates. For local-source status, verify that presentation distinguishes “configured” from “running” when runtime status cannot be observed.
+
+These are scenario prompts, not a requirement to add a test for every branch in every review. Select the transitions relevant to the change, inspect the actual producer and consumer paths, and report existing test coverage and gaps in the standard review output.

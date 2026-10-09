@@ -4,7 +4,6 @@ import { verseType } from "../../types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { keepElementInView } from "../../utils/generalUtils";
 import cn from "classnames";
-import { hasRenderableVersesInRange } from "./bibleVerseRange";
 
 type BibleVersesListProps = {
   isLoading: boolean;
@@ -23,59 +22,62 @@ const BibleVersesList = ({
   canTransmit,
   sendVerse,
 }: BibleVersesListProps) => {
-  const [selectedVerse, setSelectedVerse] = useState<number>(-1);
+  const [selection, setSelection] = useState<{ index: number; shouldCenter: boolean }>({ index: -1, shouldCenter: false });
+  const selectedVerse = selection.index;
 
-  const hasRenderableVerses = useMemo(
-    () => hasRenderableVersesInRange(verses, startVerse, endVerse),
+  const renderableVerses = useMemo(
+    () =>
+      verses.filter(
+        ({ index, text }) =>
+          index >= startVerse && index <= endVerse && Boolean(text?.trim())
+      ),
     [verses, startVerse, endVerse]
   );
+
+  const hasRenderableVerses = renderableVerses.length > 0;
 
   const showEmpty = !isLoading && !hasRenderableVerses;
 
   useEffect(() => {
-    setSelectedVerse(-1);
-  }, [startVerse, endVerse]);
-
-  useEffect(() => {
+    if (selection.index < 0) return;
     const verseElement = document.getElementById(
-      `bible-verse-${selectedVerse + startVerse}`
+      `bible-verse-${selection.index}`
     );
     const parentElement = document.getElementById("bible-verses-list");
     if (verseElement && parentElement) {
       keepElementInView({
         child: verseElement,
         parent: parentElement,
-        shouldScrollToCenter: true,
-        keepNextInView: true,
+        ...(selection.shouldCenter
+          ? { shouldScrollToCenter: true, keepNextInView: true }
+          : { scrollOnlyIntoView: true }),
       });
     }
-  }, [selectedVerse, startVerse]);
+  }, [selection]);
 
   const advanceVerse = useCallback(() => {
-    const nextVerseIndex = Math.max(
-      Math.min(selectedVerse + 1, endVerse),
-      startVerse
+    const selectedPosition = renderableVerses.findIndex(
+      ({ index }) => index === selectedVerse
     );
-    if (nextVerseIndex === selectedVerse) return;
-    const nextVerse = verses[nextVerseIndex];
+    const nextPosition = selectedPosition < 0 ? 0 : selectedPosition + 1;
+    const nextVerse = renderableVerses[nextPosition];
     if (nextVerse) {
       sendVerse(nextVerse);
-      setSelectedVerse(nextVerse.index);
+      setSelection({ index: nextVerse.index, shouldCenter: true });
     }
-  }, [selectedVerse, endVerse, verses, startVerse, sendVerse]);
+  }, [selectedVerse, renderableVerses, sendVerse]);
 
   const previousVerse = useCallback(() => {
-    const prevVerseIndex = Math.min(
-      Math.max(selectedVerse - 1, startVerse),
-      endVerse
+    const selectedPosition = renderableVerses.findIndex(
+      ({ index }) => index === selectedVerse
     );
-    if (prevVerseIndex === selectedVerse) return;
-    const prevVerse = verses[prevVerseIndex];
+    const previousPosition = selectedPosition < 0 ? 0 : selectedPosition - 1;
+    const prevVerse = renderableVerses[previousPosition];
     if (prevVerse) {
       sendVerse(prevVerse);
-      setSelectedVerse(prevVerse.index);
+      setSelection({ index: prevVerse.index, shouldCenter: true });
     }
-  }, [selectedVerse, verses, endVerse, startVerse, sendVerse]);
+  }, [selectedVerse, renderableVerses, sendVerse]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -86,13 +88,12 @@ const BibleVersesList = ({
         target.isContentEditable;
 
       if (isTyping || !canTransmit) return;
-      if (e.key === " ") {
-        e.preventDefault();
-        advanceVerse();
-      }
       if (e.key === " " && e.shiftKey) {
         e.preventDefault();
         previousVerse();
+      } else if (e.key === " ") {
+        e.preventDefault();
+        advanceVerse();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -132,39 +133,37 @@ const BibleVersesList = ({
             isLoading && "opacity-30"
           )}
         >
-          {verses
-            .filter(({ index }) => index >= startVerse && index <= endVerse)
-            .map((verse) => {
-              const bg = verse.index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
-              return verse.text?.trim() ? (
-                <li
-                  key={verse.index}
-                  id={`bible-verse-${verse.index}`}
-                  className={`${bg} flex gap-2 p-1 border ${
-                    selectedVerse === verse.index
-                      ? "border-cyan-400"
-                      : "border-transparent"
-                  }`}
+          {renderableVerses.map((verse) => {
+            const bg = verse.index % 2 === 0 ? "bg-gray-600" : "bg-gray-800";
+            return (
+              <li
+                key={verse.index}
+                id={`bible-verse-${verse.index}`}
+                className={`${bg} flex gap-2 p-1 border ${
+                  selectedVerse === verse.index
+                    ? "border-cyan-400"
+                    : "border-transparent"
+                }`}
+              >
+                <span className="text-lg text-yellow-300">{verse.name}</span>
+                <span className="text-sm mr-auto">{verse.text}</span>
+                <Button
+                  color={canTransmit ? "#22c55e" : "gray"}
+                  padding="px-1 h-full"
+                  variant="tertiary"
+                  className="text-sm"
+                  svg={Send}
+                  onClick={() => {
+                    setSelection({ index: verse.index, shouldCenter: false });
+                    sendVerse(verse);
+                  }}
+                  disabled={!canTransmit}
                 >
-                  <span className="text-lg text-yellow-300">{verse.name}</span>
-                  <span className="text-sm mr-auto">{verse.text}</span>
-                  <Button
-                    color={canTransmit ? "#22c55e" : "gray"}
-                    padding="px-1 h-full"
-                    variant="tertiary"
-                    className="text-sm"
-                    svg={Send}
-                    onClick={() => {
-                      setSelectedVerse(verse.index);
-                      sendVerse(verse);
-                    }}
-                    disabled={!canTransmit}
-                  >
-                    Send
-                  </Button>
-                </li>
-              ) : null;
-            })}
+                  Send
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
