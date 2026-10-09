@@ -14338,6 +14338,8 @@ test("a member changed after commit validation fails stale without blocking othe
   }
   assert.equal(committed.payload.results.find((result) => result.row === 2).code, "stale_preview");
   assert.equal(committed.payload.results.find((result) => result.row === 3).status, "created");
+  assert.equal(committed.payload.status, "partial");
+  assert.equal(committed.payload.success, false);
   const saved = await getDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId);
   assert.equal(saved.notes, "Concurrent edit");
   assert.deepEqual(saved.positionIds, [positionIds.Keys]);
@@ -14374,6 +14376,43 @@ test("team membership and position changes invalidate an approved member preview
     body: { type: "members", destinationTeamId: first.teamId, previewToken: secondPreview.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: secondPreview.mapping, approvedRows: secondPreview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({ row, action, recordId: matchedId || undefined, record, expectedStateHash })) },
   });
   assert.equal(changedPositions.payload.results[0].code, "stale_preview");
+});
+
+test("stale member updates do not create imported team or position dependencies", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_import_stale_no_dependencies");
+  const { teamId } = await seedTeam(context, { teamName: "Worship" });
+  const member = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Sam", lastName: "Singer", teamIds: [teamId] },
+  });
+  const csv = `First Name,Last Name,Teams,Positions,WorshipSync Member ID\nSam,Singer,New Team,New Position,${member.payload.member.memberId}`;
+  const teamActions = [{ sourceValue: "New Team", action: "create", name: "New Team" }];
+  const pendingTeamId = `portable-pending-team-${createHash("sha256").update(`${hashPortableCsv(csv)}\u0000new team`).digest("hex").slice(0, 32)}`;
+  const positionActions = [{ teamId: pendingTeamId, sourceValue: "New Position", action: "create", name: "New Position" }];
+  const preview = await previewMemberCsv(context, csv, { teamActions, positionActions });
+  await setDoc(COLLECTIONS.teamRosterMembers, member.payload.member.memberId, { notes: "Concurrent edit" }, { merge: true });
+
+  const committed = await callHandler(authHandlers.commitPortableImport, {
+    context,
+    body: {
+      type: "members",
+      teamActions,
+      positionActions,
+      previewToken: preview.payload.previewToken,
+      previewCsvHash: hashPortableCsv(csv),
+      mapping: preview.mapping,
+      approvedRows: preview.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({
+        row, action, recordId: matchedId || undefined, record, expectedStateHash,
+      })),
+    },
+  });
+
+  assert.equal(committed.payload.results[0].code, "stale_preview");
+  assert.equal(committed.payload.status, "failed");
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context });
+  assert.equal(bootstrap.payload.teams.some((item) => item.name === "New Team"), false);
+  assert.equal(bootstrap.payload.positions.some((item) => item.name === "New Position"), false);
 });
 
 test("member import retry resumes roster synchronization after a partial in-memory write", async (t) => {

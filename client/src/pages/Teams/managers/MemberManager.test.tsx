@@ -1011,14 +1011,17 @@ describe("MemberManager roster contact information", () => {
     expect(memberRow).toHaveTextContent(
       "Media · Audio, Camera Operator, Livestream",
     );
-    expect(within(memberRow).getByLabelText("Member assignments")).toHaveClass(
-      "whitespace-nowrap",
-      "overflow-hidden",
-    );
+    const assignmentLine = within(memberRow).getByLabelText("Member assignments");
+    expect(assignmentLine).toHaveClass("whitespace-nowrap");
+    expect(
+      within(assignmentLine).getByRole("button", {
+        name: "Show 3 more positions for Rae Kim",
+      }),
+    ).toBeInTheDocument();
     const moreButton = screen.getByRole("button", {
       name: "Show 3 more positions for Rae Kim",
     });
-    expect(moreButton).toHaveTextContent("+3");
+    expect(moreButton).toHaveTextContent("+3 more");
 
     await user.click(moreButton);
     const popover = await screen.findByRole("dialog", {

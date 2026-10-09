@@ -429,8 +429,6 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
           refreshFailed = true;
         }
       }
-      setMessage(result.success ? `Import finished. Review the results below.${refreshFailed ? " The data was saved, but this page could not refresh. Reload to see the latest data." : ""}` : "The import did not complete successfully. Review the results and try again.");
-      setMessageType(result.success ? "success" : "error");
       setCommitResults(combinedResults);
       setCreatedPositionCount((count) => Math.max(count, result.summary.positionsCreated || 0));
       setCreatedTeamCount((count) => Math.max(count, result.summary.teamsCreated || 0));
@@ -440,6 +438,16 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         return next;
       });
       const hasFailures = combinedResults.some((item) => item.status === "failed") || !result.success;
+      const hasCompletedRows = combinedResults.some((item) => item.status !== "failed")
+        || (result.summary.teamsCreated || 0) > 0
+        || (result.summary.positionsCreated || 0) > 0;
+      const resultMessage = hasFailures
+        ? hasCompletedRows
+          ? "Import partially completed. Review the failed rows below."
+          : "Import failed. Review the results and try again."
+        : `Import finished. Review the results below.${refreshFailed ? " The data was saved, but this page could not refresh. Reload to see the latest data." : ""}`;
+      setMessage(resultMessage);
+      setMessageType(hasFailures ? (hasCompletedRows ? "attention" : "error") : "success");
       const completedRows = new Set(combinedResults.filter((item) => item.status !== "failed").map((item) => item.row));
       const allRowsResolved = preview.rows.every((row) => completedRows.has(row.row) || explicitSkips[row.row]);
       if (!hasFailures && allRowsResolved) {

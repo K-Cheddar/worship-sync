@@ -22,7 +22,8 @@ const BibleVersesList = ({
   canTransmit,
   sendVerse,
 }: BibleVersesListProps) => {
-  const [selectedVerse, setSelectedVerse] = useState<number>(-1);
+  const [selection, setSelection] = useState<{ index: number; shouldCenter: boolean }>({ index: -1, shouldCenter: false });
+  const selectedVerse = selection.index;
 
   const renderableVerses = useMemo(
     () =>
@@ -38,24 +39,21 @@ const BibleVersesList = ({
   const showEmpty = !isLoading && !hasRenderableVerses;
 
   useEffect(() => {
-    setSelectedVerse(-1);
-  }, [startVerse, endVerse]);
-
-  useEffect(() => {
-    if (selectedVerse < 0) return;
+    if (selection.index < 0) return;
     const verseElement = document.getElementById(
-      `bible-verse-${selectedVerse}`
+      `bible-verse-${selection.index}`
     );
     const parentElement = document.getElementById("bible-verses-list");
     if (verseElement && parentElement) {
       keepElementInView({
         child: verseElement,
         parent: parentElement,
-        shouldScrollToCenter: true,
-        keepNextInView: true,
+        ...(selection.shouldCenter
+          ? { shouldScrollToCenter: true, keepNextInView: true }
+          : { scrollOnlyIntoView: true }),
       });
     }
-  }, [selectedVerse]);
+  }, [selection]);
 
   const advanceVerse = useCallback(() => {
     const selectedPosition = renderableVerses.findIndex(
@@ -65,7 +63,7 @@ const BibleVersesList = ({
     const nextVerse = renderableVerses[nextPosition];
     if (nextVerse) {
       sendVerse(nextVerse);
-      setSelectedVerse(nextVerse.index);
+      setSelection({ index: nextVerse.index, shouldCenter: true });
     }
   }, [selectedVerse, renderableVerses, sendVerse]);
 
@@ -77,7 +75,7 @@ const BibleVersesList = ({
     const prevVerse = renderableVerses[previousPosition];
     if (prevVerse) {
       sendVerse(prevVerse);
-      setSelectedVerse(prevVerse.index);
+      setSelection({ index: prevVerse.index, shouldCenter: true });
     }
   }, [selectedVerse, renderableVerses, sendVerse]);
 
@@ -156,7 +154,7 @@ const BibleVersesList = ({
                   className="text-sm"
                   svg={Send}
                   onClick={() => {
-                    setSelectedVerse(verse.index);
+                    setSelection({ index: verse.index, shouldCenter: false });
                     sendVerse(verse);
                   }}
                   disabled={!canTransmit}

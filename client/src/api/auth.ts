@@ -3122,6 +3122,7 @@ export const commitPortableImport = async (
 ) =>
   apiFetch<{
     success: boolean;
+    status?: "complete" | "partial" | "failed";
     results: Array<{
       row: number;
       status: "created" | "updated" | "unchanged" | "failed";

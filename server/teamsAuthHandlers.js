@@ -10466,7 +10466,22 @@ export const createTeamsAuthHandlers = ({
         const teamActionErrors = new Map();
         let teamsCreated = 0;
         const referencedTeamKeys = new Set();
+        if (type === "members") {
+          // Reject stale updates before creating any team dependencies. The
+          // member writer still performs its transactional stale check at the
+          // point of mutation to cover edits that race this preflight.
+          approvedRows.forEach((approved) => {
+            if (invalidPreviewRows.has(Number(approved.row)) || approved.action !== "update") return;
+            const memberId = String(approved.recordId || approved.record?.memberId || "").trim();
+            const member = data.members.find((item) => item.memberId === memberId);
+            if (!member || member.archivedAt
+              || memberImportStateHash(member, data.teams, data.positions) !== approved.expectedStateHash) {
+              invalidPreviewRows.add(Number(approved.row));
+            }
+          });
+        }
         approvedRows.forEach((approved) => {
+          if (invalidPreviewRows.has(Number(approved.row))) return;
           const record = approved.record || {};
           const refs = splitPortableReferences(record.teams, data.teams);
           const ids = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim()).filter(Boolean);
@@ -12038,18 +12053,24 @@ export const createTeamsAuthHandlers = ({
             });
           }
         }
+        const failed = results.filter((item) => item.status === "failed").length;
+        const completed = results.length - failed;
+        const teamsCreatedCount = requestedTeamActions.filter((action) => action.action === "create"
+          && teamActionIds.get(teamActionKey(action.sourceValue))).length;
+        const positionsCreatedCount = requestedPositionActions.filter((action) => action.action === "create"
+          && data.positions.some((position) => position._portableCreateKey === positionCreateKey(resolvePositionTeamId(action.teamId), action.name))).length;
+        const hasCreatedDependencies = teamsCreatedCount > 0 || positionsCreatedCount > 0;
         return res.json({
-          success: true,
+          success: failed === 0,
+          status: failed === 0 ? "complete" : completed > 0 || hasCreatedDependencies ? "partial" : "failed",
           results,
           summary: {
             created: results.filter((item) => item.status === "created").length,
             updated: results.filter((item) => item.status === "updated").length,
             unchanged: results.filter((item) => item.status === "unchanged").length,
             failed: results.filter((item) => item.status === "failed").length,
-            teamsCreated: requestedTeamActions.filter((action) => action.action === "create"
-              && teamActionIds.get(teamActionKey(action.sourceValue))).length,
-            positionsCreated: requestedPositionActions.filter((action) => action.action === "create"
-              && data.positions.some((position) => position._portableCreateKey === positionCreateKey(resolvePositionTeamId(action.teamId), action.name))).length,
+            teamsCreated: teamsCreatedCount,
+            positionsCreated: positionsCreatedCount,
           },
         });
       } catch (error) {

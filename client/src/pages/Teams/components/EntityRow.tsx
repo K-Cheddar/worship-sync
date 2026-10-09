@@ -22,8 +22,8 @@ type EntityRowProps = {
   subtitle?: string;
   /** Custom metadata below the title; takes precedence over `subtitle` when set. */
   details?: ReactNode;
-  /** Interactive control aligned with details and kept outside the row's click button. */
-  detailsAction?: ReactNode;
+  /** Details contain an interactive control and must stay outside the row's click button. */
+  detailsInteractive?: boolean;
   /** Badge shown next to the title or pinned to the top-right of the card. */
   headerBadge?: ReactNode;
   /** Where `headerBadge` is rendered. Defaults to `inline`. */
@@ -63,7 +63,7 @@ const EntityRow = ({
   title,
   subtitle,
   details,
-  detailsAction,
+  detailsInteractive = false,
   headerBadge,
   note,
   icon,
@@ -198,7 +198,7 @@ const EntityRow = ({
     </>
   );
 
-  const clickableBody = isClickable && detailsAction ? (
+  const clickableBody = isClickable && detailsInteractive ? (
     <div className={cn("flex min-w-0 items-center gap-2", clickableBodyClassName)}>
       {icon ? (
         <EntityIconBadge icon={icon} className="h-7 w-7" data-testid="entity-icon-badge" />
@@ -218,7 +218,6 @@ const EntityRow = ({
         </button>
         <div className="flex min-w-0 items-center gap-1">
           <div className="min-w-0 flex-1">{metaBlock}</div>
-          {detailsAction}
         </div>
       </div>
       {showChevron ? (
@@ -249,7 +248,6 @@ const EntityRow = ({
       )}
     >
       {rowContent}
-      {detailsAction}
     </div>
   );
 

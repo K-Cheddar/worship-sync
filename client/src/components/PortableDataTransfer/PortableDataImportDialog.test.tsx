@@ -303,6 +303,7 @@ describe("PortableDataImportDialog import flow", () => {
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     await user.click(await screen.findByRole("button", { name: "Review changes" }));
     await user.click(screen.getByRole("button", { name: "Import 2 members" }));
+    expect(await screen.findByText("Import partially completed. Review the failed rows below.")).toBeInTheDocument();
     expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
     expect(screen.getByText("Created")).toBeInTheDocument();
     expect(screen.getByText("Completed (excluded from retry)")).toBeInTheDocument();
@@ -360,6 +361,7 @@ describe("PortableDataImportDialog import flow", () => {
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     await user.click(await screen.findByRole("button", { name: "Review import" }));
     await user.click(screen.getByRole("button", { name: "Import 1 row" }));
+    expect(await screen.findByText("Import failed. Review the results and try again.")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Review changes again" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Retry 1 failed row" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review changes again" }));

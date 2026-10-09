@@ -54,10 +54,7 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
-import {
-  MemberAssignmentsDetails,
-  MemberAssignmentsMore,
-} from "../components/MemberAssignmentsSummary";
+import { MemberAssignmentsDetails } from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
 import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
@@ -1165,14 +1162,12 @@ const MemberManager = ({
                   compact
                   title={memberName(member)}
                   details={
-                    <MemberAssignmentsDetails assignments={assignments} />
-                  }
-                  detailsAction={
-                    <MemberAssignmentsMore
+                    <MemberAssignmentsDetails
                       assignments={assignments}
                       memberName={memberName(member)}
                     />
                   }
+                  detailsInteractive
                   leadingVisual={
                     <MemberAvatar
                       profileImageUrl={member.profileImageUrl}
