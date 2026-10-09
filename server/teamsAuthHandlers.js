@@ -10476,8 +10476,14 @@ export const createTeamsAuthHandlers = ({
             if (approved.action === "update") {
               const memberId = String(approved.recordId || record.memberId || "").trim();
               const member = data.members.find((item) => item.memberId === memberId);
+              const currentStateHash = member && memberImportStateHash(member, data.teams, data.positions);
+              const progress = inMemoryPortableMemberProgress.get(
+                `${churchId}:${memberId}:${approved.expectedStateHash}`,
+              );
+              const canResumePartialWrite = progress
+                && currentStateHash === progress.lastStateHash;
               if (!member || member.archivedAt
-                || memberImportStateHash(member, data.teams, data.positions) !== approved.expectedStateHash) {
+                || (currentStateHash !== approved.expectedStateHash && !canResumePartialWrite)) {
                 invalidPreviewRows.add(Number(approved.row));
               }
               return;

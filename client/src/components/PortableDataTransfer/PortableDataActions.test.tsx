@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GlobalInfoContext } from "@/context/globalInfo";
+import { ToastProvider } from "@/context/toastContext";
 import { downloadPortableData } from "../../api/auth";
 import PortableDataActions from "./PortableDataActions";
 import type { PortableDataType } from "../../api/authTypes";
@@ -13,9 +14,11 @@ jest.mock("../../api/auth", () => ({
 }));
 
 const renderActions = (role: string, type: PortableDataType) => render(
-  <GlobalInfoContext.Provider value={{ churchId: "church-1", role } as never}>
-    <PortableDataActions type={type} />
-  </GlobalInfoContext.Provider>,
+  <ToastProvider>
+    <GlobalInfoContext.Provider value={{ churchId: "church-1", role } as never}>
+      <PortableDataActions type={type} />
+    </GlobalInfoContext.Provider>
+  </ToastProvider>,
 );
 
 describe("PortableDataActions", () => {
@@ -36,7 +39,9 @@ describe("PortableDataActions", () => {
     renderActions("admin", type);
     await user.click(screen.getByRole("button", { name: "More data options" }));
     await user.click(screen.getByRole("menuitem", { name: "Import CSV…" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent(`Import ${label} from CSV`);
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      type === "members" ? "Import members" : `Import ${label} from CSV`,
+    );
     expect(screen.queryByRole("group", { name: "Choose data to import" })).not.toBeInTheDocument();
   });
 

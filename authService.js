@@ -8129,6 +8129,7 @@ export const authHandlers = {
       const statusCode = error.statusCode || 500;
       return res.status(statusCode).json({
         success: false,
+        ...(error.code ? { code: error.code } : {}),
         errorMessage: statusCode >= 500
           ? "Could not record SMS consent. Try again in a moment."
           : error.message || "Could not record SMS consent.",
