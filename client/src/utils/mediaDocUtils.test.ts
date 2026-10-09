@@ -409,6 +409,63 @@ describe("v2 media repository", () => {
     expect(docs.get("media-folders").folders).toEqual([staleFolder, survivingParent]);
   });
 
+  it("rehomes Keep Contents media and child folders through the latest parent after a concurrent folder move", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", originalParent.id);
+    const child = folder("child", target.id);
+    const item = { ...media("keep-contents-media"), folderId: target.id };
+    const { db, docs } = makePersistedDb(
+      [originalParent, latestParent, { ...target, parentId: latestParent.id }, child],
+      [item],
+    );
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [item], folders: [originalParent, latestParent, target, child] },
+      {
+        list: [{ ...item, folderId: originalParent.id }],
+        folders: [originalParent, latestParent, { ...child, parentId: originalParent.id }],
+      },
+      () => true,
+      new Set([item.id]),
+      new Set([child.id]),
+    );
+
+    expect(docs.get(mediaItemDocId(item.id))?.folderId).toBe(latestParent.id);
+    expect(docs.get("media-folders").folders).toEqual([
+      originalParent,
+      latestParent,
+      { ...child, parentId: latestParent.id },
+    ]);
+  });
+
+  it("preserves an independent media move while reconciling Keep Contents", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", originalParent.id);
+    const outside = folder("outside", null);
+    const beforeItem = { ...media("independently-moved-media"), folderId: target.id };
+    const persistedItem = { ...beforeItem, folderId: outside.id };
+    const { db, docs } = makePersistedDb(
+      [originalParent, latestParent, { ...target, parentId: latestParent.id }, outside],
+      [persistedItem],
+    );
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [beforeItem], folders: [originalParent, latestParent, target, outside] },
+      {
+        list: [{ ...beforeItem, folderId: originalParent.id }],
+        folders: [originalParent, latestParent, outside],
+      },
+      () => true,
+      new Set([beforeItem.id]),
+    );
+
+    expect(docs.get(mediaItemDocId(beforeItem.id))?.folderId).toBe(outside.id);
+  });
+
   it("moves PouchDB-only media from a deleted root folder to the library root", async () => {
     const target = folder("deleted-root", null);
     const pouchOnlyMedia = { ...media("pouch-only-root-media"), folderId: target.id };

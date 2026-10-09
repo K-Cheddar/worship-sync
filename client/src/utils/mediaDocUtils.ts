@@ -263,6 +263,7 @@ export async function saveMediaFolders(
 type FolderParentReconciliation = {
   deletedFolderIds: ReadonlySet<string>;
   originalFolders: MediaFolder[];
+  automaticFolderRehomeIds?: ReadonlySet<string>;
 };
 
 type FolderAncestorContext = {
@@ -327,6 +328,22 @@ function reconcileFolderParentsAfterDeletion(
   let changed = false;
   const reconciled = folders.map((folder) => {
     const parentId = folder.parentId;
+    if (reconciliation.automaticFolderRehomeIds?.has(folder.id)) {
+      const originalParentId = reconciliation.originalFolders.find((original) => original.id === folder.id)?.parentId;
+      const automaticDestination = originalParentId
+        ? reconciliation.originalFolders.find((original) => original.id === originalParentId)?.parentId ?? null
+        : null;
+      if (parentId === automaticDestination && originalParentId) {
+        const nextParentId = findSurvivingFolderAncestor(
+          originalParentId,
+          ancestorContext,
+          (candidateId) => !createsCycle(folder.id, candidateId),
+        );
+        if (nextParentId === parentId) return folder;
+        changed = true;
+        return { ...folder, parentId: nextParentId };
+      }
+    }
     if (parentId == null) return folder;
     if (!reconciliation.deletedFolderIds.has(parentId) && foldersById.has(parentId)) return folder;
     const nextParentId = findSurvivingFolderAncestor(
@@ -552,6 +569,8 @@ export async function persistMediaLibraryChanges(
   before: { list: MediaType[]; folders: MediaFolder[] },
   after: { list: MediaType[]; folders: MediaFolder[] },
   canCommit: () => boolean = () => true,
+  automaticMediaRehomeIds: ReadonlySet<string> = new Set(),
+  automaticFolderRehomeIds: ReadonlySet<string> = new Set(),
 ) {
   if (!canCommit()) return [];
   const latest = await loadMediaLibrary(db);
@@ -636,14 +655,19 @@ export async function persistMediaLibraryChanges(
     survivingFoldersById,
   };
   for (const [id, current] of list) {
-    const folderId = current.folderId;
-    if (!folderId || !deletedFolderIds.has(folderId)) continue;
     const beforeItem = beforeItems.get(id);
     const afterItem = afterItems.get(id);
     const folderIdAfter = afterItem?.folderId;
+    const isAutomaticRehome = automaticMediaRehomeIds.has(id)
+      && Boolean(beforeItem?.folderId && deletedFolderIds.has(beforeItem.folderId))
+      && (current.folderId === beforeItem?.folderId || current.folderId === folderIdAfter);
+    const folderId = isAutomaticRehome && beforeItem?.folderId
+      ? beforeItem.folderId
+      : current.folderId;
+    if (!folderId || !deletedFolderIds.has(folderId)) continue;
     const hasLocalFolderChange = Boolean(afterItem)
       && JSON.stringify(beforeItem?.folderId) !== JSON.stringify(folderIdAfter);
-    if (hasLocalFolderChange) {
+    if (hasLocalFolderChange && !isAutomaticRehome) {
       if (folderIdAfter === null || folderIdAfter === undefined) {
         list.set(id, { ...current, folderId: null });
         continue;
@@ -663,7 +687,7 @@ export async function persistMediaLibraryChanges(
     list.set(id, rehomed);
   }
 
-  const folderParentReconciliation = { deletedFolderIds, originalFolders };
+  const folderParentReconciliation = { deletedFolderIds, originalFolders, automaticFolderRehomeIds };
   const merged = normalizeMediaDoc({
     list: [...list.values()],
     folders: [...folders.values()],
