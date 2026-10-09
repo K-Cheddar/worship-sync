@@ -414,6 +414,7 @@ describe("v2 media repository", () => {
     const latestParent = folder("latest-parent", null);
     const target = folder("deleted", originalParent.id);
     const child = folder("child", target.id);
+    const operationId = "keep-contents-operation";
     const item = { ...media("keep-contents-media"), folderId: target.id };
     const { db, docs } = makePersistedDb(
       [originalParent, latestParent, { ...target, parentId: latestParent.id }, child],
@@ -424,8 +425,10 @@ describe("v2 media repository", () => {
       db,
       { list: [item], folders: [originalParent, latestParent, target, child] },
       {
-        list: [{ ...item, folderId: originalParent.id }],
-        folders: [originalParent, latestParent, { ...child, parentId: originalParent.id }],
+        list: [{ ...item, folderId: originalParent.id, _keepContentsRehomeOperationId: operationId }],
+        folders: [originalParent, latestParent, {
+          ...child, parentId: originalParent.id, _keepContentsRehomeOperationId: operationId,
+        }],
       },
       () => true,
       new Set([item.id]),
@@ -456,7 +459,7 @@ describe("v2 media repository", () => {
       db,
       { list: [beforeItem], folders: [originalParent, latestParent, target, outside] },
       {
-        list: [{ ...beforeItem, folderId: originalParent.id }],
+        list: [{ ...beforeItem, folderId: originalParent.id, _keepContentsRehomeOperationId: "delete-operation" }],
         folders: [originalParent, latestParent, outside],
       },
       () => true,
@@ -464,6 +467,88 @@ describe("v2 media repository", () => {
     );
 
     expect(docs.get(mediaItemDocId(beforeItem.id))?.folderId).toBe(outside.id);
+  });
+
+  it("preserves independently persisted moves to the original parent", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", latestParent.id);
+    const child = folder("child", target.id);
+    const operationId = "keep-contents-operation";
+    const beforeItem = { ...media("independently-moved-to-original-parent"), folderId: target.id };
+    const persistedItem = { ...beforeItem, folderId: originalParent.id };
+    const persistedChild = { ...child, parentId: originalParent.id };
+    const { db, docs } = makePersistedDb(
+      [originalParent, latestParent, target, persistedChild],
+      [persistedItem],
+    );
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [beforeItem], folders: [originalParent, latestParent, { ...target, parentId: originalParent.id }, child] },
+      {
+        list: [{ ...beforeItem, folderId: originalParent.id, _keepContentsRehomeOperationId: operationId }],
+        folders: [originalParent, latestParent, {
+          ...child, parentId: originalParent.id, _keepContentsRehomeOperationId: operationId,
+        }],
+      },
+      () => true,
+      new Set([beforeItem.id]),
+      new Set([child.id]),
+    );
+
+    expect(docs.get(mediaItemDocId(beforeItem.id))?.folderId).toBe(originalParent.id);
+    expect(docs.get("media-folders").folders).toContainEqual(persistedChild);
+  });
+
+  it("recognizes its own earlier Keep Contents autosave before resolving the latest parent", async () => {
+    const originalParent = folder("original-parent", null);
+    const latestParent = folder("latest-parent", null);
+    const target = folder("deleted", latestParent.id);
+    const operationId = "keep-contents-operation";
+    const item = { ...media("autosaved-keep-contents-media"), folderId: target.id };
+    const child = folder("autosaved-child", target.id);
+    const before = {
+      list: [item],
+      folders: [originalParent, latestParent, { ...target, parentId: originalParent.id }, child],
+    };
+    const autosaved = {
+      list: [{ ...item, folderId: originalParent.id, _keepContentsRehomeOperationId: operationId }],
+      folders: [originalParent, latestParent, { ...target, parentId: originalParent.id }, {
+        ...child, parentId: originalParent.id, _keepContentsRehomeOperationId: operationId,
+      }],
+    };
+    const { db, docs } = makePersistedDb(
+      before.folders,
+      [item],
+    );
+    await persistMediaStateChanges(db, before, autosaved);
+    const currentFoldersDoc = docs.get("media-folders");
+    docs.set("media-folders", {
+      ...currentFoldersDoc,
+      folders: currentFoldersDoc.folders.map((folder: MediaFolder) => folder.id === target.id
+        ? { ...folder, parentId: latestParent.id }
+        : folder),
+      _rev: "3",
+    });
+
+    await persistMediaLibraryChanges(
+      db,
+      before,
+      { list: autosaved.list, folders: [originalParent, latestParent, autosaved.folders[3]] },
+      () => true,
+      new Set([item.id]),
+      new Set([child.id]),
+    );
+
+    expect(docs.get(mediaItemDocId(item.id))?.folderId).toBe(latestParent.id);
+    expect(docs.get("media-folders").folders).toContainEqual({
+      id: child.id,
+      name: child.name,
+      parentId: latestParent.id,
+      createdAt: child.createdAt,
+      updatedAt: child.updatedAt,
+    });
   });
 
   it("moves PouchDB-only media from a deleted root folder to the library root", async () => {

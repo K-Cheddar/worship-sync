@@ -412,19 +412,31 @@ async function saveMediaFolderChanges(
         if (afterValue === undefined) delete merged[key];
         else merged[key] = afterValue;
       }
+      if (previous.parentId !== folder.parentId
+        && previous._keepContentsRehomeOperationId === folder._keepContentsRehomeOperationId) {
+        delete merged._keepContentsRehomeOperationId;
+      }
       currentById.set(id, merged as unknown as MediaFolder);
     }
     for (const id of beforeById.keys()) {
       if (!afterById.has(id)) currentById.delete(id);
     }
     const mergedFolders = [...currentById.values()];
-    const folders = folderParentReconciliation
+    let folders = folderParentReconciliation
       ? reconcileFolderParentsAfterDeletion(
           mergedFolders,
           folderParentReconciliation,
           persistedFolders,
         )
       : mergedFolders;
+    if (folderParentReconciliation?.automaticFolderRehomeIds?.size) {
+      folders = folders.map((folder) => {
+        if (!folderParentReconciliation.automaticFolderRehomeIds?.has(folder.id)) return folder;
+        const clean = { ...folder };
+        delete clean._keepContentsRehomeOperationId;
+        return clean;
+      });
+    }
     if (JSON.stringify(existing.folders || []) === JSON.stringify(folders)) {
       return requestedChangesArePersisted(persistedFolders) ? { folders: persistedFolders } : undefined;
     }
@@ -495,6 +507,10 @@ export async function persistMediaStateChanges(
             continue;
           }
           (changes as Record<string, unknown>)[key] = afterValue;
+        }
+        if (previous.folderId !== item.folderId
+          && previous._keepContentsRehomeOperationId === item._keepContentsRehomeOperationId) {
+          changes._keepContentsRehomeOperationId = undefined;
         }
         return changes;
       };
@@ -577,11 +593,38 @@ export async function persistMediaLibraryChanges(
   if (!canCommit()) return [];
 
   const list = new Map(latest.list.map((item) => [item.id, item]));
+  const folders = new Map(latest.folders.map((folder) => [folder.id, folder]));
   const beforeItems = new Map(before.list.map((item) => [item.id, item]));
   const afterItems = new Map(after.list.map((item) => [item.id, item]));
   const beforeFolders = new Map(before.folders.map((folder) => [folder.id, folder]));
   const afterFolders = new Map(after.folders.map((folder) => [folder.id, folder]));
   const deletedFolderIds = new Set([...beforeFolders.keys()].filter((id) => !afterFolders.has(id)));
+  const ownedAutomaticMediaRehomeIds = new Set<string>();
+  for (const id of automaticMediaRehomeIds) {
+    const previous = beforeItems.get(id);
+    const requested = afterItems.get(id);
+    const current = list.get(id);
+    const operationId = requested?._keepContentsRehomeOperationId;
+    if (!previous?.folderId || !requested || !current || !operationId) continue;
+    if (current.folderId === previous.folderId
+      || (current.folderId === requested.folderId
+        && current._keepContentsRehomeOperationId === operationId)) {
+      ownedAutomaticMediaRehomeIds.add(id);
+    }
+  }
+  const ownedAutomaticFolderRehomeIds = new Set<string>();
+  for (const id of automaticFolderRehomeIds) {
+    const previous = beforeFolders.get(id);
+    const requested = afterFolders.get(id);
+    const current = folders.get(id);
+    const operationId = requested?._keepContentsRehomeOperationId;
+    if (!previous || !requested || !current || !operationId) continue;
+    if (current.parentId === previous.parentId
+      || (current.parentId === requested.parentId
+        && current._keepContentsRehomeOperationId === operationId)) {
+      ownedAutomaticFolderRehomeIds.add(id);
+    }
+  }
   for (const [id, item] of afterItems) {
     const previous = beforeItems.get(id);
     if (!previous) {
@@ -610,13 +653,19 @@ export async function persistMediaLibraryChanges(
           else merged[key] = nextValue;
       }
     }
+    if (automaticMediaRehomeIds.has(id) && !ownedAutomaticMediaRehomeIds.has(id)) {
+      if (current._keepContentsRehomeOperationId) merged._keepContentsRehomeOperationId = current._keepContentsRehomeOperationId;
+      else delete merged._keepContentsRehomeOperationId;
+    } else if (previous.folderId !== item.folderId
+      && item._keepContentsRehomeOperationId === previous._keepContentsRehomeOperationId) {
+      delete merged._keepContentsRehomeOperationId;
+    }
     list.set(id, merged as unknown as MediaType);
   }
   for (const id of beforeItems.keys()) {
     if (!afterItems.has(id)) list.delete(id);
   }
 
-  const folders = new Map(latest.folders.map((folder) => [folder.id, folder]));
   for (const [id, folder] of afterFolders) {
     const previous = beforeFolders.get(id);
     if (!previous) {
@@ -639,6 +688,13 @@ export async function persistMediaLibraryChanges(
         else merged[key] = nextValue;
       }
     }
+    if (automaticFolderRehomeIds.has(id) && !ownedAutomaticFolderRehomeIds.has(id)) {
+      if (current._keepContentsRehomeOperationId) merged._keepContentsRehomeOperationId = current._keepContentsRehomeOperationId;
+      else delete merged._keepContentsRehomeOperationId;
+    } else if (previous.parentId !== folder.parentId
+      && folder._keepContentsRehomeOperationId === previous._keepContentsRehomeOperationId) {
+      delete merged._keepContentsRehomeOperationId;
+    }
     folders.set(id, merged as unknown as MediaFolder);
   }
   for (const id of beforeFolders.keys()) {
@@ -658,7 +714,7 @@ export async function persistMediaLibraryChanges(
     const beforeItem = beforeItems.get(id);
     const afterItem = afterItems.get(id);
     const folderIdAfter = afterItem?.folderId;
-    const isAutomaticRehome = automaticMediaRehomeIds.has(id)
+    const isAutomaticRehome = ownedAutomaticMediaRehomeIds.has(id)
       && Boolean(beforeItem?.folderId && deletedFolderIds.has(beforeItem.folderId))
       && (current.folderId === beforeItem?.folderId || current.folderId === folderIdAfter);
     const folderId = isAutomaticRehome && beforeItem?.folderId
@@ -684,10 +740,15 @@ export async function persistMediaLibraryChanges(
     const rehomed = { ...current };
     if (survivingAncestor) rehomed.folderId = survivingAncestor;
     else rehomed.folderId = null;
+    delete rehomed._keepContentsRehomeOperationId;
     list.set(id, rehomed);
   }
 
-  const folderParentReconciliation = { deletedFolderIds, originalFolders, automaticFolderRehomeIds };
+  const folderParentReconciliation = {
+    deletedFolderIds,
+    originalFolders,
+    automaticFolderRehomeIds: ownedAutomaticFolderRehomeIds,
+  };
   const merged = normalizeMediaDoc({
     list: [...list.values()],
     folders: [...folders.values()],
