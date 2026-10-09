@@ -506,12 +506,14 @@ describe("Song v2 writer with real PouchDB over IndexedDB", () => {
 
     const first = await reconcilePendingSongV2Cleanup(db, 20);
     expect(first.quarantined).toHaveLength(20);
+    expect(first.hasMore).toBe(true);
     expect((await db.allDocs({
       startkey: "song-v2:cleanup:", endkey: "song-v2:cleanup:\uffff", include_docs: true,
     })).rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup")).toHaveLength(1);
 
     const second = await reconcilePendingSongV2Cleanup(db, 20);
     expect(second.quarantined).toHaveLength(1);
+    expect(second.hasMore).toBe(false);
     expect((await db.allDocs({
       startkey: "song-v2:cleanup:", endkey: "song-v2:cleanup:\uffff", include_docs: true,
     })).rows.filter(row => (row.doc as any)?.docType === "song-v2-cleanup")).toHaveLength(0);
