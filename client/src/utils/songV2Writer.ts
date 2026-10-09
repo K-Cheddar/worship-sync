@@ -577,16 +577,18 @@ export async function reconcileSongV2CleanupQueue(
 export async function reconcilePendingSongV2Cleanup(
   db: PouchDB.Database,
   limit = 20,
-): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"] }> {
+): Promise<{ deleted: string[]; retired: string[]; quarantined: string[]; cleanupErrors: SongV2WriteProgress["cleanupErrors"]; hasMore: boolean }> {
   const boundedLimit = Math.max(0, limit);
   const rows = await db.allDocs<SongV2CleanupQueueDocument>({
     startkey: "song-v2:cleanup:",
     endkey: "song-v2:cleanup:\uffff",
     include_docs: true,
-    limit: boundedLimit,
+    limit: boundedLimit + 1,
   });
+  const batchRows = rows.rows.slice(0, boundedLimit);
+  const hasMore = rows.rows.length > boundedLimit;
   const countsBySong = new Map<string, number>();
-  for (const row of rows.rows) {
+  for (const row of batchRows) {
     if (row.doc?.docType !== "song-v2-cleanup") continue;
     countsBySong.set(row.doc.songId, (countsBySong.get(row.doc.songId) ?? 0) + 1);
   }
@@ -599,11 +601,11 @@ export async function reconcilePendingSongV2Cleanup(
       result.quarantined.push(...songResult.quarantined);
       result.cleanupErrors.push(...songResult.cleanupErrors);
     } catch (cause) {
-      result.cleanupErrors.push(...rows.rows.flatMap(row => row.doc?.songId === songId
+      result.cleanupErrors.push(...batchRows.flatMap(row => row.doc?.songId === songId
         ? [{ documentId: row.doc.documentId, revision: row.doc.revision, cause }]
         : []));
     }
   }
-  return result;
+  return { ...result, hasMore };
 }
 

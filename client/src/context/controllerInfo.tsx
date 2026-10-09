@@ -68,11 +68,45 @@ export let globalDb: PouchDB.Database | undefined = undefined;
 export let globalBibleDb: PouchDB.Database | undefined = undefined;
 export let globalBroadcastRef: BroadcastChannel | undefined = undefined;
 
-const cleanupMaintenanceRuns = new WeakMap<PouchDB.Database, { lastStartedAt: number; running?: Promise<void> }>();
+type CleanupMaintenanceState = {
+  lastStartedAt: number;
+  running?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  consecutiveFailures: number;
+  rerunRequested: boolean;
+};
+const cleanupMaintenanceRuns = new WeakMap<PouchDB.Database, CleanupMaintenanceState>();
 const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) => {
-  const state = cleanupMaintenanceRuns.get(db) ?? { lastStartedAt: 0 };
+  const state = cleanupMaintenanceRuns.get(db) ?? {
+    lastStartedAt: 0,
+    consecutiveFailures: 0,
+    rerunRequested: false,
+  };
   cleanupMaintenanceRuns.set(db, state);
-  if (state.running || (!force && Date.now() - state.lastStartedAt < 30_000)) return;
+
+  const scheduleAfter = (delay: number) => {
+    if (state.timer) return;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      scheduleSongV2CleanupMaintenance(db, true);
+    }, delay);
+  };
+  const retryDelay = () => Math.min(30_000 * 2 ** Math.min(state.consecutiveFailures - 1, 4), 300_000);
+
+  if (state.running) {
+    state.rerunRequested = true;
+    return;
+  }
+  if (state.timer) {
+    if (!force) return;
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  }
+  const throttleRemaining = 30_000 - (Date.now() - state.lastStartedAt);
+  if (!force && throttleRemaining > 0) {
+    scheduleAfter(throttleRemaining);
+    return;
+  }
   state.lastStartedAt = Date.now();
   state.running = import("../utils/songV2Writer")
     .then(({ reconcilePendingSongV2Cleanup }) => reconcilePendingSongV2Cleanup(db, 20))
@@ -83,9 +117,22 @@ const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) =
       if (result.cleanupErrors.length) {
         console.error("Song cleanup maintenance left records for a later retry:", result.cleanupErrors);
       }
+      state.consecutiveFailures = result.cleanupErrors.length ? state.consecutiveFailures + 1 : 0;
+      if (result.cleanupErrors.length) scheduleAfter(retryDelay());
+      else if (result.hasMore) scheduleAfter(250);
     })
-    .catch((error) => console.error("Could not run song cleanup maintenance:", error))
-    .finally(() => { state.running = undefined; });
+    .catch((error) => {
+      state.consecutiveFailures += 1;
+      console.error("Could not run song cleanup maintenance:", error);
+      scheduleAfter(retryDelay());
+    })
+    .finally(() => {
+      state.running = undefined;
+      if (state.rerunRequested) {
+        state.rerunRequested = false;
+        scheduleAfter(0);
+      }
+    });
 };
 
 const DEMO_DATABASE_KEY = "demo";
