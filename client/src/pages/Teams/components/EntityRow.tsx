@@ -22,6 +22,8 @@ type EntityRowProps = {
   subtitle?: string;
   /** Custom metadata below the title; takes precedence over `subtitle` when set. */
   details?: ReactNode;
+  /** Interactive control aligned with details and kept outside the row's click button. */
+  detailsAction?: ReactNode;
   /** Badge shown next to the title or pinned to the top-right of the card. */
   headerBadge?: ReactNode;
   /** Where `headerBadge` is rendered. Defaults to `inline`. */
@@ -34,6 +36,8 @@ type EntityRowProps = {
   inactive?: boolean;
   /** Compact row: smaller title, hides note. */
   compact?: boolean;
+  /** Highlights the active row independently from its hover state. */
+  selected?: boolean;
   /** Opens edit mode; the row becomes fully clickable with a hover affordance. */
   onTitleClick?: () => void;
   onEdit?: () => void;
@@ -59,12 +63,14 @@ const EntityRow = ({
   title,
   subtitle,
   details,
+  detailsAction,
   headerBadge,
   note,
   icon,
   archived,
   inactive,
   compact = false,
+  selected = false,
   onTitleClick,
   onEdit,
   canEdit = true,
@@ -192,7 +198,37 @@ const EntityRow = ({
     </>
   );
 
-  const clickableBody = isClickable ? (
+  const clickableBody = isClickable && detailsAction ? (
+    <div className={cn("flex min-w-0 items-center gap-2", clickableBodyClassName)}>
+      {icon ? (
+        <EntityIconBadge icon={icon} className="h-7 w-7" data-testid="entity-icon-badge" />
+      ) : null}
+      {leadingVisual}
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          className={cn(
+            "flex min-w-0 w-full cursor-pointer items-center rounded-md text-left",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
+          )}
+          aria-label={`Edit ${title}`}
+          onClick={onTitleClick}
+        >
+          {titleBlock}
+        </button>
+        <div className="flex min-w-0 items-center gap-1">
+          <div className="min-w-0 flex-1">{metaBlock}</div>
+          {detailsAction}
+        </div>
+      </div>
+      {showChevron ? (
+        <ChevronRight
+          className="h-4 w-4 shrink-0 text-gray-500 group-hover:text-gray-300"
+          aria-hidden
+        />
+      ) : null}
+    </div>
+  ) : isClickable ? (
     <button
       type="button"
       className={cn(
@@ -213,6 +249,7 @@ const EntityRow = ({
       )}
     >
       {rowContent}
+      {detailsAction}
     </div>
   );
 
@@ -225,9 +262,12 @@ const EntityRow = ({
       className={cn(
         "group flex rounded-lg border border-gray-800 bg-gray-950/40",
         rootLayoutClassName,
+        selected && "border-cyan-400/40 bg-cyan-500/10",
         isClickable &&
         "cursor-pointer transition-colors hover:border-gray-600/80 hover:bg-gray-900/60",
+        isClickable && selected && "hover:border-cyan-300/50 hover:bg-cyan-500/15",
       )}
+      aria-current={selected ? "true" : undefined}
     >
       {useStackedCardLayout ? (
         <>

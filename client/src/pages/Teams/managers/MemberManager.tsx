@@ -54,6 +54,10 @@ import TeamsCrossSectionLink from "../components/TeamsCrossSectionLink";
 import TeamsReturnToolbar from "../components/TeamsReturnToolbar";
 import EntityMultiSelect from "../EntityMultiSelect";
 import EntityRow from "../components/EntityRow";
+import {
+  MemberAssignmentsDetails,
+  MemberAssignmentsMore,
+} from "../components/MemberAssignmentsSummary";
 import MemberAvatar from "../../../components/MemberAvatar/MemberAvatar";
 import BlockoutDatesField from "../components/BlockoutDatesField";
 import CollapsibleSectionTrigger from "../../../components/CollapsibleSectionTrigger/CollapsibleSectionTrigger";
@@ -69,7 +73,7 @@ import {
   orderPositionsByTeamList,
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
-import { hasMemberContactInfo } from "../memberContactInfo";
+import { getMemberListAssignments } from "../memberListAssignments";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -317,6 +321,10 @@ const MemberManager = ({
     () => new Map(positions.map((position) => [position.positionId, position.name])),
     [positions],
   );
+  const positionsById = useMemo(
+    () => new Map(data.positions.map((position) => [position.positionId, position])),
+    [data.positions],
+  );
   const positionTeamIdById = useMemo(
     () =>
       new Map(positions.map((position) => [position.positionId, position.teamId])),
@@ -329,6 +337,32 @@ const MemberManager = ({
   const teamsById = useMemo(
     () => new Map(data.teams.map((team) => [team.teamId, team])),
     [data.teams],
+  );
+  const teamIdsByMemberId = useMemo(() => {
+    const teamIds = new Map<string, string[]>();
+    data.teams.forEach((team) => {
+      (team.memberIds || []).forEach((memberId) => {
+        const memberTeamIds = teamIds.get(memberId) || [];
+        memberTeamIds.push(team.teamId);
+        teamIds.set(memberId, memberTeamIds);
+      });
+    });
+    return teamIds;
+  }, [data.teams]);
+  const memberAssignmentsById = useMemo(
+    () =>
+      new Map(
+        members.map((member) => [
+          member.memberId,
+          getMemberListAssignments(
+            member,
+            teamIdsByMemberId.get(member.memberId) || [],
+            teamsById,
+            positionsById,
+          ),
+        ]),
+      ),
+    [members, positionsById, teamIdsByMemberId, teamsById],
   );
   const activeFilterCount = countActiveMemberListFilters(listFilters);
   const roleById = useMemo(
@@ -357,16 +391,18 @@ const MemberManager = ({
     () =>
       sortTeamRosterMembersAlphabetically(
         members.filter((member) => {
-          const positionNames = (member.positionIds || [])
-            .map((positionId) => positionNameById.get(positionId))
+          const assignments = memberAssignmentsById.get(member.memberId) || [];
+          const positionNames = assignments
+            .map((assignment) => assignment.positionName)
             .filter(Boolean) as string[];
-          if (!memberMatchesListQuery(member, listQuery, positionNames)) {
+          const teamNames = assignments.map((assignment) => assignment.teamName);
+          if (!memberMatchesListQuery(member, listQuery, positionNames, teamNames)) {
             return false;
           }
           return memberMatchesListFilters(member, listFilters, teamsById);
         }),
       ),
-    [members, listQuery, listFilters, positionNameById, teamsById],
+    [members, listQuery, listFilters, memberAssignmentsById, teamsById],
   );
   const reset = () => {
     if (profileImageSelectionToastIdRef.current) {
@@ -1121,28 +1157,36 @@ const MemberManager = ({
                   : "No matches."}
               </p>
             ) : null}
-            {filteredMembers.map((member) => (
-              <EntityRow
-                key={member.memberId}
-                compact
-                title={memberName(member)}
-                leadingVisual={
-                  <MemberAvatar
-                    profileImageUrl={member.profileImageUrl}
-                    memberName={memberName(member)}
-                    className="h-8 w-8"
-                  />
-                }
-                // Surfaced in the list so an admin can see at a glance which
-                // roster records are missing contact information.
-                subtitle={
-                  hasMemberContactInfo(member) ? undefined : "No contact info"
-                }
-                archived={Boolean(member.archivedAt)}
-                canEdit={canEdit}
-                onTitleClick={() => selectMember(member)}
-              />
-            ))}
+            {filteredMembers.map((member) => {
+              const assignments = memberAssignmentsById.get(member.memberId) || [];
+              return (
+                <EntityRow
+                  key={member.memberId}
+                  compact
+                  title={memberName(member)}
+                  details={
+                    <MemberAssignmentsDetails assignments={assignments} />
+                  }
+                  detailsAction={
+                    <MemberAssignmentsMore
+                      assignments={assignments}
+                      memberName={memberName(member)}
+                    />
+                  }
+                  leadingVisual={
+                    <MemberAvatar
+                      profileImageUrl={member.profileImageUrl}
+                      memberName={memberName(member)}
+                      className="h-8 w-8"
+                    />
+                  }
+                  archived={Boolean(member.archivedAt)}
+                  selected={editing?.memberId === member.memberId}
+                  canEdit={canEdit}
+                  onTitleClick={() => selectMember(member)}
+                />
+              );
+            })}
           </>
         }
         formHeaderActions={

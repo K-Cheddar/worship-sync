@@ -974,12 +974,102 @@ describe("MemberManager roster contact information", () => {
       ],
     } as Partial<TeamsData>);
 
-  it("flags only members without an email address or phone number", () => {
+  it("shows team assignments instead of treating missing contact details as a row warning", () => {
     renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
 
-    expect(screen.getByText("No contact info")).toBeInTheDocument();
-    expect(screen.queryByText("No email")).not.toBeInTheDocument();
+    expect(screen.queryByText("No contact info")).not.toBeInTheDocument();
+    expect(screen.getAllByText("No team assigned")).toHaveLength(3);
     expect(screen.getByRole("button", { name: /Phone Only/ })).toBeInTheDocument();
+  });
+
+  it("shows three positions, searches assignment names, and opens remaining positions without editing", async () => {
+    const user = userEvent.setup();
+    const positions = [
+      { ...producerPosition, positionId: "position-camera", name: "Camera Operator" },
+      { ...producerPosition, positionId: "position-audio", name: "Audio" },
+      { ...producerPosition, positionId: "position-livestream", name: "Livestream" },
+      { ...producerPosition, positionId: "position-producer-2", name: "Producer" },
+      { ...producerPosition, positionId: "position-stage-manager", name: "Stage Manager" },
+      { ...vocalPosition, positionId: "position-vocalist", name: "Vocalist" },
+    ];
+    const member = {
+      ...worshipMember,
+      positionIds: positions.map((position) => position.positionId),
+    };
+    renderManager({
+      data: buildData({
+        members: [member],
+        positions,
+        teams: [
+          { ...mediaTeam, memberIds: [member.memberId] },
+          { ...worshipTeam, memberIds: [member.memberId] },
+        ],
+      }),
+    });
+
+    const memberRow = screen.getAllByTestId("entity-row")[0];
+    expect(memberRow).toHaveTextContent(
+      "Media · Audio, Camera Operator, Livestream",
+    );
+    expect(within(memberRow).getByLabelText("Member assignments")).toHaveClass(
+      "whitespace-nowrap",
+      "overflow-hidden",
+    );
+    const moreButton = screen.getByRole("button", {
+      name: "Show 3 more positions for Rae Kim",
+    });
+    expect(moreButton).toHaveTextContent("+3");
+
+    await user.click(moreButton);
+    const popover = await screen.findByRole("dialog", {
+      name: "Additional assignments for Rae Kim",
+    });
+    expect(within(popover).getByText("Producer")).toBeInTheDocument();
+    expect(within(popover).getByText("Stage Manager")).toBeInTheDocument();
+    expect(within(popover).getByText("Worship")).toBeInTheDocument();
+    expect(within(popover).getByText("Vocalist")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Edit member" })).not.toBeInTheDocument();
+    await user.click(within(popover).getByText("Producer"));
+    expect(screen.queryByRole("heading", { name: "Edit member" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Additional assignments for Rae Kim" })).not.toBeInTheDocument();
+    expect(moreButton).toHaveFocus();
+
+    const search = screen.getByPlaceholderText("Search members…");
+    await user.type(search, "Camera");
+    expect(screen.getByRole("button", { name: "Edit Rae Kim" })).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "Media");
+    expect(screen.getByRole("button", { name: "Edit Rae Kim" })).toBeInTheDocument();
+  });
+
+  it("shows exactly three assigned positions without a more control", () => {
+    const positions = [
+      { ...producerPosition, positionId: "position-camera", name: "Camera Operator" },
+      { ...producerPosition, positionId: "position-livestream", name: "Livestream" },
+      { ...vocalPosition, positionId: "position-vocalist", name: "Vocalist" },
+    ];
+    const member = {
+      ...worshipMember,
+      positionIds: positions.map((position) => position.positionId),
+    };
+    renderManager({
+      data: buildData({
+        members: [member],
+        positions,
+        teams: [
+          { ...mediaTeam, memberIds: [member.memberId] },
+          { ...worshipTeam, memberIds: [member.memberId] },
+        ],
+      }),
+    });
+
+    const memberRow = screen.getAllByTestId("entity-row")[0];
+    expect(memberRow).toHaveTextContent(
+      "Media · Camera Operator, Livestream, Worship · Vocalist",
+    );
+    expect(screen.queryByRole("button", { name: /more assignments/i })).not.toBeInTheDocument();
   });
 
   it("shows roster photos and initials fallback in the member list", () => {
