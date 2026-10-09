@@ -49,7 +49,7 @@ const SelectTrigger = ({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "control-spacing data-[placeholder]:text-neutral-400 text-left text-neutral-100 [&_svg:not([class*='text-'])]:text-neutral-400 focus-visible:ring-cyan-500/35 aria-invalid:ring-destructive/30 box-border flex w-full items-center justify-between gap-2 overflow-hidden rounded-md border border-neutral-500 bg-neutral-900 px-2 py-0 text-sm leading-none whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "control-spacing data-[placeholder]:text-neutral-400 text-left text-neutral-100 [&_svg:not([class*='text-'])]:text-neutral-400 focus-visible:ring-cyan-500/35 aria-invalid:ring-destructive/30 aria-invalid:border-destructive box-border flex w-full items-center justify-between gap-2 overflow-hidden rounded-md border border-neutral-500 bg-neutral-900 px-2 py-0 text-sm leading-none whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         size === "sm"
           ? "h-8 min-h-8 max-md:min-h-[2rem]"
           : "h-[2.25rem] min-h-[2.25rem] max-md:min-h-[2rem]",

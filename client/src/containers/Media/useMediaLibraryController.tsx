@@ -150,6 +150,7 @@ function createMediaDeletionActivityHandoff(
   let ownerActive = true;
   let activityDismissed = false;
   let detachedCleanupRetry: (() => void | Promise<void>) | undefined;
+  let detachedCleanupRetryLabel = "Retry cleanup";
   let lastTransfer: Transfer | undefined;
   const routeActions = new Map<string, () => void>();
   const detachedActions = new Map<string, () => void>();
@@ -179,7 +180,7 @@ function createMediaDeletionActivityHandoff(
       canCancel: false,
       blocksUnload: false,
       actions: [
-        ...(detachedCleanupRetry ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+        ...(detachedCleanupRetry ? [{ key: "retry-cleanup", label: detachedCleanupRetryLabel }] : []),
         { key: "dismiss", label: "Dismiss" },
       ],
     });
@@ -190,9 +191,10 @@ function createMediaDeletionActivityHandoff(
     publish(lastTransfer);
   };
 
-  const setDetachedCleanupRetry = (handler?: () => void | Promise<void>) => {
+  const setDetachedCleanupRetry = (handler?: () => void | Promise<void>, label = "Retry cleanup") => {
     const cleanupWasRequired = Boolean(detachedCleanupRetry);
     detachedCleanupRetry = handler;
+    detachedCleanupRetryLabel = label;
     if (!ownerActive) {
       replaceAction(detachedActions, "retry-cleanup", handler);
       if (activityDismissed && !cleanupWasRequired && handler) {
@@ -322,11 +324,14 @@ export function useMediaLibraryController({
     activeScopeRef.current.active = true;
     return () => { activeScopeRef.current.active = false; };
   }, []);
-  const isActiveMediaScope = useCallback(() =>
+  const isCurrentUiScope = useCallback((scope: { db: typeof db; churchId: string }) =>
     activeScopeRef.current.active &&
-    activeScopeRef.current.db === db &&
-    activeScopeRef.current.churchId === churchId,
-  [churchId, db]);
+    activeScopeRef.current.db === scope.db &&
+    activeScopeRef.current.churchId === scope.churchId,
+  []);
+  const isActiveMediaScope = useCallback(() =>
+    isCurrentUiScope({ db, churchId }),
+  [churchId, db, isCurrentUiScope]);
 
   const {
     list,
@@ -1508,6 +1513,8 @@ export function useMediaLibraryController({
 
   const handleDeleteFolderKeepContents = useCallback(
     async (folderId: string) => {
+      const operationScope = { db, churchId };
+      const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
       const target = folders.find((f) => f.id === folderId);
       const fallback =
         target?.parentId == null ? MEDIA_LIBRARY_ROOT_VIEW : target.parentId;
@@ -1516,38 +1523,43 @@ export function useMediaLibraryController({
         new Set([folderId]),
         fallback,
       );
-      dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
-      for (const key of Object.keys(repairs) as MediaRouteKey[]) {
-        const folderId = repairs[key];
-        if (folderId !== undefined) {
-          dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId }));
+      const next = deleteFolderKeepContents(folderId, folders, list);
+      if (isOperationUiScopeCurrent()) {
+        dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
+        for (const key of Object.keys(repairs) as MediaRouteKey[]) {
+          const routeFolderId = repairs[key];
+          if (routeFolderId !== undefined) {
+            dispatch(setMediaRouteFolder({ controllerProfileId: controllerProfile.id, key, folderId: routeFolderId }));
+          }
         }
       }
       try {
-        if (!db) throw new Error("Media database is unavailable");
-        const docs = await repairPersistedMediaRouteFolders(db, new Set([folderId]), fallback);
-        broadcastControllerMediaRouteFoldersUpdate(docs);
+        if (!operationScope.db) throw new Error("Media database is unavailable");
+        const docs = await repairPersistedMediaRouteFolders(operationScope.db, new Set([folderId]), fallback);
+        broadcastControllerMediaRouteFoldersUpdate(docs, isOperationUiScopeCurrent);
       } catch (error) {
         console.error("Could not repair saved media folder selections", error);
-        showToast("Could not update saved Media folders. Check your connection and try again.", "error");
+        if (isOperationUiScopeCurrent()) {
+          showToast("Could not update saved Media folders. Check your connection and try again.", "error");
+        }
       }
-      const next = deleteFolderKeepContents(folderId, folders, list);
-      dispatch(setMediaListAndFolders(next));
-      void flushMediaLibraryDocToPouch(
-        db,
+      if (isOperationUiScopeCurrent()) dispatch(setMediaListAndFolders(next));
+      const flushResult = await flushMediaLibraryDocToPouch(
+        operationScope.db,
         next.list,
         next.folders,
-        () => ({ list: store.getState().media.list, folders: store.getState().media.folders }),
+        () => ({ list: next.list, folders: next.folders }),
         { list, folders },
-      ).then(
-        (r) => {
-          if (!r.ok) {
-            showToast(mediaLibraryFlushFailureMessage(r.error, "folder"), "error");
-          }
+        {
+          allowOriginalOwnerPersistenceAfterScopeChange: true,
+          publishIfCurrent: isOperationUiScopeCurrent,
         },
       );
+      if (!flushResult.ok && isOperationUiScopeCurrent()) {
+        showToast(mediaLibraryFlushFailureMessage(flushResult.error, "folder"), "error");
+      }
     },
-    [activeMediaRouteFolders, controllerProfile.id, db, dispatch, folders, list, showToast, store],
+    [activeMediaRouteFolders, controllerProfile.id, db, churchId, dispatch, folders, isCurrentUiScope, list, showToast],
   );
 
   const handleRequestFolderDelete = useCallback(() => {
@@ -1576,6 +1588,8 @@ export function useMediaLibraryController({
 
   const handleDeleteFolderSubtree = useCallback(
     async (folderId: string) => {
+      const operationScope = { db, churchId };
+      const isOperationUiScopeCurrent = () => isCurrentUiScope(operationScope);
       const target = folders.find((f) => f.id === folderId);
       const subtree = collectSubtreeFolderIds(folderId, folders);
       const fallback =
@@ -1603,6 +1617,7 @@ export function useMediaLibraryController({
       let uploadCleanupRetry: (() => Promise<void>) | undefined;
       let uploadCleanupRows: MediaType[] = [];
       let folderFinalized = false;
+      let folderFinalizationError: string | undefined;
       let ownerActive = true;
       const activityHandoff = createMediaDeletionActivityHandoff(activityId, activityActions);
       const retireOwner = () => {
@@ -1617,7 +1632,10 @@ export function useMediaLibraryController({
         const complete = fileStates.filter((file) => file.status === "complete").length;
         const failed = fileStates.filter((file) => file.status === "failed").length + providerFailedRows.length;
         activityHandoff.setDetachedCleanupRetry(
-          uploadCleanupRetry || providerFailedRows.length ? retryDetachedCleanup : undefined,
+          uploadCleanupRetry || providerFailedRows.length || folderFinalizationError
+            ? retryDetachedCleanup
+            : undefined,
+          folderFinalizationError ? "Retry folder finalization" : "Retry cleanup",
         );
         activityHandoff.publish({
           id: activityId,
@@ -1634,7 +1652,9 @@ export function useMediaLibraryController({
           actions: status === "active"
             ? []
             : [
-                ...(uploadCleanupRetry || providerFailedRows.length ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
+                ...(uploadCleanupRetry || providerFailedRows.length || folderFinalizationError
+                  ? [{ key: "retry-cleanup", label: folderFinalizationError ? "Retry folder finalization" : "Retry cleanup" }]
+                  : []),
                 ...(deleteFailedRows.length ? [{ key: "retry-delete", label: "Retry deletion" }] : []),
                 { key: "dismiss", label: "Dismiss" },
               ],
@@ -1644,14 +1664,13 @@ export function useMediaLibraryController({
         activityHandoff.registerRouteAction(key, handler);
       };
       const finishFolderNavigation = () => {
-        if (!ownerActive || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) return;
+        if (!ownerActive || !isOperationUiScopeCurrent()) return;
         setFolderDeleteOpen(false);
         navigateToFolder(fallback);
       };
       const finalizeFolder = async () => {
-        const isOriginalScope = () => activeScopeRef.current.db === db && activeScopeRef.current.churchId === churchId;
-        const canUpdateRoute = () => ownerActive && activeScopeRef.current.active && isOriginalScope();
-        if (folderFinalized || !isOriginalScope()) return;
+        const canUpdateRoute = () => ownerActive && isOperationUiScopeCurrent();
+        if (folderFinalized) return true;
         if (canUpdateRoute()) {
           dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
           for (const key of Object.keys(repairs) as MediaRouteKey[]) {
@@ -1661,35 +1680,48 @@ export function useMediaLibraryController({
             }
           }
         }
+        let routeRepairError: unknown;
         try {
-          if (!db) throw new Error("Media database is unavailable");
-          const docs = await repairPersistedMediaRouteFolders(db, subtree, fallback);
-          if (isOriginalScope() && activeScopeRef.current.active) broadcastControllerMediaRouteFoldersUpdate(docs);
+          if (!operationScope.db) throw new Error("Media database is unavailable");
+          const docs = await repairPersistedMediaRouteFolders(operationScope.db, subtree, fallback);
+          broadcastControllerMediaRouteFoldersUpdate(docs, isOperationUiScopeCurrent);
         } catch (error) {
+          routeRepairError = error;
           console.error("Could not repair saved media folder selections", error);
-          if (canUpdateRoute()) showToast("Could not update saved Media folders. Check your connection and try again.", "error");
         }
-        if (!isOriginalScope()) return;
-        const persistedList = ownerActive ? getCurrentMediaList() : next.list;
-        if (canUpdateRoute()) dispatch(setMediaListAndFolders({ list: persistedList, folders: next.folders }));
-        const flushResult = await flushMediaLibraryDocToPouch(
-          db,
-          persistedList,
-          next.folders,
-          () => ownerActive && isOriginalScope()
-            ? ({ list: store.getState().media.list, folders: store.getState().media.folders })
-            : ({ list: next.list, folders: next.folders }),
-          { list: next.list, folders },
-        );
-        if (!isOriginalScope()) return;
-        if (!flushResult.ok && canUpdateRoute()) {
-          showToast(mediaLibraryFlushFailureMessage(flushResult.error, "library"), "error");
+        if (canUpdateRoute()) dispatch(setMediaListAndFolders({ list: next.list, folders: next.folders }));
+        try {
+          const flushResult = await flushMediaLibraryDocToPouch(
+            operationScope.db,
+            next.list,
+            next.folders,
+            () => ({ list: next.list, folders: next.folders }),
+            { list: next.list, folders },
+            {
+              allowOriginalOwnerPersistenceAfterScopeChange: true,
+              publishIfCurrent: isOperationUiScopeCurrent,
+            },
+          );
+          if (!flushResult.ok) throw flushResult.error;
+          if (routeRepairError) throw routeRepairError;
+          folderFinalized = true;
+          folderFinalizationError = undefined;
+          if (canUpdateRoute()) {
+            clearSelection();
+            dispatch(ActionCreators.clearHistory());
+          }
+          return true;
+        } catch (error) {
+          console.error("Could not finalize deleted Media folder", error);
+          folderFinalizationError = error instanceof Error
+            ? error.message
+            : "The original church folder data could not be finalized.";
+          activityHandoff.setDetachedCleanupRetry(retryDetachedCleanup, "Retry folder finalization");
+          if (canUpdateRoute()) {
+            showToast("Folder deletion still needs attention. Retry folder finalization from Activity.", "error");
+          }
+          return false;
         }
-        if (canUpdateRoute()) {
-          clearSelection();
-          dispatch(ActionCreators.clearHistory());
-        }
-        folderFinalized = true;
       };
       const runDeletionAttempt = async (
         targetRows: MediaType[],
@@ -1758,19 +1790,25 @@ export function useMediaLibraryController({
           const completeCount = fileStates.filter((file) => file.status === "complete").length;
           const status: Transfer["status"] = providerFailedRows.length || deleteFailedRows.length
             ? (completeCount ? "partial" : "failed")
-            : "complete";
-          const phase = providerFailedRows.length
+            : folderFinalizationError
+              ? (completeCount ? "partial" : "failed")
+              : "complete";
+          const phase = folderFinalizationError
+            ? "Folder finalization needs attention"
+            : providerFailedRows.length
             ? "Folder removed; cloud cleanup needs attention"
             : deleteFailedRows.length
               ? result.phase === "sweep_failed" ? "Media kept because references could not be cleaned" : "Some media could not be removed"
               : "Folder deletion complete";
-          const error = providerFailedRows.length
+          const error = folderFinalizationError
+            ? `Folder metadata or saved route folders could not be finalized: ${folderFinalizationError}`
+            : providerFailedRows.length
             ? `${providerFailedRows.length} cloud ${providerFailedRows.length === 1 ? "asset needs" : "assets need"} cleanup.`
             : deleteFailedRows.length
               ? `${deleteFailedRows.length} ${deleteFailedRows.length === 1 ? "item could" : "items could"} not be removed.`
               : undefined;
           publish(status, phase, error);
-          return deleteFailedRows.length === 0;
+          return deleteFailedRows.length === 0 && !folderFinalizationError;
         } catch (error) {
           const message = error instanceof Error ? error.message : "Media could not be deleted.";
           for (const row of targetRows) {
@@ -1796,6 +1834,28 @@ export function useMediaLibraryController({
       };
 
       async function retryDetachedCleanup() {
+        if (folderFinalizationError) {
+          publish("active", "Retrying folder finalization");
+          const finalized = await finalizeFolder();
+          const stillNeedsAttention = Boolean(folderFinalizationError);
+          const stillHasProviderFailure = providerFailedRows.length > 0;
+          const status: Transfer["status"] = stillNeedsAttention
+            ? (fileStates.some((file) => file.status === "complete") ? "partial" : "failed")
+            : stillHasProviderFailure ? "partial" : "complete";
+          publish(
+            status,
+            stillNeedsAttention
+              ? "Folder finalization still needs attention"
+              : stillHasProviderFailure
+                ? "Folder removed; cloud cleanup needs attention"
+                : "Folder deletion complete",
+            folderFinalizationError
+              ? `Folder metadata or saved route folders could not be finalized: ${folderFinalizationError}`
+              : stillHasProviderFailure ? `${providerFailedRows.length} cloud assets still need cleanup.` : undefined,
+          );
+          if (finalized) finishFolderNavigation();
+          return;
+        }
         if (uploadCleanupRetry) {
           const retryCleanup = uploadCleanupRetry;
           try {
@@ -1838,6 +1898,11 @@ export function useMediaLibraryController({
       }
 
       register("retry-cleanup", async () => {
+        if (folderFinalizationError) {
+          await retryDetachedCleanup();
+          if (folderFinalized) finishFolderNavigation();
+          return;
+        }
         publish("active", "Retrying cloud cleanup");
         if (uploadCleanupRetry) {
           const retryRows = uploadCleanupRows;
@@ -1895,8 +1960,13 @@ export function useMediaLibraryController({
       });
 
       if (removedRows.length === 0) {
-        await finalizeFolder();
-        return ownerActive;
+        const finalized = await finalizeFolder();
+        publish(
+          finalized ? "complete" : "failed",
+          finalized ? "Folder deletion complete" : "Folder finalization needs attention",
+          folderFinalizationError,
+        );
+        return ownerActive && finalized;
       }
       const deletionClaim = claimMediaDeletion(removedRows.map((row) => row.id));
       publish("active", "Stopping cloud uploads for folder items");
@@ -1918,8 +1988,7 @@ export function useMediaLibraryController({
       removeMediaRowsAfterSweep,
       clearSelection,
       showToast,
-      store,
-      getCurrentMediaList,
+      isCurrentUiScope,
       activityActions,
       setPendingDeletionIds,
       deleteFromProviders,

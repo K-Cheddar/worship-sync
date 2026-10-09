@@ -1,0 +1,7 @@
+{
+  "id": "member-csv-imports",
+  "date": "2026-10-08",
+  "type": "improved",
+  "title": "Clearer member CSV imports",
+  "description": "Resolve missing positions, confirm team assignments, and review member changes before importing members from a CSV."
+}

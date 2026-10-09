@@ -1505,6 +1505,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
                 onChange(onChangeInfo);
               }}
               displayType="editor"
+              showLocalSourceStatus
               editorTransportOwner
               preparedMediaContext={editorPreparedMediaContext}
               currentItemId={_id}

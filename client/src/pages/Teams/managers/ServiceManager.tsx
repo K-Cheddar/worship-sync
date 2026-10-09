@@ -82,7 +82,7 @@ type ServiceManagerProps = {
   teams: TeamRecord[];
   planTemplates?: ServicePlanTemplate[];
   canEdit: boolean;
-  onImported?: () => void;
+  onImported?: () => void | Promise<void>;
 };
 
 const ServiceManager = ({

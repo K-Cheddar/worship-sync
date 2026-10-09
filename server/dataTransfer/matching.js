@@ -27,7 +27,8 @@ export const classifyPortablePreviewAction = ({ issues = [], match = null, candi
     "missing_reference", "invalid_value", "archived_match", "unresolved_reference",
     "archive_import_unsupported",
   ]);
-  if (issues.some((issue) => blockingCodes.has(issue.code)
+  if (issues.some((issue) => (blockingCodes.has(issue.code)
+    && !(issue.code === "missing_reference" && issue.field === "positions"))
     || (issue.code === "ambiguous_reference" && !issue.candidates?.length)
     || (issue.code === "foreign_or_unknown_reference_id" && !issue.candidates?.length))) return "invalid";
   if (candidates.length > 1 || issues.some((issue) => [

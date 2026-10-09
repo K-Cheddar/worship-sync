@@ -1020,6 +1020,7 @@ app.post("/api/sms-consent/verify", authHandlers.verifySmsConsent);
 app.post("/api/sms-consent/:churchId", authHandlers.submitSmsConsent);
 app.post("/api/sms-consent/:churchId/verify", authHandlers.verifySmsConsent);
 app.post("/api/sms-consent/:churchId/cancel", authHandlers.cancelSmsConsent);
+app.post("/api/sms-consent/:churchId/admin-record", authHandlers.recordMemberSmsConsent);
 // Twilio authenticates this endpoint with X-Twilio-Signature; it deliberately
 // does not use browser session or CSRF authentication.
 app.post(
@@ -1801,6 +1802,10 @@ app.delete(
 );
 app.get("/api/invites/preview", authHandlers.getInvitePreview);
 app.post("/api/invites/accept", authHandlers.acceptInvite);
+app.post("/api/invites/sms-context", authHandlers.getInviteSmsContext);
+app.post("/api/invites/sms-consent", authHandlers.submitInviteSmsConsent);
+app.post("/api/invites/sms-consent/cancel", authHandlers.cancelInviteSmsConsent);
+app.post("/api/invites/sms-consent/verify", authHandlers.verifyInviteSmsConsent);
 app.post(
   "/api/churches/:churchId/members/:userId/make-admin",
   authHandlers.makeAdmin,

@@ -14,6 +14,15 @@ const renderSelect = (options: React.ComponentProps<typeof Select>["options"]) =
   );
 
 describe("Select", () => {
+  it("visually and accessibly associates an error with the trigger", () => {
+    render(<Select aria-label="Team that owns Camera Operator" value="" onChange={jest.fn()} errorText="Choose the team that owns this position." options={[{ value: "team-1", label: "Media" }]} />);
+    const trigger = screen.getByRole("combobox", { name: "Team that owns Camera Operator" });
+    const error = screen.getByRole("alert");
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(trigger).toHaveAttribute("aria-describedby", error.id);
+    expect(error).toHaveTextContent("Choose the team that owns this position.");
+  });
+
   it("supports a rich selected value, compact trigger, disabled options and typeahead text", async () => {
     const user = userEvent.setup();
     const onChange = jest.fn();

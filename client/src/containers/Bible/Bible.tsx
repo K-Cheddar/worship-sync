@@ -724,6 +724,7 @@ const Bible = () => {
       )}
       <h3 className="text-xl font-semibold">{bibleItemName}</h3>
       <BibleVersesList
+        key={`${version}:${book}:${chapter}`}
         isLoading={isLoadingChapter}
         verses={verses}
         startVerse={startVerse}

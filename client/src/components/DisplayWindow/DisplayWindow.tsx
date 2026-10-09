@@ -287,6 +287,8 @@ type DisplayWindowProps = {
    * Operator preview tiles mute so three cards do not play house audio.
    */
   playLocalVideoAudio?: boolean;
+  /** Render local-source ownership status in this operator preview only. */
+  showLocalSourceStatus?: boolean;
   participantOverlayInfo?: OverlayInfo;
   prevParticipantOverlayInfo?: OverlayInfo;
   stbOverlayInfo?: OverlayInfo;
@@ -360,6 +362,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       canCaptureLocalVideo = false,
       directLocalVideoCapture = false,
       playLocalVideoAudio = true,
+      showLocalSourceStatus = false,
       participantOverlayInfo,
       prevParticipantOverlayInfo,
       stbOverlayInfo,
@@ -498,6 +501,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const isStream = displayType === "stream";
     const isEditor = displayType === "editor";
+    // This explicit opt-in is additionally constrained to the editor surface,
+    // so an output window can never render operator-only ownership status.
+    const localSourceStatusEnabled = showLocalSourceStatus && isEditor;
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
     const [editorPreparedActive, setEditorPreparedActive] = useState(false);
@@ -1497,6 +1503,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           receiveHighQuality={canCaptureLocalVideo}
           publishPreview={canCaptureLocalVideo && displayType === "editor"}
           showErrors={!canCaptureLocalVideo || displayType === "editor"}
+          showLocalSourceStatus={localSourceStatusEnabled}
           transparentBackground={displayType === "stream"}
           outputId={outputId}
           windowRole={
@@ -1702,6 +1709,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     isTransitionManaged
                     paintBackground={laneMedia.paintBackground}
                     paintForeground={laneMedia.paintForeground}
+                    showLocalSourceStatus={localSourceStatusEnabled && !isPrevious}
                   />
                 ));
               }}
@@ -1780,6 +1788,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               activeVideoUrl={activeVideoUrl}
               isWindowVideoLoaded={isWindowVideoLoaded}
               desiredCursorPosition={boxCursorPositions?.[index]}
+              showLocalSourceStatus={localSourceStatusEnabled}
             />
           ))}
         </div>

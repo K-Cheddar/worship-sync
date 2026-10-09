@@ -9,12 +9,14 @@ import {
 import WorshipSyncImage from "../assets/WorshipSyncImage.png";
 import AuthScreenMain from "../components/AuthScreenMain";
 import Button from "../components/Button/Button";
-import Checkbox from "../components/Checkbox/Checkbox";
+import SmsConsentDisclosure, {
+  SMS_CONSENT_TEXT,
+} from "../components/SmsConsentDisclosure";
 import Input from "../components/Input/Input";
 import { formatUsPhoneInput } from "../utils/phoneNumber";
+import { createSmsConsentCapabilities } from "../utils/smsConsentCapabilities";
 
-export const SMS_CONSENT_TEXT =
-  "I agree to receive SMS messages from my church through WorshipSync about volunteer availability, scheduling, assignments, and related reminders. Message frequency varies. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. Consent is optional and is not required to use WorshipSync.";
+export { SMS_CONSENT_TEXT };
 
 const SMS_OPTIONAL_DESCRIPTION =
   "Get volunteer schedule updates from your church by text.";
@@ -31,20 +33,6 @@ const isValidUsPhone = (value: string) => {
       ? digits.slice(1)
       : digits;
   return /^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber);
-};
-
-const createSmsConsentCancellationCapability = () => {
-  const challengeBytes = window.crypto.getRandomValues(new Uint8Array(16));
-  const tokenBytes = window.crypto.getRandomValues(new Uint8Array(32));
-  const challengeId = Array.from(challengeBytes, (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-  const cancellationToken = window
-    .btoa(String.fromCharCode(...tokenBytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-  return { challengeId, cancellationToken };
 };
 
 const INVALID_PHONE_MESSAGE = "Enter a valid 10-digit U.S. phone number.";
@@ -102,7 +90,7 @@ const SmsOptIn = () => {
         setErrorMessage("Open the SMS opt-in link provided by your church.");
         return;
       }
-      const capability = createSmsConsentCancellationCapability();
+      const capability = createSmsConsentCapabilities();
       setVerificationChallengeId(capability.challengeId);
       setCancellationToken(capability.cancellationToken);
       submissionStarted = true;
@@ -427,21 +415,14 @@ const SmsOptIn = () => {
               />
 
               <div className="space-y-2">
-                <Checkbox
-                  id="sms-consent"
-                  className="items-start"
-                  labelClassName="items-start"
+                <SmsConsentDisclosure
+                  includeLegalLinks={false}
                   checked={consent}
                   onCheckedChange={(checked) => {
                     setConsent(checked);
                     setConsentError("");
                     setErrorMessage("");
                   }}
-                  label={
-                    <span className="text-sm leading-relaxed text-gray-200">
-                      {SMS_CONSENT_TEXT}
-                    </span>
-                  }
                 />
                 {consentError ? (
                   <p className="text-sm text-red-300" role="alert">

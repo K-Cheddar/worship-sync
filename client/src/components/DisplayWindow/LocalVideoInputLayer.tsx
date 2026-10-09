@@ -13,6 +13,7 @@ type LocalVideoInputLayerProps = {
   receiveHighQuality?: boolean;
   publishPreview?: boolean;
   showErrors?: boolean;
+  showLocalSourceStatus?: boolean;
   transparentBackground?: boolean;
   contentVisible?: boolean;
   outputId?: string;
@@ -31,6 +32,7 @@ const LocalVideoInputLayer = ({
   receiveHighQuality,
   publishPreview,
   showErrors,
+  showLocalSourceStatus,
   transparentBackground,
   contentVisible = true,
   outputId,
@@ -71,6 +73,7 @@ const LocalVideoInputLayer = ({
         receiveHighQuality={receiveHighQuality}
         publishPreview={publishPreview}
         showErrors={showErrors}
+        showLocalSourceStatus={showLocalSourceStatus}
         transparentBackground={transparentBackground}
         outputId={outputId}
         windowRole={windowRole}

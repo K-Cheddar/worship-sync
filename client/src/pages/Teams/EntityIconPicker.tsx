@@ -389,9 +389,12 @@ const EntityIconPicker = ({ label = "Icon", context = "position", value, fallbac
                 </div>
               </div>
             ) : null}
-            {value ? (
-              <Button type="button" variant="textLink" padding="p-0" className="text-xs text-gray-400 hover:text-gray-200" onClick={() => onChange("")}>Clear icon</Button>
-            ) : null}
+            <div className="flex items-center justify-between">
+              {value ? (
+                <Button type="button" variant="textLink" padding="p-0" className="text-xs text-gray-400 hover:text-gray-200" onClick={() => onChange("")}>Clear icon</Button>
+              ) : <span />}
+              <Button type="button" variant="secondary" padding="px-3 py-1" className="h-8 min-h-0 text-xs" onClick={() => setOpen(false)}>Done</Button>
+            </div>
           </div>
         </PopoverContent>
       </Popover>

@@ -55,8 +55,9 @@ const TeamsMembersPage = () => {
       }
       onTeamSaved={(team) => upsertData("teams", "teamId", team)}
       onArchived={() => void refresh()}
-      onImported={() => void refresh()}
+      onImported={() => refresh()}
       onRemoved={(memberId) => removeData("members", "memberId", memberId)}
+      onSmsConsentRecorded={() => refresh()}
     />
   );
 };

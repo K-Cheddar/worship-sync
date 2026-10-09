@@ -1,5 +1,5 @@
 import { type ContextType } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import MemberManager from "./MemberManager";
@@ -20,6 +20,7 @@ const mockUpdateTeamRosterMember = jest.fn();
 const mockInviteTeamRosterMember = jest.fn(async (..._args: any[]) => ({
   success: true,
 }));
+const mockRecordMemberSmsConsent = jest.fn(async (..._args: unknown[]) => ({ success: true, eligibility: { status: "enabled", eligible: true, phoneNumber: "+19545551234" } }));
 
 jest.mock("../../../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {},
@@ -34,6 +35,8 @@ jest.mock("../../../api/auth", () => ({
     mockInviteTeamRosterMember(...args),
   updateTeamRosterMember: (...args: unknown[]) =>
     mockUpdateTeamRosterMember(...args),
+  recordMemberSmsConsent: (...args: unknown[]) =>
+    mockRecordMemberSmsConsent(...args),
 }));
 
 const worshipTeam: TeamRecord = {
@@ -109,6 +112,7 @@ const renderManager = ({
   onTeamSaved = jest.fn(),
   userId = "",
   role = "admin",
+  onSmsConsentRecorded = jest.fn(),
 }: {
   data?: TeamsData;
   onSaved?: jest.Mock;
@@ -116,6 +120,7 @@ const renderManager = ({
   userId?: string;
   /** Invite and the account picker call admin-only endpoints. */
   role?: string;
+  onSmsConsentRecorded?: jest.Mock;
 } = {}) => {
   render(
     <MemoryRouter>
@@ -137,13 +142,14 @@ const renderManager = ({
               onTeamSaved={onTeamSaved}
               onArchived={jest.fn()}
               onRemoved={jest.fn()}
+              onSmsConsentRecorded={onSmsConsentRecorded}
             />
           </TeamsNavigationGuardProvider>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
   );
-  return { onSaved, onTeamSaved };
+  return { onSaved, onTeamSaved, onSmsConsentRecorded };
 };
 
 const openCreateForm = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -968,12 +974,115 @@ describe("MemberManager roster contact information", () => {
       ],
     } as Partial<TeamsData>);
 
-  it("flags only members without an email address or phone number", () => {
+  it("shows team assignments instead of treating missing contact details as a row warning", () => {
     renderManager({ data: rosterWithAndWithoutContactInfo(), userId: "user-1" });
 
-    expect(screen.getByText("No contact info")).toBeInTheDocument();
-    expect(screen.queryByText("No email")).not.toBeInTheDocument();
+    expect(screen.queryByText("No contact info")).not.toBeInTheDocument();
+    expect(screen.getAllByText("No team assigned")).toHaveLength(3);
     expect(screen.getByRole("button", { name: /Phone Only/ })).toBeInTheDocument();
+  });
+
+  it("shows three positions, searches assignment names, and opens remaining positions without editing", async () => {
+    const user = userEvent.setup();
+    const positions = [
+      { ...producerPosition, positionId: "position-camera", name: "Camera Operator" },
+      { ...producerPosition, positionId: "position-audio", name: "Audio" },
+      { ...producerPosition, positionId: "position-livestream", name: "Livestream" },
+      { ...producerPosition, positionId: "position-producer-2", name: "Producer" },
+      { ...producerPosition, positionId: "position-stage-manager", name: "Stage Manager" },
+      { ...vocalPosition, positionId: "position-vocalist", name: "Vocalist" },
+    ];
+    const member = {
+      ...worshipMember,
+      positionIds: positions.map((position) => position.positionId),
+    };
+    renderManager({
+      data: buildData({
+        members: [member],
+        positions,
+        teams: [
+          { ...mediaTeam, memberIds: [member.memberId] },
+          { ...worshipTeam, memberIds: [member.memberId] },
+        ],
+      }),
+    });
+
+    const memberRow = screen.getAllByTestId("entity-row")[0];
+    expect(memberRow).toHaveTextContent(
+      "Media · Audio, Camera Operator, Livestream",
+    );
+    const assignmentLine = within(memberRow).getByLabelText(/Member assignments:/);
+    const assignmentText = within(assignmentLine).getByTestId("member-assignment-text");
+    expect(assignmentText).toHaveClass(
+      "min-w-0",
+      "overflow-hidden",
+      "text-ellipsis",
+      "whitespace-nowrap",
+    );
+    expect(assignmentLine).toHaveAttribute(
+      "title",
+      "Media · Audio, Camera Operator, Livestream, Producer, Stage Manager, Worship · Vocalist",
+    );
+    expect(
+      within(assignmentLine).getByRole("button", {
+        name: "Show 3 more positions for Rae Kim",
+      }),
+    ).toBeInTheDocument();
+    const moreButton = screen.getByRole("button", {
+      name: "Show 3 more positions for Rae Kim",
+    });
+    expect(moreButton).toHaveTextContent("+3 more");
+
+    await user.click(moreButton);
+    const popover = await screen.findByRole("dialog", {
+      name: "Additional assignments for Rae Kim",
+    });
+    expect(within(popover).getByText("Producer")).toBeInTheDocument();
+    expect(within(popover).getByText("Stage Manager")).toBeInTheDocument();
+    expect(within(popover).getByText("Worship")).toBeInTheDocument();
+    expect(within(popover).getByText("Vocalist")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Edit member" })).not.toBeInTheDocument();
+    await user.click(within(popover).getByText("Producer"));
+    expect(screen.queryByRole("heading", { name: "Edit member" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Additional assignments for Rae Kim" })).not.toBeInTheDocument();
+    expect(moreButton).toHaveFocus();
+
+    const search = screen.getByPlaceholderText("Search members…");
+    await user.type(search, "Camera");
+    expect(screen.getByRole("button", { name: "Edit Rae Kim" })).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "Media");
+    expect(screen.getByRole("button", { name: "Edit Rae Kim" })).toBeInTheDocument();
+  });
+
+  it("shows exactly three assigned positions without a more control", () => {
+    const positions = [
+      { ...producerPosition, positionId: "position-camera", name: "Camera Operator" },
+      { ...producerPosition, positionId: "position-livestream", name: "Livestream" },
+      { ...vocalPosition, positionId: "position-vocalist", name: "Vocalist" },
+    ];
+    const member = {
+      ...worshipMember,
+      positionIds: positions.map((position) => position.positionId),
+    };
+    renderManager({
+      data: buildData({
+        members: [member],
+        positions,
+        teams: [
+          { ...mediaTeam, memberIds: [member.memberId] },
+          { ...worshipTeam, memberIds: [member.memberId] },
+        ],
+      }),
+    });
+
+    const memberRow = screen.getAllByTestId("entity-row")[0];
+    expect(memberRow).toHaveTextContent(
+      "Media · Camera Operator, Livestream, Worship · Vocalist",
+    );
+    expect(screen.queryByRole("button", { name: /more assignments/i })).not.toBeInTheDocument();
   });
 
   it("shows roster photos and initials fallback in the member list", () => {
@@ -1100,6 +1209,90 @@ describe("MemberManager roster contact information", () => {
     expect(
       await screen.findByText("Invite sent. Not linked until they accept."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("MemberManager SMS consent recording", () => {
+  beforeEach(() => {
+    mockRecordMemberSmsConsent.mockClear();
+    mockRecordMemberSmsConsent.mockResolvedValue({
+      success: true,
+      eligibility: { status: "enabled", eligible: true, phoneNumber: "+19545551234" },
+    });
+  });
+
+  it("records signed-form consent and refreshes the member eligibility", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    const onSmsConsentRecorded = jest.fn();
+    renderManager({
+      data: joinedData({
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "consent_needed", eligible: false, phoneNumber: member.phoneNumber },
+        },
+      }),
+      onSmsConsentRecorded,
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByRole("status")).toHaveTextContent("SMS status: Consent needed");
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Record SMS consent" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Record SMS consent" });
+    expect(within(dialog).getByText("(954) 555-1234")).toBeInTheDocument();
+    expect(within(dialog).getByText(/agreed to receive WorshipSync texts about volunteer availability, scheduling, assignments, and related reminders/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("radio", { name: "Signed volunteer/ministry form" }));
+    await user.clear(within(dialog).getByLabelText(/Date consent was obtained/));
+    await user.type(within(dialog).getByLabelText(/Date consent was obtained/), "2026-09-30");
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: "Save consent" }));
+
+    await waitFor(() => expect(mockRecordMemberSmsConsent).toHaveBeenCalledWith("church-1", {
+      memberId: member.memberId,
+      phoneNumberSnapshot: member.phoneNumber,
+      source: "admin_signed_form",
+      consentedAt: "2026-09-30",
+      confirmed: true,
+    }));
+    expect(onSmsConsentRecorded).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Record SMS consent" })).not.toBeInTheDocument());
+  });
+
+  it("hides the consent action for non-admins and members without a valid phone", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    renderManager({ data: joinedData({ members: [member] }), role: "member" });
+    await openMember(user, /Rae Kim/);
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+
+    cleanup();
+    const invalidMember = { ...worshipMember, phoneNumber: "555" };
+    renderManager({ data: joinedData({ members: [invalidMember] }) });
+    await openMember(user, /Rae Kim/);
+    await user.click(screen.getAllByRole("button", { name: "Member actions" }).at(-1)!);
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["enabled", "Enabled"],
+    ["opted_out", "Opted out"],
+  ] as const)("shows %s status without offering another consent record", async (status, label) => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    renderManager({
+      data: joinedData({
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status, eligible: status === "enabled", phoneNumber: member.phoneNumber },
+        },
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByRole("status")).toHaveTextContent(`SMS status: ${label}`);
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
   });
 });
 
