@@ -198,19 +198,131 @@ describe("DisplayBox", () => {
     jest.useRealTimers();
   });
 
-  it("shows an unavailable status for a local-only image on another device", () => {
+  it("keeps a remote-owned image quiet unless an operator preview opts in", () => {
     setLocalImageResolution({
       isLocalImage: true,
       isOwner: false,
       status: "unavailable",
       url: undefined,
     });
-    render(
+    const { rerender } = render(
       <DisplayBox box={localImageBox} width={100} showBackground index={0} />,
     );
 
-    expect(screen.getByText("Local image unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Available on Booth PC only.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    rerender(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText("Local image · Welcome.png")).toBeInTheDocument();
+    expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+  });
+
+  it("shows unavailable local video files only in an opted-in preview", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+    const { rerender } = render(
+      <DisplayBox box={localVideoBox} width={100} showBackground index={0} />,
+    );
+    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+
+    rerender(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Local video · Welcome.mp4")).toBeInTheDocument();
+    expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+  });
+
+  it("does not mark a loading or cloud-backed local video as unavailable", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "loading",
+    });
+    const { rerender } = render(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+
+    setLocalVideoFileResolution({
+      isLocalVideoFile: false,
+      isOwner: false,
+      status: "ready",
+      url: "https://cdn.example/video.mp4",
+    });
+    rerender(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+  });
+
+  it("does not mark a playable video unavailable when only its local thumbnail is missing", () => {
+    mockUseLocalVideoFileUrl.mockImplementation((_reference, purpose) =>
+      purpose === "thumbnail"
+        ? { isLocalVideoFile: true, isOwner: false, status: "unavailable" }
+        : {
+            isLocalVideoFile: false,
+            isOwner: false,
+            status: "ready",
+            url: "https://cdn.example/video.mp4",
+          },
+    );
+    render(
+      <DisplayBox
+        box={localVideoBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+  });
+
+  it("keeps unavailable local images terminal and paint-ready", () => {
+    const onPaintReadyChange = jest.fn();
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+    render(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground
+        index={0}
+        onPaintReadyChange={onPaintReadyChange}
+      />,
+    );
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(true);
   });
 
   it("renders a warm owner image without loading chrome", () => {

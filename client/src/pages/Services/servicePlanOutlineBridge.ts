@@ -53,7 +53,7 @@ export type ServicePlanOutlinePushResult = {
 export type ServicePlanOutlinePlacementIssue = {
   sectionName: string;
   headingName?: string;
-  reason: "mapped-heading-missing" | "no-matching-heading" | "heading-removed";
+  reason: "mapped-heading-missing" | "heading-removed";
 };
 
 const findExistingListId = (
@@ -126,8 +126,12 @@ export type ServicePlanOutlineStep = {
   planned: PlannedOutlineItem;
   element: ElementOutlinePlan;
   sectionName: string;
-  targetHeading: { listId: string; name: string };
+  destination: ServicePlanOutlineDestination;
 };
+
+export type ServicePlanOutlineDestination =
+  | { kind: "heading"; listId: string; name: string }
+  | { kind: "outline-end" };
 
 export type ServicePlanOutlinePlan = {
   steps: ServicePlanOutlineStep[];
@@ -139,11 +143,12 @@ export type ServicePlanOutlinePlan = {
 export const insertServicePlanOutlineItem = (
   list: ServiceItem[],
   item: ServiceItem,
-  targetHeading: ServicePlanOutlineStep["targetHeading"],
+  destination: ServicePlanOutlineDestination,
 ): ServiceItem[] | null => {
+  if (destination.kind === "outline-end") return [...list, item];
   const headingIndex = list.findIndex(
     (candidate) =>
-      candidate.type === "heading" && candidate.listId === targetHeading.listId,
+      candidate.type === "heading" && candidate.listId === destination.listId,
   );
   if (headingIndex === -1) return null;
   let sectionEndIndex = list.length;
@@ -351,7 +356,7 @@ export const planServicePlanOutlineItems = ({
     const unresolvedForSection: PlannedOutlineItem[] = [];
     for (const elementPlan of elementPlans) {
       const additions = missingPlannedItems(workingList, elementPlan);
-      if (!placement.heading) {
+      if (!placement.heading && placement.rule) {
         unresolvedForSection.push(...additions);
         continue;
       }
@@ -360,10 +365,13 @@ export const planServicePlanOutlineItems = ({
           planned,
           element: elementPlan,
           sectionName: section.name,
-          targetHeading: {
-            listId: placement.heading.listId,
-            name: placement.heading.name,
-          },
+          destination: placement.heading
+            ? {
+                kind: "heading" as const,
+                listId: placement.heading.listId,
+                name: placement.heading.name,
+              }
+            : { kind: "outline-end" as const },
         } satisfies ServicePlanOutlineStep;
         sectionSteps.push(step);
         const simulatedItem: ServiceItem = {
@@ -387,13 +395,13 @@ export const planServicePlanOutlineItems = ({
                 : "bible",
           listId: planned.listId,
         };
-        const inserted = insertServicePlanOutlineItem(workingList, simulatedItem, step.targetHeading);
+        const inserted = insertServicePlanOutlineItem(workingList, simulatedItem, step.destination);
         if (inserted) workingList = inserted;
       }
     }
     if (sectionSteps.length) steps.push(...sectionSteps);
-    else if (placement.issue && unresolvedForSection.length) {
-      placementIssues.push(placement.issue);
+    else if (placement.rule && placement.issue && unresolvedForSection.length) {
+      placementIssues.push({ ...placement.issue, reason: "mapped-heading-missing" });
     }
   }
 
@@ -431,11 +439,11 @@ export const buildServicePlanOutlineItems = async ({
     assertCurrentContext();
     // eslint-disable-next-line no-await-in-loop -- build and append in content order
     const item = await buildServicePlanOutlineItem({ step, list: workingList, db, bibleDb });
-    const inserted = insertServicePlanOutlineItem(workingList, item, step.targetHeading);
+    const inserted = insertServicePlanOutlineItem(workingList, item, step.destination);
     if (!inserted) {
       planned.placementIssues.push({
         sectionName: step.sectionName,
-        headingName: step.targetHeading.name,
+        ...(step.destination.kind === "heading" ? { headingName: step.destination.name } : {}),
         reason: "heading-removed",
       });
       continue;

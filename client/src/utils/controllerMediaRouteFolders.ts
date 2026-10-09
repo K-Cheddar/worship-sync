@@ -23,8 +23,9 @@ const now = () => new Date().toISOString();
 
 export function broadcastControllerMediaRouteFoldersUpdate(
   docs: DBControllerMediaRouteFoldersDoc[],
+  publishIfCurrent: () => boolean,
 ) {
-  if (docs.length && globalBroadcastRef) {
+  if (docs.length && publishIfCurrent() && globalBroadcastRef) {
     globalBroadcastRef.postMessage({ type: "update", data: { docs, hostId: globalHostId } });
   }
 }

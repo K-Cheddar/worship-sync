@@ -52,6 +52,40 @@ describe("flushMediaLibraryDocToPouch", () => {
     });
   });
 
+  it("finishes a captured owner's folder write after a switch without publishing into the new scope", async () => {
+    const dbA = {
+      get: jest.fn(async (id: string) => {
+        if (id === "media-library-meta") return { _id: id, schemaVersion: 2 };
+        throw Object.assign(new Error("missing"), { status: 404 });
+      }),
+      allDocs: jest.fn().mockResolvedValue({ rows: [] }),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-folder" }),
+    } as unknown as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    mockGlobalDb = dbB;
+    mockBroadcastRef = { postMessage: jest.fn() };
+
+    const result = await flushMediaLibraryDocToPouch(
+      dbA,
+      [],
+      [{ id: "folder-a", name: "A folder", parentId: null, createdAt: "now", updatedAt: "now" }],
+      () => ({ list: [], folders: [{ id: "folder-a", name: "A folder", parentId: null, createdAt: "now", updatedAt: "now" }] }),
+      { list: [], folders: [] },
+      {
+        allowOriginalOwnerPersistenceAfterScopeChange: true,
+        publishIfCurrent: () => false,
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(dbA.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "media-folders",
+      folders: [{ id: "folder-a", name: "A folder", parentId: null, createdAt: "now", updatedAt: "now" }],
+    }));
+    expect(mockBroadcastRef.postMessage).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
   it("writes only v2 documents through the database instance supplied by the caller", async () => {
     const db = {
       get: jest.fn(async (id: string) => {

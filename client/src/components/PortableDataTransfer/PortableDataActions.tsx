@@ -1,7 +1,7 @@
 import { useContext, useState } from "react";
 import { Download, FileUp, MoreHorizontal } from "lucide-react";
 import { GlobalInfoContext } from "@/context/globalInfo";
-import type { PortableDataType } from "../../api/authTypes";
+import type { PortableDataType, TeamRecord } from "../../api/authTypes";
 import Button from "@/components/Button/Button";
 import {
   DropdownMenu,
@@ -15,9 +15,13 @@ import { downloadPortableCsv } from "./portableDataTransfer";
 const PortableDataActions = ({
   type,
   onImported,
+  teams,
+  destinationTeamId,
 }: {
   type: PortableDataType;
   onImported?: () => void;
+  teams?: TeamRecord[];
+  destinationTeamId?: string;
 }) => {
   const { churchId, role } = useContext(GlobalInfoContext) || {};
   const [importOpen, setImportOpen] = useState(false);
@@ -64,6 +68,8 @@ const PortableDataActions = ({
         onOpenChange={setImportOpen}
         churchId={churchId}
         type={type}
+        teams={teams}
+        destinationTeamId={destinationTeamId}
         onImported={onImported}
       />
     </>

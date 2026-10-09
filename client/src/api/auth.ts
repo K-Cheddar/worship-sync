@@ -64,6 +64,7 @@ import type {
   TeamIntakePreview,
   TeamIntakeRecipient,
   SmsDeliveryAttempt,
+  SmsMemberEligibility,
   SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
@@ -1058,6 +1059,15 @@ export const cancelSmsConsent = async (
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export const recordMemberSmsConsent = async (
+  churchId: string,
+  body: { memberId: string; phoneNumberSnapshot: string; source: "admin_verbal" | "admin_signed_form"; consentedAt: string; confirmed: true },
+) =>
+  apiFetch<{ success: boolean; eligibility: SmsMemberEligibility }>(
+    `api/sms-consent/${encodeURIComponent(churchId)}/admin-record`,
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const updateHumanProfile = async (body: { displayName: string }) =>
@@ -2885,10 +2895,25 @@ export const resendChurchInvite = async (churchId: string, inviteId: string) =>
   );
 
 export const fetchInvitePreview = async (token: string) =>
-  apiFetch<{ success: boolean; churchName?: string }>(
+  apiFetch<{
+    success: boolean;
+    churchName?: string;
+    smsInviteConsentEnabled?: boolean;
+  }>(
     `api/invites/preview?${new URLSearchParams({ token }).toString()}`,
     { method: "GET" },
   );
+
+export const fetchInviteSmsContext = async (body: { inviteToken: string; idToken: string }) =>
+  apiFetchWithoutAuthRecovery<{
+    success: boolean;
+    smsInviteConsentEnabled: boolean;
+    rosterPhoneNumber?: string;
+    smsConsentStatus: "none" | "pending" | "opted_in" | "opted_out";
+  }>("api/invites/sms-context", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const acceptInvite = async (body: JsonBody) =>
   apiFetch<{ success: boolean; email?: string; churchId?: string }>(
@@ -2897,6 +2922,66 @@ export const acceptInvite = async (body: JsonBody) =>
       method: "POST",
       body: JSON.stringify(body),
     },
+  );
+
+export type InviteSmsConsentRequest = {
+  inviteToken: string;
+  idToken: string;
+  phoneNumber: string;
+  expectedRosterPhoneNumber: string;
+  consent: true;
+  challengeId: string;
+  cancellationToken: string;
+};
+
+export const submitInviteSmsConsent = async (
+  body: InviteSmsConsentRequest,
+) =>
+  apiFetchWithoutAuthRecovery<{
+    success: boolean;
+    outcome:
+      | "verification_required"
+      | "already_opted_in"
+      | "opted_out"
+      | "verification_pending"
+      | "delivery_uncertain";
+    deliveryStatus?: "sending" | "sent" | "failed" | "unknown";
+    challengeId?: string;
+    cancellationToken?: string;
+  }>("api/invites/sms-consent", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const verifyInviteSmsConsent = async (
+  body: {
+    inviteToken: string;
+    idToken: string;
+    phoneNumber: string;
+    expectedRosterPhoneNumber: string;
+    code: string;
+    challengeId: string;
+  },
+) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean }>(
+    "api/invites/sms-consent/verify",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+
+export const cancelInviteSmsConsent = async (body: {
+  inviteToken: string;
+  idToken: string;
+  phoneNumber: string;
+  expectedRosterPhoneNumber: string;
+  challengeId: string;
+  cancellationToken: string;
+}) =>
+  apiFetchWithoutAuthRecovery<{ success: boolean; cancelled: boolean }>(
+    "api/invites/sms-consent/cancel",
+    { method: "POST", body: JSON.stringify(body) },
   );
 
 export const makeAdmin = async (churchId: string, userId: string) =>
@@ -3104,6 +3189,7 @@ export const previewPortableImport = async (
   csv: string,
   mapping: Record<string, string>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean } = {},
 ) =>
   apiFetch<{
     success: boolean;
@@ -3116,9 +3202,11 @@ export const previewPortableImport = async (
       review: number;
       invalid: number;
     };
+    previewToken?: string;
+    previewCsvHash?: string;
   }>(`api/churches/${churchId}/data-transfer/preview`, {
     method: "POST",
-    body: JSON.stringify({ type, csv, mapping, timeZone }),
+    body: JSON.stringify({ type, csv, mapping, timeZone, ...options }),
   });
 
 export const commitPortableImport = async (
@@ -3130,22 +3218,24 @@ export const commitPortableImport = async (
     recordId?: string;
     record: Record<string, string>;
     resolutions?: PortableImportResolution[];
+    expectedStateHash?: string;
   }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string> } = {},
 ) =>
   apiFetch<{
     success: boolean;
     results: Array<{
       row: number;
-      status: "created" | "updated" | "failed";
+      status: "created" | "updated" | "unchanged" | "failed";
       id?: string;
       code?: string;
       message?: string;
     }>;
-    summary: { created: number; updated: number; failed: number };
+    summary: { created: number; updated: number; unchanged?: number; failed: number };
   }>(`api/churches/${churchId}/data-transfer/commit`, {
     method: "POST",
-    body: JSON.stringify({ type, approvedRows, timeZone }),
+    body: JSON.stringify({ type, approvedRows, timeZone, ...options }),
   });
 
 export const downloadPortableData = async (

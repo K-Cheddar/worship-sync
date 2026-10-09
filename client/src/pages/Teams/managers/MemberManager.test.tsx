@@ -1,5 +1,5 @@
 import { type ContextType } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import MemberManager from "./MemberManager";
@@ -20,6 +20,7 @@ const mockUpdateTeamRosterMember = jest.fn();
 const mockInviteTeamRosterMember = jest.fn(async (..._args: any[]) => ({
   success: true,
 }));
+const mockRecordMemberSmsConsent = jest.fn(async (..._args: unknown[]) => ({ success: true, eligibility: { status: "enabled", eligible: true, phoneNumber: "+19545551234" } }));
 
 jest.mock("../../../api/auth", () => ({
   AuthApiError: class MockAuthApiError extends Error {},
@@ -34,6 +35,8 @@ jest.mock("../../../api/auth", () => ({
     mockInviteTeamRosterMember(...args),
   updateTeamRosterMember: (...args: unknown[]) =>
     mockUpdateTeamRosterMember(...args),
+  recordMemberSmsConsent: (...args: unknown[]) =>
+    mockRecordMemberSmsConsent(...args),
 }));
 
 const worshipTeam: TeamRecord = {
@@ -114,6 +117,7 @@ const renderManager = ({
   canManageMemberLifecycle = true,
   canEditMember,
   initialEntry,
+  onSmsConsentRecorded = jest.fn(),
 }: {
   data?: TeamsData;
   onSaved?: jest.Mock;
@@ -126,6 +130,7 @@ const renderManager = ({
   canManageMemberLifecycle?: boolean;
   canEditMember?: (member: TeamRosterMember) => boolean;
   initialEntry?: string | { pathname: string; state?: unknown };
+  onSmsConsentRecorded?: jest.Mock;
 } = {}) => {
   render(
     <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>
@@ -150,13 +155,14 @@ const renderManager = ({
               onTeamSaved={onTeamSaved}
               onArchived={jest.fn()}
               onRemoved={jest.fn()}
+              onSmsConsentRecorded={onSmsConsentRecorded}
             />
           </TeamsNavigationGuardProvider>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
   );
-  return { onSaved, onTeamSaved };
+  return { onSaved, onTeamSaved, onSmsConsentRecorded };
 };
 
 const openCreateForm = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -1195,6 +1201,90 @@ describe("MemberManager roster contact information", () => {
     expect(
       await screen.findByText("Invite sent. Not linked until they accept."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("MemberManager SMS consent recording", () => {
+  beforeEach(() => {
+    mockRecordMemberSmsConsent.mockClear();
+    mockRecordMemberSmsConsent.mockResolvedValue({
+      success: true,
+      eligibility: { status: "enabled", eligible: true, phoneNumber: "+19545551234" },
+    });
+  });
+
+  it("records signed-form consent and refreshes the member eligibility", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    const onSmsConsentRecorded = jest.fn();
+    renderManager({
+      data: joinedData({
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status: "consent_needed", eligible: false, phoneNumber: member.phoneNumber },
+        },
+      }),
+      onSmsConsentRecorded,
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByRole("status")).toHaveTextContent("SMS status: Consent needed");
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Record SMS consent" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Record SMS consent" });
+    expect(within(dialog).getByText("(954) 555-1234")).toBeInTheDocument();
+    expect(within(dialog).getByText(/agreed to receive WorshipSync texts about volunteer availability, scheduling, assignments, and related reminders/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("radio", { name: "Signed volunteer/ministry form" }));
+    await user.clear(within(dialog).getByLabelText(/Date consent was obtained/));
+    await user.type(within(dialog).getByLabelText(/Date consent was obtained/), "2026-09-30");
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: "Save consent" }));
+
+    await waitFor(() => expect(mockRecordMemberSmsConsent).toHaveBeenCalledWith("church-1", {
+      memberId: member.memberId,
+      phoneNumberSnapshot: member.phoneNumber,
+      source: "admin_signed_form",
+      consentedAt: "2026-09-30",
+      confirmed: true,
+    }));
+    expect(onSmsConsentRecorded).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Record SMS consent" })).not.toBeInTheDocument());
+  });
+
+  it("hides the consent action for non-admins and members without a valid phone", async () => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    renderManager({ data: joinedData({ members: [member] }), role: "member" });
+    await openMember(user, /Rae Kim/);
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+
+    cleanup();
+    const invalidMember = { ...worshipMember, phoneNumber: "555" };
+    renderManager({ data: joinedData({ members: [invalidMember] }) });
+    await openMember(user, /Rae Kim/);
+    await user.click(screen.getAllByRole("button", { name: "Member actions" }).at(-1)!);
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["enabled", "Enabled"],
+    ["opted_out", "Opted out"],
+  ] as const)("shows %s status without offering another consent record", async (status, label) => {
+    const user = userEvent.setup();
+    const member = { ...worshipMember, phoneNumber: "+19545551234" };
+    renderManager({
+      data: joinedData({
+        members: [member],
+        smsEligibilityByMemberId: {
+          [member.memberId]: { status, eligible: status === "enabled", phoneNumber: member.phoneNumber },
+        },
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByRole("status")).toHaveTextContent(`SMS status: ${label}`);
+    await user.click(screen.getByRole("button", { name: "Member actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
   });
 });
 

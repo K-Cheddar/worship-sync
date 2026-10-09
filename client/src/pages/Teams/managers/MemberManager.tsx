@@ -9,6 +9,7 @@ import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import SearchableSelect from "../../../components/SearchableSelect";
 import TextArea from "../../../components/TextArea/TextArea";
 import DeleteModal from "../../../components/Modal/DeleteModal";
+import RecordSmsConsentModal from "./RecordSmsConsentModal";
 import DatePicker from "@/components/ui/DatePicker";
 import BirthDateField from "../components/BirthDateField";
 import { getBirthDateValidationError } from "../../../utils/birthDate";
@@ -174,6 +175,7 @@ type MemberManagerProps = {
   onArchived: () => void;
   onRemoved: (memberId: string) => void;
   onImported?: () => void;
+  onSmsConsentRecorded?: () => Promise<void> | void;
 };
 
 const MemberManager = ({
@@ -189,6 +191,7 @@ const MemberManager = ({
   onArchived,
   onRemoved,
   onImported,
+  onSmsConsentRecorded,
 }: MemberManagerProps) => {
   const context = useContext(GlobalInfoContext);
   const { showToast, removeToast } = useToast();
@@ -218,6 +221,7 @@ const MemberManager = ({
     : canEdit;
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
+  const [recordingSmsConsentFor, setRecordingSmsConsentFor] = useState<TeamRosterMember | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [draft, setDraft] = useState<TeamRosterMemberPayload>(() =>
     buildMemberDraft(null, []),
@@ -1067,7 +1071,7 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
-        listHeaderActions={canEdit ? <PortableDataActions type="members" onImported={onImported} /> : null}
+        listHeaderActions={canEdit ? <PortableDataActions type="members" teams={data.teams} destinationTeamId={listFilters.teamIds.length === 1 ? listFilters.teamIds[0] : undefined} onImported={onImported} /> : null}
         keepCreateActionVisible
         scrollableList
         listToolbar={
@@ -1190,7 +1194,15 @@ const MemberManager = ({
                   archiveLabel="Archive member"
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
-                  additionalItems={canEditActiveMember ? [
+                  additionalItems={[
+                    ...(isChurchAdmin &&
+                      canEditActiveMember &&
+                      !editing.archivedAt &&
+                      data.smsEligibilityByMemberId?.[editing.memberId]?.status === "consent_needed" &&
+                      isValidSmsPhone(editing.phoneNumber)
+                      ? [{ text: "Record SMS consent", onClick: () => setRecordingSmsConsentFor(editing) }]
+                      : []),
+                    ...(canEditActiveMember ? [
                     {
                       text: "Copy SMS opt-in link",
                       onClick: () => void copySmsOptInLink(),
@@ -1207,7 +1219,8 @@ const MemberManager = ({
                         );
                       },
                     },
-                  ] satisfies MenuItemType[] : []}
+                    ] : []),
+                  ] satisfies MenuItemType[]}
                   onArchive={
                     editing.archivedAt
                       ? undefined
@@ -1321,6 +1334,11 @@ const MemberManager = ({
               }))
             }
           />
+          {editing && data.smsEligibilityByMemberId?.[editing.memberId] ? (
+            <p role="status" className="text-xs text-gray-300">
+              SMS status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
+            </p>
+          ) : null}
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet
@@ -2048,8 +2066,29 @@ const MemberManager = ({
         impacts={deleting ? describeDeletionImpacts("member", deleting.memberId, data) : undefined}
         warningMessage="This cannot be undone. Archive instead if you only want to hide them."
       />
+      {recordingSmsConsentFor ? (
+        <RecordSmsConsentModal
+          churchId={churchId}
+          member={recordingSmsConsentFor}
+          onClose={() => setRecordingSmsConsentFor(null)}
+          onSaved={onSmsConsentRecorded || (() => undefined)}
+        />
+      ) : null}
     </>
   );
+};
+
+const isValidSmsPhone = (value: string | null | undefined) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return /^[2-9]\d{2}[2-9]\d{6}$/.test(national);
+};
+
+const smsEligibilityLabel = (status: string) => {
+  if (status === "enabled") return "Enabled";
+  if (status === "opted_out") return "Opted out";
+  if (status === "no_mobile") return "No valid mobile number";
+  return "Consent needed";
 };
 
 const formatTeamNameList = (names: string[]) => {

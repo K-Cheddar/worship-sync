@@ -24,6 +24,7 @@ import {
 } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import LocalSourceStatus from "./LocalSourceStatus";
 import { shouldSkipDisplayTextAnimation } from "./utils";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
@@ -109,6 +110,8 @@ type DisplayBoxProps = {
   paintBackground?: boolean;
   /** When false, hide lyrics/text (used for a non-fading still hold layer). */
   paintForeground?: boolean;
+  /** Explicitly enabled only for operator previews. */
+  showLocalSourceStatus?: boolean;
 };
 
 const DisplayBox = ({
@@ -131,6 +134,7 @@ const DisplayBox = ({
   isTransitionManaged = false,
   paintBackground = true,
   paintForeground = true,
+  showLocalSourceStatus = false,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -569,18 +573,28 @@ const DisplayBox = ({
         )}
       {shouldShowBackground &&
         (localImage.isLocalImage && localImage.status === "unavailable" ? (
-          <div
-            className="display-box-background absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black px-12 text-center text-white"
-            role="status"
-            style={{ fontSize: 16, opacity: initialBackgroundOpacity }}
-          >
-            <p className="text-4xl font-semibold">Local image unavailable</p>
-            <p className="text-2xl text-neutral-300">
-              {localImage.isOwner
-                ? "Open this item on the source device and choose Relink."
-                : `Available on ${box.mediaInfo?.localImage?.ownerLabel || "the source device"} only.`}
-            </p>
-          </div>
+          showLocalSourceStatus ? (
+            <div style={{ opacity: initialBackgroundOpacity }}>
+              <LocalSourceStatus
+                sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+                ownerLabel={
+                  localImage.isOwner
+                    ? undefined
+                    : box.mediaInfo?.localImage?.ownerLabel
+                }
+                heading={
+                  localImage.isOwner
+                    ? "Local image unavailable"
+                    : undefined
+                }
+                detail={
+                  localImage.isOwner
+                    ? "Open this item on this device and choose Relink."
+                    : undefined
+                }
+              />
+            </div>
+          ) : null
         ) : displayImage ? (
           <img
             ref={backgroundImageRef}
@@ -602,6 +616,29 @@ const DisplayBox = ({
             }}
           />
         ) : null)}
+      {showLocalSourceStatus &&
+      isVideoBg &&
+      showBackground &&
+      box.mediaInfo?.localVideoFile &&
+      localVideoDisplay.isLocalVideoFile &&
+      localVideoDisplay.status === "unavailable" ? (
+        <LocalSourceStatus
+          sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
+          ownerLabel={
+            localVideoDisplay.isOwner
+              ? undefined
+              : box.mediaInfo.localVideoFile.ownerLabel
+          }
+          heading={
+            localVideoDisplay.isOwner ? "Local video unavailable" : undefined
+          }
+          detail={
+            localVideoDisplay.isOwner
+              ? "Open Media on this device and relink the file."
+              : undefined
+          }
+        />
+      ) : null}
       {paintForeground ? (
         <p
           className="display-box-text h-full w-full bg-transparent whitespace-pre-line absolute overflow-hidden"
