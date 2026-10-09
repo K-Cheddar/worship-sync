@@ -1,3 +1,16 @@
+# [2.43.0](https://github.com/K-Cheddar/worship-sync/compare/v2.42.0...v2.43.0) (2026-10-09)
+
+
+### Bug Fixes
+
+* correct bible scrolling ([52a2de9](https://github.com/K-Cheddar/worship-sync/commit/52a2de9a775447cea6d116325431fa3b8595e426))
+* correct test ([90782c9](https://github.com/K-Cheddar/worship-sync/commit/90782c94c95d573a88e09452e50bacb0e48e34b7))
+
+
+### Features
+
+* Improve members display ([5688795](https://github.com/K-Cheddar/worship-sync/commit/56887959481a082017cc45a887d66f05f3706ec1))
+
 # [2.42.0](https://github.com/K-Cheddar/worship-sync/compare/v2.41.2...v2.42.0) (2026-10-07)
 
 
