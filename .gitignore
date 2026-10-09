@@ -18,28 +18,6 @@
 !.agents/
 .agents/*
 !.agents/engineering-guidance.md
-!.agents/skills/
-.agents/skills/*
-!.agents/skills/implementation-planning/
-!.agents/skills/implementation-planning/**
-!.agents/skills/code-review/
-!.agents/skills/code-review/**
-!.agents/skills/display-window/
-!.agents/skills/display-window/**
-!.agents/skills/react-state-performance/
-!.agents/skills/react-state-performance/**
-!.agents/skills/persisted-mutation-safety/
-!.agents/skills/persisted-mutation-safety/**
-!.agents/skills/schedule-mutation-safety/
-!.agents/skills/schedule-mutation-safety/**
-!.agents/skills/react-quality/
-!.agents/skills/react-quality/**
-!.agents/skills/reliable-state-mutations/
-!.agents/skills/reliable-state-mutations/**
-!.agents/skills/brand-voice/
-!.agents/skills/brand-voice/**
-!.agents/patterns/
-!.agents/patterns/**
 .claude/settings.local.json
 
 .DS_Store
@@ -68,6 +46,10 @@ client/dist-electron/
 
 # Local HTML from `npm run email:preview`
 email-templates/.preview/
+
+# Generated Song v2 migration reports
+/song-schema-v2-*-dry-run.json
+/song-schema-v2-migration-report*.json
 
 #codex-generated-files
 .codex/

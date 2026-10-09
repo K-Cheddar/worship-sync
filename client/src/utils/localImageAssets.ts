@@ -6,11 +6,13 @@ import type {
   DBItem,
   MediaType,
 } from "../types";
+import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import { getOrCreateDeviceId } from "./authStorage";
 import { applyPouchAudit } from "./pouchAudit";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import { isRecognizedImageFile } from "./mediaFileTypes";
 import { isMediaLibraryV2 } from "./mediaDocUtils";
+import { isPouchNotFoundError, loadSong, saveSong } from "./songPersistence";
 
 const DB_NAME = "worshipsync-local-assets";
 const DB_VERSION = 4;
@@ -1089,14 +1091,14 @@ export const attachCloudCopyToLocalImageItem = <
       ),
     }));
 
-  return {
+  return normalizeItemSlides({
     ...item,
     slides: patchSlides(item.slides ?? []),
     arrangements: (item.arrangements ?? []).map((arrangement) => ({
       ...arrangement,
       slides: patchSlides(arrangement.slides ?? []),
     })),
-  } as T;
+  }) as T;
 };
 
 export const updateLocalImageReferenceInItem = <
@@ -1130,14 +1132,14 @@ export const updateLocalImageReferenceInItem = <
       }),
     }));
 
-  return {
+  return normalizeItemSlides({
     ...item,
     slides: patchSlides(item.slides ?? []),
     arrangements: (item.arrangements ?? []).map((arrangement) => ({
       ...arrangement,
       slides: patchSlides(arrangement.slides ?? []),
     })),
-  } as T;
+  }) as T;
 };
 
 export const persistLocalImageReferencePatch = async ({
@@ -1154,11 +1156,22 @@ export const persistLocalImageReferencePatch = async ({
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const current: DBItem = await db.get(itemId);
+      let current: DBItem;
+      try {
+        current = await db.get(itemId) as DBItem;
+      } catch (error) {
+        if (!isPouchNotFoundError(error)) throw error;
+        current = await loadSong(db, itemId);
+      }
+      if (current.type === "song" || current.docType === "song-v2-root") {
+        current = current.docType === "song-v2-root" ? current : await loadSong(db, itemId);
+        const patched = updateLocalImageReferenceInItem(current, assetId, patch);
+        return await saveSong(db, patched, current);
+      }
       const patched = updateLocalImageReferenceInItem(current, assetId, patch);
       const next = applyPouchAudit(
         current,
-        { ...patched, updatedAt: new Date().toISOString() },
+        { ...normalizeSongForPersistence(patched), updatedAt: new Date().toISOString() },
         { isNew: false },
       );
       const response = await db.put(next);
@@ -1187,14 +1200,25 @@ export const persistLocalImageCloudCopy = async ({
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const current: DBItem = await db.get(itemId);
+      let current: DBItem;
+      try {
+        current = await db.get(itemId) as DBItem;
+      } catch (error) {
+        if (!isPouchNotFoundError(error)) throw error;
+        current = await loadSong(db, itemId);
+      }
+      if (current.type === "song" || current.docType === "song-v2-root") {
+        current = current.docType === "song-v2-root" ? current : await loadSong(db, itemId);
+        const patched = attachCloudCopyToLocalImageItem(current, assetId, { mediaId, url });
+        return await saveSong(db, patched, current);
+      }
       const patched = attachCloudCopyToLocalImageItem(current, assetId, {
         mediaId,
         url,
       });
       const next = applyPouchAudit(
         current,
-        { ...patched, updatedAt: new Date().toISOString() },
+        { ...normalizeSongForPersistence(patched), updatedAt: new Date().toISOString() },
         { isNew: false },
       );
       const response = await db.put(next);
@@ -1208,7 +1232,7 @@ export const persistLocalImageCloudCopy = async ({
 };
 
 export const collectLocalImageAssetIds = (
-  item: Pick<DBItem, "slides" | "arrangements">,
+  item: Pick<DBItem, "slides" | "arrangements" | "type">,
 ) => {
   const ids = new Set<string>();
   const collect = (slides: ItemSlideType[]) => {
@@ -1219,10 +1243,13 @@ export const collectLocalImageAssetIds = (
       }),
     );
   };
-  collect(item.slides ?? []);
-  item.arrangements?.forEach((arrangement) =>
-    collect(arrangement.slides ?? []),
-  );
+  if (item.type === "song") {
+    item.arrangements?.forEach((arrangement) =>
+      collect(arrangement.slides ?? []),
+    );
+  } else {
+    collect(item.slides ?? []);
+  }
   return ids;
 };
 
@@ -1256,6 +1283,10 @@ export const cleanupOrphanedLocalImages = async ({
   ]);
   const referenced = new Set<string>();
   allDocs.rows.forEach((row) => {
+    const v2Slide = row.doc as { docType?: string; boxes?: ItemSlideType["boxes"] } | undefined;
+    if (v2Slide?.docType === "song-v2-slide") {
+      collectLocalImageAssetIds({ type: "free", arrangements: [], slides: [{ boxes: v2Slide.boxes } as ItemSlideType] }).forEach((id) => referenced.add(id));
+    }
     const mediaItem = row.doc as (MediaType & { docType?: string }) | undefined;
     if (mediaItem?.docType === "mediaItem" && mediaItem.localImage?.id) {
       referenced.add(mediaItem.localImage.id);

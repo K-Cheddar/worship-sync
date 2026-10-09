@@ -462,6 +462,24 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     await expect(getLocalImageThumbnail("orphaned")).resolves.toBeUndefined();
   });
 
+  it("keeps local image assets referenced directly by v2 slide documents", async () => {
+    await saveLocalImage(storedImage("v2-referenced"));
+    const db = {
+      get: jest.fn().mockResolvedValue({ _id: "media-library-meta", schemaVersion: 2 }),
+      allDocs: jest.fn().mockResolvedValue({ rows: [{ doc: {
+        _id: "song-v2:slide:song-1:arr-1:slide-1",
+        docType: "song-v2-slide",
+        songId: "song-1",
+        arrangementId: "arr-1",
+        id: "slide-1",
+        boxes: [{ mediaInfo: { localImage: { id: "v2-referenced" } } }],
+      } }] }),
+    } as unknown as PouchDB.Database;
+
+    await expect(cleanupOrphanedLocalImages({ db, workspaceId: "church-1", minimumAgeMs: 0 })).resolves.toBe(0);
+    await expect(getLocalImage("v2-referenced")).resolves.toBeDefined();
+  });
+
   it("does not treat the retained legacy media snapshot as a v2 local-image reference", async () => {
     await saveLocalImage(storedImage("legacy-only-reference"));
     const db = {

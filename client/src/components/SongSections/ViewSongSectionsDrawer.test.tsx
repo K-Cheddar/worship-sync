@@ -12,6 +12,7 @@ import {
 } from "../../test/mocks";
 import type { DBItem } from "../../types";
 import { deleteSongAudioWithRetry, uploadSongAudio } from "../../api/auth";
+import * as songPersistence from "../../utils/songPersistence";
 import ViewSongSectionsDrawer from "./ViewSongSectionsDrawer";
 
 jest.mock("../../api/auth", () => ({
@@ -40,6 +41,11 @@ jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
 
 const mockDeleteSongAudio = jest.mocked(deleteSongAudioWithRetry);
 const mockUploadSongAudio = jest.mocked(uploadSongAudio);
+
+const getLegacySong = (rev = "1-old") => jest.fn(async (id: string) => {
+  if (id === song._id) return { ...song, _rev: rev };
+  throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+});
 
 const song = {
   _id: "song-1",
@@ -164,7 +170,7 @@ describe("ViewSongSectionsDrawer", () => {
   });
 
   it("saves the same song details available from the controller editor", async () => {
-    const get = jest.fn().mockResolvedValue({ ...song, _rev: "1-old" });
+    const get = getLegacySong();
     const put = jest.fn().mockResolvedValue({ ok: true, id: song._id, rev: "2-new" });
     const db = createMockPouchDB({ get, put });
     const { store } = renderDrawer({ db });
@@ -235,7 +241,7 @@ describe("ViewSongSectionsDrawer", () => {
   it("keeps MP3 metadata available when storage deletion fails", async () => {
     const put = jest.fn();
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }),
+      get: getLegacySong(),
       put,
     });
     mockDeleteSongAudio.mockRejectedValue(new Error("R2 is unavailable."));
@@ -266,7 +272,7 @@ describe("ViewSongSectionsDrawer", () => {
     };
     mockUploadSongAudio.mockResolvedValue(replacementAudio);
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }),
+      get: getLegacySong(),
       put: jest.fn().mockRejectedValue(new Error("Database unavailable.")),
     });
     renderDrawer({ db });
@@ -301,7 +307,7 @@ describe("ViewSongSectionsDrawer", () => {
       return { success: true };
     });
     const db = createMockPouchDB({
-      get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }),
+      get: getLegacySong(),
       put: jest.fn().mockImplementation(async () => {
         operations.push("persist");
         return { ok: true, id: song._id, rev: "2-new" };
@@ -315,4 +321,57 @@ describe("ViewSongSectionsDrawer", () => {
 
     await waitFor(() => expect(operations).toEqual(["delete", "persist"]));
   });
+  it("attaches and removes v2 audio through targeted root saves", async () => {
+    const baseline = { ...song, name: "Fresh name from another device", docType: "song-v2-root" as const };
+    const replacementAudio = { ...song.songAudio!, id: "replacement", key: "replacement.mp3" };
+    const operations: string[] = [];
+    jest.spyOn(songPersistence, "loadSong").mockResolvedValue(baseline);
+    jest.spyOn(songPersistence, "saveSong").mockImplementation(async (_db, desired) => {
+      operations.push("persist");
+      return { ...baseline, songAudio: desired.songAudio };
+    });
+    mockUploadSongAudio.mockResolvedValue(replacementAudio);
+    mockDeleteSongAudio.mockImplementation(async () => {
+      operations.push("delete");
+      return { success: true };
+    });
+    renderDrawer({ drawerSong: song });
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(screen.getByLabelText("Choose MP3"), {
+      target: { files: [new File([new Uint8Array([1])], "replacement.mp3", { type: "audio/mpeg" })] },
+    });
+    await waitFor(() => expect(songPersistence.saveSong).toHaveBeenCalledTimes(1));
+    expect(songPersistence.saveSong).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
+      name: "Fresh name from another device",
+      songAudio: replacementAudio,
+    }), baseline);
+    expect(mockUploadSongAudio).toHaveBeenCalledTimes(1);
+    expect(operations).toEqual(["persist", "delete"]);
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove MP3" }));
+    await waitFor(() => expect(songPersistence.saveSong).toHaveBeenCalledTimes(2));
+    expect(operations.slice(-2)).toEqual(["persist", "delete"]);
+  });
+
+  it("cleans a new upload after a v2 root conflict and keeps the previous object", async () => {
+    const baseline = { ...song, docType: "song-v2-root" as const };
+    const replacementAudio = { ...song.songAudio!, id: "replacement", key: "replacement.mp3" };
+    jest.spyOn(songPersistence, "loadSong").mockResolvedValue(baseline);
+    jest.spyOn(songPersistence, "saveSong").mockRejectedValue(Object.assign(new Error("Song root changed"), { status: 409 }));
+    mockUploadSongAudio.mockResolvedValue(replacementAudio);
+    mockDeleteSongAudio.mockResolvedValue({ success: true });
+    renderDrawer({ drawerSong: baseline });
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(screen.getByLabelText("Choose MP3"), {
+      target: { files: [new File([new Uint8Array([1])], "replacement.mp3", { type: "audio/mpeg" })] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Song root changed");
+    expect(mockDeleteSongAudio).toHaveBeenCalledTimes(1);
+    expect(mockDeleteSongAudio).toHaveBeenCalledWith({
+      churchId: "church-1", songId: song._id, audio: replacementAudio,
+    });
+    expect(mockDeleteSongAudio).not.toHaveBeenCalledWith(expect.objectContaining({ audio: song.songAudio }));
+  });
+
 });

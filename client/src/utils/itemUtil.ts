@@ -29,6 +29,12 @@ import {
   tryParseSectionLabel,
 } from "./lyricsSectionInference";
 import { applyPouchAudit } from "./pouchAudit";
+import { normalizeItemSlides } from "./activeItemSlides";
+import {
+  createSong,
+  isPouchNotFoundError,
+  loadItemWithSongHydration,
+} from "./songPersistence";
 import { formatBible, formatFree, formatSong } from "./overflow";
 import { createNewSlide } from "./slideCreation";
 import { sortNamesInList } from "./sort";
@@ -731,6 +737,8 @@ type CreateNewItemInDbType = {
   db: PouchDB.Database | undefined;
 };
 
+type CreatedItemState = ItemState & Pick<DBItem, "_rev">;
+
 /** Share one in-flight custom-item retry across repeated local clicks. */
 export async function runCanvaCustomItemCreationOnce(
   inFlight: Map<string, Promise<string>>,
@@ -752,28 +760,33 @@ export async function runCanvaCustomItemCreationOnce(
 export const createNewItemInDb = async ({
   item,
   db,
-}: CreateNewItemInDbType): Promise<ItemState> => {
+}: CreateNewItemInDbType): Promise<CreatedItemState> => {
   if (!db) return item;
   try {
-    const response: DBItem = await db.get(item._id);
+    const response = await loadItemWithSongHydration(db, item._id);
+    const normalized = response.type === "song"
+      ? response
+      : normalizeItemSlides(response);
     return {
       ...item,
-      ...response,
+      ...normalized,
       _id: response._id,
       name: response.name,
-      slides: response.slides,
-    };
+    } as CreatedItemState;
   } catch (error) {
+    if (!isPouchNotFoundError(error)) throw error;
     const now = new Date().toISOString();
-    const doc = applyPouchAudit(
-      null,
-      { ...item, createdAt: now, updatedAt: now },
-      { isNew: true },
-    );
+    const newDoc: DBItem = { ...item, createdAt: now, updatedAt: now };
     // Do not return a newly-created item until its local database write has
     // completed. Callers such as Service Plan's "Create and attach" flow use
     // this resolution as their signal that a library reference is durable.
-    await db.put(doc);
+    if (newDoc.type === "song") {
+      const saved = await createSong(db, newDoc);
+      return { ...item, ...saved, _rev: saved._rev } as CreatedItemState;
+    } else {
+      const doc = applyPouchAudit(null, newDoc, { isNew: true });
+      await db.put(doc);
+    }
     return item;
   }
 };

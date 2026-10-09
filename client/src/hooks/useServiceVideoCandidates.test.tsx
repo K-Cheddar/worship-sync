@@ -89,6 +89,12 @@ const renderCandidates = (
       }
       const currentDoc = currentDocs.find((doc) => doc._id === id);
       if (currentDoc) return currentDoc;
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing"), {
+          status: 404,
+          name: "not_found",
+        });
+      }
       return {
         _id: id,
         items: (
@@ -191,6 +197,36 @@ describe("useServiceVideoCandidates", () => {
     expect(result.current.posterUrls).toHaveLength(7);
     expect(result.current.posterUrls[0]).toBe("https://cdn.example.com/v-1.jpg");
     expect(new Set(result.current.posterUrls).size).toBe(7);
+  });
+
+  it("scans the selected song arrangement when finding service video candidates", async () => {
+    const song = {
+      _id: "song-arranged",
+      name: "Song with media",
+      type: "song",
+      selectedArrangement: 1,
+      slides: [
+        slide("legacy-root", [
+          { id: "stale", mediaInfo: video("stale", "https://cdn.example.com/stale.mp4") },
+        ]),
+      ],
+      arrangements: [
+        { id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [] },
+        {
+          id: "arr-2", name: "Band", formattedLyrics: [], songOrder: [],
+          slides: [
+            slide("arrangement-slide", [
+              { id: "live", mediaInfo: video("live", "https://cdn.example.com/live.mp4") },
+            ]),
+          ],
+        },
+      ],
+    } as unknown as DBItem;
+    const { result } = renderCandidates([song], { currentItemId: song._id });
+
+    await waitFor(() => expect(result.current.candidates).toHaveLength(1));
+    expect(result.current.candidates[0].source).toBe("https://cdn.example.com/live.mp4");
+    expect(result.current.candidates[0].mediaKey).not.toBe("remote:stale");
   });
 
   it("includes finite MP4, media-cache, and WorshipSync media sources", async () => {
@@ -1204,5 +1240,33 @@ describe("useServiceVideoCandidates", () => {
       "remote:current-a",
       "remote:current-b",
     ]);
+  });
+
+  it("hydrates legacy song slides before discovering current-item media", async () => {
+    const legacySlide = slide("legacy-video-slide", [
+      { id: "legacy-video", mediaInfo: video("legacy-video", "https://cdn.example.com/legacy.mp4") },
+    ]);
+    const legacySong = {
+      _id: "song-legacy",
+      name: "Legacy Song",
+      type: "song",
+      selectedArrangement: 0,
+      slides: [legacySlide],
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
+        slides: [],
+      }],
+    } as unknown as DBItem;
+    const { result } = renderCandidates(
+      [legacySong],
+      { currentItemId: legacySong._id, scope: "current-item", maxSurfaces: 8 },
+    );
+
+    await waitFor(() => expect(result.current.candidates).toHaveLength(1));
+    expect(result.current.candidates[0].mediaKey).toBe("remote:legacy-video");
   });
 });

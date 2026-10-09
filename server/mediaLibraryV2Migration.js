@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { toWorshipSyncContentDbName } from "./couchContentDatabase.js";
+import { resolveContentMigrationDatabases } from "./contentDatabaseMigration.js";
 
 export const MEDIA_ITEM_PREFIX = "media-item:";
 export const MEDIA_FOLDERS_ID = "media-folders";
@@ -7,33 +7,7 @@ export const MEDIA_LIBRARY_META_ID = "media-library-meta";
 export const MEDIA_LIBRARY_SCHEMA_VERSION = 2;
 export const MEDIA_MIGRATION_BATCH_SIZE = 50;
 
-export const resolveMediaMigrationDatabases = (churchDocs) => {
-  const databases = new Set();
-  const skippedChurches = [];
-
-  for (const church of churchDocs) {
-    const data = typeof church.data === "function" ? church.data() : church;
-    const contentDatabaseKey = data?.contentDatabaseKey;
-    if (typeof contentDatabaseKey !== "string" || !contentDatabaseKey.trim()) {
-      skippedChurches.push({
-        churchId: church.id || data?.churchId || "<unknown church>",
-        reason: "Missing contentDatabaseKey.",
-      });
-      continue;
-    }
-    try {
-      databases.add(toWorshipSyncContentDbName(contentDatabaseKey));
-    } catch (error) {
-      skippedChurches.push({
-        churchId: church.id || data?.churchId || "<unknown church>",
-        contentDatabaseKey,
-        reason: error?.message || "Invalid contentDatabaseKey.",
-      });
-    }
-  }
-
-  return { databases: [...databases], skippedChurches };
-};
+export const resolveMediaMigrationDatabases = resolveContentMigrationDatabases;
 
 const encoded = (value) => encodeURIComponent(value);
 

@@ -8127,12 +8127,11 @@ export const authHandlers = {
       return res.json({ success: true, eligibility: { status: "enabled", eligible: true, phoneNumber } });
     } catch (error) {
       const statusCode = error.statusCode || 500;
-      return res.status(statusCode).json({
-        success: false,
+      return res.status(statusCode).json(serializeAuthError(error, {
         errorMessage: statusCode >= 500
           ? "Could not record SMS consent. Try again in a moment."
           : error.message || "Could not record SMS consent.",
-      });
+      }));
     }
   },
 

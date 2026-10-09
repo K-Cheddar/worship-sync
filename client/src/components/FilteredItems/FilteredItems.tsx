@@ -53,6 +53,7 @@ import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
 import ExternalLyricsResultItem from "./ExternalLyricsResultItem";
 import ViewExternalLyricsDrawer from "./ViewExternalLyricsDrawer";
+import { deleteSong } from "../../utils/songPersistence";
 import {
   EXTERNAL_SECTION_FOOTER_HEIGHT,
   EXTERNAL_SECTION_HEADER_HEIGHT,
@@ -503,9 +504,13 @@ const FilteredItems = ({
     let deletedDoc: DBItem | undefined;
     if (db) {
       try {
-        const persistedDoc = await db.get(item._id);
-        deletedDoc = persistedDoc as DBItem;
-        await db.remove(persistedDoc);
+        if (item.type === "song") {
+          deletedDoc = await deleteSong(db, item._id);
+        } else {
+          const persistedDoc = await db.get(item._id);
+          deletedDoc = persistedDoc as DBItem;
+          await db.remove(persistedDoc);
+        }
       } catch (error) {
         console.error("Error deleting library item:", error);
         return;

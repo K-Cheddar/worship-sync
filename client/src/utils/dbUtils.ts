@@ -1,3 +1,9 @@
+import { discoverSongLibrary } from "./songLibraryDiscovery";
+import { updateSongLibraryDiagnostics } from "../store/allDocsSlice";
+import {
+  normalizeItemSlides,
+  normalizeSongForPersistence,
+} from "./activeItemSlides";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { globalDb } from "../context/controllerInfo";
 import {
@@ -616,12 +622,12 @@ export const updateAllDocs = async (
 ): Promise<boolean> => {
   if (!db) return false;
   try {
-    const allDocs: allDocsType = (await db.allDocs({
-      include_docs: true,
-    })) as allDocsType;
-    const allSongs = allDocs.rows
-      .filter((row) => (row.doc as any)?.type === "song")
-      .map((row) => row.doc as DBItem);
+    // Discover IDs first so a library refresh never reads authored v2 slide bodies.
+    const manifest = await db.allDocs({ include_docs: false });
+    const keys = manifest.rows.map((row) => row.id ?? row.key ?? (row.doc as DBItem | undefined)?._id)
+      .filter((id): id is string => Boolean(id) && !id.startsWith("song-v2:slide:"));
+    const allDocs = (keys.length ? await db.allDocs({ keys, include_docs: true }) : { rows: [] }) as allDocsType;
+    const { songs: allSongs, diagnostics } = discoverSongLibrary(allDocs.rows.map((row) => row.doc));
 
     const allFreeFormDocs = allDocs.rows
       .filter((row) => (row.doc as any)?.type === "free")
@@ -637,6 +643,8 @@ export const updateAllDocs = async (
 
     if (!shouldApply()) return false;
 
+    dispatch(updateSongLibraryDiagnostics(diagnostics));
+    if (diagnostics.length) console.warn("Incomplete v2 song library projections", diagnostics);
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));
     dispatch(updateAllTimerDocs(allTimers));
@@ -675,14 +683,19 @@ export const formatAllDocs = async (
           background: formattedItem.background,
           arrangements: formattedItem.arrangements,
           selectedArrangement: formattedItem.selectedArrangement,
-          slides: formattedItem.slides,
+          ...(formattedItem.type === "song" ? {} : { slides: formattedItem.slides }),
+          monitorLayout: formattedItem.monitorLayout,
           timerInfo: formattedItem.timerInfo,
           bibleInfo: formattedItem.bibleInfo,
           shouldSendTo: formattedItem.shouldSendTo,
           updatedAt: new Date().toISOString(),
         };
         if (item.doc) {
-          await db.put(updatedItem);
+          await db.put(
+            formattedItem.type === "song"
+              ? normalizeSongForPersistence(updatedItem as DBItem)
+              : updatedItem,
+          );
         }
       } catch (error) {
         console.error("Failed to format item", error);
@@ -710,18 +723,17 @@ export const formatAllSongs = async (
       const retrievedSong = (await db.get(song._id)) as DBItem;
       const formattedItem = formatItemInfo(retrievedSong, cloud);
       const formattedSong = formatSong(formattedItem);
-      const updatedItem = {
+      const updatedItem: DBItem = {
         ...retrievedSong,
         name: formattedSong.name,
         background: formattedSong.background,
         arrangements: formattedSong.arrangements,
         selectedArrangement: formattedSong.selectedArrangement,
-        slides: formattedSong.slides,
         timerInfo: formattedSong.timerInfo,
         bibleInfo: formattedSong.bibleInfo,
         updatedAt: new Date().toISOString(),
       };
-      await db.put(updatedItem);
+      await db.put(normalizeSongForPersistence(updatedItem));
     }
   } catch (error) {
     console.error("Failed to format all songs", error);
@@ -871,7 +883,7 @@ export const migrateFontSizesToPixels = async (
       const doc = row.doc as DBItem;
       if (!doc) continue;
       try {
-        const updated: DBItem = {
+        const migrated: DBItem = {
           ...doc,
           slides: (doc.slides ?? []).map(migrateSlideFontSizes),
           arrangements: (doc.arrangements ?? []).map((arr) => ({
@@ -880,6 +892,9 @@ export const migrateFontSizesToPixels = async (
           })),
           updatedAt: new Date().toISOString(),
         };
+        const updated = migrated.type === "song"
+          ? normalizeSongForPersistence(migrated)
+          : normalizeItemSlides(migrated);
         await db.put(updated);
         migratedCount++;
       } catch (e) {
@@ -979,7 +994,7 @@ export const migrateFontSizesToDefaults = async (
       if (!doc) continue;
       const itemType = doc.type;
       try {
-        const updated: DBItem = {
+        const migrated: DBItem = {
           ...doc,
           slides: (doc.slides ?? []).map((slide, i) =>
             migrateSlideFontSizesToDefaults(slide, itemType, i),
@@ -992,6 +1007,9 @@ export const migrateFontSizesToDefaults = async (
           })),
           updatedAt: new Date().toISOString(),
         };
+        const updated = migrated.type === "song"
+          ? normalizeSongForPersistence(migrated)
+          : normalizeItemSlides(migrated);
         await db.put(updated);
         migratedCount++;
         console.log(

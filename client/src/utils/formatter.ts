@@ -5,16 +5,11 @@ import {
   ItemState,
 } from "../types";
 import { formatBible, formatFree, formatSong } from "./overflow";
+import { getActiveItemSlides } from "./activeItemSlides";
 
 const getSlidesFromItem = (item: ItemState) => {
-  const { selectedSlide } = item;
-  let slides;
-  if (item.type === "song") {
-    slides = item.arrangements[item.selectedArrangement].slides || null;
-  } else {
-    slides = item.slides || null;
-  }
-  const slide = slides ? slides[selectedSlide] : null;
+  const slides = getActiveItemSlides(item);
+  const slide = slides[item.selectedSlide] ?? null;
   return { slides, slide };
 };
 
@@ -62,7 +57,18 @@ export const updateBoxProperties = ({
     };
   });
 
-  _item = { ...item, slides: [...slides] };
+  _item =
+    item.type === "song"
+      ? {
+          ...item,
+          slides: [],
+          arrangements: item.arrangements.map((arrangement, index) =>
+            index === item.selectedArrangement
+              ? { ...arrangement, slides: [...slides] }
+              : arrangement,
+          ),
+        }
+      : { ...item, slides: [...slides] };
 
   if (item.type === "bible" && selectedSlide !== 0 && shouldFormatItem)
     _item = formatBible({
@@ -139,12 +145,23 @@ export const updateFormattedTextDisplayInfo = ({
   item,
   shouldApplyToAll,
 }: UpdateFormattedTextDisplayInfoType): ItemState => {
-  const { slides, selectedSlide } = item;
+  const slides = getActiveItemSlides(item);
+  const { selectedSlide } = item;
 
   const updatedSlides = slides.map((slide, slideIndex) => {
     if (slideIndex !== selectedSlide && !shouldApplyToAll) return slide;
     return { ...slide, formattedTextDisplayInfo: formattedTextDisplayInfo };
   });
 
-  return { ...item, slides: [...updatedSlides] };
+  return item.type === "song"
+    ? {
+        ...item,
+        slides: [],
+        arrangements: item.arrangements.map((arrangement, index) =>
+          index === item.selectedArrangement
+            ? { ...arrangement, slides: [...updatedSlides] }
+            : arrangement,
+        ),
+      }
+    : { ...item, slides: [...updatedSlides] };
 };

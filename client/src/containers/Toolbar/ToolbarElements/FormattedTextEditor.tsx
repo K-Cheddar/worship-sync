@@ -1,3 +1,4 @@
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { useDispatch, useSelector } from "../../../hooks";
@@ -64,7 +65,8 @@ type fieldType =
 const FormattedTextEditor = ({ className }: { className?: string }) => {
   const item = useSelector((state) => state.undoable.present.item);
 
-  const { slides, selectedSlide, type } = item;
+  const { selectedSlide, type } = item;
+  const slides = getActiveItemSlides(item);
 
   const formattedTextDisplayInfo = useMemo(() => {
     return slides[selectedSlide]?.formattedTextDisplayInfo;
@@ -109,7 +111,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       item: item,
       shouldApplyToAll: shouldApplyToAll,
     });
-    dispatch(updateSlides({ slides: updatedItem.slides }));
+    dispatch(updateSlides({ slides: getActiveItemSlides(updatedItem) }));
   };
 
   const handleChange = (field: fieldType, value: string) => {

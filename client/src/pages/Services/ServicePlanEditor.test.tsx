@@ -2,6 +2,7 @@ import { act, render, screen, fireEvent, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import type { ContextType, ReactNode } from "react";
+import type PouchDB from "pouchdb-browser";
 import ServicePlanEditor from "./ServicePlanEditor";
 import {
   collectServicePlanRoleNoteOptions,
@@ -11,7 +12,10 @@ import { roleNoteMatchesServicePlanTeam } from "./servicePlanRoleNoteTeam";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { ToastProvider } from "../../context/toastContext";
 import { RehearsalPlaybackProvider } from "../../components/RehearsalPlayer/RehearsalPlaybackContext";
-import { createMockGlobalContext } from "../../test/mocks";
+import {
+  createMockControllerContext,
+  createMockGlobalContext,
+} from "../../test/mocks";
 import {
   listServicePlanTemplates,
   saveServicePlanTemplate,
@@ -26,8 +30,10 @@ import {
   sendServicePlanShareEmail,
   unpublishServicePlan,
   updateServicePlanPublicLive,
+  searchYouTubeVideos,
   AuthApiError,
 } from "../../api/auth";
+import { ControllerInfoContext } from "../../context/controllerInfo";
 import { getServicePlanningImportDataFromUrl } from "../../containers/Overlays/eventParser";
 import { extractTextFromPdfFile } from "./extractPdfText";
 import type {
@@ -79,6 +85,7 @@ jest.mock("../../api/auth", () => ({
   sendServicePlanShareEmail: jest.fn(),
   unpublishServicePlan: jest.fn(),
   updateServicePlanPublicLive: jest.fn(),
+  searchYouTubeVideos: jest.fn(),
   getSongAudioUrl: jest.fn(),
 }));
 
@@ -161,6 +168,7 @@ const mockSaveServicePlan = jest.mocked(saveServicePlan);
 const mockUnpublishServicePlan = jest.mocked(unpublishServicePlan);
 const mockSendServicePlanShareEmail = jest.mocked(sendServicePlanShareEmail);
 const mockUpdateServicePlanPublicLive = jest.mocked(updateServicePlanPublicLive);
+const mockSearchYouTubeVideos = jest.mocked(searchYouTubeVideos);
 
 const oneTimeService: TeamService = {
   id: "service-1",
@@ -272,6 +280,13 @@ const editorTree = ({
 );
 
 const renderEditor = (props: RenderEditorProps = {}) => render(editorTree(props));
+
+const renderEditorWithDb = (db: PouchDB.Database, props: RenderEditorProps = {}) =>
+  render(
+    <ControllerInfoContext.Provider value={createMockControllerContext({ db })}>
+      {editorTree(props)}
+    </ControllerInfoContext.Provider>,
+  );
 
 const mockPlanLayout = () => jest
   .spyOn(HTMLElement.prototype, "getBoundingClientRect")
@@ -411,6 +426,20 @@ describe("ServicePlanEditor", () => {
     mockAllSongDocs = [];
     mockExtractTextFromPdfFile.mockReset();
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockSearchYouTubeVideos.mockResolvedValue({
+      query: "Living Hope",
+      cached: false,
+      results: [{
+        videoId: "abcdefghijk",
+        title: "Living Hope (Official Video)",
+        channelName: "Test Artist",
+        thumbnail: "https://img.example/thumb.jpg",
+        description: "Official recording",
+        durationSeconds: 180,
+        embeddable: true,
+        watchUrl: "https://www.youtube.com/watch?v=abcdefghijk",
+      }],
+    });
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockSaveServicePlanTemplate.mockResolvedValue({
       success: true,
@@ -793,6 +822,108 @@ describe("ServicePlanEditor", () => {
       }),
     );
     expect(await screen.findByText(/Song details.*Living Hope/i)).toBeInTheDocument();
+  });
+
+  it("saves a YouTube link through the repository and canonicalizes legacy song slides", async () => {
+    const legacySong = {
+      _id: "song-legacy",
+      _rev: "1-legacy",
+      type: "song",
+      name: "Living Hope",
+      selectedArrangement: 0,
+      slides: [{
+        id: "legacy-slide",
+        type: "Verse",
+        name: "Verse 1",
+        boxes: [{ id: "legacy-box", words: "Lyrics", width: 1920, height: 1080 }],
+        monitorCurrentBandBoxes: [{ id: "current-clone", fontSize: 31 }],
+        monitorNextBandBoxes: [{ id: "next-clone", fontSize: 28 }],
+      }],
+      monitorLayout: { currentFontSizePx: 31, nextFontSizePx: 28 },
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: [],
+      }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    };
+    const missing = () => Object.assign(new Error("missing"), {
+      status: 404,
+      name: "not_found",
+    });
+    const put = jest.fn(async (_document: Record<string, unknown>) => ({
+      ok: true,
+      id: legacySong._id,
+      rev: "2-canonical",
+    }));
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === "allItems") return { _id: "allItems", items: [] };
+        if (id === legacySong._id) return legacySong;
+        throw missing();
+      }),
+      put,
+    } as unknown as PouchDB.Database;
+    mockAllSongDocs = [legacySong];
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "plan-youtube",
+        churchId: "church-1",
+        planKey: "service-1@2026-07-26",
+        serviceId: "service-1",
+        date: "2026-07-26",
+        name: "Easter Sunday",
+        sections: [{
+          id: "section-1",
+          name: "Worship",
+          elements: [{
+            id: "element-1",
+            type: "song",
+            title: plainTextToRichText("Living Hope"),
+            songRef: {
+              kind: "library",
+              songId: legacySong._id,
+              songName: legacySong.name,
+            },
+          }],
+        }],
+      },
+    });
+
+    const user = userEvent.setup();
+    renderEditorWithDb(db);
+    await user.click(await screen.findByRole("tab", { name: "Rehearse" }));
+    const setlist = await screen.findByRole("region", { name: "Rehearse songs" });
+    await user.click(within(setlist).getByRole("button", { name: "Find video" }));
+    await screen.findByText("Living Hope (Official Video)");
+    await user.click(screen.getByRole("button", { name: "Link video" }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    const persisted = put.mock.calls[0][0];
+    const persistedArrangements = persisted.arrangements as Array<Record<string, unknown>>;
+    expect(persisted.songLinks).toEqual([
+      expect.objectContaining({
+        label: "YouTube",
+        url: "https://www.youtube.com/watch?v=abcdefghijk",
+      }),
+    ]);
+    expect(persisted).not.toHaveProperty("slides");
+    expect(persisted).not.toHaveProperty("monitorLayout");
+    expect(persistedArrangements).toEqual([
+      expect.objectContaining({
+        id: "arr-1",
+        monitorLayout: { currentFontSizePx: 31, nextFontSizePx: 28 },
+        slides: [
+          expect.objectContaining({ id: "legacy-slide" }),
+        ],
+      }),
+    ]);
+    const persistedSlides = persistedArrangements[0].slides as Array<Record<string, unknown>>;
+    expect(persistedSlides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(persistedSlides[0]).not.toHaveProperty("monitorNextBandBoxes");
   });
 
   it("offers to start from scratch for an occurrence with no plan yet", async () => {

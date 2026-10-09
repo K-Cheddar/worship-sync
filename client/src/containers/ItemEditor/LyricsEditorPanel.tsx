@@ -88,6 +88,7 @@ type LyricsEditorPanelProps = {
   song?: DBItem | null;
   onClose?: () => void;
   onSaveLyrics?: (payload: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
@@ -853,7 +854,9 @@ const LyricsEditorPanel = ({
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
     remoteUpdateToastIdRef.current = showToast({
-      message: `Someone else updated this ${itemTypeLabel}.`,
+      message: controllerItem.remoteUpdateReason === "song-version-transition"
+        ? "This song was migrated while it was open. Copy any draft changes before reloading the current version."
+        : `Someone else updated this ${itemTypeLabel}.`,
       variant: "info",
       persist: true,
       showCloseButton: false,
@@ -868,7 +871,7 @@ const LyricsEditorPanel = ({
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Keep Editing Mine
+            {controllerItem.remoteUpdateReason === "song-version-transition" ? "Keep Draft Open" : "Keep Editing Mine"}
           </Button>
           <Button
             variant="cta"
@@ -879,7 +882,7 @@ const LyricsEditorPanel = ({
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Use Their Changes
+            {controllerItem.remoteUpdateReason === "song-version-transition" ? "Reload Migrated Song" : "Use Their Changes"}
           </Button>
         </div>
       ),
@@ -888,6 +891,7 @@ const LyricsEditorPanel = ({
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    controllerItem.remoteUpdateReason,
     hasPendingChanges,
     hasPendingUpdate,
     itemTypeLabel,
@@ -964,6 +968,7 @@ const LyricsEditorPanel = ({
       setIsSaving(true);
       try {
         await onSaveLyrics({
+          baselineSong: item,
           arrangements: formattedItem.arrangements,
           selectedArrangement: localSelectedArrangement,
           songMetadata: localSongMetadata,

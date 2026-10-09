@@ -13,6 +13,7 @@ import type {
   Presentation,
   QuickLinkType,
 } from "../types";
+import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
 import {
   MEDIA_ROUTE_FOLDERS_POUCH_ID,
   isControllerMediaRouteFoldersDocId,
@@ -118,19 +119,13 @@ function sweepSlide(
   const mapBoxes = (boxes: Box[]) =>
     boxes.map((b) => resetBoxIfMatch(b, pb, deletedIds, deletedUrls));
   const boxes = mapBoxes(slide.boxes);
+  const boxesChanged = boxes.some((box, index) => box !== slide.boxes[index]);
   const mediaSourceMatches =
     slide.mediaSource?.kind === "local-video-input" &&
     deletedVideoSourceIds.has(slide.mediaSource.sourceId);
-  const next: ItemSlideType = {
-    ...slide,
-    boxes,
-    monitorCurrentBandBoxes: slide.monitorCurrentBandBoxes
-      ? mapBoxes(slide.monitorCurrentBandBoxes)
-      : slide.monitorCurrentBandBoxes,
-    monitorNextBandBoxes: slide.monitorNextBandBoxes
-      ? mapBoxes(slide.monitorNextBandBoxes)
-      : slide.monitorNextBandBoxes,
-  };
+  if (!boxesChanged && !mediaSourceMatches) return slide;
+  const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
+  const next: ItemSlideType = { ...clean, boxes };
   if (mediaSourceMatches) {
     const { mediaSource: _removed, ...rest } = next;
     return rest;
@@ -520,12 +515,28 @@ export async function sweepMediaReferencesBeforeDelete(
     )
       continue;
 
+    if (doc.docType === "song-v2-root") {
+      const root = doc as Record<string, unknown>;
+      const background = typeof root.background === "string" ? root.background : "";
+      if (background && matchesDeleted(deletedIds, deletedUrls, undefined, background)) {
+        addIfChanged(root, { ...root, background: preferenceDefaultForItemType("song").background, updatedAt: new Date().toISOString() });
+      }
+      continue;
+    }
+    if (doc.docType === "song-v2-slide") {
+      const swept = sweepSlide(doc as unknown as ItemSlideType, preferenceDefaultForItemType("song"), deletedIds, deletedUrls, deletedVideoSourceIds);
+      if (swept !== doc) {
+        addIfChanged(doc, { ...doc, ...swept, updatedAt: new Date().toISOString() });
+      }
+      continue;
+    }
+
     const dtype = doc.type as string | undefined;
     if (dtype && ITEM_TYPES.includes(dtype as ItemType)) {
       const item = doc as unknown as DBItem;
       const pb = preferenceDefaultForItemType(item.type);
       let dirty = false;
-      let nextItem = { ...item };
+      let nextItem = normalizeItemSlides({ ...item });
 
       if (
         item.background &&
@@ -568,10 +579,12 @@ export async function sweepMediaReferencesBeforeDelete(
         dirty = true;
       }
 
-      if (dirty) addIfChanged(item, {
-        ...nextItem,
-        updatedAt: new Date().toISOString(),
-      } as DBItem as unknown as Record<string, unknown>);
+      if (dirty) {
+        addIfChanged(item, {
+          ...nextItem,
+          updatedAt: new Date().toISOString(),
+        } as DBItem as unknown as Record<string, unknown>);
+      }
       continue;
     }
 
@@ -602,10 +615,15 @@ export async function sweepMediaReferencesBeforeDelete(
     for (let index = applied.length - 1; index >= 0; index -= 1) {
       const saved = applied[index];
       try {
-        await db.put({
+        const previousDocument: Record<string, unknown> = {
           ...saved.previous,
           ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
-        });
+        };
+        await db.put(
+          previousDocument.type === "song"
+            ? normalizeSongForPersistence(previousDocument as unknown as DBItem)
+            : previousDocument,
+        );
       } catch (error) {
         status = "uncertain";
         console.error("Failed to roll back media deletion reference cleanup:", {
@@ -619,7 +637,11 @@ export async function sweepMediaReferencesBeforeDelete(
   };
   try {
     for (const { previous, next } of pending.values()) {
-      const result = (await db.put(next)) as { rev?: string };
+      const persistedDocument =
+        next.type === "song"
+          ? normalizeSongForPersistence(next as unknown as DBItem)
+          : next;
+      const result = (await db.put(persistedDocument)) as { rev?: string };
       applied.push({ previous, savedRevision: result.rev });
     }
   } catch (error) {
@@ -764,6 +786,21 @@ export async function replaceMediaReferencesForReplacement(
       continue;
     }
 
+    if (doc.docType === "song-v2-root") {
+      if (mediaReferenceMatches(replacement.oldMedia, undefined, String(doc.background || ""))) {
+        addIfChanged(doc, { ...doc, background: replacement.newMedia.background });
+      }
+      continue;
+    }
+    if (doc.docType === "song-v2-slide") {
+      const nextSlide = replaceMediaReferencesInItem(
+        { type: "free", slides: [doc as unknown as ItemSlideType] },
+        replacement,
+      ).slides?.[0];
+      if (nextSlide) addIfChanged(doc, { ...doc, ...nextSlide });
+      continue;
+    }
+
     const dtype = doc.type as string | undefined;
     if (
       dtype &&
@@ -801,10 +838,15 @@ export async function replaceMediaReferencesForReplacement(
   }> = [];
   try {
     for (const { previous, next } of pending.values()) {
-      const result = (await db.put({
+      const nextDocument: Record<string, unknown> = {
         ...next,
         updatedAt: new Date().toISOString(),
-      })) as { rev?: string };
+      };
+      const persistedDocument =
+        nextDocument.type === "song"
+          ? normalizeSongForPersistence(nextDocument as unknown as DBItem)
+          : nextDocument;
+      const result = (await db.put(persistedDocument)) as { rev?: string };
       applied.push({ previous, savedRevision: result.rev });
     }
   } catch (error) {
@@ -813,10 +855,15 @@ export async function replaceMediaReferencesForReplacement(
     for (let index = applied.length - 1; index >= 0; index -= 1) {
       const saved = applied[index];
       try {
-        await db.put({
+        const previousDocument: Record<string, unknown> = {
           ...saved.previous,
           ...(saved.savedRevision ? { _rev: saved.savedRevision } : {}),
-        });
+        };
+        const rollbackDocument =
+          previousDocument.type === "song"
+            ? normalizeSongForPersistence(previousDocument as unknown as DBItem)
+            : previousDocument;
+        await db.put(rollbackDocument);
       } catch (rollbackError) {
         rollbackStatus = "uncertain";
         console.error("Failed to roll back Canva media reference replacement:", {

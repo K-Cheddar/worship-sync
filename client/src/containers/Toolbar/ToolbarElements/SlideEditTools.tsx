@@ -42,6 +42,7 @@ import {
 } from "../../../store/itemSlice";
 import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import PopoverPanel from "../../../components/PopOver/PopoverPanel";
 import Icon from "../../../components/Icon/Icon";
 import { Slider } from "../../../components/ui/Slider";
@@ -231,7 +232,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     (state) =>
       state.undoable.present.preferences?.scrollbarWidth ?? "thin"
   );
-  const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
+  const slides = getActiveItemSlides(item);
+  const { selectedSlide, selectedBox, timerInfo, type } = item;
   const { timers } = useSelector((state) => state.timers);
 
   const timer = timers.find((t) => t.id === timerInfo?.id);
@@ -253,15 +255,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const updateItem = useCallback(
     (updatedItem: ItemState) => {
-      dispatch(
-        updateSlides({
-          slides: updatedItem.slides,
-          formattedSections: updatedItem.formattedSections,
-        })
-      );
-      if (updatedItem.arrangements.length > 0) {
+      if (updatedItem.type === "song") {
+        dispatch(updateArrangements({ arrangements: updatedItem.arrangements }));
+      } else {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements })
+          updateSlides({
+            slides: getActiveItemSlides(updatedItem),
+            formattedSections: updatedItem.formattedSections,
+          })
         );
       }
       if (updatedItem.bibleInfo) {

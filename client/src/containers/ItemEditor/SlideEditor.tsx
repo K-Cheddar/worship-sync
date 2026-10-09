@@ -63,6 +63,7 @@ import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
 } from "../../utils/persistSongAudioAttachment";
+import { loadSong, songToLibraryProjection } from "../../utils/songPersistence";
 import { resolveEditorPreviewVideoPlayback } from "../../utils/videoBackgroundPlayback";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
@@ -102,6 +103,7 @@ import type { PresentationControllerMode } from "../../context/presentationContr
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import { getFreeSectionNumber } from "../../utils/freeSectionNames";
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -151,12 +153,12 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     selectedArrangement,
     selectedSlide,
     selectedBox,
-    slides: __slides,
     isLyricsEditorOpen,
     isLoading,
     isSectionLoading,
     restoreFocusToBox,
     hasRemoteUpdate,
+    remoteUpdateReason,
     hasPendingUpdate,
     songMetadata,
     songLinks,
@@ -169,10 +171,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const arrangement = arrangements[selectedArrangement];
 
-  const slides = useMemo(() => {
-    const _slides = arrangement?.slides || __slides || [];
-    return isLoading ? [] : _slides;
-  }, [isLoading, __slides, arrangement?.slides]);
+  const slides = useMemo(
+    () => (isLoading ? [] : getActiveItemSlides(item)),
+    [isLoading, item],
+  );
 
   const outputSlots = useSelector(
     (state: RootState) => state.presentation.outputs,
@@ -314,7 +316,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
     remoteUpdateToastIdRef.current = showToast({
-      message: `Someone else updated this ${itemTypeLabel}.`,
+      message: remoteUpdateReason === "song-version-transition"
+        ? "This song was migrated while it was open. Copy any draft changes before reloading the current version."
+        : `Someone else updated this ${itemTypeLabel}.`,
       variant: "info",
       persist: true,
       showCloseButton: false,
@@ -329,7 +333,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Keep Editing Mine
+            {remoteUpdateReason === "song-version-transition" ? "Keep Draft Open" : "Keep Editing Mine"}
           </Button>
           <Button
             variant="cta"
@@ -340,7 +344,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Use Their Changes
+            {remoteUpdateReason === "song-version-transition" ? "Reload Migrated Song" : "Use Their Changes"}
           </Button>
         </div>
       ),
@@ -349,6 +353,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    remoteUpdateReason,
     hasPendingUpdate,
     itemTypeLabel,
     isLyricsEditorOpen,
@@ -437,7 +442,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (!churchId || !db) {
         throw new Error("Sign in to attach an MP3.");
       }
-      const previousAudio = songAudio;
+      const loadedSong = baseItem?.docType === "song-v2-root" ? baseItem : await loadSong(db, _id);
+      const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+      const previousAudio = baselineSong?.songAudio ?? songAudio;
       const audio = await uploadSongAudio({
         churchId,
         songId: _id,
@@ -450,6 +457,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           db,
           songId: _id,
           audio,
+          baselineSong,
         });
       } catch (error) {
         // A replacement overwrites the existing final key. Deleting it here
@@ -465,7 +473,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
 
       dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved }));
-      dispatch(upsertItemInAllDocs(saved));
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
       broadcastItemUpdate(saved);
 
       if (previousAudio && previousAudio.key !== audio.key) {
@@ -481,7 +489,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
       showToast?.({ message: "MP3 attached.", variant: "success" });
     },
-    [_id, churchId, db, dispatch, showToast, songAudio],
+    [_id, baseItem, churchId, db, dispatch, showToast, songAudio],
   );
 
   const resolveSongAudioUrl = useCallback(
@@ -502,23 +510,41 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const removeSongAudio = useCallback(async () => {
     if (!churchId || !db || !songAudio) return;
+    const baselineSong = baseItem ?? await loadSong(db, _id);
+    const audioToRemove = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? songAudio
+      : songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      const saved = await persistSongAudioAttachment({ db, songId: _id, audio: null, baselineSong });
+      dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved }));
+      dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
+      broadcastItemUpdate(saved);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      showToast?.({ message: "MP3 removed.", variant: "success" });
+      return;
+    }
     const saved = await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
-        deleteSongAudioWithRetry({ churchId, songId: _id, audio: songAudio }),
+        deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove }),
       clearMetadata: () =>
         persistSongAudioAttachment({
           db,
           songId: _id,
           audio: null,
+          baselineSong: baselineSong.docType === "song-v2-root" ? baselineSong : undefined,
         }),
     });
     dispatch(
       applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved }),
     );
-    dispatch(upsertItemInAllDocs(saved));
+    dispatch(upsertItemInAllDocs(songToLibraryProjection(saved)));
     broadcastItemUpdate(saved);
     showToast?.({ message: "MP3 removed.", variant: "success" });
-  }, [_id, churchId, db, dispatch, showToast, songAudio]);
+  }, [_id, baseItem, churchId, db, dispatch, showToast, songAudio]);
 
   const onNameEditButtonClick = () => {
     if (!canEdit) return;
@@ -536,15 +562,13 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       name,
       type: "song" as const,
       arrangements,
-      slides: __slides,
-      selectedArrangement,
+        selectedArrangement,
       songMetadata,
       songLinks,
       songAudio,
     }) as DBItem,
     [
       _id,
-      __slides,
       arrangements,
       baseItem,
       name,
@@ -601,7 +625,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       dispatch(updateBoxes({ boxes: newBoxes }));
     }
 
-    const updatedSlides = currentItem.slides.map((slide, slideIndex) => {
+    const updatedSlides = slides.map((slide, slideIndex) => {
       if (slideIndex === selectedSlide) {
         return { ...slide, boxes: newBoxes };
       }
@@ -854,6 +878,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     dispatch,
     item,
     selectedSlide,
+    slides,
     arrangements,
     selectedArrangement,
   ]);
@@ -1144,7 +1169,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         // Optimistic update - update state immediately
         dispatch(
           updateSlides({
-            slides: currentItem.slides, // Keep current slides for now
+            slides, // Keep current slides for now
             formattedSections: updatedFormattedSections,
           })
         );
@@ -1238,9 +1263,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
                 formattedSections: _item.formattedSections,
               })
             );
-          } else {
+          } else if (type !== "song") {
             // For other types (bible, timer, etc.), update the box words directly
-            const updatedSlides = item.slides.map((slide, index) => {
+            const updatedSlides = slides.map((slide, index) => {
               if (index === selectedSlide) {
                 const updatedBoxes = slide.boxes.map((box, boxIndex) => {
                   if (boxIndex === selectedBox) {

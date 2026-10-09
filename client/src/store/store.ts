@@ -31,6 +31,15 @@ import {
   type RemoteOutputState,
 } from "./presentationSlice";
 import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
+import {
+  getActiveItemSlides,
+  normalizeItemSlides,
+} from "../utils/activeItemSlides";
+import {
+  loadItemWithSongHydration,
+  saveSong,
+  songToLibraryProjection,
+} from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -149,9 +158,10 @@ export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
 }
 
 export function broadcastItemUpdate(doc: DBItem) {
+  const payload = doc.docType === "song-v2-root" ? songToLibraryProjection(doc) : doc;
   safePostMessage({
     type: "update",
-    data: { docs: doc, hostId: globalHostId },
+    data: { docs: payload, hostId: globalHostId },
   });
 }
 
@@ -978,7 +988,12 @@ listenerMiddleware.startListening({
 
     // update Item
     const item = state.undoable.present.item;
-    let db_item: DBItem = await dbAtStart.get(item._id);
+    if (!dbAtStart) return;
+    const editorBaseline = item.baseItem;
+    const usesV2Baseline = item.type === "song" && editorBaseline?.docType === "song-v2-root";
+    let db_item: DBItem = usesV2Baseline
+      ? editorBaseline
+      : await loadItemWithSongHydration(dbAtStart, item._id);
     listenerApi.throwIfCancelled();
 
     const updatedAt = new Date().toISOString();
@@ -986,7 +1001,8 @@ listenerMiddleware.startListening({
       ...db_item,
       name: item.name,
       background: item.background,
-      slides: item.slides,
+      slides: item.type === "song" ? [] : item.slides,
+      monitorLayout: item.type === "song" ? undefined : item.monitorLayout,
       arrangements: item.arrangements,
       selectedArrangement: item.selectedArrangement,
       bibleInfo: item.bibleInfo,
@@ -1003,23 +1019,92 @@ listenerMiddleware.startListening({
       formattedSections: item.formattedSections,
       updatedAt,
     };
-    db_item = applyPouchAudit(db_item, nextItem, {
-      // Doc came from db.get — always an update (legacy rows may lack createdAt).
-      isNew: false,
-    });
+    if (usesV2Baseline && editorBaseline) {
+      if ((item.background ?? "") === (editorBaseline.background ?? "")) {
+        nextItem.background = editorBaseline.background;
+      }
+      if (!!item.shouldSkipTitle === !!editorBaseline.shouldSkipTitle) {
+        nextItem.shouldSkipTitle = editorBaseline.shouldSkipTitle;
+      }
+      if (_.isEqual(item.songLinks ?? [], editorBaseline.songLinks ?? [])) {
+        nextItem.songLinks = editorBaseline.songLinks;
+      }
+      const defaultRouting = { projector: true, monitor: true, stream: true };
+      if (_.isEqual(item.shouldSendTo, editorBaseline.shouldSendTo ?? defaultRouting)) {
+        nextItem.shouldSendTo = editorBaseline.shouldSendTo;
+      }
+    }
     listenerApi.throwIfCancelled();
-    const result = await dbAtStart.put(db_item);
-    listenerApi.throwIfCancelled();
-    db_item = {
-      ...db_item,
-      _rev: result.rev,
-    };
+    if (item.type === "song") {
+      try {
+        const saveBaseline = usesV2Baseline
+          ? editorBaseline
+          : db_item.docType === "song-v2-root" ? undefined : db_item;
+        db_item = await saveSong(dbAtStart, nextItem, saveBaseline);
+      } catch (error) {
+        if (!isListenerCancelledTaskError(error)) {
+          console.error("Could not save active song draft", error);
+          if (error instanceof Error && (
+            error.name === "SongV2ConcurrentEditError" ||
+            error.name === "SongV2VersionTransitionError" ||
+            (error.name === "SongV2WriteError" && (error as Error & { status?: number }).status === 409)
+          )) {
+            try {
+              const remoteSong = await loadItemWithSongHydration(dbAtStart, item._id);
+              const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
+              if (db === dbAtStart && latestItem._id === item._id && latestItem.listId === item.listId &&
+                latestItem.baseItem === editorBaseline && !latestItem.hasRemoteUpdate) {
+                listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remoteSong));
+                if (error instanceof Error && error.name === "SongV2VersionTransitionError") {
+                  listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
+                }
+              }
+            } catch (refreshError) {
+              console.error("Could not load the conflicting song version", refreshError);
+            }
+          }
+        }
+        return;
+      }
+    } else {
+      db_item = applyPouchAudit(db_item, nextItem, {
+        // Doc came from db.get — always an update (legacy rows may lack createdAt).
+        isNew: false,
+      });
+      const result = await dbAtStart.put(db_item);
+      db_item = { ...db_item, _rev: result.rev };
+    }
+    const latestItem = (listenerApi.getState() as RootState).undoable.present.item;
+    if (db !== dbAtStart || latestItem._id !== item._id || latestItem.listId !== item.listId) return;
+    if (usesV2Baseline) {
+      if (latestItem._id === item._id && latestItem.listId === item.listId &&
+        latestItem.baseItem === editorBaseline) {
+        const editorMatchesSubmitted = itemDocMatchesEditorState(item, latestItem);
+        const editorMatchesAcknowledged = itemDocMatchesEditorState(db_item, latestItem);
+        listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+        if (editorMatchesSubmitted || editorMatchesAcknowledged) {
+          listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+        }
+        if (!editorMatchesAcknowledged) {
+          // The acknowledged current snapshot may include untouched remote
+          // documents absent from the editor draft. Keep them available to apply.
+          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+        }
+      } else {
+        // The write is durable, but this editor no longer owns its acknowledgement.
+        return;
+      }
+    } else {
+      listenerApi.throwIfCancelled();
+      listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+      listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+    }
     const activeState = (listenerApi.getState() as RootState).undoable.present.item;
     if (db !== dbAtStart || activeState._id !== db_item._id) return;
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
-    listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
 
-    listenerApi.dispatch(upsertItemInAllDocs(db_item));
+    listenerApi.dispatch(upsertItemInAllDocs(
+      db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
+    ));
     if (db_item.type === "free") {
       const indexedItem = (listenerApi.getState() as RootState).allItems.list.find(
         (candidate) => candidate._id === db_item._id,
@@ -1039,7 +1124,7 @@ listenerMiddleware.startListening({
     safePostMessage({
       type: "update",
       data: {
-        docs: db_item,
+        docs: db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
         hostId: globalHostId,
       },
     });
@@ -1056,10 +1141,10 @@ listenerMiddleware.startListening({
     allDocsSlice.actions.updateAllTimerDocs,
     allDocsSlice.actions.updateAllBibleDocs,
   ),
-  effect: (action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
-    const currentItem = state.undoable.present.item;
+    let currentItem = state.undoable.present.item;
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
@@ -1071,7 +1156,7 @@ listenerMiddleware.startListening({
       allTimerDocs: previousTimerDocs,
       allBibleDocs: previousBibleDocs,
     } = previousState.allDocs;
-    const doc =
+    let doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
@@ -1083,8 +1168,26 @@ listenerMiddleware.startListening({
       previousBibleDocs.find((d) => d._id === activeId);
 
     if (doc) {
-      if (_.isEqual(doc, previousDoc)) {
+      if (doc.docType !== "song-v2-root" && _.isEqual(doc, previousDoc)) {
         return;
+      }
+
+      if (doc.docType === "song-v2-root") {
+        if (!allDocsSlice.actions.updateAllSongDocs.match(action) || !db) return;
+        try {
+          const projection = doc;
+          const database = db;
+          doc = await loadItemWithSongHydration(database, activeId);
+          const latest = listenerApi.getState() as RootState;
+          const latestItem = latest.undoable.present.item;
+          if (db !== database || latestItem._id !== activeId || latestItem.listId !== listId ||
+            latestItem.baseItem !== currentItem.baseItem ||
+            latest.allDocs.allSongDocs.find((song) => song._id === activeId) !== projection) return;
+          currentItem = latestItem;
+        } catch (error) {
+          console.error("Could not refresh active v2 song", error);
+          return;
+        }
       }
 
       const docMatchesBase =
@@ -1679,11 +1782,11 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     const currentItem = state.undoable.present.item;
     let item: DBItem | null = null;
-    if (currentItem._id === itemId && currentItem.slides?.length > 1) {
+    if (currentItem._id === itemId && getActiveItemSlides(currentItem).length > 1) {
       item = currentItem as unknown as DBItem;
     } else if (dbAtStart) {
       try {
-        item = (await dbAtStart.get(itemId)) as DBItem;
+        item = await loadItemWithSongHydration(dbAtStart, itemId);
       } catch {
         return;
       }
@@ -1693,8 +1796,11 @@ listenerMiddleware.startListening({
       globalFireDbInfo.db !== fireDbAtStart ||
       globalFireDbInfo.churchId !== churchIdAtStart
     ) return;
-    if (!item?.slides?.length || item.slides.length < 2) return;
-    const wrapUpSlide = item.slides[1];
+    if (!item) return;
+    if (item.type !== "song") item = normalizeItemSlides(item);
+    const slides = getActiveItemSlides(item);
+    if (slides.length < 2) return;
+    const wrapUpSlide = slides[1];
     const presentationType = item.type === "timer" ? "timer" : monitorInfo.type;
     listenerApi.dispatch(
       updateMonitor({

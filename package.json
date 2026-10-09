@@ -35,6 +35,8 @@
     "migrate:service-plan-assignees:dry-run": "node scripts/migrate-service-plan-assignees.js --dry-run",
     "migrate:media-library-v2": "node scripts/migrate-media-library-v2.js",
     "migrate:media-library-v2:dry-run": "node scripts/migrate-media-library-v2.js --dry-run",
+    "migrate:songs-v2": "node --import tsx scripts/migrate-songs-v2.js",
+    "migrate:songs-v2:dry-run": "node --import tsx scripts/migrate-songs-v2.js --dry-run",
     "firebase:update-indexes": "firebase deploy --only firestore:indexes"
   },
   "engines": {
