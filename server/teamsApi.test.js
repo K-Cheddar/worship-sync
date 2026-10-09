@@ -14982,7 +14982,128 @@ test("portable member import creates approved teams and positions once across re
   assert.equal(committed.payload.results.every((result) => result.status === "created"), true);
 });
 
-test("partial member import re-preview reuses only this batch's team and position decisions", async (t) => {
+test("position aliases reuse one destination per team and repeated approvals stay idempotent", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_member_position_aliases");
+  const media = await seedTeam(context, { teamName: "Media" });
+  const worship = await seedTeam(context, { teamName: "Worship" });
+  const csv = [
+    "First Name,Last Name,Teams,Positions",
+    "Morgan,Alias,Media,Camera Ops | Camera Operator",
+    "Riley,Distinct,Worship,Camera Operator",
+  ].join("\n");
+  const positionActions = [
+    { teamId: media.teamId, sourceValue: "Camera Ops", action: "create", name: "Camera Operator" },
+    { teamId: media.teamId, sourceValue: "Camera Operator", action: "create", name: "Camera Operator" },
+    { teamId: worship.teamId, sourceValue: "Camera Operator", action: "create", name: "Camera Operator" },
+  ];
+  const reviewed = await previewMemberCsv(context, csv, { positionActions });
+  assert.equal(reviewed.statusCode, 200, JSON.stringify(reviewed.payload));
+  assert.equal(reviewed.payload.rows.every((row) => row.issues.length === 0), true, JSON.stringify(reviewed.payload.rows));
+  const body = {
+    type: "members", positionActions,
+    previewToken: reviewed.payload.previewToken, previewCsvHash: hashPortableCsv(csv), mapping: reviewed.mapping,
+    approvedRows: reviewed.payload.rows.map(({ row, action, record }) => ({ row, action, record })),
+  };
+
+  const firstCommit = await callHandler(authHandlers.commitPortableImport, { context, body });
+  const repeatedCommit = await callHandler(authHandlers.commitPortableImport, { context, body });
+
+  assert.equal(firstCommit.payload.success, true, JSON.stringify(firstCommit.payload));
+  assert.equal(firstCommit.payload.summary.positionsCreated, 2);
+  assert.equal(repeatedCommit.payload.summary.positionsCreated, 2);
+  const positions = await queryDocs(COLLECTIONS.teamPositions, [{ field: "churchId", value: context.churchId }]);
+  const cameraPositions = positions.filter((position) => position.name === "Camera Operator");
+  assert.equal(cameraPositions.length, 2);
+  assert.deepEqual(new Set(cameraPositions.map((position) => position.teamId)), new Set([media.teamId, worship.teamId]));
+  assert.equal(new Set(cameraPositions.map((position) => position.positionId)).size, 2);
+  const mediaMember = await getDoc(COLLECTIONS.teamRosterMembers, firstCommit.payload.results.find((row) => row.row === 2).id);
+  const worshipMember = await getDoc(COLLECTIONS.teamRosterMembers, firstCommit.payload.results.find((row) => row.row === 3).id);
+  assert.equal(mediaMember.positionIds.length, 1);
+  assert.equal(mediaMember.positionIds[0], cameraPositions.find((position) => position.teamId === media.teamId).positionId);
+  assert.deepEqual(worshipMember.positionIds, [cameraPositions.find((position) => position.teamId === worship.teamId).positionId]);
+});
+
+test("member preview rejects conflicting create decisions for the same team and source alias", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_member_conflicting_position_alias");
+  const team = await seedTeam(context, { teamName: "Production" });
+  const csv = "First Name,Last Name,Teams,Positions\nJordan,Conflict,Production,Camera Ops\n";
+  const positionActions = [
+    { teamId: team.teamId, sourceValue: "Camera Ops", action: "create", name: "Camera Operator" },
+    { teamId: team.teamId, sourceValue: "Camera Ops", action: "create", name: "Video Operator" },
+  ];
+
+  const reviewed = await previewMemberCsv(context, csv, { positionActions });
+
+  assert.equal(reviewed.statusCode, 400);
+  assert.match(reviewed.payload.errorMessage, /position decisions do not match this csv/i);
+  assert.equal((await queryDocs(COLLECTIONS.teamPositions, [{ field: "teamId", value: team.teamId }])).length, 0);
+});
+
+test("member import requires explicit matches for dependencies without same-import provenance", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_member_legacy_dependency_recovery");
+  const csv = "First Name,Last Name,Teams,Positions\nCasey,Recovered,CSV Recovery Team,Camera Operator\n";
+  const teamActions = [{ sourceValue: "CSV Recovery Team", action: "create", name: "Recovery Team" }];
+  const pendingTeamId = `portable-pending-team-${createHash("sha256").update(`${hashPortableCsv(csv)}\u0000csv recovery team`).digest("hex").slice(0, 32)}`;
+  const positionActions = [{ teamId: pendingTeamId, sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }];
+  const oldTeamKey = createHash("sha256").update("old option-scoped team key").digest("hex");
+  const oldPositionKey = createHash("sha256").update("old option-scoped position key").digest("hex");
+  const oldTeamId = `team_${oldTeamKey.slice(0, 40)}`;
+  const oldPositionId = `position_${oldPositionKey.slice(0, 40)}`;
+  await setDoc(COLLECTIONS.teams, oldTeamId, {
+    teamId: oldTeamId, churchId: context.churchId, name: "Recovery Team", memberIds: [],
+    archivedAt: null, _portableCreateKey: oldTeamKey,
+  });
+  await setDoc(COLLECTIONS.teamPositions, oldPositionId, {
+    positionId: oldPositionId, churchId: context.churchId, teamId: oldTeamId, name: "Camera Operator",
+    archivedAt: null, _portableCreateKey: oldPositionKey,
+  });
+
+  const ambiguous = await previewMemberCsv(context, csv, {
+    teamActions, positionActions, updateMode: "replace", clearBlankScalars: true,
+  });
+  assert.equal(ambiguous.statusCode, 409, JSON.stringify(ambiguous.payload));
+  assert.match(ambiguous.payload.errorMessage, /team named .* already exists/i);
+
+  const explicitTeamActions = [{ sourceValue: "CSV Recovery Team", action: "match", teamId: oldTeamId }];
+  const explicitPositionActions = [{ teamId: oldTeamId, sourceValue: "Camera Operator", action: "match", positionId: oldPositionId }];
+  const reviewed = await previewMemberCsv(context, csv, {
+    teamActions: explicitTeamActions,
+    positionActions: explicitPositionActions,
+    updateMode: "replace",
+    clearBlankScalars: true,
+  });
+  assert.equal(reviewed.statusCode, 200, JSON.stringify(reviewed.payload));
+  assert.equal(reviewed.payload.rows.every((row) => row.issues.length === 0), true, JSON.stringify(reviewed.payload.rows));
+  assert.equal((await queryDocs(COLLECTIONS.teams, [{ field: "churchId", value: context.churchId }])).length, 1);
+  assert.equal((await queryDocs(COLLECTIONS.teamPositions, [{ field: "teamId", value: oldTeamId }])).length, 1);
+});
+
+test("member import does not reuse a same-name position with no source-import provenance", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("data_transfer_member_unscoped_position_recovery");
+  const team = await seedTeam(context, { teamName: "Media" });
+  const oldPositionKey = createHash("sha256").update("position created by another import").digest("hex");
+  const oldPositionId = `position_${oldPositionKey.slice(0, 40)}`;
+  await setDoc(COLLECTIONS.teamPositions, oldPositionId, {
+    positionId: oldPositionId, churchId: context.churchId, teamId: team.teamId, name: "Camera Operator",
+    archivedAt: null, _portableCreateKey: oldPositionKey,
+  });
+  const csv = "First Name,Last Name,Teams,Positions\nCasey,Another Import,Media,Camera Operator\n";
+  const positionActions = [{
+    teamId: team.teamId, sourceValue: "Camera Operator", action: "create", name: "Camera Operator",
+  }];
+
+  const reviewed = await previewMemberCsv(context, csv, { positionActions });
+
+  assert.equal(reviewed.statusCode, 409, JSON.stringify(reviewed.payload));
+  assert.match(reviewed.payload.errorMessage, /position named .* already exists/i);
+  assert.equal((await queryDocs(COLLECTIONS.teamPositions, [{ field: "teamId", value: team.teamId }])).length, 1);
+});
+
+test("partial member import retains team identity across option and position mapping changes", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("data_transfer_member_partial_batch_recovery");
   const existing = await callHandler(authHandlers.createTeamRosterMember, {
@@ -14996,7 +15117,9 @@ test("partial member import re-preview reuses only this batch's team and positio
   const teamActions = [{ sourceValue: "CSV Recovery Team", action: "create", name: "Recovery Team" }];
   const pendingTeamId = `portable-pending-team-${createHash("sha256").update(`${hashPortableCsv(csv)}\u0000csv recovery team`).digest("hex").slice(0, 32)}`;
   const positionActions = [{ teamId: pendingTeamId, sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }];
-  const reviewed = await previewMemberCsv(context, csv, { teamActions, positionActions });
+  const reviewed = await previewMemberCsv(context, csv, {
+    teamActions, positionActions, updateMode: "merge", clearBlankScalars: false,
+  });
   assert.equal(reviewed.payload.rows.every((row) => row.issues.length === 0), true, JSON.stringify(reviewed.payload.rows));
   const approved = reviewed.payload.rows.map(({ row, action, matchedId, record, expectedStateHash }) => ({
     row, action, recordId: matchedId || undefined, record, expectedStateHash,
@@ -15006,6 +15129,7 @@ test("partial member import re-preview reuses only this batch's team and positio
     context,
     body: {
       type: "members", teamActions, positionActions,
+      updateMode: "merge", clearBlankScalars: false,
       previewToken: reviewed.payload.previewToken, previewCsvHash: hashPortableCsv(csv),
       mapping: reviewed.mapping, approvedRows: approved,
     },
@@ -15015,7 +15139,18 @@ test("partial member import re-preview reuses only this batch's team and positio
   assert.equal(firstCommit.payload.summary.teamsCreated, 1);
   assert.equal(firstCommit.payload.summary.positionsCreated, 1);
 
-  const refreshed = await previewMemberCsv(context, csv, { teamActions, positionActions });
+  const revisedPositionActions = [{
+    teamId: pendingTeamId,
+    sourceValue: "Camera Operator",
+    action: "create",
+    name: "Senior Camera Operator",
+  }];
+  const refreshed = await previewMemberCsv(context, csv, {
+    teamActions,
+    positionActions: revisedPositionActions,
+    updateMode: "replace",
+    clearBlankScalars: true,
+  });
   assert.equal(refreshed.statusCode, 200, JSON.stringify(refreshed.payload));
   assert.equal(refreshed.payload.rows.every((row) => row.issues.length === 0), true, JSON.stringify(refreshed.payload.rows));
   const retryRow = refreshed.payload.rows.find((row) => row.row === 3);
@@ -15023,7 +15158,8 @@ test("partial member import re-preview reuses only this batch's team and positio
   const retry = await callHandler(authHandlers.commitPortableImport, {
     context,
     body: {
-      type: "members", teamActions, positionActions,
+      type: "members", teamActions, positionActions: revisedPositionActions,
+      updateMode: "replace", clearBlankScalars: true,
       previewToken: refreshed.payload.previewToken, previewCsvHash: hashPortableCsv(csv),
       mapping: refreshed.mapping,
       approvedRows: [{
@@ -15040,7 +15176,7 @@ test("partial member import re-preview reuses only this batch's team and positio
   assert.ok(createdTeam);
   assert.equal(teams.filter((team) => team.name === "Recovery Team").length, 1);
   const positions = await queryDocs(COLLECTIONS.teamPositions, [{ field: "teamId", value: createdTeam.teamId }]);
-  assert.equal(positions.filter((position) => position.name === "Camera Operator").length, 1);
+  assert.deepEqual(new Set(positions.map((position) => position.name)), new Set(["Camera Operator", "Senior Camera Operator"]));
   assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, existing.payload.member.memberId)).notes, "Concurrent edit");
 });
 

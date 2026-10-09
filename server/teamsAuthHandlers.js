@@ -8898,7 +8898,7 @@ export const createTeamsAuthHandlers = ({
     if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
     return value;
   })(value));
-  const portableMemberImportBatchIdentity = ({
+  const portableMemberRowOperationIdentity = ({
     churchId, csvHash, mapping, destinationTeamId, updateMode, clearBlankScalars,
     teamActions, positionActions,
   }) => crypto.createHash("sha256").update(stablePortableJson([
@@ -8912,14 +8912,23 @@ export const createTeamsAuthHandlers = ({
     teamActions || [],
     positionActions || [],
   ])).digest("hex");
-  const portableMemberTeamCreateKey = (batchIdentity, action) => crypto.createHash("sha256")
-    .update(`${batchIdentity}\u0000member-import-team\u0000${stablePortableJson([normalizePortableMatchValue(action.sourceValue)])}\u0000${normalizePortableMatchValue(action.name)}`)
+  const portableMemberTeamCreateKey = (churchId, csvHash, action) => crypto.createHash("sha256")
+    .update(stablePortableJson([
+      churchId,
+      "member-import-team",
+      String(csvHash || ""),
+      normalizePortableMatchValue(action.sourceValue),
+      normalizePortableMatchValue(action.name),
+    ]))
     .digest("hex");
-  const portableMemberPositionCreateKey = (churchId, batchIdentity, teamId, sourceValue, name) => crypto.createHash("sha256")
-    .update(`${churchId}\u0000member-import-position\u0000${batchIdentity}\u0000${teamId}\u0000${normalizePortableMatchValue(sourceValue)}\u0000${normalizePortableMatchValue(name)}`)
-    .digest("hex");
-  const legacyPortableMemberPositionCreateKey = (churchId, teamId, name) => crypto.createHash("sha256")
-    .update(`${churchId}\u0000member-import-position\u0000${teamId}\u0000${normalizePortableMatchValue(name)}`)
+  const portableMemberPositionCreateKey = (churchId, csvHash, teamId, name) => crypto.createHash("sha256")
+    .update(stablePortableJson([
+      churchId,
+      "member-import-position",
+      String(csvHash || ""),
+      String(teamId || "").trim(),
+      normalizePortableMatchValue(name),
+    ]))
     .digest("hex");
   const memberImportStateHash = (member, teams, positions) => crypto.createHash("sha256").update(stablePortableJson({
     // Include the complete member document so profile, availability,
@@ -9301,22 +9310,15 @@ export const createTeamsAuthHandlers = ({
         const positionActionsByKey = new Map(positionActions.map((action) => [
           positionActionKey(action?.teamId, action?.sourceValue), action,
         ]));
-        const createBatchIdentity = portableMemberImportBatchIdentity({
-          churchId,
-          csvHash: sourceCsvHash,
-          mapping: req.body?.mapping || {},
-          destinationTeamId,
-          updateMode: previewUpdateMode,
-          clearBlankScalars: previewClearBlankScalars,
-          teamActions,
-          positionActions,
-        });
-        const teamCreateKey = (action) => portableMemberTeamCreateKey(createBatchIdentity, action);
-        const positionCreateKey = (teamId, sourceValue, name) =>
-          portableMemberPositionCreateKey(churchId, createBatchIdentity, teamId, sourceValue, name);
+        const teamCreateKey = (action) => portableMemberTeamCreateKey(churchId, sourceCsvHash, action);
+        const positionCreateKey = (teamId, name) =>
+          portableMemberPositionCreateKey(churchId, sourceCsvHash, teamId, name);
         const createdTeamForAction = (action) => records.teams.find((item) =>
           item.churchId === churchId && !item.archivedAt
           && item._portableCreateKey === teamCreateKey(action));
+        const createdPositionForAction = (teamId, name) => records.positions.find((item) =>
+          item.churchId === churchId && item.teamId === teamId && !item.archivedAt
+          && item._portableCreateKey === positionCreateKey(teamId, name));
         const getPositionActionEntry = (teamId, sourceValue) => {
           const direct = positionActionsByKey.get(positionActionKey(teamId, sourceValue));
           if (direct) return { decisionTeamId: teamId, action: direct };
@@ -9563,13 +9565,7 @@ export const createTeamsAuthHandlers = ({
                   const ownerTeamId = ownerTeam?.teamId || teamId;
                   const nameToCreate = String(entry.action.name || "").trim();
                   if (!nameToCreate) throw httpError(400, "Enter a name for the new position.");
-                  const createKeys = [
-                    positionCreateKey(ownerTeamId, name, nameToCreate),
-                    legacyPortableMemberPositionCreateKey(churchId, ownerTeamId, nameToCreate),
-                  ];
-                  const alreadyCreated = records.positions.some((position) =>
-                    createKeys.includes(position._portableCreateKey)
-                    && position.churchId === churchId && position.teamId === ownerTeamId && !position.archivedAt);
+                  const alreadyCreated = createdPositionForAction(ownerTeamId, nameToCreate);
                   if (!alreadyCreated && records.positions.some((position) =>
                     position.churchId === churchId && position.teamId === ownerTeamId
                     && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(nameToCreate))) {
@@ -9667,13 +9663,7 @@ export const createTeamsAuthHandlers = ({
               } else if (positionAction.action === "create") {
                 const name = String(positionAction.name || "").trim();
                 if (!name) throw httpError(400, "Enter a name for the new position.");
-                const createKeys = [
-                  positionCreateKey(team.teamId, issue.referenceValue, name),
-                  legacyPortableMemberPositionCreateKey(churchId, team.teamId, name),
-                ];
-                const alreadyCreated = records.positions.some((item) =>
-                  createKeys.includes(item._portableCreateKey)
-                  && item.churchId === churchId && item.teamId === team.teamId && !item.archivedAt);
+                const alreadyCreated = createdPositionForAction(team.teamId, name);
                 const duplicate = !alreadyCreated && records.positions.some((item) => item.teamId === team.teamId
                   && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
                 if (duplicate) throw httpError(409, `A position named "${name}" already exists in ${team.name}. Choose an existing position instead.`);
@@ -10348,13 +10338,7 @@ export const createTeamsAuthHandlers = ({
                       }
                       if (entry.action.action === "create") {
                         const nameToCreate = String(entry.action.name || "").trim();
-                        const createKeys = [
-                          positionCreateKey(owningTeamId, name, nameToCreate),
-                          legacyPortableMemberPositionCreateKey(churchId, owningTeamId, nameToCreate),
-                        ];
-                        const existingByKey = records.positions.find((position) =>
-                          createKeys.includes(position._portableCreateKey)
-                          && position.churchId === churchId && position.teamId === owningTeamId && !position.archivedAt);
+                        const existingByKey = createdPositionForAction(owningTeamId, nameToCreate);
                         if (existingByKey) return [existingByKey];
                         if (records.positions.some((position) => position.churchId === churchId
                           && position.teamId === owningTeamId
@@ -10498,8 +10482,8 @@ export const createTeamsAuthHandlers = ({
         };
         const requestedTeamActions = Array.isArray(req.body?.teamActions) ? req.body.teamActions : [];
         const requestedPositionActions = Array.isArray(req.body?.positionActions) ? req.body.positionActions : [];
-        const createBatchIdentity = type === "members"
-          ? portableMemberImportBatchIdentity({
+        const rowOperationIdentity = type === "members"
+          ? portableMemberRowOperationIdentity({
               churchId,
               csvHash: req.body?.previewCsvHash,
               mapping: req.body?.mapping || {},
@@ -10539,7 +10523,7 @@ export const createTeamsAuthHandlers = ({
             identity = [type, Number(approved.row)];
           }
           return crypto.createHash("sha256")
-            .update(`${createBatchIdentity}:${JSON.stringify(identity)}`)
+            .update(`${rowOperationIdentity}:${JSON.stringify(identity)}`)
             .digest("hex");
         };
         const data = await readPortableDatasets(churchId);
@@ -10666,7 +10650,7 @@ export const createTeamsAuthHandlers = ({
           const ids = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim()).filter(Boolean);
           (refs.length ? refs : ids).forEach((sourceValue) => referencedTeamKeys.add(teamActionKey(sourceValue)));
         });
-        const teamCreateKey = (action) => portableMemberTeamCreateKey(createBatchIdentity, action);
+        const teamCreateKey = (action) => portableMemberTeamCreateKey(churchId, sourceCsvHash, action);
         for (const action of requestedTeamActions) {
           const key = teamActionKey(action.sourceValue);
           if (!referencedTeamKeys.has(key)) continue;
@@ -10685,7 +10669,8 @@ export const createTeamsAuthHandlers = ({
             const name = String(action.name || "").trim();
             if (!name) throw httpError(400, "Enter a name for the new team.");
             const createKey = teamCreateKey(action);
-            const existingByKey = data.teams.find((item) => item._portableCreateKey === createKey && item.churchId === churchId && !item.archivedAt);
+            const existingByKey = data.teams.find((item) => item._portableCreateKey === createKey
+              && item.churchId === churchId && !item.archivedAt);
             if (existingByKey) {
               teamActionIds.set(key, existingByKey.teamId);
               continue;
@@ -10713,8 +10698,11 @@ export const createTeamsAuthHandlers = ({
             && teamActionIds.get(teamActionKey(action.sourceValue)) === teamId);
           return createAction ? positionActionMap.get(positionActionKey(pendingTeamId(createAction.sourceValue), sourceValue)) : null;
         };
-        const positionCreateKey = (teamId, sourceValue, name) =>
-          portableMemberPositionCreateKey(churchId, createBatchIdentity, teamId, sourceValue, name);
+        const positionCreateKey = (teamId, name) =>
+          portableMemberPositionCreateKey(churchId, sourceCsvHash, teamId, name);
+        const createdPositionForAction = (teamId, name) => data.positions.find((item) =>
+          item.churchId === churchId && item.teamId === teamId && !item.archivedAt
+          && item._portableCreateKey === positionCreateKey(teamId, name));
         const resolveApprovedPosition = async (teamId, sourceValue) => {
           const action = getPositionAction(teamId, sourceValue);
           if (!action) return null;
@@ -10730,12 +10718,9 @@ export const createTeamsAuthHandlers = ({
           }
           if (action.action !== "create") throw httpError(400, "Choose how to handle each missing position.");
           const name = String(action.name || "").trim();
-          const createKey = positionCreateKey(actualTeamId, sourceValue, name);
-          const legacyCreateKey = legacyPortableMemberPositionCreateKey(churchId, actualTeamId, name);
-          const existingByKey = data.positions.find((item) =>
-            [createKey, legacyCreateKey].includes(item._portableCreateKey));
-          if (existingByKey && existingByKey.churchId === churchId && existingByKey.teamId === actualTeamId && !existingByKey.archivedAt)
-            return existingByKey.positionId;
+          const createKey = positionCreateKey(actualTeamId, name);
+          const existingByKey = createdPositionForAction(actualTeamId, name);
+          if (existingByKey) return existingByKey.positionId;
           const sameName = data.positions.filter((item) => item.churchId === churchId && item.teamId === actualTeamId
             && !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
           if (sameName.length) throw httpError(409, `A position named "${name}" now exists in ${team.name}. Review the position mapping before continuing.`);
@@ -12235,12 +12220,13 @@ export const createTeamsAuthHandlers = ({
         const completed = results.length - failed;
         const teamsCreatedCount = requestedTeamActions.filter((action) => action.action === "create"
           && teamActionIds.get(teamActionKey(action.sourceValue))).length;
-        const positionsCreatedCount = requestedPositionActions.filter((action) => action.action === "create"
-          && data.positions.some((position) => position._portableCreateKey === positionCreateKey(
-            resolvePositionTeamId(action.teamId), action.sourceValue, action.name,
-          ) || position._portableCreateKey === legacyPortableMemberPositionCreateKey(
-            churchId, resolvePositionTeamId(action.teamId), action.name,
-          ))).length;
+        const positionsCreatedKeys = new Set(requestedPositionActions
+          .filter((action) => action.action === "create")
+          .filter((action) => createdPositionForAction(resolvePositionTeamId(action.teamId), action.name))
+          .map((action) => stablePortableJson([
+            resolvePositionTeamId(action.teamId), normalizePortableMatchValue(action.name),
+          ])));
+        const positionsCreatedCount = positionsCreatedKeys.size;
         const hasCreatedDependencies = teamsCreatedCount > 0 || positionsCreatedCount > 0;
         return res.json({
           success: failed === 0,

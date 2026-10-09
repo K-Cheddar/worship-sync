@@ -1526,6 +1526,38 @@ export function useMediaLibraryController({
         fallback,
       );
       const next = deleteFolderKeepContents(folderId, changeBase.folders, changeBase.list);
+      const rehomeOperationId = globalThis.crypto?.randomUUID?.()
+        ?? `keep-contents-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const automaticMediaRehomeIds = new Set<string>();
+      const automaticFolderRehomeIds = new Set<string>();
+      const trackAutomaticMediaRehomes = (sourceList: MediaType[], finalList: MediaType[]) => {
+        const finalItemsById = new Map(finalList.map((item) => [item.id, item]));
+        automaticMediaRehomeIds.clear();
+        for (const item of sourceList) {
+          if (item.folderId === folderId && finalItemsById.get(item.id)?.folderId !== item.folderId) {
+            automaticMediaRehomeIds.add(item.id);
+          }
+        }
+      };
+      const trackAutomaticFolderRehomes = (sourceFolders: MediaFolder[], finalFolders: MediaFolder[]) => {
+        const finalFoldersById = new Map(finalFolders.map((folder) => [folder.id, folder]));
+        automaticFolderRehomeIds.clear();
+        for (const folder of sourceFolders) {
+          if (folder.parentId === folderId && finalFoldersById.get(folder.id)?.parentId !== folder.parentId) {
+            automaticFolderRehomeIds.add(folder.id);
+          }
+        }
+      };
+      const tagAutomaticRehomes = (state: { list: MediaType[]; folders: MediaFolder[] }) => ({
+        list: state.list.map((item) => automaticMediaRehomeIds.has(item.id)
+          ? { ...item, _keepContentsRehomeOperationId: rehomeOperationId }
+          : item),
+        folders: state.folders.map((folder) => automaticFolderRehomeIds.has(folder.id)
+          ? { ...folder, _keepContentsRehomeOperationId: rehomeOperationId }
+          : folder),
+      });
+      trackAutomaticMediaRehomes(changeBase.list, next.list);
+      trackAutomaticFolderRehomes(changeBase.folders, next.folders);
       if (isOperationUiScopeCurrent()) {
         dispatch(repairActiveMediaRouteFolders({ controllerProfileId: controllerProfile.id, repairs }));
         for (const key of Object.keys(repairs) as MediaRouteKey[]) {
@@ -1546,9 +1578,29 @@ export function useMediaLibraryController({
         }
       }
       const getFinalState = () => {
-        if (!isOperationUiScopeCurrent()) return next;
+        if (!isOperationUiScopeCurrent()) return tagAutomaticRehomes(next);
         const latest = store.getState().media;
-        return deleteFolderKeepContents(folderId, latest.folders, latest.list);
+        if (!latest.folders.some((folder) => folder.id === folderId)) {
+          const expectedItemsById = new Map(next.list.map((item) => [item.id, item]));
+          const latestItemsById = new Map(latest.list.map((item) => [item.id, item]));
+          for (const id of automaticMediaRehomeIds) {
+            if (latestItemsById.get(id)?.folderId !== expectedItemsById.get(id)?.folderId) {
+              automaticMediaRehomeIds.delete(id);
+            }
+          }
+          const expectedFoldersById = new Map(next.folders.map((folder) => [folder.id, folder]));
+          const latestFoldersById = new Map(latest.folders.map((folder) => [folder.id, folder]));
+          for (const id of automaticFolderRehomeIds) {
+            if (latestFoldersById.get(id)?.parentId !== expectedFoldersById.get(id)?.parentId) {
+              automaticFolderRehomeIds.delete(id);
+            }
+          }
+          return latest;
+        }
+        const finalState = deleteFolderKeepContents(folderId, latest.folders, latest.list);
+        trackAutomaticMediaRehomes(latest.list, finalState.list);
+        trackAutomaticFolderRehomes(latest.folders, finalState.folders);
+        return tagAutomaticRehomes(finalState);
       };
       const finalState = getFinalState();
       if (isOperationUiScopeCurrent()) dispatch(setMediaListAndFolders(finalState));
@@ -1561,8 +1613,27 @@ export function useMediaLibraryController({
         {
           allowOriginalOwnerPersistenceAfterScopeChange: true,
           publishIfCurrent: isOperationUiScopeCurrent,
+          automaticMediaRehomeIds,
+          automaticFolderRehomeIds,
         },
       );
+      if (flushResult.ok && isOperationUiScopeCurrent()) {
+        const current = store.getState().media;
+        const clearOwnedMarker = <T extends { _keepContentsRehomeOperationId?: string }>(row: T): T => {
+          if (row._keepContentsRehomeOperationId !== rehomeOperationId) return row;
+          const clean = { ...row };
+          delete clean._keepContentsRehomeOperationId;
+          return clean;
+        };
+        const cleaned = {
+          list: current.list.map(clearOwnedMarker),
+          folders: current.folders.map(clearOwnedMarker),
+        };
+        if (cleaned.list.some((item, index) => item !== current.list[index])
+          || cleaned.folders.some((folder, index) => folder !== current.folders[index])) {
+          dispatch(setMediaListAndFolders(cleaned));
+        }
+      }
       if (!flushResult.ok && isOperationUiScopeCurrent()) {
         showToast(mediaLibraryFlushFailureMessage(flushResult.error, "folder"), "error");
       }
