@@ -9208,6 +9208,18 @@ export const createTeamsAuthHandlers = ({
         if (!csv || Buffer.byteLength(csv, "utf8") > 8 * 1024 * 1024)
           throw httpError(400, "Choose a CSV file smaller than 8 MB.");
         const parsed = parseCsv(csv);
+        const columnStats = Object.fromEntries(
+          parsed.headers.map((header) => [header, { nonBlank: 0, blank: 0 }]),
+        );
+        parsed.rows.forEach(({ values }) => {
+          parsed.headers.forEach((header) => {
+            if (String(values[header] || "").trim())
+              columnStats[header].nonBlank += 1;
+          });
+        });
+        Object.values(columnStats).forEach((stats) => {
+          stats.blank = Math.max(0, parsed.totalRows - stats.nonBlank);
+        });
         return res.json({
           success: true,
           headers: parsed.headers,
@@ -9216,6 +9228,7 @@ export const createTeamsAuthHandlers = ({
           issues: parsed.issues,
           mapping: mappingSuggestions(parsed.headers, type),
           sampleRows: parsed.rows.slice(0, 5).map((row) => row.values),
+          columnStats,
         });
       } catch (error) {
         return dataTransferError(
@@ -9246,6 +9259,25 @@ export const createTeamsAuthHandlers = ({
         const destinationTeamId = String(req.body?.destinationTeamId || "").trim();
         const previewUpdateMode = req.body?.updateMode === "replace" ? "replace" : "merge";
         const previewClearBlankScalars = req.body?.clearBlankScalars === true;
+        const teamActions = Array.isArray(req.body?.teamActions) ? req.body.teamActions : [];
+        const teamActionKey = (sourceValue) => stablePortableJson([
+          normalizePortableMatchValue(sourceValue),
+        ]);
+        const sourceCsvHash = crypto.createHash("sha256").update(String(req.body?.csv || "")).digest("hex");
+        const pendingTeamId = (sourceValue) => `portable-pending-team-${crypto.createHash("sha256").update(`${sourceCsvHash}\u0000${normalizePortableMatchValue(sourceValue)}`).digest("hex").slice(0, 32)}`;
+        const pendingIgnoredTeamId = (sourceValue) => `portable-ignored-team-${crypto.createHash("sha256").update(normalizePortableMatchValue(sourceValue)).digest("hex").slice(0, 32)}`;
+        const teamActionsByKey = new Map(teamActions.map((action) => [teamActionKey(action?.sourceValue), action]));
+        const usedTeamActionKeys = new Set();
+        const positionActions = Array.isArray(req.body?.positionActions)
+          ? req.body.positionActions
+          : [];
+        const positionActionKey = (teamId, sourceValue) => stablePortableJson([
+          String(teamId || "").trim(),
+          normalizePortableMatchValue(sourceValue),
+        ]);
+        const positionActionsByKey = new Map(positionActions.map((action) => [
+          positionActionKey(action?.teamId, action?.sourceValue), action,
+        ]));
         const destinationTeam = destinationTeamId
           ? records.teams.find((item) => item.teamId === destinationTeamId && !item.archivedAt)
           : null;
@@ -9256,6 +9288,7 @@ export const createTeamsAuthHandlers = ({
           type,
           mapping: req.body?.mapping,
         });
+        const usedPositionActionKeys = new Set();
         const rows = mapped.map(({ row, record }) => {
           const issues = parsed.issues
             .filter((issue) => issue.row === row)
@@ -9268,12 +9301,15 @@ export const createTeamsAuthHandlers = ({
           let candidates = [];
           let usesDestinationTeam = false;
           let matchedTeams = [];
+          let allSourceTeamsIgnored = false;
           if (type === "members") {
             const sourceStatus = normalizePortableMatchValue(record.status);
             if (["inactive", "archived", "disabled", "deactivated"].includes(sourceStatus))
               issues.push({ field: "status", code: "source_inactive", message: `Source status is ${String(record.status || "").trim()}. Review this row and skip it if the member should remain unchanged.` });
-            const hasPortableMembershipIds = record.teamIds !== undefined || record.positionIds !== undefined;
-            usesDestinationTeam = !String(record.teams || "").trim() && !hasPortableMembershipIds;
+            const teamIdParts = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim());
+            const positionIdParts = String(record.positionIds || "").split(LIST_DELIMITER).map((value) => value.trim());
+            const hasLocalPositionId = positionIdParts.some((positionId) => records.positions.some((item) => item.positionId === positionId && item.churchId === churchId && !item.archivedAt));
+            usesDestinationTeam = !String(record.teams || "").trim() && !teamIdParts.some(Boolean) && (!positionIdParts.some(Boolean) || !hasLocalPositionId);
             if (usesDestinationTeam && !destinationTeam)
               issues.push({ field: "team", code: "required", message: "Choose a destination team for these members." });
             if (!record.firstName || !record.lastName)
@@ -9327,6 +9363,7 @@ export const createTeamsAuthHandlers = ({
               key,
               label,
               ids,
+              scopedTeamId = "",
             ) => {
               if (!name) return;
               const parts = splitPortableReferences(name, collection);
@@ -9377,44 +9414,180 @@ export const createTeamsAuthHandlers = ({
                     candidates: candidatesForChoice.map((item) => ({
                       id: item[key],
                       name: item.name,
-                      ...(field === "positions" ? { teamName: records.teams.find((team) => team.teamId === item.teamId)?.name || "" } : {}),
+                      ...(field === "positions" ? { teamId: item.teamId, teamName: records.teams.find((team) => team.teamId === item.teamId)?.name || "" } : {}),
                     })),
+                    ...(field === "positions" && scopedTeamId ? {
+                      teamId: scopedTeamId,
+                      teamName: records.teams.find((team) => team.teamId === scopedTeamId)?.name || "",
+                      positionOptions: records.positions.filter((item) => item.teamId === scopedTeamId && !item.archivedAt)
+                        .map((item) => ({ id: item.positionId, name: item.name })),
+                    } : {}),
                   });
               }
             };
-            const importedTeamNames = splitPortableReferences(record.teams, records.teams)
-              .map((value) => normalizePortableMatchValue(value))
-              .filter(Boolean);
-            matchedTeams = records.teams.filter(
-              (item) =>
-                !item.archivedAt &&
-                importedTeamNames.includes(
-                  normalizePortableMatchValue(item.name),
-                ),
-            );
-            if (!usesDestinationTeam) referenceIssue(
-              "teams",
-              record.teams,
-              records.teams,
-              "teamId",
-              "team",
-              record.teamIds,
-            );
+            const importedTeamNames = splitPortableReferences(record.teams, records.teams).filter(Boolean);
+            const sourceTeamValues = importedTeamNames.length ? importedTeamNames : teamIdParts.filter(Boolean);
+            matchedTeams = [];
+            if (!usesDestinationTeam) {
+              sourceTeamValues.forEach((sourceValue, index) => {
+                const actionKey = teamActionKey(sourceValue);
+                const planned = teamActionsByKey.get(actionKey);
+                if (planned) {
+                  usedTeamActionKeys.add(actionKey);
+                  if (planned.action === "ignore") return;
+                  if (planned.action === "match") {
+                    const selected = records.teams.find((item) => item.teamId === planned.teamId && item.churchId === churchId && !item.archivedAt);
+                    if (!selected) throw httpError(409, "The selected team is no longer active in this church. Review the file again.");
+                    matchedTeams.push(selected);
+                    return;
+                  }
+                  if (planned.action === "create") {
+                    const name = String(planned.name || "").trim();
+                    if (!name) throw httpError(400, "Enter a name for the new team.");
+                    if (records.teams.some((item) => item.churchId === churchId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name)))
+                      throw httpError(409, `A team named "${name}" already exists or is archived. Choose an active match or a different name.`);
+                    const virtualId = pendingTeamId(sourceValue);
+                    matchedTeams.push({ teamId: virtualId, churchId, name, memberIds: [], _portablePending: true });
+                    return;
+                  }
+                  throw httpError(400, "Choose how to handle each source team.");
+                }
+                const sourceId = teamIdParts[index] || (!importedTeamNames.length && records.teams.some((item) => item.teamId === sourceValue) ? sourceValue : "");
+                const exactId = sourceId ? records.teams.filter((item) => item.teamId === sourceId && item.churchId === churchId && !item.archivedAt
+                  && (!importedTeamNames.length || normalizePortableMatchValue(item.name) === normalizePortableMatchValue(sourceValue))) : [];
+                const exactName = records.teams.filter((item) => item.churchId === churchId && !item.archivedAt
+                  && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(sourceValue));
+                if (exactId.length === 1) {
+                  matchedTeams.push(exactId[0]);
+                  return;
+                }
+                if (exactName.length === 1 && !sourceId) {
+                  matchedTeams.push(exactName[0]);
+                  return;
+                }
+                const candidatesForChoice = exactName.length ? exactName : records.teams.filter((item) => item.churchId === churchId && !item.archivedAt);
+                issues.push({
+                  field: "teams",
+                  referenceIndex: index,
+                  referenceValue: sourceValue,
+                  code: exactName.length > 1 ? "ambiguous_reference" : sourceId ? "foreign_or_unknown_reference_id" : candidatesForChoice.length ? "ambiguous_reference" : "missing_reference",
+                  message: exactName.length > 1 ? `Choose which team "${sourceValue}" to use.` : sourceId ? `This WorshipSync Team ID does not match an active team here. Choose a local team, create one, or ignore these assignments.` : `Choose or create a local team for "${sourceValue}".`,
+                  candidates: candidatesForChoice.map((item) => ({ id: item.teamId, name: item.name })),
+                });
+              });
+            }
+            if (!sourceTeamValues.length && positionIdParts.some(Boolean)) {
+              positionIdParts.filter(Boolean).forEach((positionId) => {
+                const position = records.positions.find((item) => item.positionId === positionId && item.churchId === churchId && !item.archivedAt);
+                const ownerTeam = position && records.teams.find((item) => item.teamId === position.teamId && item.churchId === churchId && !item.archivedAt);
+                if (ownerTeam) matchedTeams.push(ownerTeam);
+              });
+            }
+            matchedTeams = matchedTeams.filter((team, index, all) => all.findIndex((item) => item.teamId === team.teamId) === index);
+            allSourceTeamsIgnored = !usesDestinationTeam && sourceTeamValues.length > 0
+              && sourceTeamValues.every((sourceValue) => teamActionsByKey.get(teamActionKey(sourceValue))?.action === "ignore");
+            const targetTeamScopes = usesDestinationTeam ? [destinationTeam].filter(Boolean) : matchedTeams;
+            const targetTeamIds = targetTeamScopes.map((team) => team.teamId);
+            const ignoredSourceTeamOptions = sourceTeamValues.filter((sourceValue) => teamActionsByKey.get(teamActionKey(sourceValue))?.action === "ignore")
+              .map((sourceValue) => ({ teamId: pendingIgnoredTeamId(sourceValue), name: sourceValue, ignored: true }));
+            const ownershipTeamOptions = [
+              ...targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name })),
+              ...ignoredSourceTeamOptions,
+            ];
             const positionCandidates = usesDestinationTeam
               ? records.positions.filter((item) => item.teamId === destinationTeam?.teamId)
-              : matchedTeams.length
-              ? records.positions.filter((item) =>
-                  matchedTeams.some((team) => team.teamId === item.teamId),
-                )
-              : records.positions;
-            referenceIssue(
-              "positions",
-              record.positions,
-              positionCandidates,
-              "positionId",
-              "position",
-              record.positionIds,
-            );
+              : records.positions.filter((item) => targetTeamIds.includes(item.teamId));
+            const meaningfulPositionIds = positionIdParts.some(Boolean) ? record.positionIds : "";
+            if (!allSourceTeamsIgnored) referenceIssue("positions", record.positions, positionCandidates, "positionId", "position", meaningfulPositionIds, targetTeamIds.length === 1 ? targetTeamIds[0] : "");
+            if (!allSourceTeamsIgnored && !String(record.positions || "").trim()) {
+              positionIdParts.forEach((positionId, referenceIndex) => {
+                if (!positionId || positionCandidates.some((item) => item.positionId === positionId && !item.archivedAt)) return;
+                issues.push({
+                  field: "positions", referenceIndex, referenceValue: positionId,
+                  code: "foreign_or_unknown_reference_id",
+                  message: "This WorshipSync Position ID is not verified in the selected team scope. Match it to a local position or ignore it.",
+                  candidates: [],
+                  ...(targetTeamIds.length === 1 ? {
+                    teamId: targetTeamIds[0],
+                    teamName: targetTeamScopes[0]?.name || "",
+                    positionOptions: positionCandidates.filter((item) => !item.archivedAt).map((item) => ({ id: item.positionId, name: item.name, teamId: item.teamId, teamName: targetTeamScopes.find((team) => team.teamId === item.teamId)?.name || "" })),
+                  } : targetTeamIds.length > 1 ? {
+                    teamOptions: targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name })),
+                    positionOptions: positionCandidates.filter((item) => !item.archivedAt).map((item) => ({ id: item.positionId, name: item.name, teamId: item.teamId, teamName: targetTeamScopes.find((team) => team.teamId === item.teamId)?.name || "" })),
+                  } : {}),
+                });
+              });
+            }
+            if (!allSourceTeamsIgnored && targetTeamIds.length > 1) {
+              issues.filter((issue) => issue.field === "positions" && issue.teamId === undefined && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code))
+                .forEach((issue) => {
+                  issue.teamOptions = targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name }));
+                  issue.positionOptions = positionCandidates.filter((position) => !position.archivedAt)
+                    .map((position) => ({ id: position.positionId, name: position.name, teamId: position.teamId, teamName: targetTeamScopes.find((team) => team.teamId === position.teamId)?.name || "" }));
+                });
+            }
+            if (!allSourceTeamsIgnored && ignoredSourceTeamOptions.length && sourceTeamValues.length > 1 && String(record.positions || "").trim()) {
+              const refs = splitPortableReferences(record.positions, positionCandidates);
+              refs.forEach((referenceValue, referenceIndex) => {
+                let issue = issues.find((item) => item.field === "positions" && Number(item.referenceIndex || 0) === referenceIndex
+                  && normalizePortableMatchValue(item.referenceValue) === normalizePortableMatchValue(referenceValue));
+                if (!issue) {
+                  const sameName = positionCandidates.filter((position) => !position.archivedAt
+                    && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(referenceValue));
+                  issue = {
+                    field: "positions", referenceIndex, referenceValue,
+                    code: "ambiguous_reference",
+                    message: `Choose which team owns position "${referenceValue}". Ignored teams are available so their positions can be omitted safely.`,
+                    candidates: sameName.map((position) => ({ id: position.positionId, name: position.name, teamId: position.teamId,
+                      teamName: targetTeamScopes.find((team) => team.teamId === position.teamId)?.name || "" })),
+                  };
+                  issues.push(issue);
+                } else {
+                  issue.message = `Choose which team owns position "${referenceValue}". Ignored teams are available so their positions can be omitted safely.`;
+                }
+                delete issue.teamId;
+                issue.teamOptions = ownershipTeamOptions;
+                issue.positionOptions = positionCandidates.filter((position) => !position.archivedAt)
+                  .map((position) => ({ id: position.positionId, name: position.name, teamId: position.teamId,
+                    teamName: targetTeamScopes.find((team) => team.teamId === position.teamId)?.name || "" }));
+              });
+            }
+            for (const issue of issues.filter((item) => item.field === "positions" && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(item.code))) {
+              const scopedActionEntries = (issue.teamOptions || []).map((option) => ({
+                teamId: option.teamId,
+                key: positionActionKey(option.teamId, issue.referenceValue),
+                action: positionActionsByKey.get(positionActionKey(option.teamId, issue.referenceValue)),
+              })).filter((entry) => entry.action);
+              const actionTeamId = issue.teamId || (scopedActionEntries.length === 1 ? scopedActionEntries[0].teamId : "");
+              const actionKey = actionTeamId ? positionActionKey(actionTeamId, issue.referenceValue) : "";
+              const positionAction = actionTeamId ? positionActionsByKey.get(actionKey) : null;
+              if (!positionAction) continue;
+              usedPositionActionKeys.add(actionKey);
+              if (positionAction.action === "ignore" && ignoredSourceTeamOptions.some((option) => option.teamId === actionTeamId)) {
+                issues.splice(issues.indexOf(issue), 1);
+                continue;
+              }
+               const team = records.teams.find((item) => item.teamId === actionTeamId && !item.archivedAt)
+                 || [...teamActionsByKey.values()].map((action) => action.action === "create"
+                   ? { teamId: pendingTeamId(action.sourceValue), churchId, name: String(action.name || "").trim(), memberIds: [], _portablePending: true }
+                   : null).find((item) => item?.teamId === actionTeamId);
+              if (!team) throw httpError(409, "The team for this position is no longer active. Review the file again.");
+              if (positionAction.action === "match") {
+                 if (team._portablePending) throw httpError(400, "A position cannot be matched inside a team that has not been created yet.");
+                const selected = records.positions.find((item) => item.positionId === positionAction.positionId
+                  && item.teamId === team.teamId && !item.archivedAt);
+                if (!selected) throw httpError(400, "Choose an active position in the selected team.");
+              } else if (positionAction.action === "create") {
+                const name = String(positionAction.name || "").trim();
+                if (!name) throw httpError(400, "Enter a name for the new position.");
+                const duplicate = records.positions.some((item) => item.teamId === team.teamId
+                  && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
+                if (duplicate) throw httpError(409, `A position named "${name}" already exists in ${team.name}. Choose an existing position instead.`);
+              } else if (positionAction.action !== "ignore") {
+                throw httpError(400, "Choose how to handle each missing position.");
+              }
+              issues.splice(issues.indexOf(issue), 1);
+            }
           } else if (type === "teams") {
             if (!record.name)
               issues.push({
@@ -10046,14 +10219,26 @@ export const createTeamsAuthHandlers = ({
             const targetMembershipTeams = usesDestinationTeam ? (destinationTeam ? [destinationTeam] : []) : matchedTeams;
             targetMembershipTeams.filter((team) => !(team.memberIds || []).includes(match.memberId) && !match.teamMemberships?.[team.teamId])
               .forEach((team) => changes.push({ field: "Team membership", before: "", after: team.name }));
-            if (record.positions !== undefined) {
+            if (record.positions !== undefined && !allSourceTeamsIgnored) {
               const importedPositionNames = splitPortableReferences(record.positions, records.positions);
               const targetTeamIds = usesDestinationTeam
                 ? [destinationTeam.teamId]
                 : matchedTeams.map((team) => team.teamId);
               const existingScoped = records.positions.filter((position) => (match.positionIds || []).includes(position.positionId) && targetTeamIds.includes(position.teamId));
-              const resolved = importedPositionNames.map((name) => records.positions.filter((position) => !position.archivedAt && (!targetTeamIds.length || targetTeamIds.includes(position.teamId)) && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(name))).filter((matches) => matches.length === 1).map((matches) => matches[0]);
-              const afterPositions = previewUpdateMode === "replace"
+              const resolved = importedPositionNames.flatMap((name) => {
+                const scopes = targetTeamIds;
+                return scopes.flatMap((scopedTeamId) => {
+                  const planned = scopedTeamId ? positionActionsByKey.get(positionActionKey(scopedTeamId, name)) : null;
+                  if (planned?.action === "ignore") return [];
+                  if (planned?.action === "match") return records.positions.filter((position) => position.positionId === planned.positionId && !position.archivedAt);
+                  if (planned?.action === "create") return [{ positionId: `pending:${positionActionKey(scopedTeamId, name)}`, teamId: scopedTeamId, name: planned.name }];
+                  return records.positions.filter((position) => !position.archivedAt && position.teamId === scopedTeamId && normalizePortableMatchValue(position.name) === normalizePortableMatchValue(name));
+                });
+              }).filter((position, index, all) => all.findIndex((item) => item.positionId === position.positionId) === index);
+              const hasIgnoredPosition = importedPositionNames.some((name) => {
+                return targetTeamIds.some((teamId) => positionActionsByKey.get(positionActionKey(teamId, name))?.action === "ignore");
+              });
+              const afterPositions = previewUpdateMode === "replace" && !hasIgnoredPosition
                 ? resolved
                 : [...existingScoped, ...resolved.filter((position) => !existingScoped.some((item) => item.positionId === position.positionId))];
               existingScoped.filter((position) => !afterPositions.some((item) => item.positionId === position.positionId)).forEach((position) => changes.push({ field: "Position", before: position.name, after: "" }));
@@ -10096,6 +10281,11 @@ export const createTeamsAuthHandlers = ({
           }
         });
         rows.sort((left, right) => left.row - right.row);
+        if (teamActionsByKey.size !== teamActions.length || usedTeamActionKeys.size !== teamActionsByKey.size)
+          throw httpError(400, "One or more team decisions do not match this CSV. Review the file again.");
+        if (positionActionsByKey.size !== positionActions.length
+          || usedPositionActionKeys.size !== positionActionsByKey.size)
+          throw httpError(400, "One or more position decisions do not match this CSV. Review the file again.");
         const previewToken = type === "members" ? signPortablePreview({
           churchId,
           type,
@@ -10104,7 +10294,9 @@ export const createTeamsAuthHandlers = ({
             destinationTeamId,
             updateMode: previewUpdateMode,
             clearBlankScalars: previewClearBlankScalars,
+            teamActions,
             csvHash: crypto.createHash("sha256").update(String(req.body?.csv || "")).digest("hex"),
+            positionActions,
           },
           rows: rows.map(({ row, action, record, matchedId, candidates, issues, expectedStateHash }) => ({
             row,
@@ -10163,8 +10355,12 @@ export const createTeamsAuthHandlers = ({
             return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stablePortableValue(value[key])]));
           return value;
         };
+        const requestedTeamActions = Array.isArray(req.body?.teamActions) ? req.body.teamActions : [];
+        const requestedPositionActions = Array.isArray(req.body?.positionActions) ? req.body.positionActions : [];
         const createBatchIdentity = crypto.createHash("sha256")
-          .update(JSON.stringify(stablePortableValue([churchId, type, approvedRows])))
+          .update(JSON.stringify(stablePortableValue(type === "members"
+            ? [churchId, type, String(req.body?.previewCsvHash || ""), req.body?.mapping || {}, String(req.body?.destinationTeamId || "").trim(), req.body?.updateMode === "replace" ? "replace" : "merge", req.body?.clearBlankScalars === true, requestedTeamActions, requestedPositionActions]
+            : [churchId, type, approvedRows])))
           .digest("hex");
         const portableCreateKey = (approved) => {
           const record = approved.record && typeof approved.record === "object"
@@ -10197,6 +10393,11 @@ export const createTeamsAuthHandlers = ({
             .digest("hex");
         };
         const data = await readPortableDatasets(churchId);
+        const teamActionKey = (sourceValue) => stablePortableJson([normalizePortableMatchValue(sourceValue)]);
+        const sourceCsvHash = String(req.body?.previewCsvHash || "");
+        const pendingTeamId = (sourceValue) => `portable-pending-team-${crypto.createHash("sha256").update(`${sourceCsvHash}\u0000${normalizePortableMatchValue(sourceValue)}`).digest("hex").slice(0, 32)}`;
+        const pendingIgnoredTeamId = (sourceValue) => `portable-ignored-team-${crypto.createHash("sha256").update(normalizePortableMatchValue(sourceValue)).digest("hex").slice(0, 32)}`;
+        const teamActionMap = new Map(requestedTeamActions.map((item) => [teamActionKey(item.sourceValue), item]));
         const destinationTeamId = String(req.body?.destinationTeamId || "").trim();
         const updateMode = req.body?.updateMode === "replace" ? "replace" : "merge";
         const clearBlankScalars = req.body?.clearBlankScalars === true;
@@ -10207,6 +10408,8 @@ export const createTeamsAuthHandlers = ({
             || preview.settings?.destinationTeamId !== destinationTeamId
             || preview.settings?.updateMode !== updateMode
             || preview.settings?.clearBlankScalars !== clearBlankScalars
+            || stablePortableJson(preview.settings?.teamActions || []) !== stablePortableJson(requestedTeamActions)
+            || stablePortableJson(preview.settings?.positionActions || []) !== stablePortableJson(requestedPositionActions)
             || stablePortableJson(preview.settings?.mapping || {}) !== stablePortableJson(req.body?.mapping || {})
             || preview.settings?.csvHash !== String(req.body?.previewCsvHash || "")) {
             throw httpError(409, "The import settings or preview changed. Review the file again before importing.");
@@ -10251,6 +10454,107 @@ export const createTeamsAuthHandlers = ({
           const index = data[key].findIndex((item) => item[idField] === saved[idField]);
           if (index < 0) data[key].push(saved);
           else data[key][index] = saved;
+        };
+        const positionActionKey = (teamId, sourceValue) => stablePortableJson([
+          String(teamId || "").trim(),
+          normalizePortableMatchValue(sourceValue),
+        ]);
+        const positionActionMap = new Map(requestedPositionActions.map((item) => [
+          positionActionKey(item.teamId, item.sourceValue), item,
+        ]));
+        const teamActionIds = new Map();
+        const teamActionErrors = new Map();
+        let teamsCreated = 0;
+        const referencedTeamKeys = new Set();
+        approvedRows.forEach((approved) => {
+          const record = approved.record || {};
+          const refs = splitPortableReferences(record.teams, data.teams);
+          const ids = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim()).filter(Boolean);
+          (refs.length ? refs : ids).forEach((sourceValue) => referencedTeamKeys.add(teamActionKey(sourceValue)));
+        });
+        const teamCreateKey = (action) => crypto.createHash("sha256")
+          .update(`${createBatchIdentity}\u0000member-import-team\u0000${teamActionKey(action.sourceValue)}\u0000${normalizePortableMatchValue(action.name)}`)
+          .digest("hex");
+        for (const action of requestedTeamActions) {
+          const key = teamActionKey(action.sourceValue);
+          if (!referencedTeamKeys.has(key)) continue;
+          try {
+            if (action.action === "ignore") {
+              teamActionIds.set(key, "");
+              continue;
+            }
+            if (action.action === "match") {
+              const selected = data.teams.find((item) => item.teamId === action.teamId && item.churchId === churchId && !item.archivedAt);
+              if (!selected) throw httpError(409, "The selected team is no longer active in this church. Review the file again.");
+              teamActionIds.set(key, selected.teamId);
+              continue;
+            }
+            if (action.action !== "create") throw httpError(400, "Choose how to handle each source team.");
+            const name = String(action.name || "").trim();
+            if (!name) throw httpError(400, "Enter a name for the new team.");
+            const createKey = teamCreateKey(action);
+            const existingByKey = data.teams.find((item) => item._portableCreateKey === createKey && item.churchId === churchId && !item.archivedAt);
+            if (existingByKey) {
+              teamActionIds.set(key, existingByKey.teamId);
+              continue;
+            }
+            if (data.teams.some((item) => item.churchId === churchId && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name)))
+              throw httpError(409, `A team named "${name}" now exists or is archived. Review the team match before continuing.`);
+            const payload = await validateTeamPayload({ name }, churchId);
+            payload._portableCreateKey = createKey;
+            const saved = await upsertTeamEntity({ kind: "team", churchId, payload, adminUserId: admin.user.uid, portableCreateKey: createKey });
+            replaceDatasetEntity("teams", "teamId", saved);
+            teamActionIds.set(key, saved.teamId);
+            teamsCreated += 1;
+          } catch (error) {
+            teamActionErrors.set(key, error);
+          }
+        }
+        const resolvePositionTeamId = (teamId) => {
+          const teamAction = requestedTeamActions.find((action) => action.action === "create" && pendingTeamId(action.sourceValue) === teamId);
+          return teamAction ? teamActionIds.get(teamActionKey(teamAction.sourceValue)) || "" : teamId;
+        };
+        const getPositionAction = (teamId, sourceValue) => {
+          const direct = positionActionMap.get(positionActionKey(teamId, sourceValue));
+          if (direct) return direct;
+          const createAction = requestedTeamActions.find((action) => action.action === "create"
+            && teamActionIds.get(teamActionKey(action.sourceValue)) === teamId);
+          return createAction ? positionActionMap.get(positionActionKey(pendingTeamId(createAction.sourceValue), sourceValue)) : null;
+        };
+        const positionCreateKey = (teamId, name) => crypto.createHash("sha256")
+          .update(`${churchId}\u0000member-import-position\u0000${teamId}\u0000${normalizePortableMatchValue(name)}`)
+          .digest("hex");
+        const resolveApprovedPosition = async (teamId, sourceValue) => {
+          const action = getPositionAction(teamId, sourceValue);
+          if (!action) return null;
+          if (action.action === "ignore") return "";
+          const actualTeamId = resolvePositionTeamId(teamId);
+          const team = data.teams.find((item) => item.teamId === actualTeamId && item.churchId === churchId && !item.archivedAt);
+          if (!team) throw httpError(409, "The team for this position is no longer active. Review the file again.");
+          if (action.action === "match") {
+            const match = data.positions.find((item) => item.positionId === action.positionId
+              && item.teamId === actualTeamId && item.churchId === churchId && !item.archivedAt);
+            if (!match) throw httpError(409, "The selected position is no longer active in this team. Review the file again.");
+            return match.positionId;
+          }
+          if (action.action !== "create") throw httpError(400, "Choose how to handle each missing position.");
+          const name = String(action.name || "").trim();
+          const createKey = positionCreateKey(actualTeamId, name);
+          const existingByKey = data.positions.find((item) => item._portableCreateKey === createKey);
+          if (existingByKey && existingByKey.churchId === churchId && existingByKey.teamId === actualTeamId && !existingByKey.archivedAt)
+            return existingByKey.positionId;
+          const sameName = data.positions.filter((item) => item.churchId === churchId && item.teamId === actualTeamId
+            && !item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name));
+          if (sameName.length === 1) return sameName[0].positionId;
+          if (sameName.length > 1) throw httpError(409, `More than one position named "${name}" exists in ${team.name}. Choose a specific match.`);
+          if (data.positions.some((item) => item.churchId === churchId && item.teamId === actualTeamId
+            && item.archivedAt && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name)))
+            throw httpError(409, `An archived position named "${name}" exists in ${team.name}. Choose a different name.`);
+          const payload = await validateTeamPositionPayload({ name, teamId: actualTeamId }, churchId);
+          payload._portableCreateKey = createKey;
+          const saved = await upsertTeamEntity({ kind: "position", churchId, payload, adminUserId: admin.user.uid, portableCreateKey: createKey });
+          replaceDatasetEntity("positions", "positionId", saved);
+          return saved.positionId;
         };
         if (type === "services") {
           const groups = new Map();
@@ -11489,74 +11793,111 @@ export const createTeamsAuthHandlers = ({
                   409,
                   "This row no longer matches the preview. Preview it again.",
                 );
-              const hasPortableMembershipIds = record.teamIds !== undefined || record.positionIds !== undefined;
-              const usesDestinationTeam = !String(record.teams || "").trim() && !hasPortableMembershipIds;
-              if (!String(record.teams || "").trim() && !hasPortableMembershipIds && !destinationTeam)
+              const teamIdParts = String(record.teamIds || "").split(LIST_DELIMITER).map((value) => value.trim());
+              const positionIdParts = String(record.positionIds || "").split(LIST_DELIMITER).map((value) => value.trim());
+              const sourceTeamNames = splitPortableReferences(record.teams, data.teams);
+              const sourceTeamValues = sourceTeamNames.length ? sourceTeamNames : teamIdParts.filter(Boolean);
+              const ignoredPositionTeamIds = sourceTeamValues.filter((sourceValue) => teamActionMap.get(teamActionKey(sourceValue))?.action === "ignore")
+                .map(pendingIgnoredTeamId);
+              const hasTeamNameValues = sourceTeamNames.length > 0;
+              const hasLocalPositionId = positionIdParts.some((positionId) => data.positions.some((item) => item.positionId === positionId && item.churchId === churchId && !item.archivedAt));
+              const usesDestinationTeam = !hasTeamNameValues && !teamIdParts.some(Boolean) && (!positionIdParts.some(Boolean) || !hasLocalPositionId);
+              if (usesDestinationTeam && !destinationTeam)
                 throw httpError(400, "Choose a destination team for this member.");
-              const teamNames = splitPortableReferences(record.teams, data.teams);
-              const teamIds = String(record.teamIds || "")
-                .split(LIST_DELIMITER)
-                .map((value) => value.trim());
-              const teams = teamNames.map((name, index) => {
-                const resolvedId =
-                  portableResolutionId(approved, "teams", index) ||
-                  teamIds[index];
-                return resolvedId
-                  ? data.teams.filter(
-                      (item) =>
-                        !item.archivedAt &&
-                        item.teamId === resolvedId &&
-                        normalizePortableMatchValue(item.name) ===
-                          normalizePortableMatchValue(name),
-                    )
-                  : data.teams.filter(
-                      (item) =>
-                        !item.archivedAt &&
-                        normalizePortableMatchValue(item.name) ===
-                          normalizePortableMatchValue(name),
-                    );
-              });
-              if (teams.some((matches) => matches.length !== 1))
-                throw httpError(
-                  400,
-                  "A team is missing or ambiguous. Import teams first and preview this file again.",
+              const importedTeams = [];
+              const ignoredTeamKeys = new Set();
+              if (!usesDestinationTeam) {
+                for (const [index, sourceValue] of sourceTeamValues.entries()) {
+                  const key = teamActionKey(sourceValue);
+                  const planned = teamActionMap.get(key);
+                  if (planned) {
+                    if (teamActionErrors.has(key)) throw teamActionErrors.get(key);
+                    const targetId = teamActionIds.get(key);
+                    if (!targetId) {
+                      ignoredTeamKeys.add(key);
+                      continue;
+                    }
+                    const selected = data.teams.find((item) => item.teamId === targetId && item.churchId === churchId && !item.archivedAt);
+                    if (!selected) throw httpError(409, "The selected team is no longer active in this church. Review the file again.");
+                    importedTeams.push(selected);
+                    continue;
+                  }
+                  const sourceId = teamIdParts[index] || "";
+                  const resolvedId = portableResolutionId(approved, "teams", index) || sourceId;
+                  const byId = resolvedId ? data.teams.filter((item) => item.teamId === resolvedId && item.churchId === churchId && !item.archivedAt
+                    && (!hasTeamNameValues || normalizePortableMatchValue(item.name) === normalizePortableMatchValue(sourceValue))) : [];
+                  const byName = data.teams.filter((item) => item.churchId === churchId && !item.archivedAt
+                    && normalizePortableMatchValue(item.name) === normalizePortableMatchValue(sourceValue));
+                  const matches = byId.length === 1 ? byId : byName;
+                  if (matches.length !== 1) throw httpError(400, "A team is missing or ambiguous. Review the team mappings before importing this member.");
+                  importedTeams.push(matches[0]);
+                }
+              }
+              const teams = importedTeams.filter((team, index, all) => all.findIndex((item) => item.teamId === team.teamId) === index);
+              const allSourceTeamsIgnored = sourceTeamValues.length > 0 && teams.length === 0 && ignoredTeamKeys.size > 0;
+              const targetPositionTeamIds = usesDestinationTeam
+                ? [destinationTeam.teamId]
+                : teams.map((team) => team.teamId);
+              if (!usesDestinationTeam && !sourceTeamValues.length && positionIdParts.some(Boolean)) {
+                positionIdParts.filter(Boolean).forEach((positionId) => {
+                  const position = data.positions.find((item) => item.positionId === positionId && item.churchId === churchId && !item.archivedAt);
+                  if (position && !targetPositionTeamIds.includes(position.teamId)) targetPositionTeamIds.push(position.teamId);
+                });
+              }
+              const positionIds = positionIdParts;
+              const positionCandidates = data.positions.filter((item) => !item.archivedAt && targetPositionTeamIds.includes(item.teamId));
+              const positionNames = allSourceTeamsIgnored ? [] : splitPortableReferences(record.positions, positionCandidates);
+              const resolvedPositionIds = [];
+              for (const [index, name] of positionNames.entries()) {
+                const resolutionId = portableResolutionId(approved, "positions", index);
+                const suppliedId = positionIds[index] || "";
+                const selectedId = resolutionId || suppliedId;
+                const scopedActions = [...targetPositionTeamIds, ...ignoredPositionTeamIds]
+                  .map((teamId) => ({ teamId, action: getPositionAction(teamId, name) }))
+                  .filter((entry) => entry.action);
+                if (scopedActions.length === 1) {
+                  const positionId = await resolveApprovedPosition(scopedActions[0].teamId, name);
+                  if (positionId) resolvedPositionIds.push(positionId);
+                  continue;
+                }
+                if (scopedActions.length > 1)
+                  throw httpError(400, "Choose one owning team for this position before importing the member.");
+                const candidateMatches = positionCandidates.filter((item) =>
+                  normalizePortableMatchValue(item.name) === normalizePortableMatchValue(name)
+                  && (!selectedId || item.positionId === selectedId),
                 );
-              const positionCandidates = usesDestinationTeam
-                ? data.positions.filter((item) => item.teamId === destinationTeam.teamId)
-                : teams.length
-                  ? data.positions.filter((item) => teams.some((group) => group.some((team) => team.teamId === item.teamId)))
-                  : data.positions;
-              const positionNames = splitPortableReferences(record.positions, positionCandidates);
-              const positionIds = String(record.positionIds || "")
-                .split(LIST_DELIMITER)
-                .map((value) => value.trim());
-              const positions = positionNames.map((name, index) => {
-                const resolvedId =
-                  portableResolutionId(approved, "positions", index) ||
-                  positionIds[index];
-                const belongsToSelectedTeams = (item) => positionCandidates.some((candidate) => candidate.positionId === item.positionId);
-                return resolvedId
-                  ? data.positions.filter(
-                      (item) =>
-                        !item.archivedAt &&
-                        item.positionId === resolvedId &&
-                        normalizePortableMatchValue(item.name) ===
-                          normalizePortableMatchValue(name) &&
-                        belongsToSelectedTeams(item),
-                    )
-                  : data.positions.filter(
-                      (item) =>
-                        !item.archivedAt &&
-                        normalizePortableMatchValue(item.name) ===
-                          normalizePortableMatchValue(name) &&
-                        belongsToSelectedTeams(item),
-                    );
-              });
-              if (positions.some((matches) => matches.length !== 1))
-                throw httpError(
-                  400,
-                  "A position is missing or ambiguous. Import positions first and preview this file again.",
-                );
+                if (candidateMatches.length === 1) {
+                  resolvedPositionIds.push(candidateMatches[0].positionId);
+                  continue;
+                }
+                if (!candidateMatches.length && !scopedActions.length && selectedId) {
+                  // IDs are portable only when verified in this church and in the finalized team scope.
+                  throw httpError(400, "This WorshipSync Position ID is foreign or unknown. Review its name-based mapping.");
+                }
+                throw httpError(400, candidateMatches.length > 1 || scopedActions.length > 1
+                  ? "This position exists in multiple imported teams. Choose its owning team in the position review."
+                  : "A position is missing or ambiguous. Review the position mappings before importing this member.");
+              }
+              // Preserve valid local position IDs even when a source omits the
+              // display-name column; foreign IDs are never trusted.
+              if (!allSourceTeamsIgnored && !String(record.positions || "").trim()) {
+                for (const positionId of positionIds.filter(Boolean)) {
+                  const position = data.positions.find((item) => item.positionId === positionId && !item.archivedAt
+                    && item.churchId === churchId && targetPositionTeamIds.includes(item.teamId));
+                  if (position) resolvedPositionIds.push(position.positionId);
+                  else if (positionId) {
+                    const scopedActions = [...targetPositionTeamIds, ...ignoredPositionTeamIds]
+                      .map((teamId) => ({ teamId, action: getPositionAction(teamId, positionId) }))
+                      .filter((entry) => entry.action);
+                    if (scopedActions.length === 1) {
+                      const resolved = await resolveApprovedPosition(scopedActions[0].teamId, positionId);
+                      if (resolved) resolvedPositionIds.push(resolved);
+                    } else if (scopedActions.length > 1) {
+                      throw httpError(400, "This WorshipSync Position ID maps to several teams. Choose one owning team.");
+                    } else throw httpError(400, "This WorshipSync Position ID is foreign or unknown. Match it to a local position or ignore it.");
+                  }
+                }
+              }
               const priorTeamIds = Array.from(new Set([
                 ...data.teams.filter((team) => (team.memberIds || []).includes(existing?.memberId)).map((team) => team.teamId),
                 ...Object.keys(existing?.teamMemberships || {}),
@@ -11564,10 +11905,10 @@ export const createTeamsAuthHandlers = ({
               ]));
               const importedTeamIds = usesDestinationTeam
                 ? [destinationTeam.teamId]
-                : teams.map((matches) => matches[0].teamId);
+                : [...new Set([...teams.map((team) => team.teamId), ...(!sourceTeamValues.length ? targetPositionTeamIds : [])])];
               const teamScope = new Set(importedTeamIds);
               const desiredTeamIds = new Set([...priorTeamIds, ...importedTeamIds]);
-              const resolvedPositionIds = positions.map((matches) => matches[0].positionId);
+              const hasIgnoredPosition = ignoredTeamKeys.size > 0 || targetPositionTeamIds.some((teamId) => positionNames.some((name) => getPositionAction(teamId, name)?.action === "ignore"));
               const currentPositionIds = existing?.positionIds || [];
               const preservedPositionIds = currentPositionIds.filter((positionId) => {
                 const position = data.positions.find((item) => item.positionId === positionId);
@@ -11577,10 +11918,10 @@ export const createTeamsAuthHandlers = ({
               const blankPositionsReplace = positionsWereMapped && !String(record.positions || "").trim() && updateMode === "replace";
               const nextPositionIds = !positionsWereMapped || (!String(record.positions || "").trim() && updateMode === "merge")
                 ? currentPositionIds
-                : updateMode === "replace"
+                : updateMode === "replace" && !hasIgnoredPosition
                   ? [...preservedPositionIds, ...resolvedPositionIds]
                   : [...new Set([...currentPositionIds, ...resolvedPositionIds])];
-              if (blankPositionsReplace && !teamScope.size)
+              if (blankPositionsReplace && !teamScope.size && !ignoredTeamKeys.size)
                 throw httpError(400, "Choose a team scope before replacing blank positions.");
               const importScalar = (field, oldValue) => {
                 const value = record[field];
@@ -11705,6 +12046,10 @@ export const createTeamsAuthHandlers = ({
             updated: results.filter((item) => item.status === "updated").length,
             unchanged: results.filter((item) => item.status === "unchanged").length,
             failed: results.filter((item) => item.status === "failed").length,
+            teamsCreated: requestedTeamActions.filter((action) => action.action === "create"
+              && teamActionIds.get(teamActionKey(action.sourceValue))).length,
+            positionsCreated: requestedPositionActions.filter((action) => action.action === "create"
+              && data.positions.some((position) => position._portableCreateKey === positionCreateKey(resolvePositionTeamId(action.teamId), action.name))).length,
           },
         });
       } catch (error) {

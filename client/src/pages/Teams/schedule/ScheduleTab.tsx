@@ -396,7 +396,7 @@ const ScheduleTab = ({
   // Registers an in-flight schedule save with the page so inbound sync stays
   // gated until it settles (prevents a bootstrap/SSE from reverting pending edits).
   trackTeamsSave: <T>(run: Promise<T>) => Promise<T>;
-  onImported: () => void;
+  onImported: () => void | Promise<void>;
 }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();

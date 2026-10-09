@@ -28,7 +28,7 @@ const TeamsServiceSettingsPage = () => {
       teams={pageData.teams}
       planTemplates={planTemplates}
       canEdit={Boolean(canEditServices ?? canEditTeams)}
-      onImported={() => void refresh()}
+      onImported={() => refresh()}
     />
   );
 };

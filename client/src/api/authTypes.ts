@@ -611,7 +611,7 @@ export type TeamsBootstrap = {
 
 export type PortableDataType = "members" | "teams" | "positions" | "services" | "schedules";
 export type PortableImportAction = "create" | "update" | "review" | "invalid";
-export type PortableImportCandidate = { id: string; name: string; teamName?: string; stateHash?: string };
+export type PortableImportCandidate = { id: string; name: string; teamId?: string; teamName?: string; stateHash?: string };
 export type PortableImportIssue = {
   field: string;
   code: string;
@@ -619,8 +619,26 @@ export type PortableImportIssue = {
   candidates?: PortableImportCandidate[];
   referenceIndex?: number;
   referenceValue?: string;
+  teamId?: string;
+  teamName?: string;
+  positionOptions?: Array<{ id: string; name: string; teamId?: string; teamName?: string }>;
+  teamOptions?: Array<{ teamId: string; name: string; ignored?: boolean }>;
 };
 export type PortableImportResolution = { field: string; referenceIndex: number; selectedId: string };
+export type PortablePositionAction = {
+  teamId: string;
+  teamName?: string;
+  sourceValue: string;
+  action: "match" | "create" | "ignore";
+  positionId?: string;
+  name?: string;
+};
+export type PortableTeamAction = {
+  sourceValue: string;
+  action: "match" | "create" | "ignore";
+  teamId?: string;
+  name?: string;
+};
 export type PortableImportRow = {
   row: number;
   record: Record<string, string>;

@@ -171,7 +171,7 @@ type MemberManagerProps = {
   onTeamSaved: (team: TeamRecord) => void;
   onArchived: () => void;
   onRemoved: (memberId: string) => void;
-  onImported?: () => void;
+  onImported?: () => void | Promise<void>;
   onSmsConsentRecorded?: () => Promise<void> | void;
 };
 
