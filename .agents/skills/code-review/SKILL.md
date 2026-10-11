@@ -165,6 +165,10 @@ Group findings as `Critical`, `High`, `Medium`, and `Low`. For each finding incl
 - why it matters
 - suggested direction
 
+### Product authorization status
+
+For each behavior-affecting change, state `Authorized`, `Missing / unclear`, or `Not applicable`. For an authorized change, name the applicable confirmed Feature Contract, current request, or explicit prior product-owner decision. Use `Not applicable` only when the change does not affect product behavior. Missing authorization for a consequential behavior change must also be a blocking finding and makes final readiness `Not ready`.
+
 ### Open questions / assumptions
 
 State unresolved intent or assumptions used in the review.

@@ -2,7 +2,7 @@
 
 **Contract status:** Confirmed operator workflow from the product-owner request; current implementation conflicts with one confirmed behavior. Empty loaded assignments remain unresolved.
 
-**Approval source:** Product-owner request, October 10, 2026 (the feature-contract task).
+**Approval source:** Product-owner request, October 10, 2026: “Existing matching credits are updated, even when they contain previously generated or manually edited text.” The same request describes credits as editable records of participants, calls for post-service corrections to reflect who actually served, and says regeneration is explicit rather than triggered by source changes.
 
 **Last reviewed:** October 10, 2026
 
@@ -56,9 +56,10 @@ The replacement rule applies when there is a valid generated result for a matchi
 
 - **Question/problem:** Should an explicit Generate Credits action preserve manually edited text or refresh it from available source information?
 - **Approved behavior:** Refresh matching credits, replacing existing generated or manually edited text with the current generated result.
-- **Why:** The operator deliberately chose to regenerate; manual corrections serve the actual-service record until another intentional edit or regeneration.
+- **Approved workflow:** Prepare available participant information before service; explicitly regenerate matching credits; refine names, order, or presentation text; then correct the list after service to record who actually served. Manual corrections remain until another edit or explicit regeneration, and source changes alone do not trigger regeneration.
+- **Why:** Credits are editable records of actual participants, not continuously synchronized copies of planned assignments. An explicit regeneration means the operator chose to refresh the matching contents; preserving manual text would make that action silently skip the requested refresh.
 - **Material alternative rejected:** Silently preserve a manual override during explicit regeneration, which would prevent the action from refreshing all matching credits.
-- **Approval source/date:** Product-owner request, October 10, 2026.
+- **Approval source/date:** Product-owner request, October 10, 2026; see the approved wording and workflow above.
 - **Affected workflow/contract:** Credits preparation and post-service correction; this contract.
 
 ## Known mismatch and open product questions

@@ -17,9 +17,9 @@ Plan proportionally before editing. Keep small changes concise, but do not skip 
 6. For interactive behavior, follow click, open, select, or navigation paths that mount deferred content; do not stop at what renders initially.
 7. Complete the **Product Decision Check** before editing behavior-affecting code (details below).
 8. Classify remaining unknowns:
-   - **A. Repository-answerable:** investigate before asking the user.
+   - **A. Repository-answerable technical facts:** investigate what the code does, its callers, constraints, tests, and relevant patterns. This evidence can explain current behavior and inform options; it cannot authorize or settle consequential product intent.
    - **B. Low-impact implementation detail:** resolve using existing patterns and state the assumption when useful.
-   - **C. Consequential ambiguity:** stop and ask the user when the choice could materially affect behavior/UX, architecture/data ownership, persisted or synced shapes, contracts, compatibility, permissions/security, destructive behavior, or scope.
+   - **C. Consequential ambiguity:** ask when a material product or architecture choice remains unresolved. Repository evidence can resolve technical facts and inform tradeoffs, but for product intent it cannot authorize or decide which behavior is intended. Ask when the choice could materially affect behavior/UX, architecture/data ownership, persisted or synced shapes, contracts, compatibility, permissions/security, destructive behavior, or scope.
 9. Choose the smallest suitable approach in this order: existing pattern; extension of an existing abstraction; small local solution; new abstraction only when justified.
 10. Define required verification that establishes correctness, separately from optional additional-confidence checks. Where test/production composition differences create meaningful risk, require a representative integration-level check using the real entry point or faithful composition; for regressions, preserve the original failure condition in the test when practical. Keep verification proportional to risk.
 
@@ -27,7 +27,7 @@ Plan proportionally before editing. Keep small changes concise, but do not skip 
 
 Before changing observable behavior, data handling, or an operator workflow:
 
-1. Find and read the relevant contract in [`docs/features/`](../../../docs/features/README.md). If none exists, investigate the actual workflow, implementation, tests, and adjacent features; do not create a requirement from implementation evidence alone.
+1. Find and read the relevant contract in [`docs/features/`](../../../docs/features/README.md). If none exists, investigate the workflow and adjacent features to understand what happens today and frame the decision. Code, tests, and other repository evidence are not independent authorization for a consequential product choice.
 2. Record the feature's purpose, affected operator workflow, and behaviors explicitly confirmed by the request or an applicable product-owner decision.
 3. Compare the proposed change with those guarantees. Call out restrictions, automatic behavior, data replacement/preservation/deletion, changed matching/source-of-truth rules, new fallback behavior, and materially different UI or workflow choices.
 4. Name the authorization source for each consequential behavior. Authorization comes from the current request, a confirmed applicable contract, or an explicit previous product-owner decision. Record a consequential previous decision in the affected contract, but a clear prior decision does not lose its authority just because it has not yet been written down. Existing implementation, passing tests, and agent-authored documentation do not establish approval. An intentional change to a confirmed contract needs explicit approval and a contract update.
