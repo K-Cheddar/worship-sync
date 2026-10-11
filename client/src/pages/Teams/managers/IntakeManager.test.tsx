@@ -12,6 +12,8 @@ import type {
   TeamIntakeRecipient,
   TeamIntakeSubmission,
   TeamRosterMember,
+  TeamPosition,
+  TeamSchedule,
   TeamService,
 } from "../../../api/authTypes";
 import {
@@ -87,6 +89,8 @@ const renderManager = ({
   eligibilityStatus = "consent_needed",
   forms = [form],
   services = [],
+  positions = [],
+  schedules = [],
   submissions = [],
   intakeRecipients = [recipient],
   availabilityOnly = false,
@@ -97,6 +101,8 @@ const renderManager = ({
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
   services?: TeamService[];
+  positions?: TeamPosition[];
+  schedules?: TeamSchedule[];
   submissions?: TeamIntakeSubmission[];
   intakeRecipients?: TeamIntakeRecipient[];
   availabilityOnly?: boolean;
@@ -122,8 +128,9 @@ const renderManager = ({
               submissions={submissions}
               intakeRecipients={intakeRecipients}
               services={services}
+              schedules={schedules}
               members={members}
-              positions={[]}
+              positions={positions}
               teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }]}
               canEdit
               onFormSaved={jest.fn()}
@@ -207,9 +214,115 @@ test("availability-only manager hides member intake and consent details", async 
   expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Teams to collect for" })).toBeInTheDocument();
+  expect(screen.getByText("Availability services: None")).toBeInTheDocument();
   expect(screen.queryByText("Form wording")).not.toBeInTheDocument();
   expect(screen.queryByText("Fields to collect")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /public form link/i })).not.toBeInTheDocument();
+});
+
+test("a church-wide editor gets the restricted editor and immutable payload for a Team availability form", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = {
+    occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-18T14:00:00.000Z",
+    serviceDate: "2026-10-18",
+  };
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["firstName", "email", "birthDate", "notes", "availability"],
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: availabilityForm });
+  renderManager({
+    forms: [availabilityForm],
+    intakeRecipients: [],
+    services: [{
+      id: "saved-service",
+      serviceId: "saved-service",
+      churchId: "church-1",
+      name: "Saved service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: savedOccurrence.startsAt,
+    }],
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Welcome message")).not.toBeInTheDocument();
+  expect(screen.queryByText("Birthday (year optional)")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Notes message")).not.toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Service dates" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText(/^Name/i), " updated");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    availabilityForm.formId,
+    expect.objectContaining({
+      purpose: "team_availability",
+      enabledFields: ["availability"],
+      teamIds: ["team-1"],
+      availabilityOccurrences: [savedOccurrence],
+    }),
+  ));
+});
+
+test("editing a saved availability form keeps service selections visible after its requirements change", async () => {
+  const user = userEvent.setup();
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityServices: [{ serviceId: "legacy-service", name: "Legacy service" }],
+    availabilityOccurrences: [],
+  };
+  renderManager({
+    forms: [availabilityForm],
+    intakeRecipients: [],
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+    services: [{
+      id: "legacy-service",
+      serviceId: "legacy-service",
+      churchId: "church-1",
+      name: "Legacy service",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    }],
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  expect(screen.getByRole("checkbox", { name: /Legacy service/ })).toBeChecked();
+});
+
+test("general intake editing still shows its supported fields and wording", async () => {
+  const user = userEvent.setup();
+  const generalForm: TeamIntakeForm = {
+    ...form,
+    purpose: "general_intake",
+    enabledFields: ["firstName", "availability", "notes"],
+  };
+  renderManager({ forms: [generalForm], intakeRecipients: [] });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  expect(screen.getByRole("group", { name: "Fields to include" })).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Welcome message/)).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Notes message/)).toBeInTheDocument();
 });
 
 test("More preserves history, keyboard focus, Open form, and pending action feedback", async () => {

@@ -9,7 +9,14 @@ import {
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { measureSmsMessage } from "./smsMessage.js";
 
-const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, validateReplacementCandidate } = {}) => {
+const createHarness = ({
+  providerSend,
+  firestore = false,
+  requireTeamsEdit,
+  authorizeAvailabilityForm,
+  isAvailabilityRecipientInFormScope,
+  validateReplacementCandidate,
+} = {}) => {
   const collections = new Map();
   const storeFor = (collection) => {
     if (!collections.has(collection)) collections.set(collection, new Map());
@@ -105,6 +112,10 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, vali
     queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
     requireFirestore: () => firestore ? db : null,
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
+    authorizeAvailabilityForm: authorizeAvailabilityForm || (async () => {
+      throw Object.assign(new Error("Availability form access required."), { statusCode: 403 });
+    }),
+    isAvailabilityRecipientInFormScope: isAvailabilityRecipientInFormScope || (async () => true),
     getSmsConsentForChurchPhone: async (id, phone) => id === churchId && phone === phoneNumber
       ? storeFor("smsConsents").get(smsConsentIdForChurchPhone(id, phone)) || null
       : null,
@@ -335,6 +346,109 @@ test("form history is newest-first, bounded, paginated, and redacts links on eve
   assert.equal(all[0].message, undefined);
   assert.equal(all[0].responseUrl, undefined);
   assert.equal(all[0].approvalSnapshot, undefined);
+});
+
+test("church-wide form history keeps former recipients while scoped editors lose current access", async () => {
+  const broad = createHarness({
+    authorizeAvailabilityForm: async () => ({
+      admin: { user: { uid: "teams_editor" } },
+      scoped: false,
+    }),
+  });
+  broad.storeFor("teamIntakeForms").set(broad.form.formId, {
+    ...broad.form,
+    purpose: "team_availability",
+    teamIds: ["worship"],
+  });
+  const formerIntent = {
+    intentId: "former_history",
+    churchId: broad.churchId,
+    intentType: "availability_request",
+    sourceType: "team_intake_recipient",
+    sourceId: "former_recipient",
+    recipientId: "former_recipient",
+    memberId: "former_member",
+    formId: broad.form.formId,
+    status: "sent",
+    createdAt: "2026-09-20T10:00:00.000Z",
+  };
+  broad.storeFor("notificationIntents").set(formerIntent.intentId, formerIntent);
+  broad.storeFor("smsDeliveryAttempts").set("former_attempt", {
+    attemptId: "former_attempt",
+    churchId: broad.churchId,
+    notificationIntentId: formerIntent.intentId,
+    status: "delivered",
+    outcome: "confirmed",
+    createdAt: "2026-09-20T10:01:00.000Z",
+  });
+  broad.storeFor("notificationIntents").set("unrelated_form_history", {
+    ...formerIntent,
+    intentId: "unrelated_form_history",
+    formId: "another_form",
+  });
+
+  const makeResponse = () => ({
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { this.payload = payload; return this; },
+  });
+  const broadHistory = makeResponse();
+  await broad.handler.listIntents({
+    params: { churchId: broad.churchId },
+    query: { formId: broad.form.formId },
+  }, broadHistory);
+  assert.deepEqual(broadHistory.payload.intents.map(({ intentId }) => intentId), ["former_history"]);
+  assert.equal(broadHistory.payload.intents[0].attemptStatus, "delivered");
+
+  const scoped = createHarness({
+    requireTeamsEdit: async () => { throw Object.assign(new Error("Teams Edit access required."), { statusCode: 403 }); },
+    authorizeAvailabilityForm: async () => ({
+      admin: { user: { uid: "worship_manager" } },
+      scoped: true,
+    }),
+    isAvailabilityRecipientInFormScope: async ({ memberId }) => memberId === "current_member",
+  });
+  scoped.storeFor("teamIntakeForms").set(scoped.form.formId, {
+    ...scoped.form,
+    purpose: "team_availability",
+    teamIds: ["worship"],
+  });
+  scoped.storeFor("notificationIntents").set("current_history", {
+    ...formerIntent,
+    intentId: "current_history",
+    sourceId: "current_recipient",
+    recipientId: "current_recipient",
+    memberId: "current_member",
+    status: "preview",
+  });
+  scoped.storeFor("notificationIntents").set(formerIntent.intentId, formerIntent);
+  const scopedHistory = makeResponse();
+  await scoped.handler.listIntents({
+    params: { churchId: scoped.churchId },
+    query: { formId: scoped.form.formId },
+  }, scopedHistory);
+  assert.deepEqual(scopedHistory.payload.intents.map(({ intentId }) => intentId), ["current_history"]);
+
+  const formerPreview = makeResponse();
+  await scoped.handler.getIntentPreview({
+    params: { churchId: scoped.churchId, intentId: formerIntent.intentId },
+    body: {},
+  }, formerPreview);
+  assert.equal(formerPreview.statusCode, 404);
+  const formerSend = makeResponse();
+  await scoped.handler.sendIntent({
+    params: { churchId: scoped.churchId, intentId: formerIntent.intentId },
+    body: { confirmed: true, approvalVersion: "stale" },
+  }, formerSend);
+  assert.equal(formerSend.statusCode, 404);
+  assert.equal(scoped.providerCalls, 0);
+
+  const wrongChurch = makeResponse();
+  await broad.handler.listIntents({
+    params: { churchId: "church_b" },
+    query: { formId: broad.form.formId },
+  }, wrongChurch);
+  assert.equal(wrongChurch.statusCode, 404);
 });
 
 test("a response after reminder preparation blocks dispatch and keeps request history", async () => {

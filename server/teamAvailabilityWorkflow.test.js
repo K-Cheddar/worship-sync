@@ -486,4 +486,79 @@ test("selected-Team availability creation, read, SMS, and response application s
   assert.equal(afterResponse.statusCode, 200);
   const response = afterResponse.payload.availabilityResponses.find((row) => row.formId === formId);
   assert.equal(response.occurrenceAvailability[occurrenceId], "available");
+
+  const formerMemberManager = await createHumanContext("phase3a_former_manager", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teamScopes: { [worship.teamId]: "edit" } },
+  });
+  const allTeamsEditor = await createHumanContext("phase3a_all_teams_editor", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "edit" },
+  });
+  const removedFromTeam = await callHandler(authHandlers.updateTeam, {
+    context: owner,
+    params: { teamId: worship.teamId },
+    body: { name: "Worship", memberIds: [] },
+  });
+  assert.equal(removedFromTeam.statusCode, 200, JSON.stringify(removedFromTeam.payload));
+
+  const restrictedData = await callHandler(authHandlers.getTeamAvailabilityManagementData, {
+    context: formerMemberManager,
+  });
+  assert.equal(restrictedData.statusCode, 200);
+  assert.deepEqual(restrictedData.payload.members, []);
+  assert.deepEqual(restrictedData.payload.intakeRecipients, []);
+  const scopedHistory = await callHandler(authHandlers.listIntents, {
+    context: formerMemberManager,
+    query: { formId },
+  });
+  assert.equal(scopedHistory.statusCode, 200);
+  const historyIntents = await queryDocs(COLLECTIONS.notificationIntents, [
+    { field: "churchId", value: owner.churchId },
+    { field: "formId", value: formId },
+  ]);
+  const sentIntent = historyIntents.find((intent) => intent.status === "sent");
+  assert.ok(sentIntent);
+  assert.equal(scopedHistory.payload.intents.some((intent) => intent.intentId === sentIntent.intentId), false);
+  const formerPreview = await callHandler(authHandlers.getIntentPreview, {
+    context: formerMemberManager,
+    params: { intentId: sentIntent.intentId },
+  });
+  assert.equal(formerPreview.statusCode, 404);
+  const scopedAttempts = await callHandler(authHandlers.getTeamIntakeSmsAttempts, {
+    context: formerMemberManager,
+    params: { formId },
+  });
+  assert.equal(scopedAttempts.statusCode, 200);
+  assert.deepEqual(scopedAttempts.payload.attempts, []);
+
+  const adminHistory = await callHandler(authHandlers.listIntents, {
+    context: owner,
+    query: { formId },
+  });
+  assert.equal(adminHistory.statusCode, 200);
+  const formerHistoryItem = adminHistory.payload.intents.find((intent) => intent.intentId === sentIntent.intentId);
+  assert.equal(formerHistoryItem?.status, "sent");
+  assert.ok(formerHistoryItem?.attemptStatus);
+  const broadEditorHistory = await callHandler(authHandlers.listIntents, {
+    context: allTeamsEditor,
+    query: { formId },
+  });
+  assert.equal(broadEditorHistory.statusCode, 200);
+  assert.ok(broadEditorHistory.payload.intents.some((intent) => intent.intentId === sentIntent.intentId));
+  const adminAttempts = await callHandler(authHandlers.getTeamIntakeSmsAttempts, {
+    context: owner,
+    params: { formId },
+  });
+  assert.equal(adminAttempts.statusCode, 200);
+  assert.ok(adminAttempts.payload.attempts.length > 0);
+
+  const crossChurchHistory = await callHandler(authHandlers.listIntents, {
+    context: owner,
+    params: { churchId: "unrelated_church" },
+    query: { formId },
+  });
+  assert.equal(crossChurchHistory.statusCode, 404);
 });

@@ -140,7 +140,8 @@ const TeamsFormsPage = () => {
         smsEligibilityByMemberId={scopedData.smsEligibilityByMemberId}
         services={pageData.services}
         members={scopedData.members}
-        positions={[]}
+        positions={pageData.positions.filter((position) => managedTeamIds.includes(position.teamId))}
+        schedules={pageData.schedules.filter((schedule) => managedTeamIds.includes(schedule.teamId))}
         teams={scopedData.teams.filter((team) => canEditTeam(team.teamId))}
         canEdit
         onFormSaved={(form: TeamIntakeForm) => setScopedDataState((current) => current?.scopeKey === availabilityScopeKey ? {
@@ -183,6 +184,7 @@ const TeamsFormsPage = () => {
       smsEligibilityByMemberId={pageData.smsEligibilityByMemberId}
       smsDeliveryAttempts={pageData.smsDeliveryAttempts}
       services={pageData.services}
+      schedules={pageData.schedules}
       members={pageData.members}
       positions={pageData.positions}
       teams={pageData.teams}

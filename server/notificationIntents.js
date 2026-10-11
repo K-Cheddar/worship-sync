@@ -177,7 +177,20 @@ export const createNotificationIntentHandlers = ({
     if (intent.sourceType !== "team_intake_recipient" || !intent.formId) {
       throw httpError(404, "Message preview not found.");
     }
-    return authorizeForm(req, churchId, intent.formId);
+    const access = await authorizeForm(req, churchId, intent.formId);
+    if (
+      access.scoped === true &&
+      access.form?.purpose === "team_availability" &&
+      !(await isAvailabilityRecipientInFormScope({
+        churchId,
+        formId: intent.formId,
+        recipientId: intent.recipientId || intent.sourceId,
+        memberId: intent.memberId,
+      }))
+    ) {
+      throw httpError(404, "Message preview not found.");
+    }
+    return access;
   };
 
   const listIntentPage = async ({ churchId, filters, limit, cursor }) => {
@@ -610,7 +623,7 @@ export const createNotificationIntentHandlers = ({
             intent.churchId === churchId,
           )
         : page.intents || [];
-      if (formAccess?.form?.purpose === "team_availability") {
+      if (formAccess?.scoped === true && formAccess.form?.purpose === "team_availability") {
         const inScope = [];
         for (const intent of intents) {
           if (await isAvailabilityRecipientInFormScope({

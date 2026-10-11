@@ -31,31 +31,103 @@ export const buildTeamSchedulePeriod = ({
   services,
   positions,
   teamId,
+  teamIds,
   startDate,
   endDate,
   additionalPositionSlots,
+  schedules = [],
   timeZone,
 }: {
   services: TeamService[];
   positions: TeamPosition[];
-  teamId: string;
+  teamId?: string;
+  teamIds?: string[];
   startDate: string;
   endDate: string;
   additionalPositionSlots?: Record<string, string[]>;
+  schedules?: Array<TeamSchedule | TeamScheduleSummary>;
   timeZone?: string;
 }): TeamSchedulePeriod => {
-  const teamPositionIds = positions
-    .filter((position) => position.teamId === teamId)
-    .map((position) => position.positionId);
-  const teamPositionIdSet = new Set(teamPositionIds);
+  const selectedTeamIds = [...new Set(teamIds?.length ? teamIds : teamId ? [teamId] : [])];
+  const positionIdsByTeam = new Map(selectedTeamIds.map((id) => [
+    id,
+    new Set(positions
+      .filter((position) => position.teamId === id)
+      .map((position) => position.positionId)),
+  ]));
+  const teamPositionIds = new Set([...positionIdsByTeam.values()].flatMap((ids) => [...ids]));
   const activeServices = services.filter((service) => !service.archivedAt);
-  const explicitTeamOccurrenceIds = Object.entries(additionalPositionSlots || {})
-    .filter(([, slotKeys]) => slotKeys.some((slotKey) => {
-      const slot = parseSlotKey(slotKey);
-      return Boolean(slot && teamPositionIdSet.has(slot.positionId));
-    }))
-    .map(([occurrenceId]) => occurrenceId);
-  const explicitlyStaffedServiceIds = new Set<string>();
+  const allServiceById = new Map(activeServices.map((service) => [service.serviceId, service]));
+  const selectedSchedules = schedules
+    .filter((schedule) => !schedule.archivedAt && selectedTeamIds.includes(schedule.teamId))
+    .sort((left, right) => {
+      const leftUpdatedAt = "updatedAt" in left ? String(left.updatedAt || "") : "";
+      const rightUpdatedAt = "updatedAt" in right ? String(right.updatedAt || "") : "";
+      return leftUpdatedAt.localeCompare(rightUpdatedAt);
+    });
+  const scheduleOccurrencesByTeam = new Map<string, TeamScheduleOccurrence[]>();
+  const additionalSlotsByTeam = new Map<string, Map<string, Set<string>>>();
+  const addSlots = (teamIdForSlots: string, slots: Record<string, string[]> = {}) => {
+    const byOccurrence = additionalSlotsByTeam.get(teamIdForSlots) || new Map<string, Set<string>>();
+    Object.entries(slots).forEach(([occurrenceId, keys]) => {
+      const slotKeys = byOccurrence.get(occurrenceId) || new Set<string>();
+      keys.forEach((key) => slotKeys.add(key));
+      byOccurrence.set(occurrenceId, slotKeys);
+    });
+    additionalSlotsByTeam.set(teamIdForSlots, byOccurrence);
+  };
+  selectedSchedules.forEach((schedule) => {
+    const scheduleTeamId = schedule.teamId;
+    const occurrences = (schedule.occurrences || []).filter(Boolean);
+    scheduleOccurrencesByTeam.set(scheduleTeamId, [
+      ...(scheduleOccurrencesByTeam.get(scheduleTeamId) || []),
+      ...occurrences,
+    ]);
+    if ("additionalPositionSlots" in schedule) {
+      addSlots(scheduleTeamId, schedule.additionalPositionSlots || {});
+    }
+  });
+  if (additionalPositionSlots && selectedTeamIds.length) {
+    addSlots(teamId && selectedTeamIds.includes(teamId) ? teamId : selectedTeamIds[0], additionalPositionSlots);
+  }
+
+  const hasTeamSlot = (teamIdForSlots: string, occurrenceIds: string[]) => {
+    const positionIds = positionIdsByTeam.get(teamIdForSlots) || new Set<string>();
+    const slotsByOccurrence = additionalSlotsByTeam.get(teamIdForSlots);
+    return occurrenceIds.some((occurrenceId) =>
+      [...(slotsByOccurrence?.get(occurrenceId) || [])].some((slotKey) => {
+        const slot = parseSlotKey(slotKey);
+        return Boolean(slot && positionIds.has(slot.positionId));
+      }),
+    );
+  };
+
+  const relevantServiceIds = new Set<string>();
+  activeServices.forEach((service) => {
+    if (sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
+      teamPositionIds.has(requirement.positionId),
+    )) relevantServiceIds.add(service.serviceId);
+  });
+  for (const [scheduleTeamId, occurrences] of scheduleOccurrencesByTeam) {
+    const teamPositionIdsForSchedule = [...(positionIdsByTeam.get(scheduleTeamId) || [])];
+    for (const occurrence of occurrences) {
+      const occurrenceServiceIds = occurrence.serviceIds?.length
+        ? occurrence.serviceIds
+        : [occurrence.serviceId];
+      const hasRelevantRequirement = occurrenceServiceIds.some((serviceId) =>
+        resolveOccurrenceRequirements({
+          occurrence,
+          service: allServiceById.get(serviceId),
+          teamPositionIds: teamPositionIdsForSchedule,
+          fallbackToAllTeamPositions: false,
+        }).length > 0,
+      );
+      const hasRelevantSlot = hasTeamSlot(scheduleTeamId, [occurrence.occurrenceId]);
+      if (hasRelevantRequirement || hasRelevantSlot) {
+        occurrenceServiceIds.forEach((serviceId) => relevantServiceIds.add(serviceId));
+      }
+    }
+  }
   for (const service of activeServices) {
     const ownOccurrences = generateScheduleOccurrences({
       services: [service],
@@ -64,18 +136,16 @@ export const buildTeamSchedulePeriod = ({
       endDate,
       timeZone,
     });
-    if (ownOccurrences.some((occurrence) =>
-      explicitTeamOccurrenceIds.includes(occurrence.occurrenceId) ||
-      Boolean(service.serviceGroupId && explicitTeamOccurrenceIds.includes(
-        `group:${service.serviceGroupId}@${getOccurrenceDate(occurrence, timeZone)}`,
-      )),
-    )) explicitlyStaffedServiceIds.add(service.serviceId);
+    if (ownOccurrences.some((occurrence) => selectedTeamIds.some((selectedTeamId) =>
+      hasTeamSlot(selectedTeamId, [
+        occurrence.occurrenceId,
+        ...(service.serviceGroupId
+          ? [`group:${service.serviceGroupId}@${getOccurrenceDate(occurrence, timeZone)}`]
+          : []),
+      ]),
+    ))) relevantServiceIds.add(service.serviceId);
   }
-  const teamRelevantServices = activeServices.filter((service) =>
-    sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
-      teamPositionIdSet.has(requirement.positionId),
-    ) || explicitlyStaffedServiceIds.has(service.serviceId),
-  );
+  const teamRelevantServices = activeServices.filter((service) => relevantServiceIds.has(service.serviceId));
   const serviceById = new Map(teamRelevantServices.map((service) => [service.serviceId, service]));
   const generated = generateScheduleOccurrences({
     services: teamRelevantServices,
@@ -89,20 +159,50 @@ export const buildTeamSchedulePeriod = ({
   const serviceIds = new Set<string>();
 
   generated.forEach((occurrence) => {
-    const service = serviceById.get(occurrence.serviceId);
-    const requirements = resolveOccurrenceRequirements({
-      occurrence,
-      service,
-      teamPositionIds,
-      fallbackToAllTeamPositions: false,
-    });
-    const hasExplicitTeamSlot = (additionalPositionSlots?.[occurrence.occurrenceId] || [])
-      .some((slotKey) => {
-        const slot = parseSlotKey(slotKey);
-        return Boolean(slot && teamPositionIdSet.has(slot.positionId));
+    const occurrenceServiceIds = occurrence.serviceIds?.length
+      ? occurrence.serviceIds
+      : [occurrence.serviceId];
+    const occurrenceDate = getOccurrenceDate(occurrence, timeZone);
+    const requirementsByPosition = new Map<string, PositionRequirement>();
+    let relevant = false;
+    selectedTeamIds.forEach((selectedTeamId) => {
+      const teamPositionIdsForSchedule = [...(positionIdsByTeam.get(selectedTeamId) || [])];
+      const savedOccurrences = (scheduleOccurrencesByTeam.get(selectedTeamId) || []).filter((saved) =>
+        getOccurrenceDate(saved, timeZone) === occurrenceDate &&
+        (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId])
+          .some((serviceId) => occurrenceServiceIds.includes(serviceId)),
+      );
+      const teamRequirements = new Map<string, PositionRequirement>();
+      occurrenceServiceIds.forEach((serviceId) => {
+        const service = serviceById.get(serviceId);
+        const serviceOccurrences = savedOccurrences.filter((saved) =>
+          (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId]).includes(serviceId),
+        );
+        const requirementSources = serviceOccurrences.length ? serviceOccurrences : [null];
+        requirementSources.forEach((saved) => {
+          resolveOccurrenceRequirements({
+            occurrence: saved,
+            service,
+            teamPositionIds: teamPositionIdsForSchedule,
+            fallbackToAllTeamPositions: false,
+          }).forEach((requirement) => {
+            const current = teamRequirements.get(requirement.positionId);
+            if (!current || current.count < requirement.count) teamRequirements.set(requirement.positionId, requirement);
+          });
+        });
       });
-    if (requirements.length === 0 && !hasExplicitTeamSlot) return;
+      const savedOccurrenceIds = savedOccurrences.map(({ occurrenceId }) => occurrenceId);
+      const hasExplicitTeamSlot = hasTeamSlot(selectedTeamId, [occurrence.occurrenceId, ...savedOccurrenceIds]);
+      if (!teamRequirements.size && !hasExplicitTeamSlot) return;
+      relevant = true;
+      teamRequirements.forEach((requirement, positionId) => {
+        const current = requirementsByPosition.get(positionId);
+        if (!current || current.count < requirement.count) requirementsByPosition.set(positionId, requirement);
+      });
+    });
+    if (!relevant) return;
 
+    const requirements = [...requirementsByPosition.values()];
     occurrences.push(occurrence);
     requirementsByOccurrence.set(occurrence.occurrenceId, requirements);
     (occurrence.serviceIds || [occurrence.serviceId]).forEach((serviceId) => serviceIds.add(serviceId));

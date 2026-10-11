@@ -22,13 +22,17 @@ jest.mock("../managers/IntakeManager", () => ({
     managedTeamIds,
     forms,
     submissions,
+    positions,
+    schedules,
   }: {
     listHeader: ReactNode;
     availabilityOnly?: boolean;
     managedTeamIds?: string[];
     forms: { formId: string }[];
     submissions: unknown[];
-  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output>{listHeader}</>,
+    positions?: { positionId: string; teamId: string }[];
+    schedules?: { scheduleId: string; teamId: string }[];
+  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output><output data-testid="authorized-scope-metadata">{`${positions?.map(({ positionId }) => positionId).join(",") || ""}|${schedules?.map(({ scheduleId }) => scheduleId).join(",") || ""}`}</output>{listHeader}</>,
 }));
 
 const mockUseTeamsPage = jest.mocked(useTeamsPage);
@@ -62,7 +66,14 @@ describe("TeamsFormsPage period selection", () => {
         smsEligibilityByMemberId: {},
         smsDeliveryAttempts: [],
         members: [],
-        positions: [],
+        positions: [
+          { positionId: "worship-vocal", churchId: "church-1", teamId: "worship", name: "Vocal" },
+          { positionId: "av-camera", churchId: "church-1", teamId: "av", name: "Camera" },
+        ],
+        schedules: [
+          { scheduleId: "worship-schedule", churchId: "church-1", teamId: "worship", name: "Worship" },
+          { scheduleId: "av-schedule", churchId: "church-1", teamId: "av", name: "AV" },
+        ],
         teams: [],
       },
       canEditTeams: false,
@@ -85,7 +96,14 @@ describe("TeamsFormsPage period selection", () => {
         smsEligibilityByMemberId: {},
         smsDeliveryAttempts: [],
         members: [],
-        positions: [],
+        positions: [
+          { positionId: "worship-vocal", churchId: "church-1", teamId: "worship", name: "Vocal" },
+          { positionId: "av-camera", churchId: "church-1", teamId: "av", name: "Camera" },
+        ],
+        schedules: [
+          { scheduleId: "worship-schedule", churchId: "church-1", teamId: "worship", name: "Worship" },
+          { scheduleId: "av-schedule", churchId: "church-1", teamId: "av", name: "AV" },
+        ],
         teams: [{ teamId: "worship", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
       },
       canEditTeams: false,
@@ -108,6 +126,7 @@ describe("TeamsFormsPage period selection", () => {
     expect(await screen.findByTestId("intake-manager-mode")).toHaveTextContent(
       "availability:worship:forms=1:submissions=0",
     );
+    expect(screen.getByTestId("authorized-scope-metadata")).toHaveTextContent("worship-vocal|worship-schedule");
     expect(mockGetTeamAvailabilityManagementData).toHaveBeenCalledWith("church-1");
   });
 });

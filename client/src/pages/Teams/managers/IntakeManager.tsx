@@ -42,6 +42,8 @@ import type {
   NotificationIntent,
   NotificationBatch,
   TeamAvailabilityResponse,
+  TeamSchedule,
+  TeamScheduleSummary,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -76,6 +78,7 @@ import {
   memberName,
 } from "../teamsUtils";
 import { getUpcomingAvailabilitySuggestion } from "../intakeAvailabilitySuggestion";
+import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
@@ -110,6 +113,7 @@ type IntakeManagerProps = {
   >;
   smsDeliveryAttempts?: SmsDeliveryAttempt[];
   services: TeamService[];
+  schedules?: Array<TeamSchedule | TeamScheduleSummary>;
   members: TeamRosterMember[];
   positions: TeamPosition[];
   teams: TeamRecord[];
@@ -221,6 +225,7 @@ const IntakeManager = ({
   smsEligibilityByMemberId,
   smsDeliveryAttempts: initialSmsDeliveryAttempts = [],
   services,
+  schedules = [],
   members,
   positions,
   teams,
@@ -294,6 +299,12 @@ const IntakeManager = ({
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
+  const isAvailabilityFormEditor = availabilityOnly || Boolean(
+    showingEditForm && (
+      editing?.purpose === "team_availability" ||
+      (!editing && draft.purpose === "team_availability")
+    ),
+  );
   const resetRecipientSelection = () => {
     setRecipientMemberIds(new Set());
     setRecipientSearch("");
@@ -427,20 +438,60 @@ const IntakeManager = ({
       ? "All teams"
       : ids.map((id) => teamNameById.get(id) || "Unknown team").join(", ");
 
-  const applicableServices = useMemo(
-    () =>
-      draft.startDate && draft.endDate
-        ? filterServicesWithOccurrencesInRange({
-            // A service remains discoverable after its recurrence ends. Its own
-            // date bounds decide whether it can produce an occurrence in this form.
-            services: services.filter(isActive),
-            startDate: draft.startDate,
-            endDate: draft.endDate,
-            timeZone: serviceTimeZone,
-          })
-        : [],
-    [draft.endDate, draft.startDate, serviceTimeZone, services],
+  const relevantAvailabilityPeriod = useMemo(
+    () => isAvailabilityFormEditor && draft.startDate && draft.endDate
+      ? buildTeamSchedulePeriod({
+          services,
+          positions,
+          teamIds: draft.teamIds,
+          schedules,
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+          timeZone: serviceTimeZone,
+        })
+      : null,
+    [
+      draft.endDate,
+      draft.startDate,
+      draft.teamIds,
+      isAvailabilityFormEditor,
+      positions,
+      schedules,
+      serviceTimeZone,
+      services,
+    ],
   );
+
+  const applicableServices = useMemo(() => {
+    if (!draft.startDate || !draft.endDate) return [];
+    const inRange = filterServicesWithOccurrencesInRange({
+      // A service remains discoverable after its recurrence ends. Its own date
+      // bounds decide whether it can produce an occurrence in this form.
+      services: services.filter(isActive),
+      startDate: draft.startDate,
+      endDate: draft.endDate,
+      timeZone: serviceTimeZone,
+    });
+    if (!isAvailabilityFormEditor) return inRange;
+
+    const relevantServiceIds = new Set(
+      (relevantAvailabilityPeriod?.occurrences || []).flatMap((occurrence) =>
+        occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+      ),
+    );
+    const savedServiceIds = new Set(draft.availabilityServices.map(({ serviceId }) => serviceId));
+    return inRange.filter((service) =>
+      relevantServiceIds.has(service.serviceId) || savedServiceIds.has(service.serviceId),
+    );
+  }, [
+    draft.availabilityServices,
+    draft.endDate,
+    draft.startDate,
+    isAvailabilityFormEditor,
+    relevantAvailabilityPeriod,
+    serviceTimeZone,
+    services,
+  ]);
 
   const availabilityServiceOptions = useMemo(
     () => buildIntakeAvailabilityServiceOptions(applicableServices, serviceTimeZone),
@@ -504,32 +555,47 @@ const IntakeManager = ({
       editing.availabilityOccurrences?.length
     );
     const preserveOccurrences = editingFormHasIssuedRequests || unchangedExistingCoverage || preserveSuggestedOccurrences;
-    const availabilityOccurrences = preserveSuggestedOccurrences
-      ? draft.availabilityOccurrences
-      : preserveOccurrences
-      ? editing?.availabilityOccurrences?.length ? editing.availabilityOccurrences : draft.availabilityOccurrences
-      : draft.startDate && draft.endDate
-        ? generateScheduleOccurrences({
+    const availabilityForm = editing?.purpose === "team_availability" || isAvailabilityFormEditor;
+    let availabilityOccurrences = draft.availabilityOccurrences;
+    if (preserveSuggestedOccurrences) {
+      availabilityOccurrences = draft.availabilityOccurrences;
+    } else if (preserveOccurrences) {
+      availabilityOccurrences = editing?.availabilityOccurrences?.length
+        ? editing.availabilityOccurrences
+        : draft.availabilityOccurrences;
+    } else if (draft.startDate && draft.endDate) {
+      const occurrences = availabilityForm
+        ? (relevantAvailabilityPeriod?.occurrences || []).filter((occurrence) => {
+            const occurrenceServiceIds = occurrence.serviceIds?.length
+              ? occurrence.serviceIds
+              : [occurrence.serviceId];
+            return occurrenceServiceIds.some((serviceId) => serviceIds.includes(serviceId));
+          })
+        : generateScheduleOccurrences({
             services,
             serviceIds,
             startDate: draft.startDate,
             endDate: draft.endDate,
             timeZone: serviceTimeZone,
-          }).map((occurrence) => ({
-            occurrenceId: occurrence.occurrenceId,
-            serviceId: occurrence.serviceId,
-            name: occurrence.name,
-            startsAt: occurrence.startsAt,
-            serviceDate: occurrence.serviceDate,
-          }))
-        : [];
+          });
+      availabilityOccurrences = occurrences.map((occurrence) => ({
+        occurrenceId: occurrence.occurrenceId,
+        serviceId: occurrence.serviceId,
+        name: occurrence.name,
+        startsAt: occurrence.startsAt,
+        serviceDate: occurrence.serviceDate,
+      }));
+    } else {
+      availabilityOccurrences = [];
+    }
+    let purpose = draft.purpose || "general_intake";
+    if (availabilityForm) purpose = "team_availability";
+    if (editing) purpose = editing.purpose || "general_intake";
     return {
       ...draft,
-      purpose: availabilityOnly
-        ? "team_availability"
-        : draft.purpose || "general_intake",
-      enabledFields: availabilityOnly ? ["availability"] : draft.enabledFields,
-      requireEmail: availabilityOnly ? false : draft.requireEmail,
+      purpose,
+      enabledFields: availabilityForm ? ["availability"] : draft.enabledFields,
+      requireEmail: availabilityForm ? false : draft.requireEmail,
       responseDeadline: draft.responseDeadline || draft.endDate,
       availabilityOccurrences,
     };
@@ -541,12 +607,12 @@ const IntakeManager = ({
       showToast("Name and date range are required.", "neutral");
       return;
     }
-    if (availabilityOnly && !draft.teamIds.length) {
+    if (isAvailabilityFormEditor && !draft.teamIds.length) {
       showToast("Choose at least one Team for this availability form.", "neutral");
       return;
     }
     const payload = buildPayload();
-    if (availabilityOnly && !payload.availabilityOccurrences.length) {
+    if (isAvailabilityFormEditor && !payload.availabilityOccurrences.length) {
       showToast("Choose at least one service date for this availability form.", "neutral");
       return;
     }
@@ -609,8 +675,15 @@ const IntakeManager = ({
   activeSelectedFormIdRef.current = activeSelectedFormId;
   churchIdRef.current = churchId;
   const upcomingAvailabilitySuggestion = useMemo(
-    () => getUpcomingAvailabilitySuggestion({ services, forms, timeZone: serviceTimeZone }),
-    [forms, serviceTimeZone, services],
+    () => getUpcomingAvailabilitySuggestion({
+      services,
+      forms,
+      positions,
+      schedules,
+      ...(availabilityOnly ? { teamIds: managedTeamIds } : {}),
+      timeZone: serviceTimeZone,
+    }),
+    [availabilityOnly, forms, managedTeamIds, positions, schedules, serviceTimeZone, services],
   );
 
   const openUpcomingAvailabilityDraft = () => {
@@ -623,7 +696,9 @@ const IntakeManager = ({
       setDraft(availabilityOnly ? {
         ...upcomingAvailabilitySuggestion.draft,
         purpose: "team_availability",
-        teamIds: managedTeamIds.length === 1 ? [managedTeamIds[0]] : [],
+        teamIds: upcomingAvailabilitySuggestion.draft.teamIds.length
+          ? upcomingAvailabilitySuggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
+          : [...managedTeamIds],
         enabledFields: ["availability"],
       } : upcomingAvailabilitySuggestion.draft);
       return;
@@ -638,7 +713,9 @@ const IntakeManager = ({
     setDraft(availabilityOnly ? {
       ...upcomingAvailabilitySuggestion.draft,
       purpose: "team_availability",
-      teamIds: managedTeamIds.length === 1 ? [managedTeamIds[0]] : [],
+      teamIds: upcomingAvailabilitySuggestion.draft.teamIds.length
+        ? upcomingAvailabilitySuggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
+        : [...managedTeamIds],
       enabledFields: ["availability"],
     } : upcomingAvailabilitySuggestion.draft);
   };
@@ -1432,7 +1509,7 @@ const IntakeManager = ({
       />
       {editing ? (
         <p className="px-1 text-sm text-gray-300">
-          <span className="font-bold">{availabilityOnly ? "Responses: " : "Submissions: "}</span>
+          <span className="font-bold">{isAvailabilityFormEditor ? "Responses: " : "Submissions: "}</span>
           {editing.submissionCount || 0}
         </p>
       ) : null}
@@ -1461,7 +1538,7 @@ const IntakeManager = ({
         onCheckedChange={(active) => setDraft((d) => ({ ...d, active }))}
         labelClassName="text-sm"
       />
-      {!availabilityOnly ? (
+      {!isAvailabilityFormEditor ? (
         <EntityMultiSelect
           label="Fields to include"
           description="Choose exactly what people will see on this public form."
@@ -1483,8 +1560,8 @@ const IntakeManager = ({
       ) : null}
       <EntityMultiSelect
         label="Teams to collect for"
-        description={availabilityOnly
-          ? "Choose one or more Teams you manage. Availability forms always have an explicit Team scope."
+        description={isAvailabilityFormEditor
+          ? "Choose one or more Teams. Availability forms always need an explicit Team scope."
           : "Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."}
         options={teams.filter((team) => !availabilityOnly || managedTeamIds.includes(team.teamId)).map((team) => ({
           id: team.teamId,
@@ -1499,8 +1576,8 @@ const IntakeManager = ({
         <p className="text-sm text-gray-300">Availability services: {draft.availabilityServices.map(({ name }) => name).join(", ") || "None"}</p>
       ) : (
         <EntityMultiSelect
-          label={availabilityOnly ? "Service dates" : "Show services for availability"}
-          description={availabilityOnly
+          label={isAvailabilityFormEditor ? "Service dates" : "Show services for availability"}
+          description={isAvailabilityFormEditor
             ? "Choose upcoming service dates. People will mark whether they are available for each date."
             : "Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."}
           options={availabilityServiceOptions.map((option) => ({
@@ -1534,7 +1611,7 @@ const IntakeManager = ({
           }
         />
       )}
-      {!availabilityOnly ? <fieldset className="space-y-3">
+      {!isAvailabilityFormEditor ? <fieldset className="space-y-3">
         <legend className="p-1 text-sm font-semibold">Form wording</legend>
         <p className="px-1 text-xs text-gray-400">
           Customize what people read on the public form. Leave a field blank to
@@ -1581,7 +1658,7 @@ const IntakeManager = ({
         />
       </fieldset>
         : null}
-      {editing && canEdit && !availabilityOnly ? (
+      {editing && canEdit && !isAvailabilityFormEditor ? (
         <Button
           variant="secondary"
           svg={Clipboard}

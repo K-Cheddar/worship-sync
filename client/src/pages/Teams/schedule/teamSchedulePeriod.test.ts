@@ -157,6 +157,107 @@ describe("buildTeamSchedulePeriod", () => {
     expect(generated.requirementsByOccurrence.get(generated.occurrences[0].occurrenceId)).toEqual([]);
   });
 
+  it("builds a multi-team union and preserves combined service grouping", () => {
+    const generated = buildTeamSchedulePeriod({
+      services: [
+        service({
+          serviceId: "worship-part",
+          serviceGroupId: "combined",
+          positionRequirements: [{ positionId: "vocal", count: 1 }],
+        }),
+        service({
+          serviceId: "media-part",
+          serviceGroupId: "combined",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({ serviceId: "media-only", positionRequirements: [{ positionId: "camera", count: 1 }] }),
+      ],
+      positions,
+      teamIds: ["worship", "media"],
+      startDate: "2026-10-03",
+      endDate: "2026-10-03",
+      timeZone: "America/New_York",
+    });
+
+    expect(generated.serviceIds).toEqual(expect.arrayContaining(["worship-part", "media-part", "media-only"]));
+    expect(generated.occurrences).toHaveLength(2);
+    expect(generated.occurrences.find((occurrence) => occurrence.groupId === "combined")).toMatchObject({
+      occurrenceId: "group:combined@2026-10-03",
+      serviceIds: ["worship-part", "media-part"],
+      serviceDate: "2026-10-03",
+    });
+  });
+
+  it("uses saved occurrence requirements when they override the service defaults", () => {
+    const savedOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: "override@2026-10-18T10:00:00.000Z",
+      serviceId: "override",
+      name: "Override service",
+      startsAt: "2026-10-18T10:00:00.000Z",
+      serviceDate: "2026-10-18",
+      positionRequirements: [{ positionId: "vocal", count: 1 }],
+    };
+    const generated = buildTeamSchedulePeriod({
+      services: [service({
+        serviceId: "override",
+        dateTimeISO: "2026-10-18T10:00:00.000Z",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      positions,
+      teamId: "worship",
+      schedules: [{
+        scheduleId: "worship-schedule",
+        churchId: "church-1",
+        teamId: "worship",
+        name: "Worship schedule",
+        startDate: "2026-10-18",
+        endDate: "2026-10-18",
+        serviceIds: ["override"],
+        occurrences: [savedOccurrence],
+        assignments: {},
+      }],
+      startDate: "2026-10-18",
+      endDate: "2026-10-18",
+    });
+
+    expect(generated.occurrences).toEqual([expect.objectContaining({ occurrenceId: savedOccurrence.occurrenceId })]);
+    expect(generated.requirementsByOccurrence.get(savedOccurrence.occurrenceId)).toEqual([
+      { positionId: "vocal", count: 1 },
+    ]);
+  });
+
+  it("keeps a scheduled explicit team slot when no position requirement exists", () => {
+    const savedOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: "exception@2026-10-18T10:00:00.000Z",
+      serviceId: "exception",
+      name: "Exception service",
+      startsAt: "2026-10-18T10:00:00.000Z",
+      serviceDate: "2026-10-18",
+    };
+    const generated = buildTeamSchedulePeriod({
+      services: [service({ serviceId: "exception", dateTimeISO: "2026-10-18T10:00:00.000Z" })],
+      positions,
+      teamId: "worship",
+      schedules: [{
+        scheduleId: "worship-schedule",
+        churchId: "church-1",
+        teamId: "worship",
+        name: "Worship schedule",
+        startDate: "2026-10-18",
+        endDate: "2026-10-18",
+        serviceIds: ["exception"],
+        occurrences: [savedOccurrence],
+        assignments: {},
+        additionalPositionSlots: { [savedOccurrence.occurrenceId]: ["vocal::0"] },
+      }],
+      startDate: "2026-10-18",
+      endDate: "2026-10-18",
+    });
+
+    expect(generated.occurrences).toEqual([expect.objectContaining({ occurrenceId: savedOccurrence.occurrenceId })]);
+    expect(generated.requirementsByOccurrence.get(savedOccurrence.occurrenceId)).toEqual([]);
+  });
+
   it("does not treat an occurrence override for another team as this team's need", () => {
     const generated = buildTeamSchedulePeriod({
       services: [service({
