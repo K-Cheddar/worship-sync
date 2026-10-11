@@ -519,6 +519,9 @@ const ServicePlanEditor = ({
   const { showToast } = useToast();
   const dispatch = useDispatch();
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
+  const scrollbarWidth = useSelector(
+    (state) => state.undoable.present.preferences.scrollbarWidth,
+  );
   const isAllItemsInitialized = useSelector(
     (state) => state.allItems?.isInitialized ?? false,
   );
@@ -2660,6 +2663,7 @@ const ServicePlanEditor = ({
                 onValueChange={setRoleNotesFilter}
                 onSelectionComplete={() => setPlanActionsOpen(false)}
                 options={roleNoteFilterOptions}
+                scrollbarWidth={scrollbarWidth}
                 teamFilterStorageKey="worshipsyncServicePlanRoleTeamFilter"
                 lockedTeamName={teamNotesFilter || undefined}
               />

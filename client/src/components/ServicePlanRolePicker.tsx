@@ -11,11 +11,13 @@ import {
   PopoverTrigger,
 } from "./ui/Popover";
 import { cn } from "../utils/cnHelper";
+import type { ScrollbarWidth } from "../types";
 
 export type ServicePlanRoleOption = ServicePlanRolePickerOption;
 
 type ServicePlanRolePickerBaseProps = {
   options: ServicePlanRoleOption[];
+  scrollbarWidth?: ScrollbarWidth;
   teamFilterStorageKey: string;
   /** A parent team-notes filter already scopes the supplied options. */
   lockedTeamName?: string;
@@ -44,6 +46,7 @@ export type ServicePlanRolePickerProps = ServicePlanRolePickerBaseProps & (
 const ServicePlanRolePicker = (props: ServicePlanRolePickerProps) => {
   const {
     options,
+    scrollbarWidth = "thin",
     teamFilterStorageKey,
     lockedTeamName,
     ariaLabel,
@@ -98,6 +101,7 @@ const ServicePlanRolePicker = (props: ServicePlanRolePickerProps) => {
             onValueChange={props.onValueChange}
             onSelectionComplete={() => setOpen(false)}
             options={options}
+            scrollbarWidth={scrollbarWidth}
             teamFilterStorageKey={teamFilterStorageKey}
             lockedTeamName={lockedTeamName}
             allowEmpty={allowEmpty}
@@ -108,6 +112,7 @@ const ServicePlanRolePicker = (props: ServicePlanRolePickerProps) => {
             onValueChange={props.onValueChange}
             onSelectionComplete={() => setOpen(false)}
             options={options}
+            scrollbarWidth={scrollbarWidth}
             teamFilterStorageKey={teamFilterStorageKey}
             lockedTeamName={lockedTeamName}
             allowEmpty={allowEmpty}

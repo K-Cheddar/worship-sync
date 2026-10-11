@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import { Check } from "lucide-react";
-import { useSelector } from "../hooks";
-import type { RootState } from "../store/store";
+import type { ScrollbarWidth } from "../types";
 import Button from "./Button/Button";
 import Input from "./Input/Input";
 
@@ -65,6 +64,7 @@ const groupServicePlanRoleOptionsByTeam = (options: ServicePlanRolePickerOption[
 type ServicePlanRolePickerContentBaseProps = {
   onSelectionComplete?: () => void;
   options: ServicePlanRolePickerOption[];
+  scrollbarWidth?: ScrollbarWidth;
   teamFilterStorageKey: string;
   /** A parent team-notes filter already scopes the supplied options. */
   lockedTeamName?: string;
@@ -108,14 +108,12 @@ const ServicePlanRolePickerContent = (props: ServicePlanRolePickerContentProps) 
   const {
     onSelectionComplete,
     options,
+    scrollbarWidth = "thin",
     teamFilterStorageKey,
     lockedTeamName,
     allowEmpty = true,
   } = props;
   const multi = props.multi === true;
-  const scrollbarWidth = useSelector(
-    (state: RootState) => state.undoable.present.preferences.scrollbarWidth,
-  );
   const scrollbarStyle = { "--scrollbar-width": scrollbarWidth } as CSSProperties;
   const [query, setQuery] = useState("");
   const [teamId, setTeamId] = useState(() => readStoredTeamFilter(teamFilterStorageKey));

@@ -17,6 +17,7 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
+9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
 
 For a substantial review involving async work, persistence, imports, previews, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for recurring failure shapes and adversarial scenarios; it supplements this workflow rather than replacing it.
 
@@ -100,7 +101,7 @@ Actively compare with a known-safe analogue for the same operation. WorshipSync 
 
 ### Sibling-pattern expansion
 
-When one confirmed bug represents a reusable failure class, search for sibling instances before concluding. For example: a stale global `db` in one async listener warrants checking other async/debounced/queued Pouch writers; a dead `registerTransferAction` callback warrants checking other global transfer actions backed by route-local ownership; a lost enum warrants tracing creation/read/filter/presentation; schema-unsafe cleanup warrants inspecting other automatic destructive cleanup; old durable-job incompatibility warrants checking other resumable formats; and a MIME probe/use mismatch warrants checking proxied media classes, redirects, and range responses. Do not report one instance and assume analogous code is safe without checking it.
+When one confirmed bug represents a reusable failure class, search for sibling instances before concluding. For example: a stale global `db` in one async listener warrants checking other async/debounced/queued Pouch writers; a dead `registerTransferAction` callback warrants checking other global transfer actions backed by route-local ownership; a lost enum warrants tracing creation/read/filter/presentation; schema-unsafe cleanup warrants inspecting other automatic destructive cleanup; old durable-job incompatibility warrants checking other resumable formats; a MIME probe/use mismatch warrants checking proxied media classes, redirects, and range responses; and a missing provider on one route warrants checking sibling entry points that mount the shared component. Do not report one instance and assume analogous code is safe without checking it.
 
 ### Transition-test expectations
 
@@ -160,6 +161,8 @@ State unresolved intent or assumptions used in the review.
 
 State required verification not completed separately from optional additional-confidence checks. A required gap prevents a `Ready` conclusion and a `COMPLETE` implementation claim.
 
+For each relevant review, record production-context verification as `Pass`, `Finding`, `Unverified`, or `Not applicable` with a reason. A missing, failing, or unperformed required context check prevents `Ready`; component tests that add production-missing context do not satisfy it.
+
 For substantial stateful reviews, include a compact evidence table here for only the highest-risk scenarios. Each row must name an invariant, concrete interleaving or recovery sequence, code path/symbols inspected, and the specific test that controls the critical transition—or state that coverage is missing or was not run. Mark each `Pass`, `Finding`, or `Unverified`; do not use empty checkboxes or treat test titles as evidence. Distinguish a confirmed defect from a theoretical risk or a coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
 
 State the review scope: **fix verification** checks the reported defect; **workflow review** checks affected end-to-end paths and related failure scenarios; **production-readiness review** checks release-critical branch scope, required checks, unresolved findings, and regression risk. A passing focused review supports only its stated scope. Do not call a branch production-ready unless that broader review and its verification were actually performed; say explicitly when tests, CI, builds, or runtime reproduction were not performed.
@@ -187,3 +190,4 @@ For substantial reviews, append this completion checklist and justify each `Not 
 - **Owner-retirement handoff reviewed:** Yes / No / Not applicable
 - **External side-effect adoption/compensation reviewed:** Yes / No / Not applicable
 - **Authorization/data-projection reviewed:** Yes / No / Not applicable
+- **Production entry point, runtime context, and test composition compared:** Yes / No / Not applicable

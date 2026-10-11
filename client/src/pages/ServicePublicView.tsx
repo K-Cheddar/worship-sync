@@ -18,6 +18,7 @@ import type {
   PublicServiceFlowSnapshot,
 } from "../services/serviceFlowTypes";
 import type { PublicServiceConnection } from "../services/usePublicServiceFlow";
+import type { ScrollbarWidth } from "../types";
 import { cn } from "../utils/cnHelper";
 import { formatServicePlanDuration } from "./Services/servicePlanDuration";
 import { SERVICE_PLAN_SONG_ICON_CLASS } from "./Services/servicePlanChipStyles";
@@ -312,6 +313,7 @@ const PublicServingTeamsPanel = ({
 
 export type ServicePublicViewProps = {
   snapshot: PublicServiceFlowSnapshot;
+  scrollbarWidth?: ScrollbarWidth;
   topContent?: ReactNode;
   connection?: PublicServiceConnection;
   error?: string;
@@ -336,6 +338,7 @@ export type ServicePublicViewProps = {
  */
 const ServicePublicView = ({
   snapshot,
+  scrollbarWidth = "thin",
   topContent,
   connection = "connected",
   error = "",
@@ -675,6 +678,7 @@ const ServicePublicView = ({
                           value={selectedRoles}
                           onValueChange={handleRoleNotesFilterChange}
                           options={roleOptions}
+                          scrollbarWidth={scrollbarWidth}
                           teamFilterStorageKey={rolePickerTeamFilterStorageKey}
                           lockedTeamName={selectedTeam || undefined}
                           ariaLabel="Filter role notes"

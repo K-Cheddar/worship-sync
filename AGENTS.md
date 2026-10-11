@@ -111,7 +111,9 @@ Broaden verification when a change affects shared or cross-cutting behavior, inc
 
 Do not routinely run the full `npm run checks`, the complete client Jest suite, or the complete server test suite during normal Codex implementation work. GitHub CI remains responsible for exhaustive repository-wide verification. A full local suite is appropriate when the user asks for full verification, focused testing is inadequate for a sufficiently cross-cutting change, focused tests reveal suspicious behavior that needs broader investigation, or CI is unavailable and complete verification is necessary.
 
-In the existing `Verified (required)` completion section, report the exact focused tests and checks actually run. Do not imply that the full suite passed unless it was run.
+For production-context-sensitive behavior, verify the actual entry point and runtime composition, including relevant providers, authentication/permissions, data sources, and platform differences; compare these with test wrappers, mocks, and fixtures. For interactive functionality, include deferred UI mounted only after click/open/select/navigation. When a composition mismatch creates meaningful risk, require representative integration-level coverage through the real entry point or a faithful wrapper. Regression tests should reproduce the original failure condition when practical. Keep coverage proportional; a browser test or full suite is not a default.
+
+In the existing `Verified (required)` completion section, report the exact focused tests and checks actually run, plus the production context checked or why it is not applicable. Do not imply that the full suite passed unless it was run. A required production-context check that is missing, failing, or unperformed makes implementation status `INCOMPLETE`, not `COMPLETE`.
 
 Async and stateful regression tests must exercise interruption boundaries, including identity or route changes during pending work, durable success followed by later failure and retry, live events during loading, and stale responses after newer state is active. Reproduce the production transition and meaningful values; convenient test values that remove the failure condition are not valid coverage.
 
@@ -120,6 +122,8 @@ Async and stateful regression tests must exercise interruption boundaries, inclu
 Before handoff, re-read the request and acceptance criteria; review the complete diff; check callers, consumers, parallel implementations, affected surfaces, edge cases, and failures; and run required risk-appropriate verification.
 
 Never describe work as complete when required implementation or verification remains. `COMPLETE` requires all acceptance criteria implemented, all required affected surfaces addressed, required verification completed successfully, and no known required implementation or verification work remaining. Otherwise report `INCOMPLETE`.
+
+When a failure exposes a reusable pattern, inspect relevant sibling implementations and entry points before treating the defect as isolated.
 
 `Not verified (optional)` may contain only unavailable or additional-confidence checks; it must never hide required verification. If Known follow-ups contains work required by the request, the status is `INCOMPLETE`.
 

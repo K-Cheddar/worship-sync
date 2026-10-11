@@ -609,6 +609,9 @@ const CurrentServiceViewer = () => {
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
   );
+  const scrollbarWidth = useSelector(
+    (state) => state.undoable.present.preferences.scrollbarWidth,
+  );
   const selection = useCurrentServiceViewerSelection(serviceTimes);
   const data = useCurrentServiceViewerData(
     churchId,
@@ -667,6 +670,7 @@ const CurrentServiceViewer = () => {
   if (hasPlanContent) {
     return (
       <ServicePublicView
+        scrollbarWidth={scrollbarWidth}
         snapshot={
           data.publicSnapshot ??
           buildServicePlanFlowSnapshot({

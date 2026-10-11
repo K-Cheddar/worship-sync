@@ -13,13 +13,14 @@ Plan proportionally before editing. Keep small changes concise, but do not skip 
 2. Inspect the relevant implementation before designing a solution.
 3. Search for analogous features, helpers, hooks, components, utilities, state patterns, data models, and tests.
 4. Define concrete acceptance criteria and the materially changed behavior.
-5. Map blast radius: callers and consumers, state ownership, persistence, sync, APIs, Electron/IPC, rendering surfaces, error paths, performance, and security as applicable.
-6. Classify unknowns:
+5. Map blast radius: callers and consumers, state ownership, persistence, sync, APIs, Electron/IPC, rendering surfaces, error paths, performance, and security as applicable. Identify the real entry points and runtimes that compose the changed code; include relevant providers/contexts, authentication and permissions, data sources, and browser/Electron/server differences, and compare them with the test harness.
+6. For interactive behavior, follow click, open, select, or navigation paths that mount deferred content; do not stop at what renders initially.
+7. Classify unknowns:
    - **A. Repository-answerable:** investigate before asking the user.
    - **B. Low-impact implementation detail:** resolve using existing patterns and state the assumption when useful.
    - **C. Consequential ambiguity:** stop and ask the user when the choice could materially affect behavior/UX, architecture/data ownership, persisted or synced shapes, contracts, compatibility, permissions/security, destructive behavior, or scope.
-7. Choose the smallest suitable approach in this order: existing pattern; extension of an existing abstraction; small local solution; new abstraction only when justified.
-8. Define required verification that establishes correctness, separately from optional additional-confidence checks.
+8. Choose the smallest suitable approach in this order: existing pattern; extension of an existing abstraction; small local solution; new abstraction only when justified.
+9. Define required verification that establishes correctness, separately from optional additional-confidence checks. Where test/production composition differences create meaningful risk, require a representative integration-level check using the real entry point or faithful composition; for regressions, preserve the original failure condition in the test when practical. Keep verification proportional to risk.
 
 Searching for analogous implementations is part of implementation, not optional cleanup.
 
@@ -57,7 +58,7 @@ Describe the selected approach and why it is the smallest appropriate fit.
 
 ### Affected surfaces
 
-List impacted consumers and system boundaries, or state that none apply.
+List impacted consumers and system boundaries, including the production entry point/runtime and relevant providers, authentication, permissions, and data sources; state which do not apply. Note material differences between production composition and test wrappers.
 
 ### Risks / edge cases
 
@@ -69,7 +70,7 @@ List only consequential unresolved ambiguities. Write `None` when repository evi
 
 ### Verification
 
-List the exact required checks, tests, and manual scenarios that establish correctness and distinguish changed behavior from adjacent behavior that must remain stable. List optional or unavailable additional-confidence checks separately. Required verification that remains undone makes the work incomplete.
+List the exact required checks, tests, and manual scenarios that establish correctness and distinguish changed behavior from adjacent behavior that must remain stable. Include the interaction path that mounts deferred UI and representative production-context coverage when risk warrants it. For regressions, say whether the test reproduces the pre-fix failure condition. List optional or unavailable additional-confidence checks separately. Required verification that remains undone makes the work incomplete.
 
 ## User-facing and operator UX
 

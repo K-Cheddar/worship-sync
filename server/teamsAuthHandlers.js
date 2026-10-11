@@ -15679,7 +15679,13 @@ export const createTeamsAuthHandlers = ({
         }
 
         const plan = withoutServicePlanAssignments(servicePlan, reader);
-        const includeTeamDetails = hasTeamsPlanAccess(reader);
+        // Paired workstations may view the sanitized operational projection
+        // for this saved plan without gaining access to raw Teams endpoints.
+        // Other services:view readers remain plan-only. Keep this exception
+        // local to the Current Service Viewer response rather than widening
+        // the shared Teams permission predicate.
+        const includeTeamDetails =
+          hasTeamsPlanAccess(reader) || reader?.sessionKind === "workstation";
         const snapshot = await buildPublicServicePlan({
           plan: includeTeamDetails ? servicePlan : plan,
           viewMode: "team",

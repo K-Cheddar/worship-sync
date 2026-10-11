@@ -96,6 +96,7 @@ describe("ControllerServicePlanView", () => {
         snapshot={snapshot}
         churchId="church-1"
         controllerProfileId="presentation"
+        scrollbarWidth="auto"
       />,
     );
 
@@ -125,6 +126,9 @@ describe("ControllerServicePlanView", () => {
 
     await user.click(screen.getByRole("button", { name: /Filter roles/ }));
     expect(screen.getByRole("button", { name: "Presentation Operator" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Role options" })).toHaveStyle({
+      "--scrollbar-width": "auto",
+    });
   });
 
   it("filters microphones and role notes by the selected controller role", async () => {

@@ -16,6 +16,7 @@ import {
   type ServiceFlowFilterPreference,
 } from "../../services/serviceFlowAudience";
 import type { PublicServiceFlowResource, PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
+import type { ScrollbarWidth } from "../../types";
 import {
   getServicePlanElementAssigneeNames,
   type ServicePlan,
@@ -117,6 +118,7 @@ const ControllerServicePlanView = ({
   controllerProfileId,
   sectionLabelColor,
   sectionBorderColor,
+  scrollbarWidth = "thin",
 }: {
   plan: ServicePlan;
   snapshot?: PublicServiceFlowSnapshot | null;
@@ -124,6 +126,7 @@ const ControllerServicePlanView = ({
   controllerProfileId: string;
   sectionLabelColor: string;
   sectionBorderColor: string;
+  scrollbarWidth?: ScrollbarWidth;
 }) => {
   const preferenceKey = `worship-sync:service-plan-operator:${churchId}:${controllerProfileId}`;
   const [preference, setPreference] = useState(() => readPreference(preferenceKey));
@@ -214,6 +217,7 @@ const ControllerServicePlanView = ({
             positionIds,
           })}
           options={roleOptions}
+          scrollbarWidth={scrollbarWidth}
           teamFilterStorageKey={`${preferenceKey}:role-team-filter`}
           lockedTeamName={effectivePreference.teamName || undefined}
           ariaLabel="Filter roles"
