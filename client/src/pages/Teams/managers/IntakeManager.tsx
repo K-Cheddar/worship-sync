@@ -544,6 +544,37 @@ const IntakeManager = ({
     });
   };
 
+  const updateDraftTeamIds = (teamIds: string[]) => {
+    if (isAvailabilityFormEditor) setPreserveSuggestedOccurrences(false);
+    setDraft((current) => {
+      const next = { ...current, teamIds };
+      if (
+        !isAvailabilityFormEditor ||
+        editingFormHasIssuedRequests ||
+        !current.startDate ||
+        !current.endDate
+      ) return next;
+
+      const relevantServiceIds = new Set(
+        buildTeamSchedulePeriod({
+          services,
+          positions,
+          teamIds,
+          schedules,
+          startDate: current.startDate,
+          endDate: current.endDate,
+          timeZone: serviceTimeZone,
+        }).occurrences.flatMap((occurrence) =>
+          occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+        ),
+      );
+      next.availabilityServices = current.availabilityServices.filter(({ serviceId }) =>
+        relevantServiceIds.has(serviceId),
+      );
+      return next;
+    });
+  };
+
   const buildPayload = (): TeamIntakeFormPayload => {
     const serviceIds = draft.availabilityServices.map(
       (service) => service.serviceId,
@@ -680,10 +711,13 @@ const IntakeManager = ({
       forms,
       positions,
       schedules,
-      ...(availabilityOnly ? { teamIds: managedTeamIds } : {}),
+      teamIds: availabilityOnly
+        ? managedTeamIds
+        : teams.filter((team) => !team.archivedAt).map((team) => team.teamId),
+      teamScheduleScope: availabilityOnly,
       timeZone: serviceTimeZone,
     }),
-    [availabilityOnly, forms, managedTeamIds, positions, schedules, serviceTimeZone, services],
+    [availabilityOnly, forms, managedTeamIds, positions, schedules, serviceTimeZone, services, teams],
   );
 
   const openUpcomingAvailabilityDraft = () => {
@@ -1569,7 +1603,7 @@ const IntakeManager = ({
           archived: Boolean(team.archivedAt),
         }))}
         value={draft.teamIds}
-        onChange={(teamIds) => setDraft((d) => ({ ...d, teamIds }))}
+        onChange={updateDraftTeamIds}
         emptyText="No teams yet."
       />
       {editingFormHasIssuedRequests ? (

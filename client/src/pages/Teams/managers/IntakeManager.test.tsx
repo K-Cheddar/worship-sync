@@ -13,6 +13,7 @@ import type {
   TeamIntakeSubmission,
   TeamRosterMember,
   TeamPosition,
+  TeamRecord,
   TeamSchedule,
   TeamService,
 } from "../../../api/authTypes";
@@ -95,6 +96,7 @@ const renderManager = ({
   intakeRecipients = [recipient],
   availabilityOnly = false,
   managedTeamIds = ["team-1"],
+  teams = [{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
   members = [member],
   smsEligibilityByMemberId,
 }: {
@@ -107,6 +109,7 @@ const renderManager = ({
   intakeRecipients?: TeamIntakeRecipient[];
   availabilityOnly?: boolean;
   managedTeamIds?: string[];
+  teams?: TeamRecord[];
   members?: TeamRosterMember[];
   smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
@@ -131,7 +134,7 @@ const renderManager = ({
               schedules={schedules}
               members={members}
               positions={positions}
-              teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }]}
+              teams={teams}
               canEdit
               onFormSaved={jest.fn()}
               onSubmissionSaved={jest.fn()}
@@ -306,6 +309,82 @@ test("editing a saved availability form keeps service selections visible after i
   await user.click(screen.getByRole("button", { name: "Edit" }));
 
   expect(screen.getByRole("checkbox", { name: /Legacy service/ })).toBeChecked();
+});
+
+test("changing an unsent availability form's Teams reconciles its selected service dates", async () => {
+  const user = userEvent.setup();
+  const unsentForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityServices: [],
+    availabilityOccurrences: [],
+  };
+  const services: TeamService[] = [
+    {
+      id: "worship-service",
+      serviceId: "worship-service",
+      churchId: "church-1",
+      name: "Worship service",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+      positionRequirements: [{ positionId: "vocal", count: 1 }],
+    },
+    {
+      id: "av-service",
+      serviceId: "av-service",
+      churchId: "church-1",
+      name: "AV service",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    },
+  ];
+  const editedForm = { ...unsentForm, teamIds: ["team-2"] };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: editedForm });
+  renderManager({
+    forms: [unsentForm],
+    intakeRecipients: [],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] },
+      { teamId: "team-2", churchId: "church-1", name: "AV", memberIds: [] },
+    ],
+    positions: [
+      { positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" },
+      { positionId: "camera", churchId: "church-1", teamId: "team-2", name: "Camera" },
+    ],
+    services,
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("checkbox", { name: /Worship service/ }));
+  const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
+  await user.click(within(teamScope).getByRole("checkbox", { name: "AV" }));
+  await user.click(within(teamScope).getByRole("checkbox", { name: "Worship" }));
+
+  expect(screen.queryByRole("checkbox", { name: /Worship service/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /AV service/ })).not.toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /AV service/ }));
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    unsentForm.formId,
+    expect.objectContaining({
+      teamIds: ["team-2"],
+      availabilityServices: [{ serviceId: "av-service", name: "AV service" }],
+      availabilityOccurrences: expect.arrayContaining([expect.objectContaining({ serviceId: "av-service" })]),
+    }),
+  ));
+  expect(jest.mocked(updateTeamIntakeForm).mock.calls[0][2].availabilityOccurrences).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ serviceId: "worship-service" })]),
+  );
 });
 
 test("general intake editing still shows its supported fields and wording", async () => {
@@ -512,6 +591,7 @@ test.each([
   const existingForm = {
     ...form,
     name: "October Availability",
+    teamIds: [],
     availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
     availabilityOccurrences: [existingOccurrence],
     enabledFields: ["firstName", "availability"],
@@ -526,9 +606,16 @@ test.each([
     timerType: "countdown",
     reccurence: "one_time",
     dateTimeISO: "2026-10-14T14:00:00.000Z",
+    positionRequirements: [{ positionId: "vocal", count: 1 }],
   };
   jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: existingForm });
-  renderManager({ forms: [existingForm], services: [powerUpService], intakeRecipients, submissions });
+  renderManager({
+    forms: [existingForm],
+    services: [powerUpService],
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+    intakeRecipients,
+    submissions,
+  });
 
   expect(screen.getByRole("heading", { name: "October Availability needs updating" })).toBeInTheDocument();
   expect(screen.getByText("1 upcoming service isn’t included.")).toBeInTheDocument();
@@ -670,14 +757,29 @@ test("successful form edits return to the form view with Send form available", a
 test("saving a form with existing recipients preserves its covered occurrence snapshot", async () => {
   const user = userEvent.setup();
   const savedOccurrence = { occurrenceId: "saved-occurrence", serviceId: "old-service", name: "Saved service", startsAt: "2026-10-11T14:00:00.000Z" };
-  const issuedForm = { ...form, availabilityServices: [{ serviceId: "old-service", name: "Saved service" }], availabilityOccurrences: [savedOccurrence] };
+  const issuedForm = { ...form, purpose: "team_availability", enabledFields: ["availability"], availabilityServices: [{ serviceId: "old-service", name: "Saved service" }], availabilityOccurrences: [savedOccurrence] } as TeamIntakeForm;
   jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: issuedForm });
-  renderManager({ forms: [issuedForm], services: [{ id: "old-service", serviceId: "old-service", churchId: "church-1", name: "Changed service", timerType: "countdown", reccurence: "weekly", dayOfWeek: 0, time: "10:00" }] });
+  renderManager({
+    forms: [issuedForm],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] },
+      { teamId: "team-2", churchId: "church-1", name: "AV", memberIds: [] },
+    ],
+    services: [{ id: "old-service", serviceId: "old-service", churchId: "church-1", name: "Changed service", timerType: "countdown", reccurence: "weekly", dayOfWeek: 0, time: "10:00" }],
+  });
   await user.click(screen.getByRole("button", { name: `Edit ${issuedForm.name}` }));
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.getByText(/already has private links or responses/)).toBeInTheDocument();
+  const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
+  await user.click(within(teamScope).getByRole("checkbox", { name: "AV" }));
+  await user.click(within(teamScope).getByRole("checkbox", { name: "Worship" }));
+  expect(screen.getByText("Availability services: Saved service")).toBeInTheDocument();
   await user.type(screen.getByLabelText(/^Name/i), " updated");
   await user.click(screen.getByRole("button", { name: "Save form" }));
 
-  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({ availabilityOccurrences: [savedOccurrence] })));
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({
+    teamIds: ["team-2"],
+    availabilityServices: [{ serviceId: "old-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  })));
 });

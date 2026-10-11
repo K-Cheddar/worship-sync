@@ -156,6 +156,7 @@ export const getUpcomingAvailabilitySuggestion = ({
   positions = [],
   schedules = [],
   teamIds,
+  teamScheduleScope,
   now = serverDate(),
   timeZone,
 }: {
@@ -163,8 +164,10 @@ export const getUpcomingAvailabilitySuggestion = ({
   forms: TeamIntakeForm[];
   positions?: TeamPosition[];
   schedules?: Array<TeamSchedule | TeamScheduleSummary>;
-  /** Explicit scope for the availability-only manager; an empty list yields no suggestion. */
+  /** Explicit Teams to include; an empty list yields no suggestion. */
   teamIds?: string[];
+  /** Restrict generated occurrences to staffing needs for those Teams. Defaults on for an explicit scope. */
+  teamScheduleScope?: boolean;
   now?: Date;
   timeZone?: string;
 }): UpcomingAvailabilitySuggestion | null => {
@@ -174,13 +177,9 @@ export const getUpcomingAvailabilitySuggestion = ({
 
   const template = safeTemplate(forms);
   const hasAvailabilityTemplate = template?.purpose === "team_availability";
-  const proposedTeamIds = hasAvailabilityTemplate
-    ? template.teamIds || []
-    : teamIds !== undefined
-      ? teamIds
-      : template?.teamIds || [];
-  const teamScoped = teamIds !== undefined || hasAvailabilityTemplate;
-  if (teamScoped && proposedTeamIds.length === 0) return null;
+  const proposedTeamIds = teamIds !== undefined ? teamIds : template?.teamIds || [];
+  const teamScoped = teamScheduleScope ?? (teamIds !== undefined || hasAvailabilityTemplate);
+  if ((teamIds !== undefined || teamScoped) && proposedTeamIds.length === 0) return null;
   const coveringForms = forms.filter((form) =>
     isEffectivelyOpen(form, today) &&
     resolveIntakeFormFields(form).includes("availability") &&

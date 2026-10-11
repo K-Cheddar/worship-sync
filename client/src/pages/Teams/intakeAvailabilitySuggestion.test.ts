@@ -51,6 +51,44 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     expect(result?.missingOccurrences.length).toBeGreaterThan(0);
   });
 
+  it("uses an explicit managed Team list instead of a Team-specific availability template", () => {
+    const services: TeamService[] = [
+      { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+      { ...service, serviceId: "av-service", name: "AV", positionRequirements: [{ positionId: "camera", count: 1 }] },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      teamIds: ["worship", "av"],
+      now: new Date("2026-10-04T16:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.draft.teamIds).toEqual(["worship", "av"]);
+    expect(result?.missingOccurrences.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId])).toEqual(expect.arrayContaining(["worship-service", "av-service"]));
+  });
+
+  it("uses every explicitly supplied church Team when the template is Team-specific", () => {
+    const services: TeamService[] = [
+      { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+      { ...service, serviceId: "av-service", name: "AV", positionRequirements: [{ positionId: "camera", count: 1 }] },
+      { ...service, serviceId: "unassigned-service", name: "Unassigned service" },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      teamIds: ["worship", "av"],
+      teamScheduleScope: false,
+      now: new Date("2026-10-04T16:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.draft.teamIds).toEqual(["worship", "av"]);
+    expect(result?.missingOccurrences.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId])).toEqual(expect.arrayContaining(["worship-service", "av-service", "unassigned-service"]));
+  });
+
   it("groups a combined service required by two selected Teams using the service timezone", () => {
     const services: TeamService[] = [
       {
