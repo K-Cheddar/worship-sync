@@ -490,6 +490,44 @@ describe("dbUtils", () => {
     }));
   });
 
+  it("clears a stale override flag when generation restores the persisted baseline", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "1-a",
+      id: "c1",
+      heading: "Welcome",
+      text: "Corrected by operator",
+      hidden: false,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: true,
+    });
+    db.put.mockResolvedValueOnce({ rev: "2-credit" });
+
+    const updated = await putCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      heading: "Welcome",
+      text: "Generated welcome",
+      hidden: false,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: false,
+    });
+
+    expect(updated).toEqual(expect.objectContaining({
+      text: "Generated welcome",
+      generatedBaselineText: "Generated welcome",
+      generatedTextOverridden: false,
+    }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Generated welcome",
+      generatedBaselineText: "Generated welcome",
+      generatedTextOverridden: false,
+    }));
+  });
+
   it("keeps provenance unchanged when only heading and visibility change", async () => {
     const db = createDb();
     const outlineId = "ol-1";

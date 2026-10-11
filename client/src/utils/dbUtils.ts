@@ -597,8 +597,7 @@ export const putCreditDoc = async (
     }
     if (existing.generatedBaselineText !== undefined) {
       // Text edits are authoritative even if an older client omitted the explicit flag.
-      existing.generatedTextOverridden = credit.text !== existing.generatedBaselineText
-        || existing.generatedTextOverridden === true;
+      existing.generatedTextOverridden = credit.text !== existing.generatedBaselineText;
     }
     existing.updatedAt = new Date().toISOString();
     const result = await db.put(existing);

@@ -4,10 +4,9 @@ export type GeneratedCreditItemStatus =
   | "pending"
   | "updating"
   | "updated"
-  | "current"
-  | "preserved"
-  | "missed"
-  | "error";
+  | "unchanged"
+  | "unmatched"
+  | "failed";
 
 export type GeneratedCreditItem = {
   creditId: string;
@@ -17,7 +16,6 @@ export type GeneratedCreditItem = {
   nextText: string;
   status: GeneratedCreditItemStatus;
   error?: string;
-  manualOverride?: boolean;
 };
 
 export type GeneratedCreditsState = {
@@ -55,7 +53,7 @@ export const generatedCreditsSlice = createSlice({
       action: PayloadAction<{
         generatedAt: string;
         items: Array<Omit<GeneratedCreditItem, "status" | "error"> & {
-          status?: Extract<GeneratedCreditItemStatus, "missed">;
+          status?: Extract<GeneratedCreditItemStatus, "unmatched">;
         }>;
         warning?: string | null;
       }>,
@@ -66,7 +64,7 @@ export const generatedCreditsSlice = createSlice({
       state.generatedAt = action.payload.generatedAt;
       state.currentStep = 0;
       state.totalSteps = action.payload.items.filter(
-        (item) => item.status !== "missed",
+        (item) => item.status !== "unmatched",
       ).length;
       state.activeCreditId = "";
       state.items = action.payload.items.map((item) => ({
@@ -91,7 +89,7 @@ export const generatedCreditsSlice = createSlice({
       state,
       action: PayloadAction<{
         creditId: string;
-        status: Extract<GeneratedCreditItemStatus, "updated" | "current" | "preserved">;
+        status: Extract<GeneratedCreditItemStatus, "updated" | "unchanged">;
       }>,
     ) => {
       const item = state.items.find((entry) => entry.creditId === action.payload.creditId);
@@ -107,7 +105,7 @@ export const generatedCreditsSlice = createSlice({
     ) => {
       const item = state.items.find((entry) => entry.creditId === action.payload.creditId);
       if (item) {
-        item.status = "error";
+        item.status = "failed";
         item.error = action.payload.error;
       }
       state.currentStep = Math.min(state.currentStep + 1, state.totalSteps);

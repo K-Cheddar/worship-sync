@@ -36,38 +36,29 @@ const StatusBadge = ({ status }: { status: GeneratedCreditItemStatus }) => {
     );
   }
 
-  if (status === "current") {
+  if (status === "unchanged") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-700 px-1 py-0.5 text-[10px] font-medium text-zinc-200">
         <Check size={10} />
-        Current
+        Unchanged
       </span>
     );
   }
 
-  if (status === "preserved") {
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-900/60 px-1 py-0.5 text-[10px] font-medium text-amber-200">
-        <AlertCircle size={10} />
-        Manual value preserved
-      </span>
-    );
-  }
-
-  if (status === "error") {
+  if (status === "failed") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded bg-red-900/60 px-1 py-0.5 text-[10px] font-medium text-red-200">
         <XCircle size={10} />
-        Error
+        Failed
       </span>
     );
   }
 
-  if (status === "missed") {
+  if (status === "unmatched") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-900/60 px-1 py-0.5 text-[10px] font-medium text-amber-200">
         <AlertCircle size={10} />
-        Not placed
+        Unmatched
       </span>
     );
   }
@@ -186,7 +177,7 @@ const GeneratedCreditsFloatingWindow = () => {
               {state.items.map((item) => {
                 const isActive = state.activeCreditId === item.creditId;
                 const hasTextChange = item.previousText !== item.nextText;
-                const isMissed = item.status === "missed";
+                const isUnmatched = item.status === "unmatched";
                 return (
                   <li
                     key={item.creditId}
@@ -210,7 +201,7 @@ const GeneratedCreditsFloatingWindow = () => {
                       </div>
                       <StatusBadge status={item.status} />
                     </div>
-                    {isMissed ? (
+                    {isUnmatched ? (
                       <>
                         <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
                           This scheduled role had assigned names, but no credit
@@ -248,15 +239,10 @@ const GeneratedCreditsFloatingWindow = () => {
                       </>
                     ) : (
                       <div className="rounded bg-zinc-900/70 px-2 py-1 text-xs text-zinc-300">
-                        No change. This credit already matched the generated
+                        No change. This credit already matches the generated
                         text.
                       </div>
                     )}
-                    {item.manualOverride ? (
-                      <p className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
-                        This credit already contains operator text. Generation kept it and did not apply the proposed value.
-                      </p>
-                    ) : null}
                     {item.error ? (
                       <div className="text-xs text-red-300">{item.error}</div>
                     ) : null}

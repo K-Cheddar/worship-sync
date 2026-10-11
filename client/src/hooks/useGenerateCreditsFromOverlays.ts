@@ -1,4 +1,4 @@
-import { useCallback, useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "../hooks";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -35,7 +35,6 @@ type PlannedGeneratedCreditUpdate = {
   credit: CreditsInfo;
   previousText: string;
   sourceLabel: string;
-  preserveManual: boolean;
 };
 
 const waitForCreditGenerationStep = () =>
@@ -110,11 +109,37 @@ export function useGenerateCreditsFromOverlays() {
   const servicePlanKey = useSelector(
     (state) => state.servicePlanningImport?.servicePlanKey ?? undefined,
   );
+  const generationOwnerRef = useRef({ db, churchId, outlineId: outlineIdForCredits });
+  generationOwnerRef.current = { db, churchId, outlineId: outlineIdForCredits };
+  const isMountedRef = useRef(false);
+  const justGeneratedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (justGeneratedTimeoutRef.current) {
+        clearTimeout(justGeneratedTimeoutRef.current);
+        justGeneratedTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [justGenerated, setJustGenerated] = useState(false);
 
   const generateFromOverlays = useCallback(async () => {
+    const generationOwner = generationOwnerRef.current;
+    const isGenerationDatabaseCurrent = () => {
+      const currentOwner = generationOwnerRef.current;
+      return isMountedRef.current
+        && currentOwner.db === generationOwner.db
+        && currentOwner.churchId === generationOwner.churchId;
+    };
+    const isGenerationOwnerCurrent = () => {
+      return isGenerationDatabaseCurrent()
+        && generationOwnerRef.current.outlineId === generationOwner.outlineId;
+    };
+
     setIsGenerating(true);
     try {
       const eventNameMapping: { [key: string]: string } = {
@@ -296,29 +321,20 @@ export function useGenerateCreditsFromOverlays() {
         updatedList.flatMap((credit) => {
           const detail = generatedDetails.get(credit.id);
           if (!detail) return [];
-          const existing = list.find((candidate) => candidate.id === credit.id);
-          const preserveManual = Boolean(
-            existing?.generatedTextOverridden
-            || (existing?.generatedBaselineText !== undefined
-              && existing.text !== existing.generatedBaselineText),
-          );
           return [
             {
-              credit: preserveManual
-                ? credit
-                : {
-                    ...credit,
-                    generatedBaselineText: credit.text,
-                    generatedSource: detail.sourceLabel,
-                    generatedTextOverridden: false,
-                  },
+              credit: {
+                ...credit,
+                generatedBaselineText: credit.text,
+                generatedSource: detail.sourceLabel,
+                generatedTextOverridden: false,
+              },
               sourceLabel: detail.sourceLabel,
               previousText: previousCreditTextById.get(credit.id) ?? "",
-              preserveManual,
             },
           ];
         });
-      const missedScheduleItems = schedule
+      const unmatchedScheduleItems = schedule
         .filter((entry) => !matchedScheduleEntries.has(entry))
         .filter((entry) => entry.names.trim())
         .map((entry, index) => ({
@@ -327,22 +343,21 @@ export function useGenerateCreditsFromOverlays() {
           sourceLabel: entry.sourceLabel || "Media schedule",
           previousText: "",
           nextText: entry.names,
-          status: "missed" as const,
+          status: "unmatched" as const,
         }));
 
       dispatch(
         startGeneratedCredits({
           generatedAt: new Date().toISOString(),
           items: [
-            ...plannedUpdates.map(({ credit, previousText, sourceLabel, preserveManual }) => ({
+            ...plannedUpdates.map(({ credit, previousText, sourceLabel }) => ({
               creditId: credit.id,
               creditHeading: credit.heading,
               sourceLabel,
               previousText,
               nextText: credit.text,
-              manualOverride: preserveManual,
             })),
-            ...missedScheduleItems,
+            ...unmatchedScheduleItems,
           ],
           warning: scheduleError
             ? "Media schedule was unavailable. Other sources will still be applied."
@@ -356,27 +371,44 @@ export function useGenerateCreditsFromOverlays() {
         Awaited<ReturnType<typeof putCreditDoc>>
       >[] = [];
       let hadPersistenceError = false;
-      for (const { credit, previousText, preserveManual } of plannedUpdates) {
+      for (const { credit, previousText } of plannedUpdates) {
         dispatch(setGeneratedCreditActive(credit.id));
-        dispatch(selectCredit(credit.id));
-        await waitForCreditGenerationStep();
-
-        if (preserveManual) {
-          dispatch(completeGeneratedCreditItem({ creditId: credit.id, status: "preserved" }));
-          continue;
+        if (isGenerationOwnerCurrent()) {
+          dispatch(selectCredit(credit.id));
         }
+        await waitForCreditGenerationStep();
 
         const hasChanged = previousText !== credit.text;
         const previousCredit = list.find((candidate) => candidate.id === credit.id);
         const hasMetadataChange = previousCredit?.generatedBaselineText !== credit.generatedBaselineText
           || previousCredit?.generatedSource !== credit.generatedSource
           || previousCredit?.generatedTextOverridden !== false;
-        dispatch(updateCreditFromGeneration({ ...credit, generatedSource: credit.generatedSource || "Generated credits" }));
 
-        if (db && outlineIdForCredits && (hasChanged || hasMetadataChange)) {
+        if (hasChanged || hasMetadataChange) {
+          if (!db || !outlineIdForCredits) {
+            hadPersistenceError = true;
+            dispatch(
+              failGeneratedCreditItem({
+                creditId: credit.id,
+                error: "Could not save this credit.",
+              }),
+            );
+            continue;
+          }
+
           try {
             const doc = await putCreditDoc(db, outlineIdForCredits, credit);
-            if (doc) docsToBroadcast.push(doc);
+            if (!doc) {
+              hadPersistenceError = true;
+              dispatch(
+                failGeneratedCreditItem({
+                  creditId: credit.id,
+                  error: "Could not save this credit.",
+                }),
+              );
+              continue;
+            }
+            docsToBroadcast.push(doc);
           } catch (error) {
             hadPersistenceError = true;
             dispatch(
@@ -392,23 +424,30 @@ export function useGenerateCreditsFromOverlays() {
           }
         }
 
+        if (isGenerationOwnerCurrent()) {
+          dispatch(updateCreditFromGeneration({ ...credit, generatedSource: credit.generatedSource || "Generated credits" }));
+        }
         dispatch(
           completeGeneratedCreditItem({
             creditId: credit.id,
-            status: hasChanged ? "updated" : "current",
+            status: hasChanged ? "updated" : "unchanged",
           }),
         );
       }
 
-      if (docsToBroadcast.length > 0) {
+      // This helper posts through the active BroadcastChannel, which may have switched churches
+      // while the captured PouchDB write was in flight.
+      if (docsToBroadcast.length > 0 && isGenerationDatabaseCurrent()) {
         broadcastCreditsUpdate(docsToBroadcast);
       }
 
-      await flushCreditsHistoryFromLatestList(
-        dispatch,
-        () => store.getState(),
-        db,
-      );
+      if (isGenerationDatabaseCurrent()) {
+        await flushCreditsHistoryFromLatestList(
+          dispatch,
+          () => store.getState(),
+          db,
+        );
+      }
 
       if (hadPersistenceError) {
         dispatch(failGeneratedCredits("Some credits could not be saved."));
@@ -416,12 +455,17 @@ export function useGenerateCreditsFromOverlays() {
         dispatch(completeGeneratedCredits());
       }
 
-      setJustGenerated(true);
-      setTimeout(() => setJustGenerated(false), 2000);
+      if (isMountedRef.current) {
+        setJustGenerated(true);
+        justGeneratedTimeoutRef.current = setTimeout(() => {
+          justGeneratedTimeoutRef.current = null;
+          if (isMountedRef.current) setJustGenerated(false);
+        }, 2000);
+      }
     } catch (error) {
       console.error("Error generating from overlays:", error);
     } finally {
-      setIsGenerating(false);
+      if (isMountedRef.current) setIsGenerating(false);
     }
   }, [
     participantOverlays,

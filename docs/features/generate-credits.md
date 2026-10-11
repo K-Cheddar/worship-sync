@@ -1,6 +1,6 @@
 # Feature Contract: Generate Credits
 
-**Contract status:** Confirmed operator workflow from the product-owner request; current implementation conflicts with one confirmed behavior. Empty loaded assignments remain unresolved.
+**Contract status:** Confirmed operator workflow; explicit regeneration behavior is implemented. Empty loaded assignments remain unresolved.
 
 **Approval source:** Product-owner request, October 10, 2026: “Existing matching credits are updated, even when they contain previously generated or manually edited text.” The same request describes credits as editable records of participants, calls for post-service corrections to reflect who actually served, and says regeneration is explicit rather than triggered by source changes.
 
@@ -36,14 +36,14 @@ The replacement rule applies when there is a valid generated result for a matchi
 - Generated credits are not continuously synchronized copies of plans or schedules.
 - A planned roster is preparation information, not proof of who ultimately served; operators may correct the credits afterward.
 - Unavailable/incomplete data and a loaded empty assignment are distinct states. The former must not silently be treated as an authoritative empty result.
-- This contract documents product intent. It does not implement the conflict described below.
+- The previous conflict between explicit regeneration and manual-edit preservation is resolved. The open schedule decisions below remain unresolved.
 
 ## Important scenarios
 
 | Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |
 | --- | --- | --- | --- |
 | First generation from available participant information | Populate matching credits from available sources. | `useGenerateCreditsFromOverlays` builds entries from participant overlays and team schedule data; hook tests cover generated values. | Confirmed workflow; exact source matching remains an implementation detail unless it changes operator-visible results. |
-| Explicit regeneration after an operator edited generated text | Refresh the matching credit from the current source data, replacing the previous manual text. | Current hook preserves an override and skips updating/persisting that credit. Test `preserves a genuinely manually edited generated credit during regeneration` asserts this behavior. | **Known product/implementation conflict.** Current implementation does not match confirmed intent. |
+| Explicit regeneration after an operator edited generated text | Refresh the matching credit from the current source data, replacing the previous manual text. | The hook applies and persists the generated text and refreshes its provenance; focused tests cover edited text, persisted override flags, and failed saves. | Confirmed and implemented. |
 | Operator corrects credits after service; no regeneration occurs | Keep the operator's corrected record. | Credits are edited and persisted through the credits editor; inspect the implementation references below. | Confirmed workflow. |
 | Source changes after generation, with no button press | Do not regenerate automatically. | Generation is invoked by the editor/toolbar action; no source-change-triggered regeneration is part of this contract. | Confirmed. |
 | Matching service schedule is only a summary or its assignments are unavailable | Do not treat missing cells as an empty roster and write blank credits on that basis. | `teamScheduleCredits.ts` returns `scheduleUnavailable: true` for an unhydrated matching schedule; its test asserts this distinction. | Confirmed safeguard. Other independently available source behavior during a partial load is not fully specified. |
@@ -62,9 +62,9 @@ The replacement rule applies when there is a valid generated result for a matchi
 - **Approval source/date:** Product-owner request, October 10, 2026; see the approved wording and workflow above.
 - **Affected workflow/contract:** Credits preparation and post-service correction; this contract.
 
-## Known mismatch and open product questions
+## Open product questions
 
-The September 25, 2026 change [a684f99f4](https://github.com/K-Cheddar/worship-sync/commit/a684f99f49239f408b6a39888fbb608ac06ca886) (commit subject: `feat: modernize service plan controller sync and credits`, authored 08:36 local time) added `preserveManual` detection in `useGenerateCreditsFromOverlays`. It skips both the state update and persistence for a manually edited generated credit, and reports it as preserved. This conflicts with the confirmed meaning of an explicit regeneration above. The present task records the conflict; it does not change the code.
+The September 25, 2026 change [a684f99f4](https://github.com/K-Cheddar/worship-sync/commit/a684f99f49239f408b6a39888fbb608ac06ca886) (commit subject: `feat: modernize service plan controller sync and credits`, authored 08:36 local time) added `preserveManual` detection in `useGenerateCreditsFromOverlays`. It skipped state updates and persistence for manually edited generated credits. That behavior conflicted with the confirmed meaning of explicit regeneration and has been removed; matching generated text now persists regardless of prior edits.
 
 Current code also handles a fully loaded empty schedule differently from an unavailable summary. The September 30, 2026 follow-up [0466505c5](https://github.com/K-Cheddar/worship-sync/commit/0466505c562db4f65bc893000b1ab71ff7e80e04) and its tests treat a matching loaded empty row as authoritative, so a generation can clear a matching credit. Product intent for this case is not established by that implementation or its tests.
 
