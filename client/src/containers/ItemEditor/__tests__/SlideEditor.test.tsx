@@ -3,6 +3,13 @@ import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import SlideEditor from "../SlideEditor";
 import { ToastContext } from "../../../context/toastContext";
 import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import {
+  createMockControllerContext,
+  createMockGlobalContext,
+  createMockPouchDB,
+} from "../../../test/mocks";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -404,6 +411,19 @@ const renderWithToastContext = () =>
     >
       <SlideEditor access="full" />
     </ToastContext.Provider>
+  );
+
+const renderWithControllerContexts = () =>
+  render(
+    <ControllerInfoContext.Provider
+      value={createMockControllerContext({ db: createMockPouchDB() }) as never}
+    >
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({ access: "full", churchId: "church-1" }) as never}
+      >
+        <SlideEditor access="full" />
+      </GlobalInfoContext.Provider>
+    </ControllerInfoContext.Provider>,
   );
 
 describe("SlideEditor", () => {
@@ -897,6 +917,128 @@ describe("SlideEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: /song details/i }));
 
     expect(screen.getByLabelText("Song name:")).toBeInTheDocument();
+  });
+
+  it("closes controller item details after Redux accepts the updated name", async () => {
+    mockState = makeBaseState({
+      undoable: { present: { item: { _id: "item-1", name: "Sample Item", type: "free" } } },
+    });
+    mockDispatch.mockImplementation((action: any) => {
+      if (action?.type === "item/setName") {
+        mockState.undoable.present.item.name = action.payload.name;
+      }
+      return action;
+    });
+
+    renderWithControllerContexts();
+    fireEvent.click(screen.getByRole("button", { name: "Item details" }));
+    fireEvent.change(screen.getByLabelText(/Item name/i), {
+      target: { value: "Updated item" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: "item/setName",
+        payload: { name: "Updated item" },
+      }),
+    );
+    expect(screen.queryByLabelText(/Item name/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Updated item" })).toBeInTheDocument();
+  });
+
+  it("closes controller song details after an accepted save and reopens in edit mode with current state", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-1",
+            name: "Living Hope",
+            type: "song",
+            selectedArrangement: 1,
+            selectedSlide: 2,
+            songMetadata: {
+              source: "manual",
+              trackName: "Living Hope",
+              artistName: "Phil Wickham",
+              importedAt: "2026-08-06T12:00:00.000Z",
+            },
+            arrangements: [
+              { name: "Original", slides: [], formattedLyrics: [] },
+              { name: "Acoustic", slides: [], formattedLyrics: [] },
+            ],
+          },
+        },
+      },
+    });
+    mockDispatch.mockImplementation((action: any) => {
+      if (action?.type === "item/setName") {
+        mockState.undoable.present.item.name = action.payload.name;
+      }
+      if (action?.type === "item/setSongMetadata") {
+        mockState.undoable.present.item.songMetadata = action.payload;
+      }
+      return action;
+    });
+
+    renderWithControllerContexts();
+    fireEvent.click(screen.getByRole("button", { name: "Song details" }));
+    fireEvent.change(screen.getByLabelText(/Song name/i), {
+      target: { value: "Living Hope (Acoustic)" },
+    });
+    fireEvent.change(screen.getByLabelText(/Artist/i), {
+      target: { value: "Phil Wickham and team" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: "item/setName",
+        payload: { name: "Living Hope (Acoustic)" },
+      }),
+    );
+    expect(screen.queryByLabelText(/Song name/i)).not.toBeInTheDocument();
+    expect(mockState.undoable.present.item).toEqual(
+      expect.objectContaining({
+        _id: "song-1",
+        name: "Living Hope (Acoustic)",
+        selectedArrangement: 1,
+        selectedSlide: 2,
+        songMetadata: expect.objectContaining({
+          artistName: "Phil Wickham and team",
+        }),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Song details" }));
+    expect(await screen.findByLabelText(/Song name/i)).toHaveValue(
+      "Living Hope (Acoustic)",
+    );
+    expect(screen.getByLabelText(/Artist/i)).toHaveValue("Phil Wickham and team");
+    expect(
+      screen.getByRole("heading", { name: "Song details — Living Hope (Acoustic)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps controller song details open and preserves the draft when its database is unavailable", async () => {
+    mockState = makeBaseState({
+      undoable: { present: { item: { _id: "song-1", name: "Living Hope", type: "song" } } },
+    });
+
+    render(<SlideEditor access="full" />);
+    fireEvent.click(screen.getByRole("button", { name: "Song details" }));
+    fireEvent.change(screen.getByLabelText(/Song name/i), {
+      target: { value: "Living Hope (Acoustic)" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The song library is not available. Try again.",
+    );
+    expect(screen.getByLabelText(/Song name/i)).toHaveValue(
+      "Living Hope (Acoustic)",
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
   it("offers toast actions for remote updates outside lyrics edit mode", async () => {
