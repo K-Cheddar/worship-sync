@@ -83,7 +83,7 @@ Cover relevant lifecycle, failure, concurrency, and live-operation cases.
 
 ### Questions requiring user input
 
-List only consequential unresolved ambiguities. Write `None` when repository evidence resolves the choices.
+List only consequential unresolved ambiguities. Write `None` only when no consequential product choice remains unresolved. Repository evidence can resolve technical facts, but cannot authorize consequential product intent.
 
 ### Verification
 

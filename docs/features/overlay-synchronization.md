@@ -1,47 +1,33 @@
 # Feature Contract: Service-plan overlay synchronization
 
-**Contract status:** Confirmed product intent
+**Contract status:** Mixed. Only the outcomes under **Confirmed product outcomes** are owner-confirmed; matching, creation, and live-output behavior remain unresolved. Implementation notes below describe current behavior and are not product approval.
 
-**Approval source:** Current product request, 2026-10-10
+**Approval source:** Product-owner request, 2026-10-10; the two approved outcomes are recorded under **Product decisions**.
 
-**Last reviewed:** 2026-10-10
+**Last reviewed:** 2026-10-11
 
 ## Purpose
 
-Service-plan synchronization refreshes reusable participant overlays for the current service. An overlay represents an event or role, such as Sabbath School Host or Scripture Reading, rather than one occurrence of that role in a particular weekly plan.
+Refresh reusable participant overlays for a service plan. An overlay represents an event or role, such as Sabbath School Host or Scripture Reading, and can be reused across plan occurrences.
 
 ## Operator workflow
 
-Operators maintain an ordered list of participant overlays and mapping rules. They load a service plan and choose **Sync Overlays** or **Sync All**. Manual edits remain in place until a later explicit synchronization.
+Current UI observation: operators maintain participant overlays and mapping rules, load a service plan, then choose **Sync Overlays** or **Sync All**. The available UI and its implementation do not independently establish the intended behavior of matching, creation, or live output.
 
-## Expected behavior
+## Confirmed product outcomes
 
-- Match participant overlays by the configured event label, normalized for case and repeated whitespace. A previous plan association does not prevent an event match.
-- Prefer an exact configured event match. When a repeated role has multiple candidates, assign distinct matching overlays in their existing list order.
-- When no event label is configured, use a unique best fuzzy match. If equally strong matches remain, leave the candidate unresolved and explain that the event mapping needs attention.
-- An explicit sync applies the current incoming values to mapped name, title, and event fields, including values that replace manual edits.
-- Updating an overlay preserves its ID, list position, formatting, and unrelated fields. New overlays are created only when no suitable unclaimed match exists; existing insertion behavior remains in effect.
-- Repeating **Sync Overlays** or **Sync All** updates the same reusable overlays and does not create copies.
-- Preview and execution use the same event matching rules. Execution rechecks the current overlay list before updating or creating.
-- Sync changes the overlay list and persisted overlay documents. It does not change the active participant overlay being shown to the audience.
-
-## Behavioral boundaries
-
-- Legacy `servicePlanSource`, `servicePlanBaseline`, and `servicePlanOverrides` fields may be present in stored overlay documents. They are compatibility data only and do not own an overlay, protect manual text from an explicit sync, or change event matching.
-- Synchronization changes only fields produced by the configured mapping. Formatting, timing, and other overlay settings remain operator-owned.
-- A new event uses the existing insertion behavior; established overlays keep their relative order.
+- A previous plan association does not prevent reuse of an overlay for the same event or role in a later plan.
+- Manual edits to mapped values remain until an explicit sync. An explicit sync replaces mapped values with the current plan values.
 
 ## Important scenarios
 
-| Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |
+| Scenario | Confirmed outcome | Current implementation observation | Status / open question |
 | --- | --- | --- | --- |
-| Normal workflow | A saved overlay for an event is updated from the current plan even when the plan ID changes. | `buildServicePlanningPreview` and `findOverlayForServicePlanningCandidate`; weekly-plan regression test. | Confirmed by current request |
-| Repeated explicit action | Re-running either sync action reuses the same event overlays. | Shared Controller preview and `executeOverlaySyncStep`; repeat-sync regression coverage. | Confirmed by current request |
-| Manual change | A manual mapped-field edit remains until explicit sync; sync then applies the mapped plan value. | Overlay editor persists values directly; sync patch applies mapped fields. | Confirmed by current request |
-| Missing or ambiguous data | An exact event label is preferred. An ambiguous fuzzy match is not assigned arbitrarily. | Preview marks ambiguous matches as skipped with a reason. | Confirmed by current request |
-| Multiple participants | Split and repeated roles use distinct existing overlays; additional participants may use the existing clone/create path. | Claimed overlay IDs and ordered list matching. | Confirmed by current request |
-| Legacy data | Old source fields and overlays without those fields remain readable and match by event. | `OverlayInfo`, normalization, and legacy-data tests. No migration is required. | Confirmed by current request |
-| Persistence and live output | Updated values survive persistence and list order is unchanged; sync does not put an overlay on air. | Pouch writer and overlay reducer tests; Controller sync action path. | Confirmed by current request |
+| Same event in a later plan | Reuse the event/role overlay across plan occurrences, regardless of its previous plan association. | Matching does not use the legacy plan-source fields. | Confirmed by the product decision below. |
+| Manual edit to a mapped value | Keep it until explicit sync; then apply the current plan value. | The sync patch covers mapped `name`, `title`, and `event` fields. | Confirmed by the product decision below. |
+| Matching and ambiguity | No product decision specifies normalization, fuzzy fallback, tie handling, or which duplicate event entry to use. | Configured events use case/whitespace-normalized exact matching. Fuzzy matching is used only when no event is configured; equal best fuzzy matches are skipped. Repeated candidates claim available overlays in list order. | Unresolved; see Product decisions. |
+| No available match / repeated role | No product decision specifies whether sync may create or clone overlays. | The current path clones an exact-event template or creates a participant overlay when it finds no match. | Unresolved; see Product decisions. |
+| Active participant overlay | No product decision specifies whether sync should affect an overlay currently shown to the audience. | The sync path updates the reusable overlay list and writes persisted overlay documents when the Pouch database is available; this contract does not treat that implementation path as approval of the live-output outcome. | Unresolved; see Product decisions. |
 
 ## Product decisions
 
@@ -49,14 +35,23 @@ Operators maintain an ordered list of participant overlays and mapping rules. Th
   - **Approved behavior:** No. Event/role identity is reusable across plan occurrences.
   - **Why:** Weekly service plans routinely assign new people to the same ordered set of reusable roles.
   - **Material alternative rejected:** Treating a source association as ownership of one overlay by one plan occurrence.
-  - **Approval source/date:** Current product request, 2026-10-10.
+  - **Approval source/date:** Product-owner request, 2026-10-10.
   - **Affected workflow/contract:** Weekly service-plan overlay sync.
 - **Question/problem:** Should manually edited mapped values survive an explicit sync?
-  - **Approved behavior:** No. Manual values stay until an explicit action; explicit sync replaces mapped values with the current plan values.
+  - **Approved behavior:** No. Manual values remain until an explicit action; explicit sync replaces mapped values with the current plan values.
   - **Why:** Sync is an intentional operator action to refresh the current service.
   - **Material alternative rejected:** Preserve edited values across sync by comparing baselines and overrides.
-  - **Approval source/date:** Current product request, 2026-10-10.
+  - **Approval source/date:** Product-owner request, 2026-10-10.
   - **Affected workflow/contract:** Weekly service-plan overlay sync.
+- **Question/problem:** What matching policy should determine which saved overlay receives a participant's values?
+  - **Unresolved options:** Keep the current exact-event and fuzzy fallback rules, or require an explicit mapping/operator resolution when the configured event does not identify one overlay. The current rules can select a different saved record when labels collide or are incomplete; requiring resolution can leave a participant unsynced until an operator fixes the mapping.
+  - **Affected workflow/contract:** Weekly service-plan overlay sync.
+- **Question/problem:** May synchronization create or clone overlays when no unclaimed match is available?
+  - **Unresolved options:** Keep automatic template cloning/creation, which prepares more participants but adds saved overlays, or skip and require operators to create/map overlays first, which avoids automatic records but leaves those participants unsynced until setup is complete.
+  - **Affected workflow/contract:** Weekly service-plan overlay sync.
+- **Question/problem:** Should syncing an overlay that is currently being shown to the audience change the live output?
+  - **Unresolved options:** Keep sync scoped to saved overlays, or have a matching active overlay reflect the new mapped values immediately. The former avoids a service-time display change; the latter makes the on-air overlay reflect the updated plan without another operator action.
+  - **Affected workflow/contract:** Weekly service-plan overlay sync and live presentation.
 
 ## Implementation references
 
@@ -64,7 +59,10 @@ Operators maintain an ordered list of participant overlays and mapping rules. Th
 - Implementation: `client/src/integrations/servicePlanning/findBestOverlayMatch.ts`, `client/src/integrations/servicePlanning/buildServicePlanningPreview.ts`, `client/src/hooks/useServicePlanningImport.ts`, `client/src/hooks/useServicePlanningSync.ts`, `client/src/integrations/servicePlanning/servicePlanningOverlayClone.ts`
 - Tests: `client/src/integrations/servicePlanning/findBestOverlayMatch.test.ts`, `client/src/integrations/servicePlanning/buildServicePlanningPreview.test.ts`, `client/src/integrations/servicePlanning/servicePlanningOverlayClone.test.ts`, `client/src/hooks/useServicePlanningImport.test.ts`
 
-## Technical design notes (separate from product requirements)
+## Technical design notes (current implementation; not product requirements)
 
-- `servicePlanSource`, `servicePlanBaseline`, and `servicePlanOverrides` are retained in the persisted TypeScript shape for compatibility with old documents. Current synchronization neither creates nor consults baseline/override state, and source metadata never filters matches.
-- Updates are field patches against the latest Pouch document, so unrelated stored properties survive conflicts and concurrent changes.
+- Event labels are lowercased and repeated whitespace is collapsed before exact comparison. Fuzzy matching scores planning text against event labels only when the plan has no configured event label; equally scored best matches are treated as ambiguous and skipped.
+- Exact duplicate event labels resolve to the first available overlay in list order. The sync run excludes IDs already claimed by another candidate, so repeated roles can target distinct existing overlays.
+- Existing-overlay updates patch mapped fields (`name`, `title`, `event`) and leave other overlay properties intact. Preview and execution share the matcher; execution reads the current overlay list before acting.
+- If no match is found, the current implementation clones a matching event template or creates a participant overlay. Placement follows the existing clone/create path.
+- Legacy `servicePlanSource`, `servicePlanBaseline`, and `servicePlanOverrides` fields may remain in stored documents for compatibility. Current matching and explicit-sync behavior do not consult them.
