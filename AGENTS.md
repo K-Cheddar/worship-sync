@@ -43,6 +43,8 @@ The canonical repository skills are in `.agents/skills/`. Skills own detailed pr
 
 Research the repository first; do not ask about routine implementation details that code and existing patterns can answer. Clarify rather than guess when an unresolved decision could materially affect UX, architecture or data ownership, persisted or synchronized shapes, public contracts, backward compatibility, permissions or security, destructive behavior, or scope. Do not silently make consequential product or architecture decisions.
 
+Before behavior-affecting work, read the applicable [Feature Contract](docs/features/README.md) and complete the Product Decision Check in `$implementation-planning`. A consequential behavior is authorized by the current request, a confirmed applicable contract, or an explicit previous product-owner decision. Record consequential decisions in the affected contract. Existing code, tests, and agent-authored notes are evidence about implementation, not approval. If intent remains unresolved, pause only the dependent behavior change, ask with concrete options and tradeoffs, and continue independent authorized work. `$code-review` must block an unapproved product behavior change.
+
 ### Before and after behavior
 
 For substantive work, establish before coding and repeat in the handoff:

@@ -9,7 +9,7 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 
 ## Workflow
 
-1. Establish intended behavior from the task or PR description, acceptance criteria, AGENTS.md, and applicable domain guidance.
+1. Establish intended behavior from the task or PR description, acceptance criteria, applicable Feature Contracts in [`docs/features/`](../../../docs/features/README.md), AGENTS.md, and domain guidance. Distinguish confirmed product intent from current implementation behavior, draft contract text, and unresolved questions.
 2. Compare the implementation with its declared Before / After Behavior and unchanged adjacent behavior.
 3. Inspect the complete diff.
 4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
@@ -18,6 +18,18 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
 9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
+
+## Product approval check
+
+For every behavior-affecting change, ask:
+
+- Does it change what an existing action does, automate a manual step, restrict an operator, or change how data is replaced, preserved, skipped, deleted, matched, or sourced?
+- Is that behavior explicitly requested, supported by a confirmed applicable Feature Contract, or supported by an explicit previous product-owner decision?
+- Does it conflict with a confirmed contract or leave a consequential product choice unresolved?
+- Did implementation cleanup, a fallback, or a safeguard quietly redefine an operator workflow?
+- Do changed tests merely encode the implementation choice, or is there independent product authorization for the expectation?
+
+Current implementation, passing tests, and agent-authored notes are not product approval. A passing test does not validate the product decision behind it. Report an unapproved consequential behavior change as a **blocking finding**. Do not approve it until the intended behavior is established; where useful, continue reviewing unrelated parts of the change.
 
 For a substantial review involving async work, persistence, imports, previews, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for recurring failure shapes and adversarial scenarios; it supplements this workflow rather than replacing it.
 
