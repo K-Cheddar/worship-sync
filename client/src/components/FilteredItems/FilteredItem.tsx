@@ -14,7 +14,7 @@ import HighlightWords from "./HighlightWords";
 
 export const FILTERED_ITEM_GRID_COLUMNS =
   "grid gap-1 grid-cols-[20px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[20px_minmax(0,1fr)_15rem]";
-export const FILTERED_SONG_GRID_COLUMNS =
+export const FILTERED_DETAILS_GRID_COLUMNS =
   "grid gap-1 grid-cols-[20px_minmax(0,1fr)_9rem] md:gap-2 md:grid-cols-[20px_minmax(0,1fr)_21rem]";
 
 type FilteredItemProps = {
@@ -40,10 +40,11 @@ type FilteredItemProps = {
   addButtonLabel?: string;
   /** When false, hide delete controls even if `canMutateLibrary` is true. Default follows canMutateLibrary. */
   showDelete?: boolean;
-  /** Songs library: open read-only details, resources, and lyrics for this item. */
-  onViewSongSections?: () => void;
-  /** Use the wider action track needed by song controls. */
-  useSongGrid?: boolean;
+  /** Open the existing details viewer for this item. */
+  onViewDetails?: () => void;
+  viewDetailsAriaLabel?: string;
+  /** Use the wider action track needed by song and custom-item details. */
+  useDetailsGrid?: boolean;
 };
 
 const FilteredItem = ({
@@ -60,8 +61,9 @@ const FilteredItem = ({
   showAddButton,
   addButtonLabel = "Add to outline",
   showDelete,
-  onViewSongSections,
-  useSongGrid = false,
+  onViewDetails,
+  viewDetailsAriaLabel = "View song details",
+  useDetailsGrid = false,
 }: FilteredItemProps) => {
   const [justAdded, setJustAdded] = useState(false);
   const canAdd = showAddButton ?? canMutateLibrary;
@@ -101,8 +103,8 @@ const FilteredItem = ({
       <div
         className={cn(
           "flex flex-col gap-1 py-1 pl-4 pr-4 md:items-center md:gap-2",
-          useSongGrid
-            ? FILTERED_SONG_GRID_COLUMNS
+          useDetailsGrid
+            ? FILTERED_DETAILS_GRID_COLUMNS
             : FILTERED_ITEM_GRID_COLUMNS,
         )}
       >
@@ -167,16 +169,17 @@ const FilteredItem = ({
               variant="tertiary"
             />
           )}
-          {onViewSongSections && (
+          {onViewDetails && (
             <Button
               type="button"
-              onClick={onViewSongSections}
+              onClick={onViewDetails}
               svg={LayoutList}
               variant="tertiary"
               color="#22d3ee"
-              aria-label="View song details"
+              className="min-h-7"
+              aria-label={viewDetailsAriaLabel}
             >
-              View details
+              <span className="sr-only sm:not-sr-only">View details</span>
             </Button>
           )}
           {canAdd ? (

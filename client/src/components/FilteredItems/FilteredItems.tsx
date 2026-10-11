@@ -26,6 +26,7 @@ import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
 import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
+import ServicePlanCustomDocumentPreviewDialog from "../ServicePlanCustomDocumentPreviewDialog";
 import {
   getMatchForString,
   punctuationRegex,
@@ -180,9 +181,10 @@ const FilteredItems = ({
           ? "free"
           : "timer";
   const showExternalSearch = type === "song" || (type === "all" && effectiveFilter === "song");
-  const useSongGrid =
+  const useDetailsGrid =
     type === "song" ||
-    (type === "all" && (effectiveFilter === "all" || effectiveFilter === "song"));
+    type === "free" ||
+    (type === "all" && effectiveFilter !== "timer");
   const listForFilter = useMemo(() => {
     const supportedTypes = new Set(["song", "free", "timer"]);
     return list.filter(
@@ -355,6 +357,15 @@ const FilteredItems = ({
     );
     return doc ?? null;
   }, [viewSectionsSongId, allDocs, effectiveFilter, type]);
+  const [customItemForDetails, setCustomItemForDetails] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const customDocumentById = customItemForDetails
+    ? docsById.get(customItemForDetails.id)
+    : undefined;
+  const viewCustomDocument =
+    customDocumentById?.type === "free" ? customDocumentById : null;
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access, churchId } = useContext(GlobalInfoContext) || {};
@@ -746,12 +757,20 @@ const FilteredItems = ({
       showAddButton={allowAdd}
       showDelete={allowDelete}
       addButtonLabel={addButtonLabel}
-      useSongGrid={useSongGrid}
-      onViewSongSections={
-        item.type === "song" && (type !== "all" || effectiveFilter === "all" || effectiveFilter === "song")
-          ? () => setViewSectionsSongId(item._id)
+      useDetailsGrid={useDetailsGrid}
+      onViewDetails={
+        (item.type === "song" || item.type === "free") &&
+        (type !== "all" || effectiveFilter === "all" || effectiveFilter === item.type)
+          ? () => {
+            if (item.type === "song") {
+              setViewSectionsSongId(item._id);
+            } else {
+              setCustomItemForDetails({ id: item._id, name: item.name });
+            }
+          }
           : undefined
       }
+      viewDetailsAriaLabel={`View ${item.type === "song" ? "song" : "custom item"} details for ${item.name}`}
       libraryIndex={libraryIndex}
     />
   );
@@ -824,6 +843,15 @@ const FilteredItems = ({
         isOpen={Boolean(viewSectionsSongId && viewSongDoc)}
         searchHighlight={searchValue}
         onClose={() => setViewSectionsSongId(null)}
+      />
+      <ServicePlanCustomDocumentPreviewDialog
+        document={viewCustomDocument}
+        unavailableName={
+          customItemForDetails && !viewCustomDocument
+            ? customItemForDetails.name
+            : undefined
+        }
+        onClose={() => setCustomItemForDetails(null)}
       />
       <ViewExternalLyricsDrawer
         candidate={viewExternalLyricsCandidate}

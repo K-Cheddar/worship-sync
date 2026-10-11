@@ -30,7 +30,7 @@ import ServiceFlowRichText from "../../components/ServiceFlowRichText/ServiceFlo
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import ServicePlanLibraryPicker from "./ServicePlanLibraryPicker";
 import ServicePlanCustomDocumentPicker from "./ServicePlanCustomDocumentPicker";
-import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
+import ServicePlanCustomDocumentPreviewDialog from "../../components/ServicePlanCustomDocumentPreviewDialog";
 import ServicePlanScripturePopover from "./ServicePlanScripturePopover";
 import {
   DropdownMenu,

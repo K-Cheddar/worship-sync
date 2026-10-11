@@ -1,14 +1,24 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import store from "../../store/store";
 import { setActiveItemInList } from "../../store/itemListSlice";
+import { updateAllFreeFormDocs, updateAllSongDocs } from "../../store/allDocsSlice";
 import { getServiceFlowProgress } from "../../services/serviceFlowProgress";
+import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
+import { FloatingWindowZIndexProvider } from "../../components/FloatingWindow/FloatingWindowZIndexContext";
 import ControllerServicePlanView from "./ControllerServicePlanView";
 import { buildServicePlanFlowSnapshot } from "../buildServicePlanFlowSnapshot";
 import { getServicePlanLiveProgress } from "../Services/servicePlanLive";
 import { plainTextToRichText } from "../../types/richText";
-import type { ServicePlan } from "../../types/servicePlan";
+import type { DBItem } from "../../types";
+import type { ServicePlan, ServicePlanElement } from "../../types/servicePlan";
+
+jest.mock("../../hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
+}));
 
 const plan: ServicePlan = {
   planId: "plan-1",
@@ -77,14 +87,84 @@ const brandColors = {
   sectionBorderColor: "#06b6d4",
 };
 
-const renderWithStore = (ui: React.ReactElement) => render(
-  <Provider store={store}>{ui}</Provider>,
+const RouteProbe = () => {
+  const location = useLocation();
+  return <div data-testid="controller-route">{location.pathname}{location.search}</div>;
+};
+
+const TestProviders = ({ children }: { children: React.ReactNode }) => (
+  <Provider store={store}>
+    <MemoryRouter initialEntries={["/controller/service-planning"]}>
+      {children}
+    </MemoryRouter>
+  </Provider>
 );
 
+const renderWithStore = (ui: React.ReactElement) => render(ui, { wrapper: TestProviders });
+
+const renderInFloatingWindow = (ui: React.ReactNode) => render(
+  <Provider store={store}>
+    <MemoryRouter initialEntries={["/controller/service-planning"]}>
+      <FloatingWindowZIndexProvider>
+        <FloatingWindow
+          title="Service Plan"
+          onClose={jest.fn()}
+          resizable={false}
+          defaultWidth={760}
+          defaultHeight={620}
+        >
+          {ui}
+        </FloatingWindow>
+      </FloatingWindowZIndexProvider>
+    </MemoryRouter>
+  </Provider>,
+);
+
+const makePlanWithElement = (element: ServicePlanElement): ServicePlan => ({
+  ...plan,
+  sections: [{
+    ...plan.sections[0],
+    elements: [element],
+  }],
+});
+
+const makeSongDoc = (id: string, lyrics: string): DBItem => ({
+  _id: id,
+  name: "Same Song",
+  type: "song",
+  selectedArrangement: 0,
+  arrangements: [{
+    id: `arrangement-${id}`,
+    name: "Default",
+    formattedLyrics: [{
+      id: `verse-${id}`,
+      type: "Verse",
+      name: "Verse 1",
+      words: lyrics,
+    }],
+    songOrder: [{ id: `verse-${id}`, name: "Verse 1" }],
+    slides: [],
+  }],
+  slides: [],
+  songMetadata: {
+    source: "manual",
+    trackName: "Same Song",
+    artistName: `Artist for ${id}`,
+    importedAt: "2026-10-11T12:00:00.000Z",
+  },
+  songLinks: [{ id: `link-${id}`, label: "Tutorial", url: "https://example.test/tutorial" }],
+} as unknown as DBItem);
+
 describe("ControllerServicePlanView", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    store.dispatch(updateAllSongDocs([]));
+    store.dispatch(updateAllFreeFormDocs([]));
+  });
   afterEach(() => {
     jest.restoreAllMocks();
+    store.dispatch(updateAllSongDocs([]));
+    store.dispatch(updateAllFreeFormDocs([]));
   });
 
   it("keeps quiet roster roles selectable while rendering compact controller rows", async () => {
@@ -384,5 +464,381 @@ describe("ControllerServicePlanView", () => {
     await user.click(screen.getByRole("option", { name: "Presentation" }));
     expect(screen.queryByText("Vocal mic")).not.toBeInTheDocument();
     expect(screen.getByText("Shared safety note")).toBeInTheDocument();
+  });
+
+  it("opens current and legacy song attachments by their saved IDs in attachment order", async () => {
+    const user = userEvent.setup();
+    const firstSong = makeSongDoc("song-first", "Lyrics for song-first");
+    const secondSong = makeSongDoc("song-second", "Lyrics for song-second");
+    store.dispatch(updateAllSongDocs([firstSong, secondSong]));
+    const element: ServicePlanElement = {
+      id: "songs",
+      type: "song",
+      title: plainTextToRichText("Same Song"),
+      songRefs: [{
+        id: "legacy-song-first",
+        kind: "library",
+        songId: firstSong._id,
+        songName: firstSong.name,
+      }],
+      resources: [{
+        id: "current-song-second",
+        type: "song",
+        title: secondSong.name,
+        data: {
+          songRef: {
+            kind: "library",
+            songId: secondSong._id,
+            songName: secondSong.name,
+          },
+        },
+      }],
+      contentOrder: ["current-song-second", "legacy-song-first"],
+    };
+    const songPlan = makePlanWithElement(element);
+    const songSnapshot = buildServicePlanFlowSnapshot({
+      plan: songPlan,
+      startsAt: songPlan.startsAt!,
+    });
+    const outlineStateBefore = store.getState().itemList;
+    const dispatchSpy = jest.spyOn(store, "dispatch");
+
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={songPlan}
+        snapshot={songSnapshot}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", {
+      name: "View Song: Same Song (attachment 1 of 2)",
+    }));
+    expect(screen.getByRole("heading", { name: /Song details/ })).toBeInTheDocument();
+    expect(screen.getByText("Lyrics for song-second")).toBeInTheDocument();
+    expect(screen.getByText("Artist for song-second")).toBeInTheDocument();
+    expect(screen.getByText("Tutorial")).toBeInTheDocument();
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(store.getState().itemList).toBe(outlineStateBefore);
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", {
+      name: "View Song: Same Song (attachment 2 of 2)",
+    }));
+    expect(screen.getByText("Lyrics for song-first")).toBeInTheDocument();
+    expect(screen.queryByText("Lyrics for song-second")).not.toBeInTheDocument();
+  });
+
+  it("opens pending song lyrics and explains when a library song is missing", async () => {
+    const user = userEvent.setup();
+    const pendingElement: ServicePlanElement = {
+      id: "pending-song",
+      type: "song",
+      title: plainTextToRichText("Pending song"),
+      songRef: {
+        id: "pending-song-reference",
+        kind: "pending",
+        title: "Pending song",
+        lyricsText: "Attached pending lyrics",
+      },
+    };
+    const pendingPlan = makePlanWithElement(pendingElement);
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={pendingPlan}
+        snapshot={buildServicePlanFlowSnapshot({
+          plan: pendingPlan,
+          startsAt: pendingPlan.startsAt!,
+        })}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "View Song: Pending song" }));
+    expect(screen.getByRole("heading", { name: "Lyrics — Pending song" })).toBeInTheDocument();
+    expect(screen.getByText("Attached pending lyrics")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    const missingElement: ServicePlanElement = {
+      id: "missing-song",
+      type: "song",
+      title: plainTextToRichText("Missing song"),
+      songRef: {
+        kind: "library",
+        songId: "deleted-song-id",
+        songName: "Missing song",
+      },
+    };
+    const missingPlan = makePlanWithElement(missingElement);
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={missingPlan}
+        snapshot={buildServicePlanFlowSnapshot({
+          plan: missingPlan,
+          startsAt: missingPlan.startsAt!,
+        })}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "View Song: Missing song" }));
+    expect(screen.getByText("This song is no longer available in the song library."))
+      .toBeInTheDocument();
+  });
+
+  it("navigates scripture to the existing Bible route without changing the outline", async () => {
+    const user = userEvent.setup();
+    const scripturePlan = makePlanWithElement({
+      id: "scripture",
+      type: "free",
+      title: plainTextToRichText("Reading"),
+      resources: [{
+        id: "john-passage",
+        type: "scripture",
+        title: "John 3:16–18 (NKJV)",
+        data: {
+          scripture: {
+            id: "john-passage",
+            label: "John 3:16–18 (NKJV)",
+            book: "John",
+            chapter: "3",
+            verseRange: "16-18",
+            version: "NKJV",
+          },
+        },
+      }],
+    });
+    const outlineStateBefore = store.getState().itemList;
+    const dispatchSpy = jest.spyOn(store, "dispatch");
+
+    renderWithStore(
+      <>
+        <RouteProbe />
+        <ControllerServicePlanView
+          {...brandColors}
+          plan={scripturePlan}
+          snapshot={buildServicePlanFlowSnapshot({
+            plan: scripturePlan,
+            startsAt: scripturePlan.startsAt!,
+          })}
+          churchId="church-1"
+          controllerProfileId="presentation"
+        />
+      </>,
+    );
+
+    await user.click(screen.getByRole("button", {
+      name: "View Scripture: John 3:16–18 (NKJV)",
+    }));
+    expect(screen.getByTestId("controller-route"))
+      .toHaveTextContent("/controller/bible?book=John&chapter=3&verses=16-18&version=NKJV");
+    expect(store.getState().itemList).toBe(outlineStateBefore);
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it("opens each custom-document attachment by ID and shows an unavailable state", async () => {
+    const user = userEvent.setup();
+    const firstDocument = {
+      _id: "custom-document-first",
+      name: "Same Deck",
+      type: "free",
+      slides: [{
+        id: "slide-first",
+        name: "First document slide",
+        type: "Title",
+        boxes: [{ id: "box-first", words: "First document content", width: 80, height: 20, x: 10, y: 10 }],
+      }],
+    } as unknown as DBItem;
+    const secondDocument = {
+      _id: "custom-document-second",
+      name: "Same Deck",
+      type: "free",
+      slides: [{
+        id: "slide-second",
+        name: "Second document slide",
+        type: "Title",
+        boxes: [{ id: "box-second", words: "Second document content", width: 80, height: 20, x: 10, y: 10 }],
+      }],
+    } as unknown as DBItem;
+    store.dispatch(updateAllFreeFormDocs([firstDocument, secondDocument]));
+    const customPlan = makePlanWithElement({
+      id: "custom-documents",
+      type: "free",
+      title: plainTextToRichText("Welcome"),
+      resources: [
+        {
+          id: "custom-reference-first",
+          type: "custom-document",
+          title: "Same Deck",
+          data: { customDocumentId: firstDocument._id },
+        },
+        {
+          id: "custom-reference-second",
+          type: "custom-document",
+          title: "Same Deck",
+          data: { customDocumentId: secondDocument._id },
+        },
+      ],
+      contentOrder: ["custom-reference-second", "custom-reference-first"],
+    });
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={customPlan}
+        snapshot={buildServicePlanFlowSnapshot({
+          plan: customPlan,
+          startsAt: customPlan.startsAt!,
+        })}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", {
+      name: "View Custom document: Same Deck (attachment 1 of 2)",
+    }));
+    expect(screen.getByRole("dialog", { name: "Same Deck" })).toBeInTheDocument();
+    expect(screen.getByText("Second document slide")).toBeInTheDocument();
+    expect(screen.getByText("Second document content")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", {
+      name: "View Custom document: Same Deck (attachment 2 of 2)",
+    }));
+    expect(screen.getByText("First document slide")).toBeInTheDocument();
+    expect(screen.getByText("First document content")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    const missingPlan = makePlanWithElement({
+      id: "missing-custom",
+      type: "free",
+      title: plainTextToRichText("Welcome"),
+      resources: [{
+        id: "deleted-custom-reference",
+        type: "custom-document",
+        title: "Deleted slides",
+        data: { customDocumentId: "deleted-custom-document" },
+      }],
+    });
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={missingPlan}
+        snapshot={buildServicePlanFlowSnapshot({
+          plan: missingPlan,
+          startsAt: missingPlan.startsAt!,
+        })}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "View Custom document: Deleted slides" }));
+    expect(screen.getByRole("status"))
+      .toHaveTextContent("This custom document is no longer available in the library.");
+  });
+
+  it("keeps text and media resources on the established content preview", async () => {
+    const user = userEvent.setup();
+    const previewPlan = makePlanWithElement({
+      id: "preview-resources",
+      type: "free",
+      title: plainTextToRichText("Resources"),
+      resources: [
+        {
+          id: "notes-resource",
+          type: "text",
+          title: "Run notes",
+          data: { text: "Previewable text content" },
+        },
+        {
+          id: "image-resource",
+          type: "image",
+          title: "Backdrop",
+          url: "https://example.test/backdrop.png",
+        },
+        {
+          id: "scripture-link-resource",
+          type: "scripture",
+          title: "Scripture companion",
+          url: "https://example.test/scripture",
+        },
+      ],
+    });
+    renderWithStore(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={previewPlan}
+        snapshot={buildServicePlanFlowSnapshot({
+          plan: previewPlan,
+          startsAt: previewPlan.startsAt!,
+        })}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "View Notes: Run notes" }));
+    expect(screen.getByText("Previewable text content")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    await user.click(screen.getByRole("button", { name: "View Image: Backdrop" }));
+    expect(screen.getByRole("dialog", { name: "Backdrop" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "View Scripture: Scripture companion" }));
+    expect(screen.getByRole("dialog", { name: "Scripture companion" })).toBeInTheDocument();
+  });
+
+  it("keeps preview dialogs owned by the controller floating window and restores focus", async () => {
+    const user = userEvent.setup();
+    const customDocument: DBItem = {
+      _id: "floating-window-document",
+      name: "Floating window slides",
+      type: "free",
+      slides: [],
+    } as unknown as DBItem;
+    store.dispatch(updateAllFreeFormDocs([customDocument]));
+    const floatingPlan = makePlanWithElement({
+      id: "floating-window-preview",
+      type: "free",
+      title: plainTextToRichText("Welcome"),
+      resources: [{
+        id: "floating-window-reference",
+        type: "custom-document",
+        title: customDocument.name,
+        data: { customDocumentId: customDocument._id },
+      }],
+    });
+
+    renderInFloatingWindow(
+      <ControllerServicePlanView
+        {...brandColors}
+        plan={floatingPlan}
+        snapshot={buildServicePlanFlowSnapshot({
+          plan: floatingPlan,
+          startsAt: floatingPlan.startsAt!,
+        })}
+        churchId="church-1"
+        controllerProfileId="presentation"
+      />,
+    );
+
+    const trigger = screen.getByRole("button", {
+      name: "View Custom document: Floating window slides",
+    });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const overlayHost = screen.getByTestId("floating-window-overlay-host");
+    expect(within(overlayHost).getByRole("dialog", {
+      name: "Floating window slides",
+    })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(within(overlayHost).queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
