@@ -364,6 +364,8 @@ describe("BoardControllerContent", () => {
       bestEffortOnly: true,
       oauthConfigured: true,
       isOffline: false,
+      streamState: "connected",
+      streamFailure: null,
       feedState: "pending",
       reload: jest.fn(() => Promise.resolve()),
     });
@@ -794,6 +796,8 @@ describe("BoardControllerContent", () => {
       bestEffortOnly: true,
       oauthConfigured: true,
       isOffline: false,
+      streamState: "connected",
+      streamFailure: null,
       feedState: "empty",
       reload: jest.fn(() => Promise.resolve()),
     });
@@ -838,6 +842,8 @@ describe("BoardControllerContent", () => {
       bestEffortOnly: true,
       oauthConfigured: true,
       isOffline: false,
+      streamState: "connected",
+      streamFailure: null,
       feedState: "empty",
       reload: reloadRestream,
     });
@@ -1019,6 +1025,8 @@ describe("BoardControllerContent", () => {
       bestEffortOnly: true,
       oauthConfigured: true,
       isOffline: false,
+      streamState: "connected",
+      streamFailure: null,
       feedState: "has_messages",
       reload: jest.fn(() => Promise.resolve()),
     });
@@ -1059,6 +1067,8 @@ describe("BoardControllerContent", () => {
       bestEffortOnly: true,
       oauthConfigured: true,
       isOffline: false,
+      streamState: "connected",
+      streamFailure: null,
       feedState: "empty",
       reload: jest.fn(() => Promise.resolve()),
     });

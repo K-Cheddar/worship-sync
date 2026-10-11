@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { getApiBasePath } from "../../../utils/environment";
+import { useContext, useEffect, useRef, useState } from "react";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import {
+  connectAuthenticatedSse,
+  type AuthenticatedSseFailure,
+} from "../../../utils/authenticatedSse";
 import type { TeamSchedule } from "../../../api/authTypes";
 import type {
   ServicePlan,
@@ -37,6 +41,10 @@ export type TeamsLiveConnectionState =
   | "connected"
   | "disconnected"
   | "unavailable";
+
+export type TeamsLiveConnectionFailure =
+  | AuthenticatedSseFailure["kind"]
+  | null;
 
 /**
  * The union ends in an open `{ type: string; [key: string]: unknown }` member
@@ -80,10 +88,13 @@ export const useTeamsLiveSync = (
   churchId: string | null | undefined,
   onMessage: (event: TeamsStreamEvent) => void,
 ) => {
+  const authContext = useContext(GlobalInfoContext);
   const onMessageRef = useRef(onMessage);
   const [connectionState, setConnectionState] =
     useState<TeamsLiveConnectionState>("connecting");
   const [reconnectVersion, setReconnectVersion] = useState(0);
+  const [connectionFailure, setConnectionFailure] =
+    useState<TeamsLiveConnectionFailure>(null);
 
   useEffect(() => {
     onMessageRef.current = onMessage;
@@ -95,54 +106,67 @@ export const useTeamsLiveSync = (
     let disposed = false;
     setConnectionState("connecting");
     setReconnectVersion(0);
+    setConnectionFailure(null);
 
     if (!churchId) {
       setConnectionState("unavailable");
       return undefined;
     }
-    // Some runtimes (including older webviews) do not provide EventSource.
-    // Consumers can then use a bounded REST fallback when their snapshot ages.
-    if (typeof EventSource === "undefined") {
-      setConnectionState("unavailable");
-      return undefined;
-    }
-
-    const source = new EventSource(
-      `${getApiBasePath()}api/churches/${encodeURIComponent(churchId)}/teams/stream`,
-      { withCredentials: true },
+    const close = connectAuthenticatedSse(
+      `api/churches/${encodeURIComponent(churchId)}/teams/stream`,
+      {
+        onOpen: () => {
+          if (disposed) return;
+          if (hasOpened && interrupted) {
+            interrupted = false;
+            setReconnectVersion((version) => version + 1);
+          }
+          hasOpened = true;
+          setConnectionState("connected");
+          setConnectionFailure(null);
+        },
+        onError: (failure) => {
+          if (disposed) return;
+          setConnectionFailure(failure.kind);
+          if (
+            failure.kind === "authentication" ||
+            failure.kind === "permission" ||
+            (failure.kind === "http" && !failure.retryable) ||
+            failure.kind === "invalid-response"
+          ) {
+            setConnectionState("unavailable");
+            return;
+          }
+          interrupted = true;
+          setConnectionState("disconnected");
+        },
+        onMessage: (rawData) => {
+          if (disposed) return;
+          try {
+            const data = JSON.parse(rawData) as TeamsStreamEvent;
+            onMessageRef.current(data);
+          } catch {
+            onMessageRef.current({ type: "unknown" });
+          }
+        },
+      },
     );
-
-    source.onopen = () => {
-      if (disposed) return;
-      if (hasOpened && interrupted) {
-        interrupted = false;
-        setReconnectVersion((version) => version + 1);
-      }
-      hasOpened = true;
-      setConnectionState("connected");
-    };
-
-    source.onerror = () => {
-      if (disposed || !hasOpened || interrupted) return;
-      interrupted = true;
-      setConnectionState("disconnected");
-    };
-
-    source.onmessage = (event) => {
-      if (disposed) return;
-      try {
-        const data = JSON.parse(event.data) as TeamsStreamEvent;
-        onMessageRef.current(data);
-      } catch {
-        onMessageRef.current({ type: "unknown" });
-      }
-    };
 
     return () => {
       disposed = true;
-      source.close();
+      close();
     };
-  }, [churchId]);
+  }, [
+    authContext?.access,
+    authContext?.canViewTeams,
+    authContext?.device?.deviceId,
+    authContext?.loginState,
+    authContext?.permissions?.teams,
+    authContext?.role,
+    authContext?.sessionKind,
+    authContext?.userId,
+    churchId,
+  ]);
 
-  return { connectionState, reconnectVersion };
+  return { connectionState, connectionFailure, reconnectVersion };
 };
