@@ -682,6 +682,8 @@ export type TeamIntakeForm = {
   // form covers every team in the church (the public form groups by team either
   // way).
   teamIds: string[];
+  /** Missing legacy values are general intake and are never scoped-editable. */
+  purpose?: "general_intake" | "team_availability";
   active: boolean;
   /** Public fields selected by the form owner. Missing on legacy forms. */
   enabledFields?: TeamIntakeFieldId[];
@@ -714,6 +716,25 @@ export type TeamIntakeRecipient = {
   respondedAt?: string | null;
   submissionId?: string | null;
   revokedAt?: string | null;
+};
+
+export type TeamAvailabilityResponse = {
+  formId: string;
+  recipientId: string;
+  memberId: string;
+  respondedAt: string;
+  submittedAt: string;
+  occurrenceAvailability: Record<string, "available" | "unavailable">;
+};
+
+export type TeamAvailabilityManagementData = {
+  teams: TeamRecord[];
+  members: TeamRosterMember[];
+  forms: TeamIntakeForm[];
+  intakeRecipients: TeamIntakeRecipient[];
+  availabilityResponses: TeamAvailabilityResponse[];
+  /** Contact and consent details stay on the server; only eligibility is returned. */
+  smsEligibilityByMemberId: Record<string, { eligible: boolean }>;
 };
 
 export type SmsMemberEligibilityStatus =

@@ -139,6 +139,7 @@ export type TeamsNavCapabilities = {
   hasTeamsWorkspaceAccess: boolean;
   hasBroadTeamsReadAccess: boolean;
   canViewServices: boolean;
+  canManageTeamAvailability?: boolean;
 };
 
 /** One permission model for both navigation layouts and nested route guards. */
@@ -146,17 +147,31 @@ export const getAvailableTeamsNavSections = ({
   hasTeamsWorkspaceAccess,
   hasBroadTeamsReadAccess,
   canViewServices,
+  canManageTeamAvailability = false,
 }: TeamsNavCapabilities): TeamsNavSection[] => {
   if (!hasTeamsWorkspaceAccess && !canViewServices) return [];
 
-  return [
-    ...(hasTeamsWorkspaceAccess
-      ? teamsNavSections.filter(
-          (section) =>
-            hasBroadTeamsReadAccess ||
-            (section.routePath !== "forms" && section.routePath !== "messages"),
+  const availableTeamsSections = hasTeamsWorkspaceAccess
+    ? teamsNavSections
+        .filter((section) =>
+          hasBroadTeamsReadAccess ||
+          (section.routePath !== "messages" &&
+            (section.routePath !== "forms" || canManageTeamAvailability)),
         )
-      : []),
+        .map((section) =>
+          section.routePath === "forms" &&
+          !hasBroadTeamsReadAccess &&
+          canManageTeamAvailability
+            ? {
+                ...section,
+                label: "Availability",
+                description: "Collect service-date availability from your team.",
+              }
+            : section,
+        )
+    : [];
+  return [
+    ...availableTeamsSections,
     ...(canViewServices ? servicesNavSections : []),
   ];
 };

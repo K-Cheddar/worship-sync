@@ -1405,6 +1405,10 @@ app.get(
   authHandlers.getTeamsBootstrap,
 );
 app.get(
+  "/api/churches/:churchId/team-intake/availability",
+  authHandlers.getTeamAvailabilityManagementData,
+);
+app.get(
   "/api/churches/:churchId/service-time-zone",
   authHandlers.getChurchServiceTimeZone,
 );

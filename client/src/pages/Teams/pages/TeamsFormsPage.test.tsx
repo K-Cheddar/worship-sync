@@ -2,10 +2,12 @@ import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import type { TeamService } from "../../../api/authTypes";
 import { setServerTimeOffset } from "../../../utils/serverTime";
+import { getTeamAvailabilityManagementData } from "../../../api/auth";
 import { useTeamsPage } from "../TeamsPageContext";
 import TeamsFormsPage from "./TeamsFormsPage";
 
 jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
+jest.mock("../../../api/auth", () => ({ getTeamAvailabilityManagementData: jest.fn() }));
 jest.mock("../components/RangeSelector", () => ({
   __esModule: true,
   default: ({ range }: { range: { start: string; end: string } }) => (
@@ -14,14 +16,28 @@ jest.mock("../components/RangeSelector", () => ({
 }));
 jest.mock("../managers/IntakeManager", () => ({
   __esModule: true,
-  default: ({ listHeader }: { listHeader: ReactNode }) => <>{listHeader}</>,
+  default: ({
+    listHeader,
+    availabilityOnly,
+    managedTeamIds,
+    forms,
+    submissions,
+  }: {
+    listHeader: ReactNode;
+    availabilityOnly?: boolean;
+    managedTeamIds?: string[];
+    forms: { formId: string }[];
+    submissions: unknown[];
+  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output>{listHeader}</>,
 }));
 
 const mockUseTeamsPage = jest.mocked(useTeamsPage);
+const mockGetTeamAvailabilityManagementData = jest.mocked(getTeamAvailabilityManagementData);
 
 afterEach(() => {
   jest.useRealTimers();
   setServerTimeOffset(0);
+  jest.clearAllMocks();
 });
 
 describe("TeamsFormsPage period selection", () => {
@@ -56,5 +72,42 @@ describe("TeamsFormsPage period selection", () => {
     render(<TeamsFormsPage />);
 
     expect(screen.getByText("2026-11-01:2026-11-30")).toBeInTheDocument();
+  });
+
+  it("loads the purpose-built read for a selected-Team manager", async () => {
+    mockUseTeamsPage.mockReturnValue({
+      churchId: "church-1",
+      pageData: {
+        services: [],
+        intakeForms: [],
+        intakeSubmissions: [],
+        intakeRecipients: [],
+        smsEligibilityByMemberId: {},
+        smsDeliveryAttempts: [],
+        members: [],
+        positions: [],
+        teams: [{ teamId: "worship", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
+      },
+      canEditTeams: false,
+      canEditTeam: (teamId: string) => teamId === "worship",
+      canManageTeamAvailability: true,
+      upsertData: jest.fn(),
+    } as unknown as ReturnType<typeof useTeamsPage>);
+    mockGetTeamAvailabilityManagementData.mockResolvedValue({
+      success: true,
+      teams: [{ teamId: "worship", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
+      members: [{ memberId: "member-1", churchId: "church-1", firstName: "Rae", lastName: "Kim", positionIds: [], blockoutDates: [], teamMemberships: { worship: { teamId: "worship" } }, serviceAvailability: {} }],
+      forms: [{ formId: "availability-form", churchId: "church-1", purpose: "team_availability", name: "Upcoming", teamIds: ["worship"], startDate: "2026-10-11", endDate: "2026-10-25", responseDeadline: "2026-10-25", availabilityOccurrences: [], availabilityServices: [], active: true, enabledFields: ["availability"] }],
+      intakeRecipients: [],
+      availabilityResponses: [],
+      smsEligibilityByMemberId: { "member-1": { eligible: true } },
+    });
+
+    render(<TeamsFormsPage />);
+
+    expect(await screen.findByTestId("intake-manager-mode")).toHaveTextContent(
+      "availability:worship:forms=1:submissions=0",
+    );
+    expect(mockGetTeamAvailabilityManagementData).toHaveBeenCalledWith("church-1");
   });
 });

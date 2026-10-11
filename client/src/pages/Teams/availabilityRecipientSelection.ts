@@ -21,7 +21,7 @@ export const getAvailabilityRecipientRows = ({
   positions: TeamPosition[];
   teams: TeamRecord[];
   recipients: TeamIntakeRecipient[];
-  eligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  eligibilityByMemberId?: Record<string, Pick<SmsMemberEligibility, "eligible"> & Partial<Pick<SmsMemberEligibility, "status">>>;
   form: TeamIntakeForm | undefined;
   intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
 }) => {
@@ -50,6 +50,10 @@ export const getAvailabilityRecipientRows = ({
     } else if (intentType === "availability_reminder" && !recipient) {
       reason = "No response link";
     } else if (!eligibility.eligible) {
+      if (!eligibility.status) {
+        reason = "Not eligible for SMS";
+        return { member, memberTeamIds, recipient, eligibility, eligible: false, reason };
+      }
       reason = eligibility.status === "no_mobile" ? "No mobile number" : eligibility.status === "opted_out" ? "SMS opted out" : "SMS consent needed";
     }
     return { member, memberTeamIds, recipient, eligibility, eligible: Boolean(form) && !reason, reason };

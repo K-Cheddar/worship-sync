@@ -77,6 +77,22 @@ describe("available Teams and Services sections", () => {
     expect(sections.some(({ routePath }) => routePath === "messages")).toBe(false);
   });
 
+  it("shows scoped availability without the church-wide Messages section", () => {
+    const sections = getAvailableTeamsNavSections({
+      hasTeamsWorkspaceAccess: true,
+      hasBroadTeamsReadAccess: false,
+      canViewServices: false,
+      canManageTeamAvailability: true,
+    });
+
+    expect(sections.find(({ routePath }) => routePath === "forms")).toMatchObject({
+      label: "Availability",
+      description: "Collect service-date availability from your team.",
+    });
+    expect(sections.some(({ routePath }) => routePath === "messages")).toBe(false);
+    expect(sections.some(({ routePath }) => routePath === "services")).toBe(false);
+  });
+
   it("shows only Services when Teams access is not established", () => {
     expect(
       getAvailableTeamsNavSections({

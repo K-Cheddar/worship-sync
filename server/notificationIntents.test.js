@@ -19,11 +19,12 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, vali
   let nextId = 0;
   let providerCalls = 0;
   const nowIso = () => new Date().toISOString();
+  const responseDeadline = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const churchId = "church_a";
   const phoneNumber = "+14155550123";
   const form = {
     formId: "form_a", churchId, name: "October availability", startDate: "2026-10-01",
-    endDate: "2026-10-31", responseDeadline: "2026-10-10", active: true,
+    endDate: "2026-10-31", responseDeadline, active: true,
     enabledFields: ["availability"], teamIds: [], availabilityOccurrences: [{ occurrenceId: "occ_1" }],
   };
   const recipient = {
@@ -468,13 +469,13 @@ test("permission is checked again immediately before the provider send", async (
   let checks = 0;
   const h = createHarness({ requireTeamsEdit: async () => {
     checks += 1;
-    if (checks > 2) throw Object.assign(new Error("Teams edit permission is required."), { statusCode: 403 });
+    if (checks > 3) throw Object.assign(new Error("Teams edit permission is required."), { statusCode: 403 });
     return { user: { uid: "admin_a" } };
   } });
   const { intent } = await h.preview();
   const result = await h.send(intent.intentId);
   assert.equal(result.statusCode, 403);
-  assert.equal(checks, 3);
+  assert.equal(checks, 4);
   assert.equal(h.providerCalls, 0);
   assert.equal(h.storeFor("smsDeliveryAttempts").values().next().value.outcome, "not_sent");
 });

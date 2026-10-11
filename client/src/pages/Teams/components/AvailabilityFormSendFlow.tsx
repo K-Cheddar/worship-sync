@@ -28,6 +28,7 @@ const AvailabilityFormSendFlow = ({
   recipients,
   eligibilityByMemberId,
   onBatchUpdated,
+  privacySafe = false,
   onClose,
 }: {
   churchId: string;
@@ -36,11 +37,13 @@ const AvailabilityFormSendFlow = ({
   positions: TeamPosition[];
   teams: TeamRecord[];
   recipients: TeamIntakeRecipient[];
-  eligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  eligibilityByMemberId?: Record<string, Pick<SmsMemberEligibility, "eligible"> & Partial<Pick<SmsMemberEligibility, "status">>>;
+  privacySafe?: boolean;
   onBatchUpdated?: (batch: NotificationBatch) => void;
   onClose: () => void;
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [intentType, setIntentType] = useState<"availability_request" | "availability_reminder">("availability_request");
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,8 +87,8 @@ const AvailabilityFormSendFlow = ({
     recipients,
     eligibilityByMemberId,
     form,
-    intentType: "availability_request",
-  }), [activeMembers, eligibilityByMemberId, form, positions, recipients, teams]);
+    intentType,
+  }), [activeMembers, eligibilityByMemberId, form, intentType, positions, recipients, teams]);
   const reviewedBatch = activeBatch?.formId === form.formId && activeBatch.churchId === churchId ? activeBatch : null;
   const query = search.trim().toLocaleLowerCase();
   const visibleRows = rows.filter(({ member, memberTeamIds }) =>
@@ -97,9 +100,12 @@ const AvailabilityFormSendFlow = ({
   const visibleSelectionCount = visibleEligibleIds.filter((id) => selectedIds.includes(id)).length;
   const allVisibleSelected = visibleEligibleIds.length > 0 && visibleSelectionCount === visibleEligibleIds.length;
   const someVisibleSelected = visibleSelectionCount > 0 && !allVisibleSelected;
+  const formTeamIds = new Set(form.teamIds || []);
   const teamOptions = [
     { value: "", label: "All teams" },
-    ...teams.filter((team) => !team.archivedAt).map((team) => ({ value: team.teamId, label: team.name })),
+    ...teams
+      .filter((team) => !team.archivedAt && (!formTeamIds.size || formTeamIds.has(team.teamId)))
+      .map((team) => ({ value: team.teamId, label: team.name })),
   ];
 
   const reviewMessages = async () => {
@@ -113,7 +119,7 @@ const AvailabilityFormSendFlow = ({
       const batch = await prepareAvailabilityBatchForMembers({
         churchId,
         formId: requestedFormId,
-        intentType: "availability_request",
+        intentType,
         memberIds: selectedEligibleIds,
       });
       onBatchUpdated?.(batch);
@@ -167,11 +173,15 @@ const AvailabilityFormSendFlow = ({
   return (
     <section className="space-y-4 rounded-lg border border-sky-700 bg-gray-900/60 p-4" aria-labelledby="send-form-heading">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h2 id="send-form-heading" className="font-semibold text-white">Send form</h2><p className="text-sm text-gray-400">Choose members to receive {form.name} by SMS.</p></div>
+      <div><h2 id="send-form-heading" className="font-semibold text-white">{intentType === "availability_request" ? "Send form" : "Remind nonresponders"}</h2><p className="text-sm text-gray-400">Choose members to receive {form.name} by SMS.</p></div>
         <Button variant="textLink" disabled={busy} onClick={onClose}>Close</Button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Select label="Team" value={teamFilter} onChange={setTeamFilter} options={teamOptions} disabled={busy} />
+        <Select label="Message" value={intentType} onChange={(value) => { setIntentType(value as typeof intentType); updateSelectedIds([]); invalidateReview(); }} options={[
+          { value: "availability_request", label: "Request availability" },
+          { value: "availability_reminder", label: "Remind nonresponders" },
+        ]} disabled={busy} />
+        <Select label="Team" value={teamFilter} onChange={(value) => { setTeamFilter(value); invalidateReview(); }} options={teamOptions.map((option) => option.value === "" && privacySafe ? { ...option, label: "All managed Teams" } : option)} disabled={busy} />
         <Input label="Search members" value={search} onChange={(value) => setSearch(String(value))} placeholder="Search by name" disabled={busy} />
       </div>
       <div className="max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-950/50">
@@ -186,11 +196,11 @@ const AvailabilityFormSendFlow = ({
       <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-gray-400">{selectedEligibleIds.length ? `${selectedEligibleIds.length} eligible member${selectedEligibleIds.length === 1 ? "" : "s"} selected.` : "Select at least one eligible member to continue."}</p><Button disabled={busy || !selectedEligibleIds.length} isLoading={busy} onClick={() => void reviewMessages()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button></div>
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
       {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
-      {reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} onConfirm={() => setConfirmOpen(true)} /> : null}
-      <Modal isOpen={confirmOpen && Boolean(reviewedBatch)} onClose={() => setConfirmOpen(false)} title="Send this form?" description="Review who will receive this form by SMS." size="sm">
+      {reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} privacySafe={privacySafe} onConfirm={() => setConfirmOpen(true)} /> : null}
+      <Modal isOpen={confirmOpen && Boolean(reviewedBatch)} onClose={() => setConfirmOpen(false)} title={intentType === "availability_request" ? "Send this form?" : "Send availability reminders?"} description="Review who will receive this message by SMS." size="sm">
         {reviewedBatch ? <div className="space-y-4 text-sm text-gray-200">
           <p>Send {reviewedBatch.summary.eligible} messages for {form.name}? This will use {reviewedBatch.summary.totalSegments} SMS segments. Excluded members will not be contacted.</p>
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-gray-300">{reviewedBatch.recipients.filter(({ eligible }) => eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}</ul>
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-gray-300">{reviewedBatch.recipients.filter(({ eligible }) => eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {privacySafe ? recipient.maskedPhoneNumber || "Contact hidden" : recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}</ul>
           <div className="flex justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button><Button disabled={busy} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button></div>
         </div> : null}
       </Modal>

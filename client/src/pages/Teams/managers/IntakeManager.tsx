@@ -41,6 +41,7 @@ import type {
   SmsDeliveryAttempt,
   NotificationIntent,
   NotificationBatch,
+  TeamAvailabilityResponse,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -91,6 +92,10 @@ import {
 } from "../teamsSelectors";
 
 type IntakeManagerProps = {
+  availabilityOnly?: boolean;
+  managedTeamIds?: string[];
+  availabilityResponses?: TeamAvailabilityResponse[];
+  onAvailabilityRefresh?: () => void;
   forms: TeamIntakeForm[];
   displayForms?: TeamIntakeForm[];
   listHeader?: ReactNode;
@@ -99,7 +104,7 @@ type IntakeManagerProps = {
   smsEligibilityByMemberId?: Record<
     string,
     {
-      status: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
+      status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
       eligible: boolean;
     }
   >;
@@ -134,10 +139,12 @@ const IntakeFormDetails = ({
   startDate,
   endDate,
   submissionCount,
+  countLabel = "Submissions",
 }: {
   startDate: string;
   endDate: string;
   submissionCount: number;
+  countLabel?: string;
 }) => {
   const dateRange = formatPlainDateRangeLabel(startDate, endDate);
 
@@ -148,7 +155,7 @@ const IntakeFormDetails = ({
         {dateRange}
       </p>
       <p>
-        <span className="font-bold">Submissions: </span>
+        <span className="font-bold">{countLabel}: </span>
         {submissionCount}
       </p>
     </div>
@@ -202,6 +209,10 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
 });
 
 const IntakeManager = ({
+  availabilityOnly = false,
+  managedTeamIds = [],
+  availabilityResponses = [],
+  onAvailabilityRefresh,
   forms,
   displayForms,
   listHeader,
@@ -227,7 +238,15 @@ const IntakeManager = ({
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
-  const [draft, setDraft] = useState<TeamIntakeFormPayload>(emptyDraft);
+  const makeEmptyDraft = () => availabilityOnly
+    ? {
+        ...emptyDraft(),
+        purpose: "team_availability" as const,
+        teamIds: managedTeamIds.length === 1 ? [managedTeamIds[0]] : [],
+        enabledFields: ["availability"] as TeamIntakeFormPayload["enabledFields"],
+      }
+    : emptyDraft();
+  const [draft, setDraft] = useState<TeamIntakeFormPayload>(makeEmptyDraft);
   const [editing, setEditing] = useState<TeamIntakeForm | null>(null);
   const [selectedForm, setSelectedForm] = useState<TeamIntakeForm | null>(null);
   const [smsDeliveryAttempts, setSmsDeliveryAttempts] = useState<
@@ -298,13 +317,14 @@ const IntakeManager = ({
         teamIds: editing.teamIds || [],
         active: editing.active,
         enabledFields: resolveIntakeFormFields(editing),
+        purpose: editing.purpose || "general_intake",
         requireEmail: Boolean(editing.requireEmail),
         welcomeMessage: editing.welcomeMessage || "",
         positionsMessage: editing.positionsMessage || "",
         availabilityMessage: editing.availabilityMessage || "",
         notesMessage: editing.notesMessage || "",
       }))
-    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(emptyDraft()));
+    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(makeEmptyDraft()));
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const closePanel = () => {
@@ -315,7 +335,7 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const openCreate = () => {
@@ -326,7 +346,7 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const openFormSubmissions = (form: TeamIntakeForm) => {
@@ -337,7 +357,7 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const openFormEditor = (form: TeamIntakeForm) => {
@@ -363,6 +383,7 @@ const IntakeManager = ({
       positionsMessage: form.positionsMessage || "",
       availabilityMessage: form.availabilityMessage || "",
       notesMessage: form.notesMessage || "",
+      purpose: form.purpose || "general_intake",
     });
   };
 
@@ -374,7 +395,7 @@ const IntakeManager = ({
     setShowEditForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const handlePanelBack = () => {
@@ -504,6 +525,11 @@ const IntakeManager = ({
         : [];
     return {
       ...draft,
+      purpose: availabilityOnly
+        ? "team_availability"
+        : draft.purpose || "general_intake",
+      enabledFields: availabilityOnly ? ["availability"] : draft.enabledFields,
+      requireEmail: availabilityOnly ? false : draft.requireEmail,
       responseDeadline: draft.responseDeadline || draft.endDate,
       availabilityOccurrences,
     };
@@ -515,7 +541,15 @@ const IntakeManager = ({
       showToast("Name and date range are required.", "neutral");
       return;
     }
+    if (availabilityOnly && !draft.teamIds.length) {
+      showToast("Choose at least one Team for this availability form.", "neutral");
+      return;
+    }
     const payload = buildPayload();
+    if (availabilityOnly && !payload.availabilityOccurrences.length) {
+      showToast("Choose at least one service date for this availability form.", "neutral");
+      return;
+    }
     setSaving(true);
     try {
       if (editing) {
@@ -529,7 +563,7 @@ const IntakeManager = ({
         setShowEditForm(false);
         setShowSendForm(false);
         setEditing(null);
-        setDraft(emptyDraft());
+        setDraft(makeEmptyDraft());
       } else {
         const response = await createTeamIntakeForm(churchId, payload);
         onFormSaved(response.form);
@@ -544,7 +578,7 @@ const IntakeManager = ({
         setShowEditForm(false);
         setShowSendForm(false);
         setEditing(null);
-        setDraft(emptyDraft());
+        setDraft(makeEmptyDraft());
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this intake form.");
@@ -586,7 +620,12 @@ const IntakeManager = ({
       if (!existingForm) return;
       openFormEditor(existingForm);
       setPreserveSuggestedOccurrences(true);
-      setDraft(upcomingAvailabilitySuggestion.draft);
+      setDraft(availabilityOnly ? {
+        ...upcomingAvailabilitySuggestion.draft,
+        purpose: "team_availability",
+        teamIds: managedTeamIds.length === 1 ? [managedTeamIds[0]] : [],
+        enabledFields: ["availability"],
+      } : upcomingAvailabilitySuggestion.draft);
       return;
     }
     resetRecipientSelection();
@@ -596,7 +635,12 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(true);
     setEditing(null);
-    setDraft(upcomingAvailabilitySuggestion.draft);
+    setDraft(availabilityOnly ? {
+      ...upcomingAvailabilitySuggestion.draft,
+      purpose: "team_availability",
+      teamIds: managedTeamIds.length === 1 ? [managedTeamIds[0]] : [],
+      enabledFields: ["availability"],
+    } : upcomingAvailabilitySuggestion.draft);
   };
 
   const refreshFormMessageState = useCallback((formId: string) => {
@@ -1388,7 +1432,7 @@ const IntakeManager = ({
       />
       {editing ? (
         <p className="px-1 text-sm text-gray-300">
-          <span className="font-bold">Submissions: </span>
+          <span className="font-bold">{availabilityOnly ? "Responses: " : "Submissions: "}</span>
           {editing.submissionCount || 0}
         </p>
       ) : null}
@@ -1417,28 +1461,32 @@ const IntakeManager = ({
         onCheckedChange={(active) => setDraft((d) => ({ ...d, active }))}
         labelClassName="text-sm"
       />
-      <EntityMultiSelect
-        label="Fields to include"
-        description="Choose exactly what people will see on this public form."
-        showSearch={false}
-        options={INTAKE_FORM_FIELD_OPTIONS.map((field) => ({
-          id: field.id,
-          label: field.label,
-        }))}
-        value={draft.enabledFields || []}
-        onChange={(enabledFields) =>
-          setDraft((current) => ({
-            ...current,
-            enabledFields:
-              enabledFields as TeamIntakeFormPayload["enabledFields"],
-          }))
-        }
-        emptyText="No fields selected."
-      />
+      {!availabilityOnly ? (
+        <EntityMultiSelect
+          label="Fields to include"
+          description="Choose exactly what people will see on this public form."
+          showSearch={false}
+          options={INTAKE_FORM_FIELD_OPTIONS.map((field) => ({
+            id: field.id,
+            label: field.label,
+          }))}
+          value={draft.enabledFields || []}
+          onChange={(enabledFields) =>
+            setDraft((current) => ({
+              ...current,
+              enabledFields:
+                enabledFields as TeamIntakeFormPayload["enabledFields"],
+            }))
+          }
+          emptyText="No fields selected."
+        />
+      ) : null}
       <EntityMultiSelect
         label="Teams to collect for"
-        description="Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."
-        options={teams.map((team) => ({
+        description={availabilityOnly
+          ? "Choose one or more Teams you manage. Availability forms always have an explicit Team scope."
+          : "Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."}
+        options={teams.filter((team) => !availabilityOnly || managedTeamIds.includes(team.teamId)).map((team) => ({
           id: team.teamId,
           label: team.name,
           archived: Boolean(team.archivedAt),
@@ -1451,8 +1499,10 @@ const IntakeManager = ({
         <p className="text-sm text-gray-300">Availability services: {draft.availabilityServices.map(({ name }) => name).join(", ") || "None"}</p>
       ) : (
         <EntityMultiSelect
-          label="Show services for availability"
-          description="Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."
+          label={availabilityOnly ? "Service dates" : "Show services for availability"}
+          description={availabilityOnly
+            ? "Choose upcoming service dates. People will mark whether they are available for each date."
+            : "Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."}
           options={availabilityServiceOptions.map((option) => ({
             id: option.id,
             label: option.label,
@@ -1484,7 +1534,7 @@ const IntakeManager = ({
           }
         />
       )}
-      <fieldset className="space-y-3">
+      {!availabilityOnly ? <fieldset className="space-y-3">
         <legend className="p-1 text-sm font-semibold">Form wording</legend>
         <p className="px-1 text-xs text-gray-400">
           Customize what people read on the public form. Leave a field blank to
@@ -1530,7 +1580,8 @@ const IntakeManager = ({
           }
         />
       </fieldset>
-      {editing && canEdit ? (
+        : null}
+      {editing && canEdit && !availabilityOnly ? (
         <Button
           variant="secondary"
           svg={Clipboard}
@@ -1613,10 +1664,12 @@ const IntakeManager = ({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-100">
-              Individual links and manual SMS
+              {availabilityOnly ? "Personalized availability links" : "Individual links and manual SMS"}
             </h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-400">
-              For offline sharing or one-off SMS. Use Send form above for the normal invitation workflow.
+              {availabilityOnly
+                ? "Create private links to share, or use Send form to review and manually send SMS requests."
+                : "For offline sharing or one-off SMS. Use Send form above for the normal invitation workflow."}
             </p>
           </div>
           <Button
@@ -1635,11 +1688,11 @@ const IntakeManager = ({
           <span>Responded <strong className="text-gray-200">{intakeMessageCounts.responded}</strong></span>
           <span>Waiting <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
         </div>
-        {intakeMessageCounts.failed || intakeMessageCounts.uncertain || intakeMessageCounts.optedOut ? (
+        {intakeMessageCounts.failed || intakeMessageCounts.uncertain || (!availabilityOnly && intakeMessageCounts.optedOut) ? (
           <p className="text-xs text-amber-200">{[
             intakeMessageCounts.failed ? `${intakeMessageCounts.failed} failed` : "",
             intakeMessageCounts.uncertain ? `${intakeMessageCounts.uncertain} uncertain` : "",
-            intakeMessageCounts.optedOut ? `${intakeMessageCounts.optedOut} opted out` : "",
+            !availabilityOnly && intakeMessageCounts.optedOut ? `${intakeMessageCounts.optedOut} opted out` : "",
           ].filter(Boolean).join(" · ")}</p>
         ) : null}
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -1690,26 +1743,32 @@ const IntakeManager = ({
               const latestIntent = recipientIntents[0];
               const latestDeliveryStatus = latestSmsAttempt?.status || latestIntent?.attemptStatus;
               const latestDeliveryOutcome = latestSmsAttempt?.outcome || latestIntent?.attemptOutcome;
-              const smsStatus = recipient?.respondedAt
-                ? "Responded"
-                : smsEligibility.status === "no_mobile"
-                  ? "No mobile number"
-                  : smsEligibility.status === "consent_needed"
-                    ? "SMS consent needed"
-                    : smsEligibility.status === "opted_out"
-                      ? "SMS opted out"
-                      : latestDeliveryStatus === "delivered"
-                        ? "Delivered"
-                      : latestDeliveryStatus === "failed" ||
-                            latestDeliveryStatus === "undelivered" || latestIntent?.status === "failed"
-                          ? "Failed"
-                          : latestDeliveryOutcome === "unknown" || latestIntent?.status === "unknown"
-                            ? "Delivery uncertain"
-                          : latestDeliveryStatus === "pending"
-                            ? "Sending"
-                            : latestSmsAttempt || latestIntent?.status === "sent"
-                              ? "Sent"
-                              : "Ready to send";
+              const deliveryStatus = latestDeliveryStatus === "delivered"
+                ? "Delivered"
+                : latestDeliveryStatus === "failed" ||
+                    latestDeliveryStatus === "undelivered" || latestIntent?.status === "failed"
+                  ? "Failed"
+                  : latestDeliveryOutcome === "unknown" || latestIntent?.status === "unknown"
+                    ? "Delivery uncertain"
+                    : latestDeliveryStatus === "pending"
+                      ? "Sending"
+                      : latestSmsAttempt || latestIntent?.status === "sent"
+                        ? "Sent"
+                        : "";
+              let smsStatus = "Ready to send";
+              if (availabilityOnly) {
+                smsStatus = deliveryStatus || (smsEligibility.eligible ? "SMS ready" : "Not eligible for SMS");
+              } else if (recipient?.respondedAt) {
+                smsStatus = "Responded";
+              } else if (smsEligibility.status === "no_mobile") {
+                smsStatus = "No mobile number";
+              } else if (smsEligibility.status === "consent_needed") {
+                smsStatus = "SMS consent needed";
+              } else if (smsEligibility.status === "opted_out") {
+                smsStatus = "SMS opted out";
+              } else {
+                smsStatus = deliveryStatus || smsStatus;
+              }
               const status = recipient?.revokedAt
                 ? "Revoked"
                 : recipient?.respondedAt
@@ -1730,7 +1789,7 @@ const IntakeManager = ({
                     }
                   />
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span
+                    {!availabilityOnly ? <span
                       className={cn(
                         "rounded border px-1.5 py-0.5",
                         status === "Responded"
@@ -1741,7 +1800,7 @@ const IntakeManager = ({
                       )}
                     >
                       {status}
-                    </span>
+                    </span> : null}
                     <span
                       className={cn(
                         "rounded border px-1.5 py-0.5",
@@ -1763,7 +1822,7 @@ const IntakeManager = ({
                     {latestIntent?.status === "unknown" ? <span className="text-amber-200">Delivery uncertain</span> : null}
                     {recipient && !recipient.revokedAt ? (
                       <>
-                        <Button
+                        {!availabilityOnly ? <Button
                           variant="textLink"
                           padding="px-0 py-0"
                           disabled={
@@ -1782,7 +1841,7 @@ const IntakeManager = ({
                           onClick={() => void sendRecipientSms(recipient)}
                         >
                           Send SMS
-                        </Button>
+                        </Button> : null}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="textLink" isLoading={recipientActionKey === recipient.recipientId}>More</Button>
@@ -1804,6 +1863,80 @@ const IntakeManager = ({
                 </div>
               );
             })}
+          </div>
+        )}
+      </section>
+    );
+  };
+
+  const renderAvailabilityTracking = () => {
+    if (!activeSelectedForm) return null;
+    const activeRecipients = selectedFormRecipients.filter((recipient) => !recipient.revokedAt);
+    const responded = activeRecipients.filter((recipient) => Boolean(recipient.respondedAt));
+    const outstandingCount = activeRecipients.length - responded.length;
+    const responseByRecipientId = new Map(
+      availabilityResponses
+        .filter((response) => response.formId === activeSelectedForm.formId)
+        .map((response) => [response.recipientId, response]),
+    );
+    const occurrences = activeSelectedForm.availabilityOccurrences || [];
+
+    return (
+      <section className="space-y-3" aria-labelledby="availability-response-heading">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 id="availability-response-heading" className="font-semibold text-white">Availability responses</h3>
+            <p className="mt-1 text-sm text-gray-300">
+              {activeRecipients.length} requested · {responded.length} responded · {outstandingCount} outstanding
+            </p>
+          </div>
+          <Button variant="textLink" disabled={recipientBusy || saving} onClick={onAvailabilityRefresh}>
+            Refresh status
+          </Button>
+        </div>
+        {activeRecipients.length === 0 ? (
+          <p className="rounded-md border border-gray-700 p-4 text-sm text-gray-300">No personalized requests yet. Select Team members below to create private links or prepare an SMS request.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-gray-700">
+            <table className="min-w-full border-collapse text-left text-sm">
+              <thead className="bg-gray-900 text-xs text-gray-300">
+                <tr>
+                  <th scope="col" className="sticky left-0 min-w-44 bg-gray-900 px-3 py-2">Team member</th>
+                  <th scope="col" className="min-w-32 px-3 py-2">Response</th>
+                  {occurrences.map((occurrence) => (
+                    <th key={occurrence.occurrenceId} scope="col" className="min-w-36 px-3 py-2">
+                      {occurrence.name} · {occurrence.serviceDate || formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {activeRecipients.map((recipient) => {
+                  const member = activeMembers.find((item) => item.memberId === recipient.memberId);
+                  const response = responseByRecipientId.get(recipient.recipientId);
+                  return (
+                    <tr key={recipient.recipientId}>
+                      <th scope="row" className="sticky left-0 bg-gray-950 px-3 py-2 font-medium text-white">
+                        {memberName(member || null)}
+                      </th>
+                      <td className="px-3 py-2 text-gray-300">
+                        {recipient.respondedAt
+                          ? `Responded ${new Date(recipient.respondedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                          : "Waiting"}
+                      </td>
+                      {occurrences.map((occurrence) => {
+                        const value = response?.occurrenceAvailability[occurrence.occurrenceId];
+                        return (
+                          <td key={occurrence.occurrenceId} className="px-3 py-2 text-gray-300">
+                            {value === "available" ? "Available" : value === "unavailable" ? "Unavailable" : "No answer"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
@@ -1985,9 +2118,11 @@ const IntakeManager = ({
         onOpenCreate={openCreate}
         canEdit={canEdit}
         title={panelTitle}
-        sectionTitle="Intake forms"
-        description="Share intake forms and review submissions."
-        createLabel="Create intake form"
+        sectionTitle={availabilityOnly ? "Availability" : "Intake forms"}
+        description={availabilityOnly
+          ? "Collect Team availability for upcoming services."
+          : "Share intake forms and review submissions."}
+        createLabel={availabilityOnly ? "Create availability form" : "Create intake form"}
         formHeaderActions={
           panelOpen ? (
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2022,7 +2157,7 @@ const IntakeManager = ({
         list={
           <>
             {listHeader}
-            {lastCreatedPublicUrl && canEdit && !panelOpen ? (
+            {lastCreatedPublicUrl && canEdit && !availabilityOnly && !panelOpen ? (
               <div className="mb-3 rounded-md border border-emerald-400/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
                 <p className="font-semibold">New public link ready.</p>
                 <Button
@@ -2071,10 +2206,10 @@ const IntakeManager = ({
               </section>
             ) : null}
             {forms.length === 0 ? (
-              <p className="text-sm text-gray-300">No intake forms yet.</p>
+              <p className="text-sm text-gray-300">{availabilityOnly ? "No availability forms yet." : "No intake forms yet."}</p>
             ) : null}
             {forms.length > 0 && visibleForms.length === 0 ? (
-              <p className="text-sm text-gray-300">No intake forms match this date range.</p>
+              <p className="text-sm text-gray-300">{availabilityOnly ? "No availability forms match this date range." : "No intake forms match this date range."}</p>
             ) : null}
             {visibleForms.map((form) => (
               <EntityRow
@@ -2090,6 +2225,7 @@ const IntakeManager = ({
                       startDate={form.startDate}
                       endDate={form.endDate}
                       submissionCount={form.submissionCount || 0}
+                      countLabel={availabilityOnly ? "Responses" : "Submissions"}
                     />
                   ) : undefined
                 }
@@ -2107,7 +2243,7 @@ const IntakeManager = ({
                 }
                 archived={Boolean(form.archivedAt)}
                 actions={
-                  form.active && canEdit ? (
+                  form.active && canEdit && !availabilityOnly ? (
                     <Button
                       variant="tertiary"
                       svg={Clipboard}
@@ -2149,7 +2285,21 @@ const IntakeManager = ({
         {showingEditForm
           ? renderEditForm()
           : activeSelectedForm
-            ? renderSubmissionsPanel()
+            ? availabilityOnly
+              ? <div className="space-y-5">{renderAvailabilityTracking()}{renderRecipientSection()}{showSendForm && activeSelectedForm.active ? <AvailabilityFormSendFlow
+                  key={`${churchId}:${activeSelectedForm.formId}`}
+                  churchId={churchId}
+                  form={activeSelectedForm}
+                  members={members}
+                  positions={positions}
+                  teams={teams}
+                  recipients={intakeRecipients}
+                  eligibilityByMemberId={smsEligibilityByMemberId}
+                  privacySafe
+                  onBatchUpdated={handleAvailabilityBatchUpdated}
+                  onClose={() => setShowSendForm(false)}
+                /> : null}</div>
+              : renderSubmissionsPanel()
             : null}
       </CreatePanel>
       {recipientSmsPreview ? <SmsConfirmationModal

@@ -3838,6 +3838,46 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const isBroadTeamsEditor = (admin) =>
+    admin?.role === "admin" || admin?.permissions?.teams === "edit";
+
+  // Availability forms are the only intake resources a selected-Team editor
+  // may manage. Their scope is explicit and every Team is revalidated against
+  // the current church roster and current edit permissions on each request.
+  const requireTeamAvailabilityFormEdit = async (req, churchId, form) => {
+    if (!form || form.churchId !== churchId) {
+      throw httpError(404, "Availability form not found.");
+    }
+    if (form.purpose !== "team_availability") {
+      return {
+        admin: await requireTeamsEdit(req, churchId),
+        scoped: false,
+      };
+    }
+    if (!Array.isArray(form.teamIds)) {
+      throw httpError(403, "Availability form access required.");
+    }
+    const teamIds = normalizeIdArray(form.teamIds);
+    if (
+      !teamIds.length ||
+      teamIds.length !== form.teamIds.length ||
+      form.teamIds.some((teamId) => typeof teamId !== "string" || !teamId.trim())
+    ) {
+      throw httpError(403, "Availability forms must have an explicit Team scope.");
+    }
+    const teams = await Promise.all(
+      teamIds.map((teamId) => getDoc(COLLECTIONS.teams, teamId)),
+    );
+    if (teams.some((team) => !team || team.churchId !== churchId || team.archivedAt)) {
+      throw httpError(403, "Availability form access required.");
+    }
+    let admin = null;
+    for (const teamId of teamIds) {
+      admin = await requireTeamsEditForTeam(req, churchId, teamId);
+    }
+    return { admin, scoped: !isBroadTeamsEditor(admin) };
+  };
+
   // Drop a member from the given teams' rosters. The mirror of
   // `addMemberToTeams`; returns the team ids whose roster actually changed.
   const removeMemberFromTeams = async ({
@@ -6152,10 +6192,42 @@ export const createTeamsAuthHandlers = ({
       body?.teamIds !== undefined
         ? normalizeIdArray(body.teamIds)
         : existing?.teamIds || [];
+    const rawTeamIds = body?.teamIds !== undefined
+      ? body.teamIds
+      : existing?.teamIds || [];
+    const purpose = String(
+      body?.purpose ?? existing?.purpose ?? "general_intake",
+    ).trim();
+    if (!["general_intake", "team_availability"].includes(purpose)) {
+      throw httpError(400, "Choose a supported form purpose.");
+    }
+    if (
+      existing &&
+      body?.purpose !== undefined &&
+      purpose !== (existing.purpose || "general_intake")
+    ) {
+      throw httpError(400, "A form's purpose cannot be changed after creation.");
+    }
     const enabledFields = normalizeTeamIntakeFields(
       body?.enabledFields,
       existing?.enabledFields,
     );
+    if (purpose === "team_availability") {
+      if (
+        !Array.isArray(rawTeamIds) ||
+        !teamIds.length ||
+        teamIds.length !== rawTeamIds.length ||
+        rawTeamIds.some((teamId) => typeof teamId !== "string" || !teamId.trim())
+      ) {
+        throw httpError(400, "Choose at least one Team for this availability form.");
+      }
+      if (!availabilityOccurrences.length) {
+        throw httpError(400, "Choose at least one service date for this availability form.");
+      }
+      if (enabledFields.length !== 1 || enabledFields[0] !== "availability") {
+        throw httpError(400, "Availability forms can collect service-date availability only.");
+      }
+    }
     const responseDeadline = assertPlainDate(
       body?.responseDeadline ?? existing?.responseDeadline ?? endDate,
       "Response deadline",
@@ -6174,6 +6246,7 @@ export const createTeamsAuthHandlers = ({
       availabilityServices,
       availabilityOccurrences,
       teamIds,
+      purpose,
       enabledFields,
       active: Boolean(body?.active ?? existing?.active),
       // Every selected member-detail field is required on the public form.
@@ -6896,6 +6969,43 @@ export const createTeamsAuthHandlers = ({
     now = nowIso(),
   }) => {
     const formBelongsToChurch = Boolean(form && form.churchId === churchId);
+    if (formBelongsToChurch && form.purpose === "team_availability") {
+      if (createMember) {
+        throw httpError(400, "Availability responses can only update an existing Team member.");
+      }
+      const member = await assertTeamEntityInChurch("member", memberId, churchId, {
+        label: "Member",
+        active: false,
+      });
+      const serviceAvailability = replaceServiceAvailabilityForForm({
+        existingAvailability: member.serviceAvailability,
+        replacementAvailability: normalizeServiceAvailability(
+          submission.occurrenceAvailability,
+        ),
+        form,
+      });
+      await setDoc(
+        COLLECTIONS.teamRosterMembers,
+        member.memberId,
+        {
+          serviceAvailability,
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        },
+        { merge: true },
+      );
+      return {
+        member: await getTeamEntity("member", member.memberId),
+        updatedTeams: [],
+        application: {
+          status: "applied",
+          appliedAt: now,
+          appliedByUid: adminUserId,
+          appliedMemberId: member.memberId,
+          appliedMemberCreated: false,
+        },
+      };
+    }
     const formCollectsBlockouts =
       formBelongsToChurch &&
       Boolean(form.startDate && form.endDate) &&
@@ -7219,6 +7329,14 @@ export const createTeamsAuthHandlers = ({
         updatedAt: submittedAt,
         updatedByUid: adminUserId,
       };
+      const availabilityOnly = form.purpose === "team_availability";
+      const memberPatch = availabilityOnly
+        ? {
+            serviceAvailability: nextServiceAvailability,
+            updatedAt: submittedAt,
+            updatedByUid: adminUserId,
+          }
+        : memberUpdate;
 
       // All reads are complete before any write. Firestore retries this whole
       // callback when another process changes one of these documents, so the
@@ -7233,8 +7351,8 @@ export const createTeamsAuthHandlers = ({
           .doc(submissionId),
         submission,
       });
-      transaction.set(memberRef, memberUpdate, { merge: true });
-      for (const teamSnapshot of teamSnapshots) {
+      transaction.set(memberRef, memberPatch, { merge: true });
+      for (const teamSnapshot of availabilityOnly ? [] : teamSnapshots) {
         if (!teamSnapshot.exists) continue;
         const team = teamSnapshot.data();
         if (
@@ -9166,6 +9284,16 @@ export const createTeamsAuthHandlers = ({
     teams,
   }) => {
     const formTeamIds = new Set(normalizeIdArray(form.teamIds));
+    if (form?.purpose === "team_availability") {
+      if (!formTeamIds.size) return false;
+      return teams.some((team) =>
+        formTeamIds.has(team.teamId) &&
+        team.churchId === form.churchId &&
+        !team.archivedAt &&
+        Array.isArray(team.memberIds) &&
+        team.memberIds.includes(member.memberId),
+      );
+    }
     if (formTeamIds.size === 0) return true;
     const positionTeamById = new Map(
       positions.map((position) => [position.positionId, position.teamId]),
@@ -9182,6 +9310,44 @@ export const createTeamsAuthHandlers = ({
     return [...formTeamIds].some((teamId) => memberTeamIds.has(teamId));
   };
 
+  const isAvailabilityRecipientInFormScope = async ({
+    churchId,
+    formId,
+    recipientId,
+    memberId,
+  }) => {
+    const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+    if (
+      !recipient ||
+      recipient.churchId !== churchId ||
+      recipient.formId !== formId ||
+      (memberId && recipient.memberId !== memberId)
+    ) return false;
+    const [form, member] = await Promise.all([
+      getDoc(COLLECTIONS.teamIntakeForms, formId),
+      getDoc(COLLECTIONS.teamRosterMembers, recipient.memberId),
+    ]);
+    if (
+      !form ||
+      form.churchId !== churchId ||
+      form.purpose !== "team_availability" ||
+      !member ||
+      member.churchId !== churchId ||
+      member.archivedAt
+    ) return false;
+    const teams = await listTeamCollectionForChurch(
+      COLLECTIONS.teams,
+      "teamId",
+      churchId,
+    );
+    return assertMemberWithinIntakeFormScope({
+      form,
+      member,
+      positions: [],
+      teams,
+    });
+  };
+
   const prepareAvailabilityNotificationRecipients = async ({
     churchId,
     formId,
@@ -9193,6 +9359,9 @@ export const createTeamsAuthHandlers = ({
     if (!form || form.churchId !== churchId || form.archivedAt) {
       throw httpError(404, "Intake form not found.");
     }
+    // The caller's request guard authorizes the form. This independent roster
+    // check ensures every requested member still belongs to a Team in its
+    // explicit scope when notification recipients are materialized.
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
     const enabledFields = normalizeTeamIntakeFields(
@@ -9365,6 +9534,16 @@ export const createTeamsAuthHandlers = ({
       );
     }
     const { form, member } = await getTeamIntakeRecipientContext(recipient);
+    if (form.purpose === "team_availability") {
+      const teams = await listTeamCollectionForChurch(
+        COLLECTIONS.teams,
+        "teamId",
+        intent.churchId,
+      );
+      if (!assertMemberWithinIntakeFormScope({ form, member, positions: [], teams })) {
+        throw httpError(409, "The recipient is no longer on a Team in this availability form.");
+      }
+    }
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
     if (recipient.revokedAt)
@@ -10076,6 +10255,8 @@ export const createTeamsAuthHandlers = ({
     prepareAvailabilityNotificationRecipients,
     resolveAvailabilityNotificationContext,
     resolveScheduleNotificationContext,
+    requireTeamAvailabilityFormEdit,
+    isAvailabilityRecipientInFormScope,
     async exportPortableData(req, res) {
       try {
         const churchId = String(req.params.churchId || "").trim();
@@ -12686,21 +12867,292 @@ export const createTeamsAuthHandlers = ({
     },
 
     /**
+     * Purpose-built read for the Team availability workflow. It returns only
+     * active roster identity, SMS eligibility booleans, and the requested
+     * service-date answers for forms every editable Team in the form scope.
+     */
+    async getTeamAvailabilityManagementData(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        let broadAdmin = null;
+        try {
+          broadAdmin = await requireTeamsEdit(req, churchId);
+        } catch {
+          // Scoped Team editors are admitted below using the same per-Team
+          // guard used by the rest of the Teams workspace.
+        }
+        const allTeams = await listTeamCollectionForChurch(
+          COLLECTIONS.teams,
+          "teamId",
+          churchId,
+        );
+        const activeTeams = allTeams.filter(
+          (team) => team && team.churchId === churchId && !team.archivedAt,
+        );
+        const editableTeams = broadAdmin
+          ? activeTeams
+          : await Promise.all(
+              activeTeams.map(async (team) =>
+                (await canEditTeamForRequest(req, churchId, team.teamId))
+                  ? team
+                  : null,
+              ),
+            ).then((teams) => teams.filter(Boolean));
+        if (!editableTeams.length) {
+          throw httpError(403, "Team edit access required.");
+        }
+        const editableTeamIds = new Set(
+          editableTeams.map((team) => team.teamId),
+        );
+        const teamById = new Map(activeTeams.map((team) => [team.teamId, team]));
+        const [allForms, allMembers] = await Promise.all([
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeForms,
+            "formId",
+            churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamRosterMembers,
+            "memberId",
+            churchId,
+          ),
+        ]);
+        const forms = allForms.filter((form) => {
+          if (form?.purpose !== "team_availability" || form.churchId !== churchId) {
+            return false;
+          }
+          const teamIds = Array.isArray(form.teamIds)
+            ? normalizeIdArray(form.teamIds)
+            : [];
+          return teamIds.length > 0 && teamIds.every((teamId) =>
+            teamById.has(teamId) && editableTeamIds.has(teamId),
+          );
+        });
+        const formById = new Map(forms.map((form) => [form.formId, form]));
+        const memberById = new Map(
+          allMembers
+            .filter((member) => member && member.churchId === churchId && !member.archivedAt)
+            .map((member) => [member.memberId, member]),
+        );
+        const memberTeamsById = new Map();
+        const memberIds = new Set();
+        const authorizedTeams = editableTeams.map((team) => {
+          const rosterMemberIds = [];
+          for (const memberId of Array.isArray(team.memberIds) ? team.memberIds : []) {
+            if (!memberById.has(memberId)) continue;
+            memberIds.add(memberId);
+            rosterMemberIds.push(memberId);
+            const teamIds = memberTeamsById.get(memberId) || new Set();
+            teamIds.add(team.teamId);
+            memberTeamsById.set(memberId, teamIds);
+          }
+          return {
+            teamId: team.teamId,
+            churchId,
+            name: team.name || "Team",
+            memberIds: rosterMemberIds,
+          };
+        });
+        const recipients = await queryDocs(
+          COLLECTIONS.teamIntakeRecipients,
+          [{ field: "churchId", value: churchId }],
+          { limit: TEAM_COLLECTION_QUERY_LIMIT },
+        );
+        const scopedRecipients = recipients.filter((recipient) => {
+          const form = formById.get(recipient.formId);
+          const memberTeamIds = memberTeamsById.get(recipient.memberId);
+          return Boolean(
+            form &&
+            recipient.churchId === churchId &&
+            memberById.has(recipient.memberId) &&
+            memberTeamIds &&
+            form.teamIds.some((teamId) => memberTeamIds.has(teamId)),
+          );
+        });
+        const submissionIds = [...new Set(
+          scopedRecipients.map((recipient) => recipient.submissionId).filter(Boolean),
+        )];
+        const submissions = await Promise.all(
+          submissionIds.map((submissionId) =>
+            getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId),
+          ),
+        );
+        const submissionById = new Map(
+          submissions.filter(Boolean).map((submission) => [submission.submissionId, submission]),
+        );
+        const occurrenceIdsByMember = new Map();
+        for (const form of forms) {
+          const scopedTeamIds = normalizeIdArray(form.teamIds);
+          const occurrenceIds = (form.availabilityOccurrences || [])
+            .map((occurrence) => occurrence?.occurrenceId)
+            .filter(Boolean);
+          for (const memberId of memberIds) {
+            const memberTeamIds = memberTeamsById.get(memberId) || new Set();
+            if (!scopedTeamIds.some((teamId) => memberTeamIds.has(teamId))) continue;
+            const allowed = occurrenceIdsByMember.get(memberId) || new Set();
+            occurrenceIds.forEach((occurrenceId) => allowed.add(occurrenceId));
+            occurrenceIdsByMember.set(memberId, allowed);
+          }
+        }
+        const projectedMembers = [...memberIds].map((memberId) => {
+          const member = memberById.get(memberId);
+          const availability = {};
+          const allowedOccurrenceIds = occurrenceIdsByMember.get(memberId) || new Set();
+          for (const occurrenceId of allowedOccurrenceIds) {
+            const value = member.serviceAvailability?.[occurrenceId];
+            if (value === "available" || value === "unavailable") {
+              availability[occurrenceId] = value;
+            }
+          }
+          return {
+            memberId,
+            churchId,
+            firstName: member.firstName || "",
+            lastName: member.lastName || "",
+            positionIds: [],
+            blockoutDates: [],
+            teamMemberships: Object.fromEntries(
+              [...(memberTeamsById.get(memberId) || [])].map((teamId) => [teamId, { teamId }]),
+            ),
+            serviceAvailability: availability,
+          };
+        });
+        const eligibility = await buildSmsEligibilityByMemberId(
+          churchId,
+          [...memberIds].map((memberId) => memberById.get(memberId)),
+        );
+        const projectedRecipients = scopedRecipients.map((recipient) => ({
+          recipientId: recipient.recipientId,
+          churchId,
+          formId: recipient.formId,
+          memberId: recipient.memberId,
+          createdAt: recipient.createdAt || "",
+          respondedAt: recipient.respondedAt || null,
+          revokedAt: recipient.revokedAt || null,
+          linkCopiedAt: recipient.linkCopiedAt || null,
+        }));
+        const projectedForms = forms.map((form) => ({
+          formId: form.formId,
+          churchId,
+          name: form.name || "Availability form",
+          startDate: form.startDate,
+          endDate: form.endDate,
+          responseDeadline: form.responseDeadline || form.endDate,
+          availabilityServices: form.availabilityServices || [],
+          availabilityOccurrences: form.availabilityOccurrences || [],
+          teamIds: normalizeIdArray(form.teamIds),
+          purpose: "team_availability",
+          active: Boolean(form.active),
+          enabledFields: ["availability"],
+          availabilityMessage: form.availabilityMessage || "",
+          archivedAt: form.archivedAt || null,
+          createdAt: form.createdAt || "",
+          updatedAt: form.updatedAt || "",
+          submissionCount: scopedRecipients.filter(
+            (recipient) => recipient.formId === form.formId && recipient.respondedAt,
+          ).length,
+        }));
+        const availabilityResponses = scopedRecipients.flatMap((recipient) => {
+          if (!recipient.respondedAt || !recipient.submissionId) return [];
+          const submission = submissionById.get(recipient.submissionId);
+          const form = formById.get(recipient.formId);
+          if (
+            !submission ||
+            !form ||
+            submission.churchId !== churchId ||
+            submission.formId !== recipient.formId ||
+            (submission.appliedMemberId || submission.memberId) !== recipient.memberId
+          ) return [];
+          const allowedIds = new Set(
+            (form.availabilityOccurrences || [])
+              .map((occurrence) => occurrence?.occurrenceId)
+              .filter(Boolean),
+          );
+          const availability = Object.fromEntries(
+            Object.entries(submission.occurrenceAvailability || {}).filter(
+              ([occurrenceId, value]) =>
+                allowedIds.has(occurrenceId) &&
+                (value === "available" || value === "unavailable"),
+            ),
+          );
+          return [{
+            formId: recipient.formId,
+            recipientId: recipient.recipientId,
+            memberId: recipient.memberId,
+            respondedAt: recipient.respondedAt,
+            submittedAt: submission.submittedAt || recipient.respondedAt,
+            occurrenceAvailability: availability,
+          }];
+        });
+        const smsEligibilityByMemberId = Object.fromEntries(
+          [...memberIds].map((memberId) => [memberId, {
+            eligible: Boolean(eligibility[memberId]?.eligible),
+          }]),
+        );
+        await Promise.all(editableTeams.map(async (team) => {
+          const currentTeam = await getDoc(COLLECTIONS.teams, team.teamId);
+          if (!currentTeam || currentTeam.churchId !== churchId || currentTeam.archivedAt) {
+            throw httpError(403, "Team availability access changed. Reload this page.");
+          }
+          await requireTeamsEditForTeam(req, churchId, team.teamId);
+        }));
+        await Promise.all(forms.map(async (form) => {
+          const currentForm = await getDoc(COLLECTIONS.teamIntakeForms, form.formId);
+          await requireTeamAvailabilityFormEdit(req, churchId, currentForm);
+        }));
+        return res.json({
+          success: true,
+          teams: authorizedTeams,
+          members: projectedMembers,
+          forms: projectedForms,
+          intakeRecipients: projectedRecipients,
+          availabilityResponses,
+          smsEligibilityByMemberId,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load Team availability.",
+        );
+      }
+    },
+
+    /**
      * Delivery history is loaded only for the intake form the operator opened.
      * Recipient IDs scope legacy attempts that predate the stored formId, while
      * the church filter keeps the query tenant-safe and indexable.
      */
     async getTeamIntakeSmsAttempts(req, res) {
       try {
-        await requireBroadTeamsView(req, req.params.churchId);
+        let broadAccessError = null;
+        try {
+          await requireBroadTeamsView(req, req.params.churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          broadAccessError = error;
+        }
         const form = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
         );
-        if (!form || form.churchId !== req.params.churchId) {
+        if (form && form.churchId !== req.params.churchId) {
+          if (broadAccessError) throw broadAccessError;
           throw httpError(404, "Intake form not found.");
         }
-        const recipients = await queryDocs(
+        let scoped = false;
+        if (!form) {
+          if (broadAccessError) throw broadAccessError;
+        } else if (form.purpose === "team_availability") {
+          ({ scoped } = await requireTeamAvailabilityFormEdit(
+            req,
+            req.params.churchId,
+            form,
+          ));
+        } else if (broadAccessError) {
+          throw broadAccessError;
+        }
+        const loadedRecipients = await queryDocs(
           COLLECTIONS.teamIntakeRecipients,
           [
             { field: "churchId", value: req.params.churchId },
@@ -12708,7 +13160,16 @@ export const createTeamsAuthHandlers = ({
           ],
           { limit: TEAM_COLLECTION_QUERY_LIMIT },
         );
-        const recipientIds = recipients
+        const visibleRecipients = scoped
+          ? (await Promise.all(loadedRecipients.map(async (recipient) =>
+              await isAvailabilityRecipientInFormScope({
+                churchId: req.params.churchId,
+                formId: form.formId,
+                recipientId: recipient.recipientId || recipient.id,
+              }) ? recipient : null,
+            ))).filter(Boolean)
+          : loadedRecipients;
+        const recipientIds = visibleRecipients
           .map((recipient) =>
             String(recipient.recipientId || recipient.id || "").trim(),
           )
@@ -12730,9 +13191,23 @@ export const createTeamsAuthHandlers = ({
         const uniqueAttempts = new Map(
           attempts.map((attempt) => [attempt.attemptId || attempt.id, attempt]),
         );
+        const recipientById = new Map(visibleRecipients.map((recipient) => [
+          recipient.recipientId || recipient.id,
+          recipient,
+        ]));
+        const scopedAttempts = scoped
+          ? [...uniqueAttempts.values()].filter((attempt) => {
+              const recipient = recipientById.get(attempt.recipientId);
+              return Boolean(
+                recipient &&
+                attempt.memberId === recipient.memberId &&
+                (!attempt.formId || attempt.formId === form.formId),
+              );
+            })
+          : [...uniqueAttempts.values()];
         return res.json({
           success: true,
-          attempts: [...uniqueAttempts.values()]
+          attempts: scopedAttempts
             .sort(
               (a, b) =>
                 new Date(b.createdAt || 0).getTime() -
@@ -14194,10 +14669,14 @@ export const createTeamsAuthHandlers = ({
     async createTeamIntakeForm(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = validateTeamIntakeFormPayload(req.body);
+        const { admin, scoped } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          { ...payload, churchId: req.params.churchId },
+        );
         const formId = createId("teamIntakeForm");
         const publicLinkToken = createTeamIntakeShortPublicToken();
-        const payload = validateTeamIntakeFormPayload(req.body);
         const now = nowIso();
         const form = {
           ...payload,
@@ -14222,9 +14701,19 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({
           success: true,
-          form: sanitizeTeamIntakeFormForAdmin(form, 0),
-          publicToken: publicLinkToken,
-          publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
+          form: scoped
+            ? (() => {
+                const safeForm = sanitizeTeamIntakeFormForAdmin(form, 0);
+                delete safeForm.publicUrl;
+                return safeForm;
+              })()
+            : sanitizeTeamIntakeFormForAdmin(form, 0),
+          ...(!scoped
+            ? {
+                publicToken: publicLinkToken,
+                publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
+              }
+            : {}),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -14238,7 +14727,6 @@ export const createTeamsAuthHandlers = ({
     async updateTeamIntakeForm(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const existing = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
@@ -14246,7 +14734,19 @@ export const createTeamsAuthHandlers = ({
         if (!existing || existing.churchId !== req.params.churchId) {
           throw httpError(404, "Intake form not found.");
         }
+        const { admin, scoped } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          existing,
+        );
         const payload = validateTeamIntakeFormPayload(req.body, existing);
+        if (payload.purpose === "team_availability") {
+          await requireTeamAvailabilityFormEdit(
+            req,
+            req.params.churchId,
+            { ...existing, ...payload },
+          );
+        }
         const update = {
           ...payload,
           updatedAt: nowIso(),
@@ -14268,7 +14768,13 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({
           success: true,
-          form: sanitizeTeamIntakeFormForAdmin(nextForm),
+          form: scoped
+            ? (() => {
+                const safeForm = sanitizeTeamIntakeFormForAdmin(nextForm);
+                delete safeForm.publicUrl;
+                return safeForm;
+              })()
+            : sanitizeTeamIntakeFormForAdmin(nextForm),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -14327,7 +14833,6 @@ export const createTeamsAuthHandlers = ({
     async createTeamIntakeRecipients(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const form = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
@@ -14335,6 +14840,11 @@ export const createTeamsAuthHandlers = ({
         if (!form || form.churchId !== req.params.churchId) {
           throw httpError(404, "Intake form not found.");
         }
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
         assertTeamIntakeFormIsOpen(form);
         const memberIds = normalizeIdArray(req.body?.memberIds).slice(0, 500);
         if (memberIds.length === 0) {
@@ -14378,16 +14888,21 @@ export const createTeamsAuthHandlers = ({
             throw httpError(404, "Member not found or archived.");
           }
           if (formTeamIds.size > 0) {
-            const memberTeamIds = new Set([
-              ...Object.keys(member.teamMemberships || {}),
-              ...(member.positionIds || [])
-                .map((positionId) => positionTeamById.get(positionId))
-                .filter(Boolean),
-              ...teams
-                .filter((team) => (team.memberIds || []).includes(memberId))
-                .map((team) => team.teamId),
-            ]);
-            if (![...formTeamIds].some((teamId) => memberTeamIds.has(teamId))) {
+            const isWithinScope = form.purpose === "team_availability"
+              ? assertMemberWithinIntakeFormScope({ form, member, positions, teams })
+              : (() => {
+                  const memberTeamIds = new Set([
+                    ...Object.keys(member.teamMemberships || {}),
+                    ...(member.positionIds || [])
+                      .map((positionId) => positionTeamById.get(positionId))
+                      .filter(Boolean),
+                    ...teams
+                      .filter((team) => (team.memberIds || []).includes(memberId))
+                      .map((team) => team.teamId),
+                  ]);
+                  return [...formTeamIds].some((teamId) => memberTeamIds.has(teamId));
+                })();
+            if (!isWithinScope) {
               throw httpError(
                 400,
                 "One or more selected members are outside this form's team scope.",
@@ -14498,7 +15013,6 @@ export const createTeamsAuthHandlers = ({
     async getTeamIntakeRecipientLink(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const recipient = await getDoc(
           COLLECTIONS.teamIntakeRecipients,
           req.params.recipientId,
@@ -14512,6 +15026,26 @@ export const createTeamsAuthHandlers = ({
             requireTokenHash: false,
           },
         );
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
+        if (
+          form.purpose === "team_availability" &&
+          !assertMemberWithinIntakeFormScope({
+            form,
+            member,
+            positions: [],
+            teams: await listTeamCollectionForChurch(
+              COLLECTIONS.teams,
+              "teamId",
+              req.params.churchId,
+            ),
+          })
+        ) {
+          throw httpError(404, "Individual request not found.");
+        }
         const markCopied = req.body?.markCopied === true;
         const copiedAt = nowIso();
         const ensured = await ensureTeamIntakeRecipientToken(
@@ -14565,7 +15099,19 @@ export const createTeamsAuthHandlers = ({
     async sendTeamIntakeRecipientSms(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
         enforceRateLimit({
           scope: "team-intake-sms-send",
           key: `${req.params.churchId}:${admin.user.uid}:${req.params.recipientId}`,
@@ -14579,7 +15125,10 @@ export const createTeamsAuthHandlers = ({
             "The shared volunteer message dispatcher is unavailable.",
           );
         }
-        return await sendTeamIntakeNotificationIntent(req, res);
+        return await sendTeamIntakeNotificationIntent({
+          ...req,
+          params: { ...req.params, formId: form.formId },
+        }, res);
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -14592,7 +15141,19 @@ export const createTeamsAuthHandlers = ({
     async prepareTeamIntakeRecipientSms(req, res) {
       try {
         await assertCsrf(req);
-        await requireTeamsEdit(req, req.params.churchId);
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (
+          !recipient ||
+          recipient.churchId !== req.params.churchId ||
+          recipient.formId !== req.params.formId
+        ) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+        await requireTeamAvailabilityFormEdit(req, req.params.churchId, form);
         if (typeof prepareTeamIntakeNotificationIntent !== "function") {
           throw httpError(
             503,
@@ -14612,12 +15173,32 @@ export const createTeamsAuthHandlers = ({
     async revokeTeamIntakeRecipient(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const recipient = await getDoc(
           COLLECTIONS.teamIntakeRecipients,
           req.params.recipientId,
         );
         if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
+        if (
+          form.purpose === "team_availability" &&
+          !assertMemberWithinIntakeFormScope({
+            form,
+            member: { memberId: recipient.memberId },
+            positions: [],
+            teams: await listTeamCollectionForChurch(
+              COLLECTIONS.teams,
+              "teamId",
+              req.params.churchId,
+            ),
+          })
+        ) {
           throw httpError(404, "Individual request not found.");
         }
         const revokedAt = nowIso();

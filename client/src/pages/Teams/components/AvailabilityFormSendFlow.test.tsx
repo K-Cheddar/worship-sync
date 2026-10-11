@@ -160,3 +160,59 @@ it("clears a reviewed batch when the form context changes while mounted", async 
   await waitFor(() => expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument());
   expect(screen.getByRole("status")).toHaveTextContent("Form changed");
 });
+
+it("uses a scoped team list and keeps contact details and link tokens out of scoped review", async () => {
+  const user = userEvent.setup();
+  const scopedMember: TeamRosterMember = {
+    memberId: member.memberId,
+    churchId: member.churchId,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    positionIds: [],
+    blockoutDates: [],
+    teamMemberships: { worship: { teamId: "worship" } },
+  };
+  const scopedBatch: NotificationBatch = {
+    ...batch,
+    recipients: [{
+      memberId: member.memberId,
+      memberName: "Rae Kim",
+      maskedPhoneNumber: "â€¢â€¢â€¢ â€¢â€¢â€¢ 1234",
+      phoneNumberSnapshot: member.phoneNumber,
+      eligible: true,
+      intentId: "intent-1",
+      status: "ready",
+      segmentCount: 1,
+      message: "Respond at [private response link]",
+    }],
+  };
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: scopedBatch });
+  render(<AvailabilityFormSendFlow
+    churchId="church-1"
+    form={{ ...form, purpose: "team_availability", enabledFields: ["availability"] }}
+    members={[scopedMember]}
+    positions={[]}
+    teams={[{ teamId: "worship", churchId: "church-1", name: "Worship", memberIds: [member.memberId] }, { teamId: "av", churchId: "church-1", name: "AV", memberIds: [] }]}
+    recipients={[]}
+    eligibilityByMemberId={{ [member.memberId]: { eligible: true } }}
+    privacySafe
+    onClose={jest.fn()}
+  />);
+
+  await user.click(screen.getByRole("combobox", { name: /Team:/ }));
+  expect(screen.getByRole("option", { name: "All managed Teams" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Worship" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "AV" })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("checkbox", { name: "Rae Kim" }));
+  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  await user.click(await screen.findByText("View message"));
+  expect(await screen.findByText("Respond at [private response link]")).toBeInTheDocument();
+  expect(screen.queryByText(/private-token/)).not.toBeInTheDocument();
+  expect(screen.queryByText(member.phoneNumber!)).not.toBeInTheDocument();
+  expect(screen.getByText(/Contact hidden|â€¢â€¢â€¢ â€¢â€¢â€¢ 1234/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
+  const confirmation = screen.getByRole("dialog");
+  expect(confirmation).not.toHaveTextContent(member.phoneNumber!);
+  expect(confirmation).toHaveTextContent(/1234/);
+});

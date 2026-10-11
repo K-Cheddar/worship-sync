@@ -61,6 +61,7 @@ import type {
   TeamQualificationLevel,
   TeamRole,
   TeamIntakeForm,
+  TeamAvailabilityManagementData,
   TeamIntakePreview,
   TeamIntakeRecipient,
   SmsDeliveryAttempt,
@@ -1362,6 +1363,7 @@ export type TeamIntakeFormPayload = {
   availabilityServices: TeamIntakeForm["availabilityServices"];
   availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
   teamIds: string[];
+  purpose?: TeamIntakeForm["purpose"];
   active: boolean;
   enabledFields?: TeamIntakeForm["enabledFields"];
   requireEmail?: boolean;
@@ -1395,6 +1397,11 @@ export type TeamIntakeSubmissionPayload = {
 export const getTeamsBootstrap = async (churchId: string) =>
   apiFetch<TeamsBootstrap>(
     `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
+  );
+
+export const getTeamAvailabilityManagementData = async (churchId: string) =>
+  apiFetch<TeamAvailabilityManagementData & { success: boolean }>(
+    `api/churches/${churchId}/team-intake/availability`,
   );
 
 export const getNotificationIntents = async (
@@ -1586,8 +1593,8 @@ export const createTeamIntakeForm = async (
   apiFetch<{
     success: boolean;
     form: TeamIntakeForm;
-    publicToken: string;
-    publicUrl: string;
+    publicToken?: string;
+    publicUrl?: string;
   }>(`api/churches/${churchId}/team-intake/forms`, {
     method: "POST",
     body: JSON.stringify(body),

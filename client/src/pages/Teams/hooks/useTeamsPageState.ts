@@ -1180,14 +1180,17 @@ export const useTeamsPageState = (
     !accessDenied && (canViewTeams || membershipAccessGranted);
   const hasBroadTeamsReadAccess = Boolean(context?.hasBroadTeamsReadAccess);
   const canViewServices = Boolean(context?.canViewServices);
+  const canManageTeamAvailability =
+    canEditTeams || pageData.teams.some((team) => canEditTeam(team.teamId));
   const availableNavSections = useMemo(
     () =>
       getAvailableTeamsNavSections({
         hasTeamsWorkspaceAccess,
         hasBroadTeamsReadAccess,
         canViewServices,
+        canManageTeamAvailability,
       }),
-    [hasTeamsWorkspaceAccess, hasBroadTeamsReadAccess, canViewServices],
+    [hasTeamsWorkspaceAccess, hasBroadTeamsReadAccess, canViewServices, canManageTeamAvailability],
   );
 
   return useMemo(() => ({
@@ -1203,6 +1206,7 @@ export const useTeamsPageState = (
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
+    canManageTeamAvailability,
     pageData,
     normalizedPageData,
     servicePlansRevision,
@@ -1238,6 +1242,7 @@ export const useTeamsPageState = (
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
+    canManageTeamAvailability,
     pageData,
     normalizedPageData,
     servicePlansRevision,

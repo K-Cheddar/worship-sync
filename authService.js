@@ -6841,6 +6841,10 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   queryDocs,
   requireFirestore,
   requireTeamsEdit: requireTeamsEditSession,
+  authorizeAvailabilityForm: (...args) =>
+    teamsAuthHandlers.requireTeamAvailabilityFormEdit(...args),
+  isAvailabilityRecipientInFormScope: (...args) =>
+    teamsAuthHandlers.isAvailabilityRecipientInFormScope(...args),
   getSmsConsentForChurchPhone: (churchId, phoneNumber) =>
     getDoc(
       COLLECTIONS.smsConsents,

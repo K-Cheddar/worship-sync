@@ -5,11 +5,13 @@ const AvailabilityBatchReview = ({
   batch,
   formName,
   busy,
+  privacySafe = false,
   onConfirm,
 }: {
   batch: NotificationBatch;
   formName: string;
   busy: boolean;
+  privacySafe?: boolean;
   onConfirm: () => void;
 }) => {
   const canSend = ["prepared", "partial"].includes(batch.status) && batch.recipients.some(({ eligible }) => eligible);
@@ -28,7 +30,7 @@ const AvailabilityBatchReview = ({
           <li key={recipient.memberId} className="space-y-1 py-3">
             <div className="flex flex-wrap justify-between gap-2 text-sm">
               <span className="font-medium text-white">{recipient.memberName}</span>
-              <span className="text-gray-300">{recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber || "No mobile"} · {recipient.eligible ? `${recipient.segmentCount} SMS segment${recipient.segmentCount === 1 ? "" : "s"}` : recipient.eligibilityStatus || "Not eligible"}{recipient.attemptStatus ? ` · ${recipient.attemptStatus === "delivered" ? "Delivered" : recipient.attemptStatus === "failed" || recipient.attemptStatus === "undelivered" ? "Failed" : recipient.attemptStatus}` : ""}{recipient.attemptOutcome === "unknown" ? " · Uncertain" : ""}</span>
+              <span className="text-gray-300">{privacySafe ? recipient.maskedPhoneNumber || "Contact hidden" : recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber || "No mobile"} · {recipient.eligible ? `${recipient.segmentCount} SMS segment${recipient.segmentCount === 1 ? "" : "s"}` : privacySafe ? "Not eligible" : recipient.eligibilityStatus || "Not eligible"}{recipient.attemptStatus ? ` · ${recipient.attemptStatus === "delivered" ? "Delivered" : recipient.attemptStatus === "failed" || recipient.attemptStatus === "undelivered" ? "Failed" : recipient.attemptStatus}` : ""}{recipient.attemptOutcome === "unknown" ? " · Uncertain" : ""}</span>
             </div>
             {recipient.message ? <details className="rounded bg-gray-950 px-3 py-2 text-sm text-gray-200"><summary className="cursor-pointer">View message</summary><p className="mt-2 break-words">{recipient.message}</p></details> : null}
             {!recipient.eligible && recipient.exclusionReason ? <p className="text-sm text-amber-200">Excluded: {recipient.exclusionReason}</p> : null}
@@ -41,9 +43,9 @@ const AvailabilityBatchReview = ({
         <div><dt className="text-gray-400">Responded</dt><dd className="text-white">{batch.summary.responded}</dd></div>
         <div><dt className="text-gray-400">Waiting</dt><dd className="text-white">{batch.summary.waiting}</dd></div>
       </dl>
-      {batch.summary.failed || batch.summary.uncertain || batch.summary.optedOut ? (
+      {batch.summary.failed || batch.summary.uncertain || (!privacySafe && batch.summary.optedOut) ? (
         <p className="text-sm text-amber-200">
-          {[batch.summary.failed ? `${batch.summary.failed} failed` : "", batch.summary.uncertain ? `${batch.summary.uncertain} uncertain` : "", batch.summary.optedOut ? `${batch.summary.optedOut} opted out` : ""].filter(Boolean).join(" · ")}
+          {[batch.summary.failed ? `${batch.summary.failed} failed` : "", batch.summary.uncertain ? `${batch.summary.uncertain} uncertain` : "", !privacySafe && batch.summary.optedOut ? `${batch.summary.optedOut} opted out` : ""].filter(Boolean).join(" · ")}
         </p>
       ) : null}
     </section>

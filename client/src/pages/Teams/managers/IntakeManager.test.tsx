@@ -89,12 +89,20 @@ const renderManager = ({
   services = [],
   submissions = [],
   intakeRecipients = [recipient],
+  availabilityOnly = false,
+  managedTeamIds = ["team-1"],
+  members = [member],
+  smsEligibilityByMemberId,
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
   services?: TeamService[];
   submissions?: TeamIntakeSubmission[];
   intakeRecipients?: TeamIntakeRecipient[];
+  availabilityOnly?: boolean;
+  managedTeamIds?: string[];
+  members?: TeamRosterMember[];
+  smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
   const onSmsDeliveryAttemptSaved = jest.fn();
   const onRecipientSaved = jest.fn();
@@ -108,11 +116,13 @@ const renderManager = ({
         <ToastProvider>
           <TeamsNavigationGuardProvider>
             <IntakeManager
+              availabilityOnly={availabilityOnly}
+              managedTeamIds={managedTeamIds}
               forms={forms}
               submissions={submissions}
               intakeRecipients={intakeRecipients}
               services={services}
-              members={[member]}
+              members={members}
               positions={[]}
               teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }]}
               canEdit
@@ -122,7 +132,7 @@ const renderManager = ({
               onTeamSaved={jest.fn()}
               onRecipientSaved={onRecipientSaved}
               onSmsDeliveryAttemptSaved={onSmsDeliveryAttemptSaved}
-              smsEligibilityByMemberId={{
+              smsEligibilityByMemberId={smsEligibilityByMemberId || {
                 "member-1": {
                   status: eligibilityStatus,
                   eligible: eligibilityStatus === "enabled",
@@ -167,6 +177,39 @@ test("shows the consent reason and keeps Copy link available when SMS is ineligi
   await waitFor(() => expect(navigator.clipboard.writeText).toBeDefined());
   expect(await navigator.clipboard.readText()).toBe("https://example.test/a/r_test");
   expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("availability-only manager hides member intake and consent details", async () => {
+  const user = userEvent.setup();
+  const safeMember: TeamRosterMember = {
+    memberId: member.memberId,
+    churchId: member.churchId,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    positionIds: [],
+    blockoutDates: [],
+    teamMemberships: { "team-1": { teamId: "team-1" } },
+    serviceAvailability: {},
+  };
+  renderManager({
+    availabilityOnly: true,
+    members: [safeMember],
+    smsEligibilityByMemberId: { "member-1": { eligible: false } },
+    forms: [{ ...form, purpose: "team_availability", enabledFields: ["availability"], availabilityOccurrences: [{ occurrenceId: "service@2026-10-18T10:00:00.000Z", serviceId: "service", name: "Sunday", serviceDate: "2026-10-18", startsAt: "2026-10-18T10:00:00.000Z" }] }],
+  });
+
+  await openForm(user);
+
+  expect(screen.getByText("Availability responses")).toBeInTheDocument();
+  expect(screen.queryByText("Not eligible for SMS")).not.toBeInTheDocument();
+  expect(screen.queryByText(/SMS consent needed|SMS opted out|No mobile number/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send SMS" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.queryByText("Form wording")).not.toBeInTheDocument();
+  expect(screen.queryByText("Fields to collect")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /public form link/i })).not.toBeInTheDocument();
 });
 
 test("More preserves history, keyboard focus, Open form, and pending action feedback", async () => {
