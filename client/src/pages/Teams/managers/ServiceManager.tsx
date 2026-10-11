@@ -58,6 +58,7 @@ import {
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useChurchServiceTimeZone } from "../../../context/churchServiceTimeZone";
+import ChurchServiceTimeZoneSettings from "../ChurchServiceTimeZoneSettings";
 
 const applyPositionCountDrafts = (
   requirements: PositionRequirement[] | undefined,
@@ -516,15 +517,24 @@ const ServiceManager = ({
       createLabel="Create service"
         listHeaderActions={<PortableDataActions type="services" onImported={onImported} />}
       listToolbar={
-        <EntityListFilterToolbar
-          entityLabel="Services"
-          query={listQuery}
-          onQueryChange={setListQuery}
-          filters={listFilters}
-          onFiltersChange={setListFilters}
-          filtersOpen={showFilters}
-          onFiltersOpenChange={setShowFilters}
-        />
+        <div className="space-y-3">
+          {churchId ? (
+            <ChurchServiceTimeZoneSettings
+              key={churchId}
+              churchId={churchId}
+              canEdit={canEdit}
+            />
+          ) : null}
+          <EntityListFilterToolbar
+            entityLabel="Services"
+            query={listQuery}
+            onQueryChange={setListQuery}
+            filters={listFilters}
+            onFiltersChange={setListFilters}
+            filtersOpen={showFilters}
+            onFiltersOpenChange={setShowFilters}
+          />
+        </div>
       }
       asideOpen={showFilters}
       asideTitle="Filter services"
