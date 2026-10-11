@@ -8,8 +8,10 @@ import {
   getRepeatedOverlayDedupeKey,
   overlayPlanHasExecutableChange,
 } from "./useServicePlanningImport";
+import { buildServicePlanningPreview } from "../integrations/servicePlanning/buildServicePlanningPreview";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import type { OverlayInfo } from "../types";
+import type { ServicePlanningConfig } from "../types/integrations";
 import { useServicePlanningImport } from "./useServicePlanningImport";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -438,6 +440,107 @@ describe("useServicePlanningImport overlay execution", () => {
     expect(
       secondControllerStore.getState().undoable.present.overlays.list[0].name,
     ).toBe("Current Plan Name");
+  });
+
+  it("applies every mapped field from preview when one changes after preview", async () => {
+    jest.useFakeTimers();
+
+    const overlay: OverlayInfo = {
+      id: "weekly-host",
+      type: "participant",
+      name: "James",
+      title: "Elder",
+      event: "Sabbath School Host",
+    };
+    const servicePlanning: ServicePlanningConfig = {
+      enabled: true,
+      people: [
+        {
+          id: "michael",
+          names: ["Michael"],
+          displayName: "Michael",
+          title: "Elder",
+        },
+      ],
+      sectionRules: [],
+      elementRules: [
+        {
+          id: "sabbath-school",
+          matchElementType: "Sabbath School",
+          matchMode: "exact",
+          displayName: "Sabbath School Host",
+          nameSources: ["ledBy"],
+          multiOverlay: { mode: "single" },
+        },
+      ],
+    };
+    const preview = buildServicePlanningPreview({
+      importData: {
+        planLabel: "This week",
+        sections: [
+          {
+            sectionName: "Worship",
+            rows: [
+              {
+                elementType: "Sabbath School",
+                title: "Sabbath School",
+                ledBy: "Michael",
+              },
+            ],
+          },
+        ],
+        teamAssignments: [],
+      },
+      servicePlanning,
+      overlays: [overlay],
+      songLibrary: [],
+      activeOutlineList: [],
+    });
+    const step = preview.overlayPlan[0];
+    expect(step).toMatchObject({
+      action: "update",
+      targetOverlayId: "weekly-host",
+      patch: {
+        name: "Michael",
+        title: "Elder",
+        event: "Sabbath School Host",
+      },
+    });
+    if (step.action !== "update") throw new Error("Expected an update step");
+    const executionStep = { ...step, action: "update" as const };
+
+    let storedDoc: Record<string, unknown> = {
+      _id: "overlay-weekly-host",
+      _rev: "1-a",
+      docType: "overlay",
+      ...overlay,
+    };
+    const db = {
+      get: jest.fn(async () => ({ ...storedDoc })),
+      put: jest.fn(async (doc: unknown) => {
+        storedDoc = { ...(doc as Record<string, unknown>), _rev: "2-b" };
+        return { ok: true, rev: "2-b" };
+      }),
+    };
+    const store = createSyncTestStore([overlay]);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+
+    // The unchanged title became a manual edit after preview was built.
+    store.dispatch(updateOverlayInList({ id: "weekly-host", title: "Pastor" }));
+
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep(executionStep);
+      await jest.advanceTimersByTimeAsync(500);
+      await pending;
+    });
+
+    expect(storedDoc).toMatchObject({
+      name: "Michael",
+      title: "Elder",
+      event: "Sabbath School Host",
+    });
   });
 
   it("creates a genuinely unmatched event after existing overlays and persists it", async () => {

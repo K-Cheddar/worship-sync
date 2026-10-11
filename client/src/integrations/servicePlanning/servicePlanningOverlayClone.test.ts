@@ -5,6 +5,7 @@ import {
   buildNewParticipantOverlay,
   findParticipantTemplateForSync,
   applyServicePlanningOverlayPatch,
+  persistNewParticipantOverlay,
 } from "./servicePlanningOverlayClone";
 
 const p = (id: string, event: string, name?: string): OverlayInfo => ({
@@ -117,6 +118,55 @@ describe("buildNewParticipantOverlay", () => {
       }),
     );
     expect(built.formatting).toBeTruthy();
+  });
+});
+
+describe("persist finalized participant overlays", () => {
+  it("persists the finalized clone fields with new Pouch identity and audit metadata", async () => {
+    const template: OverlayInfo = {
+      ...p("template", "Sabbath School", "Template Name"),
+      title: "Template Title",
+      formatting: { participantOverlayPosition: "left" },
+      description: "Template description",
+      heading: "Template heading",
+      subHeading: "Template subheading",
+      url: "https://example.com/template",
+      imageUrl: "template-image.png",
+    };
+    const finalized = buildClonedParticipantOverlay(
+      template,
+      {
+        name: "Michael",
+        title: "Elder",
+        event: "Sabbath School Host",
+      },
+      "new-host",
+      { participantOverlayPosition: "right" },
+    );
+    const put = jest.fn(async (_doc: unknown) => ({ ok: true, rev: "1-new" }));
+
+    await persistNewParticipantOverlay({ put }, finalized);
+
+    expect(put).toHaveBeenCalledTimes(1);
+    const persisted = put.mock.calls[0][0] as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      ...finalized,
+      _id: "overlay-new-host",
+      id: "new-host",
+      docType: "overlay",
+      type: "participant",
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String),
+    });
+    expect(persisted).toMatchObject({
+      formatting: { participantOverlayPosition: "right" },
+      description: "",
+      heading: "",
+      subHeading: "",
+      url: "",
+      imageUrl: "",
+    });
+    expect(persisted).not.toHaveProperty("_rev");
   });
 });
 

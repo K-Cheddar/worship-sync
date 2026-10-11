@@ -82,74 +82,10 @@ export const buildNewParticipantOverlay = (
 });
 
 type PouchLike = {
-  get: (id: string) => Promise<unknown>;
   put: (doc: unknown) => Promise<unknown>;
 };
 
-/** Persist a new overlay doc cloned from the template row in Pouch (fallback: minimal doc from `fallback`). */
-export const persistNewParticipantOverlayClone = async (
-  db: PouchLike | undefined,
-  templateId: string,
-  newId: string,
-  patch: ServicePlanningFieldPatch,
-  fallback: OverlayInfo,
-): Promise<void> => {
-  if (!db) return;
-  const now = new Date().toISOString();
-  try {
-    const raw = (await db.get(`overlay-${templateId}`)) as DBOverlay;
-    const {
-      _rev: _r,
-      _id: _i,
-      servicePlanSource: _servicePlanSource,
-      servicePlanBaseline: _servicePlanBaseline,
-      servicePlanOverrides: _servicePlanOverrides,
-      ...rest
-    } = raw;
-    delete (rest as Record<string, unknown>).servicePlanReviewRequired;
-    const stamped = applyPouchAudit(
-      null,
-      {
-        ...rest,
-        _id: `overlay-${newId}`,
-        id: newId,
-        docType: "overlay",
-        name: patch.name ?? "",
-        title: patch.title ?? "",
-        event: patch.event ?? (rest as OverlayInfo).event,
-        duration:
-          (rest as OverlayInfo).duration ??
-          DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
-        createdAt: now,
-        updatedAt: now,
-      } as DBOverlay,
-      { isNew: true },
-    );
-    await db.put(stamped);
-  } catch (e) {
-    console.error("Service Planning: full clone from template doc failed", e);
-    try {
-      const minimal = applyPouchAudit(
-        null,
-        {
-          ...fallback,
-          _id: `overlay-${newId}`,
-          id: newId,
-          docType: "overlay",
-          type: "participant",
-          createdAt: now,
-          updatedAt: now,
-        } as DBOverlay,
-        { isNew: true },
-      );
-      await db.put(minimal);
-    } catch (e2) {
-      console.error("Service Planning: fallback new overlay put failed", e2);
-      throw e2;
-    }
-  }
-};
-
+/** Persist the finalized overlay with new-document identity and audit metadata. */
 export const persistNewParticipantOverlay = async (
   db: PouchLike | undefined,
   newOverlay: OverlayInfo,

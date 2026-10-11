@@ -77,6 +77,7 @@ export type OverlaySyncPlanItem = {
   targetOverlayId?: string;
   targetOverlayName?: string;
   targetOverlayEvent?: string;
+  /** Full desired mapped values; execution computes changed fields against current state. */
   patch: {
     name?: string;
     title?: string;

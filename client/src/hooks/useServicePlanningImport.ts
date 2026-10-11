@@ -28,7 +28,6 @@ import {
   applyServicePlanningOverlayPatch,
   findParticipantTemplateForSync,
   persistNewParticipantOverlay,
-  persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
 import { moveOverlayAfterServicePlanningAnchor } from "../integrations/servicePlanning/servicePlanningOverlayOrder";
 import generateRandomId from "../utils/generateRandomId";
@@ -379,13 +378,7 @@ export const useServicePlanningImport = () => {
                   defaultTemplateIdsByType,
                 ),
               );
-              await persistNewParticipantOverlayClone(
-                db,
-                template.id,
-                newId,
-                cand.patch,
-                built,
-              );
+              await persistNewParticipantOverlay(db, built);
               dispatch(
                 addExistingOverlayToList({
                   overlay: built,
@@ -817,13 +810,7 @@ export const useServicePlanningImport = () => {
               defaultTemplateIdsByType,
             ),
           );
-          await persistNewParticipantOverlayClone(
-            db,
-            template.id,
-            newId,
-            step.patch,
-            built,
-          );
+          await persistNewParticipantOverlay(db, built);
           dispatch(
             addExistingOverlayToList({
               overlay: built,

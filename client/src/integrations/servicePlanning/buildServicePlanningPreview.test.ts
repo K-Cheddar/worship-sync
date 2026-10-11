@@ -252,7 +252,14 @@ describe("reusable saved-plan overlays", () => {
   it("matches the same event across different weekly plan and element IDs", () => {
     const overlayConfig: ServicePlanningConfig = {
       enabled: true,
-      people: [],
+      people: [
+        {
+          id: "michael",
+          names: ["Michael"],
+          displayName: "Michael",
+          title: "Elder",
+        },
+      ],
       sectionRules: [],
       elementRules: [
         {
@@ -268,8 +275,8 @@ describe("reusable saved-plan overlays", () => {
     const previousWeekOverlay: OverlayInfo = {
       id: "weekly-host",
       type: "participant",
-      name: "Previous Name",
-      title: "Previous Title",
+      name: "James",
+      title: "Elder",
       event: " Sabbath   School Host ",
       formatting: { participantOverlayPosition: "right" },
       servicePlanSource: {
@@ -285,7 +292,7 @@ describe("reusable saved-plan overlays", () => {
           sections: [{ sectionName: "Worship", rows: [{
             elementType: "Sabbath School",
             title: "Sabbath School",
-            ledBy: "Current Name",
+            ledBy: "Michael",
             sourcePlanElementId: elementId,
             sourceOccurrenceId: elementId,
           }] }],
@@ -309,14 +316,18 @@ describe("reusable saved-plan overlays", () => {
       expect.objectContaining({
         action: "update",
         targetOverlayId: "weekly-host",
-        patch: expect.objectContaining({ name: "Current Name" }),
+        patch: {
+          name: "Michael",
+          title: "Elder",
+          event: "Sabbath School Host",
+        },
       }),
     );
 
     const afterSync = {
       ...previousWeekOverlay,
-      name: "Current Name",
-      title: undefined,
+      name: "Michael",
+      title: "Elder",
       event: "Sabbath School Host",
     };
     const repeated = build("service@2026-10-02", "element-next", [afterSync]);
