@@ -142,6 +142,26 @@ const getMostRecentServiceWithinGrace = (
   return bestRecent;
 };
 
+const chooseDisplayedUpcomingService = (
+  bestRecent: { service: ServiceTime; nextAt: Date } | null,
+  futureUpcoming: { service: ServiceTime; nextAt: Date } | null,
+  now: Date,
+  graceMs: number,
+  options: DisplayedUpcomingServiceOptions,
+): { service: ServiceTime; nextAt: Date } | null => {
+  if (options.keepRecentlyElapsedDuringGrace && bestRecent) {
+    if (!futureUpcoming) {
+      return bestRecent;
+    }
+
+    const msUntilFuture = futureUpcoming.nextAt.getTime() - now.getTime();
+    if (msUntilFuture > graceMs) return bestRecent;
+  }
+
+  if (futureUpcoming) return futureUpcoming;
+  return bestRecent;
+};
+
 const shiftPlainDate = (value: string, days: number) => {
   const date = parsePlainDate(value);
   if (!date) return "";
@@ -282,21 +302,13 @@ export function getDisplayedUpcomingService(
 ): { service: ServiceTime; nextAt: Date } | null {
   const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs, timeZone);
   const futureUpcoming = getClosestUpcomingService(services, now, timeZone);
-
-  if (options.keepRecentlyElapsedDuringGrace && bestRecent) {
-    if (!futureUpcoming) {
-      return bestRecent;
-    }
-
-    const msUntilFuture = futureUpcoming.nextAt.getTime() - now.getTime();
-    if (msUntilFuture > graceMs) {
-      return bestRecent;
-    }
-  }
-
-  if (futureUpcoming) return futureUpcoming;
-
-  return bestRecent;
+  return chooseDisplayedUpcomingService(
+    bestRecent,
+    futureUpcoming,
+    now,
+    graceMs,
+    options,
+  );
 }
 
 export function getUpcomingServiceRefreshDelay(
@@ -308,12 +320,12 @@ export function getUpcomingServiceRefreshDelay(
 ): number | null {
   const bestRecent = getMostRecentServiceWithinGrace(services, now, graceMs, timeZone);
   const futureUpcoming = getClosestUpcomingService(services, now, timeZone);
-  const displayedService = getDisplayedUpcomingService(
-    services,
+  const displayedService = chooseDisplayedUpcomingService(
+    bestRecent,
+    futureUpcoming,
     now,
     graceMs,
     options,
-    timeZone,
   );
   if (!displayedService) return null;
 

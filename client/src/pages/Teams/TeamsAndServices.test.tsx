@@ -130,6 +130,16 @@ jest.mock("../../api/auth", () => ({
   removeTeamScheduleGuest: jest.fn(),
 }));
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
 const mockEnsureTeamScheduleForPeriod = jest.mocked(ensureTeamScheduleForPeriod);

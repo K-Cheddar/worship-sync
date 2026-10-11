@@ -16609,6 +16609,8 @@ test("team-scoped plan status does not expose unrelated plans or plan roster pro
     context: servicesViewer,
   });
   assert.equal(teamBootstrapDenied.statusCode, 403);
+});
+
 test("member preview settings and approved row content are bound to the server preview", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("member_preview_approval_binding");

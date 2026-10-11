@@ -7,6 +7,16 @@ import {
 } from "./useCurrentServiceOccurrence";
 import { setServerTimeOffset } from "../../utils/serverTime";
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const service = (serviceId: string, dateTimeISO: string): TeamService => ({
   id: serviceId,
   serviceId,

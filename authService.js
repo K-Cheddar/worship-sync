@@ -700,7 +700,6 @@ const collectionMap = {
 };
 
 const rateLimits = new Map();
-const smsConsentMutationQueues = new Map();
 const inviteMutationQueues = new Map();
 const RATE_LIMIT_SWEEP_INTERVAL = 200;
 let rateLimitEnforcementCount = 0;
@@ -711,25 +710,6 @@ const sweepExpiredRateLimits = (now) => {
     const resetAt = Number(bucket?.resetAt || 0);
     if (blockedUntil <= now && resetAt <= now) {
       rateLimits.delete(bucketKey);
-    }
-  }
-};
-
-const withSmsConsentMutationLock = async (consentId, operation) => {
-  const previous = smsConsentMutationQueues.get(consentId) || Promise.resolve();
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  const current = previous.then(() => gate);
-  smsConsentMutationQueues.set(consentId, current);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (smsConsentMutationQueues.get(consentId) === current) {
-      smsConsentMutationQueues.delete(consentId);
     }
   }
 };

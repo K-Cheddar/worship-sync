@@ -147,6 +147,16 @@ jest.mock("../TeamsPageContext", () => ({
   useTeamsPage: () => ({ ...mockUseTeamsPage(), templates: mockTemplatesResource }),
 }));
 
+jest.mock("../../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const mockGetServicePlan = jest.mocked(getServicePlan);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServiceEquipment = jest.mocked(getServiceEquipment);

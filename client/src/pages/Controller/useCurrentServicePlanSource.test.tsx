@@ -48,6 +48,16 @@ jest.mock("../../api/auth", () => ({
   listServicePlans: (...args: unknown[]) => mockListServicePlans(...args),
 }));
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 jest.mock("../../utils/itemListImports", () => ({
   persistItemListServicePlanBinding: (...args: unknown[]) =>
     mockPersistItemListServicePlanBinding(...args),

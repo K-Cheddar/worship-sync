@@ -191,6 +191,41 @@ describe("serviceTimes", () => {
       expect(result?.getHours()).toBe(10);
     });
 
+    it("finds monthly occurrences from distant configured start and end dates", () => {
+      const futureService = createService({
+        reccurence: "monthly",
+        ordinal: 5,
+        weekday: 1,
+        time: "10:00",
+        startDateISO: "2027-08-01",
+      });
+      const expiredService = createService({
+        reccurence: "monthly",
+        ordinal: 5,
+        weekday: 0,
+        time: "10:00",
+        endDateISO: "2024-06-30",
+      });
+
+      const next = getNextOccurrenceForService(
+        futureService,
+        new Date(2026, 0, 4, 9, 0, 0),
+      );
+      const recent = getMostRecentTargetTime(
+        expiredService,
+        new Date(2026, 0, 4, 12, 0, 0),
+      );
+
+      expect(next?.getFullYear()).toBe(2027);
+      expect(next?.getMonth()).toBe(7);
+      expect(next?.getDate()).toBe(30);
+      expect(next?.getHours()).toBe(10);
+      expect(recent?.getFullYear()).toBe(2024);
+      expect(recent?.getMonth()).toBe(5);
+      expect(recent?.getDate()).toBe(30);
+      expect(recent?.getHours()).toBe(10);
+    });
+
     describe("multi_weekly", () => {
       it("returns the soonest upcoming day among the selected days", () => {
         // Wednesday 2026-01-07 at 09:00

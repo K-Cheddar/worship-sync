@@ -4,6 +4,16 @@ import { createServiceTime } from "../test/fixtures";
 import type { ServiceTime } from "../types";
 import { setServerTimeOffset } from "../utils/serverTime";
 
+jest.mock("../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const futureIso = (msFromNow: number) =>
   new Date(Date.now() + msFromNow).toISOString();
 

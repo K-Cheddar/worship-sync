@@ -24,6 +24,10 @@ import {
   updateTeamIntakeForm,
 } from "../../../api/auth";
 
+jest.mock("../TeamsPageContext", () => ({
+  useTeamsPage: () => ({ serviceTimeZone: "UTC" }),
+}));
+
 const mockGetRecipientLink = jest.fn();
 const mockPrepareSms = jest.fn();
 const mockSendIntent = jest.fn();
@@ -372,7 +376,9 @@ test.each([
 
   expect(screen.getByRole("heading", { name: "October Availability needs updating" })).toBeInTheDocument();
   expect(screen.getByText("1 upcoming service isn’t included.")).toBeInTheDocument();
-  expect(screen.getByText("Power Up · Oct 14")).toBeInTheDocument();
+  expect(screen.getByRole("listitem")).toHaveTextContent(
+    "Power Up · Wed, Oct 14, 2026 @ 2:00 PM UTC",
+  );
   await user.click(screen.getByRole("button", { name: "Review form" }));
   expect(screen.getByRole("button", { name: "Save form" })).toBeInTheDocument();
   expect(screen.getByLabelText(/^Name/i)).toHaveValue("October Availability");

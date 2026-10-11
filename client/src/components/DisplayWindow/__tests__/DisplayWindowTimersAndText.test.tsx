@@ -18,6 +18,16 @@ jest.mock("../../../hooks", () => ({
   useSharedNow: () => new Date("2026-01-04T10:00:00.000Z").getTime(),
 }));
 
+jest.mock("../../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const createTimer = (overrides: Partial<TimerInfo> = {}): TimerInfo => ({
   hostId: "host-1",
   id: "timer-1",
