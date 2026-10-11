@@ -6,7 +6,7 @@ import { servicePlanToImportData } from "../integrations/servicePlanning/service
 import type { ServicePlanningMappedRow } from "../integrations/servicePlanning/mapServicePlanningToOverlays";
 import {
   buildServicePlanningPreview,
-  normalizeOverlayEvent,
+  getChangedOverlayPatch,
 } from "../integrations/servicePlanning/buildServicePlanningPreview";
 import { findOverlayForServicePlanningCandidate } from "../integrations/servicePlanning/findBestOverlayMatch";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -25,8 +25,8 @@ import { addItemToAllItemsList } from "../store/allItemsSlice";
 import {
   buildClonedParticipantOverlay,
   buildNewParticipantOverlay,
+  applyServicePlanningOverlayPatch,
   findParticipantTemplateForSync,
-  mergeServicePlanOverlayFields,
   persistNewParticipantOverlay,
   persistNewParticipantOverlayClone,
 } from "../integrations/servicePlanning/servicePlanningOverlayClone";
@@ -345,26 +345,20 @@ export const useServicePlanningImport = () => {
       for (const block of overlayCandidates) {
         for (const cand of block.candidates) {
           const list = store.getState().undoable.present.overlays.list;
-          const target = findOverlayForServicePlanningCandidate(
+          const resolution = findOverlayForServicePlanningCandidate(
             block.source.elementType,
             cand.patch.event,
             list,
             usedOverlayIds,
-            block.source.sourcePlanKey && block.source.sourcePlanElementId
-              ? {
-                  planKey: block.source.sourcePlanKey,
-                  elementId: block.source.sourcePlanElementId,
-                  candidateId: `${block.source.sourcePlanElementId}:${cand.sourceIdentity || cand.personIndex}`,
-                }
-              : undefined,
           );
-          const source = block.source.sourcePlanKey && block.source.sourcePlanElementId
-            ? {
-                planKey: block.source.sourcePlanKey,
-                elementId: block.source.sourcePlanElementId,
-                candidateId: `${block.source.sourcePlanElementId}:${cand.sourceIdentity || cand.personIndex}`,
-              }
-            : undefined;
+          if (resolution.kind === "ambiguous") {
+            skipped += 1;
+            reasons.push(
+              `More than one overlay could match "${cand.patch.event || block.source.elementType}". Adjust the event mapping before syncing this item.`,
+            );
+            continue;
+          }
+          const target = resolution.kind === "match" ? resolution.overlay : null;
 
           if (!target) {
             const template = findParticipantTemplateForSync(
@@ -384,7 +378,13 @@ export const useServicePlanningImport = () => {
                   templatesByType,
                   defaultTemplateIdsByType,
                 ),
-                source,
+              );
+              await persistNewParticipantOverlayClone(
+                db,
+                template.id,
+                newId,
+                cand.patch,
+                built,
               );
               dispatch(
                 addExistingOverlayToList({
@@ -395,13 +395,6 @@ export const useServicePlanningImport = () => {
               placeNewOverlayAfterAnchor(newId, overlayAnchorId);
               overlayAnchorId = newId;
               usedOverlayIds.add(newId);
-              await persistNewParticipantOverlayClone(
-                db,
-                template.id,
-                newId,
-                cand.patch,
-                built,
-              );
               updated += 1;
               continue;
             }
@@ -417,13 +410,12 @@ export const useServicePlanningImport = () => {
                 templatesByType,
                 defaultTemplateIdsByType,
               ),
-              source,
             );
+            await persistNewParticipantOverlay(db, newOverlay);
             dispatch(addExistingOverlayToList({ overlay: newOverlay }));
             placeNewOverlayAfterAnchor(newId, overlayAnchorId);
             overlayAnchorId = newId;
             usedOverlayIds.add(newId);
-            await persistNewParticipantOverlay(db, newOverlay);
             updated += 1;
             reasons.push(
               `Created overlay for "${cand.patch.event || block.source.elementType}"`,
@@ -431,7 +423,8 @@ export const useServicePlanningImport = () => {
             continue;
           }
 
-          const nextOverlay = mergeServicePlanOverlayFields(target, cand.patch, source);
+          const changedPatch = getChangedOverlayPatch(target, cand.patch);
+          const nextOverlay = applyServicePlanningOverlayPatch(target, cand.patch);
           if (JSON.stringify(nextOverlay) === JSON.stringify(target)) {
             overlayAnchorId = target.id;
             usedOverlayIds.add(target.id);
@@ -442,30 +435,19 @@ export const useServicePlanningImport = () => {
             continue;
           }
 
+          dispatch(setOverlayHasPendingUpdate(false));
+          dispatch(selectOverlay(target));
+          await new Promise((resolve) =>
+            setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+          );
           if (db) {
-            try {
-              dispatch(setOverlayHasPendingUpdate(false));
-              dispatch(selectOverlay(target));
-              await new Promise((resolve) =>
-                setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
-              );
-              const persisted = await persistExistingOverlayDoc(db, {
-                ...nextOverlay,
-              });
-              applyPersistedOverlayUpdate(persisted, { select: true });
-            } catch (e) {
-              console.error("Service Planning sync DB error", target.id, e);
-            }
+            const persisted = await persistExistingOverlayDoc(db, {
+              id: target.id,
+              ...changedPatch,
+            } as OverlayInfo);
+            applyPersistedOverlayUpdate(persisted, { select: true });
           } else {
-            dispatch(setOverlayHasPendingUpdate(false));
-            dispatch(selectOverlay(target));
-            await new Promise((resolve) =>
-              setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
-            );
-            applyPersistedOverlayUpdate(
-              nextOverlay,
-              { select: true },
-            );
+            applyPersistedOverlayUpdate(nextOverlay, { select: true });
           }
 
           overlayAnchorId = target.id;
@@ -744,56 +726,59 @@ export const useServicePlanningImport = () => {
       } = {},
     ): Promise<ServicePlanningOverlayStepExecutionResult> => {
       const list = store.getState().undoable.present.overlays.list;
-      const source = step.sourcePlanKey && step.sourcePlanElementId && step.sourceCandidateId
-        ? {
-            planKey: step.sourcePlanKey,
-            elementId: step.sourcePlanElementId,
-            candidateId: step.sourceCandidateId,
-          }
-        : undefined;
-      const sourceValues = step.sourceValues || step.patch;
       // Insert each new overlay after the previously synced plan item so the
       // synced overlays build up in plan order. Fall back to the template (clone)
       // or end of list (create) for the first step when there is no anchor yet.
       const { insertAfterId: anchorOverlayId, claimedOverlayIds } = options;
+      const skipStep = (
+        reason: string,
+        resultOverlayId?: string,
+      ): ServicePlanningOverlayStepExecutionResult => ({
+        overlaysUpdated: 0,
+        overlaysCloned: 0,
+        overlaysCreated: 0,
+        overlaysSkipped: 1,
+        reasons: [reason],
+        resultOverlayId,
+      });
 
-      if (step.action === "update") {
-        const target =
-          (step.targetOverlayId &&
-            list.find((overlay) => overlay.id === step.targetOverlayId)) ||
-          null;
-        if (!target) {
-          return {
-            overlaysUpdated: 0,
-            overlaysCloned: 0,
-            overlaysCreated: 0,
-            overlaysSkipped: 1,
-            reasons: [
-              `Could not find overlay for "${step.patch.event || step.elementType}".`,
-            ],
-          };
-        }
-        const next = mergeServicePlanOverlayFields(target, sourceValues, source, { applyIncoming: true });
-        if (JSON.stringify(next) === JSON.stringify(target)) {
-          return {
-            overlaysUpdated: 0,
-            overlaysCloned: 0,
-            overlaysCreated: 0,
-            overlaysSkipped: 1,
-            reasons: [
-              `Overlay for "${step.patch.event || step.elementType}" is already up to date.`,
-            ],
-            resultOverlayId: target.id,
-          };
+      const excludedIds = new Set(claimedOverlayIds);
+      if (step.action === "clone" && step.targetOverlayId) {
+        excludedIds.add(step.targetOverlayId);
+      }
+      const resolution = findOverlayForServicePlanningCandidate(
+        step.elementType,
+        step.patch.event,
+        list,
+        excludedIds,
+      );
+      if (resolution.kind === "ambiguous") {
+        return skipStep(
+          `More than one overlay could match "${step.patch.event || step.elementType}". Adjust the event mapping before syncing this item.`,
+        );
+      }
+      const target = resolution.kind === "match" ? resolution.overlay : null;
+
+      if (target) {
+        const changedPatch = getChangedOverlayPatch(target, step.patch);
+        if (Object.keys(changedPatch).length === 0) {
+          return skipStep(
+            `Overlay for "${step.patch.event || step.elementType}" is already up to date.`,
+            target.id,
+          );
         }
 
+        const next = applyServicePlanningOverlayPatch(target, step.patch);
         dispatch(setOverlayHasPendingUpdate(false));
         dispatch(selectOverlay(target));
         await new Promise((resolve) =>
           setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
         );
         if (db) {
-          const persisted = await persistExistingOverlayDoc(db, next);
+          const persisted = await persistExistingOverlayDoc(db, {
+            id: target.id,
+            ...changedPatch,
+          } as OverlayInfo);
           applyPersistedOverlayUpdate(persisted, { select: true });
         } else {
           applyPersistedOverlayUpdate(next, { select: true });
@@ -809,126 +794,54 @@ export const useServicePlanningImport = () => {
         };
       }
 
-      // Idempotency guard for clone/create: if a participant overlay with the
-      // same event already exists (and wasn't touched earlier in this run, and
-      // isn't the clone template), update it in place instead of creating a
-      // duplicate. This keeps "Sync all" safe to re-run and recovers from a
-      // stale preview that still lists an overlay as new.
-      if (step.action === "clone" || step.action === "create") {
-        const targetEvent = normalizeOverlayEvent(step.patch.event);
-        const existingDuplicate = targetEvent
-          ? list.find(
-              (overlay) =>
-                (overlay.type ?? "participant") === "participant" &&
-                overlay.id !== step.targetOverlayId &&
-                !claimedOverlayIds?.has(overlay.id) &&
-                (!source || !overlay.servicePlanSource || (
-                  overlay.servicePlanSource.planKey === source.planKey
-                  && overlay.servicePlanSource.elementId === source.elementId
-                  && overlay.servicePlanSource.candidateId === source.candidateId
-                )) &&
-                normalizeOverlayEvent(overlay.event) === targetEvent,
-            )
-          : undefined;
-
-        if (existingDuplicate) {
-          const next = mergeServicePlanOverlayFields(existingDuplicate, sourceValues, source, { applyIncoming: true });
-          if (JSON.stringify(next) === JSON.stringify(existingDuplicate)) {
-            dispatch(selectOverlay(existingDuplicate));
-            return {
-              overlaysUpdated: 0,
-              overlaysCloned: 0,
-              overlaysCreated: 0,
-              overlaysSkipped: 1,
-              reasons: [
-                `Overlay for "${step.patch.event || step.elementType}" already exists.`,
-              ],
-              resultOverlayId: existingDuplicate.id,
-            };
-          }
-
-          dispatch(setOverlayHasPendingUpdate(false));
-          dispatch(selectOverlay(existingDuplicate));
-          await new Promise((resolve) =>
-            setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
-          );
-          if (db) {
-            const persisted = await persistExistingOverlayDoc(db, next);
-            applyPersistedOverlayUpdate(persisted, { select: true });
-          } else {
-            applyPersistedOverlayUpdate(next, { select: true });
-          }
-
-          return {
-            overlaysUpdated: 1,
-            overlaysCloned: 0,
-            overlaysCreated: 0,
-            overlaysSkipped: 0,
-            reasons: [],
-            resultOverlayId: existingDuplicate.id,
-          };
-        }
-      }
-
       if (step.action === "clone") {
         const template =
           (step.targetOverlayId &&
             list.find((overlay) => overlay.id === step.targetOverlayId)) ||
           null;
-        if (!template) {
+        if (template) {
+          dispatch(selectOverlay(template));
+          await new Promise((resolve) =>
+            setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
+          );
+          const newId = generateRandomId();
+          const { templatesByType, defaultTemplateIdsByType } =
+            store.getState().undoable.present.overlayTemplates;
+          const built = buildClonedParticipantOverlay(
+            template,
+            step.patch,
+            newId,
+            getConfiguredDefaultFormatting(
+              "participant",
+              templatesByType,
+              defaultTemplateIdsByType,
+            ),
+          );
+          await persistNewParticipantOverlayClone(
+            db,
+            template.id,
+            newId,
+            step.patch,
+            built,
+          );
+          dispatch(
+            addExistingOverlayToList({
+              overlay: built,
+              insertAfterId: anchorOverlayId ?? template.id,
+            }),
+          );
+          placeNewOverlayAfterAnchor(newId, anchorOverlayId);
+          dispatch(selectOverlay(built));
+
           return {
             overlaysUpdated: 0,
-            overlaysCloned: 0,
+            overlaysCloned: 1,
             overlaysCreated: 0,
-            overlaysSkipped: 1,
-            reasons: [
-              `Could not find template overlay for "${step.patch.event || step.elementType}".`,
-            ],
+            overlaysSkipped: 0,
+            reasons: [],
+            resultOverlayId: newId,
           };
         }
-
-        dispatch(selectOverlay(template));
-        await new Promise((resolve) =>
-          setTimeout(resolve, OVERLAY_SELECTION_SCROLL_DELAY_MS),
-        );
-        const newId = generateRandomId();
-        const { templatesByType, defaultTemplateIdsByType } =
-          store.getState().undoable.present.overlayTemplates;
-        const built = buildClonedParticipantOverlay(
-          template,
-          step.patch,
-          newId,
-          getConfiguredDefaultFormatting(
-            "participant",
-            templatesByType,
-            defaultTemplateIdsByType,
-          ),
-          source,
-        );
-        await persistNewParticipantOverlayClone(
-          db,
-          template.id,
-          newId,
-          step.patch,
-          built,
-        );
-        dispatch(
-          addExistingOverlayToList({
-            overlay: built,
-            insertAfterId: anchorOverlayId ?? template.id,
-          }),
-        );
-        placeNewOverlayAfterAnchor(newId, anchorOverlayId);
-        dispatch(selectOverlay(built));
-
-        return {
-          overlaysUpdated: 0,
-          overlaysCloned: 1,
-          overlaysCreated: 0,
-          overlaysSkipped: 0,
-          reasons: [],
-          resultOverlayId: newId,
-        };
       }
 
       const newId = generateRandomId();
@@ -942,7 +855,6 @@ export const useServicePlanningImport = () => {
           templatesByType,
           defaultTemplateIdsByType,
         ),
-        source,
       );
       await persistNewParticipantOverlay(db, newOverlay);
       dispatch(

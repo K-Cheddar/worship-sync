@@ -2,73 +2,19 @@ import type { DBOverlay, OverlayFormatting, OverlayInfo } from "../../types";
 import type { ServicePlanningFieldPatch } from "./mapServicePlanningToOverlays";
 import { applyPouchAudit } from "../../utils/pouchAudit";
 import { getDefaultFormatting } from "../../utils/overlayUtils";
+import { normalizeOverlayEvent } from "./findBestOverlayMatch";
 
-export type ServicePlanOverlaySource = {
-  planKey: string;
-  elementId: string;
-  candidateId: string;
-};
-
-type SyncedOverlayField = "name" | "title" | "event";
-
-/** Merge source values independently so one edited field does not freeze the others. */
-export const mergeServicePlanOverlayFields = (
+/** Apply only mapped service-plan fields; explicit sync replaces earlier edits. */
+export const applyServicePlanningOverlayPatch = (
   existing: OverlayInfo,
   patch: ServicePlanningFieldPatch,
-  source?: ServicePlanOverlaySource,
-  options: { applyIncoming?: boolean } = {},
 ): OverlayInfo => {
-  const fields: SyncedOverlayField[] = ["name", "title", "event"];
-  const baseline = { ...(existing.servicePlanBaseline || {}) };
-  const overrides = { ...(existing.servicePlanOverrides || {}) };
   const next: OverlayInfo = { ...existing };
 
-  fields.forEach((field) => {
-    const importedValue = patch[field];
-    if (importedValue === undefined) return;
-    const currentValue = existing[field] || "";
-    const hasPriorBaseline = existing.servicePlanBaseline?.[field] !== undefined;
-    const isOverride = !options.applyIncoming && (Boolean(overrides[field])
-      || !hasPriorBaseline
-      || currentValue !== (existing.servicePlanBaseline?.[field] || ""));
-    if (isOverride) {
-      overrides[field] = true;
-    } else {
-      next[field] = importedValue;
-      delete overrides[field];
-    }
-    baseline[field] = importedValue;
-  });
-
-  return {
-    ...next,
-    servicePlanSource: source || existing.servicePlanSource,
-    servicePlanBaseline: baseline,
-    servicePlanOverrides: overrides,
-  };
-};
-
-export const trackServicePlanOverlayEdit = (
-  existing: OverlayInfo,
-  incoming: Partial<OverlayInfo>,
-): OverlayInfo => {
-  if (!existing.servicePlanSource || !existing.servicePlanBaseline) {
-    return { ...existing, ...incoming };
-  }
-  const next = { ...existing, ...incoming };
-  const overrides = { ...(existing.servicePlanOverrides || {}) };
   (["name", "title", "event"] as const).forEach((field) => {
-    if (!(field in incoming)) return;
-    if ((next[field] || "") === (existing.servicePlanBaseline?.[field] || "")) {
-      delete overrides[field];
-    } else {
-      overrides[field] = true;
-    }
+    if (field in patch) next[field] = patch[field];
   });
-  return {
-    ...next,
-    servicePlanOverrides: overrides,
-  };
+  return next;
 };
 
 export const DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION = 7;
@@ -79,10 +25,10 @@ export const findParticipantTemplateForSync = (
   targetEvent: string | undefined,
 ): OverlayInfo | null => {
   if (!targetEvent?.trim()) return null;
-  const te = targetEvent.toLowerCase().replace(/\s+/g, " ").trim();
-  const participants = list.filter((o) => o.type === "participant");
+  const te = normalizeOverlayEvent(targetEvent);
+  const participants = list.filter((o) => (o.type ?? "participant") === "participant");
   const exact = participants.find(
-    (o) => (o.event || "").toLowerCase().replace(/\s+/g, " ").trim() === te,
+    (o) => normalizeOverlayEvent(o.event) === te,
   );
   if (exact) return exact;
   return null;
@@ -94,7 +40,6 @@ export const buildClonedParticipantOverlay = (
   newId: string,
   formatting: OverlayFormatting =
     template.formatting || getDefaultFormatting("participant"),
-  source?: ServicePlanOverlaySource,
 ): OverlayInfo => {
   const next: OverlayInfo = {
     ...template,
@@ -104,18 +49,11 @@ export const buildClonedParticipantOverlay = (
     event: patch.event ?? template.event,
     duration: template.duration ?? DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
     formatting,
-    ...(source
-      ? {
-          servicePlanSource: source,
-          servicePlanBaseline: {
-            name: patch.name ?? "",
-            title: patch.title ?? "",
-            event: patch.event ?? template.event ?? "",
-          },
-          servicePlanOverrides: {},
-        }
-      : {}),
   };
+  delete next.servicePlanSource;
+  delete next.servicePlanBaseline;
+  delete next.servicePlanOverrides;
+  delete (next as Record<string, unknown>).servicePlanReviewRequired;
   next.heading = "";
   next.subHeading = "";
   next.url = "";
@@ -128,7 +66,6 @@ export const buildNewParticipantOverlay = (
   patch: ServicePlanningFieldPatch,
   newId: string,
   formatting: OverlayFormatting = getDefaultFormatting("participant"),
-  source?: ServicePlanOverlaySource,
 ): OverlayInfo => ({
   id: newId,
   type: "participant",
@@ -142,17 +79,6 @@ export const buildNewParticipantOverlay = (
   description: "",
   imageUrl: "",
   formatting,
-  ...(source
-    ? {
-        servicePlanSource: source,
-        servicePlanBaseline: {
-          name: patch.name ?? "",
-          title: patch.title ?? "",
-          event: patch.event ?? "",
-        },
-        servicePlanOverrides: {},
-      }
-    : {}),
 });
 
 type PouchLike = {
@@ -172,7 +98,15 @@ export const persistNewParticipantOverlayClone = async (
   const now = new Date().toISOString();
   try {
     const raw = (await db.get(`overlay-${templateId}`)) as DBOverlay;
-    const { _rev: _r, _id: _i, ...rest } = raw;
+    const {
+      _rev: _r,
+      _id: _i,
+      servicePlanSource: _servicePlanSource,
+      servicePlanBaseline: _servicePlanBaseline,
+      servicePlanOverrides: _servicePlanOverrides,
+      ...rest
+    } = raw;
+    delete (rest as Record<string, unknown>).servicePlanReviewRequired;
     const stamped = applyPouchAudit(
       null,
       {
@@ -183,9 +117,6 @@ export const persistNewParticipantOverlayClone = async (
         name: patch.name ?? "",
         title: patch.title ?? "",
         event: patch.event ?? (rest as OverlayInfo).event,
-        servicePlanSource: fallback.servicePlanSource,
-        servicePlanBaseline: fallback.servicePlanBaseline,
-        servicePlanOverrides: fallback.servicePlanOverrides,
         duration:
           (rest as OverlayInfo).duration ??
           DEFAULT_SERVICE_PLANNING_OVERLAY_DURATION,
@@ -214,6 +145,7 @@ export const persistNewParticipantOverlayClone = async (
       await db.put(minimal);
     } catch (e2) {
       console.error("Service Planning: fallback new overlay put failed", e2);
+      throw e2;
     }
   }
 };
@@ -240,5 +172,6 @@ export const persistNewParticipantOverlay = async (
     await db.put(stamped);
   } catch (e) {
     console.error("Service Planning: new participant overlay put failed", e);
+    throw e;
   }
 };

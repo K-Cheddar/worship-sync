@@ -662,14 +662,15 @@ export type OverlayInfo = {
   updatedAt?: string;
   createdBy?: string;
   updatedBy?: string;
-  /** Provenance for overlays generated from a saved WorshipSync plan. */
+  /** Legacy provenance retained when loading old overlays; it never controls matching. */
   servicePlanSource?: {
     planKey: string;
     elementId: string;
     candidateId: string;
   };
-  /** Last synchronized values, used to detect independent operator overrides. */
+  /** Legacy sync metadata retained for stored-data compatibility; current sync ignores it. */
   servicePlanBaseline?: Partial<Record<"name" | "title" | "event", string>>;
+  /** Legacy sync metadata retained for stored-data compatibility; current sync ignores it. */
   servicePlanOverrides?: Partial<Record<"name" | "title" | "event", boolean>>;
 };
 

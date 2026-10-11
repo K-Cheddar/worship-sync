@@ -4,8 +4,7 @@ import {
   buildClonedParticipantOverlay,
   buildNewParticipantOverlay,
   findParticipantTemplateForSync,
-  mergeServicePlanOverlayFields,
-  trackServicePlanOverlayEdit,
+  applyServicePlanningOverlayPatch,
 } from "./servicePlanningOverlayClone";
 
 const p = (id: string, event: string, name?: string): OverlayInfo => ({
@@ -121,88 +120,75 @@ describe("buildNewParticipantOverlay", () => {
   });
 });
 
-describe("plan generated overlay field ownership", () => {
-  const source = { planKey: "service@2026-09-25", elementId: "element-1", candidateId: "element-1:0" };
+describe("explicit service-plan overlay updates", () => {
+  it("replaces edited mapped values and preserves formatting and unrelated fields", () => {
+    const overlay: OverlayInfo = {
+      ...p("legacy", "Sabbath School Host", "Manual Name"),
+      title: "Manual Title",
+      url: "https://example.com/keep",
+      formatting: { participantOverlayPosition: "right" },
+      servicePlanSource: {
+        planKey: "previous-service",
+        elementId: "previous-element",
+        candidateId: "previous-candidate",
+      },
+      servicePlanBaseline: { name: "Old Plan Name" },
+      servicePlanOverrides: { name: true },
+    };
 
-  it("preserves an edited name while updating untouched title and event fields", () => {
-    const generated = buildNewParticipantOverlay(
-      { name: "Plan Name", title: "Reader", event: "Reading" },
-      "overlay-1",
-      undefined,
-      source,
-    );
-    const edited = trackServicePlanOverlayEdit(generated, { name: "Corrected Name" });
-    const refreshed = mergeServicePlanOverlayFields(edited, {
-      name: "Changed Plan Name",
-      title: "Scripture Reader",
-      event: "Reading of the Word",
-    }, source);
-
-    expect(refreshed.name).toBe("Corrected Name");
-    expect(refreshed.title).toBe("Scripture Reader");
-    expect(refreshed.event).toBe("Reading of the Word");
-    expect(refreshed.servicePlanOverrides).toEqual({ name: true });
-  });
-
-  it("lets an operator reset one field to the current plan value", () => {
-    const generated = buildNewParticipantOverlay(
-      { name: "Plan Name", title: "Reader", event: "Reading" },
-      "overlay-1",
-      undefined,
-      source,
-    );
-    const edited = trackServicePlanOverlayEdit(generated, { name: "Corrected Name" });
-    const reset = trackServicePlanOverlayEdit(edited, { name: "Plan Name" });
-    const refreshed = mergeServicePlanOverlayFields(reset, {
-      name: "Updated Plan Name",
-      title: "Updated Reader",
-      event: "Updated Reading",
-    }, source);
-
-    expect(refreshed.name).toBe("Updated Plan Name");
-    expect(refreshed.servicePlanOverrides?.name).toBeUndefined();
-  });
-
-  it("preserves legacy overlay edits during background reconciliation", () => {
-    const legacy = p("legacy", "Reading", "Operator Name");
-    legacy.title = "Operator Title";
-    const associated = mergeServicePlanOverlayFields(legacy, {
-      name: "Plan Name",
-      title: "Plan Title",
-      event: "Reading",
-    }, source);
-
-    expect(associated.name).toBe("Operator Name");
-    expect(associated.title).toBe("Operator Title");
-    expect(associated.servicePlanOverrides).toEqual({ name: true, title: true, event: true });
-  });
-
-  it("applies mapped values during an explicit sync, including over prior edits", () => {
-    const legacy = p("legacy", "Sabbath School Host", "Dobney Keen");
-    const associated = mergeServicePlanOverlayFields(legacy, {
-      name: "Clarence Jones",
+    const updated = applyServicePlanningOverlayPatch(overlay, {
+      name: "Current Plan Name",
+      title: "Current Title",
       event: "Sabbath School Host",
-    }, source, { applyIncoming: true });
+    });
 
-    expect(associated.name).toBe("Clarence Jones");
-    expect(associated.event).toBe("Sabbath School Host");
-    expect(associated.servicePlanOverrides).toEqual({});
-    expect(associated).not.toHaveProperty("servicePlanReviewRequired");
+    expect(updated).toEqual({
+      ...overlay,
+      name: "Current Plan Name",
+      title: "Current Title",
+      event: "Sabbath School Host",
+    });
   });
 
-  it("keeps source fields safe during passive reconciliation after an operator edit", () => {
-    const generated = buildNewParticipantOverlay(
-      { name: "Plan Name", title: "Reader", event: "Reading" },
-      "overlay-1",
-      undefined,
-      source,
+  it("clears a mapped title when the current plan has no title", () => {
+    const overlay = { ...p("legacy", "Reading", "Manual Name"), title: "Old Title" };
+
+    expect(
+      applyServicePlanningOverlayPatch(overlay, {
+        name: "Current Name",
+        title: undefined,
+        event: "Reading",
+      }).title,
+    ).toBeUndefined();
+  });
+
+  it("does not copy old source or override metadata into a new overlay", () => {
+    const template: OverlayInfo = {
+      ...p("template", "Sabbath School", "Old Name"),
+      servicePlanSource: {
+        planKey: "previous-service",
+        elementId: "previous-element",
+        candidateId: "previous-candidate",
+      },
+      servicePlanBaseline: { name: "Old Name" },
+      servicePlanOverrides: { name: true },
+    };
+
+    const cloned = buildClonedParticipantOverlay(
+      template,
+      { name: "New Name", event: "Sabbath School" },
+      "new-id",
     );
-    const edited = trackServicePlanOverlayEdit(generated, { name: "Corrected Name" });
-    const refreshed = mergeServicePlanOverlayFields(edited, {
-      name: "Changed Plan Name",
-      event: "Updated Reading",
-    }, source);
-    expect(refreshed.name).toBe("Corrected Name");
-    expect(refreshed.event).toBe("Updated Reading");
+    const created = buildNewParticipantOverlay(
+      { name: "New Name", event: "New Event" },
+      "created-id",
+    );
+
+    expect(cloned).not.toHaveProperty("servicePlanSource");
+    expect(cloned).not.toHaveProperty("servicePlanBaseline");
+    expect(cloned).not.toHaveProperty("servicePlanOverrides");
+    expect(created).not.toHaveProperty("servicePlanSource");
+    expect(created).not.toHaveProperty("servicePlanBaseline");
+    expect(created).not.toHaveProperty("servicePlanOverrides");
   });
 });

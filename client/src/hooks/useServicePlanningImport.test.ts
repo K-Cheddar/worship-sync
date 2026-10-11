@@ -1,3 +1,7 @@
+import React, { type PropsWithChildren } from "react";
+import { act, renderHook } from "@testing-library/react";
+import { configureStore, type UnknownAction } from "@reduxjs/toolkit";
+import { Provider } from "react-redux";
 import {
   dedupeOutlineCandidatesForPreview,
   getChangedOverlayPatch,
@@ -6,6 +10,100 @@ import {
 } from "./useServicePlanningImport";
 import type { OutlineItemCandidate } from "../types/servicePlanningImport";
 import type { OverlayInfo } from "../types";
+import { useServicePlanningImport } from "./useServicePlanningImport";
+import { ControllerInfoContext } from "../context/controllerInfo";
+import { GlobalInfoContext } from "../context/globalInfo";
+import overlaysReducer, {
+  addExistingOverlayToList,
+  initiateOverlayList,
+  updateOverlayInList,
+} from "../store/overlaysSlice";
+import { overlaySlice } from "../store/overlaySlice";
+import { normalizeOverlayForSync } from "../utils/overlayUtils";
+
+type SyncTestState = {
+  allItems: { list: never[]; isAllItemsLoading: boolean };
+  allDocs: { allSongDocs: never[]; allFreeFormDocs: never[] };
+  undoable: {
+    present: {
+      overlays: ReturnType<typeof overlaysReducer>;
+      overlay: ReturnType<typeof overlaySlice.reducer>;
+      itemList: { list: never[] };
+      itemLists: { selectedList: null; activeList: null };
+      preferences: { preferences: Record<string, unknown> };
+      overlayTemplates: {
+        templatesByType: Record<string, never[]>;
+        defaultTemplateIdsByType: Record<string, string>;
+      };
+    };
+  };
+  presentation: { participantOverlayInfo: Partial<OverlayInfo> };
+};
+
+const initialSyncTestState: SyncTestState = {
+  allItems: { list: [], isAllItemsLoading: false },
+  allDocs: { allSongDocs: [], allFreeFormDocs: [] },
+  undoable: {
+    present: {
+      overlays: overlaysReducer(undefined, { type: "test/init" }),
+      overlay: overlaySlice.reducer(undefined, { type: "test/init" }),
+      itemList: { list: [] },
+      itemLists: { selectedList: null, activeList: null },
+      preferences: {
+        preferences: {
+          defaultBibleBackground: { background: {}, mediaInfo: undefined },
+          defaultBibleBackgroundBrightness: 0,
+          defaultBibleFontMode: "default",
+        },
+      },
+      overlayTemplates: {
+        templatesByType: {},
+        defaultTemplateIdsByType: {},
+      },
+    },
+  },
+  presentation: { participantOverlayInfo: { id: "on-air", name: "On Air" } },
+};
+
+const createSyncTestStore = (initialOverlays: OverlayInfo[]) => {
+  const reducer = (
+    state: SyncTestState = initialSyncTestState,
+    action: UnknownAction,
+  ): SyncTestState => ({
+    ...state,
+    undoable: {
+      ...state.undoable,
+      present: {
+        ...state.undoable.present,
+        overlays: overlaysReducer(state.undoable.present.overlays, action),
+        overlay: overlaySlice.reducer(state.undoable.present.overlay, action),
+      },
+    },
+  });
+  const store = configureStore({ reducer });
+  store.dispatch(initiateOverlayList(initialOverlays));
+  return store;
+};
+
+const servicePlanningHookWrapper = (
+  store: ReturnType<typeof createSyncTestStore>,
+  db: { get: (id: string) => Promise<unknown>; put: (doc: unknown) => Promise<unknown> },
+) => ({ children }: PropsWithChildren) =>
+  React.createElement(
+    Provider,
+    {
+      store: store as never,
+      children: React.createElement(
+        ControllerInfoContext.Provider,
+        { value: { db } as never },
+        React.createElement(
+          GlobalInfoContext.Provider,
+          { value: {} as never },
+          children,
+        ),
+      ),
+    },
+  );
 
 const makeSongCandidate = (
   overrides: Partial<OutlineItemCandidate> = {},
@@ -200,5 +298,290 @@ describe("overlayPlanHasExecutableChange", () => {
         overlays,
       ),
     ).toBe(false);
+  });
+});
+
+describe("useServicePlanningImport overlay execution", () => {
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+  });
+
+  it("rechecks stale create steps, replaces manual names, and preserves persisted order and settings", async () => {
+    jest.useFakeTimers();
+
+    const reusableOverlay: OverlayInfo = {
+      id: "weekly-host",
+      type: "participant",
+      name: "Manual Name",
+      title: "Manual Title",
+      event: "Sabbath School Host",
+      description: "Local note",
+      formatting: { participantOverlayPosition: "left" },
+      servicePlanSource: {
+        planKey: "service@2026-09-25",
+        elementId: "element-previous",
+        candidateId: "element-previous:0",
+      },
+      servicePlanBaseline: { name: "Old plan value" },
+      servicePlanOverrides: { name: true },
+    };
+    const otherOverlay: OverlayInfo = {
+      id: "benediction",
+      type: "participant",
+      name: "Other Person",
+      event: "Benediction",
+      formatting: { participantOverlayPosition: "center" },
+    };
+    let storedDoc = {
+      _id: "overlay-weekly-host",
+      _rev: "1-a",
+      docType: "overlay",
+      ...reusableOverlay,
+      // Another controller's newer unrelated fields are in Pouch already,
+      // although this controller has not received their overlay-list echo yet.
+      description: "Remote note",
+      formatting: { participantOverlayPosition: "right" as const },
+    };
+    const get = jest.fn(async () => ({ ...storedDoc }));
+    const put = jest.fn(async (doc: unknown) => {
+      storedDoc = {
+        ...(doc as typeof storedDoc),
+        _rev: "2-b",
+      };
+      return { ok: true, rev: "2-b" };
+    });
+    const db = { get, put };
+    const store = createSyncTestStore([reusableOverlay, otherOverlay]);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+    const orderBefore = store
+      .getState()
+      .undoable.present.overlays.list.map((overlay) => overlay.id);
+    const livePresentationBefore = store.getState().presentation;
+    expect(store.getState().undoable.present.overlays.list[0].name).toBe(
+      "Manual Name",
+    );
+
+    const staleCreateStep = {
+      action: "create" as const,
+      sectionName: "",
+      sourceRowIndex: 0,
+      elementType: "Sabbath School Lesson Study",
+      title: "Current Reader",
+      ledBy: "Current Plan Name",
+      personIndex: 0,
+      rawNameToken: "Current Plan Name",
+      patch: {
+        name: "Current Plan Name",
+        title: "Current Reader",
+        event: "Sabbath School Host",
+      },
+    };
+
+    let firstResult: Awaited<ReturnType<typeof result.current.executeOverlaySyncStep>>;
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep(staleCreateStep);
+      await jest.advanceTimersByTimeAsync(500);
+      firstResult = await pending;
+    });
+
+    expect(firstResult!).toMatchObject({
+      overlaysUpdated: 1,
+      overlaysCreated: 0,
+      resultOverlayId: "weekly-host",
+    });
+    expect(storedDoc).toMatchObject({
+      name: "Current Plan Name",
+      title: "Current Reader",
+      event: "Sabbath School Host",
+      description: "Remote note",
+      formatting: { participantOverlayPosition: "right" },
+    });
+    expect(
+      store.getState().undoable.present.overlays.list.map((overlay) => overlay.id),
+    ).toEqual(orderBefore);
+    expect(
+      store.getState().undoable.present.overlays.list[0],
+    ).toMatchObject({
+      id: "weekly-host",
+      name: "Current Plan Name",
+      formatting: { participantOverlayPosition: "right" },
+      description: "Remote note",
+    });
+    expect(store.getState().presentation).toEqual(livePresentationBefore);
+
+    let repeatedResult: Awaited<ReturnType<typeof result.current.executeOverlaySyncStep>>;
+    await act(async () => {
+      repeatedResult = await result.current.executeOverlaySyncStep(staleCreateStep);
+    });
+    expect(repeatedResult!).toMatchObject({
+      overlaysUpdated: 0,
+      overlaysCreated: 0,
+      overlaysSkipped: 1,
+      resultOverlayId: "weekly-host",
+    });
+    expect(put).toHaveBeenCalledTimes(1);
+
+    // A second controller loading the shared persisted overlay keeps the same
+    // configured order and sees the refreshed values.
+    const secondControllerStore = createSyncTestStore([
+      normalizeOverlayForSync(storedDoc),
+      otherOverlay,
+    ]);
+    expect(
+      secondControllerStore
+        .getState()
+        .undoable.present.overlays.list.map((overlay) => overlay.id),
+    ).toEqual(orderBefore);
+    expect(
+      secondControllerStore.getState().undoable.present.overlays.list[0].name,
+    ).toBe("Current Plan Name");
+  });
+
+  it("creates a genuinely unmatched event after existing overlays and persists it", async () => {
+    jest.useFakeTimers();
+
+    const existing: OverlayInfo[] = [
+      { id: "sabbath", type: "participant", event: "Sabbath School Host" },
+      { id: "benediction", type: "participant", event: "Benediction" },
+    ];
+    const createdDocs: unknown[] = [];
+    const db = {
+      get: jest.fn(async () => { throw new Error("No template document"); }),
+      put: jest.fn(async (doc: unknown) => {
+        createdDocs.push(doc);
+        return { ok: true, rev: "1-new" };
+      }),
+    };
+    const store = createSyncTestStore(existing);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+    const step = {
+      action: "create" as const,
+      sectionName: "",
+      sourceRowIndex: 0,
+      elementType: "Offering",
+      title: "Deacon",
+      ledBy: "Jordan",
+      personIndex: 0,
+      rawNameToken: "Jordan",
+      patch: { name: "Jordan", title: "Deacon", event: "Offering" },
+    };
+    const orderBefore = store
+      .getState()
+      .undoable.present.overlays.list.map((overlay) => overlay.id);
+
+    let executionResult: Awaited<ReturnType<typeof result.current.executeOverlaySyncStep>>;
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep(step);
+      await jest.advanceTimersByTimeAsync(500);
+      executionResult = await pending;
+    });
+
+    expect(executionResult!).toMatchObject({ overlaysCreated: 1 });
+    expect(createdDocs).toHaveLength(1);
+    const created = store.getState().undoable.present.overlays.list;
+    expect(created.slice(1).map((overlay) => overlay.id)).toEqual(orderBefore);
+    expect(created[0]).toMatchObject({
+      name: "Jordan",
+      title: "Deacon",
+      event: "Offering",
+    });
+  });
+
+  it("revalidates a planned update when its original target no longer matches", async () => {
+    jest.useFakeTimers();
+
+    const staleTarget: OverlayInfo = {
+      id: "stale-target",
+      type: "participant",
+      name: "Keep this person",
+      event: "Sabbath School Host",
+    };
+    const replacement: OverlayInfo = {
+      id: "current-match",
+      type: "participant",
+      name: "Old current person",
+      event: "Sabbath School Host",
+    };
+    const docs: Record<string, Record<string, unknown>> = {
+      "overlay-stale-target": {
+        _id: "overlay-stale-target",
+        _rev: "1-stale",
+        docType: "overlay",
+        ...staleTarget,
+      },
+      "overlay-current-match": {
+        _id: "overlay-current-match",
+        _rev: "1-current",
+        docType: "overlay",
+        ...replacement,
+      },
+    };
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (!docs[id]) throw new Error(`Missing ${id}`);
+        return { ...docs[id] };
+      }),
+      put: jest.fn(async (doc: unknown) => {
+        const saved: Record<string, unknown> = {
+          ...(doc as Record<string, unknown>),
+          _rev: "2-current",
+        };
+        docs[String(saved["_id"])] = saved;
+        return { ok: true, rev: "2-current" };
+      }),
+    };
+    const store = createSyncTestStore([staleTarget]);
+    const { result } = renderHook(() => useServicePlanningImport(), {
+      wrapper: servicePlanningHookWrapper(store, db),
+    });
+
+    // The overlay changed after preview, and another controller added a row
+    // that now owns the planned event.
+    store.dispatch(updateOverlayInList({ id: "stale-target", event: "Prayer" }));
+    store.dispatch(addExistingOverlayToList({ overlay: replacement }));
+
+    let executionResult: Awaited<ReturnType<typeof result.current.executeOverlaySyncStep>>;
+    await act(async () => {
+      const pending = result.current.executeOverlaySyncStep({
+        action: "update",
+        sectionName: "",
+        sourceRowIndex: 0,
+        elementType: "Sabbath School Lesson Study",
+        title: "Reader",
+        ledBy: "New current person",
+        personIndex: 0,
+        rawNameToken: "New current person",
+        targetOverlayId: "stale-target",
+        patch: {
+          name: "New current person",
+          title: "Reader",
+          event: "Sabbath School Host",
+        },
+      });
+      await jest.advanceTimersByTimeAsync(500);
+      executionResult = await pending;
+    });
+
+    expect(executionResult!).toMatchObject({
+      overlaysUpdated: 1,
+      resultOverlayId: "current-match",
+    });
+    expect(
+      store.getState().undoable.present.overlays.list.find(
+        (overlay) => overlay.id === "stale-target",
+      ),
+    ).toMatchObject({ name: "Keep this person", event: "Prayer" });
+    expect(docs["overlay-current-match"]).toMatchObject({
+      name: "New current person",
+      title: "Reader",
+      event: "Sabbath School Host",
+    });
+    expect(db.get).toHaveBeenCalledWith("overlay-current-match");
+    expect(db.get).not.toHaveBeenCalledWith("overlay-stale-target");
   });
 });
