@@ -7431,6 +7431,18 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     generalPublicSnapshotRes.payload.service.sections[0].items[0].teamNotes,
     [],
   );
+  assert.deepEqual(generalPublicSnapshotRes.payload.roles ?? [], []);
+  assert.deepEqual(generalPublicSnapshotRes.payload.servingTeams ?? [], []);
+  assert.deepEqual(
+    generalPublicSnapshotRes.payload.service.sections[0].items[0]
+      .microphoneAssignments,
+    [],
+  );
+  assert.equal(
+    generalPublicSnapshotRes.payload.service.sections[0].items[0]
+      .equipmentAssignments,
+    undefined,
+  );
 
   const currentTeamSnapshotRes = createRes();
   await authHandlers.getPublicServicePlan(
@@ -7596,6 +7608,17 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     appAccess: "view",
     permissions: { teams: "view" },
   });
+  const noServicePlanAccessContext = await createHumanContext(
+    "service_plan_no_access_viewer",
+    {
+      userId: "teams_api_no_service_plan_access_viewer",
+      email: "teams-api-no-service-plan-access-viewer@example.com",
+      churchId: context.churchId,
+      role: "member",
+      appAccess: "view",
+      permissions: { teams: "none", services: "none", teamScopes: {} },
+    },
+  );
   const viewerPairing = await callHandler(
     authHandlers.createWorkstationPairing,
     {
@@ -7617,9 +7640,25 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     workstationRedeemed,
   );
   assert.equal(workstationRedeemed.statusCode, 200);
+  assert.equal(
+    workstationRedeemed.payload.bootstrap.permissions.services,
+    "view",
+  );
+  assert.equal(
+    workstationRedeemed.payload.bootstrap.permissions.teams,
+    "none",
+  );
+  assert.equal(
+    workstationRedeemed.payload.bootstrap.device.serviceWorkspaceAccess,
+    false,
+  );
   const planOnlyViewerContext = {
     churchId: context.churchId,
-    headers: {},
+    headers: {
+      "x-csrf-token": String(
+        workstationRedeemed.payload.bootstrap.csrfToken || "",
+      ),
+    },
     session: workstationSession,
   };
   const viewerPlanKey = "svc-viewer@2026-07-27";
@@ -7693,6 +7732,14 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     email: "private@example.com",
     phone: "+15555550123",
     privateNotes: "private roster data",
+  });
+  await setDoc(COLLECTIONS.teamRosterMembers, "unassigned-member", {
+    memberId: "unassigned-member",
+    churchId: context.churchId,
+    firstName: "Unscheduled",
+    lastName: "Volunteer",
+    email: "unassigned@example.com",
+    privateNotes: "not part of this service",
   });
   await setDoc(COLLECTIONS.teamSchedules, "viewer-schedule", {
     scheduleId: "viewer-schedule",
@@ -7774,20 +7821,27 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     viewerPayload.payload.snapshot.service.shareId,
     `current-service-viewer:${viewerPlanKey}`,
   );
-  const serializedPlanOnlyViewer = JSON.stringify(viewerPayload.payload.snapshot);
-  for (const rosterValue of [
+  const workstationSnapshot = viewerPayload.payload.snapshot;
+  assert.equal(
+    workstationSnapshot.roles.some((role) => role.positionId === "viewer-lead"),
+    true,
+  );
+  assert.equal(
+    workstationSnapshot.servingTeams[0].members[0].memberName,
     "Avery Stone",
-    "https://example.com/avery.jpg",
-    "viewer-member",
-    "viewer-mic",
-    "Blue",
-    "viewer-iem",
-    "Red IEM",
-  ]) {
-    assert.equal(serializedPlanOnlyViewer.includes(rosterValue), false, rosterValue);
-  }
-  assert.deepEqual(viewerPayload.payload.snapshot.roles ?? [], []);
-  assert.deepEqual(viewerPayload.payload.snapshot.servingTeams ?? [], []);
+  );
+  assert.deepEqual(
+    workstationSnapshot.servingTeams[0].members[0].microphones.map(
+      (microphone) => microphone.name,
+    ),
+    ["Blue"],
+  );
+  assert.deepEqual(
+    workstationSnapshot.servingTeams[0].members[0].equipment.map(
+      (equipment) => equipment.name,
+    ),
+    ["Red IEM"],
+  );
   const viewerItem = viewerPayload.payload.snapshot.service.sections[0].items[0];
   assert.deepEqual(viewerItem.teamNotes, [
     { label: "Worship Team", notes: richText("Team cue") },
@@ -7803,9 +7857,10 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     plan: viewerPayload.payload.plan.sections[0].elements[0],
     item: viewerItem,
   }));
-  assert.equal(viewerItem.creditName, undefined);
-  assert.deepEqual(viewerItem.microphoneAssignments ?? [], []);
-  assert.deepEqual(viewerItem.equipmentAssignments ?? [], []);
+  assert.equal(viewerItem.creditName, "Avery Stone");
+  assert.equal(viewerItem.microphoneAssignments[0].microphone.name, "Blue");
+  assert.equal(viewerItem.microphoneAssignments[0].holderName, "Avery Stone");
+  assert.equal(viewerItem.equipmentAssignments[0].equipment.name, "Red IEM");
   assert.deepEqual(viewerItem.resources, [{
     type: "url",
     title: "Service notes",
@@ -7813,17 +7868,51 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   }]);
   assert.equal(typeof viewerPayload.payload.snapshot.churchName, "string");
   assert.equal(viewerPayload.payload.snapshot.service.live.mode, "schedule");
-  const serializedViewer = JSON.stringify(viewerPayload.payload.snapshot);
+  const serializedViewer = JSON.stringify(viewerPayload.payload);
   for (const privateValue of [
     "private@example.com",
     "+15555550123",
     "private roster data",
     "viewer-member",
+    "unassigned@example.com",
+    "Unscheduled Volunteer",
+    "not part of this service",
+    "viewer-schedule",
     "raw-schedule-token",
     publicToken,
   ]) {
     assert.equal(serializedViewer.includes(privateValue), false);
   }
+  assert.equal(
+    JSON.stringify(viewerPayload.payload.plan).includes("assignees"),
+    false,
+  );
+
+  const noServicePlanAccessPayload = await callHandler(
+    authHandlers.getServicePlanViewer,
+    {
+      context: noServicePlanAccessContext,
+      params: { planKey: viewerPlanKey },
+    },
+  );
+  assert.equal(noServicePlanAccessPayload.statusCode, 403);
+
+  const planOnlyAssignments = await callHandler(
+    authHandlers.getServicePlanAssignments,
+    {
+      context: planOnlyViewerContext,
+      params: { planKey: viewerPlanKey },
+    },
+  );
+  assert.deepEqual(planOnlyAssignments.payload.assignments, []);
+  const planOnlyPublicSnapshot = await callHandler(
+    authHandlers.getServicePlanPublicSnapshot,
+    {
+      context: planOnlyViewerContext,
+      params: { planKey: viewerPlanKey },
+    },
+  );
+  assert.equal(planOnlyPublicSnapshot.payload.snapshot, null);
   const teamsAuthorizedViewerPayload = await callHandler(
     authHandlers.getServicePlanViewer,
     { context: viewerContext, params: { planKey: viewerPlanKey } },
@@ -7849,6 +7938,57 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     viewerPublicSnapshot,
   );
   assert.equal(viewerPublicSnapshot.statusCode, 200);
+  const publishedWorkstationRead = await callHandler(
+    authHandlers.getServicePlanViewer,
+    {
+      context: planOnlyViewerContext,
+      params: { planKey: viewerPlanKey },
+    },
+  );
+  assert.equal(publishedWorkstationRead.statusCode, 200);
+  for (const secretField of [
+    "publicLinkToken",
+    "publicTokenHash",
+    "publicGeneralLinkToken",
+    "publicGeneralTokenHash",
+  ]) {
+    assert.equal(publishedWorkstationRead.payload.plan[secretField], undefined);
+  }
+  assert.equal(publishedWorkstationRead.payload.publicUrls, undefined);
+  assert.equal(
+    JSON.stringify(publishedWorkstationRead.payload).includes(viewerPublicToken),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(publishedWorkstationRead.payload).includes("raw-schedule-token"),
+    false,
+  );
+  assert.deepEqual(workstationSnapshot.roles, viewerPublicSnapshot.payload.roles);
+  assert.deepEqual(
+    workstationSnapshot.servingTeams,
+    viewerPublicSnapshot.payload.servingTeams,
+  );
+  assert.deepEqual(
+    workstationSnapshot.service.live,
+    viewerPublicSnapshot.payload.service.live,
+  );
+  const workstationPublicItem =
+    workstationSnapshot.service.sections[0].items[0];
+  const publicDetailedItem =
+    viewerPublicSnapshot.payload.service.sections[0].items[0];
+  for (const field of [
+    "notes",
+    "teamNotes",
+    "resources",
+    "microphoneAssignments",
+    "equipmentAssignments",
+  ]) {
+    assert.deepEqual(
+      workstationPublicItem[field],
+      publicDetailedItem[field],
+      `Current Service Viewer and detailed public snapshot should match ${field}`,
+    );
+  }
   assert.deepEqual(
     teamsAuthorizedSnapshot.roles,
     viewerPublicSnapshot.payload.roles,
@@ -7860,6 +8000,33 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   assert.equal(
     viewerPublicSnapshot.payload.service.shareId,
     viewerPublicToken,
+  );
+
+  const otherChurch = await createAdminContext("service_plan_viewer_other");
+  await callHandler(authHandlers.saveServicePlan, {
+    context: otherChurch,
+    params: { planKey: viewerPlanKey },
+    body: {
+      serviceId: "svc-viewer",
+      date: "2026-07-27",
+      name: "Other Church Secret Service",
+      startsAt: upcomingStartsAt,
+      sections: [],
+    },
+  });
+  const crossChurchRead = await callHandler(
+    authHandlers.getServicePlanViewer,
+    {
+      context: planOnlyViewerContext,
+      params: { churchId: otherChurch.churchId, planKey: viewerPlanKey },
+    },
+  );
+  assert.equal(crossChurchRead.statusCode, 403);
+  assert.equal(
+    JSON.stringify(crossChurchRead.payload).includes(
+      "Other Church Secret Service",
+    ),
+    false,
   );
 
   // An editor still gets the links back so "copy share link" keeps working.
@@ -7881,6 +8048,69 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     },
   });
   assert.equal(viewerWrite.statusCode, 403);
+
+  const microphoneWrite = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentMicrophones,
+    {
+      context: planOnlyViewerContext,
+      params: { scheduleId: "viewer-schedule" },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: "viewer-lead::0",
+        microphoneIds: [],
+      },
+    },
+  );
+  assert.equal(microphoneWrite.statusCode, 403);
+  const iemWrite = await callHandler(
+    authHandlers.updateTeamScheduleAssignmentIems,
+    {
+      context: planOnlyViewerContext,
+      params: { scheduleId: "viewer-schedule" },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: "viewer-lead::0",
+        iemIds: [],
+      },
+    },
+  );
+  assert.equal(iemWrite.statusCode, 403);
+  const scheduleWrite = await callHandler(
+    authHandlers.updateTeamScheduleAssignment,
+    {
+      context: planOnlyViewerContext,
+      params: { scheduleId: "viewer-schedule" },
+      body: {
+        serviceId: occurrenceId,
+        positionSlotKey: "viewer-lead::0",
+        memberId: "unassigned-member",
+      },
+    },
+  );
+  assert.ok([401, 403].includes(scheduleWrite.statusCode));
+  const teamWrite = await callHandler(authHandlers.updateTeam, {
+    context: planOnlyViewerContext,
+    params: { teamId: "viewer-worship" },
+    body: { name: "Changed without permission" },
+  });
+  assert.ok([401, 403].includes(teamWrite.statusCode));
+
+  const unchangedSchedule = await getDoc(
+    COLLECTIONS.teamSchedules,
+    "viewer-schedule",
+  );
+  assert.deepEqual(
+    unchangedSchedule.microphoneAssignments[occurrenceId]["viewer-lead::0"],
+    ["viewer-mic"],
+  );
+  assert.deepEqual(
+    unchangedSchedule.iemAssignments[occurrenceId]["viewer-lead::0"],
+    ["viewer-iem"],
+  );
+  assert.equal(
+    (await getDoc(COLLECTIONS.teams, "viewer-worship")).name,
+    "Worship Team",
+  );
 
   const deleteSseClient = createSseClient();
   addServiceFlowSseClient(publicToken, deleteSseClient);

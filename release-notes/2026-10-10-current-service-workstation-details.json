@@ -1,0 +1,7 @@
+{
+  "id": "current-service-workstation-details",
+  "date": "2026-10-10",
+  "type": "improved",
+  "title": "More service details on shared workstations",
+  "description": "Shared workstations now show service microphones, IEMs, scheduled teammates, and role filters in Current Service."
+}
