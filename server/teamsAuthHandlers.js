@@ -9467,7 +9467,9 @@ export const createTeamsAuthHandlers = ({
                     })),
                     ...(field === "positions" && scopedTeamId ? {
                       teamId: scopedTeamId,
-                      teamName: records.teams.find((team) => team.teamId === scopedTeamId)?.name || "",
+                      teamName: targetTeamScopes.find((team) => team.teamId === scopedTeamId)?.name
+                        || records.teams.find((team) => team.teamId === scopedTeamId)?.name || "",
+                      teamIsNew: Boolean(targetTeamScopes.find((team) => team.teamId === scopedTeamId)?._portablePending),
                       positionOptions: records.positions.filter((item) => item.teamId === scopedTeamId && !item.archivedAt)
                         .map((item) => ({ id: item.positionId, name: item.name })),
                     } : {}),
@@ -9545,8 +9547,8 @@ export const createTeamsAuthHandlers = ({
             const ignoredSourceTeamOptions = sourceTeamValues.filter((sourceValue) => teamActionsByKey.get(teamActionKey(sourceValue))?.action === "ignore")
               .map((sourceValue) => ({ teamId: pendingIgnoredTeamId(sourceValue), name: sourceValue, ignored: true }));
             const ownershipTeamOptions = [
-              ...targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name })),
-              ...ignoredSourceTeamOptions,
+              ...targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name, isNew: Boolean(team._portablePending) })),
+              ...ignoredSourceTeamOptions.map((team) => ({ ...team, isNew: false })),
             ];
             const positionCandidates = usesDestinationTeam
               ? records.positions.filter((item) => item.teamId === destinationTeam?.teamId)
@@ -9587,9 +9589,10 @@ export const createTeamsAuthHandlers = ({
                   ...(targetTeamIds.length === 1 ? {
                     teamId: targetTeamIds[0],
                     teamName: targetTeamScopes[0]?.name || "",
+                    teamIsNew: Boolean(targetTeamScopes[0]?._portablePending),
                     positionOptions: positionCandidates.filter((item) => !item.archivedAt).map((item) => ({ id: item.positionId, name: item.name, teamId: item.teamId, teamName: targetTeamScopes.find((team) => team.teamId === item.teamId)?.name || "" })),
                   } : targetTeamIds.length > 1 ? {
-                    teamOptions: targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name })),
+                    teamOptions: targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name, isNew: Boolean(team._portablePending) })),
                     positionOptions: positionCandidates.filter((item) => !item.archivedAt).map((item) => ({ id: item.positionId, name: item.name, teamId: item.teamId, teamName: targetTeamScopes.find((team) => team.teamId === item.teamId)?.name || "" })),
                   } : {}),
                 });
@@ -9598,7 +9601,7 @@ export const createTeamsAuthHandlers = ({
             if (!allSourceTeamsIgnored && targetTeamIds.length > 1) {
               issues.filter((issue) => issue.field === "positions" && issue.teamId === undefined && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code))
                 .forEach((issue) => {
-                  issue.teamOptions = targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name }));
+                  issue.teamOptions = targetTeamScopes.map((team) => ({ teamId: team.teamId, name: team.name, isNew: Boolean(team._portablePending) }));
                   issue.positionOptions = positionCandidates.filter((position) => !position.archivedAt)
                     .map((position) => ({ id: position.positionId, name: position.name, teamId: position.teamId, teamName: targetTeamScopes.find((team) => team.teamId === position.teamId)?.name || "" }));
                 });
@@ -9655,6 +9658,8 @@ export const createTeamsAuthHandlers = ({
                    ? { teamId: pendingTeamId(action.sourceValue), churchId, name: String(action.name || "").trim(), memberIds: [], _portablePending: true }
                    : null).find((item) => item?.teamId === actionTeamId);
               if (!team) throw httpError(409, "The team for this position is no longer active. Review the file again.");
+              if (positionAction.teamName && normalizePortableMatchValue(positionAction.teamName) !== normalizePortableMatchValue(team.name))
+                throw httpError(409, "The selected team for this position changed. Review the file again.");
               if (positionAction.action === "match") {
                  if (team._portablePending) throw httpError(400, "A position cannot be matched inside a team that has not been created yet.");
                 const selected = records.positions.find((item) => item.positionId === positionAction.positionId

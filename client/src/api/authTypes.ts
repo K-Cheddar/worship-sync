@@ -621,8 +621,9 @@ export type PortableImportIssue = {
   referenceValue?: string;
   teamId?: string;
   teamName?: string;
+  teamIsNew?: boolean;
   positionOptions?: Array<{ id: string; name: string; teamId?: string; teamName?: string }>;
-  teamOptions?: Array<{ teamId: string; name: string; ignored?: boolean }>;
+  teamOptions?: Array<{ teamId: string; name: string; isNew?: boolean; ignored?: boolean }>;
 };
 export type PortableImportResolution = { field: string; referenceIndex: number; selectedId: string };
 export type PortablePositionAction = {
