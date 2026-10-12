@@ -360,3 +360,16 @@ test("delivery status progression is monotonic and preserves final states", () =
   assert.equal(nextSmsDeliveryStatus("failed", "queued"), "failed");
   assert.equal(nextSmsDeliveryStatus("sent", "delivered"), "delivered");
 });
+
+
+test("Twilio adapter requires explicit REST rejection evidence, not a code alone", async () => {
+  for (const [fields, expected] of [
+    [{ status: 400, code: 21609 }, true], [{ status: 408, code: 21609 }, false],
+    [{ status: 503, code: 21609 }, false], [{ code: 21609 }, false], [{ statusCode: 400, code: 21609 }, false],
+  ]) {
+    const provider = createTwilioSmsProvider({ accountSid: "AC1", authToken: "test", senderPhoneNumber: "+14155550123",
+      clientFactory: () => ({ messages: { create: async () => { throw Object.assign(new Error("fake rejection"), fields); } } }),
+    });
+    await assert.rejects(provider.sendMessage({ to: "+14155550124", body: "test" }), (error) => error.definitiveRejection === expected);
+  }
+});

@@ -3272,7 +3272,7 @@ export const createTeamsAuthHandlers = ({
 
   const sanitizeSmsDeliveryAttemptForAdmin = (attempt) => {
     if (!attempt) return null;
-    const { phoneNumberSnapshot, providerMessageId, ...safeAttempt } = attempt;
+    const { phoneNumberSnapshot, providerMessageId, callbackToken, ...safeAttempt } = attempt;
     return safeAttempt;
   };
 

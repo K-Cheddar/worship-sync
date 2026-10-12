@@ -105,6 +105,7 @@ import {
   getSmsProviderForConfig,
   normalizeTwilioStatus,
   resolveTwilioStatusCallbackUrl,
+  twilioStatusCallbackUrlForRequest,
   validateTwilioWebhookSignature,
 } from "./server/smsProvider.js";
 
@@ -6618,13 +6619,14 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
 });
 
 const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
+  COLLECTIONS, getDoc, requireFirestore,
   queryDocs,
   setDoc,
   nowIso,
   validateSignature: validateTwilioWebhookSignature,
   normalizeStatus: normalizeTwilioStatus,
   getAuthToken: () => process.env.TWILIO_AUTH_TOKEN || "",
-  getCallbackUrl: (req) => resolveTwilioStatusCallbackUrl({ request: req }),
+  getCallbackUrl: (req) => twilioStatusCallbackUrlForRequest(resolveTwilioStatusCallbackUrl(), req),
 });
 
 const smsInboundWebhookHandler = createSmsInboundWebhookHandler({

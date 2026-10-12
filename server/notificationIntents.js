@@ -1,8 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { claimReviewedNotificationBatch, executeReviewedNotificationBatch, notificationBatchReviewVersion } from "./notificationBatches.js";
 import { isChurchMessagingReady, normalizeChurchMessagingConfig } from "./churchMessagingConfig.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
-import { normalizeSmsDeliveryStatus } from "./smsDeliveryAttempts.js";
+import { createSmsDeliveryReconciler, withSmsDeliveryLock, hasConfirmedSmsEvidence, normalizeSmsDeliveryStatus } from "./smsDeliveryAttempts.js";
 import { deliveryKey as notificationDeliveryKey } from "./notificationLedger.js";
 import { buildTeamIntakeSms, measureSmsMessage } from "./smsMessage.js";
 import { hasPersonalizedIntakeResponseFields, intakeFormCollectsServiceAvailability } from "./teamIntakeFields.js";
@@ -45,6 +46,7 @@ const safeProviderFailureMessage = (error, fallback) => {
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL]")
     .slice(0, 500);
 };
+const publicAttempt = ({ callbackToken: _callbackToken, ...attempt }) => attempt;
 const intentIdFor = (hashValue, churchId, idempotencyKey) =>
   hashValue(`${churchId}|notification-intent|${idempotencyKey}`);
 
@@ -125,12 +127,47 @@ export const createNotificationIntentHandlers = ({
   setDoc,
   automaticSendsDisabled = AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
 }) => {
+  const reconcileDelivery = createSmsDeliveryReconciler({ COLLECTIONS, getDoc, setDoc, requireFirestore, nowIso });
   const memoryClaims = new Map();
   const runMemoryClaim = (id, task) => {
     const previous = memoryClaims.get(id) || Promise.resolve();
     const current = previous.then(task, task);
     memoryClaims.set(id, current.then(() => undefined, () => undefined));
     return current;
+  };
+
+  const mutateIntent = async (churchId, intentId, change) => {
+    const db = requireFirestore();
+    const apply = async (read, write) => {
+      const current = await read(COLLECTIONS.notificationIntents, intentId);
+      const attempt = current?.attemptId ? await read(COLLECTIONS.smsDeliveryAttempts, current.attemptId) : null;
+      const patch = change(current, attempt);
+      if (patch) await write(patch);
+      return patch ? { ...current, ...patch } : current;
+    };
+    if (db) return db.runTransaction(async (transaction) => apply(
+      async (collection, id) => {
+        const snap = await transaction.get(db.collection(collection).doc(id));
+        return snap.exists ? snap.data() : null;
+      },
+      (patch) => transaction.set(db.collection(COLLECTIONS.notificationIntents).doc(intentId), patch, { merge: true }),
+    ));
+    return withSmsDeliveryLock(getDoc, `${churchId}|${intentId}`, () => apply(getDoc,
+      (patch) => setDoc(COLLECTIONS.notificationIntents, intentId, patch, { merge: true })));
+  };
+
+  const deleteUnusedIntent = async (churchId, intentId) => {
+    const unused = (current) => current?.churchId === churchId &&
+      ["preview", "ready"].includes(current.status) && !current.attemptId && !current.providerAcceptedAttemptId;
+    const db = requireFirestore();
+    if (db) return db.runTransaction(async (transaction) => {
+      const ref = db.collection(COLLECTIONS.notificationIntents).doc(intentId);
+      const snapshot = await transaction.get(ref);
+      if (snapshot.exists && unused(snapshot.data())) transaction.delete(ref);
+    });
+    return withSmsDeliveryLock(getDoc, `${churchId}|${intentId}`, async () => {
+      if (unused(await getDoc(COLLECTIONS.notificationIntents, intentId))) await deleteDoc(COLLECTIONS.notificationIntents, intentId);
+    });
   };
 
   const listChurchDocs = (collection, churchId, filters = [], limit = 500) =>
@@ -191,16 +228,12 @@ export const createNotificationIntentHandlers = ({
   };
 
   const markUnknownAfterInterruption = async (intent) => {
-    const updatedAt = nowIso();
-    await setDoc(COLLECTIONS.notificationIntents, intent.intentId, {
-      status: "unknown", outcome: "unknown", failureMessage: "The send was interrupted before its provider outcome could be confirmed.", updatedAt,
-    }, { merge: true });
-    if (intent.attemptId) {
-      await setDoc(COLLECTIONS.smsDeliveryAttempts, intent.attemptId, {
-        status: "pending", outcome: "unknown", failureCode: "dispatch_interrupted",
-        failureMessage: "The send was interrupted before its provider outcome could be confirmed.", updatedAt,
-      }, { merge: true });
-    }
+    const result = await reconcileDelivery({
+      churchId: intent.churchId, intentId: intent.intentId, attemptId: intent.attemptId,
+      expectedIntent: intent, recovery: true, isStaleSending,
+      update: { status: "pending", outcome: "unknown", failureCode: "dispatch_interrupted" },
+    });
+    return result.intent || intent;
   };
 
   const messageFor = ({ intentType, church, schedule, occurrence, form, publicUrl, responseUrl, serviceName, positionName }) => {
@@ -509,8 +542,8 @@ export const createNotificationIntentHandlers = ({
       const id = intentIdFor(hashValue, churchId, key);
       const existing = await getDoc(COLLECTIONS.notificationIntents, id);
       if (!existing) {
-        await setDoc(COLLECTIONS.notificationIntents, id, { intentId: id, ...intent }, { merge: false });
-        saved.push({ intentId: id, ...intent });
+        const created = await mutateIntent(churchId, id, (current) => current ? null : { intentId: id, ...intent });
+        saved.push(created);
       }
     }
     return saved;
@@ -540,11 +573,12 @@ export const createNotificationIntentHandlers = ({
       const schedule = scheduleId ? await getDoc(COLLECTIONS.teamSchedules, scheduleId) : null;
       const enriched = await Promise.all(intents.map(async (intent) => {
         let currentIntent = intent;
-        if (intent.status === "sending" && isStaleSending(intent)) {
-          currentIntent = { ...intent, status: "unknown", outcome: "unknown", updatedAt: nowIso() };
-          await markUnknownAfterInterruption(intent);
+        if ((intent.status === "sending" && isStaleSending(intent)) || intent.status === "unknown") {
+          currentIntent = await markUnknownAfterInterruption(intent);
         }
-        const attempt = attemptByIntentId.get(currentIntent.intentId);
+        const attempt = currentIntent.attemptId
+          ? await getDoc(COLLECTIONS.smsDeliveryAttempts, currentIntent.attemptId)
+          : attemptByIntentId.get(currentIntent.intentId);
         const recipient = recipientById.get(currentIntent.recipientId);
         const response = schedule?.responses?.[currentIntent.occurrenceId]?.[currentIntent.cellKey || ""];
         const previewEligible = ["preview", "ready", "failed"].includes(currentIntent.status);
@@ -598,8 +632,10 @@ export const createNotificationIntentHandlers = ({
 
   const claimIntent = async ({ intentId, churchId, actorUid, attemptId, approvalVersion }) => {
     const db = requireFirestore();
+    const callbackToken = randomBytes(32).toString("hex");
     const claim = async (current, records = null) => {
       if (!current || current.churchId !== churchId) throw httpError(404, "Message preview not found.");
+      if (current.providerAcceptedAttemptId) throw httpError(409, "This message was already accepted by the provider.");
       if (current.status === "unknown" || current.status === "sending") throw httpError(409, "This send has an uncertain or active provider outcome. Review delivery history before retrying.");
       if (["sent", "suppressed"].includes(current.status)) throw httpError(409, "This message has already been handled.");
       if (current.status !== "preview" && current.status !== "ready" && current.status !== "failed") throw httpError(409, "This message is not ready to send.");
@@ -616,7 +652,7 @@ export const createNotificationIntentHandlers = ({
         return { invalidated: true, errorMessage: "The recipient, phone number, consent, source, or message changed. Review and confirm the current preview again.", statusCode: 409 };
       }
       const sendStartedAt = nowIso();
-      const next = { ...current, status: "sending", attemptId, approvedByUid: actorUid, approvedAt: sendStartedAt, sendStartedAt, updatedAt: sendStartedAt };
+      const next = { ...current, status: "sending", outcome: "", attemptId, approvedByUid: actorUid, approvedAt: sendStartedAt, sendStartedAt, updatedAt: sendStartedAt };
       return { next, validated };
     };
     if (db) {
@@ -653,12 +689,15 @@ export const createNotificationIntentHandlers = ({
           config: configSnap.exists ? { churchId: configSnap.id, ...configSnap.data() } : null,
           consent: consentSnap?.exists ? { consentId, ...consentSnap.data() } : null,
         };
+        const previousAttempt = current.attemptId ? await transaction.get(db.collection(COLLECTIONS.smsDeliveryAttempts).doc(current.attemptId)) : null;
+        if (previousAttempt?.exists && (hasConfirmedSmsEvidence(previousAttempt.data()) || previousAttempt.data().outcome === "unknown")) throw httpError(409, "This send has a confirmed or uncertain provider outcome.");
         const result = await claim(current, records);
         if (result.invalidated) {
           transaction.set(intentRef, { status: "preview", approvalSnapshot: null, updatedAt: nowIso() }, { merge: true });
           return result;
         }
         const attempt = {
+          callbackToken, providerAccountId: result.validated.config.twilioAccountSid || process.env.TWILIO_ACCOUNT_SID || "",
           attemptId, churchId, recipientType: "notification_intent", recipientId: current.recipientId || current.memberId,
           notificationIntentId: intentId, memberId: current.memberId, formId: current.formId || "",
           scheduleId: current.sourceType === "team_schedule" ? current.sourceId : "",
@@ -675,14 +714,17 @@ export const createNotificationIntentHandlers = ({
       if (result.invalidated) throw httpError(result.statusCode, result.errorMessage);
       return result;
     }
-    const result = await runMemoryClaim(intentId, async () => {
+    const result = await withSmsDeliveryLock(getDoc, `${churchId}|${intentId}`, async () => {
       const current = await getDoc(COLLECTIONS.notificationIntents, intentId);
+      const previousAttempt = current?.attemptId ? await getDoc(COLLECTIONS.smsDeliveryAttempts, current.attemptId) : null;
+      if (hasConfirmedSmsEvidence(previousAttempt) || previousAttempt?.outcome === "unknown") throw httpError(409, "This send has a confirmed or uncertain provider outcome.");
       const result = await claim(current);
       if (result.invalidated) {
         await setDoc(COLLECTIONS.notificationIntents, intentId, { status: "preview", approvalSnapshot: null, updatedAt: nowIso() }, { merge: true });
         return result;
       }
       const attempt = {
+        callbackToken, providerAccountId: result.validated.config.twilioAccountSid || process.env.TWILIO_ACCOUNT_SID || "",
         attemptId, churchId, recipientType: "notification_intent", recipientId: current.recipientId || current.memberId,
         notificationIntentId: intentId, memberId: current.memberId, formId: current.formId || "",
         scheduleId: current.sourceType === "team_schedule" ? current.sourceId : "",
@@ -704,6 +746,7 @@ export const createNotificationIntentHandlers = ({
     let attemptId = "";
     let intent = null;
     let providerCallStarted = false;
+    let confirmedResult = null;
     try {
       await assertCsrf(req);
       const churchId = normalize(req.params.churchId);
@@ -729,34 +772,40 @@ export const createNotificationIntentHandlers = ({
         phoneNumberSnapshot: phoneNumber,
         updatedAt: nowIso(),
       }, { merge: true });
+      const latestClaim = await getDoc(COLLECTIONS.notificationIntents, intentId);
+      if (!latestClaim || latestClaim.churchId !== churchId || latestClaim.attemptId !== attemptId ||
+          (latestClaim.providerAcceptedAttemptId && latestClaim.providerAcceptedAttemptId !== attemptId)) {
+        throw httpError(409, "This send claim changed or a prior attempt was accepted. Review delivery history.");
+      }
       const provider = smsProviderFactory({ config, churchId });
-      const statusCallbackUrl = validateTwilioStatusCallbackUrl();
+      const callbackBase = validateTwilioStatusCallbackUrl();
+      const callback = callbackBase ? new URL(callbackBase) : null;
+      if (callback) {
+        callback.searchParams.set("attempt", attemptId);
+        callback.searchParams.set("correlation", attempt.callbackToken);
+      }
+      const statusCallbackUrl = callback?.toString();
       let result;
       providerCallStarted = true;
       try {
         result = await provider.sendMessage({ to: finalCheck.phoneNumber, body: finalCheck.message, statusCallbackUrl });
       } catch (error) {
-        // Twilio's five-digit API errors are definitive rejections; network
-        // failures and provider errors without an HTTP/Twilio code stay
-        // uncertain so they can never be retried as if they were not sent.
-        const definitive = Boolean(error?.statusCode && error.statusCode < 500) || Boolean(error?.code && /^\d{5}$/.test(String(error.code)));
+        const definitive = error?.definitiveRejection === true;
         const outcome = definitive ? "failed" : "unknown";
-        const updatedAt = nowIso();
-        await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, {
+        const reconciled = await reconcileDelivery({ churchId, intentId, attemptId, update: {
           status: definitive ? "failed" : "pending", outcome,
           failureCode: String(error?.code || "provider_outcome_uncertain").slice(0, 80),
-          failureMessage: safeProviderFailureMessage(error, "SMS provider outcome could not be confirmed."), updatedAt,
-        }, { merge: true });
-        await setDoc(COLLECTIONS.notificationIntents, intentId, { status: outcome, ...(definitive ? { approvalSnapshot: null } : {}), attemptId, updatedAt }, { merge: true });
+          failureMessage: safeProviderFailureMessage(error, "SMS provider outcome could not be confirmed."),
+        } });
+        if (reconciled.intent?.status === "sent") return res.json({ success: true, intent: safeIntentProjection(reconciled.intent), attempt: publicAttempt(reconciled.attempt) });
         return res.status(definitive ? 502 : 202).json({ success: false, outcome, errorMessage: definitive ? "The SMS provider rejected this message." : "The provider outcome is uncertain. Review delivery history before retrying." });
       }
       const providerMessageId = normalize(result?.providerMessageId);
       if (!providerMessageId) throw Object.assign(new Error("Provider accepted an SMS without returning its ID."), { code: "provider_outcome_uncertain" });
       const updatedAt = nowIso();
-      await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, {
-        providerMessageId, status: normalizeSmsDeliveryStatus(result.status), outcome: "confirmed", updatedAt,
-      }, { merge: true });
-      await setDoc(COLLECTIONS.notificationIntents, intentId, { status: "sent", attemptId, providerMessageId, sentAt: updatedAt, updatedAt }, { merge: true });
+      confirmedResult = { providerMessageId, status: normalizeSmsDeliveryStatus(result.status), outcome: "confirmed" };
+      const reconciled = await reconcileDelivery({ churchId, intentId, attemptId, update: confirmedResult });
+      if (reconciled.ignored) throw httpError(409, "Provider evidence could not be associated with this send. Review delivery history.");
       const ledgerEntry = {
         recipient: phoneNumber,
         event: `sms.${intent.intentType}`,
@@ -778,16 +827,17 @@ export const createNotificationIntentHandlers = ({
         },
         { merge: true },
       ).catch((error) => console.error("Could not update the shared notification delivery ledger", error));
-      return res.json({ success: true, intent: safeIntentProjection({ ...intent, status: "sent", attemptId, providerMessageId, sentAt: updatedAt }), attempt: { ...attempt, providerMessageId, status: normalizeSmsDeliveryStatus(result.status), outcome: "confirmed", updatedAt } });
+      return res.json({ success: true, intent: safeIntentProjection(reconciled.intent || { ...intent, status: "sent", attemptId, providerMessageId, sentAt: updatedAt }), attempt: publicAttempt(reconciled.attempt) });
     } catch (error) {
-      if (intent && attemptId && !providerCallStarted) {
-        const updatedAt = nowIso();
-        await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, { status: "failed", outcome: "not_sent", failureCode: String(error?.code || "preflight_failed").slice(0, 80), failureMessage: safeErrorMessage(error, "Message could not be sent."), updatedAt }, { merge: true }).catch(() => {});
-        await setDoc(COLLECTIONS.notificationIntents, intent.intentId, { status: "failed", approvalSnapshot: null, attemptId, failureMessage: safeErrorMessage(error, "Message could not be sent."), updatedAt }, { merge: true }).catch(() => {});
-      } else if (intent && attemptId) {
-        const updatedAt = nowIso();
-        await setDoc(COLLECTIONS.smsDeliveryAttempts, attemptId, { status: "pending", outcome: "unknown", failureCode: String(error?.code || "dispatch_interrupted").slice(0, 80), failureMessage: safeErrorMessage(error, "The provider outcome could not be confirmed."), updatedAt }, { merge: true }).catch(() => {});
-        await setDoc(COLLECTIONS.notificationIntents, intent.intentId, { status: "unknown", attemptId, updatedAt }, { merge: true }).catch(() => {});
+      if (intent && attemptId) {
+        await reconcileDelivery({ churchId: intent.churchId, intentId: intent.intentId, attemptId,
+          update: confirmedResult || {
+            status: providerCallStarted ? "pending" : "failed",
+            outcome: providerCallStarted ? "unknown" : "not_sent",
+            failureCode: String(error?.code || "dispatch_interrupted").slice(0, 80),
+            failureMessage: safeErrorMessage(error, "The provider outcome could not be confirmed."),
+          },
+        }).catch(() => {});
       }
       return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not send this message."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
@@ -828,8 +878,7 @@ export const createNotificationIntentHandlers = ({
         });
         intent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       } else {
-        await setDoc(COLLECTIONS.notificationIntents, intentId, { intentId, ...intent }, { merge: false });
-        intent = { intentId, ...intent };
+        intent = await mutateIntent(churchId, intentId, (current) => current ? null : { intentId, ...intent });
       }
     }
     return { intent: { intentId, ...intent }, context };
@@ -981,15 +1030,17 @@ export const createNotificationIntentHandlers = ({
           return true;
         });
       } else {
-        createdIntent = true;
-        await setDoc(COLLECTIONS.notificationIntents, intentId, { intentId, ...intent, preparedByUid: admin.user.uid }, { merge: false });
+        await mutateIntent(churchId, intentId, (current) => {
+          createdIntent = !current;
+          return current ? null : { intentId, ...intent, preparedByUid: admin.user.uid };
+        });
       }
       await setDoc(COLLECTIONS.notificationBatches, vacancyClaimId, { status: "active", expiresAt: 0 }, { merge: true });
       const savedIntent = await getDoc(COLLECTIONS.notificationIntents, intentId) || { intentId, ...intent };
       const reviewed = await prepareIntentReview(savedIntent);
       return res.json({ success: true, intent: reviewedIntentProjection(reviewed) });
       } catch (error) {
-        if (createdIntent) await deleteDoc(COLLECTIONS.notificationIntents, intentId).catch(() => {});
+        if (createdIntent) await deleteUnusedIntent(churchId, intentId).catch(() => {});
         if (acquiredVacancyClaim) {
           await setDoc(COLLECTIONS.notificationBatches, vacancyClaimId, { status: "released", releasedAt: nowIso(), expiresAt: 0 }, { merge: true }).catch(() => {});
         }
@@ -1082,7 +1133,9 @@ export const createNotificationIntentHandlers = ({
       });
     const formatted = rows.map((row) => {
       const intent = intentById.get(row.intentId);
-      const attempt = intent ? attemptByIntentId.get(intent.intentId || intent.id) : null;
+      const attempt = intent?.attemptId
+        ? attempts.find((item) => (item.attemptId || item.id) === intent.attemptId)
+        : intent ? attemptByIntentId.get(intent.intentId || intent.id) : null;
       const recipient = recipientById.get(row.recipientId);
       const snapshot = intent?.approvalSnapshot;
       const awaitingDispatch = Boolean(intent && ["preview", "ready"].includes(intent.status) && snapshot?.approvalVersion && Number(snapshot.expiresAt) > Date.now());
@@ -1280,8 +1333,17 @@ export const createNotificationIntentHandlers = ({
               }
               if (previousBatch) await setDoc(COLLECTIONS.notificationBatches, previousBatchId, { status: "superseded", supersededAt: nowIso(), updatedAt: nowIso() }, { merge: true });
             }
-            const moved = { ...existing, intentId: id, batchId, status: existing.status === "failed" ? "ready" : existing.status, approvalSnapshot: null };
-            await setDoc(COLLECTIONS.notificationIntents, id, { batchId, status: moved.status, approvalSnapshot: null, updatedAt: nowIso() }, { merge: true });
+            const moved = await mutateIntent(churchId, id, (current, attempt) => {
+              if (!current || current.churchId !== churchId || current.batchId !== existing.batchId ||
+                  !["preview", "ready", "failed"].includes(current.status) || current.providerAcceptedAttemptId || hasConfirmedSmsEvidence(attempt) || attempt?.outcome === "unknown") return null;
+              return { batchId, status: current.status === "failed" ? "ready" : current.status, approvalSnapshot: null, updatedAt: nowIso() };
+            });
+            if (moved?.batchId !== batchId) {
+              row.status = moved?.status || "excluded";
+              row.exclusionReason = "A previous send is already handled or unresolved.";
+              rows.push(row);
+              continue;
+            }
             const reviewed = await prepareIntentReview(moved);
             row.intentId = id;
             row.status = reviewed.eligible ? reviewed.intent.status : "excluded";
@@ -1318,7 +1380,7 @@ export const createNotificationIntentHandlers = ({
                 if (!snapshot.exists) transaction.create(ref, { intentId: id, ...intent });
               });
             } else {
-              await setDoc(COLLECTIONS.notificationIntents, id, { intentId: id, ...intent }, { merge: false });
+              await mutateIntent(churchId, id, (current) => current ? null : { intentId: id, ...intent });
             }
             const savedIntent = await getDoc(COLLECTIONS.notificationIntents, id) || { intentId: id, ...intent };
             const reviewed = await prepareIntentReview(savedIntent);

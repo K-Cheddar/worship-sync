@@ -76,7 +76,7 @@ const TWILIO_STATUS_MAP = new Map([
 ]);
 
 export const normalizeTwilioStatus = (value) =>
-  TWILIO_STATUS_MAP.get(String(value || "").trim().toLowerCase()) || "accepted";
+  TWILIO_STATUS_MAP.get(String(value || "").trim().toLowerCase()) || "";
 
 export const validateTwilioWebhookSignature = ({
   authToken,
@@ -131,14 +131,24 @@ export const createTwilioSmsProvider = ({
   return {
     provider: "twilio",
     async sendMessage({ to, body, statusCallbackUrl } = {}) {
-      const message = await client.messages.create({
-        to,
-        body,
-        ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
-        ...(normalizedMessagingServiceId
-          ? { messagingServiceSid: normalizedMessagingServiceId }
-          : { from: normalizedSenderPhoneNumber }),
-      });
+      let message;
+      try {
+        message = await client.messages.create({
+          to,
+          body,
+          ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
+          ...(normalizedMessagingServiceId
+            ? { messagingServiceSid: normalizedMessagingServiceId }
+            : { from: normalizedSenderPhoneNumber }),
+        });
+      } catch (error) {
+        // Only an explicit Twilio REST client rejection is proof of non-acceptance.
+        // Codes alone, redirects, timeouts and 5xx responses remain uncertain.
+        error.definitiveRejection = Number.isInteger(error.status) &&
+          error.status >= 400 && error.status < 500 && error.status !== 408 &&
+          Number.isInteger(error.code) && error.code >= 20000 && error.code < 30000;
+        throw error;
+      }
       if (!message?.sid) {
         throw new Error("The SMS provider did not return a message ID.");
       }
@@ -203,3 +213,14 @@ export const setSmsProviderForServerTests = (provider) => {
 
 export const getSmsProviderForConfig = (options) =>
   smsProviderForServerTests || createSmsProviderForConfig(options);
+
+/** Reconstruct exactly the query Twilio received; ignore request origin/path. */
+export const twilioStatusCallbackUrlForRequest = (base, req) => {
+  if (!base) return base;
+  const original = String(req.originalUrl || req.url || "");
+  if (!original) return base;
+  const url = new URL(base);
+  const queryStart = original.indexOf("?");
+  url.search = queryStart < 0 ? "" : original.slice(queryStart);
+  return url.toString();
+};

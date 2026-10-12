@@ -1,6 +1,6 @@
 # SMS foundation audit and incremental design
 
-Audited on 2026-10-12 on `in-progress`. This phase extracts shared batch mechanics; it does **not** implement bulk schedule SMS, background execution, or permission redesign. Production infrastructure/configuration was not inspected. Unresolved proposals below are not approved product decisions.
+Audited and hardened on 2026-10-12 on `in-progress`. Phase 1 extracts shared batch mechanics; Phase 2 adds monotonic send reconciliation. This work does **not** implement bulk schedule SMS, background execution, or permission redesign. Production infrastructure/configuration was not inspected. Unresolved proposals below are not approved product decisions.
 
 ## Planning and authorization
 
@@ -49,13 +49,13 @@ A future feature should supply selection, content, scoped authorization, source 
 ## Concrete findings and consequences
 
 1. **HTTP timeout and unfinished work:** `notificationBatches.js:32` iterates sequentially inside `dispatchAvailabilityBatch` (`notificationIntents.js:1386`). There is no time budget, provider request deadline, heartbeat or independently durable execution cursor. Up to 500 recipients may be selected. Heroku drops a request after 30 seconds while application processing can continue: [Heroku H12 guidance](https://devcenter.heroku.com/articles/preventing-h12-errors-request-timeouts). Browser disconnect and timeout do not reliably stop the loop; a process crash does. The extraction does not fix or hide this risk.
-2. **Stale timestamps are not ownership leases:** `notificationIntents.js:188`, `:193`, `getAvailabilityBatch` and the shared claim allow two-minute stale recovery. An old process can still be running when a new request recovers the batch. Per-intent transactions block duplicate active sends, but recovery blindly writes unknown from an earlier read and batch completion writes a retained batch snapshot without fencing. A stale read can overwrite a newly confirmed result; competing finalizers can replace progress. Safe long-running recovery needs conditional attempt-state transitions and dispatcher ownership tokens, not a longer timeout.
+2. **Stale timestamps are not ownership leases:** Phase 2 fixes per-intent recovery with fresh transactional reads, claim/owner checks and provider-evidence reconciliation. Batch claim/completion still lack dispatcher fencing: an old process can be running during stale batch recovery and retained final batch snapshots can replace progress. Fenced batch generations/leases remain continuation work; per-intent claims prevent resend of confirmed/unknown work.
 3. **Attempt pointer gap fixed here:** `claimIntent` used to create an attempt without attaching its ID to the sending intent until provider completion. A crash left recovery unable to mark that attempt uncertain. Both transaction and memory claim paths now checkpoint `attemptId` with `sending`. Legacy sending intents without this field remain blocked; do not invent an attempt association or resend them.
-4. **Provider acceptance is not atomic with application persistence:** `sendIntent` writes provider SID/status to attempt, then intent. If the second write fails, its catch writes unknown/pending over the confirmed attempt. A crash before the SID write leaves callbacks unable to match. This avoids automatic resend but can strand known sends and lose evidence. Preserve accepted evidence monotonically, atomically reconcile attempt/intent where possible, and add an attempt-bound signed callback correlation before unattended recovery. Never use absence of a saved SID as proof the provider did not accept.
-5. **Callback ordering has a concurrency gap:** `smsStatusWebhook.js:32` queries by SID, then writes without a transaction (`:44`). `nextSmsDeliveryStatus` protects sequential duplicated/delayed callbacks, not simultaneous callbacks or a send-result write racing a callback. A callback arriving before SID persistence is acknowledged as ignored and is not retained. Webhook updates attempts only, not unknown intents. Transactional monotonic reconciliation and durable unmatched callback capture remain necessary.
+4. **Provider acceptance is outside the database transaction:** Phase 2 replaces separate result/error writes with shared reconciliation. Firestore commits attempt/intent together; memory checkpoints the attempt first. Confirmed SID/outcome/delivery evidence survives subsequent exceptions. New sends persist callback correlation before contacting Twilio, so an authenticated early callback can checkpoint acceptance. A process/database failure before any result/callback checkpoint still leaves unavoidable uncertainty, never proof of non-sending.
+5. **Callback ordering gap fixed in Phase 2:** query/URL attribution is followed by a fresh transactional read of attempt and intent. The same monotonic rule handles callback, result, exception and recovery writes. New correlation eliminates the SID-persistence race for newly claimed attempts. Legacy unmatched callbacks remain conservative no-ops because they cannot be attributed safely; no unmatched-message collection was introduced.
 6. **Broad authorization:** all notification preparation/history/review/dispatch paths use `requireTeamsEdit`; production injects `requireTeamsEditSession` (`authService.js:6654`, predicate at `:5121`). Team-scoped editors can be denied messaging despite schedule edit rights; globally authorized editors are not filtered by source teams. Compare `sendTeamSchedule` at `teamsAuthHandlers.js:13064`, which authorizes the schedule team. Recipient inclusion in a form's teams is not authorization for the operator. Read-only inspection of `in-progress-2` confirms its team-scoped helper validates the scoped team's church and active state, while its broad Teams edit helper remains broad. Align with those helpers when that work is available; no branch was switched or merged.
 7. **Feature scope is not fully revalidated:** preparation checks member/form membership (`teamsAuthHandlers.js:8265`, `:8342`); `resolveAvailabilityNotificationContext` and the transaction validation path check church, active source, response and consent but do not repeat that membership resolution. Review fingerprints include form team IDs, not current member/position/team membership. Moving a member out of scope after review can escape final source-scope enforcement. Final validation must also bind recipient.memberId to intent.memberId. Keep this adapter responsibility explicit before adding features.
-8. **Draft preparation concurrency:** reservation binds church/form/type/selected member IDs and request key and allocates reminder rounds transactionally. Remaining preparation happens outside that transaction. Two requests observing `preparing` can both build previews; adoption from a different batch checks and writes separately and can race dispatch. The existing ten-minute review fingerprint blocks many stale sends, but this is not a fenced preparation lifecycle. Reservation and preparation need conditional completion/adoption tests before a generic prepare endpoint.
+8. **Draft preparation concurrency:** reservation binds church/form/type/selection/request key and allocates reminder rounds transactionally. Phase 2 makes intent creation and adoption conditional, so stale preparation cannot reset a completed or uncertain send. The broader preparation lifecycle and prior-batch supersession still lack dispatcher fencing; this remains a continuation boundary.
 9. **Inbound mapping is single-number-only:** `smsInboundWebhook.js:76` maps `To` to exactly one `senderPhoneNumber`; no match or ambiguity returns successful empty TwiML without changing consent. The provider preferentially uses a Messaging Service, which may select another sender. Inbound code ignores service/account metadata and `OptOutType`. [Twilio Messaging Services](https://www.twilio.com/docs/messaging/services) documents sender-pool selection, inbound webhook settings and Advanced Opt-Out. Verify unique church/account/service ownership, every pool number, enabled webhook/signature credentials and keyword settings before adding senders. Never choose an arbitrary church under ambiguity.
 10. **Publication/email coupling:** `sendTeamSchedule` first emails (`:13150`), sets `sentAt` (`:13156`), then records SMS drafts (`:13161`). `validateIntent` requires `sentAt` for assignment notifications. The smallest future separation is a channel-neutral publication checkpoint and independent email/SMS delivery operations. Preserve legacy `sentAt` interpretation for old schedules and keep today's Send schedule action calling the same sequence. Do not silently define a publication revision from a timestamp changed by unrelated writes.
 11. **UI recovery is useful but limited:** `availabilityBatchActions.ts` persists request and last-batch IDs; Messages reloads the latter, and Forms reads current batch after dispatch errors. Recovery depends on that browser's local storage and history queries; there is no authorized server batch list or polling while a dispatcher continues. It cannot guarantee progress discovery from another browser/device.
@@ -66,10 +66,10 @@ Intent creation starts at `preview`. Review attaches a snapshot; `ready` is also
 
 - Accepted with a provider SID: intent `sent`, attempt `confirmed` with accepted/sent/delivered/undelivered/failed delivery status. Later undelivered or failed callbacks never make the intent retryable.
 - Definitive rejection or pre-provider failure: intent `failed`, attempt `failed` or `not_sent`; clear approval. Deliberately prepare/review again before retrying.
-- Ambiguous provider/network outcome or interrupted active claim: intent `unknown`, attempt outcome `unknown`; never automatically retry. Existing reconciliation is insufficient to release this state safely.
+- Ambiguous provider/network outcome or interrupted active claim: intent `unknown`, attempt outcome `unknown`; never automatically retry. Phase 2 can repair this state from confirmed evidence; absent evidence it remains blocked.
 - `suppressed` is handled/non-sendable. `sending` and `unknown` cannot be claimed again.
 
-Current provider error classification treats an HTTP status below 500 or five-digit provider code as definitive; ambiguous/network failures without such evidence remain unknown. Review this classification against actual Twilio error semantics before expanding recovery; a code alone is not general proof of non-acceptance across arbitrary providers.
+Phase 2 classifies rejection at the Twilio adapter: a REST exception must carry an integer HTTP `status` of 400?499 (excluding timeout 408) and an integer Twilio request-error `code` in 20000?29999. The handler consumes only its explicit `definitiveRejection` signal. Codes alone, `statusCode` from arbitrary errors, delivery-error codes, 5xx and network failures stay unknown. See [Twilio REST responses](https://www.twilio.com/docs/usage/twilios-response) and [invalid callback rejection 21609](https://www.twilio.com/docs/api/errors/21609).
 
 Batch lifecycle: `preparing -> prepared -> dispatching -> sent | partial`; adoption by another draft can set `superseded`. Stale dispatch is recoverable as `partial`. `sent` describes processing/provider acceptance, not guaranteed handset delivery. `partial` also covers unknown, failed, pending and invalidated previews. Failed intents require new deliberate preparation; batch resume sends only untouched `preview`/`ready` intents. Excluded rows stay in the review for explanation.
 
@@ -120,7 +120,7 @@ Still unresolved: whether approved work may continue beyond the existing ten-min
 
 ## Ordered next phases / readiness
 
-1. Make recovery state transitions conditional and preserve confirmed provider evidence; transactional callbacks, correlation/unmatched callback capture, and controlled race/failure tests.
+1. Phase 2 implements conditional recovery, confirmed-evidence preservation, transactional callbacks and attempt correlation with controlled race/failure tests. Unattributable legacy outcomes remain blocked; no unsafe attribution or automatic retry is added.
 2. Align source/team authorization and final member/source scope validation with the separate permissions work; include history and preview projections, not only sending.
 3. Implement the selected existing-web-dyno continuation design with fenced progress and server-side authorized batch discovery, once expiry/reapproval, permission revocation and restart recovery behavior are resolved. Add provider deadlines. Verify real Firestore contention and representative Heroku interruption before claiming reliability.
 4. Separate publication from channel delivery while retaining today's email action and legacy schedules.
@@ -167,3 +167,85 @@ Self-review scope: extraction and affected workflow compatibility, not branch pr
 Review checklist: cross-boundary, sibling-pattern, persisted compatibility, identity isolation, contract round trip, validate/use, retry authority, provider-result adoption, authorization/projection, and production composition reviewed. No new long-lived UI owner or callbacks were introduced; existing client unmount tests were reviewed/run. No optional check is represented as live production verification.
 
 Final review readiness: **Ready** for the bounded extraction/compatibility scope. No blocking regression was found in this patch. The broader production reliability and schedule readiness review remains **Not ready** for the concrete findings and missing infrastructure verification above.
+
+## Phase 2 delivery reliability contract (authoritative)
+
+### Goal / existing architecture
+
+Preserve provider evidence and converge after interruption through the existing intent and attempt collections. `smsDeliveryAttempts.js:createSmsDeliveryReconciler` is the shared boundary; `authService.js` injects the same concrete storage functions into sending and callbacks. No new queue, dispatcher, collection, scheduled work or external side effect is added.
+
+### Before behavior / after behavior
+
+Before Phase 2, intent-write failure could erase an accepted attempt, stale recovery could overwrite a newer result, and early callbacks could not match an unsaved SID. After Phase 2, all outcome writers read current state and share monotonic reconciliation. Firestore uses a transaction; fallback memory uses a datastore-function/church/intent lock shared with claims and conditional draft writes. The attempt ID already checkpointed by Phase 1 remains the unique claim generation.
+
+### Product Decision Check / behavior intentionally unchanged
+
+Authorization: the current Phase 2 request and [availability SMS feature contract](features/team-availability-sms.md). The operator still selects, reviews and confirms; consent, phone, recipient, source and current authority checks stay in the existing claim/final validation. Text, secure links, identities, UI, schedule emails, reminders and permissions are preserved. The reliability changes and their additive fields are explicitly requested. No consequential product choice remains unresolved inside this phase; authority scope and background execution policy remain separate phases.
+
+### Proposed implementation / affected surfaces
+
+One shared reconciler replaces duplicated send-result, exception, recovery and callback writers. Conditional intent creation/adoption and deletion of unused drafts close adjacent writers that could reset send state; a single history sanitizer removes the new secret. Forms, Messages and individual schedule sends use existing routes and API shapes. The Express status route still authenticates with Twilio signatures rather than browser CSRF. Display/Electron/client rendering are unaffected. The shared helper is necessary because independent guards cannot enforce invariants under concurrent writes.
+
+### Permitted state transitions and evidence
+
+| Fact | Permitted transition | Required evidence |
+| --- | --- | --- |
+| Intent review | `preview`/`ready`/`failed` -> `sending` | Explicit operator confirmation, matching unexpired reviewed version, current source/consent/authority and atomic durable attempt claim |
+| Acceptance | `sending`/`unknown`/`failed` -> `sent` | Bound provider result with SID, or authenticated attributed callback, or current stored authoritative acceptance evidence |
+| Definitive non-send | `sending`/`unknown` -> `failed` | Pre-provider failure or adapter-classified REST rejection; attempt outcome `not_sent` or `failed`; approval cleared |
+| Uncertainty | Unresolved stale `sending` -> `unknown`; active external uncertainty -> `unknown` | Fresh matching claim with no authoritative accepted evidence; never assume SID absence means unsent |
+| Manual retry | `failed` -> new reviewed claim | Deliberate preparation/review/confirmation; previous attempt not accepted/unknown; accepted-attempt fence absent |
+| Delivery | `pending` -> `accepted` -> `sent` -> `delivered`/`undelivered`/`failed` (forward states may be skipped) | Provider result or attributed callback; first terminal state wins, contradictory terminal callbacks cannot replace it |
+| Suppression | `suppressed` remains non-sendable | Existing workflow policy; no new suppression behavior |
+
+Attempt outcomes remain compatible: `confirmed` is provider acceptance, `not_sent` is a definitive pre-provider failure, `failed` is definitive REST rejection, `unknown` is ambiguity; a freshly claimed `pending` attempt may lack an outcome. Delivery `failed` with a SID is **confirmed acceptance**, not definitive REST rejection. An accepted message later undelivered never becomes retryable. Volunteer response is read separately from recipient submission or schedule responses; delivery does not imply action completion.
+
+Confirmed stored evidence includes a SID, `outcome: confirmed`, or accepted/sent/delivered/undelivered status. Bare `failed`/`pending` and error codes are not acceptance evidence. Historical intent `sent`/SID evidence is also retained for its current attempt. Ordinary error handlers cannot change acceptance or delivery status after confirmation. Provider SID conflicts are ignored rather than rebound. Observation timestamps (`acceptedAt`, `sentAt`, `deliveredAt`, `undeliveredAt`, `failedAt`) are additive; existing timestamps are retained. These are application observations, not precise provider event times. Intent `sentAt` means acceptance, separately from attempt `sentAt` delivery progression.
+
+`providerAcceptedAttemptId` is a sticky acceptance fence on the existing intent. Normally it names the current confirmed attempt. A late callback for an older attempt updates only that attempt's delivery facts and sets the fence, keeping the newer attempt pointer/status intact. The fence blocks another claim or draft adoption. It never falsely confirms the newer attempt. If a newer external call has already begun, recording old acceptance cannot retract it; that contradictory-rejection case needs investigation, not another retry.
+
+### Transaction and recovery boundaries
+
+Firestore reads both documents before any writes and commits both atomically; transaction conflicts retry with fresh state. Twilio remains outside the transaction. The fallback store is single-process only, with the same per-intent lock for claims/results/recovery/callbacks; its writes are not atomic. Acceptance checkpoints the attempt before intent adoption, making a failed second write recoverable. The outer exception retains the actual provider result and attempts the same reconciliation again rather than overwriting it with unknown.
+
+Recovery rechecks church, intent, attempt pointer, source/member/recipient/batch, start time and approving owner inside the commit boundary. Linked attempt ownership is also validated. Only a still-stale unresolved claim is changed to unknown. Confirmed evidence repairs `sending` or `unknown` intents to sent; newer callbacks/results and changed claim generations win. Repeated recovery converges without provider calls. History and stale batch processing return the actual reconciled state. Rejection facts survive a later generic interrupted handler.
+
+### Callback correlation and authentication
+
+New claims persist 256 random bits as `callbackToken` plus provider account identity before the send. The callback URL adds only `attempt` and `correlation`; no church, recipient, body or response-link data enters that URL. Both fields are covered by [Twilio URL/body signature verification](https://www.twilio.com/docs/usage/security). The signature verifier uses the configured public origin/path plus the exact received query; request host/proxy headers cannot redirect the authority. Changing callback configuration while messages are outstanding can invalidate signatures and is an operational constraint.
+
+After signature verification, the handler validates one well-formed correlation pair, looks up the attempt, then rechecks the token in the transaction. Supplied destination/account must match the persisted snapshot; SID cannot contradict a saved SID. Uncorrelated legacy callbacks require exactly one SID match and revalidate that saved SID at commit time. Malformed, ambiguous, unknown/deleted or unattributable callbacks are successful ignored no-ops. Unrecognized delivery statuses are ignored. Database failures return a server error so callback delivery may be retried. Duplicate processing is idempotent. Tokens are omitted from manual-send responses and admin history; callback error responses do not expose internal exceptions or response links. Free-form provider callback error text is not persisted; numeric error evidence remains.
+
+### Legacy behavior / risks and edge cases
+
+Existing documents need no migration. Legacy attempts with a saved SID use signature-verified SID attribution and the same reconciliation. A legacy active intent without an attempt ID becomes blocked unknown if no authoritative intent evidence exists; no association is invented. Missing/deleted linked attempts and malformed ownership remain conservatively blocked. Pre-correlation sends whose SID was never saved cannot be attributed through an early callback; later correctly attributable evidence can reconcile, but absent such evidence they remain unknown indefinitely.
+
+A crash after Twilio acceptance but before all database writes, coupled with an absent/lost/unauthenticatable callback, remains unknowable. Persistent database outages can lose locally returned evidence before checkpointing. No provider lookup/manual resolution endpoint is added. This does not guarantee exactly-once external delivery. The ancillary delivery ledger is best-effort and never controls SMS retries. Terminal-status conflicts retain the first terminal result; no event-time ordering or provider polling is introduced.
+
+### Acceptance criteria / verification and review
+
+Confirmed evidence never regresses; stale writes re-read/retry; authenticated early callbacks checkpoint their attempt; confirmed/unknown sends cannot be reclaimed; old-attempt results cannot mutate a newer attempt; existing manual workflows remain compatible. Tests use only fake sends.
+
+Required checks run after implementation:
+
+- Focused Node set: `notificationBatches`, `notificationIntents`, `smsDeliveryReliability`, `smsMessaging`, `smsConsent`, `smsInboundWebhook`, `smsStatusWebhook`, `notificationLedger`, `assignmentResponseToken` test files: **131 passed, 0 failed, 0 skipped**.
+- Composed `teamsApi.test.js` selection `SMS|notification requests|schedule.*(send|email)|send.*schedule`: **8 passed, 0 failed, 0 skipped**, including the real auth-service callback factory, exact signed correlation URL and token-redacted history.
+- `git diff --check`: required final check.
+
+The new optimistic transaction fake overlaps transactions, stages atomic writes, rejects reads after writes, tracks read versions and retries conflicts. Explicit barriers force recovery and delayed `sent` callback reads before competing successful/delivered commits; retry counts and final persisted facts are asserted. Memory tests inject intent-write failures; send-handler tests assert one provider call after retry attempts. Ordinary serial transaction fixtures remain useful compatibility checks but are not concurrency proof.
+
+Self-review traced claims, all intent/attempt writers, batch adoption, successful send, rejection, preflight exceptions, outer exceptions, stale/unknown history recovery, callbacks, status normalization, admin history, ledger and real Express/auth composition. Identity/persistence/retry/publication/compatibility/security boundaries were reviewed. No UI lifetime owner is added.
+
+| Invariant | Adversarial scenario | Code/test evidence | Result |
+| --- | --- | --- | --- |
+| Confirmed evidence persists | Acceptance then repeated intent-write failure and later recovery | Shared reconciler + actual send-handler failure injection | Pass in memory |
+| Newer state survives | Recovery paused before commit while result/callback commits | Optimistic MVCC conflict + explicit retry assertion | Pass in transaction fake |
+| Delivery cannot regress | Delayed sent transaction overlaps delivered callback; original result follows early callback | Shared monotonic rule, conflict tests and composed auth test | Pass in fakes |
+| Old attempt cannot impersonate newer attempt | Old SID callback after changed pointer | Old attempt updated, sticky fence recorded, newer pointer/status untouched | Pass in fakes |
+| Correlation is authoritative | Forged signature/token, wrong phone/account/SID, missing legacy token | Real Twilio signature generation/verification + transactional token/SID checks | Pass in fakes |
+
+Optional additional confidence not run: real Firestore/emulator contention, live Twilio callbacks, Heroku interruption and full repository suite. No real SMS, deployment or merge was performed.
+
+### Questions requiring user input / known follow-ups
+
+None for this bounded reliability phase. The foundation is ready for the next **authorization phase**, not for unattended background continuation. Continuation still requires approved expiry/reapproval and permission-revocation policy, scoped authority/source validation, fenced batch leases/generations and progress finalization, restart discovery/trigger, provider deadlines and representative operational verification. Inbound Messaging Service ownership and independent schedule publication/grouping remain the separate findings above.
