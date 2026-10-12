@@ -24,6 +24,8 @@ Changes to source data do not automatically regenerate credits.
 ## Expected behavior — confirmed product intent
 
 - Pressing **Generate Credits** is an explicit request to refresh matching credits. It replaces their contents with the generated result, even when the existing text was previously generated and then manually edited.
+- If a credit's heading, visibility, or other fields change while generation is running, preserve those current fields while applying the generated text and provenance.
+- For participant overlays, a matching overlay with an explicitly blank name is an authoritative empty result; when no overlay matches the event or its name is missing, there is no valid result and the existing credit text remains unchanged.
 - Manual edits after generation are allowed and remain in the editable credits record until an operator changes that record or intentionally regenerates it.
 - The operator may correct a plan-derived list after the service so it records who actually served.
 - Generation does not run automatically when an overlay, plan, or schedule changes.
@@ -43,6 +45,9 @@ The replacement rule applies when there is a valid generated result for a matchi
 | Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |
 | --- | --- | --- | --- |
 | First generation from available participant information | Populate matching credits from available sources. | `useGenerateCreditsFromOverlays` builds entries from participant overlays and team schedule data; hook tests cover generated values. | Confirmed workflow; exact source matching remains an implementation detail unless it changes operator-visible results. |
+| Matching credit has no participant overlay source or the match has no name value | Leave its text unchanged and report that the participant overlay source was unmatched. | The hook records an unmatched result without persisting the credit; tests cover missing sources and present-but-blank values. | Confirmed by the product-owner request, October 11, 2026. |
+| Matching participant overlay is present with an explicitly blank name | Treat the blank value as authoritative when Generate Credits is explicitly requested. | The hook produces an empty generated result and persists it; regression tests distinguish it from missing names. | Confirmed by the product-owner request, October 11, 2026. |
+| Same-outline credit fields change while generation is running | Preserve the current heading, visibility, and other fields while applying generated text. | The hook merges into latest Redux state; field-scoped Pouch writes preserve other document fields and retry once after a revision conflict. Focused hook, editor, and persistence tests cover these interleavings. | Confirmed by the product-owner request, October 11, 2026. |
 | Explicit regeneration after an operator edited generated text | Refresh the matching credit from the current source data, replacing the previous manual text. | The hook applies and persists the generated text and refreshes its provenance; focused tests cover edited text, persisted override flags, and failed saves. | Confirmed and implemented. |
 | Operator corrects credits after service; no regeneration occurs | Keep the operator's corrected record. | Credits are edited and persisted through the credits editor; inspect the implementation references below. | Confirmed workflow. |
 | Source changes after generation, with no button press | Do not regenerate automatically. | Generation is invoked by the editor/toolbar action; no source-change-triggered regeneration is part of this contract. | Confirmed. |
@@ -61,6 +66,24 @@ The replacement rule applies when there is a valid generated result for a matchi
 - **Material alternative rejected:** Silently preserve a manual override during explicit regeneration, which would prevent the action from refreshing all matching credits.
 - **Approval source/date:** Product-owner request, October 10, 2026; see the approved wording and workflow above.
 - **Affected workflow/contract:** Credits preparation and post-service correction; this contract.
+
+### Participant overlay source presence and empty names
+
+- **Question/problem:** Should a missing participant overlay match be treated like an empty participant name during explicit generation?
+- **Approved behavior:** A missing match or missing name value is not a valid generated result, so the matching credit is left unchanged and shown as unmatched. A matching participant overlay with an explicitly blank name is an authoritative empty result and clears matching credit text on explicit generation.
+- **Why:** This prevents absent overlay data from erasing existing names while keeping an intentional blank source meaningful.
+- **Material alternative rejected:** Convert every missing overlay match to an empty string, which could clear text without an authoritative source.
+- **Approval source/date:** Product-owner request, October 11, 2026.
+- **Affected workflow/contract:** Generate Credits from participant overlays.
+
+### Concurrent credit edits during generation
+
+- **Question/problem:** Should a delayed generation save overwrite credit fields unrelated to generated participant text?
+- **Approved behavior:** No. Generation refreshes text and provenance while preserving the latest heading, visibility, and other credit fields from the same outline.
+- **Why:** An explicit refresh of participant names must not undo an operator's concurrent presentation or visibility edits.
+- **Material alternative rejected:** Save a captured full credit object after an asynchronous delay, which can revert newer edits.
+- **Approval source/date:** Product-owner request, October 11, 2026.
+- **Affected workflow/contract:** Generate Credits and concurrent credit editing.
 
 ## Open product questions
 

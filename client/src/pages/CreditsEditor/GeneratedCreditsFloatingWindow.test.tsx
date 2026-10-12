@@ -22,6 +22,7 @@ describe("GeneratedCreditsFloatingWindow", () => {
         { creditId: "updated", creditHeading: "Welcome", sourceLabel: "Overlays", previousText: "Old", nextText: "New" },
         { creditId: "unchanged", creditHeading: "Reading", sourceLabel: "Overlays", previousText: "Reader", nextText: "Reader" },
         { creditId: "unmatched", creditHeading: "Stream Audio", sourceLabel: "Media schedule", previousText: "", nextText: "Sam", status: "unmatched" },
+        { creditId: "missing-overlay", creditHeading: "Welcome", sourceLabel: "Participant overlays", previousText: "Existing host", nextText: "", status: "unmatched" },
         { creditId: "failed", creditHeading: "Invocation", sourceLabel: "Overlays", previousText: "Old", nextText: "New" },
       ],
     }));
@@ -40,7 +41,8 @@ describe("GeneratedCreditsFloatingWindow", () => {
 
     expect(screen.getByText("Updated")).toBeInTheDocument();
     expect(screen.getByText("Unchanged")).toBeInTheDocument();
-    expect(screen.getByText("Unmatched")).toBeInTheDocument();
+    expect(screen.getAllByText("Unmatched")).toHaveLength(2);
+    expect(screen.getByText("No participant name was available. Existing credit text was left unchanged.")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("Could not save this credit.")).toBeInTheDocument();
     expect(screen.getByText("No change. This credit already matches the generated text.")).toBeInTheDocument();

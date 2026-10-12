@@ -573,37 +573,98 @@ export const ensureCreditsIndexDoc = async (
 /**
  * Persist a single credit to the db (get-then-put; does not touch _rev). Returns the doc for broadcasting, or null on error.
  */
+const isPouchRevisionConflict = (error: unknown) =>
+  typeof error === "object"
+  && error !== null
+  && "status" in error
+  && error.status === 409;
+
 export const putCreditDoc = async (
   db: PouchDB.Database,
   outlineId: string,
-  credit: CreditsInfo,
+  credit: Pick<CreditsInfo, "id"> & Partial<Omit<CreditsInfo, "id">>,
 ): Promise<DBCredit | null> => {
   try {
     const docId = getCreditDocId(outlineId, credit.id);
-    const existing: DBCredit = await db.get(docId);
-    existing.heading = credit.heading;
-    existing.text = credit.text;
-    existing.hidden = credit.hidden;
-    const hasField = (field: keyof CreditsInfo) =>
-      Object.prototype.hasOwnProperty.call(credit, field);
-    if (hasField("generatedBaselineText")) {
-      existing.generatedBaselineText = credit.generatedBaselineText;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const existing: DBCredit = await db.get(docId);
+      const hasField = (field: keyof CreditsInfo) =>
+        Object.prototype.hasOwnProperty.call(credit, field);
+      if (hasField("heading")) existing.heading = credit.heading ?? "";
+      if (hasField("text")) existing.text = credit.text ?? "";
+      if (hasField("hidden")) existing.hidden = credit.hidden;
+      if (hasField("generatedBaselineText")) {
+        existing.generatedBaselineText = credit.generatedBaselineText;
+      }
+      if (hasField("generatedSource")) {
+        existing.generatedSource = credit.generatedSource;
+      }
+      if (hasField("generatedTextOverridden")) {
+        existing.generatedTextOverridden = credit.generatedTextOverridden;
+      }
+      if (existing.generatedBaselineText !== undefined && hasField("text")) {
+        // Text edits are authoritative even if an older client omitted the explicit flag.
+        existing.generatedTextOverridden = existing.text !== existing.generatedBaselineText;
+      }
+      existing.updatedAt = new Date().toISOString();
+      try {
+        const result = await db.put(existing);
+        return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };
+      } catch (error) {
+        if (!isPouchRevisionConflict(error) || attempt === 1) throw error;
+      }
     }
-    if (hasField("generatedSource")) {
-      existing.generatedSource = credit.generatedSource;
-    }
-    if (hasField("generatedTextOverridden")) {
-      existing.generatedTextOverridden = credit.generatedTextOverridden;
-    }
-    if (existing.generatedBaselineText !== undefined) {
-      // Text edits are authoritative even if an older client omitted the explicit flag.
-      existing.generatedTextOverridden = credit.text !== existing.generatedBaselineText;
-    }
-    existing.updatedAt = new Date().toISOString();
-    const result = await db.put(existing);
-    return { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) };
+    return null;
   } catch (e) {
     console.error("putCreditDoc failed", credit.id, e);
+    return null;
+  }
+};
+
+export type GeneratedCreditWriteResult = {
+  doc: DBCredit;
+  changed: boolean;
+  textChanged: boolean;
+};
+
+/** Persist generated fields only, preserving concurrent edits to the rest of the credit. */
+export const putGeneratedCreditDoc = async (
+  db: PouchDB.Database,
+  outlineId: string,
+  credit: Pick<CreditsInfo, "id" | "text"> & { generatedSource: string },
+): Promise<GeneratedCreditWriteResult | null> => {
+  try {
+    const docId = getCreditDocId(outlineId, credit.id);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const existing: DBCredit = await db.get(docId);
+      const textChanged = existing.text !== credit.text;
+      const changed = textChanged
+        || existing.generatedBaselineText !== credit.text
+        || existing.generatedSource !== credit.generatedSource
+        || existing.generatedTextOverridden !== false;
+
+      if (!changed) return { doc: existing, changed: false, textChanged: false };
+
+      existing.text = credit.text;
+      existing.generatedBaselineText = credit.text;
+      existing.generatedSource = credit.generatedSource;
+      existing.generatedTextOverridden = false;
+      existing.updatedAt = new Date().toISOString();
+
+      try {
+        const result = await db.put(existing);
+        return {
+          doc: { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) },
+          changed: true,
+          textChanged,
+        };
+      } catch (error) {
+        if (!isPouchRevisionConflict(error) || attempt === 1) throw error;
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error("putGeneratedCreditDoc failed", credit.id, e);
     return null;
   }
 };

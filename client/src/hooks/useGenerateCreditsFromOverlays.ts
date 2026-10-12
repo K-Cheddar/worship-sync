@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { useDispatch, useSelector } from "../hooks";
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
-import { putCreditDoc } from "../utils/dbUtils";
+import { putGeneratedCreditDoc } from "../utils/dbUtils";
 import { getTeamsBootstrap } from "../api/auth";
 import { selectCredit, updateCreditFromGeneration } from "../store/creditsSlice";
 import {
@@ -24,6 +24,18 @@ import {
 } from "../utils/teamScheduleCredits";
 
 const PRAISE_TEAM_ROLE_ORDER = ["worship leader", "soprano", "alto", "tenor"];
+const PARTICIPANT_EVENT_KEYS = [
+  "sabbath school",
+  "welcome",
+  "call to praise",
+  "invocation",
+  "reading",
+  "intercessor",
+  "offertory",
+  "special",
+  "sermon",
+  "behind the pulpit",
+];
 const CREDIT_GENERATION_STEP_DELAY_MS = 350;
 
 type GeneratedCreditDetail = {
@@ -32,7 +44,11 @@ type GeneratedCreditDetail = {
 };
 
 type PlannedGeneratedCreditUpdate = {
-  credit: CreditsInfo;
+  credit: CreditsInfo & {
+    generatedBaselineText: string;
+    generatedSource: string;
+    generatedTextOverridden: false;
+  };
   previousText: string;
   sourceLabel: string;
 };
@@ -142,51 +158,33 @@ export function useGenerateCreditsFromOverlays() {
 
     setIsGenerating(true);
     try {
-      const eventNameMapping: { [key: string]: string } = {
-        "sabbath school": participantOverlays
-          .filter((overlay) =>
-            overlay.event?.toLowerCase().includes("sabbath school"),
-          )
-          .map((overlay) => overlay.name)
-          .join("\n")
-          .trim(),
-        welcome:
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("welcome"),
-          )?.name || "",
-        "call to praise":
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("call to praise"),
-          )?.name || "",
-        invocation:
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("invocation"),
-          )?.name || "",
-        reading:
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("reading"),
-          )?.name || "",
-        intercessor:
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("intercessor"),
-          )?.name || "",
-        offertory:
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("offertory"),
-          )?.name || "",
-        special: participantOverlays
-          .filter((overlay) => overlay.event?.toLowerCase().includes("special"))
-          .map((overlay) => overlay.name)
-          .join("\n")
-          .trim(),
-        sermon:
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("sermon"),
-          )?.name || "",
-        "behind the pulpit":
-          participantOverlays.find((overlay) =>
-            overlay.event?.toLowerCase().includes("behind the pulpit"),
-          )?.name || "",
+      const findParticipantOverlay = (event: string) =>
+        participantOverlays.find((overlay) =>
+          overlay.event?.toLowerCase().includes(event),
+        );
+      const participantNamesForEvent = (event: string) =>
+        findParticipantOverlay(event)?.name;
+      const sabbathSchoolOverlays = participantOverlays.filter((overlay) =>
+        overlay.event?.toLowerCase().includes("sabbath school"),
+      );
+      const specialOverlays = participantOverlays.filter((overlay) =>
+        overlay.event?.toLowerCase().includes("special"),
+      );
+      const optionalEventNameMapping: Record<string, string | undefined> = {
+        "sabbath school": sabbathSchoolOverlays.some((overlay) => overlay.name !== undefined)
+          ? sabbathSchoolOverlays.map((overlay) => overlay.name ?? "").join("\n").trim()
+          : undefined,
+        welcome: participantNamesForEvent("welcome"),
+        "call to praise": participantNamesForEvent("call to praise"),
+        invocation: participantNamesForEvent("invocation"),
+        reading: participantNamesForEvent("reading"),
+        intercessor: participantNamesForEvent("intercessor"),
+        offertory: participantNamesForEvent("offertory"),
+        special: specialOverlays.some((overlay) => overlay.name !== undefined)
+          ? specialOverlays.map((overlay) => overlay.name ?? "").join("\n").trim()
+          : undefined,
+        sermon: participantNamesForEvent("sermon"),
+        "behind the pulpit": participantNamesForEvent("behind the pulpit"),
       };
 
       let schedule: TeamScheduleCreditEntry[] = [];
@@ -239,12 +237,13 @@ export function useGenerateCreditsFromOverlays() {
           };
         }
 
-        const eventKey = Object.keys(eventNameMapping).find((key) =>
+        const eventKey = PARTICIPANT_EVENT_KEYS.find((key) =>
           credit.heading.toLowerCase().includes(key),
         );
 
         if (eventKey) {
-          const names = eventNameMapping[eventKey];
+          const names = optionalEventNameMapping[eventKey];
+          if (names === undefined) return credit;
           generatedDetails.set(credit.id, {
             sourceLabel: "Participant overlays",
             names,
@@ -345,6 +344,21 @@ export function useGenerateCreditsFromOverlays() {
           nextText: entry.names,
           status: "unmatched" as const,
         }));
+      const unmatchedOverlayItems = list.flatMap((credit) => {
+        const eventKey = PARTICIPANT_EVENT_KEYS.find((key) =>
+          credit.heading.toLowerCase().includes(key),
+        );
+        if (!eventKey || generatedDetails.has(credit.id)
+          || optionalEventNameMapping[eventKey] !== undefined) return [];
+        return [{
+          creditId: credit.id,
+          creditHeading: credit.heading,
+          sourceLabel: "Participant overlays",
+          previousText: credit.text,
+          nextText: "",
+          status: "unmatched" as const,
+        }];
+      });
 
       dispatch(
         startGeneratedCredits({
@@ -358,6 +372,7 @@ export function useGenerateCreditsFromOverlays() {
               nextText: credit.text,
             })),
             ...unmatchedScheduleItems,
+            ...unmatchedOverlayItems,
           ],
           warning: scheduleError
             ? "Media schedule was unavailable. Other sources will still be applied."
@@ -368,8 +383,8 @@ export function useGenerateCreditsFromOverlays() {
       );
 
       const docsToBroadcast: NonNullable<
-        Awaited<ReturnType<typeof putCreditDoc>>
-      >[] = [];
+        Awaited<ReturnType<typeof putGeneratedCreditDoc>>
+      >["doc"][] = [];
       let hadPersistenceError = false;
       for (const { credit, previousText } of plannedUpdates) {
         dispatch(setGeneratedCreditActive(credit.id));
@@ -378,14 +393,17 @@ export function useGenerateCreditsFromOverlays() {
         }
         await waitForCreditGenerationStep();
 
-        const hasChanged = previousText !== credit.text;
-        const previousCredit = list.find((candidate) => candidate.id === credit.id);
-        const hasMetadataChange = previousCredit?.generatedBaselineText !== credit.generatedBaselineText
-          || previousCredit?.generatedSource !== credit.generatedSource
-          || previousCredit?.generatedTextOverridden !== false;
+        const latestCredit = store.getState().undoable.present.credits.list.find(
+          (candidate: CreditsInfo) => candidate.id === credit.id,
+        );
+        const hasChanged = (latestCredit?.text ?? previousText) !== credit.text;
+        const hasMetadataChange = latestCredit?.generatedBaselineText !== credit.generatedBaselineText
+          || latestCredit?.generatedSource !== credit.generatedSource
+          || latestCredit?.generatedTextOverridden !== false;
+        let textChangedInDatabase = false;
 
-        if (hasChanged || hasMetadataChange) {
-          if (!db || !outlineIdForCredits) {
+        if (!db || !outlineIdForCredits) {
+          if (hasChanged || hasMetadataChange) {
             hadPersistenceError = true;
             dispatch(
               failGeneratedCreditItem({
@@ -395,10 +413,14 @@ export function useGenerateCreditsFromOverlays() {
             );
             continue;
           }
-
+        } else {
           try {
-            const doc = await putCreditDoc(db, outlineIdForCredits, credit);
-            if (!doc) {
+            const result = await putGeneratedCreditDoc(db, outlineIdForCredits, {
+              id: credit.id,
+              text: credit.text,
+              generatedSource: credit.generatedSource,
+            });
+            if (!result) {
               hadPersistenceError = true;
               dispatch(
                 failGeneratedCreditItem({
@@ -408,7 +430,8 @@ export function useGenerateCreditsFromOverlays() {
               );
               continue;
             }
-            docsToBroadcast.push(doc);
+            textChangedInDatabase = result.textChanged;
+            if (result.changed) docsToBroadcast.push(result.doc);
           } catch (error) {
             hadPersistenceError = true;
             dispatch(
@@ -425,12 +448,21 @@ export function useGenerateCreditsFromOverlays() {
         }
 
         if (isGenerationOwnerCurrent()) {
-          dispatch(updateCreditFromGeneration({ ...credit, generatedSource: credit.generatedSource || "Generated credits" }));
+          const latestCreditAfterSave = store.getState().undoable.present.credits.list.find(
+            (candidate: CreditsInfo) => candidate.id === credit.id,
+          );
+          dispatch(updateCreditFromGeneration({
+            ...(latestCreditAfterSave ?? credit),
+            text: credit.text,
+            generatedBaselineText: credit.text,
+            generatedSource: credit.generatedSource || "Generated credits",
+            generatedTextOverridden: false,
+          }));
         }
         dispatch(
           completeGeneratedCreditItem({
             creditId: credit.id,
-            status: hasChanged ? "updated" : "unchanged",
+            status: textChangedInDatabase ? "updated" : "unchanged",
           }),
         );
       }

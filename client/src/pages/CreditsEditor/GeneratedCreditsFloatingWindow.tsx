@@ -203,18 +203,26 @@ const GeneratedCreditsFloatingWindow = () => {
                     </div>
                     {isUnmatched ? (
                       <>
-                        <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
-                          This scheduled role had assigned names, but no credit
-                          heading matched it.
-                        </div>
-                        <div>
-                          <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                            Scheduled names
+                        {item.nextText.trim() ? (
+                          <>
+                            <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
+                              This scheduled role had assigned names, but no credit
+                              heading matched it.
+                            </div>
+                            <div>
+                              <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                                Scheduled names
+                              </div>
+                              <div className="wrap-break-word whitespace-pre-line text-xs text-zinc-200">
+                                {item.nextText}
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
+                            No participant name was available. Existing credit text was left unchanged.
                           </div>
-                          <div className="wrap-break-word whitespace-pre-line text-xs text-zinc-200">
-                            {item.nextText}
-                          </div>
-                        </div>
+                        )}
                       </>
                     ) : hasTextChange ? (
                       <>
