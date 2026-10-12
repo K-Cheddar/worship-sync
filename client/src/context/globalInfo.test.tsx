@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode, useContext } from "react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import GlobalInfoProvider, {
   GlobalInfoContext,
   globalFireDbInfo,
@@ -457,6 +457,34 @@ const CodeActionsProbe = () => {
   );
 };
 
+const VerifyNavigationProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (!context) return null;
+
+  return (
+    <div>
+      <div data-testid="history-path">{location.pathname}</div>
+      <div data-testid="verify-auth-status">{context.authServerStatus}</div>
+      <button
+        type="button"
+        onClick={() =>
+          void context.verifyEmailCode({
+            pendingAuthId: "pending-history-test",
+            code: "123456",
+          })
+        }
+      >
+        Verify email code
+      </button>
+      <button type="button" onClick={() => navigate(-1)}>
+        Go back
+      </button>
+    </div>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -490,6 +518,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.createHumanSession as jest.Mock).mockReset();
     (authApi.createChurchAccount as jest.Mock).mockReset();
     (authApi.exchangeDesktopAuth as jest.Mock).mockReset();
+    (authApi.verifyEmailCode as jest.Mock).mockReset();
     (authApi.resendEmailCode as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
     (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
@@ -559,6 +588,31 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     });
 
     await waitFor(() => expect(signOutMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("replaces the login history entry when email-code sign-in completes", async () => {
+    (authApi.verifyEmailCode as jest.Mock).mockResolvedValue({
+      success: true,
+      bootstrap: loggedInHumanBootstrap,
+    });
+    renderProvider(<VerifyNavigationProbe />, ["/before-login", "/login"]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("verify-auth-status")).toHaveTextContent(
+        "online",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Verify email code" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("history-path")).toHaveTextContent("/home"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("history-path")).toHaveTextContent(
+        "/before-login",
+      ),
+    );
   });
 
   it("marks display sessions as read-only for shared realtime data", async () => {

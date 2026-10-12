@@ -3963,7 +3963,6 @@ const recordFailedEmailChallengeAttempt = async (challenge) => {
     type: shouldLock ? "email_code_locked" : "email_code_failed",
     churchId: challenge.churchId,
     userId: challenge.userId,
-    pendingAuthId: challenge.pendingAuthId,
     failedAttempts,
   });
 
@@ -7713,7 +7712,6 @@ export const authHandlers = {
       } catch (deleteErr) {
         logAuthEvent("warn", "email-code.verify.delete-challenge.error", {
           message: deleteErr.message,
-          pendingAuthId,
         });
         await revokeHumanApiCredentialSlot(user.uid, device.deviceId);
         await destroySession(req);

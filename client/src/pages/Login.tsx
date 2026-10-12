@@ -11,7 +11,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
 import Input from "../components/Input/Input";
 import Button from "../components/Button/Button";
@@ -32,6 +32,7 @@ import { GlobalInfoContext } from "../context/globalInfo";
 import {
   clearPublicShellAuthReturnPath,
   getAuthRedirectPathnameFromState,
+  getHumanPostAuthPath,
   peekPublicShellAuthReturnPath,
 } from "../utils/authRedirectPath";
 import {
@@ -108,14 +109,18 @@ const LastUsedBadge = ({ show }: { show: boolean }) => {
 };
 
 /**
- * Dedupes concurrent `verifyEmailCode` calls for the same pending auth + digits.
- * Ref-based guards reset on remount; this survives React Strict Mode remounts and
- * blocks overlapping async work from the auto-submit effect and manual submit.
+ * Keeps verification attempts alive across React Strict Mode's effect replay.
+ * Attempts are keyed by challenge and digits, so changed credentials can start
+ * a new request while the same pair stays suppressed after a failed attempt.
  */
-let emailCodeVerificationInFlight: string | null = null;
+const emailCodeVerificationInFlight = new Set<string>();
+const attemptedEmailCodeVerifications = new Set<string>();
+const getEmailCodeAttemptKey = (pendingAuthId: string, digits: string) =>
+  JSON.stringify([pendingAuthId, digits]);
 
 const Login = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const context = useContext(GlobalInfoContext);
   const [mode, setMode] = useState<Mode>("signIn");
@@ -125,6 +130,8 @@ const Login = () => {
   const [adminName, setAdminName] = useState("");
   const [code, setCode] = useState("");
   const [pendingAuthId, setPendingAuthId] = useState("");
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isCompletingCodeSignIn, setIsCompletingCodeSignIn] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<LoginFieldErrors>({});
@@ -254,8 +261,9 @@ const Login = () => {
   const authServerRetryCount = context?.authServerRetryCount ?? 0;
   const isAuthServerOnline = authServerStatus === "online";
   const isAuthServerChecking = authServerStatus === "checking";
-  /** Session is ready but router has not left `/login` yet (avoids a dead-air gap after the submit spinner stops). */
-  const isFinishingSignIn = context?.loginState === "success";
+  /** A bootstrap-confirmed human session is ready to leave `/login`. */
+  const isFinishingSignIn =
+    context?.loginState === "success" && context?.sessionKind === "human";
   /**
    * Hosted desktop handoff runs in a normal browser tab that may already have a WorshipSync
    * web session. In that case `loginState` is still "success" from bootstrap, but the page copy
@@ -264,35 +272,28 @@ const Login = () => {
   const showWebSessionNavigatingChrome = Boolean(
     isFinishingSignIn &&
     !isHostedDesktopBrowserFlow &&
-    // A device-code challenge outranks "navigating". Firebase sign-in can
-    // succeed (so `loginState` is "success") while the server still requires
-    // a code for an unrecognized device — as happens right after accepting an
-    // invite. Showing "Signed in — hang tight, this screen will switch in a
-    // moment" over the code form tells the operator to wait for something
-    // that will never arrive, while the action they must take sits below.
+    // Email-code progress is tied to its own request, never global session success.
     mode !== "code",
   );
-  const isVerificationCodeComplete =
-    mode === "code" && isFinishingSignIn;
-  /**
-   * `isFinishingSignIn` means "signed in, navigating away", which normally
-   * should lock the form. It must not while a device code is outstanding:
-   * Firebase sign-in succeeds before the server issues the challenge, so
-   * treating that as "finishing" disables the Verify button and the six-digit
-   * auto-submit — leaving the one action that can unblock the person unusable.
-   */
-  const isAwaitingDeviceCode = mode === "code" && !isVerificationCodeComplete;
+  const isVerificationCodeBusy =
+    mode === "code" && (isVerifyingCode || isCompletingCodeSignIn);
+  /** Workstation and display success states do not complete human email-code sign-in. */
+  const isAwaitingDeviceCode = mode === "code" && !isVerificationCodeBusy;
   const isAuthActionDisabled =
+    context?.bootstrapStatus !== "ready" ||
     context?.loginState === "loading" ||
     (isFinishingSignIn && !isAwaitingDeviceCode) ||
     !isAuthServerOnline;
   const isSignInFormFieldsLocked =
+    context?.bootstrapStatus !== "ready" ||
     !isAuthServerOnline ||
     context?.loginState === "loading" ||
     (isFinishingSignIn && !isAwaitingDeviceCode);
   const verifyEmailCode = context?.verifyEmailCode;
   const pendingLinkState = context?.pendingLinkState;
-  const prevVerificationDigitsLenRef = useRef(0);
+  const humanSessionRedirectStartedRef = useRef(false);
+  const hasExplicitAuthFlowRef = useRef(false);
+  const isMountedRef = useRef(false);
   const desktopAuthPollInFlightRef = useRef(false);
   const desktopBrowserAutoStartRef = useRef(false);
   const providerRedirectCompletionStartedRef = useRef(false);
@@ -305,6 +306,7 @@ const Login = () => {
       pendingId: string;
       verificationEmail?: string;
     }) => {
+      hasExplicitAuthFlowRef.current = true;
       setPendingAuthId(pendingId);
       setVerificationEmail(nextVerificationEmail?.trim() || "");
       setMode("code");
@@ -338,6 +340,13 @@ const Login = () => {
     },
     []
   );
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const finishingProviderSignInRef = useRef<"google" | "microsoft" | null>(
     null,
@@ -434,6 +443,7 @@ const Login = () => {
     }
 
     providerRedirectCompletionStartedRef.current = true;
+    hasExplicitAuthFlowRef.current = true;
     setActiveProviderSignIn(pendingProviderRedirect.method);
     finishingProviderSignInRef.current = pendingProviderRedirect.method;
     void context
@@ -492,9 +502,55 @@ const Login = () => {
         next.delete("createChurch");
         return next;
       },
-      { replace: true }
+      { replace: true, state: location.state }
     );
-  }, [searchParams, setSearchParams]);
+  }, [location.state, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const hasAlternateAuthFlow = Boolean(
+      activeProviderSignIn ||
+        context?.pendingEmailVerificationId ||
+        pendingLinkState ||
+        pendingProviderRedirect ||
+        pendingDesktopAuth ||
+        isHostedDesktopBrowserFlow ||
+        isStartingDesktopAuth ||
+        desktopBrowserFlowStatus === "loading" ||
+        (isCreateChurchUiEnabled() &&
+          ["1", "true"].includes(searchParams.get("createChurch") || "")) ||
+        mode === "forgotPassword" ||
+        mode === "createChurch"
+    );
+    if (
+      context?.bootstrapStatus !== "ready" ||
+      context?.sessionKind !== "human" ||
+      context?.loginState === "loading" ||
+      hasAlternateAuthFlow ||
+      hasExplicitAuthFlowRef.current ||
+      humanSessionRedirectStartedRef.current
+    ) {
+      return;
+    }
+
+    humanSessionRedirectStartedRef.current = true;
+    navigate(getHumanPostAuthPath(location), { replace: true });
+  }, [
+    activeProviderSignIn,
+    context?.bootstrapStatus,
+    context?.loginState,
+    context?.pendingEmailVerificationId,
+    context?.sessionKind,
+    desktopBrowserFlowStatus,
+    isHostedDesktopBrowserFlow,
+    isStartingDesktopAuth,
+    location,
+    mode,
+    navigate,
+    pendingDesktopAuth,
+    pendingLinkState,
+    pendingProviderRedirect,
+    searchParams,
+  ]);
 
   useEffect(() => {
     if (
@@ -798,6 +854,7 @@ const Login = () => {
       return;
     }
     setFieldErrors({});
+    hasExplicitAuthFlowRef.current = true;
     const response = await context?.login({
       method: "password",
       email: trimmedEmail,
@@ -860,6 +917,7 @@ const Login = () => {
       return;
     }
     setFieldErrors({});
+    hasExplicitAuthFlowRef.current = true;
     const response = await context?.createChurchAccount({
       method: "password",
       churchName: churchName.trim(),
@@ -880,6 +938,7 @@ const Login = () => {
     if (!validateCreateChurchIdentityFields()) {
       return;
     }
+    hasExplicitAuthFlowRef.current = true;
     setActiveProviderSignIn(method);
     finishingProviderSignInRef.current = method;
     setFieldErrors({});
@@ -899,6 +958,7 @@ const Login = () => {
       finishingProviderSignInRef.current === method);
 
   const handleProviderSignIn = async (method: "google" | "microsoft") => {
+    hasExplicitAuthFlowRef.current = true;
     setActiveProviderSignIn(method);
     finishingProviderSignInRef.current = method;
     setInfoBanner("");
@@ -918,55 +978,137 @@ const Login = () => {
     }
   };
 
-  const handleVerifyCode = useCallback(async () => {
+  const handleVerifyCode = useCallback(async (automatic = false) => {
     setInfoBanner("");
     setLocalAuthError("");
     const digits = code.replace(/\D/g, "");
-    if (!pendingAuthId || digits.length !== 6) {
+    const normalizedPendingAuthId = pendingAuthId.trim();
+    if (!normalizedPendingAuthId || digits.length !== 6) {
       setFieldErrors({ code: "Enter the six-digit code from your email." });
-      return;
+      return false;
     }
-    const dedupeKey = `${pendingAuthId}:${digits}`;
-    if (emailCodeVerificationInFlight === dedupeKey) {
-      return;
+    if (
+      !verifyEmailCode ||
+      context?.bootstrapStatus !== "ready" ||
+      !isAuthServerOnline ||
+      context?.loginState === "loading" ||
+      context?.pendingEmailVerificationId
+    ) {
+      return false;
     }
-    emailCodeVerificationInFlight = dedupeKey;
+    if (
+      automatic &&
+      (context?.sessionKind === "human" ||
+        activeProviderSignIn !== null ||
+        pendingLinkState ||
+        context?.pendingEmailVerificationId ||
+        pendingProviderRedirect ||
+        pendingDesktopAuth ||
+        isHostedDesktopBrowserFlow ||
+        isStartingDesktopAuth ||
+        desktopBrowserFlowStatus === "loading")
+    ) {
+      return false;
+    }
+
+    const attemptKey = getEmailCodeAttemptKey(normalizedPendingAuthId, digits);
+    if (automatic && attemptedEmailCodeVerifications.has(attemptKey)) {
+      return false;
+    }
+    if (emailCodeVerificationInFlight.has(attemptKey)) {
+      return false;
+    }
+
+    emailCodeVerificationInFlight.add(attemptKey);
+    attemptedEmailCodeVerifications.add(attemptKey);
+    hasExplicitAuthFlowRef.current = true;
+    setIsVerifyingCode(true);
+    setIsCompletingCodeSignIn(false);
     setFieldErrors({});
     try {
-      const success = await verifyEmailCode?.({
-        pendingAuthId,
+      const success = await verifyEmailCode({
+        pendingAuthId: normalizedPendingAuthId,
         code: digits,
       });
-      if (!success) {
-        return;
+      if (success) {
+        if (isMountedRef.current) {
+          setIsCompletingCodeSignIn(true);
+          setCode("");
+          setPendingAuthId("");
+          setVerificationEmail("");
+        }
       }
-      setCode("");
-      setPendingAuthId("");
-      setVerificationEmail("");
+      return success;
     } finally {
-      if (emailCodeVerificationInFlight === dedupeKey) {
-        emailCodeVerificationInFlight = null;
+      emailCodeVerificationInFlight.delete(attemptKey);
+      if (isMountedRef.current) {
+        setIsVerifyingCode(false);
       }
     }
-  }, [code, pendingAuthId, verifyEmailCode]);
+  }, [
+    activeProviderSignIn,
+    code,
+    context?.bootstrapStatus,
+    context?.loginState,
+    context?.pendingEmailVerificationId,
+    context?.sessionKind,
+    desktopBrowserFlowStatus,
+    isAuthServerOnline,
+    isHostedDesktopBrowserFlow,
+    isStartingDesktopAuth,
+    pendingAuthId,
+    pendingDesktopAuth,
+    pendingLinkState,
+    pendingProviderRedirect,
+    verifyEmailCode,
+  ]);
 
   useEffect(() => {
-    if (mode !== "code") {
-      prevVerificationDigitsLenRef.current = 0;
-      return;
-    }
     const digits = code.replace(/\D/g, "");
-    const len = digits.length;
-    const prevLen = prevVerificationDigitsLenRef.current;
-    prevVerificationDigitsLenRef.current = len;
-    if (len !== 6 || !pendingAuthId || isAuthActionDisabled) {
+    const normalizedPendingAuthId = pendingAuthId.trim();
+    if (
+      mode !== "code" ||
+      !normalizedPendingAuthId ||
+      digits.length !== 6 ||
+      context?.bootstrapStatus !== "ready" ||
+      context?.loginState === "loading" ||
+      !isAuthServerOnline ||
+      !verifyEmailCode ||
+      context?.sessionKind === "human" ||
+      context?.pendingEmailVerificationId ||
+      activeProviderSignIn !== null ||
+      pendingLinkState ||
+      pendingProviderRedirect ||
+      pendingDesktopAuth ||
+      isHostedDesktopBrowserFlow ||
+      isStartingDesktopAuth ||
+      desktopBrowserFlowStatus === "loading" ||
+      attemptedEmailCodeVerifications.has(
+        getEmailCodeAttemptKey(normalizedPendingAuthId, digits),
+      )
+    ) {
       return;
     }
-    if (prevLen === 6) {
-      return;
-    }
-    void handleVerifyCode();
-  }, [code, mode, pendingAuthId, isAuthActionDisabled, handleVerifyCode]);
+    void handleVerifyCode(true);
+  }, [
+    activeProviderSignIn,
+    code,
+    context?.bootstrapStatus,
+    context?.loginState,
+    context?.pendingEmailVerificationId,
+    context?.sessionKind,
+    desktopBrowserFlowStatus,
+    handleVerifyCode,
+    isAuthServerOnline,
+    isHostedDesktopBrowserFlow,
+    isStartingDesktopAuth,
+    mode,
+    pendingAuthId,
+    pendingDesktopAuth,
+    pendingLinkState,
+    pendingProviderRedirect,
+    verifyEmailCode,
+  ]);
 
   const handleResendCode = async () => {
     if (
@@ -1091,7 +1233,7 @@ const Login = () => {
       return context?.authError || infoBanner;
     }
     // Not while a code is outstanding: nothing is opening until it is entered.
-    if (context?.loginState === "success" && mode !== "code") {
+    if (isFinishingSignIn && mode !== "code") {
       return "Opening WorshipSync…";
     }
     if (mode === "forgotPassword") {
@@ -1155,7 +1297,8 @@ const Login = () => {
     if (showWebSessionNavigatingChrome) return "Signed in";
     if (hasPendingDesktopAuth) return "Continue in browser";
     if (mode === "code") {
-      if (isVerificationCodeComplete) return "You’re signed in";
+      if (isVerifyingCode) return "Verifying your code";
+      if (isCompletingCodeSignIn) return "You’re signed in";
       return isExpiredEmailCodeError ? "Get a new code" : "Check your email";
     }
     if (mode === "forgotPassword") {
@@ -1180,7 +1323,13 @@ const Login = () => {
     if (hasPendingDesktopAuth) {
       return "";
     }
-    if (mode === "code" && isVerificationCodeComplete) {
+    if (mode === "code" && context?.bootstrapStatus !== "ready") {
+      return "Checking your sign-in session…";
+    }
+    if (mode === "code" && isVerifyingCode) {
+      return "Verifying the code you entered…";
+    }
+    if (mode === "code" && isCompletingCodeSignIn) {
       return "Opening WorshipSync…";
     }
     if (mode === "code" && isExpiredEmailCodeError) {
@@ -1208,6 +1357,7 @@ const Login = () => {
       className="relative"
       aria-busy={
         showWebSessionNavigatingChrome ||
+        isVerificationCodeBusy ||
         context?.loginState === "loading" ||
         isStartingDesktopAuth ||
         desktopBrowserFlowStatus === "loading"
@@ -1226,7 +1376,7 @@ const Login = () => {
                 iconSize="sm"
                 gap="gap-1.5"
                 className="-ml-2 whitespace-nowrap px-2 py-1.5 text-sm"
-                disabled={showWebSessionNavigatingChrome}
+                disabled={showWebSessionNavigatingChrome || isVerificationCodeBusy}
                 onClick={handleBackToSignIn}
               >
                 Back to sign in
@@ -1622,14 +1772,16 @@ const Login = () => {
               </>
             ) : null}
 
-            {isVerificationCodeComplete ? (
+            {isVerificationCodeBusy ? (
               <div
                 className="mt-4 flex flex-col items-center gap-3 rounded-xl border border-gray-600 bg-white/5 px-4 py-6 text-center"
                 role="status"
                 aria-live="polite"
               >
                 <Spinner size="lg" width="40px" className="shrink-0 text-cyan-400" />
-                <p className="text-sm text-gray-200">Signing you in…</p>
+                <p className="text-sm text-gray-200">
+                  {isVerifyingCode ? "Verifying your code…" : "Opening WorshipSync…"}
+                </p>
               </div>
             ) : mode === "code" && !isExpiredEmailCodeError ? (
               <VerificationCodeInput
@@ -1642,14 +1794,14 @@ const Login = () => {
                     setFieldErrors((prev) => ({ ...prev, code: undefined }));
                   }
                 }}
-                disabled={isSignInFormFieldsLocked}
+                disabled={isSignInFormFieldsLocked || isVerificationCodeBusy}
                 autoFocus
                 errorText={fieldErrors.code}
               />
             ) : null}
 
             {mode === "code" &&
-              !isVerificationCodeComplete &&
+              !isVerificationCodeBusy &&
               !isExpiredEmailCodeError && (
                 <div className="mt-3 flex flex-col items-center gap-1">
                   <span className="text-sm text-gray-300">
@@ -1668,19 +1820,17 @@ const Login = () => {
               )}
 
             <div className="mt-4 flex flex-col gap-2">
-              {mode === "code" && !isVerificationCodeComplete ? (
+              {mode === "code" && !isVerificationCodeBusy ? (
                 <Button
                   type={isExpiredEmailCodeError ? "button" : "submit"}
                   variant="cta"
                   className="w-full justify-center"
-                  // Not "success": sign-in completing is what produced this
-                  // challenge, so spinning here reads as work in progress when
-                  // the form is actually waiting on input.
-                  isLoading={context?.loginState === "loading"}
+                  isLoading={isVerifyingCode}
                   disabled={
-                    isExpiredEmailCodeError
+                    isVerificationCodeBusy ||
+                    (isExpiredEmailCodeError
                       ? !canResendCode
-                      : isAuthActionDisabled
+                      : isAuthActionDisabled)
                   }
                   onClick={
                     isExpiredEmailCodeError
