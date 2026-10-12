@@ -58,7 +58,10 @@ jest.mock("../../../api/auth", () => ({
 
 jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
-    selector({ allDocs: { allSongDocs: [] } }),
+    selector({
+      allDocs: { allSongDocs: [] },
+      undoable: { present: { preferences: { scrollbarWidth: "thin" } } },
+    }),
   useDispatch: () => jest.fn(),
 }));
 

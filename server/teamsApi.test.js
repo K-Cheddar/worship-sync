@@ -13435,10 +13435,16 @@ test("portable team ID from another church does not auto-match a same-named loca
   });
   assert.equal(forgedRecord.payload.results[0].code, "stale_preview");
 
-  const secondLocal = await callHandler(authHandlers.createTeam, {
-    context: target,
-    body: { name: "Media", memberIds: [] },
-  });
+  // Duplicate team names are rejected by the public API. Seed a legacy
+  // duplicate directly so this import still exercises ambiguous name matching.
+  const secondLocal = {
+    teamId: "team_legacy_duplicate_media",
+    churchId: target.churchId,
+    name: "Media",
+    memberIds: [],
+    archivedAt: null,
+  };
+  await setDoc(COLLECTIONS.teams, secondLocal.teamId, secondLocal);
   const positionCsv = "Position,Team\nKeys,Media\n";
   const positionInspection = await callHandler(
     authHandlers.inspectPortableImport,
@@ -13477,7 +13483,7 @@ test("portable team ID from another church does not auto-match a same-named loca
     },
   });
   assert.equal(resolvedCommit.payload.summary.created, 1);
-  const selectedTeam = [local.payload.team, secondLocal.payload.team].find(
+  const selectedTeam = [local.payload.team, secondLocal].find(
     (team) => team.teamId === selectedTeamId,
   );
   await setDoc("teams", selectedTeamId, {
