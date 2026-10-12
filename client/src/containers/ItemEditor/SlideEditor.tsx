@@ -422,7 +422,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     songMetadataPatch?: SongMetadata | null;
     songLinksPatch?: typeof songLinks;
   }) => {
-    if (!db) return;
+    if (!db) {
+      throw new Error("The song library is not available. Try again.");
+    }
     dispatch(setName({ name: nextName }));
     if (songMetadataPatch !== undefined) {
       dispatch(setSongMetadata(songMetadataPatch));
@@ -1695,6 +1697,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           itemType={type}
           itemName={name}
           songMetadata={songMetadata}
+          onSaveSuccess={() => setIsItemDetailsModalOpen(false)}
           onSave={saveSongDetails}
         />
       )}
@@ -1705,6 +1708,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           initialMode="edit"
           onClose={() => setIsSongDetailsDrawerOpen(false)}
           onSave={saveSongDetails}
+          onSaveSuccess={() => setIsSongDetailsDrawerOpen(false)}
           onUploadSongAudio={attachSongAudio}
           onGetSongAudioUrl={resolveSongAudioUrl}
           onRemoveSongAudio={removeSongAudio}

@@ -40,4 +40,10 @@ describe("EntityRow", () => {
     expect(onDragHandle).toHaveBeenCalledTimes(1);
     expect(onTitleClick).toHaveBeenCalledTimes(1);
   });
+
+  it("marks a selected row separately from its hover style", () => {
+    render(<EntityRow title="Rae Kim" compact selected onTitleClick={jest.fn()} />);
+
+    expect(screen.getByTestId("entity-row")).toHaveAttribute("aria-current", "true");
+  });
 });

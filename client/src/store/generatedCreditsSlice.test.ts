@@ -4,7 +4,7 @@ import generatedCreditsReducer, {
 } from "./generatedCreditsSlice";
 
 describe("generatedCreditsSlice", () => {
-  it("keeps missed schedule entries out of the update step count", () => {
+  it("keeps unmatched schedule entries out of the update step count", () => {
     const state = generatedCreditsReducer(
       initialGeneratedCreditsState,
       startGeneratedCredits({
@@ -23,7 +23,7 @@ describe("generatedCreditsSlice", () => {
             sourceLabel: "Media schedule",
             previousText: "",
             nextText: "Sam",
-            status: "missed",
+            status: "unmatched",
           },
         ],
       }),
@@ -32,7 +32,7 @@ describe("generatedCreditsSlice", () => {
     expect(state.totalSteps).toBe(1);
     expect(state.items.map((item) => item.status)).toEqual([
       "pending",
-      "missed",
+      "unmatched",
     ]);
   });
 });

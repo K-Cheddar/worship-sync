@@ -1139,7 +1139,11 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       }
       reloadElectronDisplayWindows();
       setAuthServerStatus("online");
-      navigate(postAuthPath || getHumanPostAuthPath(location));
+      const safePostAuthPath =
+        postAuthPath && postAuthPath.split("?", 1)[0] !== "/login"
+          ? postAuthPath
+          : getHumanPostAuthPath(location);
+      navigate(safePostAuthPath, { replace: true });
     },
     [applyBootstrap, dispatch, location, navigate],
   );

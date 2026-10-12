@@ -1061,6 +1061,7 @@ export const memberMatchesListQuery = (
   member: TeamRosterMember,
   query: string,
   positionNames: string[] = [],
+  teamNames: string[] = [],
 ) =>
   entityMatchesQuery(
     [
@@ -1069,6 +1070,7 @@ export const memberMatchesListQuery = (
       member.lastName,
       member.notes,
       ...positionNames,
+      ...teamNames,
     ],
     query,
   );

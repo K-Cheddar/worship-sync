@@ -27,6 +27,7 @@ import {
   migrateSplitPreferencesDocs,
   loadPreferencesBundle,
   putCreditDoc,
+  putGeneratedCreditDoc,
   putCreditHistoryDoc,
   putCreditHistoryDocs,
   putOverlayHistoryDoc,
@@ -454,6 +455,242 @@ describe("dbUtils", () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
+  it("persists a heading-only credit edit without overwriting generated text or visibility", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "2-generated",
+      id: "c1",
+      heading: "Old heading",
+      text: "Explicitly regenerated name",
+      hidden: true,
+      generatedBaselineText: "Explicitly regenerated name",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: false,
+      formatting: { fontSize: 18 },
+    });
+    db.put.mockResolvedValueOnce({ rev: "3-heading" });
+
+    const updated = await putCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      heading: "Updated heading",
+    });
+
+    expect(updated).toEqual(expect.objectContaining({
+      heading: "Updated heading",
+      text: "Explicitly regenerated name",
+      hidden: true,
+      generatedBaselineText: "Explicitly regenerated name",
+      generatedTextOverridden: false,
+      formatting: { fontSize: 18 },
+    }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      heading: "Updated heading",
+      text: "Explicitly regenerated name",
+      hidden: true,
+      generatedTextOverridden: false,
+      formatting: { fontSize: 18 },
+    }));
+  });
+
+  it("retries a heading-only edit after generation wins the Pouch revision race", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get
+      .mockResolvedValueOnce({
+        _id: getCreditDocId(outlineId, "c1"),
+        _rev: "1-before-generation",
+        id: "c1",
+        heading: "Old heading",
+        text: "Old name",
+        hidden: false,
+      })
+      .mockResolvedValueOnce({
+        _id: getCreditDocId(outlineId, "c1"),
+        _rev: "2-generated",
+        id: "c1",
+        heading: "Old heading",
+        text: "Explicitly regenerated name",
+        hidden: true,
+        generatedBaselineText: "Explicitly regenerated name",
+        generatedSource: "Participant overlays",
+        generatedTextOverridden: false,
+      });
+    db.put
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce({ rev: "3-heading" });
+
+    const updated = await putCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      heading: "Updated heading",
+    });
+
+    expect(updated).toEqual(expect.objectContaining({
+      _rev: "3-heading",
+      heading: "Updated heading",
+      text: "Explicitly regenerated name",
+      hidden: true,
+      generatedTextOverridden: false,
+    }));
+    expect(db.get).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates generated fields on the latest credit doc and preserves concurrent non-generated fields", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "2-latest",
+      id: "c1",
+      heading: "Heading edited during generation",
+      text: "Old participant",
+      hidden: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      formatting: { fontSize: 18, color: "cyan" },
+      generatedBaselineText: "Earlier name",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: true,
+    });
+    db.put.mockResolvedValueOnce({ rev: "3-generated" });
+
+    const result = await putGeneratedCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      text: "Current participant",
+      generatedSource: "Participant overlays",
+    });
+
+    expect(result).toEqual({
+      doc: expect.objectContaining({
+        _rev: "3-generated",
+        heading: "Heading edited during generation",
+        text: "Current participant",
+        hidden: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        formatting: { fontSize: 18, color: "cyan" },
+        generatedBaselineText: "Current participant",
+        generatedSource: "Participant overlays",
+        generatedTextOverridden: false,
+      }),
+      changed: true,
+      textChanged: true,
+    });
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      _rev: "2-latest",
+      heading: "Heading edited during generation",
+      text: "Current participant",
+      hidden: true,
+      formatting: { fontSize: 18, color: "cyan" },
+    }));
+  });
+
+  it("re-reads after a revision conflict and preserves the intervening credit edit", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get
+      .mockResolvedValueOnce({
+        _id: getCreditDocId(outlineId, "c1"),
+        _rev: "1-before-edit",
+        id: "c1",
+        heading: "Welcome",
+        text: "Old participant",
+        hidden: false,
+      })
+      .mockResolvedValueOnce({
+        _id: getCreditDocId(outlineId, "c1"),
+        _rev: "2-concurrent-edit",
+        id: "c1",
+        heading: "Welcome (updated)",
+        text: "Old participant",
+        hidden: true,
+        formatting: { fontSize: 18 },
+      });
+    db.put
+      .mockRejectedValueOnce({ status: 409 })
+      .mockResolvedValueOnce({ rev: "3-generated" });
+
+    const result = await putGeneratedCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      text: "Current participant",
+      generatedSource: "Participant overlays",
+    });
+
+    expect(result).toEqual({
+      doc: expect.objectContaining({
+        _rev: "3-generated",
+        heading: "Welcome (updated)",
+        text: "Current participant",
+        hidden: true,
+        formatting: { fontSize: 18 },
+      }),
+      changed: true,
+      textChanged: true,
+    });
+    expect(db.get).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenLastCalledWith(expect.objectContaining({
+      _rev: "2-concurrent-edit",
+      heading: "Welcome (updated)",
+      text: "Current participant",
+      hidden: true,
+      formatting: { fontSize: 18 },
+    }));
+  });
+
+  it("reports unchanged generated text without writing an already-current credit", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "1-current",
+      id: "c1",
+      heading: "Welcome",
+      text: "Current participant",
+      hidden: false,
+      generatedBaselineText: "Current participant",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: false,
+    });
+
+    const result = await putGeneratedCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      text: "Current participant",
+      generatedSource: "Participant overlays",
+    });
+
+    expect(result).toEqual({
+      doc: expect.objectContaining({ _rev: "1-current", text: "Current participant" }),
+      changed: false,
+      textChanged: false,
+    });
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("returns null when a generated credit write fails", async () => {
+    const db = createDb();
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId("ol-1", "c1"),
+      _rev: "1-a",
+      id: "c1",
+      heading: "Welcome",
+      text: "Old participant",
+      hidden: false,
+    });
+    db.put.mockRejectedValueOnce(new Error("disk full"));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await putGeneratedCreditDoc(db as unknown as PouchDB.Database, "ol-1", {
+      id: "c1",
+      text: "New participant",
+      generatedSource: "Participant overlays",
+    });
+
+    expect(result).toBeNull();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("preserves generated provenance and marks ordinary text edits as overrides", async () => {
     const db = createDb();
     const outlineId = "ol-1";
@@ -487,6 +724,44 @@ describe("dbUtils", () => {
       generatedBaselineText: "Generated welcome",
       generatedSource: "Overlay: Welcome",
       generatedTextOverridden: true,
+    }));
+  });
+
+  it("clears a stale override flag when generation restores the persisted baseline", async () => {
+    const db = createDb();
+    const outlineId = "ol-1";
+    db.get.mockResolvedValueOnce({
+      _id: getCreditDocId(outlineId, "c1"),
+      _rev: "1-a",
+      id: "c1",
+      heading: "Welcome",
+      text: "Corrected by operator",
+      hidden: false,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: true,
+    });
+    db.put.mockResolvedValueOnce({ rev: "2-credit" });
+
+    const updated = await putCreditDoc(db as unknown as PouchDB.Database, outlineId, {
+      id: "c1",
+      heading: "Welcome",
+      text: "Generated welcome",
+      hidden: false,
+      generatedBaselineText: "Generated welcome",
+      generatedSource: "Overlay: Welcome",
+      generatedTextOverridden: false,
+    });
+
+    expect(updated).toEqual(expect.objectContaining({
+      text: "Generated welcome",
+      generatedBaselineText: "Generated welcome",
+      generatedTextOverridden: false,
+    }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Generated welcome",
+      generatedBaselineText: "Generated welcome",
+      generatedTextOverridden: false,
     }));
   });
 

@@ -77,6 +77,8 @@ const buildRestreamState = (overrides: Record<string, unknown> = {}) => ({
   bestEffortOnly: false,
   oauthConfigured: true,
   isOffline: false,
+  streamState: "connected",
+  streamFailure: null,
   feedState: "empty",
   reload: jest.fn().mockResolvedValue(undefined),
   ...overrides,

@@ -51,7 +51,6 @@ import {
 } from "../../store/overlaySlice";
 import { updateTemplatesFromRemote } from "../../store/overlayTemplatesSlice";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
-import { trackServicePlanOverlayEdit } from "../../integrations/servicePlanning/servicePlanningOverlayClone";
 import OverlayEditor from "./OverlayEditor";
 import OverlaysListSkeleton from "./OverlaysListSkeleton";
 import {
@@ -318,22 +317,17 @@ const Overlays = ({
   const handleOverlayUpdate = useCallback(
     async (overlay: OverlayInfo) => {
       if (!overlay.id) return;
-      const existing = (store.getState() as RootState).undoable.present.overlays.list
-        .find((candidate) => candidate.id === overlay.id);
-      const trackedOverlay = existing
-        ? trackServicePlanOverlayEdit(existing, overlay)
-        : overlay;
 
       // Draft flushes can arrive after selection swaps; persist by payload id so edits are not dropped.
       if (selectedOverlay.id && overlay.id !== selectedOverlay.id) {
-        dispatch(updateOverlayInList(trackedOverlay));
+        dispatch(updateOverlayInList(overlay));
         if (!db) return;
         try {
           const dbOverlay: DBOverlay = await db.get(`overlay-${overlay.id}`);
           const updatedAt = new Date().toISOString();
           const merged = applyPouchAudit(
             dbOverlay,
-            { ...dbOverlay, ...trackedOverlay, updatedAt },
+            { ...dbOverlay, ...overlay, updatedAt },
             { isNew: false },
           );
           await db.put(merged);
@@ -343,10 +337,10 @@ const Overlays = ({
         return;
       }
 
-      dispatch(updateOverlay(trackedOverlay));
-      dispatch(updateOverlayInList(trackedOverlay));
+      dispatch(updateOverlay(overlay));
+      dispatch(updateOverlayInList(overlay));
     },
-    [db, dispatch, selectedOverlay.id, store],
+    [db, dispatch, selectedOverlay.id],
   );
 
   const handleApplyFormattingToAll = async (formatting: OverlayFormatting) => {

@@ -345,6 +345,9 @@ export const CompactColorPicker: React.FC<CompactColorPickerProps> = ({
   return (
     <PopoverPanel
       align="start"
+      onOpenChange={(open) => {
+        if (!open) commitPendingColor();
+      }}
       contentClassName="w-[min(28rem,calc(100vw-2rem))]"
       bodyClassName="px-3 pb-3"
       TriggeringButton={

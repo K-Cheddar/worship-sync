@@ -74,7 +74,7 @@ type TeamManagerProps = {
   onRosterMemberSaved?: (member: TeamRosterMember) => void;
   onRosterMemberRemoved?: (memberId: string) => void;
   onRosterMutationReconcile?: (memberId: string) => void;
-  onImported?: () => void;
+  onImported?: () => void | Promise<void>;
 };
 
 const TeamManager = ({

@@ -37,6 +37,8 @@ type ViewSongSectionsDrawerProps = {
   initialMode?: "view" | "edit";
   /** Override persistence when the caller owns the active editor state. */
   onSave?: (payload: ItemDetailsSavePayload) => void | Promise<void>;
+  /** Override the default successful-save transition back to read-only details. */
+  onSaveSuccess?: () => void;
   onUploadSongAudio?: (file: File) => Promise<void>;
   onGetSongAudioUrl?: (disposition: "inline" | "attachment") => Promise<string>;
   onRemoveSongAudio?: () => Promise<void>;
@@ -49,6 +51,7 @@ const ViewSongSectionsDrawer = ({
   searchHighlight,
   initialMode = "view",
   onSave,
+  onSaveSuccess,
   onUploadSongAudio: onUploadSongAudioOverride,
   onGetSongAudioUrl: onGetSongAudioUrlOverride,
   onRemoveSongAudio: onRemoveSongAudioOverride,
@@ -313,6 +316,7 @@ const ViewSongSectionsDrawer = ({
                 onGetSongAudioUrl={onGetSongAudioUrlOverride ?? resolveSongAudioUrl}
                 onRemoveSongAudio={onRemoveSongAudioOverride ?? removeSongAudio}
                 onSave={onSave ?? persistSongPatch}
+                onSaveSuccess={onSaveSuccess ?? (() => setIsEditing(false))}
               />
             </section>
           ) : (

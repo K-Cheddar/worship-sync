@@ -12,7 +12,6 @@
   .scrollbar-portal,
   .scrollbar-portal :where(*) {
     scrollbar-width: var(--scrollbar-width, thin);
-    scrollbar-color: #71717a #27272a;
   }
   .overflow-anywhere {
     overflow-wrap: anywhere;
@@ -26,6 +25,13 @@
 }
 
 @layer base {
+  /* Apply to every scroll owner, including body portals and nested containers.
+     scrollbar-width does not inherit; no opt-in class should be required. */
+  * {
+    scrollbar-width: var(--scrollbar-width, thin);
+    scrollbar-color: #71717a #27272a;
+  }
+
   input,
   textarea,
   select {

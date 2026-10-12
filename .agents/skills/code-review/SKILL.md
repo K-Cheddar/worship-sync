@@ -9,16 +9,31 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 
 ## Workflow
 
-1. Establish intended behavior from the task or PR description, acceptance criteria, AGENTS.md, and applicable domain guidance.
+1. Establish intended behavior from the task or PR description, acceptance criteria, applicable Feature Contracts in [`docs/features/`](../../../docs/features/README.md), AGENTS.md, and domain guidance. Distinguish confirmed product intent from current implementation behavior, draft contract text, and unresolved questions.
 2. Compare the implementation with its declared Before / After Behavior and unchanged adjacent behavior.
 3. Inspect the complete diff.
-4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests.
+4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
 5. Search for duplicated solutions and existing abstractions that should have been reused.
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
+9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
 
-For a substantial review involving async work, persistence, uploads, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for the recurring shapes; it supplements this workflow rather than replacing it.
+## Product approval check
+
+For every behavior-affecting change, ask:
+
+- Does it change what an existing action does, automate a manual step, restrict an operator, or change how data is replaced, preserved, skipped, deleted, matched, or sourced?
+- Is that behavior explicitly requested, supported by a confirmed applicable Feature Contract, or supported by an explicit previous product-owner decision?
+- Does it conflict with a confirmed contract or leave a consequential product choice unresolved?
+- Did implementation cleanup, a fallback, or a safeguard quietly redefine an operator workflow?
+- Do changed tests merely encode the implementation choice, or is there independent product authorization for the expectation?
+
+Current implementation, passing tests, and agent-authored notes are not product approval. A passing test does not validate the product decision behind it. Report an unapproved consequential behavior change as a **blocking finding**. Do not approve it until the intended behavior is established; where useful, continue reviewing unrelated parts of the change.
+
+For a substantial review involving async work, persistence, imports, previews, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for recurring failure shapes and adversarial scenarios; it supplements this workflow rather than replacing it.
+
+For substantial stateful changes, also complete the two independent passes in [adversarial stateful review](references/adversarial-stateful-review.md). Derive scenarios from the workflow contract before using existing tests to judge coverage. Use only the relevant domain matrix linked from that reference for Media persistence, CSV import, or invitation/SMS recovery; unrelated changes do not require those matrices. Keep isolated, low-risk edits lightweight.
 
 ### Required specialized guidance
 
@@ -37,12 +52,15 @@ When applicable, load and apply the deeper domain guidance:
 | --- | --- |
 | Identity | What stable owner started the work (church, controller profile, service, route, item, media asset, token, or another scope)? What happens if it changes before an await, queued callback, debounce, retry, provider result, or live event settles? An entity/document ID alone is insufficient when it can repeat across owners. |
 | Lifetime | Can the creating component or route unmount while work continues? Can a longer-lived owner such as TransferProvider retain its callbacks? Are retry/cancel/dismiss actions valid after unmount? Does cleanup stop the operation or deliberately transfer its ownership? |
-| Persistence | Which concrete database, document, and revision belong to each async operation? Is a mutable imported/global DB handle reread after an await, debounce, queue, or callback? Are writes, Redux commits, and broadcasts scoped to the original owner? May a write finish against the original DB while its UI result is suppressed after a scope change? |
+| Persistence and publication | Which concrete database, document, and revision belong to each async operation? Is a mutable imported/global DB handle reread after an await, debounce, queue, or callback? At completion, which values must come from a fresh authoritative read, and how are unrelated concurrent changes preserved? Are writes, Redux commits, and broadcasts scoped to the original owner? May a write finish against the original DB while its UI result is suppressed after a scope change? |
 | Retry/durable step | Which steps committed durably? Which side effects may have succeeded despite a lost response? Does retry resume from the last durable checkpoint, or can it duplicate upload/send/create/delete work? |
 | Compatibility | Can older WorshipSync data or jobs enter this code? Does the client reject a durable shape still supported by server/storage? Is migration complete, partial, absent, malformed, or temporarily unreadable? |
 | Destructive/schema | For delete, cleanup, archive, or other destructive work, is the authoritative schema definitely known? Does absent or uncertain schema status preserve data rather than delete it? |
+| Input and decision path | How do blank, absent, alternate, or normalized representations flow from input to validation and final mutation? Are valid outcomes and intermediate states handled by every consumer? If there is a preview or approval step, does commit apply the same ownership/resolution rules and all approved choices? |
 | Contract round trip | Trace enums, resource types, statuses, wire fields, and provider metadata through `creation -> normalization -> persistence -> API read -> client model -> filtering/presentation`. Does the value survive every step? |
 | Validate/use | Can the resource later used differ from the one validated or authorized, and is later use bound to that validation? Consider metadata probe -> proxy GET, permission check -> delayed mutation, signed token -> response type, and preview classification -> actual content. |
+
+For import, preview, or other approval workflows, compare preview and commit as one contract. Check the same resolution and ownership rules, and account for every addition, replacement, preservation, and removal in Merge and Replace modes separately where both exist. Verify that signed or server-validated preview decisions remain bound to the committed settings. On retry after partial success, include IDs and resources created by earlier steps and prove that prior approvals are retained or deliberately refreshed without rejecting valid newly created entities. An omitted destructive consequence in preview is a correctness defect even if commit itself is valid.
 
 For retryable UI flows, identify the source of truth at each stage:
 
@@ -52,6 +70,8 @@ For retryable UI flows, identify the source of truth at each stage:
 - On Retry, does Retry consume those edits or the retained runtime?
 
 If UI state can diverge from a retained runtime after failure, either synchronize the runtime deliberately or freeze the UI for that batch. When the failed UI remains editable, require a transition test that changes a selection, name, or option between failure and retry and proves which values Retry uses.
+
+For user-triggered async flows, follow the operator path through immediate pending feedback and duplicate-action protection, success, partial success, definitive versus uncertain errors, terminal states such as expiration, retry/cancel, and recovery after refresh or remount when relevant. Check that every recoverable failure exposes an accessible next action, that uncertain external side effects cannot be repeated unsafely, and that status wording is supported by an observable signal rather than inferred from an attempted request.
 
 For every globally visible operation whose local owner can unmount, write a retirement matrix before accepting the lifecycle design:
 
@@ -93,7 +113,7 @@ Actively compare with a known-safe analogue for the same operation. WorshipSync 
 
 ### Sibling-pattern expansion
 
-When one confirmed bug represents a reusable failure class, search for sibling instances before concluding. For example: a stale global `db` in one async listener warrants checking other async/debounced/queued Pouch writers; a dead `registerTransferAction` callback warrants checking other global transfer actions backed by route-local ownership; a lost enum warrants tracing creation/read/filter/presentation; schema-unsafe cleanup warrants inspecting other automatic destructive cleanup; old durable-job incompatibility warrants checking other resumable formats; and a MIME probe/use mismatch warrants checking proxied media classes, redirects, and range responses. Do not report one instance and assume analogous code is safe without checking it.
+When one confirmed bug represents a reusable failure class, search for sibling instances before concluding. For example: a stale global `db` in one async listener warrants checking other async/debounced/queued Pouch writers; a dead `registerTransferAction` callback warrants checking other global transfer actions backed by route-local ownership; a lost enum warrants tracing creation/read/filter/presentation; schema-unsafe cleanup warrants inspecting other automatic destructive cleanup; old durable-job incompatibility warrants checking other resumable formats; a MIME probe/use mismatch warrants checking proxied media classes, redirects, and range responses; and a missing provider on one route warrants checking sibling entry points that mount the shared component. Do not report one instance and assume analogous code is safe without checking it.
 
 ### Transition-test expectations
 
@@ -124,7 +144,11 @@ For async work, identity-tracking refs/state, promises, debounces/autosaves, ret
 - Could a same-entity event invalidate an in-flight load without replacing it?
 - Can stale completion overwrite or suppress newer state?
 - Are previous-entity decisions accidentally based on current-entity refs or state?
+- Does a delayed whole-list/document replacement use a start-time snapshot that can erase unrelated changes made while it was pending?
+- Does an operation combine identity captured by React with collections read later from Redux or another source, and can selection change before rerender?
 - Does the test reproduce the production transition and meaningful values?
+
+Construct at least one concrete adversarial transition for each relevant failure mechanism, using the reference examples as prompts. Trace the production code path to the expected behavior; a general question, a happy-path test, or a list of risks without a traced outcome does not satisfy this pass. When one instance is found, use its mechanism to search targeted sibling paths before concluding.
 
 For React code, also review unnecessary derived state; effects used for derivation instead of render or event logic; dependencies; stale closures; async cancellation and races; state ownership; unnecessary rerenders in live paths; unstable objects/functions in hot paths; duplicated local/remote state; cleanup; accessibility; reuse of existing primitives; and mobile behavior.
 
@@ -141,6 +165,10 @@ Group findings as `Critical`, `High`, `Medium`, and `Low`. For each finding incl
 - why it matters
 - suggested direction
 
+### Product authorization status
+
+For each behavior-affecting change, state `Authorized`, `Missing / unclear`, or `Not applicable`. For an authorized change, name the applicable confirmed Feature Contract, current request, or explicit prior product-owner decision. Use `Not applicable` only when the change does not affect product behavior. Missing authorization for a consequential behavior change must also be a blocking finding and makes final readiness `Not ready`.
+
 ### Open questions / assumptions
 
 State unresolved intent or assumptions used in the review.
@@ -149,6 +177,12 @@ State unresolved intent or assumptions used in the review.
 
 State required verification not completed separately from optional additional-confidence checks. A required gap prevents a `Ready` conclusion and a `COMPLETE` implementation claim.
 
+For each relevant review, record production-context verification as `Pass`, `Finding`, `Unverified`, or `Not applicable` with a reason. A missing, failing, or unperformed required context check prevents `Ready`; component tests that add production-missing context do not satisfy it.
+
+For substantial stateful reviews, include a compact evidence table here for only the highest-risk scenarios. Each row must name an invariant, concrete interleaving or recovery sequence, code path/symbols inspected, and the specific test that controls the critical transition—or state that coverage is missing or was not run. Mark each `Pass`, `Finding`, or `Unverified`; do not use empty checkboxes or treat test titles as evidence. Distinguish a confirmed defect from a theoretical risk or a coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
+
+State the review scope: **fix verification** checks the reported defect; **workflow review** checks affected end-to-end paths and related failure scenarios; **production-readiness review** checks release-critical branch scope, required checks, unresolved findings, and regression risk. A passing focused review supports only its stated scope. Do not call a branch production-ready unless that broader review and its verification were actually performed; say explicitly when tests, CI, builds, or runtime reproduction were not performed.
+
 ### Pattern / learning opportunities
 
 Identify reusable enforcement or documentation opportunities. Follow `.agents/engineering-guidance.md`; do not turn one-off comments into permanent policy.
@@ -156,6 +190,8 @@ Identify reusable enforcement or documentation opportunities. Follow `.agents/en
 ### Final readiness
 
 Choose exactly one: `Ready`, `Ready with minor follow-up`, or `Not ready`.
+
+Readiness applies to the stated review scope; it is not a production-readiness claim unless the review explicitly covered that scope.
 
 For substantial reviews, append this completion checklist and justify each `Not applicable`. Any relevant `No` prevents a final `Ready` conclusion.
 
@@ -170,3 +206,4 @@ For substantial reviews, append this completion checklist and justify each `Not 
 - **Owner-retirement handoff reviewed:** Yes / No / Not applicable
 - **External side-effect adoption/compensation reviewed:** Yes / No / Not applicable
 - **Authorization/data-projection reviewed:** Yes / No / Not applicable
+- **Production entry point, runtime context, and test composition compared:** Yes / No / Not applicable

@@ -197,6 +197,7 @@ type keepElementInViewType = {
   parent: HTMLElement;
   shouldScrollToCenter?: boolean;
   keepNextInView?: boolean;
+  scrollOnlyIntoView?: boolean;
 };
 
 export const keepElementInView = ({
@@ -204,6 +205,7 @@ export const keepElementInView = ({
   parent,
   shouldScrollToCenter,
   keepNextInView,
+  scrollOnlyIntoView,
 }: keepElementInViewType) => {
   try {
     const parentRect = parent.getBoundingClientRect();
@@ -213,7 +215,9 @@ export const keepElementInView = ({
     const currentScrollTop = parent.scrollTop;
 
     // Calculate padding based on scroll mode
-    const scrollPadding = shouldScrollToCenter
+    const scrollPadding = scrollOnlyIntoView
+      ? 0
+      : shouldScrollToCenter
       ? parentHeight / 2 - childHeight / 2
       : Math.max(0, Math.min(childHeight / 2, parentHeight - childHeight));
 

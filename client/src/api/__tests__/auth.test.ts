@@ -28,6 +28,7 @@ jest.mock("../../utils/authStorage", () => ({
 // eslint-disable-next-line import/first -- see above
 import {
   apiFetch,
+  authenticatedApiFetch,
   createHumanSession,
   getAuthBootstrap,
   logoutSession,
@@ -93,6 +94,67 @@ describe("api/auth", () => {
         credentials: "include",
         headers: expect.objectContaining({
           Authorization: "Bearer wsh_test_token",
+        }),
+      }),
+    );
+  });
+
+  it("keeps browser SSE requests cookie-authenticated", async () => {
+    await authenticatedApiFetch("api/churches/church-1/teams/stream", {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/teams/stream",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+        headers: expect.objectContaining({ Accept: "text/event-stream" }),
+      }),
+    );
+    const [, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(options.headers["x-workstation-token"]).toBeUndefined();
+  });
+
+  it("uses the stored human bearer for packaged Electron SSE requests", async () => {
+    packagedElectron.value = true;
+    humanApiTokenStore.value = "human-sse-token";
+
+    await authenticatedApiFetch("api/churches/church-1/teams/stream", {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/teams/stream",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({
+          Accept: "text/event-stream",
+          Authorization: "Bearer human-sse-token",
+        }),
+      }),
+    );
+  });
+
+  it("uses the stored workstation token for packaged Electron SSE requests", async () => {
+    packagedElectron.value = true;
+    workstationTokenStore.value = "workstation-sse-token";
+
+    await authenticatedApiFetch("api/churches/church-1/restream/stream", {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/restream/stream",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({
+          Accept: "text/event-stream",
+          "x-workstation-token": "workstation-sse-token",
         }),
       }),
     );

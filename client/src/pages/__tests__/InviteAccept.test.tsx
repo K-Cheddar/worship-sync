@@ -746,7 +746,6 @@ describe("InviteAccept", () => {
       delete: jest.fn(() => Promise.resolve()),
     };
     setCurrentUser(signedInUser);
-    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
     window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
       accepted: true,
       token: "invite-token",
@@ -854,6 +853,228 @@ describe("InviteAccept", () => {
     expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(2);
   });
 
+  it("renews an expired SMS challenge after refresh and verifies the replacement code", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    createUserWithEmailAndPasswordMock.mockImplementation(async () => {
+      setCurrentUser(signedInUser);
+      return { user: signedInUser };
+    });
+    acceptInviteMock.mockResolvedValue({ success: true });
+    submitInviteSmsConsentMock
+      .mockResolvedValueOnce({ success: true, outcome: "verification_required", deliveryStatus: "sent", challengeId: "m".repeat(32), cancellationToken: "n".repeat(43) })
+      .mockResolvedValueOnce({ success: true, outcome: "verification_required", deliveryStatus: "sent", challengeId: "o".repeat(32), cancellationToken: "p".repeat(43) });
+    verifyInviteSmsConsentMock
+      .mockRejectedValueOnce(Object.assign(new Error("That verification code expired."), { details: { code: "sms_challenge_expired" } }))
+      .mockResolvedValueOnce({ success: true });
+    createHumanSessionMock.mockResolvedValue({ success: true, requiresEmailCode: true, pendingAuthId: "sms-renewed" });
+
+    const { unmount: unmountFirstPage } = renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+    await user.type(screen.getByLabelText(/email/i), "invited@example.com");
+    await user.type(screen.getByLabelText(/^name/i), "Invited User");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
+    await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
+    await user.click(await screen.findByRole("checkbox", { name: /reviewed and confirm this exact mobile number/i }));
+    await user.click(screen.getByRole("button", { name: /send verification code/i }));
+    await user.type(await screen.findByLabelText(/verification code/i), "123456");
+    await user.click(screen.getByRole("button", { name: /verify phone/i }));
+
+    expect(await screen.findByText(/this verification code expired or is no longer available/i)).toBeInTheDocument();
+    const recovered = JSON.parse(window.sessionStorage.getItem("worshipsync_invite_recovery") || "null");
+    expect(recovered.smsDeliveryState).toBe("expired");
+    expect(recovered.smsVerification.phoneNumber).toBe("+12125550123");
+
+    unmountFirstPage();
+    renderPage({ initialEntry: "/invite" });
+    expect(await screen.findByText(/this verification code expired or is no longer available/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /request a new code/i }));
+    await waitFor(() => expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(2));
+    expect(submitInviteSmsConsentMock.mock.calls[1][0].challengeId).not.toBe(submitInviteSmsConsentMock.mock.calls[0][0].challengeId);
+    expect(submitInviteSmsConsentMock.mock.calls[1][0].cancellationToken).not.toBe(submitInviteSmsConsentMock.mock.calls[0][0].cancellationToken);
+    expect(submitInviteSmsConsentMock.mock.calls[1][0].inviteToken).toBe("invite-token");
+    expect(submitInviteSmsConsentMock.mock.calls[1][0].phoneNumber).toBe("+12125550123");
+    expect(submitInviteSmsConsentMock.mock.calls[1][0].expectedRosterPhoneNumber).toBe("+12125550123");
+    await user.clear(screen.getByLabelText(/verification code/i));
+    await user.type(screen.getByLabelText(/verification code/i), "654321");
+    await user.click(screen.getByRole("button", { name: /verify phone/i }));
+    await waitFor(() => expect(verifyInviteSmsConsentMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      challengeId: "o".repeat(32), code: "654321",
+    })));
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalled());
+  });
+
+  it("uses the current roster phone after the server rejects a recovered challenge as stale", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    setCurrentUser(signedInUser);
+    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
+    window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
+      accepted: true,
+      token: "invite-token",
+      acceptedAt: Date.now(),
+      smsConsentChecked: true,
+      smsDeliveryState: "expired",
+      smsVerification: {
+        phoneNumber: "+12125550123",
+        expectedRosterPhoneNumber: "+12125550123",
+        challengeId: "u".repeat(32),
+        cancellationToken: "v".repeat(43),
+      },
+    }));
+    submitInviteSmsConsentMock
+      .mockRejectedValueOnce(new Error("The member's mobile number changed after this invitation."))
+      .mockResolvedValueOnce({
+        success: true,
+        outcome: "verification_required",
+        deliveryStatus: "sent",
+        challengeId: "w".repeat(32),
+        cancellationToken: "x".repeat(43),
+      });
+    fetchInviteSmsContextMock.mockResolvedValueOnce({
+      success: true,
+      smsInviteConsentEnabled: true,
+      rosterPhoneNumber: "+14155550123",
+      smsConsentStatus: "none",
+    });
+
+    renderPage({ initialEntry: "/invite" });
+    expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", { name: /request a new code/i }));
+    expect(await screen.findByText(/this mobile number changed/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+14155550123/)).toBeInTheDocument();
+    expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1);
+    expect(submitInviteSmsConsentMock.mock.calls[0][0].phoneNumber).toBe("+12125550123");
+
+    await user.click(screen.getByRole("checkbox", { name: /reviewed and confirm this exact mobile number/i }));
+    await user.click(screen.getByRole("button", { name: /send verification code/i }));
+    await waitFor(() => expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(2));
+    expect(submitInviteSmsConsentMock.mock.calls[1][0]).toEqual(expect.objectContaining({
+      phoneNumber: "+14155550123",
+      expectedRosterPhoneNumber: "+14155550123",
+    }));
+  });
+
+  it("does not send a replacement code when recovery has no usable phone number", async () => {
+    const user = userEvent.setup();
+    setCurrentUser({
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    });
+    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
+    window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
+      accepted: true,
+      token: "invite-token",
+      acceptedAt: Date.now(),
+      smsConsentChecked: true,
+      smsDeliveryState: "expired",
+      smsVerification: {
+        expectedRosterPhoneNumber: "",
+        challengeId: "y".repeat(32),
+        cancellationToken: "z".repeat(43),
+      },
+    }));
+
+    renderPage({ initialEntry: "/invite" });
+    await user.click(await screen.findByRole("button", { name: /request a new code/i }));
+
+    expect(await screen.findByText(/enter a valid 10-digit u\.s\. mobile number/i)).toBeInTheDocument();
+    expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks a second replacement-code request while the first request is pending", async () => {
+    const user = userEvent.setup();
+    setCurrentUser({
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    });
+    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
+    window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
+      accepted: true,
+      token: "invite-token",
+      acceptedAt: Date.now(),
+      smsConsentChecked: true,
+      smsDeliveryState: "expired",
+      smsVerification: {
+        phoneNumber: "+12125550123",
+        expectedRosterPhoneNumber: "+12125550123",
+        challengeId: "a".repeat(32),
+        cancellationToken: "b".repeat(43),
+      },
+    }));
+    let finishRequest!: (result: {
+      success: boolean;
+      outcome: "verification_required";
+      deliveryStatus: "sent";
+      challengeId: string;
+      cancellationToken: string;
+    }) => void;
+    submitInviteSmsConsentMock.mockReturnValueOnce(new Promise((resolve) => {
+      finishRequest = resolve;
+    }));
+
+    renderPage({ initialEntry: "/invite" });
+    expect(submitInviteSmsConsentMock).not.toHaveBeenCalled();
+    const requestButton = await screen.findByRole("button", { name: /request a new code/i });
+    await user.click(requestButton);
+    await waitFor(() => expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1));
+    expect(requestButton).toBeDisabled();
+    await user.click(requestButton);
+    expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(1);
+
+    finishRequest({
+      success: true,
+      outcome: "verification_required",
+      deliveryStatus: "sent",
+      challengeId: "c".repeat(32),
+      cancellationToken: "d".repeat(43),
+    });
+    await screen.findByLabelText(/verification code/i);
+  });
+
+  it("shows definitive pre-send rejections and allows a fresh request without calling it uncertain", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    createUserWithEmailAndPasswordMock.mockImplementation(async () => {
+      setCurrentUser(signedInUser);
+      return { user: signedInUser };
+    });
+    acceptInviteMock.mockResolvedValue({ success: true });
+    submitInviteSmsConsentMock
+      .mockRejectedValueOnce(Object.assign(new Error("Too many attempts. Wait a moment and try again."), { status: 429, details: { outcome: "rejected_before_send" } }))
+      .mockResolvedValueOnce({ success: true, outcome: "verification_required", deliveryStatus: "sent", challengeId: "q".repeat(32), cancellationToken: "r".repeat(43) });
+
+    renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: /i agree to receive sms messages/i }));
+    await user.type(screen.getByLabelText(/email/i), "invited@example.com");
+    await user.type(screen.getByLabelText(/^name/i), "Invited User");
+    await user.type(screen.getByLabelText(/password/i, { selector: "input" }), "Secret-pass1!");
+    await user.click(screen.getByRole("button", { name: /^accept invite$/i }));
+    await user.click(await screen.findByRole("checkbox", { name: /reviewed and confirm this exact mobile number/i }));
+    await user.click(screen.getByRole("button", { name: /send verification code/i }));
+
+    expect(await screen.findByText(/too many attempts/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sms delivery result is uncertain/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/verification code/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /send verification code/i }));
+    await screen.findByLabelText(/verification code/i);
+    expect(submitInviteSmsConsentMock).toHaveBeenCalledTimes(2);
+  });
+
   it("retries cancellation with the same capability after an uncertain response", async () => {
     const user = userEvent.setup();
     const signedInUser: MockFirebaseUser = {
@@ -888,6 +1109,39 @@ describe("InviteAccept", () => {
     await waitFor(() => expect(cancelInviteSmsConsentMock).toHaveBeenCalledTimes(2));
     expect(cancelInviteSmsConsentMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ challengeId: "g".repeat(32) }));
     expect(cancelInviteSmsConsentMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ challengeId: "g".repeat(32) }));
+  });
+
+  it("shows Continue without SMS as busy before cancellation settles and blocks duplicate actions", async () => {
+    const user = userEvent.setup();
+    const signedInUser: MockFirebaseUser = {
+      email: "invited@example.com",
+      getIdToken: jest.fn(() => Promise.resolve("firebase-id-token")),
+      delete: jest.fn(() => Promise.resolve()),
+    };
+    setCurrentUser(signedInUser);
+    window.sessionStorage.setItem("worshipsync_pending_invite_token", "invite-token");
+    window.sessionStorage.setItem("worshipsync_invite_recovery", JSON.stringify({
+      accepted: true, token: "invite-token", acceptedAt: Date.now(), smsConsentChecked: true,
+      smsVerification: {
+        phoneNumber: "+12125550123", expectedRosterPhoneNumber: "+12125550123",
+        challengeId: "s".repeat(32), cancellationToken: "t".repeat(43),
+      },
+    }));
+    let finishCancellation!: (result: { success: boolean; cancelled: boolean }) => void;
+    cancelInviteSmsConsentMock.mockReturnValueOnce(new Promise((resolve) => { finishCancellation = resolve; }));
+    createHumanSessionMock.mockResolvedValue({ success: true, requiresEmailCode: true, pendingAuthId: "sms-skip-pending" });
+
+    renderPage({ initialEntry: "/invite" });
+    const continueButton = await screen.findByRole("button", { name: /continue without sms/i });
+    await user.click(continueButton);
+    await waitFor(() => expect(cancelInviteSmsConsentMock).toHaveBeenCalledTimes(1));
+    expect(continueButton).toBeDisabled();
+    expect(continueButton).toHaveAttribute("aria-busy", "true");
+    await user.click(continueButton);
+    expect(cancelInviteSmsConsentMock).toHaveBeenCalledTimes(1);
+
+    finishCancellation({ success: true, cancelled: true });
+    await waitFor(() => expect(createHumanSessionMock).toHaveBeenCalledTimes(1));
   });
 
   it.each(["resolved", "rejected"] as const)(

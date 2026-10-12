@@ -442,6 +442,9 @@ const ServicePlanningSyncFloatingWindow = ({
   const floatingWindowRestoreId = useSelector(
     (s: RootState) => s.servicePlanningImport.floatingWindowRestoreId,
   );
+  const scrollbarWidth = useSelector(
+    (s: RootState) => s.undoable?.present?.preferences?.scrollbarWidth ?? "thin",
+  );
   const prevRestoreIdRef = useRef(floatingWindowRestoreId);
   useEffect(() => {
     return () => {
@@ -1323,6 +1326,7 @@ const ServicePlanningSyncFloatingWindow = ({
                   snapshot={selectedPlanSnapshot}
                   churchId={churchId || ""}
                   controllerProfileId={controllerProfile.id}
+                  scrollbarWidth={scrollbarWidth}
                   sectionLabelColor={sectionLabelColor}
                   sectionBorderColor={sectionBorderColor}
                 />

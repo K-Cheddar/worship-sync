@@ -411,14 +411,20 @@ export const creditsSlice = createSlice({
     deleteCredit: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((credit) => credit.id !== action.payload);
     },
-    updateCredit: (state, action: PayloadAction<CreditsInfo>) => {
+    updateCredit: (
+      state,
+      action: PayloadAction<Partial<CreditsInfo> & Pick<CreditsInfo, "id">>,
+    ) => {
       state.list = state.list.map((credit) => {
         if (credit.id === action.payload.id) {
-          const next = { ...action.payload };
+          const next = { ...credit, ...action.payload };
           if (credit.generatedBaselineText !== undefined) {
+            const hasTextUpdate = Object.prototype.hasOwnProperty.call(action.payload, "text");
             next.generatedBaselineText = credit.generatedBaselineText;
             next.generatedSource = credit.generatedSource;
-            next.generatedTextOverridden = next.text !== credit.generatedBaselineText;
+            next.generatedTextOverridden = hasTextUpdate
+              ? next.text !== credit.generatedBaselineText
+              : credit.generatedTextOverridden;
           }
           return next;
         }

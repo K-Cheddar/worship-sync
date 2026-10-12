@@ -105,6 +105,8 @@ Prefer domain types, accurate API payloads, narrowing of unknown data, and discr
 
 Use Testing Library's accessible queries and `user-event` for operator interactions. Put reducer and utility contracts in focused tests; add lifecycle tests for state reset, request cancellation, timers/listeners, async errors, and synchronization whenever that behavior changes. Live display changes also need the surface-specific tests required by `$display-window`.
 
+Before choosing a component test wrapper, trace the feature's real route/entry point and the providers, auth/permission contexts, data sources, and runtime it supplies; compare those with test setup. Exercise controls that mount content only after a click, open, selection, or navigation. If a composition difference creates meaningful risk, add focused integration coverage through the actual entry point or a faithful production wrapper. For regressions, make the test reproduce the original failure condition before the fix when practical. Keep browser-level coverage proportional to risk.
+
 Ask: could this test pass while the user-visible or cross-device behavior is broken? If so, it may be coupled to implementation details or lack a negative/lifecycle assertion. Do not weaken an existing expectation until the production behavior and old contract have been reviewed under `AGENTS.md`.
 
 ### Test lint rules

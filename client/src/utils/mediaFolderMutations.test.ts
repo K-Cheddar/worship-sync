@@ -2,6 +2,7 @@ import {
   MEDIA_LIBRARY_ROOT_VIEW,
   getMediaRouteFolderRepairs,
   isMediaLibraryFolderEmpty,
+  moveMediaToFolder,
 } from "./mediaFolderMutations";
 import type { MediaFolder, MediaType } from "../types";
 
@@ -24,6 +25,21 @@ describe("getMediaRouteFolderRepairs", () => {
       "parent-folder",
     );
     expect(repairs).toEqual({ "overlay-controller": "parent-folder" });
+  });
+});
+
+describe("moveMediaToFolder", () => {
+  it("clears Keep Contents ownership when a user independently moves media", () => {
+    const item = {
+      id: "moved-media",
+      folderId: "deleted-folder",
+      _keepContentsRehomeOperationId: "old-operation",
+    } as MediaType;
+
+    const [moved] = moveMediaToFolder(new Set([item.id]), "original-parent", [item]);
+
+    expect(moved.folderId).toBe("original-parent");
+    expect(moved._keepContentsRehomeOperationId).toBeUndefined();
   });
 });
 

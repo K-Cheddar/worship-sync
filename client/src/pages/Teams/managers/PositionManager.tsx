@@ -94,7 +94,7 @@ type PositionManagerProps = {
   onArchived: () => void;
   onRemoved: (positionId: string) => void;
   onReordered: (teamId: string, orderedPositionIds: string[]) => void;
-  onImported?: () => void;
+  onImported?: () => void | Promise<void>;
 };
 
 const PositionManager = ({

@@ -53,6 +53,10 @@ export type FlushMediaLibraryDocOptions = {
   allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
   /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
   publishIfCurrent?: () => boolean;
+  /** Media rows relocated only because their folder is being deleted with Keep Contents. */
+  automaticMediaRehomeIds?: ReadonlySet<string>;
+  /** Child folders relocated only because their parent is being deleted with Keep Contents. */
+  automaticFolderRehomeIds?: ReadonlySet<string>;
 };
 
 /** Tombstone known v2 rows directly and publish those tombstones to other local controllers. */
@@ -116,7 +120,14 @@ export async function flushMediaLibraryDocToPouch(
       return stateToPersist;
     };
     const changedDocs = changeBase
-      ? await persistMediaLibraryChanges(db, changeBase, readLatestState(), canPersist)
+      ? await persistMediaLibraryChanges(
+          db,
+          changeBase,
+          readLatestState(),
+          canPersist,
+          options.automaticMediaRehomeIds,
+          options.automaticFolderRehomeIds,
+        )
       : await persistMediaLibrarySnapshot(
           db,
           list,

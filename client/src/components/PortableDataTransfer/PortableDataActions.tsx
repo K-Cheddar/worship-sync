@@ -19,7 +19,7 @@ const PortableDataActions = ({
   destinationTeamId,
 }: {
   type: PortableDataType;
-  onImported?: () => void;
+  onImported?: () => void | Promise<void>;
   teams?: TeamRecord[];
   destinationTeamId?: string;
 }) => {

@@ -60,10 +60,54 @@ describe("BibleVersesList", () => {
     expect(sendVerse).toHaveBeenCalledWith(verses[1]);
     expect(screen.getAllByRole("listitem")[1]).toHaveClass("border-cyan-400");
     expect(mockedKeepElementInView).toHaveBeenCalledWith(
-      expect.objectContaining({
+      {
         child: expect.objectContaining({ id: "bible-verse-1" }),
-      })
+        parent: expect.objectContaining({ id: "bible-verses-list" }),
+        scrollOnlyIntoView: true,
+      }
     );
+  });
+
+  it("resets keyboard selection when the passage changes with the same range", () => {
+    const firstChapter = [
+      { index: 0, name: "1", text: "First chapter" },
+      { index: 14, name: "15", text: "Selected verse" },
+    ];
+    const secondChapter = [
+      { index: 0, name: "1", text: "Next chapter first verse" },
+      { index: 14, name: "15", text: "Next chapter verse 15" },
+    ];
+    const sendVerse = jest.fn();
+    const renderPassage = (passage: string, chapterVerses: verseType[]) => (
+      <BibleVersesList
+        key={passage}
+        isLoading={false}
+        verses={chapterVerses}
+        startVerse={0}
+        endVerse={14}
+        sendVerse={sendVerse}
+        canTransmit
+      />
+    );
+    const view = render(renderPassage("John:1", firstChapter));
+    fireEvent.click(sendButtonAt(1));
+    sendVerse.mockClear();
+
+    view.rerender(renderPassage("John:2", secondChapter));
+    fireEvent.keyDown(window, { key: " " });
+
+    expect(sendVerse).toHaveBeenCalledWith(secondChapter[0]);
+  });
+
+  it("does not center a verse when Send is clicked", () => {
+    renderList();
+    fireEvent.click(sendButtonAt(2));
+
+    expect(mockedKeepElementInView).toHaveBeenCalledWith({
+      child: expect.objectContaining({ id: "bible-verse-2" }),
+      parent: expect.objectContaining({ id: "bible-verses-list" }),
+      scrollOnlyIntoView: true,
+    });
   });
 
   it("targets the absolute verse DOM id when an individual verse is sent from a nonzero range", () => {

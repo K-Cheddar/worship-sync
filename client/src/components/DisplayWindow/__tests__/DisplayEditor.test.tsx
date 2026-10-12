@@ -511,7 +511,7 @@ describe("DisplayEditor", () => {
       />,
     );
 
-    expect(screen.getByText("Local source active")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
     expect(screen.getByText("Local image · welcome.png")).toBeInTheDocument();
     expect(screen.getByText("Available on Lobby PC")).toBeInTheDocument();
   });
@@ -553,7 +553,7 @@ describe("DisplayEditor", () => {
     const { rerender } = render(
       <DisplayEditor box={videoBox} width={960} index={0} />,
     );
-    expect(screen.queryByText("Local source active")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
     rerender(
       <DisplayEditor
         box={{ ...videoBox, words: "owner unavailable" }}

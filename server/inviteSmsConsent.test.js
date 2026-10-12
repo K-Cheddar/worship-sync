@@ -11,12 +11,15 @@ import { setSmsConsentSenderForServerTests } from "./smsConsent.js";
 const {
   authHandlers,
   authRuntimeInfo,
+  COLLECTIONS,
+  getDoc,
   getSmsConsentForServerTests,
   seedActiveHumanBearerForServerTests,
   seedPendingInviteForServerTests,
   seedRosterMemberForServerTests,
   setDoc,
   seedSmsConsentForServerTests,
+  setAuthReadObserverForServerTests,
   setServerFirestoreForTests,
   setVerifyIdTokenForServerTests,
 } = await import("../authService.js");
@@ -328,6 +331,131 @@ test("invitation signup preserves existing opted-in and opted-out consent", asyn
   assert.equal(unchanged.status, "opted_out");
 });
 
+test("invitation signup observes consent that becomes opted in between its read and upsert", async (t) => {
+  if (authRuntimeInfo.hasFirestore) return t.skip("Uses in-memory auth storage only.");
+  const invite = await setupAcceptedInvite({ label: "opted-in-read-race" });
+  process.env.SMS_INVITE_CONSENT_ENABLED = "true";
+  t.after(() => {
+    delete process.env.SMS_INVITE_CONSENT_ENABLED;
+    setVerifyIdTokenForServerTests(null);
+    setAuthReadObserverForServerTests(null);
+  });
+  const body = consentBody({ invite, phoneNumber: "+12125550123", expectedRosterPhoneNumber: "+12125550123" });
+  let raced = false;
+  setAuthReadObserverForServerTests((event) => {
+    if (raced || event.collectionName !== "smsConsents") return;
+    raced = true;
+    queueMicrotask(() => {
+      void setDoc("smsConsents", event.id, { status: "opted_in" }, { merge: true });
+    });
+  });
+  sendCount = 0;
+  const result = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), result);
+  assert.equal(raced, true);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload, { success: true, outcome: "already_opted_in" });
+  assert.equal(sendCount, 0);
+});
+
+test("Firestore consent upsert returns already opted in when its transaction sees a concurrent verification", async (t) => {
+  if (authRuntimeInfo.hasFirestore) return t.skip("Uses a Firestore test double.");
+  const invite = await setupAcceptedInvite({ label: "firestore-opted-in-read-race" });
+  process.env.SMS_INVITE_CONSENT_ENABLED = "true";
+  const firestore = createFirestoreMock();
+  const phoneNumber = "+12125550123";
+  const consentId = smsConsentIdForChurchPhone(invite.churchId, phoneNumber);
+  firestore.seed("invites", invite.inviteId, {
+    inviteId: invite.inviteId, churchId: invite.churchId, memberId: invite.memberId,
+    email: invite.email, status: "accepted",
+    tokenHash: createHash("sha256").update(invite.token).digest("hex"),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  firestore.seed("memberships", `${invite.churchId}_${invite.userId}`, {
+    churchId: invite.churchId, userId: invite.userId, status: "active",
+  });
+  firestore.seed("teamRosterMembers", invite.memberId, {
+    memberId: invite.memberId, churchId: invite.churchId, phoneNumber,
+  });
+  const originalCollection = firestore.collection.bind(firestore);
+  let interleaved = false;
+  firestore.collection = (collectionName) => {
+    const collection = originalCollection(collectionName);
+    if (collectionName !== "smsConsents") return collection;
+    return {
+      ...collection,
+      doc(id) {
+        const reference = collection.doc(id);
+        return {
+          ...reference,
+          async get() {
+            const snapshot = await reference.get();
+            if (id === consentId && !interleaved) {
+              interleaved = true;
+              queueMicrotask(() => firestore.seed("smsConsents", consentId, {
+                consentId, churchId: invite.churchId, phoneNumber, status: "opted_in",
+              }));
+            }
+            return snapshot;
+          },
+        };
+      },
+    };
+  };
+  setServerFirestoreForTests(firestore);
+  t.after(() => {
+    delete process.env.SMS_INVITE_CONSENT_ENABLED;
+    setVerifyIdTokenForServerTests(null);
+    setServerFirestoreForTests(null);
+  });
+  sendCount = 0;
+  const result = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body: consentBody({
+    invite, phoneNumber, expectedRosterPhoneNumber: phoneNumber,
+  }) }), result);
+  assert.equal(interleaved, true);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload, { success: true, outcome: "already_opted_in" });
+  assert.equal(sendCount, 0);
+});
+
+test("a pre-send failure clears its unsent challenge so invite SMS can be retried immediately", async (t) => {
+  if (authRuntimeInfo.hasFirestore) return t.skip("Uses in-memory auth storage only.");
+  const invite = await setupAcceptedInvite({ label: "pre-send-challenge-cleanup" });
+  process.env.SMS_INVITE_CONSENT_ENABLED = "true";
+  const phoneNumber = "+12125550123";
+  const consentId = smsConsentIdForChurchPhone(invite.churchId, phoneNumber);
+  let failConfigRead = true;
+  t.after(() => {
+    delete process.env.SMS_INVITE_CONSENT_ENABLED;
+    setVerifyIdTokenForServerTests(null);
+    setAuthReadObserverForServerTests(null);
+  });
+  setAuthReadObserverForServerTests((event) => {
+    if (failConfigRead && event.collectionName === COLLECTIONS.churchMessagingConfigs) {
+      failConfigRead = false;
+      throw new Error("Messaging configuration is temporarily unavailable.");
+    }
+  });
+  const body = consentBody({ invite, phoneNumber, expectedRosterPhoneNumber: phoneNumber });
+  sendCount = 0;
+  const rejected = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), rejected);
+  assert.equal(rejected.statusCode, 500);
+  assert.equal(rejected.payload.outcome, "rejected_before_send");
+  assert.equal(sendCount, 0);
+  const afterRejection = await getDoc(COLLECTIONS.smsConsents, consentId);
+  assert.equal(afterRejection.status, "pending");
+  assert.equal(afterRejection.verificationChallengeId, null);
+  assert.equal(afterRejection.verificationCodeHash, null);
+
+  const retried = createRes();
+  await authHandlers.submitInviteSmsConsent(createReq({ body }), retried);
+  assert.equal(retried.statusCode, 200);
+  assert.equal(retried.payload.outcome, "verification_required");
+  assert.equal(sendCount, 1);
+});
+
 test("an active challenge for a shared phone is preserved for the other invitee", async (t) => {
   if (authRuntimeInfo.hasFirestore) return t.skip("Uses in-memory auth storage only.");
   const first = await setupAcceptedInvite({ label: "shared-first", churchId: "invite_sms_shared" });
@@ -421,6 +549,11 @@ test("an expired invitation OTP can be renewed and its repeat request does not r
     verificationCancellationTokenHash: "c".repeat(64),
     verificationCancellationExpiresAt: "2020-01-01T00:00:00.000Z",
   }, { merge: true });
+
+  const expiredVerify = createRes();
+  await authHandlers.verifyInviteSmsConsent(createReq({ body: { ...body, code: "123456" } }), expiredVerify);
+  assert.equal(expiredVerify.statusCode, 409);
+  assert.equal(expiredVerify.payload.code, "sms_challenge_expired");
 
   const renewed = createRes();
   await authHandlers.submitInviteSmsConsent(createReq({ body }), renewed);

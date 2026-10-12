@@ -352,7 +352,7 @@ test("cancelling a pending challenge invalidates its OTP and is idempotent", asy
     }),
     oldOtp,
   );
-  assert.equal(oldOtp.statusCode, 400);
+  assert.equal(oldOtp.statusCode, 409);
   assert.equal(
     (await getSmsConsentForServerTests(CHURCH_ID, phoneNumber))?.status,
     "pending",
@@ -413,7 +413,7 @@ test("verification and cancellation cannot both consume the same pending challen
   const [cancelled] = await Promise.all([cancellation, verificationRequest]);
 
   assert.deepEqual(cancelled.payload, { success: true, cancelled: true });
-  assert.equal(verification.statusCode, 400);
+  assert.equal(verification.statusCode, 409);
   const record = await getSmsConsentForServerTests(CHURCH_ID, phoneNumber);
   assert.equal(record?.status, "pending");
   assert.equal(record?.verificationCodeHash, null);
@@ -522,7 +522,7 @@ test("cancellation is isolated to the church and challenge that issued it", asyn
     }),
     oldCode,
   );
-  assert.equal(oldCode.statusCode, 400);
+  assert.equal(oldCode.statusCode, 409);
 
   const currentCode = createRes();
   await authHandlers.verifySmsConsent(
@@ -575,7 +575,7 @@ test("expired cancellation capabilities cannot affect the consent record", async
     }),
     verify,
   );
-  assert.equal(verify.statusCode, 400);
+  assert.equal(verify.statusCode, 409);
 });
 
 test("cancelling a re-verification challenge preserves prior verified consent", async () => {
@@ -678,7 +678,7 @@ test("Firestore verification commits invalid attempts and preserves the lockout"
           "sms-firestore-locked-ip",
         )
       ).statusCode,
-      400,
+      attempt === SMS_CONSENT_MAX_ATTEMPTS - 1 ? 409 : 400,
     );
   }
   const lockedRecord = await getSmsConsentForServerTests(
@@ -695,7 +695,7 @@ test("Firestore verification commits invalid attempts and preserves the lockout"
         "sms-firestore-locked-ip",
       )
     ).statusCode,
-    400,
+    409,
   );
   assert.equal(
     (await getSmsConsentForServerTests(CHURCH_ID, lockedPhone))?.status,
@@ -745,7 +745,7 @@ test("Firestore verification commits invalid attempts and preserves the lockout"
   assert.equal(
     (await verify(concurrentPhone, invalidCode(concurrentPhone), concurrentIp))
       .statusCode,
-    400,
+    409,
   );
   const concurrentRecord = await getSmsConsentForServerTests(
     CHURCH_ID,
@@ -797,7 +797,7 @@ test("Firestore cancellation transaction clears only its pending challenge", asy
     }),
     staleVerification,
   );
-  assert.equal(staleVerification.statusCode, 400);
+  assert.equal(staleVerification.statusCode, 409);
   assert.equal((await consentRef.get()).data()?.status, "pending");
 });
 

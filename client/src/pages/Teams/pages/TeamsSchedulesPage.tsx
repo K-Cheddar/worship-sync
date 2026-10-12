@@ -154,7 +154,7 @@ const TeamsSchedulesPage = () => {
       onScheduleDraftFlush={flushScheduleDraft}
       onScheduleDraftClear={clearScheduleDraft}
       trackTeamsSave={trackTeamsSave}
-      onImported={() => void refresh()}
+      onImported={() => refresh()}
     />
   );
 };

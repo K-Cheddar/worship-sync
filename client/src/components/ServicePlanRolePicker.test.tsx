@@ -81,6 +81,27 @@ describe("ServicePlanRolePicker", () => {
     expect(onValueChange).toHaveBeenCalledWith("camera");
   });
 
+  it("uses an explicit scrollbar preference for authenticated callers", async () => {
+    const user = userEvent.setup();
+
+    renderWithStore(
+      <ServicePlanRolePicker
+        value=""
+        onValueChange={jest.fn()}
+        options={roles}
+        scrollbarWidth="auto"
+        teamFilterStorageKey="role-picker-team"
+        ariaLabel="Filter role notes"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+
+    expect(screen.getByRole("region", { name: "Role options" })).toHaveStyle({
+      "--scrollbar-width": "auto",
+    });
+  });
+
   it("uses a parent team scope without overwriting the saved picker team", async () => {
     const user = userEvent.setup();
     localStorage.setItem("role-picker-team", "media");

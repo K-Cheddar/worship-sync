@@ -2067,8 +2067,17 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
   const consentId = smsConsentIdForChurchPhone(churchId, normalizedPhoneNumber);
   if (!consentId) throw httpError(400, "A church is required for SMS consent.");
   const db = requireFirestore();
-  const invalid = () => {
-    throw httpError(400, "That verification code is not valid or has expired.");
+  const throwVerificationFailure = (reason) => {
+    if (reason === "expired") {
+      throw httpError(409, "That verification code expired. Request a new code or continue without SMS.", "sms_challenge_expired");
+    }
+    if (reason === "locked" || reason === "max_attempts") {
+      throw httpError(409, "This verification code can no longer be used. Request a new code or continue without SMS.", "sms_challenge_unavailable");
+    }
+    if (reason === "unavailable") {
+      throw httpError(409, "This verification code is no longer available. Request a new code or continue without SMS.", "sms_challenge_unavailable");
+    }
+    throw httpError(400, "That verification code is not valid.", "sms_code_invalid");
   };
 
   if (db) {
@@ -2099,8 +2108,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
           );
         }
         return {
-          status:
-            attempts >= SMS_CONSENT_MAX_ATTEMPTS ? "max_attempts" : "invalid",
+          status: attempts >= SMS_CONSENT_MAX_ATTEMPTS ? "max_attempts" : result.reason,
         };
       }
       const verifiedAt = nowIso();
@@ -2124,7 +2132,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
       return { status: "verified", verifiedAt };
     });
 
-    if (transactionResult.status !== "verified") invalid();
+    if (transactionResult.status !== "verified") throwVerificationFailure(transactionResult.status);
     const { verifiedAt } = transactionResult;
     return { consentId, verifiedAt };
   }
@@ -2152,7 +2160,7 @@ const verifySmsConsent = async (churchId, phoneNumber, code, challengeId) => {
           { merge: true },
         );
       }
-      invalid();
+      throwVerificationFailure(result.reason);
     }
     const verifiedAt = nowIso();
     await setDoc(
@@ -4039,7 +4047,6 @@ const recordFailedEmailChallengeAttempt = async (challenge) => {
     type: shouldLock ? "email_code_locked" : "email_code_failed",
     churchId: challenge.churchId,
     userId: challenge.userId,
-    pendingAuthId: challenge.pendingAuthId,
     failedAttempts,
   });
 
@@ -7906,7 +7913,6 @@ export const authHandlers = {
       } catch (deleteErr) {
         logAuthEvent("warn", "email-code.verify.delete-challenge.error", {
           message: deleteErr.message,
-          pendingAuthId,
         });
         await revokeHumanApiCredentialSlot(user.uid, device.deviceId);
         await destroySession(req);
@@ -8330,6 +8336,7 @@ export const authHandlers = {
       const statusCode = error.statusCode || 500;
       return res.status(statusCode).json({
         success: false,
+        ...(error.code ? { code: error.code } : {}),
         errorMessage: statusCode >= 500
           ? "Could not record SMS consent. Try again in a moment."
           : error.message || "Could not record SMS consent.",
@@ -9131,6 +9138,9 @@ export const authHandlers = {
 
   /** Invitation signup uses the same church-and-phone consent record as every other path. */
   async submitInviteSmsConsent(req, res) {
+    let deliveryMayHaveOccurred = false;
+    let activeChallenge = null;
+    let pendingChallengeCancellation = null;
     try {
       const parsed = parseSmsConsentBody(req.body);
       if (!parsed.ok) throw httpError(400, parsed.errorMessage);
@@ -9183,7 +9193,7 @@ export const authHandlers = {
         return res.json({ success: true, outcome: "verification_pending" });
       }
 
-      const { consentId, challenge, shouldSend, retry } = await upsertSmsConsent(
+      const { consentId, challenge, shouldSend, retry, alreadyOptedIn } = await upsertSmsConsent(
         context.invite.churchId,
         parsed.phoneNumber,
         {
@@ -9199,12 +9209,26 @@ export const authHandlers = {
           preserveExistingActive: true,
         },
       );
+      if (alreadyOptedIn) {
+        return res.json({ success: true, outcome: "already_opted_in" });
+      }
+      activeChallenge = challenge || null;
+      pendingChallengeCancellation = challenge ? {
+        churchId: context.invite.churchId,
+        phoneNumber: parsed.phoneNumber,
+        challengeId: challenge.challengeId,
+        cancellationToken: challenge.cancellationToken,
+      } : null;
+      // A retry can refer to a challenge delivered by an earlier request. If
+      // anything later fails, keep the client from treating it as safe to resend.
+      deliveryMayHaveOccurred = Boolean(!shouldSend && challenge);
       if (shouldSend && challenge) {
         const messagingConfig = await getDoc(
           COLLECTIONS.churchMessagingConfigs,
           context.invite.churchId,
         );
         try {
+          deliveryMayHaveOccurred = true;
           const delivery = await sendSmsConsentVerificationCode({
             phoneNumber: parsed.phoneNumber,
             code: challenge.code,
@@ -9310,10 +9334,28 @@ export const authHandlers = {
       });
     } catch (error) {
       const statusCode = error.statusCode || 500;
+      if (!deliveryMayHaveOccurred && pendingChallengeCancellation) {
+        try {
+          const cancellation = await cancelSmsConsentVerification(pendingChallengeCancellation);
+          if (!cancellation.confirmed) {
+            console.warn("Could not clear an undelivered SMS verification challenge after a pre-send failure.");
+          }
+        } catch (cancellationError) {
+          console.error("Could not clear an undelivered SMS verification challenge after a pre-send failure.", cancellationError);
+        }
+      }
+      const outcome = deliveryMayHaveOccurred ? "delivery_uncertain" : "rejected_before_send";
       return res.status(statusCode).json({
         success: false,
+        outcome,
+        ...(deliveryMayHaveOccurred && activeChallenge
+          ? {
+              challengeId: activeChallenge.challengeId,
+              cancellationToken: activeChallenge.cancellationToken,
+            }
+          : {}),
         errorMessage:
-          statusCode >= 500
+          deliveryMayHaveOccurred || statusCode >= 500
             ? "Could not start SMS verification. You can continue without SMS or try again later."
             : error.message || "Could not start SMS verification.",
       });
@@ -9434,6 +9476,7 @@ export const authHandlers = {
       const statusCode = error.statusCode || 500;
       return res.status(statusCode).json({
         success: false,
+        ...(error.code ? { code: error.code } : {}),
         errorMessage:
           statusCode >= 500
             ? "Could not verify SMS consent right now. You can continue without SMS or try again."

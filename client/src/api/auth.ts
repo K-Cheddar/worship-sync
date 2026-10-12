@@ -80,6 +80,8 @@ import type {
   PortableDataType,
   PortableImportRow,
   PortableImportResolution,
+  PortablePositionAction,
+  PortableTeamAction,
   TrustedHumanDeviceListItem,
   WorkstationDeviceClient,
 } from "./authTypes";
@@ -3185,6 +3187,7 @@ export const inspectPortableImport = async (
     issues: Array<{ row: number; code: string; message: string }>;
     mapping: Record<string, string>;
     sampleRows: Array<Record<string, string>>;
+    columnStats: Record<string, { nonBlank: number; blank: number }>;
   }>(`api/churches/${churchId}/data-transfer/inspect`, {
     method: "POST",
     body: JSON.stringify({ type, csv }),
@@ -3196,7 +3199,7 @@ export const previewPortableImport = async (
   csv: string,
   mapping: Record<string, string>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[] } = {},
 ) =>
   apiFetch<{
     success: boolean;
@@ -3228,10 +3231,11 @@ export const commitPortableImport = async (
     expectedStateHash?: string;
   }>,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string> } = {},
+  options: { destinationTeamId?: string; updateMode?: "merge" | "replace"; clearBlankScalars?: boolean; previewToken?: string; previewCsvHash?: string; mapping?: Record<string, string>; positionActions?: PortablePositionAction[]; teamActions?: PortableTeamAction[] } = {},
 ) =>
   apiFetch<{
     success: boolean;
+    status?: "complete" | "partial" | "failed";
     results: Array<{
       row: number;
       status: "created" | "updated" | "unchanged" | "failed";
@@ -3239,7 +3243,7 @@ export const commitPortableImport = async (
       code?: string;
       message?: string;
     }>;
-    summary: { created: number; updated: number; unchanged?: number; failed: number };
+    summary: { created: number; updated: number; unchanged?: number; failed: number; positionsCreated?: number; teamsCreated?: number };
   }>(`api/churches/${churchId}/data-transfer/commit`, {
     method: "POST",
     body: JSON.stringify({ type, approvedRows, timeZone, ...options }),

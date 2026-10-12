@@ -87,6 +87,7 @@ export type SelectProps = Pick<AriaAttributes, "aria-label" | "aria-labelledby" 
   onOpenChange?: (open: boolean) => void;
   required?: boolean;
   ariaInvalid?: boolean;
+  errorText?: string;
 };
 
 const Select = ({
@@ -116,6 +117,7 @@ const Select = ({
   onOpenChange,
   required = false,
   ariaInvalid = false,
+  errorText,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
   "aria-describedby": ariaDescribedBy,
@@ -123,6 +125,8 @@ const Select = ({
 }: SelectProps) => {
   const generatedId = useId();
   const id = idProp || generatedId;
+  const errorId = useId();
+  const describedBy = [ariaDescribedBy, errorText ? errorId : null].filter(Boolean).join(" ") || undefined;
 
   // Radix determines controlled-vs-uncontrolled from whether `value` is
   // `undefined` on the *first* render, then warns if that ever flips — which
@@ -171,9 +175,9 @@ const Select = ({
           size={size}
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledBy}
-          aria-describedby={ariaDescribedBy}
+          aria-describedby={describedBy}
           aria-required={required}
-          aria-invalid={ariaInvalid}
+          aria-invalid={ariaInvalid || Boolean(errorText)}
           className={cn(backgroundColor, selectClassName, textColor)}
           chevronColor={chevronColor}
         >
@@ -202,6 +206,7 @@ const Select = ({
           ))}
         </SelectContent>
       </RadixSelect>
+      {errorText ? <p id={errorId} className="mt-1 text-sm text-red-400" role="alert">{errorText}</p> : null}
     </div>
   );
 };

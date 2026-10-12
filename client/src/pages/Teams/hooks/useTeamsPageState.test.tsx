@@ -4,6 +4,7 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastContext } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
 import { getTeamScheduleDetail, getTeamsBootstrap, reorderTeamPositions } from "../../../api/auth";
+import type { AuthenticatedSseHandlers } from "../../../utils/authenticatedSse";
 import { useTeamsPageState } from "./useTeamsPageState";
 
 let mockState: unknown;
@@ -18,24 +19,24 @@ jest.mock("../../../api/auth", () => ({
   reorderTeamPositions: jest.fn(),
 }));
 
-class MockEventSource {
-  static instances: MockEventSource[] = [];
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  closed = false;
+const mockConnections: Array<{
+  path: string;
+  handlers: AuthenticatedSseHandlers;
+  close: jest.Mock;
+}> = [];
 
-  constructor(
-    public url: string,
-    public options?: { withCredentials?: boolean },
-  ) {
-    MockEventSource.instances.push(this);
-  }
+const mockConnectAuthenticatedSse = jest.fn(
+  (path: string, handlers: AuthenticatedSseHandlers) => {
+    const close = jest.fn();
+    mockConnections.push({ path, handlers, close });
+    return close;
+  },
+);
 
-  close() {
-    this.closed = true;
-  }
-}
+jest.mock("../../../utils/authenticatedSse", () => ({
+  connectAuthenticatedSse: (...args: unknown[]) =>
+    mockConnectAuthenticatedSse(...(args as [string, AuthenticatedSseHandlers])),
+}));
 
 const emptyBootstrap = {
   success: true,
@@ -47,7 +48,6 @@ const emptyBootstrap = {
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
-const originalEventSource = (global as { EventSource?: unknown }).EventSource;
 
 const emitFocus = () => act(() => window.dispatchEvent(new Event("focus")));
 const emitVisibilityChange = () =>
@@ -97,9 +97,8 @@ describe("useTeamsPageState bootstrap recovery", () => {
     mockState = {
       undoable: { present: { serviceTimes: { list: [] } } },
     };
-    MockEventSource.instances = [];
-    (global as { EventSource?: unknown }).EventSource =
-      MockEventSource as unknown as typeof EventSource;
+    mockConnections.length = 0;
+    mockConnectAuthenticatedSse.mockClear();
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "visible",
@@ -112,7 +111,6 @@ describe("useTeamsPageState bootstrap recovery", () => {
 
   afterEach(() => {
     jest.useRealTimers();
-    (global as { EventSource?: unknown }).EventSource = originalEventSource;
   });
 
   it("loads once initially and ignores fresh focus and visibility events", async () => {
@@ -120,7 +118,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
 
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     emitFocus();
     emitVisibilityChange();
     emitFocus();
@@ -232,11 +230,11 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
-  it("uses bounded REST refresh without EventSource for scoped/member access", async () => {
+  it("uses bounded REST refresh without a live stream for scoped/member access", async () => {
     canUseTeamsLiveSync = false;
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    expect(MockEventSource.instances).toHaveLength(0);
+    expect(mockConnections).toHaveLength(0);
     emitFocus();
     emitVisibilityChange();
     await flushMicrotasks();
@@ -244,7 +242,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
-    expect(MockEventSource.instances).toHaveLength(0);
+    expect(mockConnections).toHaveLength(0);
     unmount();
   });
 
@@ -329,19 +327,23 @@ describe("useTeamsPageState bootstrap recovery", () => {
     const { unmount } = renderPageState(onTemplateEvent);
     await flushMicrotasks();
 
-    const source = MockEventSource.instances[0];
-    act(() => source.onmessage?.({
-      data: JSON.stringify({
-        type: "service-plan-template-updated",
-        templateId: "template-1",
-      }),
-    }));
-    act(() => source.onmessage?.({
-      data: JSON.stringify({
-        type: "service-plan-template-removed",
-        templateId: "template-1",
-      }),
-    }));
+    const handlers = mockConnections[0].handlers;
+    act(() =>
+      handlers.onMessage(
+        JSON.stringify({
+          type: "service-plan-template-updated",
+          templateId: "template-1",
+        }),
+      ),
+    );
+    act(() =>
+      handlers.onMessage(
+        JSON.stringify({
+          type: "service-plan-template-removed",
+          templateId: "template-1",
+        }),
+      ),
+    );
 
     expect(onTemplateEvent).toHaveBeenNthCalledWith(1, {
       type: "service-plan-template-updated",
@@ -360,14 +362,14 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
     expect(onReconnect).not.toHaveBeenCalled();
 
-    const source = MockEventSource.instances[0];
-    act(() => source.onopen?.());
-    act(() => source.onerror?.());
-    act(() => source.onopen?.());
+    const handlers = mockConnections[0].handlers;
+    act(() => handlers.onOpen());
+    act(() => handlers.onError({ kind: "interrupted" }));
+    act(() => handlers.onOpen());
     await flushMicrotasks();
 
     expect(onReconnect).toHaveBeenCalledTimes(1);
-    expect(MockEventSource.instances).toHaveLength(1);
+    expect(mockConnections).toHaveLength(1);
     jest.setSystemTime(new Date(Date.now() + 6 * 60 * 1000));
     emitFocus();
     await flushMicrotasks();
@@ -401,7 +403,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("performs one bootstrap after the five-minute freshness window", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
 
     emitFocus();
@@ -415,7 +417,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("revalidates uncovered Teams data on a bounded interval while connected", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
 
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
     await flushMicrotasks();
@@ -427,7 +429,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("skips interval reads while hidden and recovers when the page returns", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "hidden",
@@ -451,11 +453,11 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("counts an unchanged recovery response as a fresh validation", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    const source = MockEventSource.instances[0];
-    act(() => source.onopen?.());
+    const handlers = mockConnections[0].handlers;
+    act(() => handlers.onOpen());
     act(() => jest.advanceTimersByTime(4 * 60 * 1000));
-    act(() => source.onerror?.());
-    act(() => source.onopen?.());
+    act(() => handlers.onError({ kind: "interrupted" }));
+    act(() => handlers.onOpen());
     await flushMicrotasks();
 
     act(() => jest.advanceTimersByTime(2 * 60 * 1000));
@@ -469,26 +471,31 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("recovers once after a real disconnect and reconnect, not initial open", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    const source = MockEventSource.instances[0];
+    const handlers = mockConnections[0].handlers;
 
-    act(() => source.onopen?.());
+    act(() => handlers.onOpen());
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
 
-    act(() => source.onerror?.());
+    act(() => handlers.onError({ kind: "interrupted" }));
     act(() => {
-      source.onopen?.();
-      source.onopen?.();
+      handlers.onOpen();
+      handlers.onOpen();
     });
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
     unmount();
   });
 
-  it("uses stale age rather than every focus when EventSource is unavailable", async () => {
-    (global as { EventSource?: unknown }).EventSource = undefined;
+  it("uses stale age rather than every focus when authentication rejects the stream", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
+    act(() =>
+      mockConnections[0].handlers.onError({
+        kind: "authentication",
+        status: 401,
+      }),
+    );
 
     emitFocus();
     emitVisibilityChange();
@@ -507,7 +514,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     const logError = jest.spyOn(console, "error").mockImplementation(() => {});
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     mockGetTeamsBootstrap.mockRejectedValueOnce(new Error("offline"));
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
     await flushMicrotasks();
@@ -525,8 +532,8 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("defers reconnect recovery while a teams save is in flight", async () => {
     const { result, unmount } = renderPageState();
     await flushMicrotasks();
-    const source = MockEventSource.instances[0];
-    act(() => source.onopen?.());
+    const handlers = mockConnections[0].handlers;
+    act(() => handlers.onOpen());
     const localTeam = {
       teamId: "local-team",
       churchId: "church-1",
@@ -543,8 +550,8 @@ describe("useTeamsPageState bootstrap recovery", () => {
     act(() => {
       void result.current.trackTeamsSave(save);
     });
-    act(() => source.onerror?.());
-    act(() => source.onopen?.());
+    act(() => handlers.onError({ kind: "interrupted" }));
+    act(() => handlers.onOpen());
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
 
@@ -583,7 +590,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
       } as never);
     });
 
-    act(() => MockEventSource.instances[1].onopen?.());
+    act(() => mockConnections[1].handlers.onOpen());
     emitFocus();
     await flushMicrotasks();
 

@@ -31,7 +31,7 @@ import AnimateCollapse from "../../components/AnimateCollapse/AnimateCollapse";
 import Button from "../../components/Button/Button";
 import Icon from "../../components/Icon/Icon";
 import ContentPreviewDialog from "../../components/ContentPreview/ContentPreviewDialog";
-import ServicePlanCustomDocumentPreviewDialog from "./ServicePlanCustomDocumentPreviewDialog";
+import ServicePlanCustomDocumentPreviewDialog from "../../components/ServicePlanCustomDocumentPreviewDialog";
 import { createChurchResourcePreview, resolveExternalContentPreviewSource, type ContentPreviewResource } from "../../components/ContentPreview/contentPreview";
 import type { DBItem } from "../../types";
 import ServicePlanAssigneeList, {

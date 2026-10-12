@@ -50,16 +50,30 @@ export const useServicePlanOutlinePush = () => {
       onItemAdded?: (item: ServiceItem) => Promise<void> | void,
       shouldContinue: () => boolean = () => true,
     ): Promise<ServicePlanOutlinePushResult> => {
-      if (!selectedList) {
+      const stateAtStart = store.getState().undoable.present;
+      const selectedListAtStart = stateAtStart.itemLists.selectedList;
+      if (!selectedListAtStart) {
         throw new Error("Open or create an item list in the Controller first.");
       }
-      const startingContext = contextRef.current;
-      const startingList = store.getState().undoable.present.itemList.list;
+      if (selectedList?._id !== selectedListAtStart._id) {
+        throw new Error("The selected outline changed before the service plan could be imported.");
+      }
+      const startingContext = {
+        ...contextRef.current,
+        selectedList: selectedListAtStart,
+        db,
+        bibleDb,
+        songs,
+        customDocuments,
+      };
+      const startingList = stateAtStart.itemList.list;
       // One run uses one mapping configuration even if integrations refresh
       // while the operator is watching the visible per-item progress.
       const sectionRulesSnapshot = (sectionRules ?? []).map((rule) => ({ ...rule }));
       const isContextCurrent = () =>
         isSourcePlanCurrent()
+        &&
+        store.getState().undoable.present.itemLists.selectedList?._id === startingContext.selectedList._id
         &&
         contextRef.current.selectedList?._id === startingContext.selectedList?._id
         && contextRef.current.db === startingContext.db
@@ -121,13 +135,25 @@ export const useServicePlanOutlinePush = () => {
           });
           continue;
         }
+        if (!isContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
         dispatch(updateItemList(placedList));
         if (db && item.type === "bible") {
+          if (!isContextCurrent()) {
+            throw new Error("The selected outline changed before the service plan could be imported.");
+          }
           dispatch(upsertItemInAllItemsList({ ...item, listId: "" }));
         }
         items.push(item);
         await onItemAdded?.(item);
+        if (!isContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
         await delay(OUTLINE_STEP_DELAY_MS);
+        if (!isContextCurrent()) {
+          throw new Error("The selected outline changed before the service plan could be imported.");
+        }
       }
       return {
         items,
