@@ -4117,6 +4117,7 @@ export const createTeamsAuthHandlers = ({
       publicTokenHash,
       publicTokenNonce,
       publicLinkToken,
+      teamAvailabilityScopeLocked,
       ...clientForm
     } = form || {};
     return {
@@ -6867,10 +6868,214 @@ export const createTeamsAuthHandlers = ({
   const createTeamIntakeRecipientId = (formId, memberId) =>
     `teamIntakeRecipient_${hashValue(`${formId}:${memberId}`).slice(0, 32)}`;
 
+  const TEAM_AVAILABILITY_SCOPE_LOCK_FIELD = "teamAvailabilityScopeLocked";
+  const teamAvailabilityFormQueues = new Map();
+  const withTeamAvailabilityFormLock = (formId, task) => {
+    const previous = teamAvailabilityFormQueues.get(formId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    teamAvailabilityFormQueues.set(formId, settled);
+    void settled.finally(() => {
+      if (teamAvailabilityFormQueues.get(formId) === settled) {
+        teamAvailabilityFormQueues.delete(formId);
+      }
+    });
+    return run;
+  };
+
+  const validateCurrentTeamAvailabilityForm = ({
+    currentForm,
+    expectedForm,
+    churchId,
+    members = [],
+    teams = [],
+  }) => {
+    if (!currentForm || currentForm.churchId !== churchId) {
+      throw httpError(404, "Intake form not found.");
+    }
+    if (
+      currentForm.purpose !== "team_availability" ||
+      !sameIdSet(currentForm.teamIds, expectedForm?.teamIds)
+    ) {
+      throw httpError(
+        409,
+        "This availability form's Team scope changed. Reload and try again.",
+      );
+    }
+    assertTeamIntakeFormIsOpen(currentForm);
+    assertTeamIntakeFormResponseDeadline(currentForm);
+    for (const member of members) {
+      if (
+        !member ||
+        member.archivedAt ||
+        member.churchId !== churchId ||
+        !isMemberWithinTeamAvailabilityScope({
+          form: currentForm,
+          member,
+          teams,
+        })
+      ) {
+        throw httpError(
+          409,
+          "One or more selected members are outside this form's current Team scope.",
+        );
+      }
+    }
+    return currentForm;
+  };
+
+  const hasReusableTeamIntakeRecipientToken = (recipient) => {
+    const token = decryptTeamIntakeRecipientToken(
+      recipient?.recipientTokenCiphertext,
+      teamIntakeRecipientTokenSecret,
+    );
+    return Boolean(
+      token &&
+      looksLikeTeamIntakeRecipientToken(token) &&
+      hashTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret) ===
+        recipient?.recipientTokenHash,
+    );
+  };
+
   const buildTeamIntakeRecipientPublicUrl = (token) =>
     `${APP_BASE_URL}/a/${encodeURIComponent(String(token || "").trim())}`;
 
-  const ensureTeamIntakeRecipientToken = async (recipient, updatedByUid) => {
+  const ensureTeamIntakeRecipientToken = async (
+    recipient,
+    updatedByUid,
+    { form: expectedForm = null, member: expectedMember = null, teams: expectedTeams = null } = {},
+  ) => {
+    const form = expectedForm || await getDoc(
+      COLLECTIONS.teamIntakeForms,
+      recipient.formId,
+    );
+    if (form?.purpose === "team_availability") {
+      const member = expectedMember || await getDoc(
+        COLLECTIONS.teamRosterMembers,
+        recipient.memberId,
+      );
+      const teams = expectedTeams || await listTeamCollectionForChurch(
+        COLLECTIONS.teams,
+        "teamId",
+        form.churchId,
+      );
+      const db = requireFirestore?.();
+      const ensureWithCurrentRecords = async (currentForm, currentRecipient, transaction = null, refs = null) => {
+        const validatedForm = validateCurrentTeamAvailabilityForm({
+          currentForm,
+          expectedForm: form,
+          churchId: form.churchId,
+          members: [member],
+          teams,
+        });
+        if (
+          !currentRecipient ||
+          currentRecipient.revokedAt ||
+          currentRecipient.churchId !== form.churchId ||
+          currentRecipient.formId !== form.formId ||
+          currentRecipient.memberId !== member?.memberId
+        ) {
+          throw httpError(409, "This individual intake request is no longer available.");
+        }
+        assertTeamIntakeFormIsOpen(validatedForm);
+        assertTeamIntakeFormResponseDeadline(validatedForm);
+        const updatedAt = nowIso();
+        const canReuseToken = hasReusableTeamIntakeRecipientToken(currentRecipient);
+        const existingToken = canReuseToken
+          ? decryptTeamIntakeRecipientToken(
+              currentRecipient.recipientTokenCiphertext,
+              teamIntakeRecipientTokenSecret,
+            )
+          : "";
+        const token = canReuseToken ? existingToken : createTeamIntakeRecipientToken();
+        const update = {
+          ...(!canReuseToken
+            ? {
+                recipientTokenHash: hashTeamIntakeRecipientToken(
+                  token,
+                  teamIntakeRecipientTokenSecret,
+                ),
+                recipientTokenCiphertext: encryptTeamIntakeRecipientToken(
+                  token,
+                  teamIntakeRecipientTokenSecret,
+                ),
+                tokenIssuedAt: updatedAt,
+              }
+            : {}),
+          updatedAt,
+          ...(updatedByUid ? { updatedByUid } : {}),
+        };
+        const shouldPersistUpdate = Object.keys(update).length > 2 || !canReuseToken;
+        if (transaction) {
+          if (!validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]) {
+            transaction.set(
+              refs.form,
+              { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+              { merge: true },
+            );
+          }
+          if (shouldPersistUpdate) {
+            transaction.set(refs.recipient, update, { merge: true });
+          }
+        } else {
+          if (!validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]) {
+            await setDoc(
+              COLLECTIONS.teamIntakeForms,
+              form.formId,
+              { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+              { merge: true },
+            );
+          }
+          if (shouldPersistUpdate) {
+            await setDoc(
+              COLLECTIONS.teamIntakeRecipients,
+              currentRecipient.recipientId || recipient.recipientId,
+              update,
+              { merge: true },
+            );
+          }
+        }
+        return {
+          token,
+          recipient: { ...currentRecipient, ...update },
+          form: validatedForm,
+        };
+      };
+
+      if (db?.runTransaction) {
+        const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(form.formId);
+        const recipientRef = db
+          .collection(COLLECTIONS.teamIntakeRecipients)
+          .doc(recipient.recipientId);
+        return db.runTransaction(async (transaction) => {
+          const [formSnapshot, recipientSnapshot] = await Promise.all([
+            transaction.get(formRef),
+            transaction.get(recipientRef),
+          ]);
+          return ensureWithCurrentRecords(
+            formSnapshot.exists
+              ? { formId: formSnapshot.id, ...formSnapshot.data() }
+              : null,
+            recipientSnapshot.exists
+              ? { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() }
+              : null,
+            transaction,
+            { form: formRef, recipient: recipientRef },
+          );
+        });
+      }
+      return withTeamAvailabilityFormLock(form.formId, async () => {
+        const [currentForm, currentRecipient] = await Promise.all([
+          getDoc(COLLECTIONS.teamIntakeForms, form.formId),
+          getDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId),
+        ]);
+        return ensureWithCurrentRecords(currentForm, currentRecipient);
+      });
+    }
+
     const updatedAt = nowIso();
     const existingToken = decryptTeamIntakeRecipientToken(
       recipient.recipientTokenCiphertext,
@@ -6984,23 +7189,140 @@ export const createTeamsAuthHandlers = ({
     return getTeamIntakeRecipientContext(recipient);
   };
 
-  const writeTeamIntakeRecipientBatch = async (writes) => {
+  const writeTeamIntakeRecipientBatch = async (
+    writes,
+    availabilityContext = null,
+  ) => {
     const db = requireFirestore?.();
-    if (db) {
-      const batch = db.batch();
-      writes.forEach(({ id, data, merge }) => {
-        batch.set(
-          db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
-          data,
-          { merge },
-        );
+    if (!availabilityContext) {
+      if (db) {
+        if (!writes.length) return [];
+        const batch = db.batch();
+        writes.forEach(({ id, data, merge }) => {
+          batch.set(
+            db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+            data,
+            { merge },
+          );
+        });
+        await batch.commit();
+        return [];
+      }
+      for (const { id, data, merge } of writes) {
+        await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
+      }
+      return [];
+    }
+
+    const {
+      form,
+      churchId,
+      members,
+      teams,
+    } = availabilityContext;
+    const validate = (currentForm, currentRecipients) => {
+      const validatedForm = validateCurrentTeamAvailabilityForm({
+        currentForm,
+        expectedForm: form,
+        churchId,
+        members,
+        teams,
       });
-      await batch.commit();
-      return;
+      const latestById = new Map(
+        currentRecipients
+          .filter(Boolean)
+          .map((recipient) => [recipient.recipientId, recipient]),
+      );
+      const finalRecipients = [];
+      const recipientWrites = [];
+      for (const prepared of writes) {
+        const current = latestById.get(prepared.id) || null;
+        if (current && !current.revokedAt && hasReusableTeamIntakeRecipientToken(current)) {
+          finalRecipients.push(current);
+          continue;
+        }
+        const data = {
+          ...(current || {}),
+          ...prepared.data,
+          ...(current?.createdAt ? { createdAt: current.createdAt } : {}),
+        };
+        recipientWrites.push({
+          id: prepared.id,
+          data,
+          merge: Boolean(current),
+        });
+        finalRecipients.push({ recipientId: prepared.id, ...data });
+      }
+      const needsScopeMarker =
+        validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] !== true;
+      if (recipientWrites.length + Number(needsScopeMarker) > 500) {
+        throw httpError(
+          400,
+          "This request is too large to issue atomically. Select fewer members and try again.",
+        );
+      }
+      return { validatedForm, finalRecipients, recipientWrites, needsScopeMarker };
+    };
+
+    if (db?.runTransaction) {
+      const formRef = db
+        .collection(COLLECTIONS.teamIntakeForms)
+        .doc(form.formId);
+      return db.runTransaction(async (transaction) => {
+        const formSnapshot = await transaction.get(formRef);
+        const recipientSnapshots = await Promise.all(
+          writes.map(({ id }) => transaction.get(
+            db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+          )),
+        );
+        const currentForm = formSnapshot.exists
+          ? { formId: formSnapshot.id, ...formSnapshot.data() }
+          : null;
+        const currentRecipients = recipientSnapshots.flatMap((snapshot) =>
+          snapshot.exists
+            ? [{ recipientId: snapshot.id, ...snapshot.data() }]
+            : [],
+        );
+        const result = validate(currentForm, currentRecipients);
+        if (result.needsScopeMarker) {
+          transaction.set(
+            formRef,
+            { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+            { merge: true },
+          );
+        }
+        result.recipientWrites.forEach(({ id, data, merge }) => {
+          transaction.set(
+            db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+            data,
+            { merge },
+          );
+        });
+        return result.finalRecipients;
+      });
     }
-    for (const { id, data, merge } of writes) {
-      await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
-    }
+
+    // This path only protects sequential work inside this server process. The
+    // production Firestore path above is the cross-instance consistency boundary.
+    return withTeamAvailabilityFormLock(form.formId, async () => {
+      const [currentForm, ...currentRecipients] = await Promise.all([
+        getDoc(COLLECTIONS.teamIntakeForms, form.formId),
+        ...writes.map(({ id }) => getDoc(COLLECTIONS.teamIntakeRecipients, id)),
+      ]);
+      const result = validate(currentForm, currentRecipients);
+      if (result.needsScopeMarker) {
+        await setDoc(
+          COLLECTIONS.teamIntakeForms,
+          form.formId,
+          { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+          { merge: true },
+        );
+      }
+      for (const { id, data, merge } of result.recipientWrites) {
+        await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
+      }
+      return result.finalRecipients;
+    });
   };
 
   const applyTeamIntakeSubmissionToMember = async ({
@@ -9217,14 +9539,9 @@ export const createTeamsAuthHandlers = ({
 
   const teamIntakeNotificationRecipientQueues = new Map();
   const withTeamIntakeRecipientLock = (recipientId, task) => {
-    const previous =
-      teamIntakeNotificationRecipientQueues.get(recipientId) ||
-      Promise.resolve();
+    const previous = teamIntakeNotificationRecipientQueues.get(recipientId) || Promise.resolve();
     const run = previous.then(task, task);
-    const settled = run.then(
-      () => undefined,
-      () => undefined,
-    );
+    const settled = run.then(() => undefined, () => undefined);
     teamIntakeNotificationRecipientQueues.set(recipientId, settled);
     void settled.finally(() => {
       if (teamIntakeNotificationRecipientQueues.get(recipientId) === settled) {
@@ -9238,21 +9555,47 @@ export const createTeamsAuthHandlers = ({
     form,
     member,
     actorUid,
+    teams,
   }) => {
     const recipientId = createTeamIntakeRecipientId(
       form.formId,
       member.memberId,
     );
     const db = requireFirestore?.();
-    const buildOrReuse = (
+    const availabilityOnly = form.purpose === "team_availability";
+    const buildOrReuse = async (
+      currentForm,
       existing,
       transaction = null,
-      recipientRef = null,
+      refs = null,
     ) => {
+      const validatedForm = availabilityOnly
+        ? validateCurrentTeamAvailabilityForm({
+            currentForm,
+            expectedForm: form,
+            churchId: form.churchId,
+            members: [member],
+            teams,
+          })
+        : currentForm || form;
+      if (availabilityOnly) {
+        assertTeamIntakeFormIsOpen(validatedForm);
+        assertTeamIntakeFormResponseDeadline(validatedForm);
+      }
       if (existing?.revokedAt)
-        return { recipient: existing, token: "", reason: "revoked" };
+        return {
+          recipient: existing,
+          token: "",
+          reason: "revoked",
+          form: validatedForm,
+        };
       if (existing?.respondedAt)
-        return { recipient: existing, token: "", reason: "responded" };
+        return {
+          recipient: existing,
+          token: "",
+          reason: "responded",
+          form: validatedForm,
+        };
       const existingToken = decryptTeamIntakeRecipientToken(
         existing?.recipientTokenCiphertext,
         teamIntakeRecipientTokenSecret,
@@ -9294,50 +9637,102 @@ export const createTeamsAuthHandlers = ({
         updatedAt: now,
         updatedByUid: actorUid,
       };
-      if (transaction && recipientRef) {
-        transaction.set(recipientRef, recipient, { merge: Boolean(existing) });
+      if (transaction && refs) {
+        if (
+          availabilityOnly &&
+          validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] !== true
+        ) {
+          transaction.set(
+            refs.form,
+            { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+            { merge: true },
+          );
+        }
+        transaction.set(refs.recipient, recipient, { merge: Boolean(existing) });
+      } else if (availabilityOnly) {
+        if (
+          validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] !== true
+        ) {
+          await setDoc(
+            COLLECTIONS.teamIntakeForms,
+            form.formId,
+            { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+            { merge: true },
+          );
+        }
+        if (
+          !existing ||
+          recipient.recipientTokenHash !== existing.recipientTokenHash
+        ) {
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+            recipient,
+            { merge: Boolean(existing) },
+          );
+        }
       }
-      return { recipient, token, reason: "" };
+      return { recipient, token, reason: "", form: validatedForm };
     };
 
-    if (db) {
+    if (db?.runTransaction) {
       return db.runTransaction(async (transaction) => {
-        const ref = db
+        const recipientRef = db
           .collection(COLLECTIONS.teamIntakeRecipients)
           .doc(recipientId);
-        const snapshot = await transaction.get(ref);
-        const existing = snapshot.exists
-          ? { recipientId: snapshot.id, ...snapshot.data() }
+        const formRef = availabilityOnly
+          ? db.collection(COLLECTIONS.teamIntakeForms).doc(form.formId)
           : null;
-        return buildOrReuse(existing, transaction, ref);
+        const [formSnapshot, recipientSnapshot] = availabilityOnly
+          ? await Promise.all([
+              transaction.get(formRef),
+              transaction.get(recipientRef),
+            ])
+          : [null, await transaction.get(recipientRef)];
+        const currentForm = availabilityOnly && formSnapshot.exists
+          ? { formId: formSnapshot.id, ...formSnapshot.data() }
+          : form;
+        const existing = recipientSnapshot.exists
+          ? { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() }
+          : null;
+        return buildOrReuse(currentForm, existing, transaction, {
+          form: formRef,
+          recipient: recipientRef,
+        });
       });
     }
-    return withTeamIntakeRecipientLock(recipientId, async () => {
-      const existing = await getDoc(
-        COLLECTIONS.teamIntakeRecipients,
-        recipientId,
-      );
-      const result = buildOrReuse(existing);
-      if (!existing && !result.reason) {
-        await setDoc(
-          COLLECTIONS.teamIntakeRecipients,
-          recipientId,
-          result.recipient,
-          { merge: false },
-        );
-      } else if (
-        existing &&
-        !result.reason &&
-        result.recipient.recipientTokenHash !== existing.recipientTokenHash
-      ) {
-        await setDoc(
-          COLLECTIONS.teamIntakeRecipients,
-          recipientId,
-          result.recipient,
-          { merge: true },
-        );
-      }
-      return result;
+    if (!availabilityOnly) {
+      return withTeamIntakeRecipientLock(recipientId, async () => {
+        const existing = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+        const result = await buildOrReuse(form, existing);
+        if (!existing && !result.reason) {
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+            result.recipient,
+            { merge: false },
+          );
+        } else if (
+          existing &&
+          !result.reason &&
+          result.recipient.recipientTokenHash !== existing.recipientTokenHash
+        ) {
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+            result.recipient,
+            { merge: true },
+          );
+        }
+        return result;
+      });
+    }
+    return withTeamAvailabilityFormLock(form.formId, async () => {
+      const [currentForm, existing] = await Promise.all([
+        getDoc(COLLECTIONS.teamIntakeForms, form.formId),
+        getDoc(COLLECTIONS.teamIntakeRecipients, recipientId),
+      ]);
+      return buildOrReuse(currentForm, existing);
     });
   };
 
@@ -9482,6 +9877,7 @@ export const createTeamsAuthHandlers = ({
           form,
           member,
           actorUid,
+          teams,
         });
         recipient = ensured.recipient;
         token = ensured.token;
@@ -9528,6 +9924,7 @@ export const createTeamsAuthHandlers = ({
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
           actorUid,
+          { form, member, teams },
         );
         recipient = ensured.recipient;
         token = ensured.token;
@@ -9591,8 +9988,9 @@ export const createTeamsAuthHandlers = ({
       );
     }
     const { form, member } = await getTeamIntakeRecipientContext(recipient);
+    let teams = [];
     if (form.purpose === "team_availability") {
-      const teams = await listTeamCollectionForChurch(
+      teams = await listTeamCollectionForChurch(
         COLLECTIONS.teams,
         "teamId",
         intent.churchId,
@@ -9618,10 +10016,14 @@ export const createTeamsAuthHandlers = ({
         "This intake form no longer has response fields for an existing volunteer.",
       );
     }
-    const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
-    return {
-      form,
+    const ensured = await ensureTeamIntakeRecipientToken(
       recipient,
+      actorUid,
+      { form, member, teams },
+    );
+    return {
+      form: ensured.form || form,
+      recipient: ensured.recipient,
       member,
       church: await getChurchById(intent.churchId),
       publicUrl: buildTeamIntakeRecipientPublicUrl(ensured.token),
@@ -15369,6 +15771,12 @@ export const createTeamsAuthHandlers = ({
               if (currentForm.churchId !== req.params.churchId) {
                 throw httpError(404, "Intake form not found.");
               }
+              if (currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true) {
+                throw httpError(
+                  409,
+                  "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                );
+              }
               const recipientQuery = db
                 .collection(COLLECTIONS.teamIntakeRecipients)
                 .where("formId", "==", req.params.formId)
@@ -15392,20 +15800,47 @@ export const createTeamsAuthHandlers = ({
               transaction.set(formRef, update, { merge: true });
             });
           } else {
-            const recipients = await queryDocs(
-              COLLECTIONS.teamIntakeRecipients,
-              [{ field: "formId", value: req.params.formId }],
-              { limit: 1 },
+            await withTeamAvailabilityFormLock(
+              req.params.formId,
+              async () => {
+                const currentForm = await getDoc(
+                  COLLECTIONS.teamIntakeForms,
+                  req.params.formId,
+                );
+                if (!currentForm || currentForm.churchId !== req.params.churchId) {
+                  throw httpError(404, "Intake form not found.");
+                }
+                const recipients = await queryDocs(
+                  COLLECTIONS.teamIntakeRecipients,
+                  [{ field: "formId", value: req.params.formId }],
+                  { limit: 1 },
+                );
+                if (
+                  currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true ||
+                  recipients.length
+                ) {
+                  throw httpError(
+                    409,
+                    "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                  );
+                }
+                if (
+                  !sameIdSet(currentForm.teamIds, existing.teamIds) &&
+                  !sameIdSet(currentForm.teamIds, payload.teamIds)
+                ) {
+                  throw httpError(
+                    409,
+                    "This availability form changed. Reload it before saving.",
+                  );
+                }
+                await setDoc(
+                  COLLECTIONS.teamIntakeForms,
+                  req.params.formId,
+                  update,
+                  { merge: true },
+                );
+              },
             );
-            if (recipients.length) {
-              throw httpError(
-                409,
-                "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
-              );
-            }
-            await setDoc(COLLECTIONS.teamIntakeForms, req.params.formId, update, {
-              merge: true,
-            });
           }
         } else {
           await setDoc(COLLECTIONS.teamIntakeForms, req.params.formId, update, {
@@ -15540,6 +15975,7 @@ export const createTeamsAuthHandlers = ({
         const formTeamIds = new Set(normalizeIdArray(form.teamIds));
         const now = nowIso();
         const recipients = [];
+        const selectedMembers = [];
         const existingRecipients = await Promise.all(
           memberIds.map((memberId) =>
             getDoc(
@@ -15554,6 +15990,7 @@ export const createTeamsAuthHandlers = ({
           if (!member || member.archivedAt) {
             throw httpError(404, "Member not found or archived.");
           }
+          selectedMembers.push(member);
           if (formTeamIds.size > 0) {
             const isWithinScope = form.purpose === "team_availability"
               ? assertMemberWithinIntakeFormScope({ form, member, positions, teams })
@@ -15645,13 +16082,12 @@ export const createTeamsAuthHandlers = ({
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
               };
-          if (!isActive || !canReuseToken) {
-            writes.push({
-              id: recipientId,
-              data: recipient,
-              merge: Boolean(existing),
-            });
-          }
+          writes.push({
+            id: recipientId,
+            data: recipient,
+            merge: Boolean(existing),
+            shouldWrite: !isActive || !canReuseToken,
+          });
           recipients.push(
             sanitizeTeamIntakeRecipientForAdmin({
               recipientId,
@@ -15659,7 +16095,25 @@ export const createTeamsAuthHandlers = ({
             }),
           );
         }
-        await writeTeamIntakeRecipientBatch(writes);
+        let responseRecipients = recipients;
+        if (form.purpose === "team_availability") {
+          const committedRecipients = await writeTeamIntakeRecipientBatch(
+            writes,
+            {
+              form,
+              churchId: req.params.churchId,
+              members: selectedMembers,
+              teams,
+            },
+          );
+          responseRecipients = committedRecipients.map((recipient) =>
+            sanitizeTeamIntakeRecipientForAdmin(recipient),
+          );
+        } else {
+          await writeTeamIntakeRecipientBatch(
+            writes.filter((write) => write.shouldWrite),
+          );
+        }
         await addSecurityEvent({
           type: "team_intake_recipients_created",
           churchId: req.params.churchId,
@@ -15667,7 +16121,7 @@ export const createTeamsAuthHandlers = ({
           formId: req.params.formId,
           memberIds,
         });
-        return res.json({ success: true, recipients });
+        return res.json({ success: true, recipients: responseRecipients });
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -15698,18 +16152,16 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           form,
         );
-        if (
-          form.purpose === "team_availability" &&
-          !assertMemberWithinIntakeFormScope({
-            form,
-            member,
-            positions: [],
-            teams: await listTeamCollectionForChurch(
+        const teams = form.purpose === "team_availability"
+          ? await listTeamCollectionForChurch(
               COLLECTIONS.teams,
               "teamId",
               req.params.churchId,
-            ),
-          })
+            )
+          : [];
+        if (
+          form.purpose === "team_availability" &&
+          !assertMemberWithinIntakeFormScope({ form, member, positions: [], teams })
         ) {
           throw httpError(404, "Individual request not found.");
         }
@@ -15718,6 +16170,7 @@ export const createTeamsAuthHandlers = ({
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
           admin.user.uid,
+          { form, member, teams },
         );
         const update = {
           ...(markCopied
