@@ -29,6 +29,7 @@ const createFirestoreMock = () => {
   const documentVersions = new Map();
   const collectionVersions = new Map();
   let beforeCommit = null;
+  let beforeDirectSet = null;
   const versionKey = (collectionName, id) => `${collectionName}/${id}`;
   const getStore = (collectionName) => {
     if (!stores.has(collectionName)) stores.set(collectionName, new Map());
@@ -53,6 +54,7 @@ const createFirestoreMock = () => {
           return snapshotFor(id, store.get(id) || null, ref);
         },
         async set(data, options = {}) {
+          await beforeDirectSet?.(ref, data, options);
           const current = store.get(id) || {};
           store.set(id, options.merge ? { ...current, ...structuredClone(data) } : structuredClone(data));
           bumpVersion(collectionName, id);
@@ -140,6 +142,7 @@ const createFirestoreMock = () => {
       };
     },
     setBeforeCommit(callback) { beforeCommit = callback; },
+    setBeforeDirectSet(callback) { beforeDirectSet = callback; },
     async runTransaction(callback) {
       for (let attempt = 0; attempt < 8; attempt += 1) {
         const reads = [];
@@ -452,6 +455,69 @@ test("simultaneous first issuance and scope update serialize on the form documen
     ], { limit: 0 }),
     [],
   );
+});
+
+test("a delayed metadata save cannot restore its stale Team scope after issuance", async (t) => {
+  const db = createFirestoreMock();
+  const fixture = await createFixture(db, "stale-metadata-save");
+  t.after(() => setServerFirestoreForTests(null));
+  const avMemberId = "concurrency_test_av_member_stale_metadata";
+  await db.collection(COLLECTIONS.teams).doc(fixture.avTeamId).update({
+    memberIds: [avMemberId],
+  });
+  await db.collection(COLLECTIONS.teamRosterMembers).doc(avMemberId).set({
+    memberId: avMemberId,
+    churchId: fixture.context.churchId,
+    firstName: "Alex",
+    lastName: "Volunteer",
+    positionIds: [],
+    teamMemberships: { [fixture.avTeamId]: { teamId: fixture.avTeamId } },
+  });
+
+  const saveEntered = deferred();
+  const releaseSave = deferred();
+  db.setBeforeDirectSet(async (ref, data) => {
+    if (
+      ref.collectionName === COLLECTIONS.teamIntakeForms &&
+      ref.id === fixture.formId
+    ) {
+      db.setBeforeDirectSet(null);
+      saveEntered.resolve(structuredClone(data));
+      await releaseSave.promise;
+    }
+  });
+  const staleMetadataSave = callHandler(authHandlers.updateTeamIntakeForm, {
+    context: fixture.context,
+    params: { formId: fixture.formId },
+    body: formPayload([fixture.worshipTeamId], "Name edited by Editor A"),
+  });
+  const delayedWrite = await saveEntered.promise;
+
+  const scopeChange = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context: fixture.context,
+    params: { formId: fixture.formId },
+    body: formPayload([fixture.avTeamId], "AV availability"),
+  });
+  const issuance = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context: fixture.context,
+    params: { formId: fixture.formId },
+    body: { memberIds: [avMemberId] },
+  });
+
+  releaseSave.resolve();
+  const saved = await staleMetadataSave;
+  assert.equal(delayedWrite.teamIds, undefined);
+  assert.equal(scopeChange.statusCode, 200, JSON.stringify(scopeChange.payload));
+  assert.equal(issuance.statusCode, 200, JSON.stringify(issuance.payload));
+  assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+  const storedForm = await getDoc(COLLECTIONS.teamIntakeForms, fixture.formId);
+  assert.deepEqual(
+    storedForm.teamIds,
+    [fixture.avTeamId],
+    `Delayed metadata write included stale Team IDs: ${JSON.stringify(delayedWrite.teamIds)}`,
+  );
+  assert.equal(storedForm.teamAvailabilityScopeLocked, true);
+  assert.deepEqual(saved.payload.form.teamIds, [fixture.avTeamId]);
 });
 
 test("two operators can issue separate recipients concurrently after the first form lock", async (t) => {

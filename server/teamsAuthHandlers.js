@@ -15748,15 +15748,26 @@ export const createTeamsAuthHandlers = ({
             { ...existing, ...payload },
           );
         }
-        const update = {
-          ...payload,
-          updatedAt: nowIso(),
-          updatedByUid: admin.user.uid,
-        };
         const changesAvailabilityScope =
           existing.purpose === "team_availability" &&
           !sameIdSet(existing.teamIds, payload.teamIds);
-        if (changesAvailabilityScope) {
+        const writesAvailabilityTeamIds =
+          existing.purpose === "team_availability" &&
+          JSON.stringify(normalizeIdArray(existing.teamIds)) !==
+            JSON.stringify(normalizeIdArray(payload.teamIds));
+        const updatePayload = { ...payload };
+        if (
+          existing.purpose === "team_availability" &&
+          !writesAvailabilityTeamIds
+        ) {
+          delete updatePayload.teamIds;
+        }
+        const update = {
+          ...updatePayload,
+          updatedAt: nowIso(),
+          updatedByUid: admin.user.uid,
+        };
+        if (writesAvailabilityTeamIds) {
           const db = requireFirestore?.();
           if (db?.runTransaction) {
             await db.runTransaction(async (transaction) => {
@@ -15771,22 +15782,24 @@ export const createTeamsAuthHandlers = ({
               if (currentForm.churchId !== req.params.churchId) {
                 throw httpError(404, "Intake form not found.");
               }
-              if (currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true) {
-                throw httpError(
-                  409,
-                  "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
-                );
-              }
-              const recipientQuery = db
-                .collection(COLLECTIONS.teamIntakeRecipients)
-                .where("formId", "==", req.params.formId)
-                .limit(1);
-              const recipientSnapshot = await transaction.get(recipientQuery);
-              if (recipientSnapshot.docs.length) {
-                throw httpError(
-                  409,
-                  "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
-                );
+              if (changesAvailabilityScope) {
+                if (currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true) {
+                  throw httpError(
+                    409,
+                    "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                  );
+                }
+                const recipientQuery = db
+                  .collection(COLLECTIONS.teamIntakeRecipients)
+                  .where("formId", "==", req.params.formId)
+                  .limit(1);
+                const recipientSnapshot = await transaction.get(recipientQuery);
+                if (recipientSnapshot.docs.length) {
+                  throw httpError(
+                    409,
+                    "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                  );
+                }
               }
               if (
                 !sameIdSet(currentForm.teamIds, existing.teamIds) &&
@@ -15810,19 +15823,21 @@ export const createTeamsAuthHandlers = ({
                 if (!currentForm || currentForm.churchId !== req.params.churchId) {
                   throw httpError(404, "Intake form not found.");
                 }
-                const recipients = await queryDocs(
-                  COLLECTIONS.teamIntakeRecipients,
-                  [{ field: "formId", value: req.params.formId }],
-                  { limit: 1 },
-                );
-                if (
-                  currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true ||
-                  recipients.length
-                ) {
-                  throw httpError(
-                    409,
-                    "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                if (changesAvailabilityScope) {
+                  const recipients = await queryDocs(
+                    COLLECTIONS.teamIntakeRecipients,
+                    [{ field: "formId", value: req.params.formId }],
+                    { limit: 1 },
                   );
+                  if (
+                    currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true ||
+                    recipients.length
+                  ) {
+                    throw httpError(
+                      409,
+                      "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                    );
+                  }
                 }
                 if (
                   !sameIdSet(currentForm.teamIds, existing.teamIds) &&
@@ -15854,10 +15869,13 @@ export const createTeamsAuthHandlers = ({
               { limit: 1 },
             )).length > 0
           : undefined;
+        const persistedForm = await getDoc(
+          COLLECTIONS.teamIntakeForms,
+          req.params.formId,
+        );
         const nextForm = {
           formId: req.params.formId,
-          ...existing,
-          ...update,
+          ...(persistedForm || { ...existing, ...update }),
           ...(hasIssuedRecipientRequests === undefined
             ? {}
             : { hasIssuedRecipientRequests }),
