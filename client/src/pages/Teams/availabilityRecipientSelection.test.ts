@@ -99,6 +99,12 @@ it("keeps only unsent eligible members selectable and exposes retryable and unce
     recipients,
     eligibilityByMemberId: Object.fromEntries(members.map(({ memberId }) => [memberId, { status: "enabled" as const, eligible: true }])),
     notificationIntents,
+    smsDeliveryAttempts: [{
+      attemptId: "failed-attempt", churchId: form.churchId, recipientType: "notification_intent" as const,
+      recipientId: "recipient-failed", memberId: "failed", formId: form.formId, provider: "twilio",
+      purpose: "availability_request" as const, status: "failed" as const, outcome: "failed" as const,
+      createdAt: "2026-09-01", updatedAt: "2026-09-01",
+    }],
     form,
     intentType: "availability_request",
   });
@@ -155,7 +161,7 @@ it("keeps an accepted but undelivered provider attempt blocked from duplicate se
   expect(rows[0]).toMatchObject({ eligible: false, reason: "Already sent", previousDeliveryStatus: "sent" });
 });
 
-it("does not retry a failed attempt whose provider outcome is missing", () => {
+it("treats a failed attempt with no outcome as uncertain even when its intent is failed", () => {
   const memberId = "one";
   const recipientId = "recipient-one";
   const rows = getAvailabilityRecipientRows({
@@ -164,6 +170,12 @@ it("does not retry a failed attempt whose provider outcome is missing", () => {
     teams: [],
     recipients: [{ recipientId, churchId: form.churchId, formId: form.formId, memberId, createdAt: "2026-09-01" }],
     eligibilityByMemberId: { [memberId]: { status: "enabled", eligible: true } },
+    notificationIntents: [{
+      intentId: "intent-one", churchId: form.churchId, formId: form.formId, recipientId, memberId,
+      intentType: "availability_request", sourceType: "team_intake_recipient", sourceId: recipientId,
+      sourceVersion: "", occurrenceId: "", channel: "sms", message: "", status: "failed",
+      createdAt: "2026-09-01", updatedAt: "2026-09-02",
+    }],
     smsDeliveryAttempts: [{
       attemptId: "attempt-one", churchId: form.churchId, recipientType: "notification_intent", recipientId, memberId,
       formId: form.formId, provider: "twilio", purpose: "availability_request", status: "failed",

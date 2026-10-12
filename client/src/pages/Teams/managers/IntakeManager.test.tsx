@@ -504,12 +504,10 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   };
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
   jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: { ...batch, status: "sent", summary: { ...batch.summary, sent: 1, delivered: 1 } } });
-  let resolveStaleAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
-  let resolveStaleIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
   jest.mocked(getTeamIntakeSmsAttempts)
     .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [] })
-    .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleAttempts = resolve; }))
+    .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [deliveredAttempt] });
   const notificationIntent = {
     intentId: "intent-batch-1", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
@@ -520,7 +518,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   jest.mocked(getNotificationIntents)
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
-    .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleIntents = resolve; }))
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [notificationIntent], nextCursor: "", limit: 50 });
 
   const StatefulManager = () => {
@@ -545,13 +543,11 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Review 1 message" }));
   await screen.findByRole("button", { name: "Send 1 message" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send 1 message" })).toBeEnabled());
   await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
   const counts = screen.getByLabelText("Intake message and response counts");
-  await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
-  resolveStaleAttempts({ success: true, attempts: [] });
-  resolveStaleIntents({ success: true, intents: [{ ...notificationIntent, status: "ready", attemptStatus: undefined }], nextCursor: "", limit: 50 });
   await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
   await user.click(screen.getByRole("button", { name: "Close" }));
 

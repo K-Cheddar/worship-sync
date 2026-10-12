@@ -66,6 +66,11 @@ const AvailabilityFormSendFlow = ({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    if (!historyLoaded) setConfirmOpen(false);
+  }, [historyLoaded]);
+
   const contextIdentity = `${churchId}:${form.formId}`;
   const formReviewIdentity = JSON.stringify({
     formId: form.formId,
@@ -251,7 +256,7 @@ const AvailabilityFormSendFlow = ({
   };
 
   const sendBatch = async () => {
-    if (!reviewedBatch || reviewedBatch.formId !== form.formId || reviewedBatch.churchId !== churchId || busy) return;
+    if (!historyLoaded || !reviewedBatch || reviewedBatch.formId !== form.formId || reviewedBatch.churchId !== churchId || busy) return;
     const requestedContext = contextIdentity;
     const requestedFormIdentity = formReviewIdentity;
     const requestedRecipientEligibilityIdentity = recipientEligibilityIdentity;
@@ -334,12 +339,14 @@ const AvailabilityFormSendFlow = ({
       <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-gray-400">{selectedEligibleIds.length ? `${selectedEligibleIds.length} of ${statusCounts.ready} eligible member${statusCounts.ready === 1 ? "" : "s"} selected.` : "Select at least one eligible member to continue."}</p><Button disabled={busy || !historyLoaded || !selectedEligibleIds.length} isLoading={busy} onClick={() => void reviewMessages()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button></div>
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
       {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
-      {reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} onConfirm={() => setConfirmOpen(true)} /> : null}
-      <Modal isOpen={confirmOpen && Boolean(reviewedBatch)} onClose={() => setConfirmOpen(false)} title="Send this form?" description="Review who will receive this form by SMS." size="sm">
+      {reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy || !historyLoaded} onConfirm={() => {
+        if (historyLoaded && !busy) setConfirmOpen(true);
+      }} /> : null}
+      <Modal isOpen={confirmOpen && Boolean(reviewedBatch) && historyLoaded} onClose={() => setConfirmOpen(false)} title="Send this form?" description="Review who will receive this form by SMS." size="sm">
         {reviewedBatch ? <div className="space-y-4 text-sm text-gray-200">
           <p>Send {reviewedBatch.summary.eligible} messages for {form.name}? This will use {reviewedBatch.summary.totalSegments} SMS segments. Excluded members will not be contacted.</p>
           <ul className="max-h-48 space-y-1 overflow-y-auto text-gray-300">{reviewedBatch.recipients.filter(({ eligible }) => eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}</ul>
-          <div className="flex justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button><Button disabled={busy} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button></div>
+          <div className="flex justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button><Button disabled={busy || !historyLoaded} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button></div>
         </div> : null}
       </Modal>
     </section>
