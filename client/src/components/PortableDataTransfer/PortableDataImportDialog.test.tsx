@@ -155,7 +155,7 @@ describe("PortableDataImportDialog import flow", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onImported).toHaveBeenCalledTimes(1);
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(mockShowToast).toHaveBeenCalledWith("Members imported successfully. 1 added · 1 position created.", "success");
+    expect(mockShowToast).toHaveBeenCalledWith("Members imported successfully. 1 added · 1 position created for this import.", "success");
   });
 
   it("lets an admin resolve an ambiguous relationship before import", async () => {
@@ -245,7 +245,7 @@ describe("PortableDataImportDialog import flow", () => {
       .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "approved-token", previewCsvHash: "a".repeat(64) })
       .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "refreshed-token", previewCsvHash: "a".repeat(64) });
     jest.mocked(commitPortableImport)
-      .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "failed", code: "stale_preview", message: "Review the file again." }], summary: { created: 0, updated: 0, failed: 1 } })
+      .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "failed", code: "stale_preview", message: "Review the file again." }], summary: { created: 0, updated: 0, failed: 1, teamsCreated: 1, positionsCreated: 1 } })
       .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "created", id: "member-1" }], summary: { created: 1, updated: 0, failed: 0, teamsCreated: 1, positionsCreated: 1 } });
     const file = new File(["First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator"], "people.csv", { type: "text/csv" });
     Object.defineProperty(file, "text", { value: async () => "First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator" });
@@ -274,6 +274,10 @@ describe("PortableDataImportDialog import flow", () => {
 
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
     expect(await screen.findByRole("button", { name: "Review changes again" })).toBeInTheDocument();
+    expect(await screen.findByText("Teams created for this import: 1")).toBeInTheDocument();
+    expect(screen.getByText("Positions created for this import: 1")).toBeInTheDocument();
+    expect(screen.getByText("These totals include teams and positions created by earlier retries of this import.")).toBeInTheDocument();
+    expect(screen.getByText("Import partially completed. 1 team and 1 position created for this import. Review the failed rows below.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review changes again" }));
     await waitFor(() => expect(previewPortableImport).toHaveBeenCalledTimes(4));
     expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
@@ -289,6 +293,7 @@ describe("PortableDataImportDialog import flow", () => {
       teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }],
       positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
     }));
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining("1 team created for this import · 1 position created for this import"), "success");
   });
 
   it("highlights the unresolved owning-team field when continuing position review", async () => {

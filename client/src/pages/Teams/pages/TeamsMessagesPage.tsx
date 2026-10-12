@@ -10,12 +10,13 @@ import {
   getNotificationIntents,
   sendNotificationIntent,
 } from "../../../api/auth";
-import type { NotificationBatch, NotificationIntent, NotificationIntentType } from "../../../api/authTypes";
+import type { NotificationBatch, NotificationIntent, NotificationIntentType, SmsDeliveryAttempt } from "../../../api/authTypes";
 import { useTeamsPage } from "../TeamsPageContext";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { getAvailabilityRecipientRows } from "../availabilityRecipientSelection";
 import { dispatchReviewedAvailabilityBatch, prepareAvailabilityBatchForMembers } from "../availabilityBatchActions";
+import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
 
 const memberName = (member: { firstName?: string; lastName?: string }) =>
   [member.firstName, member.lastName].filter(Boolean).join(" ") || "Volunteer";
@@ -45,12 +46,17 @@ const TeamsMessagesPage = () => {
   churchIdRef.current = churchId;
   const [intentType, setIntentType] = useState<Extract<NotificationIntentType, "availability_request" | "availability_reminder">>("availability_request");
   const [formId, setFormId] = useState("");
+  const formIdRef = useRef(formId);
+  formIdRef.current = formId;
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [teamFilter, setTeamFilter] = useState("");
   const [memberSearch, setMemberSearch] = useState("");
   const [activeBatch, setActiveBatch] = useState<NotificationBatch | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [intents, setIntents] = useState<NotificationIntent[]>([]);
+  const [attempts, setAttempts] = useState<SmsDeliveryAttempt[]>([]);
+  const [historyLoadedForFormId, setHistoryLoadedForFormId] = useState("");
+  const [historyLoadError, setHistoryLoadError] = useState("");
   const [nextCursor, setNextCursor] = useState("");
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -85,32 +91,39 @@ const TeamsMessagesPage = () => {
       teams: pageData.teams,
       recipients: pageData.intakeRecipients,
       eligibilityByMemberId: pageData.smsEligibilityByMemberId,
+      notificationIntents: intents,
+      smsDeliveryAttempts: attempts,
       form: selectedForm,
       intentType,
     });
-  }, [forms, formId, intentType, members, pageData.intakeRecipients, pageData.positions, pageData.smsEligibilityByMemberId, pageData.teams]);
+  }, [attempts, forms, formId, intentType, intents, members, pageData.intakeRecipients, pageData.positions, pageData.smsEligibilityByMemberId, pageData.teams]);
   const query = memberSearch.trim().toLocaleLowerCase();
   const recipientRows = allRecipientRows.filter(({ member, memberTeamIds }) =>
       (!teamFilter || memberTeamIds.has(teamFilter)) &&
       (!query || memberName(member).toLocaleLowerCase().includes(query)),
     );
   const visibleEligibleIds = recipientRows.filter((row) => row.eligible).map(({ member }) => member.memberId);
-  const selectedVisibleCount = visibleEligibleIds.filter((id) => selectedMemberIds.includes(id)).length;
-  const allVisibleSelected = visibleEligibleIds.length > 0 && selectedVisibleCount === visibleEligibleIds.length;
+  const historyReady = Boolean(formId) && historyLoadedForFormId === formId;
+  const selectableVisibleIds = historyReady ? visibleEligibleIds : [];
+  const selectedVisibleCount = selectableVisibleIds.filter((id) => selectedMemberIds.includes(id)).length;
+  const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length;
   const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
-  const selectedEligibleIds = allRecipientRows.filter(({ member, eligible }) => eligible && selectedMemberIds.includes(member.memberId)).map(({ member }) => member.memberId);
+  const selectedEligibleIds = historyReady ? allRecipientRows.filter(({ member, eligible }) => eligible && selectedMemberIds.includes(member.memberId)).map(({ member }) => member.memberId) : [];
   const reviewedBatch = activeBatch?.churchId === churchId && activeBatch.formId === formId && activeBatch.intentType === intentType ? activeBatch : null;
 
   useEffect(() => {
     let active = true;
     setIntents([]);
+    setAttempts([]);
+    setHistoryLoadedForFormId("");
+    setHistoryLoadError("");
     setNextCursor("");
     setActiveBatch(null);
     if (!churchId || !canEditTeams || !formId) return () => { active = false; };
     setLoading(true);
-    getNotificationIntents(churchId, { formId })
-      .then((response) => { if (active) { setIntents(response.intents); setNextCursor(response.nextCursor || ""); } })
-      .catch((caught) => { if (active) setError(caught instanceof Error ? caught.message : "Could not load message history."); })
+    loadAvailabilityNotificationHistory(churchId, formId)
+      .then((history) => { if (active) { setIntents(history.intents); setAttempts(history.attempts); setNextCursor(""); setHistoryLoadedForFormId(formId); setHistoryLoadError(""); } })
+      .catch((caught) => { if (active) { const message = caught instanceof Error ? caught.message : "Could not load message history."; setHistoryLoadError(message); } })
       .finally(() => { if (active) setLoading(false); });
     const savedBatchId = !didRestoreInitialBatchRef.current
       ? window.localStorage.getItem(`worshipsync:last-notification-batch:${churchId}:${formId}`)
@@ -131,9 +144,24 @@ const TeamsMessagesPage = () => {
 
   const refreshIntents = async () => {
     const requestedChurch = churchId;
-    if (!formId) return;
-    const response = await getNotificationIntents(requestedChurch, { formId });
-    if (churchIdRef.current === requestedChurch) { setIntents(response.intents); setNextCursor(response.nextCursor || ""); }
+    const requestedFormId = formId;
+    if (!requestedFormId) return;
+    setHistoryLoadedForFormId("");
+    setHistoryLoadError("");
+    try {
+      const history = await loadAvailabilityNotificationHistory(requestedChurch, requestedFormId);
+      if (churchIdRef.current === requestedChurch && formIdRef.current === requestedFormId) {
+        setIntents(history.intents);
+        setAttempts(history.attempts);
+        setNextCursor("");
+        setHistoryLoadedForFormId(requestedFormId);
+      }
+    } catch (caught) {
+      if (churchIdRef.current === requestedChurch && formIdRef.current === requestedFormId) {
+        setHistoryLoadError(caught instanceof Error ? caught.message : "Could not refresh message history.");
+      }
+      throw caught;
+    }
   };
 
   const loadOlderIntents = async () => {
@@ -173,12 +201,12 @@ const TeamsMessagesPage = () => {
 
   const toggleVisibleMembers = (checked: boolean) => {
     updateSelectedMemberIds(checked
-      ? [...selectedMemberIds, ...visibleEligibleIds]
-      : selectedMemberIds.filter((id) => !visibleEligibleIds.includes(id)));
+      ? [...selectedMemberIds, ...selectableVisibleIds]
+      : selectedMemberIds.filter((id) => !selectableVisibleIds.includes(id)));
   };
 
   const makePreview = async () => {
-    if (!formId || selectedEligibleIds.length === 0 || loading || sending) return;
+    if (!historyReady || !formId || selectedEligibleIds.length === 0 || loading || sending) return;
     const ownerChurch = churchId;
     setError("");
     setNotice("");
@@ -345,8 +373,8 @@ const TeamsMessagesPage = () => {
           <div className="max-h-80 touch-pan-y overflow-y-auto overscroll-contain rounded-lg border border-gray-700 bg-gray-950/50">
             <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-gray-700 bg-gray-900 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <Checkbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={loading || sending || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
-                <span className="text-sm text-gray-200">Select all {visibleEligibleIds.length} eligible shown</span>
+                <Checkbox aria-label={`Select all ${selectableVisibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={loading || sending || !historyReady || !selectableVisibleIds.length} onCheckedChange={(checked) => toggleVisibleMembers(checked === true)} />
+                <span className="text-sm text-gray-200">Select all {selectableVisibleIds.length} eligible shown</span>
                 <span className="text-xs text-gray-400">{recipientRows.length} shown</span>
               </div>
               <div className="flex items-center justify-between gap-3 sm:justify-end">
@@ -357,7 +385,7 @@ const TeamsMessagesPage = () => {
             <div className="divide-y divide-gray-800" role="list" aria-label="Volunteer recipients">
               {recipientRows.length ? recipientRows.map(({ member, eligible, reason }) => (
                 <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem">
-                  <Checkbox label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} disabled={loading || sending || !eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
+                  <Checkbox label={memberName(member)} checked={selectedMemberIds.includes(member.memberId)} disabled={loading || sending || !historyReady || !eligible} onCheckedChange={(checked) => toggleMember(member.memberId, checked)} className="flex-1" />
                   {!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason || "Choose a form first"}</span> : null}
                 </div>
               )) : <p className="p-4 text-sm text-gray-400">No volunteers match these filters.</p>}
@@ -366,8 +394,9 @@ const TeamsMessagesPage = () => {
         </div>
         <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-gray-400">{!formId ? "Choose an intake form to review messages." : selectedEligibleIds.length ? `${selectedEligibleIds.length} eligible volunteer${selectedEligibleIds.length === 1 ? "" : "s"} selected.` : "Select at least one eligible volunteer to continue."}</p>
-          <Button disabled={loading || sending || !formId || selectedEligibleIds.length === 0} isLoading={loading} onClick={() => void makePreview()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button>
+          <Button disabled={loading || sending || !historyReady || !formId || selectedEligibleIds.length === 0} isLoading={loading} onClick={() => void makePreview()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button>
         </div>
+        {formId && !historyReady ? historyLoadError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-sm text-amber-100"><span>Could not verify consent and message history: {historyLoadError}</span><Button variant="secondary" disabled={loading || sending} onClick={() => void refreshIntents().catch(() => undefined)}>Retry status check</Button></div> : <p role="status" className="text-sm text-gray-400">Loading consent and message history before recipient selection.</p> : null}
         {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
         {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
       </section>
@@ -377,11 +406,11 @@ const TeamsMessagesPage = () => {
       <section className="space-y-3" aria-labelledby="preview-list-heading">
         <div className="flex items-center justify-between gap-3">
           <h2 id="preview-list-heading" className="font-semibold text-white">{formId ? "Recent messages" : "Message history"}</h2>
-          {formId ? <Button variant="textLink" disabled={loading || sending} onClick={() => { void refreshIntents().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not refresh message history.")); }}>Refresh</Button> : null}
+          {formId ? <Button variant="textLink" disabled={loading || sending} onClick={() => { void refreshIntents().catch(() => undefined); }}>Refresh</Button> : null}
         </div>
         {!formId ? <p className="text-sm text-gray-400">Choose an intake form to load its bounded message history.</p> : null}
         {loading && !intents.length ? <p className="text-sm text-gray-400">Loading form message history…</p> : null}
-        {formId && !intents.length && !loading ? <p className="rounded border border-gray-700 p-4 text-sm text-gray-400">No volunteer messages for this form yet.</p> : null}
+        {historyReady && !intents.length && !loading ? <p className="rounded border border-gray-700 p-4 text-sm text-gray-400">No volunteer messages for this form yet.</p> : null}
         {intents.map((intent) => {
           const member = members.find((item) => item.memberId === intent.memberId);
           const actionable = ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;

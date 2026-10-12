@@ -550,9 +550,15 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       const hasCompletedRows = combinedResults.some((item) => item.status !== "failed")
         || (result.summary.teamsCreated || 0) > 0
         || (result.summary.positionsCreated || 0) > 0;
+      const teamsCreatedForImport = Math.max(createdTeamCount, result.summary.teamsCreated || 0);
+      const positionsCreatedForImport = Math.max(createdPositionCount, result.summary.positionsCreated || 0);
+      const createdDependencySummary = [
+        teamsCreatedForImport ? `${teamsCreatedForImport} ${teamsCreatedForImport === 1 ? "team" : "teams"}` : "",
+        positionsCreatedForImport ? `${positionsCreatedForImport} ${positionsCreatedForImport === 1 ? "position" : "positions"}` : "",
+      ].filter(Boolean).join(" and ");
       const resultMessage = hasFailures
         ? hasCompletedRows
-          ? "Import partially completed. Review the failed rows below."
+          ? `Import partially completed.${createdDependencySummary ? ` ${createdDependencySummary} created for this import.` : ""} Review the failed rows below.`
           : "Import failed. Review the results and try again."
         : `Import finished. Review the results below.${refreshFailed ? " The data was saved, but this page could not refresh. Reload to see the latest data." : ""}`;
       setMessage(resultMessage);
@@ -564,10 +570,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         const updated = combinedResults.filter((item) => item.status === "updated").length;
         const unchanged = combinedResults.filter((item) => item.status === "unchanged").length;
         const skipped = Object.values(explicitSkips).filter(Boolean).length;
-        const positionsCreated = Math.max(createdPositionCount, result.summary.positionsCreated || 0);
-        const teamsCreated = Math.max(createdTeamCount, result.summary.teamsCreated || 0);
         const entity = currentType.label;
-        const counts = [created ? `${created} added` : "", updated ? `${updated} updated` : "", unchanged ? `${unchanged} unchanged` : "", skipped ? `${skipped} skipped` : "", teamsCreated ? `${teamsCreated} ${teamsCreated === 1 ? "team" : "teams"} created` : "", positionsCreated ? `${positionsCreated} ${positionsCreated === 1 ? "position" : "positions"} created` : ""].filter(Boolean).join(" · ");
+        const counts = [created ? `${created} added` : "", updated ? `${updated} updated` : "", unchanged ? `${unchanged} unchanged` : "", skipped ? `${skipped} skipped` : "", teamsCreatedForImport ? `${teamsCreatedForImport} ${teamsCreatedForImport === 1 ? "team" : "teams"} created for this import` : "", positionsCreatedForImport ? `${positionsCreatedForImport} ${positionsCreatedForImport === 1 ? "position" : "positions"} created for this import` : ""].filter(Boolean).join(" · ");
         const title = created && !updated && !unchanged && !skipped ? `${entity} imported successfully` : created || updated || skipped ? "Import completed" : "No changes needed";
         const summary = title === "No changes needed" ? `All ${unchanged} ${entity.toLowerCase()} are already up to date.` : counts;
         showToast(refreshFailed ? `${title}. ${summary}. The page could not refresh; reload to see changes.` : `${title}. ${summary}.`, refreshFailed ? "warning" : "success");
@@ -838,9 +842,10 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                 <span className="rounded-full bg-gray-700 px-2 py-1 text-gray-200">Unchanged {commitResults.filter((item) => item.status === "unchanged").length}</span>
                 <span className="rounded-full bg-red-500/10 px-2 py-1 text-red-200">Failed {commitResults.filter((item) => item.status === "failed").length}</span>
                 <span className="rounded-full bg-gray-700 px-2 py-1 text-gray-200">Skipped {Math.max(0, preview.summary.total - commitResults.length)}</span>
-                {createdTeamCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Teams created {createdTeamCount}</span>}
-                {createdPositionCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Positions created {createdPositionCount}</span>}
+                {createdTeamCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Teams created for this import: {createdTeamCount}</span>}
+                {createdPositionCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Positions created for this import: {createdPositionCount}</span>}
               </div>
+              {type === "members" && (createdTeamCount > 0 || createdPositionCount > 0) && <p className="mt-2 text-xs text-gray-300">These totals include teams and positions created by earlier retries of this import.</p>}
               {type === "members" && <Button type="button" variant="tertiary" className="mt-2" onClick={downloadRecoveryRows}>Download failed and skipped rows</Button>}
             </div>}
             {preview.issues.map((issue) => <p key={`${issue.row}-${issue.code}`} className="text-sm text-red-200">Row {issue.row}: {issue.message}</p>)}

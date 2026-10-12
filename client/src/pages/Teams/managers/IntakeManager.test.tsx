@@ -4,10 +4,12 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import IntakeManager from "./IntakeManager";
+import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import type {
+  NotificationIntent,
   TeamIntakeForm,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
@@ -53,6 +55,7 @@ jest.mock("../../../api/auth", () => ({
   revokeTeamIntakeRecipient: jest.fn(),
   updateTeamIntakeForm: jest.fn(),
 }));
+jest.mock("../../../utils/apiErrorToast", () => ({ showApiErrorToast: jest.fn() }));
 
 const member: TeamRosterMember = {
   memberId: "member-1",
@@ -115,7 +118,7 @@ const renderManager = ({
 } = {}) => {
   const onSmsDeliveryAttemptSaved = jest.fn();
   const onRecipientSaved = jest.fn();
-  render(
+  const view = render(
     <MemoryRouter>
       <GlobalInfoContext.Provider
         value={{ churchId: "church-1", role: "admin" } as ContextType<
@@ -155,7 +158,7 @@ const renderManager = ({
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
   );
-  return { onSmsDeliveryAttemptSaved, onRecipientSaved };
+  return { ...view, onSmsDeliveryAttemptSaved, onRecipientSaved };
 };
 
 const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -164,6 +167,20 @@ const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+test("late form history failures do not publish an error toast after Forms unmounts", async () => {
+  const user = userEvent.setup();
+  let rejectHistory!: (error: Error) => void;
+  jest.mocked(getNotificationIntents).mockReturnValueOnce(new Promise((_, reject) => { rejectHistory = reject; }));
+  const view = renderManager();
+  await openForm(user);
+  await waitFor(() => expect(getNotificationIntents).toHaveBeenCalled());
+
+  view.unmount();
+  await act(async () => rejectHistory(new Error("History failed after navigation.")));
+
+  expect(showApiErrorToast).not.toHaveBeenCalled();
 });
 
 test("shows the consent reason and keeps Copy link available when SMS is ineligible", async () => {
@@ -732,6 +749,58 @@ test("an existing form view exposes Send form", async () => {
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
 
+test("refreshes history on every Send form open and ignores older history responses", async () => {
+  const user = userEvent.setup();
+  const sentIntent: NotificationIntent = {
+    intentId: "sent-request", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
+    sourceId: recipient.recipientId, sourceVersion: "", memberId: member.memberId, formId: form.formId,
+    recipientId: recipient.recipientId, occurrenceId: "", channel: "sms", status: "sent",
+    createdAt: "2026-10-01T12:00:00.000Z", updatedAt: "2026-10-01T12:00:00.000Z",
+  };
+  const historyPage = (intents: NotificationIntent[]) => ({ success: true, intents, nextCursor: "", limit: 100 }) as Awaited<ReturnType<typeof getNotificationIntents>>;
+  const attemptsPage = { success: true, attempts: [] } as Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>;
+  let resolveOlderIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  let resolveOlderAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  let resolveReopenIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  let resolveReopenAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  jest.mocked(getNotificationIntents)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderIntents = resolve; }))
+    .mockResolvedValueOnce(historyPage([sentIntent]))
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveReopenIntents = resolve; }));
+  jest.mocked(getTeamIntakeSmsAttempts)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderAttempts = resolve; }))
+    .mockResolvedValueOnce(attemptsPage)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveReopenAttempts = resolve; }));
+  renderManager({ eligibilityStatus: "enabled" });
+  await openForm(user);
+  await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(1));
+
+  await user.click(screen.getByRole("button", { name: "Send form" }));
+  const sendRegion = screen.getByRole("region", { name: "Send form" });
+  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  await waitFor(() => expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0));
+  expect(getNotificationIntents).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    resolveOlderIntents(historyPage([]));
+    resolveOlderAttempts(attemptsPage);
+  });
+  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
+
+  await user.click(within(sendRegion).getByRole("button", { name: "Close" }));
+  await user.click(screen.getByRole("button", { name: "Send form" }));
+  const reopenedRegion = screen.getByRole("region", { name: "Send form" });
+  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(3));
+  await act(async () => {
+    resolveReopenIntents(historyPage([sentIntent]));
+    resolveReopenAttempts(attemptsPage);
+  });
+  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(reopenedRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
+});
+
 test("a sent batch updates recipients and delivery counts in Forms without reloading", async () => {
   const user = userEvent.setup();
   const deliveredAttempt = {
@@ -750,11 +819,10 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   };
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
   jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: { ...batch, status: "sent", summary: { ...batch.summary, sent: 1, delivered: 1 } } });
-  let resolveStaleAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
-  let resolveStaleIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
   jest.mocked(getTeamIntakeSmsAttempts)
     .mockResolvedValueOnce({ success: true, attempts: [] })
-    .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleAttempts = resolve; }))
+    .mockResolvedValueOnce({ success: true, attempts: [] })
+    .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [deliveredAttempt] });
   const notificationIntent = {
     intentId: "intent-batch-1", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
@@ -764,7 +832,8 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   } as const;
   jest.mocked(getNotificationIntents)
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
-    .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleIntents = resolve; }))
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [notificationIntent], nextCursor: "", limit: 50 });
 
   const StatefulManager = () => {
@@ -786,23 +855,21 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   render(<StatefulManager />);
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  await user.click(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" }));
+  expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Review 1 message" }));
   await screen.findByRole("button", { name: "Send 1 message" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send 1 message" })).toBeEnabled());
   await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
   const counts = screen.getByLabelText("Intake message and response counts");
-  await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
-  resolveStaleAttempts({ success: true, attempts: [] });
-  resolveStaleIntents({ success: true, intents: [{ ...notificationIntent, status: "ready", attemptStatus: undefined }], nextCursor: "", limit: 50 });
   await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
   await user.click(screen.getByRole("button", { name: "Close" }));
 
   expect(within(counts).getAllByText("1")).toHaveLength(3);
   expect(screen.getAllByText("Waiting").length).toBeGreaterThan(1);
   expect(screen.queryByText("Not requested")).not.toBeInTheDocument();
-  expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId });
+  expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId, limit: 100 });
   expect(getTeamIntakeSmsAttempts).toHaveBeenCalledWith("church-1", form.formId);
 });
 

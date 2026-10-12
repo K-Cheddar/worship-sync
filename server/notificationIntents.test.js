@@ -264,6 +264,24 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(intent.batchId, batch.batchId);
 });
 
+test("a confirmed availability request cannot be selected for a duplicate send", async () => {
+  const h = createHarness();
+  const { batch: firstBatch } = await h.preview();
+  const firstSend = await h.dispatch(firstBatch.batchId);
+  assert.equal(firstSend.statusCode, 200);
+  assert.equal(firstSend.payload.batch.summary.sent, 1);
+  assert.equal(h.providerCalls, 1);
+
+  const { batch: secondBatch } = await h.preview();
+  assert.equal(secondBatch.summary.eligible, 0);
+  assert.equal(secondBatch.summary.alreadySent, 1);
+  assert.equal(secondBatch.recipients[0].status, "sent");
+  assert.match(secondBatch.recipients[0].exclusionReason, /already sent/i);
+  const secondSend = await h.dispatch(secondBatch.batchId);
+  assert.equal(secondSend.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
+});
+
 test("forms with editable non-availability fields prepare form-response messages", async () => {
   const h = createHarness();
   const form = {

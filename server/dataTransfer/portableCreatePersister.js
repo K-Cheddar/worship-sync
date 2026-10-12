@@ -1,7 +1,7 @@
 /** Persist an approved import create key and entity atomically in Firestore. */
 export const persistPortableCreate = async ({
   db, entityCollection, entityId, entity, ledgerCollection, ledgerId, ledger,
-  enqueue, getDoc, setDoc, conflict,
+  enqueue, getDoc, setDoc, conflict, validateCreate, serializationKey,
 }) => {
   if (db) {
     const entityRef = db.collection(entityCollection).doc(entityId);
@@ -17,6 +17,7 @@ export const persistPortableCreate = async ({
           if (!matchesEntity(current, entity, ledger.createKey)) throw conflict();
           return current;
         }
+        await validateCreate?.({ transaction });
         transaction.set(entityRef, entity, { merge: false });
         return entity;
       }
@@ -27,18 +28,22 @@ export const persistPortableCreate = async ({
         transaction.set(ledgerRef, ledger, { merge: false });
         return current;
       }
+      await validateCreate?.({ transaction });
       transaction.create(entityRef, entity);
       transaction.create(ledgerRef, ledger);
       return entity;
     });
   }
 
-  return enqueue(ledgerId, async () => {
+  return enqueue(serializationKey || ledgerId, async () => {
     const prior = await getDoc(ledgerCollection, ledgerId);
     if (prior && !matchesClaim(prior, ledger, entityId, entityCollection)) throw conflict();
     const current = await getDoc(entityCollection, entityId);
     if (current && !matchesEntity(current, entity, ledger.createKey)) throw conflict();
-    if (!current) await setDoc(entityCollection, entityId, entity, { merge: false });
+    if (!current) {
+      await validateCreate?.({ transaction: null });
+      await setDoc(entityCollection, entityId, entity, { merge: false });
+    }
     if (!prior) await setDoc(ledgerCollection, ledgerId, ledger, { merge: false });
     return current || entity;
   });

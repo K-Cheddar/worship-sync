@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-12-availability-form-sms",
+  "date": "2026-10-12",
+  "type": "improved",
+  "title": "Availability form messages",
+  "description": "Availability forms preselect first-time recipients, let you choose failed sends for retry, and refresh message history before you review a send."
+}

@@ -13,6 +13,7 @@ import {
   Routes,
   useLocation,
   useNavigate,
+  type NavigateFunction,
 } from "react-router-dom";
 import * as authApi from "../../api/auth";
 import Login from "../Login";
@@ -30,6 +31,7 @@ const verifyEmailCodeMock = jest.fn(
   async (_args: VerifyEmailCodeArgs): Promise<boolean> => false,
 );
 let updateTestContext: (updates: TestContext) => void = () => {};
+let navigateTestRouter: NavigateFunction = () => {};
 
 jest.mock("../../utils/devFeatures", () => ({
   isCreateChurchUiEnabled: () => true,
@@ -56,6 +58,7 @@ const TestContextProvider = ({
   updateTestContext = (updates) => {
     setValue((current) => ({ ...current, ...updates }));
   };
+  navigateTestRouter = navigate;
 
   const contextValue = useMemo(() => {
     const verifyEmailCode = value.verifyEmailCode as (
@@ -141,6 +144,7 @@ describe("Login email-code sign-in", () => {
     localStorage.clear();
     sessionStorage.clear();
     updateTestContext = () => {};
+    navigateTestRouter = () => {};
     verifyEmailCodeMock.mockReset().mockResolvedValue(false);
     jest
       .spyOn(authApi, "getEmailCodeHint")
@@ -319,7 +323,29 @@ describe("Login email-code sign-in", () => {
     });
   });
 
-  it("accepts a changed code and a new challenge after an earlier attempt", async () => {
+  it("allows reopening a failed link to start a new automatic attempt", async () => {
+    const link = emailCodeLink("pending-reopened-link");
+    renderLogin({}, link);
+
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Verify device" }),
+      ).toBeEnabled(),
+    );
+    expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      navigateTestRouter(link);
+    });
+    await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2));
+    expect(verifyEmailCodeMock).toHaveBeenLastCalledWith({
+      pendingAuthId: "pending-reopened-link",
+      code: "123456",
+    });
+  });
+
+  it("clears the old code and accepts a new challenge after an earlier attempt", async () => {
     const clearPendingEmailVerification = jest.fn(() =>
       updateTestContext({
         pendingEmailVerificationId: null,
@@ -332,6 +358,11 @@ describe("Login email-code sign-in", () => {
     );
 
     await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Verify device" }),
+      ).toBeEnabled(),
+    );
     fireEvent.paste(screen.getByLabelText("Digit 1 of 6"), {
       clipboardData: { getData: () => "654321" },
     });
@@ -340,6 +371,11 @@ describe("Login email-code sign-in", () => {
       pendingAuthId: "pending-change-code",
       code: "654321",
     });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Verify device" }),
+      ).toBeEnabled(),
+    );
 
     await act(async () => {
       updateTestContext({
@@ -349,10 +385,18 @@ describe("Login email-code sign-in", () => {
         pendingEmailVerificationEmail: "new@example.com",
       });
     });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Digit 1 of 6")).toHaveValue(""),
+    );
+    expect(verifyEmailCodeMock).toHaveBeenCalledTimes(2);
+
+    fireEvent.paste(screen.getByLabelText("Digit 1 of 6"), {
+      clipboardData: { getData: () => "987654" },
+    });
     await waitFor(() => expect(verifyEmailCodeMock).toHaveBeenCalledTimes(3));
     expect(verifyEmailCodeMock).toHaveBeenLastCalledWith({
       pendingAuthId: "pending-new-challenge",
-      code: "654321",
+      code: "987654",
     });
     expect(clearPendingEmailVerification).toHaveBeenCalled();
   });

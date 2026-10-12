@@ -108,13 +108,8 @@ const LastUsedBadge = ({ show }: { show: boolean }) => {
   );
 };
 
-/**
- * Keeps verification attempts alive across React Strict Mode's effect replay.
- * Attempts are keyed by challenge and digits, so changed credentials can start
- * a new request while the same pair stays suppressed after a failed attempt.
- */
+/** Shared only while requests are active, to dedupe overlapping submissions. */
 const emailCodeVerificationInFlight = new Set<string>();
-const attemptedEmailCodeVerifications = new Set<string>();
 const getEmailCodeAttemptKey = (pendingAuthId: string, digits: string) =>
   JSON.stringify([pendingAuthId, digits]);
 
@@ -130,6 +125,7 @@ const Login = () => {
   const [adminName, setAdminName] = useState("");
   const [code, setCode] = useState("");
   const [pendingAuthId, setPendingAuthId] = useState("");
+  const attemptedEmailCodeVerificationsRef = useRef(new Set<string>());
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [isCompletingCodeSignIn, setIsCompletingCodeSignIn] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState("");
@@ -307,6 +303,8 @@ const Login = () => {
       verificationEmail?: string;
     }) => {
       hasExplicitAuthFlowRef.current = true;
+      attemptedEmailCodeVerificationsRef.current.clear();
+      setCode("");
       setPendingAuthId(pendingId);
       setVerificationEmail(nextVerificationEmail?.trim() || "");
       setMode("code");
@@ -322,6 +320,12 @@ const Login = () => {
       return;
     }
     setResendCooldownSec(RESEND_COOLDOWN_SEC);
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "code") {
+      attemptedEmailCodeVerificationsRef.current.clear();
+    }
   }, [mode]);
 
   useEffect(() => {
@@ -482,11 +486,18 @@ const Login = () => {
       return;
     }
 
-    if (hasValidCode) {
+    if (hasValidCode && pendingTrimmed) {
+      attemptedEmailCodeVerificationsRef.current.clear();
       setCode(digits);
-    }
-    if (pendingTrimmed) {
       setPendingAuthId(pendingTrimmed);
+    } else if (pendingTrimmed) {
+      attemptedEmailCodeVerificationsRef.current.clear();
+      setCode("");
+      setPendingAuthId(pendingTrimmed);
+    } else if (hasValidCode) {
+      attemptedEmailCodeVerificationsRef.current.clear();
+      setCode(digits);
+      setPendingAuthId("");
     }
     if (hasValidCode || pendingTrimmed) {
       setMode("code");
@@ -1012,7 +1023,10 @@ const Login = () => {
     }
 
     const attemptKey = getEmailCodeAttemptKey(normalizedPendingAuthId, digits);
-    if (automatic && attemptedEmailCodeVerifications.has(attemptKey)) {
+    if (
+      automatic &&
+      attemptedEmailCodeVerificationsRef.current.has(attemptKey)
+    ) {
       return false;
     }
     if (emailCodeVerificationInFlight.has(attemptKey)) {
@@ -1020,7 +1034,7 @@ const Login = () => {
     }
 
     emailCodeVerificationInFlight.add(attemptKey);
-    attemptedEmailCodeVerifications.add(attemptKey);
+    attemptedEmailCodeVerificationsRef.current.add(attemptKey);
     hasExplicitAuthFlowRef.current = true;
     setIsVerifyingCode(true);
     setIsCompletingCodeSignIn(false);
@@ -1031,6 +1045,7 @@ const Login = () => {
         code: digits,
       });
       if (success) {
+        attemptedEmailCodeVerificationsRef.current.clear();
         if (isMountedRef.current) {
           setIsCompletingCodeSignIn(true);
           setCode("");
@@ -1083,7 +1098,7 @@ const Login = () => {
       isHostedDesktopBrowserFlow ||
       isStartingDesktopAuth ||
       desktopBrowserFlowStatus === "loading" ||
-      attemptedEmailCodeVerifications.has(
+      attemptedEmailCodeVerificationsRef.current.has(
         getEmailCodeAttemptKey(normalizedPendingAuthId, digits),
       )
     ) {
@@ -1126,6 +1141,7 @@ const Login = () => {
     try {
       const result = await context?.resendEmailCode({ pendingAuthId });
       if (result?.pendingAuthId) {
+        attemptedEmailCodeVerificationsRef.current.clear();
         setPendingAuthId(result.pendingAuthId);
         if (result.verificationEmail) {
           setVerificationEmail(result.verificationEmail);
