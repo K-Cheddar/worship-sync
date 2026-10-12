@@ -23,7 +23,7 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, vali
   const phoneNumber = "+14155550123";
   const form = {
     formId: "form_a", churchId, name: "October availability", startDate: "2026-10-01",
-    endDate: "2026-10-31", responseDeadline: "2026-10-10", active: true,
+    endDate: "2026-10-31", responseDeadline: "2026-12-10", active: true,
     enabledFields: ["availability"], teamIds: [], availabilityOccurrences: [{ occurrenceId: "occ_1" }],
   };
   const recipient = {
@@ -250,6 +250,24 @@ test("a prepared batch is scoped to its selected form and recipients, and hides 
   assert.equal(history.payload.intents[0].message, undefined);
   assert.doesNotMatch(history.payload.intents[0].messagePreview, /secure-token/);
   assert.equal(intent.batchId, batch.batchId);
+});
+
+test("a confirmed availability request cannot be selected for a duplicate send", async () => {
+  const h = createHarness();
+  const { batch: firstBatch } = await h.preview();
+  const firstSend = await h.dispatch(firstBatch.batchId);
+  assert.equal(firstSend.statusCode, 200);
+  assert.equal(firstSend.payload.batch.summary.sent, 1);
+  assert.equal(h.providerCalls, 1);
+
+  const { batch: secondBatch } = await h.preview();
+  assert.equal(secondBatch.summary.eligible, 0);
+  assert.equal(secondBatch.summary.alreadySent, 1);
+  assert.equal(secondBatch.recipients[0].status, "sent");
+  assert.match(secondBatch.recipients[0].exclusionReason, /already sent/i);
+  const secondSend = await h.dispatch(secondBatch.batchId);
+  assert.equal(secondSend.statusCode, 200);
+  assert.equal(h.providerCalls, 1);
 });
 
 test("forms with editable non-availability fields prepare form-response messages", async () => {

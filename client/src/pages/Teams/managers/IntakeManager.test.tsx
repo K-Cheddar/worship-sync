@@ -4,6 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import IntakeManager from "./IntakeManager";
+import { showApiErrorToast } from "../../../utils/apiErrorToast";
 import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
@@ -46,6 +47,7 @@ jest.mock("../../../api/auth", () => ({
   revokeTeamIntakeRecipient: jest.fn(),
   updateTeamIntakeForm: jest.fn(),
 }));
+jest.mock("../../../utils/apiErrorToast", () => ({ showApiErrorToast: jest.fn() }));
 
 const member: TeamRosterMember = {
   memberId: "member-1",
@@ -94,7 +96,7 @@ const renderManager = ({
 } = {}) => {
   const onSmsDeliveryAttemptSaved = jest.fn();
   const onRecipientSaved = jest.fn();
-  render(
+  const view = render(
     <MemoryRouter>
       <GlobalInfoContext.Provider
         value={{ churchId: "church-1", role: "admin" } as ContextType<
@@ -131,7 +133,7 @@ const renderManager = ({
       </GlobalInfoContext.Provider>
     </MemoryRouter>,
   );
-  return { onSmsDeliveryAttemptSaved, onRecipientSaved };
+  return { ...view, onSmsDeliveryAttemptSaved, onRecipientSaved };
 };
 
 const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -140,6 +142,20 @@ const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+test("late form history failures do not publish an error toast after Forms unmounts", async () => {
+  const user = userEvent.setup();
+  let rejectHistory!: (error: Error) => void;
+  jest.mocked(getNotificationIntents).mockReturnValueOnce(new Promise((_, reject) => { rejectHistory = reject; }));
+  const view = renderManager();
+  await openForm(user);
+  await waitFor(() => expect(getNotificationIntents).toHaveBeenCalled());
+
+  view.unmount();
+  await act(async () => rejectHistory(new Error("History failed after navigation.")));
+
+  expect(showApiErrorToast).not.toHaveBeenCalled();
 });
 
 test("shows the consent reason and keeps Copy link available when SMS is ineligible", async () => {
@@ -471,7 +487,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   render(<StatefulManager />);
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Send form" }));
-  await user.click(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" }));
+  expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Review 1 message" }));
   await screen.findByRole("button", { name: "Send 1 message" });
   await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
@@ -487,7 +503,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   expect(within(counts).getAllByText("1")).toHaveLength(3);
   expect(screen.getAllByText("Waiting").length).toBeGreaterThan(1);
   expect(screen.queryByText("Not requested")).not.toBeInTheDocument();
-  expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId });
+  expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId, limit: 100 });
   expect(getTeamIntakeSmsAttempts).toHaveBeenCalledWith("church-1", form.formId);
 });
 

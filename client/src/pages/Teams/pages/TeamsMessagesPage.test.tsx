@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TeamsMessagesPage from "./TeamsMessagesPage";
 import { useTeamsPage } from "../TeamsPageContext";
@@ -7,6 +7,7 @@ import {
   getAvailabilityNotificationBatch,
   getNotificationIntentPreview,
   getNotificationIntents,
+  getTeamIntakeSmsAttempts,
   prepareAvailabilityNotificationBatch,
   sendNotificationIntent,
 } from "../../../api/auth";
@@ -18,6 +19,7 @@ jest.mock("../../../api/auth", () => ({
   getAvailabilityNotificationBatch: jest.fn(),
   getNotificationIntentPreview: jest.fn(),
   getNotificationIntents: jest.fn(),
+  getTeamIntakeSmsAttempts: jest.fn(),
   prepareAvailabilityNotificationBatch: jest.fn(),
   sendNotificationIntent: jest.fn(),
 }));
@@ -25,6 +27,7 @@ jest.mock("../../../api/auth", () => ({
 const mockUseTeamsPage = jest.mocked(useTeamsPage);
 const mockGetBatch = jest.mocked(getAvailabilityNotificationBatch);
 const mockGetIntents = jest.mocked(getNotificationIntents);
+const mockGetSmsAttempts = jest.mocked(getTeamIntakeSmsAttempts);
 const mockGetIntentPreview = jest.mocked(getNotificationIntentPreview);
 const mockPrepare = jest.mocked(prepareAvailabilityNotificationBatch);
 const mockDispatch = jest.mocked(dispatchAvailabilityNotificationBatch);
@@ -69,6 +72,7 @@ beforeEach(() => {
     },
   } as unknown as ReturnType<typeof useTeamsPage>);
   mockGetIntents.mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 50 });
+  mockGetSmsAttempts.mockResolvedValue({ success: true, attempts: [] });
   mockGetIntentPreview.mockResolvedValue({
     success: true,
     preview: {
@@ -187,6 +191,106 @@ test("only sends after confirmation and dispatches the explicitly prepared batch
   await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1"));
 });
 
+test("Messages waits for complete history before enabling recipient selection", async () => {
+  const user = userEvent.setup();
+  let resolveHistory!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  mockGetIntents.mockReturnValueOnce(new Promise((resolve) => { resolveHistory = resolve; }));
+  render(<TeamsMessagesPage />);
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review 0 messages" })).toBeDisabled();
+
+  await act(async () => resolveHistory({ success: true, intents: [], nextCursor: "", limit: 100 }));
+  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
+});
+
+test("a history response from the previous church cannot block the same form in the new church", async () => {
+  const user = userEvent.setup();
+  let resolveOldIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  let resolveOldAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  mockGetIntents
+    .mockReturnValueOnce(new Promise((resolve) => { resolveOldIntents = resolve; }))
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 100 });
+  mockGetSmsAttempts
+    .mockReturnValueOnce(new Promise((resolve) => { resolveOldAttempts = resolve; }))
+    .mockResolvedValueOnce({ success: true, attempts: [] });
+  const view = render(<TeamsMessagesPage />);
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  const initialContext = mockUseTeamsPage.mock.results[mockUseTeamsPage.mock.results.length - 1].value as ReturnType<typeof useTeamsPage>;
+  const recipient = { recipientId: "recipient_1", churchId: "church_1", formId: "form_1", memberId: "member_1", createdAt: "2026-09-01" };
+  mockUseTeamsPage.mockReturnValue({
+    ...initialContext,
+    churchId: "church_2",
+    pageData: { ...initialContext.pageData, intakeRecipients: [recipient] },
+  });
+  view.rerender(<TeamsMessagesPage />);
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled());
+
+  await act(async () => {
+    resolveOldIntents({ success: true, intents: [{ ...recentIntent, recipientId: recipient.recipientId, status: "sent" }], nextCursor: "", limit: 100 });
+    resolveOldAttempts({ success: true, attempts: [] });
+  });
+  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
+  expect(screen.queryByText("Already sent")).not.toBeInTheDocument();
+  expect(mockGetIntents.mock.calls.map(([church]) => church)).toEqual(["church_1", "church_2"]);
+});
+
+test("a failed Messages history load blocks selection until status check succeeds", async () => {
+  const user = userEvent.setup();
+  mockGetIntents.mockRejectedValueOnce(new Error("History temporarily unavailable."));
+  render(<TeamsMessagesPage />);
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  expect(await screen.findByText("Could not verify consent and message history: History temporarily unavailable.")).toBeInTheDocument();
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(screen.queryByText("No volunteer messages for this form yet.")).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeDisabled();
+
+  await user.click(screen.getByRole("button", { name: "Retry status check" }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled());
+});
+
+test("a delayed retry for one form cannot replace the new form's loaded history", async () => {
+  const user = userEvent.setup();
+  let resolveOldIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  let resolveOldAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  mockGetIntents
+    .mockRejectedValueOnce(new Error("Initial history unavailable."))
+    .mockReturnValueOnce(new Promise((resolve) => { resolveOldIntents = resolve; }))
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 100 });
+  mockGetSmsAttempts
+    .mockResolvedValueOnce({ success: true, attempts: [] })
+    .mockReturnValueOnce(new Promise((resolve) => { resolveOldAttempts = resolve; }))
+    .mockResolvedValueOnce({ success: true, attempts: [] });
+  const view = render(<TeamsMessagesPage />);
+  const initialContext = mockUseTeamsPage.mock.results[mockUseTeamsPage.mock.results.length - 1].value as ReturnType<typeof useTeamsPage>;
+  const secondForm = { formId: "form_2", churchId: "church_1", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", availabilityServices: [], availabilityOccurrences: [], teamIds: [], active: true };
+  mockUseTeamsPage.mockReturnValue({
+    ...initialContext,
+    pageData: { ...initialContext.pageData, intakeForms: [...initialContext.pageData.intakeForms, secondForm] },
+  });
+  view.rerender(<TeamsMessagesPage />);
+
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  expect(await screen.findByText(/Initial history unavailable/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry status check" }));
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /November availability/ }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled());
+
+  await act(async () => {
+    resolveOldIntents({ success: true, intents: [], nextCursor: "", limit: 100 });
+    resolveOldAttempts({ success: true, attempts: [] });
+  });
+  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
+});
+
 test("team and name filters compose, and selection survives filter changes", async () => {
   const user = userEvent.setup();
   mockUseTeamsPage.mockReturnValue({
@@ -221,7 +325,7 @@ test("team and name filters compose, and selection survives filter changes", asy
   expect(screen.getByText("2 selected")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Clear" }));
   expect(screen.getByText("0 selected")).toBeInTheDocument();
-  expect(screen.getByText("No mobile number")).toBeInTheDocument();
+  expect(screen.getByText("Missing or invalid phone")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Terry Taylor" })).toBeDisabled();
 });
 
