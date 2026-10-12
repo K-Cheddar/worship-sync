@@ -53,12 +53,15 @@ const AvailabilityFormSendFlow = ({
   onClose: () => void;
 }) => {
   const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
+  const [selectedRetryIds, setSelectedRetryIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [reviewedBatchState, setReviewedBatchState] = useState<{
     batch: NotificationBatch;
     formIdentity: string;
+    recipientEligibilityIdentity: string;
+    selectionIdentity: string;
   } | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState("");
@@ -70,9 +73,15 @@ const AvailabilityFormSendFlow = ({
     startDate: form.startDate,
     endDate: form.endDate,
     responseDeadline: form.responseDeadline || "",
+    availabilityServices: form.availabilityServices || [],
     teamIds: [...(form.teamIds || [])].sort(),
     enabledFields: [...(form.enabledFields || [])].sort(),
     availabilityOccurrences: form.availabilityOccurrences || [],
+    requireEmail: Boolean(form.requireEmail),
+    welcomeMessage: form.welcomeMessage || "",
+    positionsMessage: form.positionsMessage || "",
+    availabilityMessage: form.availabilityMessage || "",
+    notesMessage: form.notesMessage || "",
     active: form.active,
     archivedAt: form.archivedAt || "",
   });
@@ -88,6 +97,7 @@ const AvailabilityFormSendFlow = ({
     previousContextRef.current = contextIdentity;
     previousFormReviewRef.current = formReviewIdentity;
     setDeselectedIds(new Set());
+    setSelectedRetryIds(new Set());
     setReviewedBatchState(null);
     setConfirmOpen(false);
     setNotice("Form changed. Choose recipients and review the messages again.");
@@ -108,17 +118,6 @@ const AvailabilityFormSendFlow = ({
     if (hadReview) setNotice("Recipients changed. Review the messages again before sending.");
   };
 
-  const updateRecipientSelection = (memberIds: string[], selected: boolean) => {
-    const next = new Set(deselectedIds);
-    memberIds.forEach((memberId) => {
-      if (selected) next.delete(memberId);
-      else next.add(memberId);
-    });
-    if (next.size === deselectedIds.size && [...next].every((id) => deselectedIds.has(id))) return;
-    setDeselectedIds(next);
-    invalidateReview();
-  };
-
   const activeMembers = useMemo(() => members.filter((member) => !member.archivedAt).sort((a, b) => memberName(a).localeCompare(memberName(b))), [members]);
   const rows = useMemo(() => getAvailabilityRecipientRows({
     members: activeMembers,
@@ -132,19 +131,68 @@ const AvailabilityFormSendFlow = ({
     intentType: "availability_request",
   }), [activeMembers, eligibilityByMemberId, form, notificationIntents, positions, recipients, smsDeliveryAttempts, teams]);
   const activeBatch = reviewedBatchState?.batch || null;
-  const reviewedBatch = activeBatch?.formId === form.formId && activeBatch.churchId === churchId && reviewedBatchState?.formIdentity === formReviewIdentity ? activeBatch : null;
+  const recipientEligibilityIdentity = JSON.stringify(rows.map(({ member, memberTeamIds, recipient, eligibility, eligible, reason, previousDeliveryStatus }) => [
+    member.memberId,
+    memberName(member),
+    member.phoneNumber || "",
+    [...memberTeamIds].sort(),
+    eligibility.status,
+    eligibility.eligible,
+    eligibility.phoneNumber || "",
+    eligible,
+    reason,
+    recipient?.respondedAt || "",
+    recipient?.revokedAt || "",
+    previousDeliveryStatus,
+  ]));
+  const currentRecipientEligibilityRef = useRef(recipientEligibilityIdentity);
+  currentRecipientEligibilityRef.current = recipientEligibilityIdentity;
+  const previousRecipientEligibilityRef = useRef(recipientEligibilityIdentity);
+  useEffect(() => {
+    if (previousRecipientEligibilityRef.current === recipientEligibilityIdentity) return;
+    previousRecipientEligibilityRef.current = recipientEligibilityIdentity;
+    const hadReview = Boolean(reviewedBatchState || confirmOpen);
+    setReviewedBatchState(null);
+    setConfirmOpen(false);
+    if (hadReview) setNotice("Recipient eligibility changed. Review the messages again before sending.");
+  }, [confirmOpen, recipientEligibilityIdentity, reviewedBatchState]);
   const query = search.trim().toLocaleLowerCase();
   const visibleRows = rows.filter(({ member, memberTeamIds }) =>
     (!teamFilter || memberTeamIds.has(teamFilter)) &&
     (!query || memberName(member).toLocaleLowerCase().includes(query)),
   );
   const visibleEligibleIds = historyLoaded ? visibleRows.filter(({ eligible }) => eligible).map(({ member }) => member.memberId) : [];
-  const selectedEligibleIds = historyLoaded ? rows.filter(({ member, eligible }) => eligible && !deselectedIds.has(member.memberId)).map(({ member }) => member.memberId) : [];
-  const selectionIdentityRef = useRef(JSON.stringify(selectedEligibleIds));
-  selectionIdentityRef.current = JSON.stringify(selectedEligibleIds);
-  const visibleSelectionCount = visibleEligibleIds.filter((id) => !deselectedIds.has(id)).length;
+  const selectedEligibleIds = rows.filter(({ member, eligible, previousDeliveryStatus }) =>
+    eligible && (previousDeliveryStatus === "failed" ? selectedRetryIds.has(member.memberId) : !deselectedIds.has(member.memberId)),
+  ).map(({ member }) => member.memberId);
+  const selectionIdentity = JSON.stringify(selectedEligibleIds);
+  const selectionIdentityRef = useRef(selectionIdentity);
+  selectionIdentityRef.current = selectionIdentity;
+  const reviewedBatch = activeBatch?.formId === form.formId && activeBatch.churchId === churchId &&
+    reviewedBatchState?.formIdentity === formReviewIdentity &&
+    reviewedBatchState.recipientEligibilityIdentity === recipientEligibilityIdentity &&
+    reviewedBatchState.selectionIdentity === selectionIdentity ? activeBatch : null;
+  const visibleSelectionCount = visibleEligibleIds.filter((id) => selectedEligibleIds.includes(id)).length;
   const allVisibleSelected = visibleEligibleIds.length > 0 && visibleSelectionCount === visibleEligibleIds.length;
   const someVisibleSelected = visibleSelectionCount > 0 && !allVisibleSelected;
+  const retryableMemberIds = new Set(rows.filter(({ previousDeliveryStatus }) => previousDeliveryStatus === "failed").map(({ member }) => member.memberId));
+  const updateRecipientSelection = (memberIds: string[], selected: boolean) => {
+    const nextDeselected = new Set(deselectedIds);
+    const nextRetries = new Set(selectedRetryIds);
+    memberIds.forEach((memberId) => {
+      if (retryableMemberIds.has(memberId)) {
+        if (selected) nextRetries.add(memberId);
+        else nextRetries.delete(memberId);
+      } else if (selected) nextDeselected.delete(memberId);
+      else nextDeselected.add(memberId);
+    });
+    const deselectionsChanged = nextDeselected.size !== deselectedIds.size || [...nextDeselected].some((id) => !deselectedIds.has(id));
+    const retriesChanged = nextRetries.size !== selectedRetryIds.size || [...nextRetries].some((id) => !selectedRetryIds.has(id));
+    if (!deselectionsChanged && !retriesChanged) return;
+    setDeselectedIds(nextDeselected);
+    setSelectedRetryIds(nextRetries);
+    invalidateReview();
+  };
   const teamOptions = [
     { value: "", label: "All teams" },
     ...teams.filter((team) => !team.archivedAt).map((team) => ({ value: team.teamId, label: team.name })),
@@ -166,6 +214,7 @@ const AvailabilityFormSendFlow = ({
     const requestedContext = contextIdentity;
     const requestedFormId = form.formId;
     const requestedFormIdentity = formReviewIdentity;
+    const requestedRecipientEligibilityIdentity = recipientEligibilityIdentity;
     const requestedMemberIds = [...selectedEligibleIds];
     const requestedSelectionIdentity = JSON.stringify(requestedMemberIds);
     setBusy(true);
@@ -181,10 +230,16 @@ const AvailabilityFormSendFlow = ({
       if (
         currentContextRef.current !== requestedContext ||
         currentFormReviewRef.current !== requestedFormIdentity ||
+        currentRecipientEligibilityRef.current !== requestedRecipientEligibilityIdentity ||
         selectionIdentityRef.current !== requestedSelectionIdentity
       ) return;
       onBatchUpdated?.(batch);
-      setReviewedBatchState({ batch, formIdentity: requestedFormIdentity });
+      setReviewedBatchState({
+        batch,
+        formIdentity: requestedFormIdentity,
+        recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
+        selectionIdentity: requestedSelectionIdentity,
+      });
       setNotice("Messages are ready to review. Nothing has been sent.");
     } catch (caught) {
       if (currentContextRef.current === requestedContext) {
@@ -199,6 +254,8 @@ const AvailabilityFormSendFlow = ({
     if (!reviewedBatch || reviewedBatch.formId !== form.formId || reviewedBatch.churchId !== churchId || busy) return;
     const requestedContext = contextIdentity;
     const requestedFormIdentity = formReviewIdentity;
+    const requestedRecipientEligibilityIdentity = recipientEligibilityIdentity;
+    const requestedSelectionIdentity = selectionIdentity;
     const batchToSend = reviewedBatch;
     setBusy(true);
     setError("");
@@ -206,7 +263,12 @@ const AvailabilityFormSendFlow = ({
       const response = await dispatchReviewedAvailabilityBatch(churchId, batchToSend);
       if (currentContextRef.current !== requestedContext || currentFormReviewRef.current !== requestedFormIdentity) return;
       onBatchUpdated?.(response.batch);
-      setReviewedBatchState({ batch: response.batch, formIdentity: requestedFormIdentity });
+      setReviewedBatchState({
+        batch: response.batch,
+        formIdentity: requestedFormIdentity,
+        recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
+        selectionIdentity: requestedSelectionIdentity,
+      });
       setConfirmOpen(false);
       setNotice("Send finished. Delivery and response status are shown below.");
     } catch (caught) {
@@ -217,7 +279,12 @@ const AvailabilityFormSendFlow = ({
         const latest = await getAvailabilityNotificationBatch(churchId, batchToSend.batchId);
         if (currentContextRef.current === requestedContext && currentFormReviewRef.current === requestedFormIdentity) {
           onBatchUpdated?.(latest.batch);
-          setReviewedBatchState({ batch: latest.batch, formIdentity: requestedFormIdentity });
+          setReviewedBatchState({
+            batch: latest.batch,
+            formIdentity: requestedFormIdentity,
+            recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
+            selectionIdentity: requestedSelectionIdentity,
+          });
         }
       } catch {
         // Keep the reviewed batch available so the operator can check it in Messages.
@@ -232,7 +299,7 @@ const AvailabilityFormSendFlow = ({
   return (
     <section className="space-y-4 rounded-lg border border-sky-700 bg-gray-900/60 p-4" aria-labelledby="send-form-heading">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h2 id="send-form-heading" className="font-semibold text-white">Send form</h2><p className="text-sm text-gray-400">Eligible members are selected automatically. Uncheck anyone you don’t want to contact.</p></div>
+        <div><h2 id="send-form-heading" className="font-semibold text-white">Send form</h2><p className="text-sm text-gray-400">First-time recipients are selected automatically. Select a previous failure to retry it.</p></div>
         <Button variant="textLink" disabled={busy} onClick={onClose}>Close</Button>
       </div>
       {historyLoaded ? <dl className="grid grid-cols-2 gap-2 rounded-lg border border-gray-700 bg-gray-950/40 p-3 text-sm sm:grid-cols-4 lg:grid-cols-8" aria-label="Recipient status summary">
@@ -258,10 +325,10 @@ const AvailabilityFormSendFlow = ({
       <div className="max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-950/50">
         <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 bg-gray-900 px-3 py-3">
           <div className="flex items-center gap-3"><Checkbox aria-label={`Select all ${visibleEligibleIds.length} eligible shown`} checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false} disabled={busy || !visibleEligibleIds.length} onCheckedChange={(checked) => toggleVisible(checked === true)} /><span className="text-sm text-gray-200">Select eligible members shown</span><span className="text-xs text-gray-400">{visibleRows.length} shown</span></div>
-          <div className="flex items-center gap-3"><span aria-live="polite" className="text-sm text-gray-300">{selectedEligibleIds.length} selected</span><Button variant="textLink" disabled={busy || !selectedEligibleIds.length} onClick={() => updateRecipientSelection(selectedEligibleIds, false)}>Clear</Button></div>
+          <div className="flex items-center gap-3"><span aria-live="polite" className="text-sm text-gray-300">{selectedEligibleIds.length} selected</span><Button variant="textLink" disabled={busy || !historyLoaded || !selectedEligibleIds.length} onClick={() => updateRecipientSelection(selectedEligibleIds, false)}>Clear</Button></div>
         </div>
         <div className="divide-y divide-gray-800" role="list" aria-label="Form recipients">
-          {visibleRows.length ? visibleRows.map(({ member, eligible, reason, previousDeliveryStatus }) => <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem"><Checkbox label={memberName(member)} checked={eligible && !deselectedIds.has(member.memberId)} disabled={busy || !historyLoaded || !eligible} onCheckedChange={(checked) => updateRecipientSelection([member.memberId], checked === true)} className="flex-1" />{!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason}</span> : <span className="shrink-0 text-xs text-emerald-200">{previousDeliveryStatus === "failed" ? "SMS ready · previous attempt failed" : "SMS ready"}</span>}</div>) : <p className="p-4 text-sm text-gray-400">No members match these filters.</p>}
+          {visibleRows.length ? visibleRows.map(({ member, eligible, reason, previousDeliveryStatus }) => <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem"><Checkbox label={memberName(member)} checked={selectedEligibleIds.includes(member.memberId)} disabled={busy || !historyLoaded || !eligible} onCheckedChange={(checked) => updateRecipientSelection([member.memberId], checked === true)} className="flex-1" />{!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason}</span> : <span className="shrink-0 text-xs text-emerald-200">{previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First send · SMS ready"}</span>}</div>) : <p className="p-4 text-sm text-gray-400">No members match these filters.</p>}
         </div>
       </div>
       <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-gray-400">{selectedEligibleIds.length ? `${selectedEligibleIds.length} of ${statusCounts.ready} eligible member${statusCounts.ready === 1 ? "" : "s"} selected.` : "Select at least one eligible member to continue."}</p><Button disabled={busy || !historyLoaded || !selectedEligibleIds.length} isLoading={busy} onClick={() => void reviewMessages()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button></div>

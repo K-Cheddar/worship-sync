@@ -1,4 +1,4 @@
-import type { TeamIntakeForm, TeamRosterMember } from "../../api/authTypes";
+import type { NotificationIntent, TeamIntakeForm, TeamRosterMember } from "../../api/authTypes";
 import { getAvailabilityRecipientRows } from "./availabilityRecipientSelection";
 
 const member = (memberId: string, overrides: Partial<TeamRosterMember> = {}): TeamRosterMember => ({
@@ -126,4 +126,56 @@ it("uses a completed delivery attempt to keep a legacy sent request out of the p
   });
 
   expect(row[0]).toMatchObject({ eligible: false, reason: "Already sent", previousDeliveryStatus: "sent" });
+});
+
+it("keeps an accepted but undelivered provider attempt blocked from duplicate sends", () => {
+  const memberId = "one";
+  const recipientId = "recipient-one";
+  const intent: NotificationIntent = {
+    intentId: "intent-one", churchId: form.churchId, formId: form.formId, recipientId, memberId,
+    intentType: "availability_request", sourceType: "team_intake_recipient", sourceId: recipientId,
+    sourceVersion: "", occurrenceId: "", channel: "sms", message: "", status: "failed", createdAt: "2026-09-01", updatedAt: "2026-09-02",
+  };
+  const rows = getAvailabilityRecipientRows({
+    members: [member(memberId, { teamMemberships: { worship: { teamId: "worship" } } })],
+    positions: [],
+    teams: [],
+    recipients: [{ recipientId, churchId: form.churchId, formId: form.formId, memberId, createdAt: "2026-09-01" }],
+    eligibilityByMemberId: { [memberId]: { status: "enabled", eligible: true } },
+    notificationIntents: [intent],
+    smsDeliveryAttempts: [{
+      attemptId: "attempt-one", churchId: form.churchId, recipientType: "notification_intent", recipientId, memberId,
+      formId: form.formId, provider: "twilio", purpose: "availability_request",
+      status: "undelivered", outcome: "confirmed", createdAt: "2026-09-01", updatedAt: "2026-09-02",
+    }],
+    form,
+    intentType: "availability_request",
+  });
+
+  expect(rows[0]).toMatchObject({ eligible: false, reason: "Already sent", previousDeliveryStatus: "sent" });
+});
+
+it("does not retry a failed attempt whose provider outcome is missing", () => {
+  const memberId = "one";
+  const recipientId = "recipient-one";
+  const rows = getAvailabilityRecipientRows({
+    members: [member(memberId, { teamMemberships: { worship: { teamId: "worship" } } })],
+    positions: [],
+    teams: [],
+    recipients: [{ recipientId, churchId: form.churchId, formId: form.formId, memberId, createdAt: "2026-09-01" }],
+    eligibilityByMemberId: { [memberId]: { status: "enabled", eligible: true } },
+    smsDeliveryAttempts: [{
+      attemptId: "attempt-one", churchId: form.churchId, recipientType: "notification_intent", recipientId, memberId,
+      formId: form.formId, provider: "twilio", purpose: "availability_request", status: "failed",
+      createdAt: "2026-09-01", updatedAt: "2026-09-02",
+    }],
+    form,
+    intentType: "availability_request",
+  });
+
+  expect(rows[0]).toMatchObject({
+    eligible: false,
+    reason: "Previous send outcome is uncertain. Check message history before sending again.",
+    previousDeliveryStatus: "uncertain",
+  });
 });

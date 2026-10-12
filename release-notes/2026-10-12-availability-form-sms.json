@@ -3,5 +3,5 @@
   "date": "2026-10-12",
   "type": "improved",
   "title": "Availability form messages",
-  "description": "Availability forms now preselect volunteers ready to receive their private response links and show consent and message history before you send."
+  "description": "Availability forms preselect first-time recipients, let you choose failed sends for retry, and refresh message history before you review a send."
 }

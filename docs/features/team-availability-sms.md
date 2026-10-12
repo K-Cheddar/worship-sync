@@ -16,13 +16,14 @@ From the selected active availability form, the operator opens **Send form**, re
 
 ## Expected behavior
 
-- Eligible, active members in the form's selected team scope who have not already received the request are selected automatically.
+- Eligible, active members in the form's selected team scope with no prior request are selected automatically. A definitively failed request remains eligible but starts unselected; the operator must choose it to retry.
 - Members without SMS consent or a valid phone, opted-out numbers, archived members, out-of-scope members, previously responded members, and members whose request was already sent are not selectable.
 - The operator can add or remove eligible members. Filtering and searching do not change selection. An explicit deselection stays in effect when consent or other eligibility data refreshes.
 - Recipient selection and batch preparation do not send SMS. Sending requires the existing explicit confirmation for the reviewed batch.
 - Each message uses the existing private response link for that member and form. Existing response records and links remain valid; volunteers do not need WorshipSync accounts.
 - If multiple selected members share a phone number, review shows the shared destination while retaining separate messages and private response links for each member.
-- Previously sent requests remain blocked from resend. A failed, definitively rejected delivery can be selected again after the operator reviews its history. An uncertain or in-progress outcome stays blocked and is never retried automatically.
+- Provider-accepted requests remain blocked from resend, including attempts later reported undelivered. A definitively rejected delivery can be selected again after the operator reviews its history. An uncertain or in-progress outcome stays blocked and is never retried automatically.
+- Opening Send form refreshes the complete current-form message and delivery history. Recipient selection and review stay disabled until that refresh succeeds; stale responses cannot replace a newer snapshot.
 - Consent and phone eligibility are checked again by the server at send time. Existing form scope, recipient identity, response, consent, durable claim, approval-version, idempotency, and STOP protections remain authoritative.
 - Creating or editing a form, recording consent, opening the workflow, and preparing a batch do not send SMS. Automatic sends remain disabled.
 - Forms is the primary location for sending a form request. Messages may continue to provide advanced message management and history.
@@ -39,7 +40,8 @@ From the selected active availability form, the operator opens **Send form**, re
 | Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |
 | --- | --- | --- | --- |
 | Normal workflow | Eligible unsent members in form scope are preselected; review is separate from explicit send confirmation. | `AvailabilityFormSendFlow.test.tsx`; `notificationIntents.test.js` | Confirmed by current request; implemented |
-| Repeated or explicit action | Already sent requests stay excluded; uncertain sends cannot be retried automatically. | Duplicate-send regression in `notificationIntents.test.js`; intent claim and dispatch guards in `server/notificationIntents.js` | Duplicate-send decision confirmed on 2026-10-12; implemented |
+| Repeated or explicit action | Provider-accepted requests stay excluded, including later undelivered attempts; uncertain sends cannot be retried automatically. | Duplicate-send regression in `notificationIntents.test.js`; `availabilityRecipientSelection.test.ts`; intent claim and dispatch guards in `server/notificationIntents.js` | Duplicate-send decision confirmed on 2026-10-12; implemented |
+| Failed send retry | Definitive failures are available for deliberate selection and do not join first-time recipients in the automatic selection. | `AvailabilityFormSendFlow.test.tsx`; `availabilityRecipientSelection.test.ts` | Confirmed by current request dated 2026-10-12; implemented |
 | Manual change | Eligible recipients can be unchecked or added; filters preserve selection and explicit unchecks survive eligibility refresh. | `AvailabilityFormSendFlow.test.tsx`; `TeamsMessagesPage.test.tsx` | Confirmed by current request; implemented |
 | Missing, incomplete, or unavailable data | Consent and full form message history must load before recipients can be selected or reviewed. | `availabilityNotificationHistory.test.ts`; Forms and Messages flow tests | Confirmed by current request; implemented |
 | Error or recovery | Definitive failures are visible and may be prepared again; unknown outcomes require history review and are not automatically retried. | `notificationIntents.test.js`; `AvailabilityBatchReview.test.tsx` | Confirmed by current request; implemented |
@@ -53,6 +55,13 @@ From the selected active availability form, the operator opens **Send form**, re
 - **Material alternative rejected:** Add a deliberate manual resend path.
 - **Approval source/date:** Product-owner reply to the clarification question in this conversation, 2026-10-12.
 - **Affected workflow/contract:** Availability form SMS, in Forms and the shared Messages recipient selector.
+
+- **Question/problem:** Should definitively failed form requests be included in the default recipient selection?
+- **Approved behavior:** Preselect first-time recipients only; leave failed requests unchecked until the operator deliberately selects them for retry.
+- **Why:** Make first sends and retries clear and prevent a retry from being included by default.
+- **Material alternative rejected:** Automatically select every eligible failed request.
+- **Approval source/date:** Current task request, 2026-10-12.
+- **Affected workflow/contract:** Availability form SMS in Forms.
 
 ## Implementation references
 

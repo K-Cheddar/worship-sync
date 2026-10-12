@@ -637,6 +637,12 @@ const IntakeManager = ({
     refreshFormMessageState(batch.formId);
   };
 
+  const openSendForm = () => {
+    if (!activeSelectedForm?.active) return;
+    refreshFormMessageState(activeSelectedForm.formId);
+    setShowSendForm(true);
+  };
+
   const selectedFormSubmissions = useMemo(
     () =>
       activeSelectedForm
@@ -2012,7 +2018,7 @@ const IntakeManager = ({
               </Button>
               {activeSelectedForm?.active && !showingEditForm && canEdit ? (
                 <>
-                  <Button variant="secondary" padding="px-2 py-1" onClick={() => setShowSendForm(true)}>
+                  <Button variant="secondary" padding="px-2 py-1" onClick={openSendForm}>
                     Send form
                   </Button>
                   <Button

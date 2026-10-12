@@ -9,6 +9,7 @@ import { ToastProvider } from "../../../context/toastContext";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
 import type {
+  NotificationIntent,
   TeamIntakeForm,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
@@ -433,6 +434,58 @@ test("an existing form view exposes Send form", async () => {
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
 
+test("refreshes history on every Send form open and ignores older history responses", async () => {
+  const user = userEvent.setup();
+  const sentIntent: NotificationIntent = {
+    intentId: "sent-request", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
+    sourceId: recipient.recipientId, sourceVersion: "", memberId: member.memberId, formId: form.formId,
+    recipientId: recipient.recipientId, occurrenceId: "", channel: "sms", status: "sent",
+    createdAt: "2026-10-01T12:00:00.000Z", updatedAt: "2026-10-01T12:00:00.000Z",
+  };
+  const historyPage = (intents: NotificationIntent[]) => ({ success: true, intents, nextCursor: "", limit: 100 }) as Awaited<ReturnType<typeof getNotificationIntents>>;
+  const attemptsPage = { success: true, attempts: [] } as Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>;
+  let resolveOlderIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  let resolveOlderAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  let resolveReopenIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  let resolveReopenAttempts!: (value: Awaited<ReturnType<typeof getTeamIntakeSmsAttempts>>) => void;
+  jest.mocked(getNotificationIntents)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderIntents = resolve; }))
+    .mockResolvedValueOnce(historyPage([sentIntent]))
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveReopenIntents = resolve; }));
+  jest.mocked(getTeamIntakeSmsAttempts)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderAttempts = resolve; }))
+    .mockResolvedValueOnce(attemptsPage)
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveReopenAttempts = resolve; }));
+  renderManager({ eligibilityStatus: "enabled" });
+  await openForm(user);
+  await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(1));
+
+  await user.click(screen.getByRole("button", { name: "Send form" }));
+  const sendRegion = screen.getByRole("region", { name: "Send form" });
+  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  await waitFor(() => expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0));
+  expect(getNotificationIntents).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    resolveOlderIntents(historyPage([]));
+    resolveOlderAttempts(attemptsPage);
+  });
+  expect(within(sendRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(sendRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
+
+  await user.click(within(sendRegion).getByRole("button", { name: "Close" }));
+  await user.click(screen.getByRole("button", { name: "Send form" }));
+  const reopenedRegion = screen.getByRole("region", { name: "Send form" });
+  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  await waitFor(() => expect(getNotificationIntents).toHaveBeenCalledTimes(3));
+  await act(async () => {
+    resolveReopenIntents(historyPage([sentIntent]));
+    resolveReopenAttempts(attemptsPage);
+  });
+  expect(within(reopenedRegion).getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
+  expect(within(reopenedRegion).getAllByText("Already sent").length).toBeGreaterThan(0);
+});
+
 test("a sent batch updates recipients and delivery counts in Forms without reloading", async () => {
   const user = userEvent.setup();
   const deliveredAttempt = {
@@ -455,6 +508,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   let resolveStaleIntents!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
   jest.mocked(getTeamIntakeSmsAttempts)
     .mockResolvedValueOnce({ success: true, attempts: [] })
+    .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleAttempts = resolve; }))
     .mockResolvedValueOnce({ success: true, attempts: [deliveredAttempt] });
   const notificationIntent = {
@@ -464,6 +518,7 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
     createdAt: "2026-09-29T12:00:00.000Z", updatedAt: "2026-09-29T12:00:00.000Z",
   } as const;
   jest.mocked(getNotificationIntents)
+    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockImplementationOnce(() => new Promise((resolve) => { resolveStaleIntents = resolve; }))
     .mockResolvedValueOnce({ success: true, intents: [notificationIntent], nextCursor: "", limit: 50 });

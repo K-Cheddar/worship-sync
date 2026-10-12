@@ -860,7 +860,7 @@ export type SmsDeliveryAttempt = {
   provider: string;
   purpose: "initial" | "reminder" | NotificationIntentType;
   status: SmsDeliveryAttemptStatus;
-  outcome?: "confirmed" | "unknown" | "not_sent";
+  outcome?: "confirmed" | "failed" | "unknown" | "not_sent";
   failureCode?: string;
   failureMessage?: string;
   createdAt: string;

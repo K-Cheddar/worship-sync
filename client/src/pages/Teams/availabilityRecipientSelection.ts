@@ -70,13 +70,15 @@ export const getAvailabilityRecipientRows = ({
       const intent = requestIntentByRecipientId.get(recipient.recipientId);
       const attempts = requestAttemptsByRecipientId.get(recipient.recipientId) || [];
       const providerAccepted = intent?.status === "sent" || attempts.some((attempt) =>
-        ["accepted", "sent", "delivered"].includes(attempt.status),
+        ["accepted", "sent", "delivered", "undelivered"].includes(attempt.status) ||
+        attempt.outcome === "confirmed",
       );
       const deliveryUncertain = ["sending", "unknown"].includes(intent?.status || "") || attempts.some((attempt) =>
-        attempt.outcome === "unknown" || attempt.status === "pending",
+        attempt.outcome === "unknown" || attempt.status === "pending" ||
+        (attempt.status === "failed" && !attempt.outcome && intent?.status !== "failed"),
       );
       const hasRetryableFailure = intent?.status === "failed" || attempts.some((attempt) =>
-        ["failed", "undelivered"].includes(attempt.status) || attempt.outcome === "not_sent",
+        attempt.outcome === "not_sent" || attempt.outcome === "failed",
       );
       if (providerAccepted) previousDeliveryStatus = "sent";
       else if (deliveryUncertain) previousDeliveryStatus = "uncertain";
