@@ -11204,27 +11204,45 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
     assert.equal(scopedByMember.get(scheduleOnlyGuest.memberId).eligible, false);
 
     const prepared = await callHandler(authHandlers.prepareScheduleInitialSmsBatch, {
-      context: manager,
+      context: admin,
       params: { scheduleId: assigned.scheduleId },
       body: { memberIds: [assigned.memberId] },
     });
     assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+    assert.equal(prepared.payload.privacySafe, false);
     assert.equal(prepared.payload.batch.intentType, "schedule_initial_notification");
     assert.equal(prepared.payload.batch.recipients.length, 1);
     assert.equal(prepared.payload.batch.recipients[0].eligible, true);
-    assert.equal(prepared.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
-    assert.doesNotMatch(prepared.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.equal(prepared.payload.batch.recipients[0].phoneNumberSnapshot, phoneNumber);
+    assert.match(prepared.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
     assert.equal(fake.calls.length, 0, "Preparing schedule messages makes no SMS provider call");
 
     const batchId = prepared.payload.batch.batchId;
-    const batchVersion = prepared.payload.batch.approvalVersion;
+    const intentId = prepared.payload.batch.recipients[0].intentId;
+    const currentIntent = await getDoc("notificationIntents", intentId);
+    assert.ok(currentIntent.approvalSnapshot, "the administrator-prepared batch initially has an approval snapshot");
+    await setDoc("notificationIntents", intentId, { approvalSnapshot: null }, { merge: true });
     const detail = await callHandler(authHandlers.getAvailabilityBatch, {
       context: manager,
       params: { batchId },
     });
     assert.equal(detail.statusCode, 200);
+    assert.equal(detail.payload.privacySafe, true);
     assert.equal(detail.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
     assert.doesNotMatch(detail.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.match(detail.payload.batch.recipients[0].message, /\[private response link\]/);
+    assert.doesNotMatch(JSON.stringify(detail.payload.batch), /\+19545551333/);
+    assert.doesNotMatch(JSON.stringify(detail.payload.batch), /schedule-response\/[A-Za-z0-9_-]{10}/);
+    const scopedPrepared = await callHandler(authHandlers.prepareScheduleInitialSmsBatch, {
+      context: manager,
+      params: { scheduleId: assigned.scheduleId },
+      body: { memberIds: [assigned.memberId] },
+    });
+    assert.equal(scopedPrepared.statusCode, 200, JSON.stringify(scopedPrepared.payload));
+    assert.equal(scopedPrepared.payload.privacySafe, true);
+    assert.equal(scopedPrepared.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
+    assert.doesNotMatch(scopedPrepared.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    const batchVersion = scopedPrepared.payload.batch.approvalVersion;
     assert.ok([403, 404].includes((await callHandler(authHandlers.getAvailabilityBatch, {
       context: unrelatedManager,
       params: { batchId },
@@ -11234,11 +11252,10 @@ test("Phase 3C schedule SMS review uses current Team access and never sends", as
       params: { batchId },
     })).statusCode));
 
-    const intentId = prepared.payload.batch.recipients[0].intentId;
     const singleSend = await callHandler(authHandlers.sendIntent, {
       context: manager,
       params: { intentId },
-      body: { confirmed: true, approvalVersion: prepared.payload.batch.recipients[0].approvalVersion },
+      body: { confirmed: true, approvalVersion: scopedPrepared.payload.batch.recipients[0].approvalVersion },
     });
     assert.equal(singleSend.statusCode, 503);
     const dispatch = await callHandler(authHandlers.dispatchAvailabilityBatch, {

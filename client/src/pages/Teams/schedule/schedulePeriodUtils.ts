@@ -1,6 +1,7 @@
 import { parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
 import { calendarDateInTimeZone, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
+import { hasOccurrenceIdentityAmbiguity, matchOccurrencesByIdentity } from "../../../../shared/teamScheduleOccurrences.js";
 import { RANGE_PRESET_OPTIONS, resolveRangePreset, type RangePreset } from "../rangeSelection";
 
 export type SchedulePeriodPreset = RangePreset;
@@ -109,12 +110,20 @@ export const findReusablePeriodSchedule = ({
   if (!firstVisibleDate || !lastVisibleDate) return { schedule: null, ambiguous: false };
   const periodStartDate = visibleStartDate || startDate || firstVisibleDate;
   const periodEndDate = visibleEndDate || endDate || lastVisibleDate;
+  const inScope = schedules.filter((schedule) =>
+    !schedule.archivedAt && schedule.churchId === churchId && schedule.teamId === teamId &&
+    Boolean(schedule.startDate && schedule.endDate) &&
+    schedule.startDate! <= periodEndDate && schedule.endDate! >= periodStartDate,
+  );
+  const ambiguous = inScope.some((schedule) =>
+    hasOccurrenceIdentityAmbiguity(schedule.occurrences || [], occurrences, timeZone),
+  );
   const eligible = schedules.filter((schedule) => {
     if (
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate
     ) return false;
-    return coversCurrentOccurrences(schedule.occurrences || [], occurrences);
+    return coversCurrentOccurrences(schedule.occurrences || [], occurrences, timeZone);
   });
   const deduplicated = deduplicateCanonicalGenerated(eligible);
   const exact = deduplicated.filter((schedule) =>
@@ -131,35 +140,18 @@ export const findReusablePeriodSchedule = ({
     String(left.endDate).localeCompare(String(right.endDate)) ||
     left.scheduleId.localeCompare(right.scheduleId),
   );
-  return { schedule: preferred || ordered[0] || null, ambiguous: false };
+  return { schedule: preferred || ordered[0] || null, ambiguous };
 };
 
 const coversCurrentOccurrences = (
   stored: TeamScheduleOccurrence[],
   current: TeamScheduleOccurrence[],
+  timeZone = "UTC",
 ) => {
-  const remaining = new Map(stored.map((saved) => [saved.occurrenceId, saved]));
-  // Reserve stable identities before comparing names, and consume each row once.
-  const unmatched = current.filter((occurrence) => {
-    const saved = remaining.get(occurrence.occurrenceId);
-    if (!saved || new Date(saved.startsAt).getTime() !== new Date(occurrence.startsAt).getTime()) return true;
-    remaining.delete(occurrence.occurrenceId);
-    return false;
-  });
-  const semanticKey = (occurrence: TeamScheduleOccurrence) =>
-    JSON.stringify([String(occurrence.name || "").trim().toLowerCase(), new Date(occurrence.startsAt).getTime()]);
-  const counts = new Map<string, number>();
-  remaining.forEach((saved) => {
-    const key = semanticKey(saved);
-    counts.set(key, (counts.get(key) || 0) + 1);
-  });
-  return unmatched.every((occurrence) => {
-    const key = semanticKey(occurrence);
-    const count = counts.get(key) || 0;
-    if (!count) return false;
-    counts.set(key, count - 1);
-    return true;
-  });
+  const { matches, ambiguousCurrentIds } = matchOccurrencesByIdentity(stored, current, timeZone);
+  return ambiguousCurrentIds.size === 0 && current.every((occurrence) =>
+    matches.has(occurrence.occurrenceId),
+  );
 };
 
 const deduplicateCanonicalGenerated = <T extends TeamScheduleSummary>(schedules: T[]) => {

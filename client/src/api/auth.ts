@@ -2681,6 +2681,7 @@ export type BulkServicePlanTarget = {
   serviceId: string;
   serviceIds: string[];
   groupId?: string;
+  logicalOccurrenceId?: string;
   occurrenceId: string;
   startsAt: string;
   date: string;

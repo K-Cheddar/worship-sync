@@ -1508,6 +1508,9 @@ export const createNotificationIntentHandlers = ({
       const intent = intentById.get(row.intentId);
       const attempt = intent?.attemptId ? attemptById.get(intent.attemptId) : null;
       const snapshot = intent?.approvalSnapshot;
+      const { message: storedMessage, ...safeRow } = row;
+      delete safeRow.phoneNumberSnapshot;
+      const message = intent?.approvalSnapshot ? intent.message : storedMessage;
       const awaitingDispatch = Boolean(intent && ["preview", "ready"].includes(intent.status) && snapshot?.approvalVersion && Number(snapshot.expiresAt) > Date.now());
       const stale = Boolean(row.sourceStale || (snapshot && row.sourceFingerprint && snapshot.sourceFingerprint !== row.sourceFingerprint));
       const previewError = row.exclusionReason || (stale
@@ -1516,7 +1519,7 @@ export const createNotificationIntentHandlers = ({
           ? "This review expired. Review the current schedule again."
           : "");
       return {
-        ...row,
+        ...safeRow,
         eligible: Boolean(awaitingDispatch && !stale),
         eligibilityStatus: privacySafe && row.eligibilityStatus === "opted_out" ? "" : row.eligibilityStatus || "",
         exclusionReason: privacySafe && /opted out/i.test(previewError)
@@ -1530,7 +1533,7 @@ export const createNotificationIntentHandlers = ({
         approvalVersion: snapshot?.approvalVersion || "",
         maskedPhoneNumber: snapshot?.phoneLast4 ? `••• ••• ${snapshot.phoneLast4}` : row.maskedPhoneNumber || "",
         ...(!privacySafe ? { phoneNumberSnapshot: snapshot?.phoneNumberSnapshot || "" } : {}),
-        ...(intent?.approvalSnapshot ? { message: privacySafe ? redactPersonalizedLinks(intent.message) : intent.message } : {}),
+        ...(message !== undefined ? { message: privacySafe ? redactPersonalizedLinks(message) : message } : {}),
       };
     });
     const selected = (batch.selectedMemberIds || []).length;

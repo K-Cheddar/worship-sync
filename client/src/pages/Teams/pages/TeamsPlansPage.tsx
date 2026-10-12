@@ -945,6 +945,9 @@ const TeamsPlansPage = () => {
             serviceId,
             serviceIds,
             ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
+            ...(occurrence.logicalOccurrenceId
+              ? { logicalOccurrenceId: occurrence.logicalOccurrenceId }
+              : {}),
             occurrenceId: occurrence.occurrenceId,
             startsAt: occurrence.startsAt,
             date: getOccurrenceDate(occurrence, serviceTimeZone),

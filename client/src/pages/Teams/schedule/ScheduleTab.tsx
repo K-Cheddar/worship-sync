@@ -54,7 +54,8 @@ import {
   getOccurrenceDate,
   getOccurrenceTimeZoneAbbreviation,
   getSharedOccurrenceTiming,
-  occurrenceIdsMatch,
+  occurrenceScheduleDetailsMatch,
+  preserveStoredOccurrenceIds,
 } from "@/utils/teamScheduleOccurrences";
 import {
   getCreateScheduleDefaultRange,
@@ -781,8 +782,8 @@ const ScheduleTab = ({
   // occurrences and no date range. Computed once so it never drifts as the memo
   // below recomputes on data refreshes.
   const fallbackStartsAt = useMemo(() => serverDate().toISOString(), []);
-  // What occurrences this schedule's services + date range would produce right
-  // now. Compared against the stored shape to detect grouping/timing drift.
+  // What occurrences this schedule's services + date range produce now. The
+  // stable identity is compared separately from current scheduled details.
   const regeneratedOccurrences = useMemo(() => {
     if (
       !selectedSchedule?.startDate ||
@@ -822,13 +823,14 @@ const ScheduleTab = ({
     if (selectedSchedule.scheduleId.startsWith("local-")) return false;
     const stored = selectedSchedule.occurrences || [];
     if (stored.length === 0 || !regeneratedOccurrences) return false;
-    return !occurrenceIdsMatch(stored, regeneratedOccurrences);
-  }, [canEdit, regeneratedOccurrences, selectedSchedule]);
+    return !occurrenceScheduleDetailsMatch(stored, regeneratedOccurrences, serviceTimeZone);
+  }, [canEdit, regeneratedOccurrences, selectedSchedule, serviceTimeZone]);
   const refreshBlocked = Boolean(selectedSchedule && regeneratedOccurrences &&
     !canRefreshScheduleOccurrences({
       schedule: selectedSchedule,
       services: data.services,
       regeneratedOccurrences,
+      timeZone: serviceTimeZone,
     }));
   const [applyingGrouping, setApplyingGrouping] = useState(false);
   // Spreadsheet-style undo/redo for the assignment grid. The stack is
@@ -868,29 +870,35 @@ const ScheduleTab = ({
       redo: isMac ? "⌘⇧Z" : "Ctrl+Shift+Z",
     };
   }, []);
-  // Re-generate occurrences and re-key assignments onto them, then persist —
-  // the one-click path behind the "schedule out of date" nudge.
+  // Refresh snapshots only when every saved occurrence has one exact logical
+  // counterpart. Legacy map keys are retained by preserveStoredOccurrenceIds.
   const refreshScheduleOccurrences = useCallback(async () => {
     if (!canEdit || !selectedSchedule || !regeneratedOccurrences || refreshBlocked || applyingGrouping) return;
     const sourceOccurrences = selectedSchedule.occurrences || [];
+    const refreshedOccurrences = preserveStoredOccurrenceIds(
+      sourceOccurrences,
+      regeneratedOccurrences,
+      serviceTimeZone,
+    );
+    if (!refreshedOccurrences) return;
     const assignments = rekeyAssignmentsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       assignments: selectedSchedule.assignments || {},
     });
     const microphoneAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       rows: selectedSchedule.microphoneAssignments,
     });
     const iemAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       rows: selectedSchedule.iemAssignments,
     });
     const additionalPositionSlots = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       rows: selectedSchedule.additionalPositionSlots,
     });
     setApplyingGrouping(true);
@@ -899,7 +907,7 @@ const ScheduleTab = ({
     resetUndoHistory();
     onScheduleSaved({
       ...selectedSchedule,
-      occurrences: regeneratedOccurrences,
+      occurrences: refreshedOccurrences,
       assignments,
       microphoneAssignments,
       iemAssignments,
@@ -916,7 +924,7 @@ const ScheduleTab = ({
           startDate: selectedSchedule.startDate || "",
           endDate: selectedSchedule.endDate || "",
           serviceIds: selectedSchedule.serviceIds || [],
-          occurrences: regeneratedOccurrences,
+          occurrences: refreshedOccurrences,
           assignments,
           microphoneAssignments,
           iemAssignments,
@@ -937,6 +945,7 @@ const ScheduleTab = ({
     churchId,
     onScheduleSaved,
     regeneratedOccurrences,
+    serviceTimeZone,
     refreshBlocked,
     resetUndoHistory,
     selectedSchedule,
@@ -5408,6 +5417,11 @@ const ScheduleTab = ({
                 labelLayout="inline"
               />
             </div>
+            {periodScheduleMatch.ambiguous && !viewingSavedSchedule ? (
+              <p role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                A saved schedule in this period has occurrence rows that cannot be matched safely to the current services. Its assignments remain preserved. Select that saved schedule to review it before creating another.
+              </p>
+            ) : null}
           </section>
 
           {canShowScheduleWorkspace ? (

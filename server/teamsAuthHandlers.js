@@ -87,9 +87,16 @@ import { persistPortableCreate } from "./dataTransfer/portableCreatePersister.js
 import {
   isValidPortablePlainDate,
   isValidPortableTimeZone,
-  portableWallClockToIso,
 } from "./dataTransfer/time.js";
 import { invalidateChurchServiceTimeZone } from "./churchServiceTimeZone.js";
+import {
+  calendarDateInTimeZone,
+  hasOccurrenceIdentityAmbiguity,
+  logicalOccurrenceIdForGroup,
+  logicalOccurrenceIdForService,
+  matchOccurrencesByIdentity,
+  serviceDateTimeInTimeZone,
+} from "../shared/teamScheduleOccurrences.js";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -917,30 +924,12 @@ export const createTeamsAuthHandlers = ({
       .update(`${churchId}\u0000${teamId}\u0000${startDate}\u0000${endDate}`)
       .digest("hex");
   const generatedPeriodScheduleId = (key) => `generated_${key}`;
-  // Keep the coverage contract aligned with schedulePeriodUtils on the client.
-  const coversCurrentOccurrences = (stored, current) => {
-    const remaining = new Map(stored.map((saved) => [saved.occurrenceId, saved]));
-    // Reserve stable identities before comparing names, and consume each row once.
-    const unmatched = current.filter((occurrence) => {
-      const saved = remaining.get(occurrence.occurrenceId);
-      if (!saved || new Date(saved.startsAt).getTime() !== new Date(occurrence.startsAt).getTime()) return true;
-      remaining.delete(occurrence.occurrenceId);
-      return false;
-    });
-    const semanticKey = (occurrence) =>
-      JSON.stringify([String(occurrence.name || "").trim().toLowerCase(), new Date(occurrence.startsAt).getTime()]);
-    const counts = new Map();
-    remaining.forEach((saved) => {
-      const key = semanticKey(saved);
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
-    return unmatched.every((occurrence) => {
-      const key = semanticKey(occurrence);
-      const count = counts.get(key) || 0;
-      if (!count) return false;
-      counts.set(key, count - 1);
-      return true;
-    });
+  // Legacy timestamp IDs resolve only by service/group identity and church date.
+  const coversCurrentOccurrences = (stored, current, timeZone = "UTC") => {
+    const { matches, ambiguousCurrentIds } = matchOccurrencesByIdentity(stored, current, timeZone);
+    return ambiguousCurrentIds.size === 0 && current.every((occurrence) =>
+      matches.has(occurrence.occurrenceId),
+    );
   };
   const generatedPeriodEnsureQueues = new Map();
 
@@ -1055,7 +1044,7 @@ export const createTeamsAuthHandlers = ({
       "Sat",
     ].indexOf(values.weekday);
     return {
-      date: `${values.year}-${values.month}-${values.day}`,
+      date: calendarDateInTimeZone(instant, timeZone),
       time: `${values.hour}:${values.minute}`,
       weekday: weekdayIndex,
       startsAt: instant.toISOString(),
@@ -1083,19 +1072,19 @@ export const createTeamsAuthHandlers = ({
         .time;
     }
     if (service.reccurence === "weekly") {
-      return Number(service.dayOfWeek) === weekday &&
+      const time = Number(service.dayOfWeek) === weekday &&
         /^\d{2}:\d{2}$/.test(String(service.time || ""))
         ? service.time
         : null;
+      return time && serviceDateTimeInTimeZone(localDate, time, timeZone) ? time : null;
     }
     if (service.reccurence === "multi_weekly") {
-      return (
-        (service.daysOfWeek || []).find(
+      const time = (service.daysOfWeek || []).find(
           (item) =>
             Number(item?.day) === weekday &&
             /^\d{2}:\d{2}$/.test(String(item?.time || "")),
-        )?.time || null
-      );
+        )?.time || null;
+      return time && serviceDateTimeInTimeZone(localDate, time, timeZone) ? time : null;
     }
     if (service.reccurence === "monthly") {
       const [year, month, day] = localDate.split("-").map(Number);
@@ -1105,11 +1094,12 @@ export const createTeamsAuthHandlers = ({
         day + 7 > new Date(Date.UTC(year, month, 0)).getUTCDate();
       const matchesOrdinal =
         ordinal === 5 ? isLastWeekday : Math.ceil(day / 7) === ordinal;
-      return occurrenceDate.getUTCDay() === Number(service.weekday) &&
+      const time = occurrenceDate.getUTCDay() === Number(service.weekday) &&
         matchesOrdinal &&
         /^\d{2}:\d{2}$/.test(String(service.time || ""))
         ? service.time
         : null;
+      return time && serviceDateTimeInTimeZone(localDate, time, timeZone) ? time : null;
     }
     return null;
   };
@@ -1125,6 +1115,16 @@ export const createTeamsAuthHandlers = ({
         400,
         "A target does not match its current service recurrence.",
       );
+    }
+    if (service.reccurence !== "one_time") {
+      const expectedInstant = serviceDateTimeInTimeZone(
+        localParts.date,
+        scheduledTime,
+        timeZone,
+      );
+      if (!expectedInstant || expectedInstant.toISOString() !== localParts.startsAt) {
+        throw httpError(400, "A service occurrence has an invalid scheduled instant.");
+      }
     }
     if (
       service.reccurence === "one_time" &&
@@ -1142,6 +1142,7 @@ export const createTeamsAuthHandlers = ({
     serviceId,
     serviceIds,
     groupId,
+    logicalOccurrenceId,
     occurrenceId,
     startsAt,
     serviceDate,
@@ -1174,9 +1175,7 @@ export const createTeamsAuthHandlers = ({
           .sort(
             (left, right) =>
               left.time.localeCompare(right.time) ||
-              String(left.service?.name || "").localeCompare(
-                String(right.service?.name || ""),
-              ),
+              left.id.localeCompare(right.id),
           )
       : [];
 
@@ -1196,7 +1195,9 @@ export const createTeamsAuthHandlers = ({
       }
       const localOccurrenceId = `group:${groupId}@${localParts.date}`;
       const legacyUtcOccurrenceId = `group:${groupId}@${startsAt.slice(0, 10)}`;
+      const expectedLogicalId = logicalOccurrenceIdForGroup(groupId, localParts.date);
       if (
+        (logicalOccurrenceId && logicalOccurrenceId !== expectedLogicalId) ||
         occurrenceId !== localOccurrenceId &&
         (serviceDate || occurrenceId !== legacyUtcOccurrenceId)
       ) {
@@ -1205,11 +1206,13 @@ export const createTeamsAuthHandlers = ({
       return;
     }
 
+    const expectedLogicalId = logicalOccurrenceIdForService(serviceId, localParts.date);
     if (
       serviceIds.length !== 1 ||
       serviceIds[0] !== serviceId ||
       occurringGroupServices.length > 1 ||
-      occurrenceId !== `${serviceId}@${startsAt}`
+      (logicalOccurrenceId && logicalOccurrenceId !== expectedLogicalId) ||
+      (occurrenceId !== expectedLogicalId && occurrenceId !== `${serviceId}@${startsAt}`)
     ) {
       throw httpError(
         400,
@@ -2290,11 +2293,13 @@ export const createTeamsAuthHandlers = ({
   };
 
   const getTeamScopedServicePlanKeys = async (churchId, reader) => {
-    const teams = await listTeamCollectionForChurch(
-      COLLECTIONS.teams,
-      "teamId",
-      churchId,
-    );
+    const [teams, church] = await Promise.all([
+      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
+      getDoc(COLLECTIONS.churches, churchId),
+    ]);
+    const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+      ? church.serviceTimeZone
+      : "UTC";
     const requestedTeamIds = new Set(
       reader?.role === "admin" ||
         reader?.permissions?.teams === "view" ||
@@ -2324,7 +2329,7 @@ export const createTeamsAuthHandlers = ({
         if (schedule.archivedAt || !activeTeamIds.has(schedule.teamId)) return [];
         return (schedule.occurrences || [])
           .map((occurrence) =>
-            getServicePlanKeyForOccurrence(occurrence, servicePlans),
+            getServicePlanKeyForOccurrence(occurrence, servicePlans, timeZone),
           )
           .filter(Boolean);
       }),
@@ -5114,6 +5119,7 @@ export const createTeamsAuthHandlers = ({
         max: 260,
       });
       const serviceId = normalizeShortText(occurrence?.serviceId, { max: 160 });
+      const logicalOccurrenceId = normalizeShortText(occurrence?.logicalOccurrenceId, { max: 260 });
       if (!occurrenceId) {
         throw httpError(400, "Service occurrence id is required.");
       }
@@ -5136,6 +5142,7 @@ export const createTeamsAuthHandlers = ({
         : [];
       return {
         occurrenceId,
+        ...(logicalOccurrenceId ? { logicalOccurrenceId } : {}),
         serviceId,
         ...(groupId ? { groupId } : {}),
         ...(serviceIds.length ? { serviceIds } : {}),
@@ -5786,7 +5793,7 @@ export const createTeamsAuthHandlers = ({
   };
 
   const getConcreteTeamServiceDate = (service) => {
-    const iso = service?.overrideDateTimeISO || service?.dateTimeISO || "";
+    const iso = service?.dateTimeISO || "";
     if (iso) return String(iso).slice(0, 10);
     return String(service?.date || "");
   };
@@ -5921,24 +5928,19 @@ export const createTeamsAuthHandlers = ({
     return { ...payload, iemAssignments };
   };
 
-  const getServicePlanKeyForOccurrence = (occurrence, servicePlans = []) => {
+  const getServicePlanKeyForOccurrence = (occurrence, servicePlans = [], timeZone = "UTC") => {
     const legacyGroupDate = String(occurrence?.occurrenceId || "")
       .match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
     const date = occurrence?.serviceDate || legacyGroupDate;
-    if (!date && occurrence?.startsAt) {
-      const matchingPlan = servicePlans.find(
-        (plan) =>
-          plan.startsAt === occurrence.startsAt &&
-          (occurrence.groupId
-            ? plan.groupId === occurrence.groupId
-            : plan.serviceId === occurrence.serviceId),
-      );
-      if (matchingPlan?.planKey) return matchingPlan.planKey;
-    }
-    const calendarDate = date || String(occurrence?.startsAt || "").slice(0, 10);
-    return occurrence?.groupId
-      ? `group:${occurrence.groupId}@${calendarDate}`
-      : `${occurrence?.serviceId || ""}@${calendarDate}`;
+    const matchingPlan = servicePlans.find((plan) =>
+      plan.startsAt === occurrence?.startsAt &&
+      (occurrence?.groupId
+        ? plan.groupId === occurrence.groupId
+        : plan.serviceId === occurrence?.serviceId),
+    );
+    if (matchingPlan?.planKey) return matchingPlan.planKey;
+    const resolved = resolveOccurrenceIdentity({ ...occurrence, ...(date ? { serviceDate: date } : {}) }, timeZone);
+    return resolved?.logicalOccurrenceId || "";
   };
 
   /**
@@ -5947,7 +5949,7 @@ export const createTeamsAuthHandlers = ({
    * data — only people assigned to the requested plan.
    */
   const buildServicePlanAssignments = async (churchId, planKey, servicePlan) => {
-    const [members, positions, teams, schedules] = await Promise.all([
+    const [members, positions, teams, schedules, church] = await Promise.all([
       listTeamCollectionForChurch(
         COLLECTIONS.teamRosterMembers,
         "memberId",
@@ -5964,7 +5966,11 @@ export const createTeamsAuthHandlers = ({
         "scheduleId",
         churchId,
       ),
+      getDoc(COLLECTIONS.churches, churchId),
     ]);
+    const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+      ? church.serviceTimeZone
+      : "UTC";
     const memberById = new Map(
       members.map((member) => [member.memberId, member]),
     );
@@ -5977,7 +5983,7 @@ export const createTeamsAuthHandlers = ({
       if (schedule.archivedAt) return [];
       const occurrence = (schedule.occurrences || []).find(
         (candidate) =>
-          getServicePlanKeyForOccurrence(candidate) === planKey ||
+          getServicePlanKeyForOccurrence(candidate, servicePlan ? [servicePlan] : [], timeZone) === planKey ||
           (candidate.startsAt === servicePlan?.startsAt &&
             (candidate.groupId
               ? candidate.groupId === servicePlan?.groupId
@@ -12411,6 +12417,12 @@ export const createTeamsAuthHandlers = ({
             .digest("hex");
         };
         const data = await readPortableDatasets(churchId);
+        const church = type === "schedules"
+          ? await getDoc(COLLECTIONS.churches, churchId)
+          : null;
+        const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
         const teamActionKey = (sourceValue) => stablePortableJson([normalizePortableMatchValue(sourceValue)]);
         const sourceCsvHash = String(req.body?.previewCsvHash || "");
         const pendingTeamId = (sourceValue) => `portable-pending-team-${crypto.createHash("sha256").update(`${sourceCsvHash}\u0000${normalizePortableMatchValue(sourceValue)}`).digest("hex").slice(0, 32)}`;
@@ -13084,16 +13096,11 @@ export const createTeamsAuthHandlers = ({
                     400,
                     "Use a valid 24-hour start time, such as 10:30.",
                   );
-                const timeZone = String(req.body?.timeZone || "UTC").trim();
-                const startsAt = portableWallClockToIso(
-                  date,
-                  startTime,
-                  timeZone,
-                );
+                const startsAt = serviceDateTimeInTimeZone(date, startTime, serviceTimeZone)?.toISOString() || null;
                 if (!startsAt)
                   throw httpError(
                     400,
-                    "Use a valid service date, time, and time zone.",
+                    "The service time does not exist on this date in the church time zone.",
                   );
                 const priorOccurrence = existing?.occurrences?.find(
                   (item) =>
@@ -13104,25 +13111,28 @@ export const createTeamsAuthHandlers = ({
                   priorOccurrence?.occurrenceId ||
                     (serviceIds.length > 1
                       ? `group:${services[0].serviceGroupId}@${date}`
-                      : `${serviceIds[0]}@${startsAt}`),
+                      : logicalOccurrenceIdForService(serviceIds[0], date)),
                 );
                 const occurrenceKey = `${date}\u0000${startTime}\u0000${serviceIds.join(",")}`;
                 if (!occurrencesByKey.has(occurrenceKey)) {
                   const requirementMap = new Map();
+                  const teamPositionIds = new Set(data.positions
+                    .filter((position) => position.teamId === team.teamId)
+                    .map((position) => position.positionId));
                   services.forEach((service) =>
                     (service.positionRequirements || []).forEach(
                       ({ positionId, count }) =>
-                        requirementMap.set(
+                        teamPositionIds.has(positionId) && requirementMap.set(
                           positionId,
-                          Math.max(
-                            requirementMap.get(positionId) || 0,
-                            Number(count) || 0,
-                          ),
+                          Math.max(requirementMap.get(positionId) || 0, Number(count) || 0),
                         ),
                     ),
                   );
                   occurrencesByKey.set(occurrenceKey, {
                     occurrenceId,
+                    logicalOccurrenceId: serviceIds.length > 1
+                      ? logicalOccurrenceIdForGroup(services[0].serviceGroupId, date)
+                      : logicalOccurrenceIdForService(serviceIds[0], date),
                     serviceId: serviceIds[0],
                     ...(serviceIds.length > 1
                       ? { groupId: services[0].serviceGroupId }
@@ -17539,14 +17549,15 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         let payload = await validateTeamSchedulePayload(req.body, churchId);
-        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
-        if (!timeZone)
-          throw httpError(400, "Choose a time zone for this schedule period.");
         const admin = await requireTeamsEditForTeam(
           req,
           churchId,
           payload.teamId,
         );
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
         const activeServicesById = new Map(
           (await readChurchServiceTimes(churchId))
             .filter((service) => !service?.archivedAt)
@@ -17556,6 +17567,16 @@ export const createTeamsAuthHandlers = ({
               }),
               service,
             ]),
+        );
+        const teamPositionIds = new Set(
+          (await listTeamCollectionForChurch(
+            COLLECTIONS.teamPositions,
+            "positionId",
+            churchId,
+          ))
+            .filter((position) => position.teamId === payload.teamId)
+            .map((position) => normalizeShortText(position.positionId, { max: 160 }))
+            .filter(Boolean),
         );
         if (
           payload.serviceIds.some(
@@ -17601,6 +17622,8 @@ export const createTeamsAuthHandlers = ({
             serviceIds: occurrenceServiceIds,
             groupId:
               normalizeShortText(occurrence.groupId, { max: 160 }) || undefined,
+            logicalOccurrenceId:
+              normalizeShortText(occurrence.logicalOccurrenceId, { max: 260 }) || undefined,
             occurrenceId: occurrence.occurrenceId,
             startsAt: occurrence.startsAt,
             serviceDate: occurrence.serviceDate,
@@ -17619,17 +17642,17 @@ export const createTeamsAuthHandlers = ({
               ? occurrence.serviceIds
               : [occurrence.serviceId],
           );
-          const requirements = occurrence.groupId
-            ? mergeServicePositionRequirements(
-                serviceIds.map((id) => activeServicesById.get(id)),
-              )
-            : sanitizePositionRequirements(
-                activeServicesById.get(occurrence.serviceId)
-                  ?.positionRequirements,
-              );
+          const requirements = mergeServicePositionRequirements(
+            serviceIds.map((id) => activeServicesById.get(id)),
+          ).filter((requirement) => teamPositionIds.has(requirement.positionId));
+          const serviceDate = getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date;
+          const logicalOccurrenceId = occurrence.groupId
+            ? logicalOccurrenceIdForGroup(occurrence.groupId, serviceDate)
+            : logicalOccurrenceIdForService(occurrence.serviceId, serviceDate);
           return {
             ...occurrence,
-            serviceDate: getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date,
+            logicalOccurrenceId,
+            serviceDate,
             ...(requirements.length
               ? { positionRequirements: requirements }
               : { positionRequirements: [] }),
@@ -17682,12 +17705,28 @@ export const createTeamsAuthHandlers = ({
                 Object.keys(schedule.optionalPositionSlots || {}).length ||
                 Object.keys(schedule.responses || {}).length,
             );
+          const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
+            schedule.churchId === churchId && hasScheduleData(schedule) &&
+            schedule.startDate && schedule.endDate &&
+            schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
+            hasOccurrenceIdentityAmbiguity(
+              schedule.occurrences || [],
+              payload.occurrences,
+              timeZone,
+            ),
+          );
+          if (ambiguousSavedSchedule) {
+            throw httpError(
+              409,
+              "A saved schedule has occurrence rows that cannot be matched safely. Its assignments were preserved; review the saved schedule before creating another.",
+            );
+          }
           // Resolve the default schedule from the full requested period. A
           // partial custom schedule remains an overlap-picker option.
           const compatible = activeTeamSchedules.filter(
             (schedule) => schedule.churchId === churchId &&
               schedule.startDate && schedule.endDate &&
-              coversCurrentOccurrences(schedule.occurrences || [], payload.occurrences),
+              coversCurrentOccurrences(schedule.occurrences || [], payload.occurrences, timeZone),
           );
           const canonicalGenerated = compatible.filter(
             (schedule) =>
@@ -17741,7 +17780,7 @@ export const createTeamsAuthHandlers = ({
 
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
           const reuseExisting = (existing) => {
-            if (!coversCurrentOccurrences(existing.occurrences || [], payload.occurrences)) {
+            if (!coversCurrentOccurrences(existing.occurrences || [], payload.occurrences, timeZone)) {
               throw httpError(409, "This saved period is missing current services. Edit its services or create a custom schedule for this period.");
             }
             return { schedule: existing, created: false };
@@ -18702,9 +18741,10 @@ export const createTeamsAuthHandlers = ({
           throw httpError(400, "Existing plans can only be skipped.");
         }
         const useServiceDefaults = req.body?.useServiceDefaults === true;
-        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
-        if (!timeZone)
-          throw httpError(400, "Choose a time zone for service occurrences.");
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
         const templateId = normalizeShortText(req.body?.templateId, {
           max: 160,
         });
@@ -18750,11 +18790,14 @@ export const createTeamsAuthHandlers = ({
           }
           const expectedOccurrenceId = groupId
             ? `group:${groupId}@${date}`
+            : logicalOccurrenceIdForService(serviceId, date);
+          const legacyOccurrenceId = groupId
+            ? `group:${groupId}@${startsAt.slice(0, 10)}`
             : `${serviceId}@${startsAt}`;
           const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
           if (
             !occurrenceId ||
-            occurrenceId !== expectedOccurrenceId ||
+            (occurrenceId !== expectedOccurrenceId && occurrenceId !== legacyOccurrenceId) ||
             localParts.date !== date
           ) {
             throw httpError(
@@ -18776,6 +18819,7 @@ export const createTeamsAuthHandlers = ({
             serviceId,
             serviceIds,
             groupId,
+            logicalOccurrenceId: raw?.logicalOccurrenceId,
             occurrenceId,
             startsAt,
             serviceDate: date,

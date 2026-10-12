@@ -46,7 +46,9 @@ export const getOneTimeServiceOccurrence = (
   service: TeamService,
   timeZone?: string,
 ): TeamScheduleOccurrence | null => {
-  const isoDate = service.overrideDateTimeISO || service.dateTimeISO;
+  // Countdown overrides are temporary live controls; plan lookup follows the
+  // scheduled one-time definition exactly like team schedule generation.
+  const isoDate = service.dateTimeISO;
   if (!isoDate) return null;
   const resolvedTimeZone = timeZone || "UTC";
   const date = calendarDateInTimeZone(new Date(isoDate), resolvedTimeZone);

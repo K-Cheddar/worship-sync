@@ -243,7 +243,7 @@ export const hasOccurrenceIdentityAmbiguity = (stored, current, timeZone = "UTC"
     if (sameKey.length) return false;
     return storedRows.some((row) =>
       row.identity?.serviceDate === identity.serviceDate &&
-      row.identity.serviceIds.some((serviceId) => identity.serviceIds.includes(serviceId),
+      row.identity.serviceIds.some((serviceId) => identity.serviceIds.includes(serviceId)),
     );
   });
 };

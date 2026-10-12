@@ -9,7 +9,11 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import { clampPlainDateToMin } from "@/utils/plainDate";
-import { getDefaultScheduleRange, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
+import {
+  getDefaultScheduleRange,
+  getOccurrenceDate,
+  preserveStoredOccurrenceIds,
+} from "@/utils/teamScheduleOccurrences";
 
 export type ScheduleFormMode = "edit" | "create-custom" | "copy";
 
@@ -19,10 +23,12 @@ export const canRefreshScheduleOccurrences = ({
   schedule,
   services,
   regeneratedOccurrences,
+  timeZone = "UTC",
 }: {
   schedule: TeamSchedule;
   services: TeamService[];
   regeneratedOccurrences: TeamScheduleOccurrence[];
+  timeZone?: string;
 }) => {
   const availableServiceIds = new Set(services.map((service) => service.serviceId));
   const storedServiceIds = new Set([
@@ -31,7 +37,8 @@ export const canRefreshScheduleOccurrences = ({
       occurrence.serviceIds || [occurrence.serviceId]),
   ]);
   return [...storedServiceIds].every((id) => availableServiceIds.has(id)) &&
-    (!(schedule.occurrences?.length) || regeneratedOccurrences.length > 0);
+    regeneratedOccurrences.length > 0 &&
+    preserveStoredOccurrenceIds(schedule.occurrences || [], regeneratedOccurrences, timeZone) !== null;
 };
 
 export const getScheduleCopyDraftKey = (sourceScheduleId: string) =>
