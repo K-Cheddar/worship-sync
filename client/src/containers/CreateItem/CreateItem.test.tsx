@@ -173,12 +173,14 @@ const renderCreateItem = ({
   store = createTestStore(),
   initialEntry = "/controller/create",
   controllerProfileId,
+  db,
 }: {
   store?: ReturnType<typeof createTestStore>;
   initialEntry?: string;
   controllerProfileId?: string;
+  db?: PouchDB.Database;
 } = {}) => {
-  const controllerContext = createMockControllerContext();
+  const controllerContext = createMockControllerContext(db ? { db } : {});
   const globalContext = createMockGlobalContext();
 
   const routes = (
@@ -219,6 +221,45 @@ const renderCreateItem = ({
 };
 
 describe("CreateItem", () => {
+  it("creates a B-titled document with A import lyrics after renaming the pending creation draft", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof resolveLrclibImport>>) => void;
+    mockedResolveLrclibImport.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const a = createMockItem({ _id: "song-A", name: "Song A" });
+    const b = createMockItem({ _id: "song-B", name: "Song B" });
+    const docs = new Map([[a._id, a], [b._id, b]]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        const found = docs.get(id);
+        if (!found) throw Object.assign(new Error("not found"), { status: 404 });
+        return found;
+      }),
+      put: jest.fn(async (doc: ItemState) => { docs.set(doc._id, doc); return { rev: "1-created" }; }),
+    };
+    mockedCreateNewSong.mockImplementation(jest.requireActual("../../utils/itemUtil").createNewSong);
+    const store = createTestStore({
+      createItem: { ...initialCreateItemState, name: "Song A" }, allSongDocs: [a, b],
+    });
+    renderCreateItem({ store, db: db as never });
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    fireEvent.change(screen.getByLabelText("Song name:"), { target: { value: "Song B" } });
+    await act(async () => finish({
+      match: { source: "genius", geniusId: 17, trackName: "Song A", artistName: "Artist A",
+        albumName: "", plainLyrics: "Song A exclusive imported lyrics", syncedLyrics: null },
+      candidates: [],
+    }));
+    expect(store.getState().createItem.name).toBe("Song B");
+    expect(store.getState().createItem.text).toBe("Song A exclusive imported lyrics");
+    expect(store.getState().allDocs.allSongDocs).toEqual([a, b]);
+    fireEvent.click(screen.getByRole("button", { name: "Create Song" }));
+    await waitFor(() => expect(db.put).toHaveBeenCalledTimes(1));
+    const created = [...docs.values()].filter(doc => !["song-A", "song-B"].includes(doc._id));
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe("Song B");
+    expect(created[0].arrangements[0].formattedLyrics[0].words).toBe("Song A exclusive imported lyrics");
+    expect(docs.get(a._id)).toEqual(a);
+    expect(docs.get(b._id)).toEqual(b);
+  });
+
   beforeEach(() => {
     mockedCreateNewSong.mockReset();
     mockedCreateNewFreeForm.mockReset();

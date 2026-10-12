@@ -6,6 +6,7 @@ import {
   createNotificationIntent,
   NOTIFICATION_INTENT_TYPES,
 } from "./notificationIntents.js";
+import { createSmsStatusWebhookHandler } from "./smsStatusWebhook.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { measureSmsMessage } from "./smsMessage.js";
 
@@ -17,6 +18,7 @@ const createHarness = ({
   authorizeAvailabilityForm,
   isAvailabilityRecipientInFormScope,
   validateReplacementCandidate,
+  beforeSetDoc,
 } = {}) => {
   const collections = new Map();
   const storeFor = (collection) => {
@@ -84,6 +86,7 @@ const createHarness = ({
           const prior = storeFor(ref.collection).get(ref.id) || {};
           storeFor(ref.collection).set(ref.id, options.merge ? { ...prior, ...value } : value);
         },
+        delete: (ref) => storeFor(ref.collection).delete(ref.id),
         create: (ref, value) => {
           if (storeFor(ref.collection).has(ref.id)) throw new Error("already exists");
           storeFor(ref.collection).set(ref.id, value);
@@ -93,6 +96,7 @@ const createHarness = ({
       return run;
     },
   };
+  const getDoc = async (collection, id) => storeFor(collection).get(id) || null;
   const handler = createNotificationIntentHandlers({
     COLLECTIONS: {
       notificationIntents: "notificationIntents", smsDeliveryAttempts: "smsDeliveryAttempts",
@@ -105,7 +109,7 @@ const createHarness = ({
     },
     assertCsrf: async () => undefined,
     createId: (prefix) => `${prefix}_${++nextId}`,
-    getDoc: async (collection, id) => storeFor(collection).get(id) || null,
+    getDoc,
     deleteDoc: async (collection, id) => storeFor(collection).delete(id),
     hashValue,
     httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
@@ -184,6 +188,7 @@ const createHarness = ({
     smsProviderFactory: () => provider,
     validateTwilioStatusCallbackUrl: () => "https://example.test/status",
     setDoc: async (collection, id, data, { merge = false } = {}) => {
+      if (beforeSetDoc) await beforeSetDoc(collection, id, data);
       const current = storeFor(collection).get(id) || {};
       storeFor(collection).set(id, merge ? { ...current, ...data } : { ...data });
     },
@@ -215,7 +220,7 @@ const createHarness = ({
     await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
     return res;
   };
-  return { collections, storeFor, handler, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
+  return { collections, storeFor, getDoc, db, handler, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
 
 for (const firestore of [false, true]) {
@@ -694,6 +699,7 @@ test("Twilio 21609 records its provider message and code as a definitive rejecti
     throw Object.assign(new Error("A statusCallback URL must be publicly accessible."), {
       code: 21609,
       statusCode: 400,
+      definitiveRejection: true,
     });
   } });
   const { intent } = await h.preview();
@@ -720,7 +726,7 @@ test("interrupted bulk dispatch marks in-flight attempts uncertain and can resum
   intent.sendStartedAt = "2020-01-01T00:00:00.000Z";
   intent.attemptId = "attempt_interrupted";
   h.storeFor("notificationIntents").set(intent.intentId, intent);
-  h.storeFor("smsDeliveryAttempts").set(intent.attemptId, { attemptId: intent.attemptId, churchId: h.churchId, status: "pending" });
+  h.storeFor("smsDeliveryAttempts").set(intent.attemptId, { attemptId: intent.attemptId, churchId: h.churchId, notificationIntentId: intent.intentId, memberId: intent.memberId, recipientId: intent.recipientId, sourceId: intent.sourceId, status: "pending" });
   h.storeFor("notificationBatches").set("batch_interrupted", {
     batchId: "batch_interrupted", churchId: h.churchId, formId: h.form.formId,
     intentType: "availability_request", status: "dispatching", dispatchStartedAt: "2020-01-01T00:00:00.000Z",
@@ -921,3 +927,93 @@ test("batch consent withdrawal or expired individual approval never calls provid
     assert.equal(h.providerCalls, 0);
   }
 });
+
+
+test("accepted send with repeated intent-write failures retains SID and recovers without another provider call", async () => {
+  let fail = true;
+  const h = createHarness({ beforeSetDoc: async (collection, _id, data) => {
+    if (fail && collection === "notificationIntents" && data.status === "sent") throw new Error("intent write unavailable");
+  } });
+  const { intent } = await h.preview();
+  assert.equal((await h.send(intent.intentId)).statusCode, 500);
+  const attempt = [...h.storeFor("smsDeliveryAttempts").values()][0];
+  assert.equal(attempt.providerMessageId, "SM1");
+  assert.equal(attempt.outcome, "confirmed");
+  assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "sending");
+  assert.equal((await h.send(intent.intentId)).statusCode, 409);
+  fail = false;
+  h.storeFor("notificationIntents").get(intent.intentId).sendStartedAt = "2020-01-01";
+  const res = { status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+  await h.handler.listIntents({ params: { churchId: h.churchId }, query: { formId: h.form.formId } }, res);
+  assert.equal(res.payload.intents[0].status, "sent");
+  assert.equal((await h.send(intent.intentId)).statusCode, 409);
+  assert.equal(h.providerCalls, 1);
+});
+
+for (const firestore of [false, true]) {
+  test(`callback before send-result persistence wins over provider timeout (${firestore ? "transaction" : "memory"})`, async () => {
+    let h;
+    h = createHarness({ firestore, providerSend: async ({ statusCallbackUrl }) => {
+      const handler = createSmsStatusWebhookHandler({
+        getDoc: h.getDoc, requireFirestore: () => firestore ? h.db : null,
+        queryDocs: async () => [], nowIso: () => new Date().toISOString(),
+        setDoc: async (collection, id, patch) => h.storeFor(collection).set(id, { ...h.storeFor(collection).get(id), ...patch }),
+        validateSignature: () => true, normalizeStatus: (status) => status,
+        getAuthToken: () => "test", getCallbackUrl: () => statusCallbackUrl,
+      });
+      const res = { status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+      await handler({ headers: {}, body: { MessageSid: "SMearly", MessageStatus: "delivered", To: h.phoneNumber, AccountSid: "AC1" } }, res);
+      assert.equal(res.payload.updated, true);
+      throw Object.assign(new Error("request timed out after acceptance"), { code: 21609 });
+    } });
+    const { intent } = await h.preview();
+    const sent = await h.send(intent.intentId);
+    assert.equal(sent.payload.success, true);
+    assert.equal(sent.payload.attempt.status, "delivered");
+    assert.equal(sent.payload.attempt.callbackToken, undefined);
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "sent");
+    assert.equal((await h.send(intent.intentId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+  });
+}
+
+test("arbitrary five-digit provider code remains unknown and blocked", async () => {
+  const h = createHarness({ providerSend: async () => { throw Object.assign(new Error("lost reply"), { code: 21609 }); } });
+  const { intent } = await h.preview();
+  assert.equal((await h.send(intent.intentId)).payload.outcome, "unknown");
+  assert.equal((await h.send(intent.intentId)).statusCode, 409);
+  assert.equal(h.providerCalls, 1);
+});
+
+
+for (const firestore of [false, true]) {
+  test(`older accepted-attempt fence blocks another deliberately prepared claim (${firestore ? "transaction" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    const { intent } = await h.preview();
+    h.storeFor("notificationIntents").get(intent.intentId).providerAcceptedAttemptId = "older";
+    assert.equal((await h.send(intent.intentId)).statusCode, 409);
+    assert.equal(h.providerCalls, 0);
+  });
+}
+
+
+for (const firestore of [false, true]) {
+  test(`replacement preview cleanup cannot delete an intent accepted concurrently (${firestore ? "transaction" : "memory"})`, async () => {
+    let h; let interleaved = false;
+    h = createHarness({ firestore, beforeSetDoc: async (collection, id, data) => {
+      if (collection !== "notificationIntents" || !data.approvalSnapshot || interleaved) return;
+      interleaved = true;
+      h.storeFor(collection).set(id, { ...h.storeFor(collection).get(id), ...data });
+      assert.equal((await h.send(id)).payload.success, true);
+      throw new Error("preview response persistence failed after concurrent send");
+    } });
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.prepareReplacementInvitation({ params: { churchId: h.churchId }, body: { scheduleId: h.schedule.scheduleId, occurrenceId: "occ_1", cellKey: "position::0", memberId: h.member.memberId } }, res);
+    assert.equal(res.statusCode, 500);
+    const retained = [...h.storeFor("notificationIntents").values()][0];
+    assert.equal(retained.status, "sent");
+    assert.equal(retained.providerMessageId, "SM1");
+    assert.equal((await h.send(retained.intentId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+  });
+}

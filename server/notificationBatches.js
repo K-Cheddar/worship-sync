@@ -38,8 +38,8 @@ export const executeReviewedNotificationBatch = async ({
       continue;
     }
     if (current.status === "sending" && isStaleSending(current)) {
-      await markUnknownAfterInterruption(current);
-      results.push({ intentId, status: "unknown", outcome: "unknown" });
+      const recovered = await markUnknownAfterInterruption(current);
+      results.push({ intentId, status: recovered?.status || "unknown", outcome: recovered?.outcome || "unknown" });
       continue;
     }
     if (!batchRecipient?.approvalVersion || batchRecipient.approvalVersion !== current.approvalSnapshot?.approvalVersion) {

@@ -15,6 +15,7 @@ process.env.RESEND_API_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import twilio from "twilio";
 import { createHash } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
@@ -12222,7 +12223,22 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
   });
   assert.equal(form.statusCode, 200);
   const body = { formId: form.payload.form.formId, memberIds: [memberId], intentType: "availability_request", requestKey: "batch_request" };
-  const fake = createFakeSmsProvider({ response: { providerMessageId: "SM_foundation_batch", status: "accepted" } });
+  const previousCallback = process.env.TWILIO_STATUS_CALLBACK_URL;
+  const previousToken = process.env.TWILIO_AUTH_TOKEN;
+  process.env.TWILIO_STATUS_CALLBACK_URL = "https://worshipsync.net/api/webhooks/twilio/sms-status?configured=1";
+  process.env.TWILIO_AUTH_TOKEN = "fake-signing-secret";
+  const fake = createFakeSmsProvider({ sendMessage: async ({ statusCallbackUrl }) => {
+    const params = { MessageSid: "SM_foundation_batch", MessageStatus: "delivered", To: phoneNumber, AccountSid: "AC_test" };
+    const url = new URL(statusCallbackUrl);
+    const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await authHandlers.handleSmsStatusWebhook({
+      originalUrl: url.pathname + url.search,
+      headers: { "x-twilio-signature": twilio.getExpectedTwilioSignature("fake-signing-secret", statusCallbackUrl, params) }, body: params,
+    }, response);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.updated, true);
+    return { providerMessageId: "SM_foundation_batch", status: "accepted" };
+  } });
   setSmsProviderForServerTests(fake);
   try {
     const prepared = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body });
@@ -12242,6 +12258,10 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
     assert.equal(sent.payload.batch.summary.sent, 1);
     assert.match(fake.calls[0].body, /\/a\/r_/);
     const intent = await getDoc("notificationIntents", batch.intentIds[0]);
+    assert.equal((await getDoc("smsDeliveryAttempts", intent.attemptId)).status, "delivered");
+    const history = await callHandler(authHandlers.getTeamIntakeSmsAttempts, { context, params: { formId: form.payload.form.formId } });
+    assert.equal(history.statusCode, 200);
+    assert.equal(history.payload.attempts[0].callbackToken, undefined);
     await setDoc("smsDeliveryAttempts", intent.attemptId, { status: "undelivered" }, { merge: true });
     const again = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body: { ...body, requestKey: "new_request" } });
     assert.equal(again.payload.batch.summary.eligible, 0);
@@ -12249,6 +12269,8 @@ test("availability SMS batch uses the composed auth handlers and preserves accep
     assert.equal(fake.calls.length, 1);
   } finally {
     setSmsProviderForServerTests(null);
+    if (previousCallback === undefined) delete process.env.TWILIO_STATUS_CALLBACK_URL; else process.env.TWILIO_STATUS_CALLBACK_URL = previousCallback;
+    if (previousToken === undefined) delete process.env.TWILIO_AUTH_TOKEN; else process.env.TWILIO_AUTH_TOKEN = previousToken;
   }
 });
 
@@ -12574,7 +12596,8 @@ test("individual intake SMS records provider failure and blocks missing consent,
   const failingProvider = createFakeSmsProvider({
     sendMessage: async () => {
       const error = new Error("provider rejected message");
-      error.code = "30007";
+      error.code = "21609";
+      error.definitiveRejection = true;
       throw error;
     },
   });
@@ -12594,7 +12617,7 @@ test("individual intake SMS records provider failure and blocks missing consent,
       { field: "recipientId", value: recipientId },
     ]);
     assert.equal(attempts.at(-1).status, "failed");
-    assert.equal(attempts.at(-1).failureCode, "30007");
+    assert.equal(attempts.at(-1).failureCode, "21609");
   } finally {
     setSmsProviderForServerTests(null);
   }

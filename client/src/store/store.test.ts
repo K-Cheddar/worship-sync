@@ -284,6 +284,196 @@ const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// Characterization tests deliberately assert the current defects. Convert the
+// defect expectations to preservation expectations when the fixes are approved.
+describe("item content integrity investigation", () => {
+  const fixture = (id: string, type = "song") => createSongDoc({
+    _id: id, _rev: "1-original", name: id, type,
+    slides: [createScreenSlide(id + "-slide", id + " exclusive words")],
+    arrangements: type === "song" ? [{
+      id: id + "-arrangement", name: "Master",
+      slides: [createScreenSlide(id + "-arr-slide", id + " exclusive words")],
+      formattedLyrics: [{ id: id + "-section", type: "Verse", name: "Verse",
+        words: id + " exclusive words", slideSpan: 1 }],
+      songOrder: [{ id: id + "-order", name: "Verse" }],
+    }] : [],
+  });
+  type Fixture = ReturnType<typeof fixture> & { _rev?: string; formattedSections?: unknown };
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const setup = () => {
+    const runtime = loadStoreWithItemPersistence();
+    const docs = new Map<string, Fixture>([
+      ["song-A", fixture("song-A")], ["song-B", fixture("song-B")],
+      ["free-A", { ...fixture("free-A", "free"),
+        formattedSections: [{ sectionNum: 1, words: "free-A exclusive words", slideSpan: 1 }] }],
+      ["free-B", fixture("free-B", "free")],
+    ]);
+    let revision = 1;
+    runtime.db.get.mockImplementation(async (id: string) => clone(docs.get(id)));
+    const commit = async (doc: Fixture) => {
+      const current = docs.get(doc._id);
+      if (current?._rev !== doc._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = String(++revision) + "-written";
+      docs.set(doc._id, clone({ ...doc, _rev: rev }));
+      return { ok: true, id: doc._id, rev };
+    };
+    runtime.db.put.mockImplementation(commit);
+    const select = (id: string) => runtime.store.dispatch(
+      runtime.itemSlice.actions.setActiveItem(clone(docs.get(id))),
+    );
+    const edit = (name: string) => runtime.store.dispatch(runtime.itemSlice.actions._setName(name));
+    const tick = async () => { await jest.advanceTimersByTimeAsync(1500); await flushListenerEffects(); };
+    return { ...runtime, docs, select, edit, tick, commit };
+  };
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("saves captured A under A after switching to B during debounce", async () => {
+    const { docs, select, edit, tick, db } = setup();
+    const beforeB = clone(docs.get("song-B"));
+    select("song-A"); edit("A edited"); select("song-B");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A edited");
+    expect(docs.get("song-B")).toEqual(beforeB);
+    expect(db.get).toHaveBeenCalledWith("song-A");
+    expect(db.get).not.toHaveBeenCalledWith("song-B");
+  });
+
+  it("loses A edits when an edit of B cancels A before debounce completes", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("song-A"); edit("A lost"); select("song-B"); edit("B edited");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-B")?.name).toBe("B edited");
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it("finishes an initiated A put under A without reconciling B", async () => {
+    const { docs, select, edit, tick, db, commit, store, postMessage } = setup();
+    const held = deferred<void>();
+    db.put.mockImplementation(async (doc: Fixture) => { await held.promise; return commit(doc); });
+    select("song-A"); edit("A in flight"); await tick();
+    expect(db.put).toHaveBeenCalledTimes(1);
+    select("song-B"); held.resolve(); await flushListenerEffects(); await flushListenerEffects();
+    expect(docs.get("song-A")?.name).toBe("A in flight");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    expect(store.getState().undoable.present.item._id).toBe("song-B");
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it("cancels A after its delayed get resolves when B starts a newer save", async () => {
+    const { docs, select, edit, tick, db } = setup();
+    const held = deferred<Fixture>();
+    db.get.mockImplementation((id: string) => id === "song-A"
+      ? held.promise : Promise.resolve(clone(docs.get(id))));
+    select("song-A"); edit("A canceled"); await tick();
+    select("song-B"); edit("B saved");
+    held.resolve(clone(docs.get("song-A")!)); await flushListenerEffects();
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-B")?.name).toBe("B saved");
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-B" }));
+  });
+
+  it("persists stale free-A sections into free-B when the incoming doc lacks them", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("free-A"); select("free-B"); edit("B renamed");
+    await tick();
+    expect(docs.get("free-B")?.formattedSections).toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("free-B")?.slides).toEqual(fixture("free-B", "free").slides);
+  });
+
+  it("carries custom sections through a song and back into another custom document", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("free-A"); select("song-A"); edit("Song renamed"); await tick();
+    expect(docs.get("song-A")?.formattedSections).toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
+    select("free-B"); edit("Free renamed"); await tick();
+    expect(docs.get("free-B")?.formattedSections).toEqual(docs.get("free-A")?.formattedSections);
+  });
+
+  it("overwrites a second client's newer content by fetching its latest revision", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("song-A"); edit("Local rename");
+    const remote = { ...fixture("song-A"), _rev: "2-remote",
+      arrangements: fixture("song-B").arrangements };
+    docs.set("song-A", remote);
+    await tick();
+    expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
+    expect(docs.get("song-A")?._rev).not.toBe(remote._rev);
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it("leaves failed writes pending without changing stored content", async () => {
+    const { docs, select, edit, tick, db, store } = setup();
+    const before = clone([...docs]);
+    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    db.put.mockRejectedValue(Object.assign(new Error("write failed"), { status: 500 }));
+    select("song-A"); edit("Failed edit"); await tick();
+    expect([...docs]).toEqual(before);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("preserves the remote revision when a second client writes between get and put", async () => {
+    const { docs, select, edit, tick, db, commit, store } = setup();
+    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote won" };
+    db.put.mockImplementation(async (doc: Fixture) => {
+      docs.set("song-A", remote);
+      return commit(doc);
+    });
+    select("song-A"); edit("Local losing edit"); await tick();
+    expect(docs.get("song-A")).toEqual(remote);
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("buffers replicated A while local edits are pending, then stale autosave replaces it", async () => {
+    const { docs, select, edit, tick, store } = setup();
+    select("song-A"); edit("Local edit");
+    const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
+    docs.set("song-A", remote);
+    store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("Local edit");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+  });
+
+  it("rapid back-and-forth navigation keeps the last surviving payload paired with its ID", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("song-A"); edit("A lost"); select("song-B"); edit("B survives");
+    select("song-A"); select("song-B"); await tick();
+    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-B")?.name).toBe("B survives");
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it("undo and redo after changing items persist each restored snapshot under its own identity", async () => {
+    const { docs, select, edit, tick, store } = setup();
+    store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    await jest.runOnlyPendingTimersAsync();
+    select("song-A"); edit("A edited"); await tick();
+    select("song-B");
+    store.dispatch({ type: "@@redux-undo/UNDO" }); await tick();
+    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    store.dispatch({ type: "@@redux-undo/REDO" }); await tick();
+    expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+});
+
 const createSongAudio = (id: string) => ({
   id,
   key: `churches/church-1/songs/song-1/${id}.mp3`,
