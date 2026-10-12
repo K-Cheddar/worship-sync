@@ -6,13 +6,15 @@ const AvailabilityBatchReview = ({
   formName,
   busy,
   privacySafe = false,
+  readinessMessage = "",
   onConfirm,
 }: {
   batch: NotificationBatch;
   formName: string;
   busy: boolean;
   privacySafe?: boolean;
-  onConfirm: () => void;
+  readinessMessage?: string;
+  onConfirm?: () => void;
 }) => {
   const canSend = ["prepared", "partial"].includes(batch.status) && batch.recipients.some(({ eligible }) => eligible);
   const destinationCounts = new Map<string, number>();
@@ -27,7 +29,7 @@ const AvailabilityBatchReview = ({
           <p className="text-sm text-gray-300">{batch.summary.selected} selected · {batch.summary.eligible} eligible · {batch.summary.excluded} excluded · {batch.summary.totalSegments} expected SMS segments</p>
           <p className="text-xs text-gray-400">Each message includes that member’s private response link. Nothing sends until you confirm.</p>
         </div>
-        {canSend ? <Button disabled={busy} onClick={onConfirm}>Send {batch.summary.eligible} message{batch.summary.eligible === 1 ? "" : "s"}</Button> : null}
+        {canSend ? <Button disabled={busy || Boolean(readinessMessage)} onClick={onConfirm}>{readinessMessage ? "Sending unavailable" : `Send ${batch.summary.eligible} message${batch.summary.eligible === 1 ? "" : "s"}`}</Button> : null}
       </div>
       <ul className="divide-y divide-gray-800">
         {batch.recipients.map((recipient) => {
@@ -66,11 +68,12 @@ const AvailabilityBatchReview = ({
           );
         })}
       </ul>
+      {readinessMessage ? <p role="status" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">{readinessMessage}</p> : null}
       <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <div><dt className="text-gray-400">Accepted by provider</dt><dd className="text-white">{batch.summary.sent}</dd></div>
         <div><dt className="text-gray-400">Delivered</dt><dd className="text-white">{batch.summary.delivered}</dd></div>
-        <div><dt className="text-gray-400">Responded</dt><dd className="text-white">{batch.summary.responded}</dd></div>
-        <div><dt className="text-gray-400">Waiting</dt><dd className="text-white">{batch.summary.waiting}</dd></div>
+        {batch.summary.responded !== undefined ? <div><dt className="text-gray-400">Responded</dt><dd className="text-white">{batch.summary.responded}</dd></div> : null}
+        {batch.summary.waiting !== undefined ? <div><dt className="text-gray-400">Waiting</dt><dd className="text-white">{batch.summary.waiting}</dd></div> : null}
       </dl>
       {batch.summary.failed || batch.summary.uncertain || (!privacySafe && batch.summary.optedOut) ? (
         <p className="text-sm text-amber-200">

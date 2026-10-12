@@ -56,6 +56,11 @@ import {
 import { normalizeUsPhoneNumber } from "./phoneNumber.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import {
+  getScheduleAssignedMemberIds,
+  getScheduleMemberAssignments,
+  mapWithConcurrency,
+} from "./scheduleInitialSms.js";
+import {
   createTeamIntakeRecipientToken,
   decryptTeamIntakeRecipientToken,
   encryptTeamIntakeRecipientToken,
@@ -10108,6 +10113,30 @@ export const createTeamsAuthHandlers = ({
       throw httpError(409, "The source schedule is no longer available.");
     }
     const member = await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
+    if (intent.intentType === "schedule_initial_notification") {
+      const [positions, church] = await Promise.all([
+        listTeamCollectionForChurch(
+          COLLECTIONS.teamPositions,
+          "positionId",
+          intent.churchId,
+        ),
+        getChurchById(intent.churchId),
+      ]);
+      return {
+        schedule,
+        member,
+        church,
+        assignments: getScheduleMemberAssignments({ schedule, memberId: intent.memberId, positions }),
+        serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC",
+        responseUrl: buildAssignmentResponseUrl({
+          churchId: intent.churchId,
+          scheduleId: intent.sourceId,
+          memberId: intent.memberId,
+        }),
+      };
+    }
     const occurrence = (schedule.occurrences || []).find(
       (item) => item.occurrenceId === intent.occurrenceId,
     );
@@ -10131,6 +10160,64 @@ export const createTeamsAuthHandlers = ({
         memberId: intent.memberId,
       }),
     };
+  };
+
+  const prepareScheduleInitialSmsRecipients = async ({ churchId, schedule }) => {
+    const [members, positions] = await Promise.all([
+      listTeamCollectionForChurch(COLLECTIONS.teamRosterMembers, "memberId", churchId),
+      listTeamCollectionForChurch(COLLECTIONS.teamPositions, "positionId", churchId),
+    ]);
+    const memberById = new Map(members.map((member) => [member.memberId, member]));
+    const guests = new Map((schedule.guests || []).filter((guest) => guest?.guestId).map((guest) => [guest.guestId, guest]));
+    return mapWithConcurrency(getScheduleAssignedMemberIds(schedule), 8, async (memberId) => {
+      const member = memberById.get(memberId) || null;
+      const guest = guests.get(memberId) || null;
+      const assignments = getScheduleMemberAssignments({ schedule, memberId, positions });
+      let eligibility = { status: "no_mobile", eligible: false, phoneNumber: "" };
+      let exclusionReason = "";
+      let exclusionKind = "";
+      if (!member && guest) {
+        exclusionKind = "guest";
+        exclusionReason = "Guests do not have roster SMS eligibility.";
+      } else if (!member || member.churchId !== churchId) {
+        exclusionKind = "unlinked";
+        exclusionReason = "This assignment is not linked to an active roster member.";
+      } else if (member.archivedAt) {
+        exclusionKind = "archived";
+        exclusionReason = "Archived roster members cannot receive schedule SMS.";
+      } else if (!assignments.length) {
+        exclusionKind = "team_mismatch";
+        exclusionReason = "No current assignment belongs to this schedule's Team.";
+      } else {
+        const preliminary = resolveSmsMemberEligibility({ member, churchId, consent: null });
+        const consent = preliminary.phoneNumber
+          ? await getSmsConsentForChurchPhone(churchId, preliminary.phoneNumber)
+          : null;
+        eligibility = resolveSmsMemberEligibility({ member, churchId, consent });
+        exclusionReason = eligibility.eligible
+          ? ""
+          : {
+              no_mobile: "No valid mobile number.",
+              consent_needed: "SMS consent is needed for this phone number.",
+              opted_out: "This phone number opted out of SMS.",
+            }[eligibility.status];
+      }
+      const displayName = member
+        ? `${member.firstName || ""} ${member.lastName || ""}`.trim() || "Roster member"
+        : String(guest?.name || "Guest").trim();
+      return {
+        memberId,
+        member,
+        memberName: displayName,
+        isGuest: Boolean(guest && !member),
+        exclusionKind,
+        assignments,
+        eligibilityStatus: eligibility.status,
+        phoneNumber: eligibility.phoneNumber || "",
+        eligible: Boolean(member && !member.archivedAt && assignments.length && eligibility.eligible),
+        exclusionReason,
+      };
+    });
   };
 
   const closeResolvedReplacementInvitations = async ({
@@ -10936,6 +11023,7 @@ export const createTeamsAuthHandlers = ({
 
   return {
     prepareAvailabilityNotificationRecipients,
+    prepareScheduleInitialSmsRecipients,
     resolveAvailabilityNotificationContext,
     resolveScheduleNotificationContext,
     requireTeamScheduleNotificationEdit,
@@ -15124,6 +15212,9 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Schedule", active: false },
         );
+        if (schedule.published === false) {
+          throw httpError(409, "Publish this schedule before sending it.");
+        }
         const admin = await requireTeamsEditForTeamIds(
           req,
           req.params.churchId,

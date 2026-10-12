@@ -450,6 +450,12 @@ export type TeamScheduleAssignments = Record<
 >;
 
 export type TeamScheduleOccurrence = {
+  /**
+   * Current stable logical identity: serviceId@church-local-date or
+   * group:groupId@church-local-date. Legacy rows may omit this and keep their
+   * original occurrenceId so assignment/equipment map keys remain readable.
+   */
+  logicalOccurrenceId?: string;
   occurrenceId: string;
   // representative service for back-compat lookups; for a combined occurrence this
   // is the earliest service of the group. Use `serviceIds` for the full set.
@@ -463,9 +469,8 @@ export type TeamScheduleOccurrence = {
   startsAt: string;
   /** Calendar date at the service location, independent of the UTC instant. */
   serviceDate?: string;
-  // optional per-date override of the service's position requirements. For a
-  // combined occurrence this holds the union (max count per position) of its
-  // grouped services so one set of cells covers them all.
+  // Optional per-date snapshot of position requirements. In a team schedule,
+  // this contains only the selected team's positions even for a combined row.
   positionRequirements?: PositionRequirement[];
 };
 
@@ -535,6 +540,8 @@ export type TeamScheduleSummary = {
   serviceIds: string[];
   /** Identifies schedules created lazily for a generated team/date period. */
   source?: "generated-period" | "custom";
+  /** Missing publication metadata is treated as Published for legacy schedules. */
+  published?: boolean;
   /** Stable logical key used by the idempotent generated-period endpoint. */
   generatedPeriodKey?: string;
   occurrences?: TeamScheduleOccurrence[];
@@ -784,7 +791,8 @@ export type NotificationIntentType =
   | "assignment_notification"
   | "assignment_confirmation"
   | "schedule_change"
-  | "replacement_request";
+  | "replacement_request"
+  | "schedule_initial_notification";
 
 export type NotificationIntentStatus =
   | "preview"
@@ -848,14 +856,44 @@ export type NotificationBatchRecipient = {
   message?: string;
   approvalVersion?: string;
   phoneNumberSnapshot?: string;
+  previousDeliveryStatus?: "first_send" | "failed" | "accepted" | "uncertain" | "handled";
+  exclusionKind?: "" | "guest" | "archived" | "unlinked" | "team_mismatch";
+  assignments?: ScheduleSmsAssignment[];
+  sourceFingerprint?: string;
+  sourceStale?: boolean;
+};
+
+export type ScheduleSmsAssignment = {
+  occurrenceId: string;
+  serviceName: string;
+  serviceDate: string;
+  startsAt: string;
+  positions: { positionId: string; positionName: string }[];
+};
+
+export type ScheduleInitialSmsRecipient = {
+  memberId: string;
+  memberName: string;
+  assignments: ScheduleSmsAssignment[];
+  eligibilityStatus: SmsMemberEligibilityStatus | "";
+  eligible: boolean;
+  exclusionReason: string;
+  previousDeliveryStatus: "first_send" | "failed" | "accepted" | "uncertain" | "handled";
+  status: NotificationIntentStatus | "excluded";
+  intentId: string;
+  segmentCount: number;
+  exclusionKind?: "" | "guest" | "archived" | "unlinked" | "team_mismatch";
+  maskedPhoneNumber: string;
+  phoneNumberSnapshot?: string;
 };
 
 export type NotificationBatch = {
   batchId: string;
   churchId: string;
-  formId: string;
-  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
-  reminderRound: number;
+  formId?: string;
+  scheduleId?: string;
+  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification";
+  reminderRound?: number;
   status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
@@ -875,8 +913,8 @@ export type NotificationBatch = {
     delivered: number;
     failed: number;
     uncertain: number;
-    responded: number;
-    waiting: number;
+    responded?: number;
+    waiting?: number;
     optedOut: number;
   };
 };

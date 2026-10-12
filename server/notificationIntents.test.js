@@ -9,6 +9,10 @@ import {
 import { createSmsStatusWebhookHandler } from "./smsStatusWebhook.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { measureSmsMessage } from "./smsMessage.js";
+import {
+  getScheduleAssignedMemberIds,
+  getScheduleMemberAssignments,
+} from "./scheduleInitialSms.js";
 
 const createHarness = ({
   providerSend,
@@ -58,7 +62,7 @@ const createHarness = ({
   storeFor("teamIntakeRecipients").set(recipient.recipientId, recipient);
   storeFor("teamRosterMembers").set(member.memberId, member);
   storeFor("teamRosterMembers").set("member_b", { memberId: "member_b", churchId, firstName: "Casey", lastName: "Candidate", phoneNumber });
-  storeFor("teamPositions").set("position", { positionId: "position", churchId, name: "Worship" });
+  storeFor("teamPositions").set("position", { positionId: "position", churchId, teamId: "team_a", name: "Worship" });
   storeFor("churchMessagingConfigs").set(churchId, config);
   storeFor("smsConsents").set(smsConsentIdForChurchPhone(churchId, phoneNumber), {
     consentId: smsConsentIdForChurchPhone(churchId, phoneNumber), churchId, phoneNumber,
@@ -164,15 +168,43 @@ const createHarness = ({
       church: storeFor("churches").get(churchId),
       publicUrl: "https://www.worshipsync.net/a/secure-token",
     }),
-    resolveScheduleNotificationContext: async (intent) => ({
-      schedule: storeFor("teamSchedules").get(intent.sourceId),
-      member,
-      church: storeFor("churches").get(churchId),
-      occurrence: schedule.occurrences[0],
-      serviceName: "Sunday service",
-      positionName: "Worship",
-      responseUrl: "https://www.worshipsync.net/schedule-response/secure-token",
-    }),
+    resolveScheduleNotificationContext: async (intent) => {
+      const currentSchedule = storeFor("teamSchedules").get(intent.sourceId);
+      const currentMember = storeFor("teamRosterMembers").get(intent.memberId);
+      if (intent.intentType === "schedule_initial_notification") return {
+        schedule: currentSchedule,
+        member: currentMember,
+        church: storeFor("churches").get(churchId),
+        assignments: getScheduleMemberAssignments({ schedule: currentSchedule, memberId: intent.memberId, positions: [...storeFor("teamPositions").values()] }),
+        serviceTimeZone: "America/Los_Angeles",
+        responseUrl: "https://www.worshipsync.net/schedule-response/secure-token",
+      };
+      return {
+        schedule: currentSchedule,
+        member: currentMember,
+        church: storeFor("churches").get(churchId),
+        occurrence: currentSchedule.occurrences[0],
+        serviceName: "Sunday service",
+        positionName: "Worship",
+        responseUrl: "https://www.worshipsync.net/schedule-response/secure-token",
+      };
+    },
+    prepareScheduleInitialSmsRecipients: async ({ churchId: targetChurchId, schedule: currentSchedule }) =>
+      getScheduleAssignedMemberIds(currentSchedule).map((memberId) => {
+        const currentMember = storeFor("teamRosterMembers").get(memberId);
+        const assignments = getScheduleMemberAssignments({ schedule: currentSchedule, memberId, positions: [...storeFor("teamPositions").values()] });
+        return {
+          memberId,
+          member: currentMember,
+          memberName: `${currentMember?.firstName || ""} ${currentMember?.lastName || ""}`.trim() || "Roster member",
+          assignments,
+          exclusionKind: "",
+          eligibilityStatus: currentMember?.archivedAt ? "no_mobile" : "enabled",
+          phoneNumber: currentMember?.archivedAt ? "" : currentMember?.phoneNumber || "",
+          eligible: Boolean(currentMember && !currentMember.archivedAt && assignments.length),
+          exclusionReason: currentMember?.archivedAt ? "Archived roster members cannot receive schedule SMS." : "",
+        };
+      }),
     validateReplacementCandidate: validateReplacementCandidate || (async ({ churchId: targetChurchId, scheduleId, occurrenceId, cellKey, memberId }) => {
       const candidate = storeFor("teamRosterMembers").get(memberId);
       const currentSchedule = storeFor("teamSchedules").get(scheduleId);
@@ -222,6 +254,129 @@ const createHarness = ({
   };
   return { collections, storeFor, getDoc, db, handler, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
+
+for (const firestore of [false, true]) {
+  test(`grouped schedule SMS is one reviewed intent per current roster member and remains gated (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    h.schedule.published = true;
+    h.schedule.occurrences = [
+      { occurrenceId: "occ_1", name: "Sunday service", serviceDate: "2026-10-04", startsAt: "2026-10-04T15:00:00.000Z" },
+      { occurrenceId: "occ_2", name: "Combined service", serviceDate: "2026-10-11", startsAt: "2026-10-11T15:00:00.000Z", serviceIds: ["early", "late"], groupId: "combined" },
+    ];
+    h.storeFor("teamPositions").set("audio", { positionId: "audio", churchId: h.churchId, teamId: "team_a", name: "Audio" });
+    const other = { memberId: "member_b", churchId: h.churchId, firstName: "Casey", lastName: "Candidate", phoneNumber: h.phoneNumber };
+    h.storeFor("teamRosterMembers").set(other.memberId, other);
+    h.schedule.assignments = {
+      occ_1: { "position::0": h.member.memberId, "position::1": h.member.memberId, "audio::0": h.member.memberId },
+      occ_2: { "position::0": h.member.memberId, "audio::0": other.memberId },
+    };
+    const getRecipients = async () => {
+      const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+      await h.handler.getScheduleInitialSmsRecipients({ params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId } }, res);
+      return res;
+    };
+    const recipients = await getRecipients();
+    assert.equal(recipients.statusCode, 200);
+    assert.equal(recipients.payload.historyComplete, true);
+    assert.equal(recipients.payload.recipients.length, 2, "two members sharing a phone remain separate recipients");
+    assert.equal(recipients.payload.summary.eligible, 2);
+    const prepare = async () => {
+      const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+      await h.handler.prepareScheduleInitialSmsBatch({
+        params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+        body: { memberIds: [h.member.memberId, other.memberId] },
+      }, res);
+      return res;
+    };
+    const first = await prepare();
+    assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+    assert.equal(first.payload.batch.intentType, "schedule_initial_notification");
+    assert.equal(first.payload.batch.recipients.length, 2);
+    assert.equal(first.payload.batch.intentIds.length, 2);
+    const groupedMessage = first.payload.batch.recipients.find((row) => row.memberId === h.member.memberId).message;
+    assert.match(groupedMessage, /First Church: Your schedule is ready/);
+    assert.match(groupedMessage, /Sunday service · Sun, Oct 4/);
+    assert.match(groupedMessage, /Audio, Worship \(2\)/);
+    assert.match(groupedMessage, /Combined service · Sun, Oct 11/);
+    assert.equal((groupedMessage.match(/schedule-response\/secure-token/g) || []).length, 1);
+    assert.equal(h.providerCalls, 0, "reviewing and persisting the batch never calls the provider");
+    const stableIntentIds = [...first.payload.batch.intentIds].sort();
+    const batchId = first.payload.batch.batchId;
+
+    h.schedule.description = "unrelated note changed";
+    h.schedule.updatedAt = "2026-10-12T12:00:00.000Z";
+    const repeated = await prepare();
+    assert.equal(repeated.statusCode, 200);
+    assert.equal(repeated.payload.batch.batchId, batchId);
+    assert.deepEqual([...repeated.payload.batch.intentIds].sort(), stableIntentIds, "the initial identity is stable across preparation retries and unrelated schedule metadata changes");
+
+    const batchDetail = async () => {
+      const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+      await h.handler.getAvailabilityBatch({ params: { churchId: h.churchId, batchId } }, res);
+      return res;
+    };
+    const currentReview = await batchDetail();
+    assert.equal(currentReview.statusCode, 200);
+    assert.equal(currentReview.payload.batch.recipients.find((row) => row.memberId === h.member.memberId).eligible, true);
+    h.schedule.assignments.occ_1["position::0"] = other.memberId;
+    const staleReview = await batchDetail();
+    const staleRecipient = staleReview.payload.batch.recipients.find((row) => row.memberId === h.member.memberId);
+    assert.equal(staleRecipient.eligible, false);
+    assert.equal(staleRecipient.sourceStale, true, "assignment changes invalidate the persisted approval before use");
+
+    const firstIntent = h.storeFor("notificationIntents").get(stableIntentIds[0]);
+    const attemptId = "attempt_accepted";
+    h.storeFor("notificationIntents").set(firstIntent.intentId, {
+      ...firstIntent, status: "sent", outcome: "confirmed", attemptId, providerAcceptedAttemptId: attemptId,
+    });
+    h.storeFor("smsDeliveryAttempts").set(attemptId, { attemptId, churchId: h.churchId, notificationIntentId: firstIntent.intentId, status: "accepted", outcome: "confirmed", providerMessageId: "SM_already_accepted" });
+    const status = await getRecipients();
+    const accepted = status.payload.recipients.find((row) => row.memberId === firstIntent.memberId);
+    assert.equal(accepted.previousDeliveryStatus, "accepted");
+    assert.equal(accepted.eligible, false);
+
+    const dispatch = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.dispatchAvailabilityBatch({ params: { churchId: h.churchId, batchId }, body: { confirmed: true, approvalVersion: repeated.payload.batch.approvalVersion } }, dispatch);
+    assert.equal(dispatch.statusCode, 503);
+    assert.match(dispatch.payload.errorMessage, /restart recovery/i);
+    const singleSend = await h.send(stableIntentIds[1]);
+    assert.equal(singleSend.statusCode, 503, "a grouped message cannot bypass the batch readiness gate through the single-intent route");
+    assert.equal(h.providerCalls, 0);
+  });
+
+  test(`schedule SMS recipient history blocks unknown outcomes and allows only deliberate definitive-failure retry (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore });
+    h.schedule.published = true;
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId, "position::1": "member_b" } };
+    h.storeFor("teamRosterMembers").set("member_b", { memberId: "member_b", churchId: h.churchId, firstName: "Casey", lastName: "Candidate", phoneNumber: h.phoneNumber });
+    const batchId = `h_${Buffer.from(`${h.churchId}|notification-batch|schedule_initial_sms|${h.schedule.scheduleId}|initial`).toString("hex")}`;
+    const hashValue = (value) => `h_${Buffer.from(String(value)).toString("hex")}`;
+    const intentIdForMember = (memberId) => hashValue(`${h.churchId}|notification-intent|schedule_initial_notification|${h.schedule.scheduleId}|${memberId}|initial`);
+    const acceptedId = intentIdForMember(h.member.memberId);
+    const failedId = intentIdForMember("member_b");
+    h.storeFor("notificationIntents").set(acceptedId, {
+      intentId: acceptedId, churchId: h.churchId, sourceType: "team_schedule", sourceId: h.schedule.scheduleId,
+      intentType: "schedule_initial_notification", memberId: h.member.memberId,
+      idempotencyKey: `schedule_initial_notification|${h.schedule.scheduleId}|${h.member.memberId}|initial`,
+      status: "unknown", outcome: "unknown",
+    });
+    h.storeFor("notificationIntents").set(failedId, {
+      intentId: failedId, churchId: h.churchId, sourceType: "team_schedule", sourceId: h.schedule.scheduleId,
+      intentType: "schedule_initial_notification", memberId: "member_b",
+      idempotencyKey: `schedule_initial_notification|${h.schedule.scheduleId}|member_b|initial`,
+      status: "failed", outcome: "failed",
+    });
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.getScheduleInitialSmsRecipients({ params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.recipients.find((row) => row.memberId === h.member.memberId).eligible, false);
+    const failed = res.payload.recipients.find((row) => row.memberId === "member_b");
+    assert.equal(failed.previousDeliveryStatus, "failed");
+    assert.equal(failed.eligible, true);
+    assert.deepEqual(res.payload.selectedMemberIds, [], "a definitive failure is not selected automatically");
+    assert.notEqual(batchId, "");
+  });
+}
 
 for (const firestore of [false, true]) {
   test(`schedule authorization is rechecked after claim before provider (${firestore ? "transaction fake" : "memory"})`, async () => {
@@ -761,6 +916,7 @@ test("shared intents cover every requested volunteer notification event", () => 
   assert.deepEqual(NOTIFICATION_INTENT_TYPES, [
     "availability_request", "availability_reminder", "assignment_notification",
     "assignment_confirmation", "schedule_change", "replacement_request",
+    "schedule_initial_notification",
   ]);
   for (const intentType of NOTIFICATION_INTENT_TYPES) {
     assert.equal(createNotificationIntent({

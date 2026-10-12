@@ -11087,6 +11087,173 @@ test("Phase 3B schedule messaging uses current Team ownership through production
   }
 });
 
+test("Phase 3C schedule SMS review uses current Team access and never sends", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("phase3c");
+  const assigned = await seedAssignedSchedule(admin, "phase3c", { link: false });
+  const extraMembers = [
+    { memberId: "phase3c_missing_consent", firstName: "No", lastName: "Consent", phoneNumber: "+19545551334" },
+    { memberId: "phase3c_missing_phone", firstName: "No", lastName: "Phone" },
+    { memberId: "phase3c_opted_out", firstName: "Opted", lastName: "Out", phoneNumber: "+19545551335" },
+    { memberId: "phase3c_archived", firstName: "Archived", lastName: "Volunteer", archivedAt: "2026-10-01T00:00:00.000Z" },
+  ];
+  for (const member of extraMembers) {
+    await setDoc("teamRosterMembers", member.memberId, {
+      ...member,
+      churchId: admin.churchId,
+      positionIds: [assigned.media.positionIds.Camera],
+    });
+  }
+  const currentSchedule = await getDoc("teamSchedules", assigned.scheduleId);
+  const scheduleOnlyGuest = { memberId: "phase3c_guest" };
+  const assignedSubjects = [...extraMembers, scheduleOnlyGuest];
+  const extraOccurrences = assignedSubjects.map((member, index) => ({
+    occurrenceId: `phase3c-extra-${index}`,
+    serviceId: `phase3c-extra-service-${index}`,
+    name: `Additional service ${index + 1}`,
+    serviceDate: `2026-11-${String(1 + index).padStart(2, "0")}`,
+    startsAt: `2026-11-${String(1 + index).padStart(2, "0")}T14:00:00.000Z`,
+    positionRequirements: [{ positionId: assigned.media.positionIds.Camera, count: 1 }],
+  }));
+  await setDoc("teamSchedules", assigned.scheduleId, {
+    occurrences: [...currentSchedule.occurrences, ...extraOccurrences],
+    assignments: {
+      ...currentSchedule.assignments,
+      ...Object.fromEntries(assignedSubjects.map((member, index) => [
+        extraOccurrences[index].occurrenceId,
+        { [assigned.cellKey]: { primaryMemberId: member.memberId } },
+      ])),
+    },
+    guests: [{ guestId: scheduleOnlyGuest.memberId, name: "Schedule guest" }],
+  }, { merge: true });
+  const manager = await createHumanContext("phase3c_manager", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [assigned.media.teamId]: "edit" } },
+  });
+  const reader = await createHumanContext("phase3c_reader", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [assigned.media.teamId]: "view" } },
+  });
+  const unrelatedManager = await createHumanContext("phase3c_other_team", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { anotherTeam: "edit" } },
+  });
+  const foreign = await createAdminContext("phase3c_foreign");
+  const phoneNumber = "+19545551333";
+  await setDoc("teamRosterMembers", assigned.memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber, status: "opted_in" });
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber: extraMembers[2].phoneNumber, status: "opted_out", optedOutAt: "2026-10-01T00:00:00.000Z" });
+  await setDoc("churchMessagingConfigs", admin.churchId, {
+    churchId: admin.churchId,
+    provider: "twilio",
+    providerAccountId: "AC_test",
+    messagingServiceId: "MG_test",
+    registrationStatus: "approved",
+    enabled: true,
+  });
+  const fake = createFakeSmsProvider({ response: { providerMessageId: "SM_phase3c", status: "accepted" } });
+  const emails = [];
+  setSmsProviderForServerTests(fake);
+  setSendEmailForServerTests(async (message) => emails.push(message));
+  const getRecipients = (context) => callHandler(authHandlers.getScheduleInitialSmsRecipients, {
+    context,
+    params: { scheduleId: assigned.scheduleId },
+  });
+  try {
+    await setDoc("teamSchedules", assigned.scheduleId, { published: false }, { merge: true });
+    const draftSms = await callHandler(authHandlers.prepareScheduleInitialSmsBatch, {
+      context: manager,
+      params: { scheduleId: assigned.scheduleId },
+      body: { memberIds: [assigned.memberId] },
+    });
+    assert.equal(draftSms.statusCode, 409);
+    const draftEmail = await callHandler(authHandlers.sendTeamSchedule, {
+      context: manager,
+      params: { scheduleId: assigned.scheduleId },
+    });
+    assert.equal(draftEmail.statusCode, 409);
+    assert.equal(emails.length, 0, "Draft schedules do not use the email path either");
+    assert.equal((await getRecipients(foreign)).statusCode, 404);
+    assert.equal((await getRecipients(unrelatedManager)).statusCode, 403);
+    assert.equal((await getRecipients(reader)).statusCode, 403);
+
+    await setDoc("teamSchedules", assigned.scheduleId, { published: true }, { merge: true });
+    const scopedRecipients = await getRecipients(manager);
+    assert.equal(scopedRecipients.statusCode, 200, JSON.stringify(scopedRecipients.payload));
+    assert.equal(scopedRecipients.payload.privacySafe, true);
+    assert.equal(scopedRecipients.payload.recipients.length, 6);
+    assert.equal(scopedRecipients.payload.summary.assigned, 5);
+    const scopedByMember = new Map(scopedRecipients.payload.recipients.map((row) => [row.memberId, row]));
+    assert.equal(scopedByMember.get(assigned.memberId).eligible, true);
+    assert.equal(scopedByMember.get(assigned.memberId).phoneNumberSnapshot, undefined);
+    assert.match(scopedByMember.get(assigned.memberId).maskedPhoneNumber, /1333$/);
+    assert.equal(scopedRecipients.payload.summary.missingConsent, 1);
+    assert.equal(scopedRecipients.payload.summary.missingPhone, 1);
+    assert.equal(scopedRecipients.payload.summary.optedOut, 0, "scoped views do not expose the opt-out category");
+    assert.equal(scopedByMember.get(extraMembers[0].memberId).exclusionReason, "SMS consent is needed for this phone number.");
+    assert.equal(scopedByMember.get(extraMembers[1].memberId).exclusionReason, "No valid mobile number.");
+    assert.equal(scopedByMember.get(extraMembers[2].memberId).exclusionReason, "Not eligible for SMS.");
+    assert.equal(scopedByMember.get(extraMembers[3].memberId).exclusionKind, "archived");
+    assert.equal(scopedByMember.get(scheduleOnlyGuest.memberId).exclusionKind, "guest");
+    assert.equal(scopedByMember.get(scheduleOnlyGuest.memberId).eligible, false);
+
+    const prepared = await callHandler(authHandlers.prepareScheduleInitialSmsBatch, {
+      context: manager,
+      params: { scheduleId: assigned.scheduleId },
+      body: { memberIds: [assigned.memberId] },
+    });
+    assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+    assert.equal(prepared.payload.batch.intentType, "schedule_initial_notification");
+    assert.equal(prepared.payload.batch.recipients.length, 1);
+    assert.equal(prepared.payload.batch.recipients[0].eligible, true);
+    assert.equal(prepared.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
+    assert.doesNotMatch(prepared.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.equal(fake.calls.length, 0, "Preparing schedule messages makes no SMS provider call");
+
+    const batchId = prepared.payload.batch.batchId;
+    const batchVersion = prepared.payload.batch.approvalVersion;
+    const detail = await callHandler(authHandlers.getAvailabilityBatch, {
+      context: manager,
+      params: { batchId },
+    });
+    assert.equal(detail.statusCode, 200);
+    assert.equal(detail.payload.batch.recipients[0].phoneNumberSnapshot, undefined);
+    assert.doesNotMatch(detail.payload.batch.recipients[0].message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.ok([403, 404].includes((await callHandler(authHandlers.getAvailabilityBatch, {
+      context: unrelatedManager,
+      params: { batchId },
+    })).statusCode));
+    assert.ok([403, 404].includes((await callHandler(authHandlers.getAvailabilityBatch, {
+      context: foreign,
+      params: { batchId },
+    })).statusCode));
+
+    const intentId = prepared.payload.batch.recipients[0].intentId;
+    const singleSend = await callHandler(authHandlers.sendIntent, {
+      context: manager,
+      params: { intentId },
+      body: { confirmed: true, approvalVersion: prepared.payload.batch.recipients[0].approvalVersion },
+    });
+    assert.equal(singleSend.statusCode, 503);
+    const dispatch = await callHandler(authHandlers.dispatchAvailabilityBatch, {
+      context: manager,
+      params: { batchId },
+      body: { confirmed: true, approvalVersion: batchVersion },
+    });
+    assert.equal(dispatch.statusCode, 503);
+    assert.equal(fake.calls.length, 0, "Neither individual nor batch actions can bypass the dispatch gate");
+  } finally {
+    setSmsProviderForServerTests(null);
+    setSendEmailForServerTests(null);
+  }
+});
+
 test("sending a schedule notifies once and is idempotent", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_sched");

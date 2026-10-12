@@ -91,19 +91,23 @@ const ScheduleMessagesPanel = ({
       <div className="space-y-2">
         {intents.map((intent) => {
           const member = members.find((item) => item.memberId === intent.memberId);
-          const assignmentResponse = intent.intentType === "replacement_request"
+          const assignmentResponse = intent.intentType === "schedule_initial_notification"
+            ? "per assignment"
+            : intent.intentType === "replacement_request"
             ? intent.replacementResolvedAt
               ? "invitation closed"
               : "awaiting manual follow-up"
             : getVolunteerResponse(intent);
-          const label = intent.intentType === "assignment_notification"
+          const label = intent.intentType === "schedule_initial_notification"
+            ? "Grouped schedule SMS"
+            : intent.intentType === "assignment_notification"
             ? "Assignment notification"
             : intent.intentType === "assignment_confirmation"
               ? "Assignment response"
               : intent.intentType === "schedule_change"
                 ? "Schedule change"
                 : "Replacement invitation";
-          const actionable = ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
+          const actionable = intent.intentType !== "schedule_initial_notification" && ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
 
           return (
             <article key={intent.intentId} className="rounded border border-gray-700 px-3 py-2">
@@ -150,6 +154,9 @@ const ScheduleMessagesPanel = ({
                 <p className="mt-1 text-xs text-amber-200">
                   Provider outcome uncertain. Check SMS delivery history before any further action.
                 </p>
+              ) : null}
+              {intent.intentType === "schedule_initial_notification" && ["preview", "ready"].includes(intent.status) ? (
+                <p className="mt-1 text-xs text-amber-200">Bulk schedule dispatch is paused until safe continuation and restart recovery are ready.</p>
               ) : null}
             </article>
           );

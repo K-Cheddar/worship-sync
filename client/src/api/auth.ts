@@ -40,6 +40,7 @@ import type {
   NotificationIntent,
   NotificationIntentType,
   NotificationBatch,
+  ScheduleInitialSmsRecipient,
   MemberPermissions,
   NotificationCategory,
   NotificationPreference,
@@ -1527,6 +1528,42 @@ export const prepareAvailabilityNotificationBatch = async (
     `api/churches/${churchId}/notification-batches/prepare`,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+export const getScheduleInitialSmsRecipients = async (
+  churchId: string,
+  scheduleId: string,
+) => apiFetch<{
+  success: boolean;
+  historyComplete: boolean;
+  privacySafe: boolean;
+  hasPreparedSelection: boolean;
+  scheduleId: string;
+  published: boolean;
+  batchId: string;
+  selectedMemberIds: string[];
+  recipients: ScheduleInitialSmsRecipient[];
+  summary: {
+    assigned: number;
+    total: number;
+    eligible: number;
+    alreadySent: number;
+    failed: number;
+    uncertain: number;
+    missingConsent: number;
+    optedOut: number;
+    missingPhone: number;
+    ineligible: number;
+  };
+}>(`api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/initial-sms-recipients`);
+
+export const prepareScheduleInitialSmsBatch = async (
+  churchId: string,
+  scheduleId: string,
+  memberIds: string[],
+) => apiFetch<{ success: boolean; batch: NotificationBatch; privacySafe: boolean }>(
+  `api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/initial-sms-batch`,
+  { method: "POST", body: JSON.stringify({ memberIds }) },
+);
 
 export const getAvailabilityNotificationBatch = async (
   churchId: string,

@@ -236,6 +236,7 @@ import {
 import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import ScheduleMessagesPanel from "./ScheduleMessagesPanel";
+import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 import {
   ScheduleAssignmentProvider,
   type ScheduleAssignmentHandlers,
@@ -1089,6 +1090,7 @@ const ScheduleTab = ({
   const [replacementIntentToClose, setReplacementIntentToClose] = useState<NotificationIntent | null>(null);
   const [closingReplacement, setClosingReplacement] = useState(false);
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
+  const [scheduleInitialSmsOpen, setScheduleInitialSmsOpen] = useState(false);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
@@ -1132,7 +1134,8 @@ const ScheduleTab = ({
   };
 
   const scheduleNotificationCounts = useMemo(() => {
-    const responded = scheduleNotificationIntents.filter((intent) => {
+    const responseTrackedIntents = scheduleNotificationIntents.filter((intent) => intent.intentType !== "schedule_initial_notification");
+    const responded = responseTrackedIntents.filter((intent) => {
       if (intent.intentType === "replacement_request") return Boolean(intent.replacementResolvedAt);
       const response = selectedSchedule?.responses?.[intent.occurrenceId]?.[intent.cellKey || ""];
       return response?.memberId === intent.memberId && ["accepted", "declined"].includes(response.response);
@@ -1144,7 +1147,7 @@ const ScheduleTab = ({
       failed: scheduleNotificationIntents.filter((intent) => ["failed", "undelivered"].includes(intent.attemptStatus || "")).length,
       uncertain: scheduleNotificationIntents.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown").length,
       responded,
-      waiting: scheduleNotificationIntents.length - responded,
+      waiting: responseTrackedIntents.length - responded,
       optedOut: scheduleNotificationIntents.filter((intent) => intent.previewError?.toLowerCase().includes("opted out")).length,
     };
   }, [scheduleNotificationIntents, selectedSchedule?.responses]);
@@ -5246,35 +5249,53 @@ const ScheduleTab = ({
               iconSize="sm"
               disabled={isSendingSchedule || sendRecipientCount === 0}
             >
-              {selectedSchedule.sentAt ? "Send updates" : "Send schedule"}
+              Send schedule
             </Button>
           </PopoverTrigger>
           <PopoverContent
             align="end"
             className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
           >
-            <p className="text-sm text-gray-300">
-              Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant="cta"
-                svg={Send}
-                iconSize="sm"
-                disabled={isSendingSchedule}
-                onClick={handleSendSchedule}
-              >
-                {isSendingSchedule ? "Sending…" : "Yes, send"}
-              </Button>
-              <Button
-                variant="tertiary"
-                iconSize="sm"
-                disabled={isSendingSchedule}
-                onClick={() => setIsConfirmingSend(false)}
-              >
-                Cancel
-              </Button>
-            </div>
+            {selectedSchedule.published === false ? (
+              <>
+                <p className="text-sm text-amber-200">Publish this schedule before sending email or SMS.</p>
+                <Button variant="tertiary" disabled={isSendingSchedule} onClick={() => setIsConfirmingSend(false)}>Close</Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-300">
+                  Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="cta"
+                    svg={Send}
+                    iconSize="sm"
+                    disabled={isSendingSchedule}
+                    onClick={handleSendSchedule}
+                  >
+                    {isSendingSchedule ? "Sending…" : "Yes, send email"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={isSendingSchedule || selectedSchedule.scheduleId.startsWith("virtual:")}
+                    onClick={() => {
+                      setIsConfirmingSend(false);
+                      setScheduleInitialSmsOpen(true);
+                    }}
+                  >
+                    Review SMS recipients
+                  </Button>
+                  <Button
+                    variant="tertiary"
+                    disabled={isSendingSchedule}
+                    onClick={() => setIsConfirmingSend(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            )}
           </PopoverContent>
         </Popover>
       ) : null}
@@ -6280,6 +6301,30 @@ const ScheduleTab = ({
                     await handleSendScheduleIntent(result.intent);
                   }}
                 />
+              ) : null}
+              {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
+                <Drawer
+                  key={`${churchId}:${selectedSchedule.scheduleId}:initial-sms`}
+                  isOpen={scheduleInitialSmsOpen}
+                  onClose={() => setScheduleInitialSmsOpen(false)}
+                  title="Send schedule by SMS"
+                  position="right"
+                  size="xl"
+                  showBackdrop
+                  className="!max-w-[min(46rem,90vw)] max-sm:!max-w-full"
+                  contentPadding="p-0"
+                  contentClassName="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
+                >
+                  <ScheduleInitialSmsSendFlow
+                    key={`${churchId}:${selectedSchedule.scheduleId}`}
+                    churchId={churchId}
+                    schedule={selectedSchedule}
+                    scheduleName={selectedSchedule.name || "Schedule"}
+                    teamName={data.teams.find((team) => team.teamId === selectedSchedule.teamId)?.name || "Team"}
+                    timeZone={serviceTimeZone}
+                    onClose={() => setScheduleInitialSmsOpen(false)}
+                  />
+                </Drawer>
               ) : null}
               {scheduleSmsPreview ? <SmsConfirmationModal
                 isOpen

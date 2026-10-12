@@ -806,7 +806,7 @@ const IntakeManager = ({
   }, [activeSelectedFormId, refreshFormMessageState]);
 
   const handleAvailabilityBatchUpdated = (batch: NotificationBatch) => {
-    if (batch.churchId !== churchIdRef.current) return;
+    if (batch.churchId !== churchIdRef.current || !batch.formId) return;
     batch.intakeRecipients?.forEach(onRecipientSaved);
     refreshFormMessageState(batch.formId);
   };

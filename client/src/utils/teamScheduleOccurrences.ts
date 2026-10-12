@@ -5,9 +5,28 @@ import type {
 } from "../api/authTypes";
 import type { MonthWeekOrdinal, Weekday } from "../types";
 import { formatPlainDate, parsePlainDate } from "./plainDate";
+import {
+  calendarDateInTimeZone,
+  logicalOccurrenceIdForGroup,
+  logicalOccurrenceIdForService,
+  occurrenceIdentityListsMatch,
+  occurrenceScheduleDetailsMatch as compareOccurrenceScheduleDetails,
+  serviceDateTimeInTimeZone,
+} from "../../../shared/teamScheduleOccurrences.js";
 
-const occurrenceIdFor = (serviceId: string, startsAt: string) =>
-  `${serviceId}@${startsAt}`;
+export {
+  calendarDateInTimeZone,
+  logicalOccurrenceIdForGroup,
+  logicalOccurrenceIdForService,
+  occurrenceIdentityListsMatch,
+  occurrenceScheduleDetailsMatch,
+  hasOccurrenceIdentityAmbiguity,
+  resolveOccurrenceIdentity,
+  sameOccurrenceIdentity,
+  matchOccurrencesByIdentity,
+  preserveStoredOccurrenceIds,
+  serviceDateTimeInTimeZone,
+} from "../../../shared/teamScheduleOccurrences.js";
 
 const toOccurrence = (
   service: TeamService,
@@ -15,8 +34,10 @@ const toOccurrence = (
   serviceDate: string,
 ): TeamScheduleOccurrence => {
   const iso = startsAt.toISOString();
+  const logicalOccurrenceId = logicalOccurrenceIdForService(service.serviceId, serviceDate);
   return {
-    occurrenceId: occurrenceIdFor(service.serviceId, iso),
+    occurrenceId: logicalOccurrenceId,
+    logicalOccurrenceId,
     serviceId: service.serviceId,
     name: service.name,
     startsAt: iso,
@@ -34,105 +55,6 @@ const toOccurrence = (
         }
       : {}),
   };
-};
-
-const MAX_TIME_ZONE_CACHE_ENTRIES = 12_000;
-const wallClockFormatterCache = new Map<string, Intl.DateTimeFormat>();
-const serviceDateOffsetsCache = new Map<string, number[]>();
-const serviceDateTimeCache = new Map<string, number | null>();
-
-const cacheValue = <T,>(cache: Map<string, T>, key: string, value: T): T => {
-  if (cache.size >= MAX_TIME_ZONE_CACHE_ENTRIES) {
-    cache.delete(cache.keys().next().value as string);
-  }
-  cache.set(key, value);
-  return value;
-};
-
-const wallClockFormatter = (timeZone: string) => {
-  const cached = wallClockFormatterCache.get(timeZone);
-  if (cached) return cached;
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  });
-  wallClockFormatterCache.set(timeZone, formatter);
-  return formatter;
-};
-
-const wallClockPartsAt = (instant: number, timeZone: string) => {
-  const parts = wallClockFormatter(timeZone).formatToParts(new Date(instant));
-  return Object.fromEntries(parts.map(({ type, value }) => [type, value]));
-};
-
-const getServiceDateOffsets = (date: string, timeZone: string, naive: number) => {
-  const key = `${timeZone}|${date}`;
-  const cached = serviceDateOffsetsCache.get(key);
-  if (cached) return cached;
-  const offsets = new Set<number>();
-  // Three samples cover the offset immediately around the date and both sides
-  // of a DST transition. Recurring services on the same date share this work.
-  for (const hours of [-36, 0, 36]) {
-    const sample = naive + hours * 60 * 60 * 1000;
-    const parts = wallClockPartsAt(sample, timeZone);
-    const wallClock = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
-    offsets.add(Date.parse(`${wallClock}Z`) - sample);
-  }
-  return cacheValue(serviceDateOffsetsCache, key, [...offsets]);
-};
-
-/** Convert a service's local date and wall clock into an instant in its zone. */
-export const serviceDateTimeInTimeZone = (
-  date: string,
-  time: string,
-  timeZone: string,
-): Date | null => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
-    return null;
-  }
-  const cacheKey = `${timeZone}|${date}|${time}`;
-  const cached = serviceDateTimeCache.get(cacheKey);
-  if (cached !== undefined) return cached === null ? null : new Date(cached);
-  const requested = `${date}T${time}:00`;
-  const naive = Date.parse(`${requested}Z`);
-  try {
-    const offsets = getServiceDateOffsets(date, timeZone, naive);
-    const candidates = offsets.map((offset) => naive - offset);
-    const exact = candidates
-      .filter((instant) => {
-        const parts = wallClockPartsAt(instant, timeZone);
-        return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}` === requested;
-      })
-      .sort((left, right) => left - right);
-    if (exact.length) {
-      cacheValue(serviceDateTimeCache, cacheKey, exact[0]);
-      return new Date(exact[0]);
-    }
-
-    // Match the existing local Date behavior through a spring-forward gap by
-    // moving the wall clock forward to the first valid time on the same date.
-    const forward = candidates
-      .map((instant) => {
-        const parts = wallClockPartsAt(instant, timeZone);
-        return {
-          instant,
-          wallClock: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`,
-        };
-      })
-      .filter(({ wallClock }) => wallClock.slice(0, 10) === date && wallClock > requested)
-      .sort((left, right) => left.wallClock.localeCompare(right.wallClock) || left.instant - right.instant)[0];
-    cacheValue(serviceDateTimeCache, cacheKey, forward?.instant ?? null);
-    return forward ? new Date(forward.instant) : null;
-  } catch {
-    cacheValue(serviceDateTimeCache, cacheKey, null);
-    return null;
-  }
 };
 
 const nthWeekdayOfMonth = (
@@ -284,22 +206,13 @@ export const getOccurrenceDate = (
 ) => {
   const storedDate =
     occurrence.serviceDate ||
-    occurrence.occurrenceId.match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
+    occurrence.occurrenceId.match(/@((?:\d{4}-\d{2}-\d{2}))$/)?.[1];
   if (storedDate) return storedDate;
   const startsAt = new Date(occurrence.startsAt);
   return Number.isNaN(startsAt.getTime())
     ? ""
     : calendarDateInTimeZone(startsAt, timeZone);
 };
-
-/** YYYY-MM-DD for `date` in `timeZone` (en-CA is ISO-like and stable). */
-export const calendarDateInTimeZone = (date: Date, timeZone: string): string =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 
 /**
  * True when the occurrence falls on the same calendar day as `referenceDate`
@@ -409,7 +322,7 @@ const mergeGroupedOccurrences = (
     const sorted = [...bucket].sort(
       (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
-        a.name.localeCompare(b.name),
+        a.serviceId.localeCompare(b.serviceId),
     );
     const first = sorted[0];
     const groupId = serviceById.get(first.serviceId)?.serviceGroupId as string;
@@ -421,7 +334,8 @@ const mergeGroupedOccurrences = (
         .filter(Boolean) as TeamService[],
     );
     const combined: TeamScheduleOccurrence = {
-      occurrenceId: `group:${groupId}@${getOccurrenceDate(first)}`,
+      occurrenceId: logicalOccurrenceIdForGroup(groupId, getOccurrenceDate(first)),
+      logicalOccurrenceId: logicalOccurrenceIdForGroup(groupId, getOccurrenceDate(first)),
       serviceId: first.serviceId,
       groupId,
       serviceIds,
@@ -579,12 +493,15 @@ export const generateScheduleOccurrences = ({
 export const occurrenceIdsMatch = (
   a: TeamScheduleOccurrence[],
   b: TeamScheduleOccurrence[],
-): boolean => {
-  if (a.length !== b.length) return false;
-  const aIds = [...a.map((occurrence) => occurrence.occurrenceId)].sort();
-  const bIds = [...b.map((occurrence) => occurrence.occurrenceId)].sort();
-  return aIds.every((id, index) => id === bIds[index]);
-};
+  timeZone = "UTC",
+): boolean => occurrenceIdentityListsMatch(a, b, timeZone);
+
+/** True only when identity, service membership, and scheduled date/time all match. */
+export const occurrenceScheduleDetailsMatch = (
+  a: TeamScheduleOccurrence[],
+  b: TeamScheduleOccurrence[],
+  timeZone = "UTC",
+): boolean => compareOccurrenceScheduleDetails(a, b, timeZone);
 
 /** Services that would produce at least one occurrence in the given plain-date range. */
 export const filterServicesWithOccurrencesInRange = ({

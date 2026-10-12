@@ -6870,6 +6870,8 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
     teamsAuthHandlers.resolveAvailabilityNotificationContext(...args),
   resolveScheduleNotificationContext: (...args) =>
     teamsAuthHandlers.resolveScheduleNotificationContext(...args),
+  prepareScheduleInitialSmsRecipients: (...args) =>
+    teamsAuthHandlers.prepareScheduleInitialSmsRecipients(...args),
   validateReplacementCandidate: (...args) =>
     teamsAuthHandlers.validateReplacementCandidate(...args),
 });

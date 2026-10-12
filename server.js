@@ -1433,6 +1433,14 @@ app.post(
   authHandlers.prepareAvailabilityBatch,
 );
 app.get(
+  "/api/churches/:churchId/team-schedules/:scheduleId/initial-sms-recipients",
+  authHandlers.getScheduleInitialSmsRecipients,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/initial-sms-batch",
+  authHandlers.prepareScheduleInitialSmsBatch,
+);
+app.get(
   "/api/churches/:churchId/notification-batches/:batchId",
   authHandlers.getAvailabilityBatch,
 );
