@@ -5,6 +5,7 @@ import {
   createListenerMiddleware,
   isAnyOf,
   Reducer,
+  Middleware,
 } from "@reduxjs/toolkit";
 import undoable, { ActionCreators } from "redux-undo";
 import {
@@ -42,7 +43,10 @@ import { itemListsSlice } from "./itemListsSlice";
 import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
-import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
+import {
+  globalDb as db,
+  globalBroadcastRef,
+} from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get, runTransaction, update } from "firebase/database";
 import {
@@ -64,6 +68,7 @@ import {
   QUICK_LINKS_POUCH_ID,
   DBServices,
   FormattedTextDisplayInfo,
+  ItemState,
   getCreditsDocId,
   getControllerMediaRouteFoldersDocId,
   OverlayInfo,
@@ -123,6 +128,14 @@ import {
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+import {
+  flushPendingItemMutations,
+  getActiveContentDatabaseOwner,
+  getContentDatabaseForOwner,
+  getItemMutationOwner,
+  registerContentDatabaseFlushHandler,
+  sameItemMutationOwner,
+} from "./deferredItemMutations";
 import { patchControllerMediaRouteFolder } from "../utils/controllerMediaRouteFolders";
 
 /**
@@ -924,12 +937,109 @@ const listenerMiddleware = createListenerMiddleware();
 const songLibraryIndexRepairMiddleware =
   createSongLibraryIndexRepairMiddleware();
 
+type ItemAutosaveDebounce = {
+  timer: ReturnType<typeof setTimeout>;
+  promise: Promise<void>;
+  resolve: () => void;
+  flush: () => void;
+};
+
+const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
+const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
+
+const itemAutosaveKey = (item: ItemState) =>
+  JSON.stringify([
+    item.contentOwner?.scopeId ?? "legacy",
+    item.contentOwner?.databaseKey ?? "",
+    item.contentOwner?.churchId ?? "",
+    item._id,
+    item.type,
+  ]);
+
+const scheduleItemAutosaveDebounce = (key: string) => {
+  const previous = itemAutosaveDebounces.get(key);
+  if (previous) {
+    clearTimeout(previous.timer);
+    previous.resolve();
+  }
+
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const timer = setTimeout(resolve, 1500);
+  const debounce: ItemAutosaveDebounce = {
+    timer,
+    promise,
+    resolve,
+    flush: () => {
+      clearTimeout(timer);
+      resolve();
+    },
+  };
+  itemAutosaveDebounces.set(key, debounce);
+  return debounce;
+};
+
+const cancelItemAutosaveDebounce = (key: string) => {
+  const pending = itemAutosaveDebounces.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  itemAutosaveDebounces.delete(key);
+  pending.resolve();
+};
+
+const enqueueItemAutosaveWrite = <T,>(key: string, write: () => Promise<T>) => {
+  const previous = itemAutosaveWriteQueues.get(key) ?? Promise.resolve();
+  const queued = previous.catch(() => undefined).then(write);
+  const settled = queued.then(() => undefined, () => undefined);
+  itemAutosaveWriteQueues.set(key, settled);
+  void settled.then(() => {
+    if (itemAutosaveWriteQueues.get(key) === settled) {
+      itemAutosaveWriteQueues.delete(key);
+    }
+  });
+  return queued;
+};
+
+const autosaveBelongsToContentDatabase = (key: string, scopeId: string) => {
+  try {
+    return JSON.parse(key)[0] === scopeId;
+  } catch {
+    return false;
+  }
+};
+
+const flushItemAutosavesForContentDatabase = async (scopeId: string) => {
+  for (let attempts = 0; attempts < 100; attempts += 1) {
+    for (const [key, debounce] of itemAutosaveDebounces) {
+      if (autosaveBelongsToContentDatabase(key, scopeId)) debounce.flush();
+    }
+
+    // Let listener effects leave their debounce waits and enqueue Pouch writes.
+    await Promise.resolve();
+    const writes = [...itemAutosaveWriteQueues.entries()]
+      .filter(([key]) => autosaveBelongsToContentDatabase(key, scopeId))
+      .map(([, write]) => write);
+    await Promise.all(writes);
+    await Promise.resolve();
+
+    const hasDebounces = [...itemAutosaveDebounces.keys()].some((key) =>
+      autosaveBelongsToContentDatabase(key, scopeId),
+    );
+    const hasWrites = [...itemAutosaveWriteQueues.keys()].some((key) =>
+      autosaveBelongsToContentDatabase(key, scopeId),
+    );
+    if (!hasDebounces && !hasWrites) return;
+  }
+};
+
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     // Audio is persisted independently after the R2 operation succeeds. Let the
-    // reconciliation action enter this listener so it can cancel an older editor
-    // autosave, but do not schedule another save for it.
+    // reconciliation action retire a pending debounce for this item, but do not
+    // schedule another save for it.
     if (itemSlice.actions.applyPersistedSongAudio.match(action)) {
       return (
         (currentState as RootState).undoable.present.item._id ===
@@ -961,87 +1071,110 @@ listenerMiddleware.startListening({
   },
 
   effect: async (_action, listenerApi) => {
-    const dbAtStart = db;
     if (itemSlice.actions.applyPersistedSongAudio.match(_action)) {
-      listenerApi.cancelActiveListeners();
+      const item = (listenerApi.getState() as RootState).undoable.present.item;
+      cancelItemAutosaveDebounce(itemAutosaveKey(item));
       return;
     }
-    if (!dbAtStart) return;
 
     let state = listenerApi.getState() as RootState;
+    let ownedSnapshot: ItemState | undefined;
     if (itemSlice.actions.setActiveItem.match(_action)) {
       state = listenerApi.getOriginalState() as RootState;
-    } else {
-      listenerApi.cancelActiveListeners();
-      await listenerApi.delay(1500);
+    }
+    if (itemSlice.actions.applyOwnedContentUpdate.match(_action)) {
+      ownedSnapshot = _action.payload.snapshot;
     }
 
     // update Item
-    const item = state.undoable.present.item;
-    let db_item: DBItem = await dbAtStart.get(item._id);
-    listenerApi.throwIfCancelled();
+    const item = ownedSnapshot ?? state.undoable.present.item;
+    const owner = item.contentOwner;
+    const dbAtStart = owner
+      ? getContentDatabaseForOwner(owner) ??
+        (owner.scopeId === "unscoped" ? db : undefined)
+      : db;
+    if (!dbAtStart) return;
+    const saveKey = itemAutosaveKey(item);
 
-    const updatedAt = new Date().toISOString();
-    const nextItem: DBItem = {
-      ...db_item,
-      name: item.name,
-      background: item.background,
-      slides: item.slides,
-      arrangements: item.arrangements,
-      selectedArrangement: item.selectedArrangement,
-      bibleInfo: item.bibleInfo,
-      timerInfo: item.timerInfo,
-      songMetadata: item.songMetadata,
-      songLinks: item.songLinks,
-      // R2 attachment flows persist this field out-of-band. Ordinary editor
-      // autosaves must retain the latest durable value instead of their older
-      // Redux snapshot. Keep setSongAudio working for any explicit caller.
-      songAudio: itemSlice.actions.setSongAudio.match(_action)
-        ? item.songAudio
-        : db_item.songAudio,
-      shouldSendTo: item.shouldSendTo,
-      formattedSections: item.formattedSections,
-      updatedAt,
-    };
-    db_item = applyPouchAudit(db_item, nextItem, {
-      // Doc came from db.get — always an update (legacy rows may lack createdAt).
-      isNew: false,
-    });
-    listenerApi.throwIfCancelled();
-    const result = await dbAtStart.put(db_item);
-    listenerApi.throwIfCancelled();
-    db_item = {
-      ...db_item,
-      _rev: result.rev,
-    };
-    const activeState = (listenerApi.getState() as RootState).undoable.present.item;
-    if (db !== dbAtStart || activeState._id !== db_item._id) return;
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
-    listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
-
-    listenerApi.dispatch(upsertItemInAllDocs(db_item));
-    if (db_item.type === "free") {
-      const indexedItem = (listenerApi.getState() as RootState).allItems.list.find(
-        (candidate) => candidate._id === db_item._id,
-      );
-      listenerApi.dispatch(
-        allItemsSlice.actions.upsertItemInAllItemsList(
-          {
-            ...freeFormDocToServiceItem(db_item),
-            listId: indexedItem?.listId ?? db_item._id,
-          },
-        ),
-      );
+    if (itemSlice.actions.setActiveItem.match(_action)) {
+      cancelItemAutosaveDebounce(saveKey);
+    } else {
+      const debounce = scheduleItemAutosaveDebounce(saveKey);
+      await debounce.promise;
+      if (itemAutosaveDebounces.get(saveKey) !== debounce) return;
+      itemAutosaveDebounces.delete(saveKey);
     }
 
-    // Local machine updates
-    if (db !== dbAtStart) return;
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_item,
-        hostId: globalHostId,
-      },
+    await enqueueItemAutosaveWrite(saveKey, async () => {
+      let db_item: DBItem = await dbAtStart.get(item._id);
+      const updatedAt = new Date().toISOString();
+      const nextItem: DBItem = {
+        ...db_item,
+        name: item.name,
+        background: item.background,
+        slides: item.slides,
+        arrangements: item.arrangements,
+        selectedArrangement: item.selectedArrangement,
+        bibleInfo: item.bibleInfo,
+        timerInfo: item.timerInfo,
+        songMetadata: item.songMetadata,
+        songLinks: item.songLinks,
+        // R2 attachment flows persist this field out-of-band. Ordinary editor
+        // autosaves must retain the latest durable value instead of their older
+        // Redux snapshot. Keep setSongAudio working for any explicit caller.
+        songAudio: itemSlice.actions.setSongAudio.match(_action)
+          ? item.songAudio
+          : db_item.songAudio,
+        shouldSendTo: item.shouldSendTo,
+        formattedSections: item.formattedSections,
+        updatedAt,
+      };
+      db_item = applyPouchAudit(db_item, nextItem, {
+        // Doc came from db.get â€” always an update (legacy rows may lack createdAt).
+        isNew: false,
+      });
+      const result = await dbAtStart.put(db_item);
+      db_item = { ...db_item, _rev: result.rev };
+
+      const latestState = listenerApi.getState() as RootState;
+      const activeItem = latestState.undoable.present.item;
+      const isSameActiveOwner =
+        activeItem._id === db_item._id &&
+        sameItemMutationOwner(
+          getItemMutationOwner(activeItem),
+          getItemMutationOwner(item),
+        );
+      if (isSameActiveOwner) {
+        listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
+        listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+      }
+
+      const activeDatabaseOwner = getActiveContentDatabaseOwner();
+      const stillInOriginalDatabase = owner
+        ? activeDatabaseOwner?.scopeId === owner.scopeId
+        : db === dbAtStart;
+      if (!stillInOriginalDatabase) return;
+
+      listenerApi.dispatch(upsertItemInAllDocs(db_item));
+      if (db_item.type === "free") {
+        const indexedItem = latestState.allItems.list.find(
+          (candidate) => candidate._id === db_item._id,
+        );
+        listenerApi.dispatch(
+          allItemsSlice.actions.upsertItemInAllItemsList({
+            ...freeFormDocToServiceItem(db_item),
+            listId: indexedItem?.listId ?? db_item._id,
+          }),
+        );
+      }
+
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: db_item,
+          hostId: globalHostId,
+        },
+      });
     });
   },
 });
@@ -3628,16 +3761,58 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
   return combinedReducers(state, action);
 };
 
+const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: any) => {
+  const currentItem = (api.getState() as RootState).undoable.present.item;
+  const currentOwner = getItemMutationOwner(currentItem);
+
+  if (
+    itemSlice.actions.setSelectedSlide.match(action) ||
+    itemSlice.actions._setSelectedArrangement.match(action) ||
+    action.type === "@@redux-undo/UNDO" ||
+    action.type === "@@redux-undo/REDO" ||
+    action.type === "RESET" ||
+    action.type === "RESET_CONTROLLER_SESSION"
+  ) {
+    flushPendingItemMutations(currentOwner);
+    return next(action);
+  }
+
+  if (!itemSlice.actions.setActiveItem.match(action)) return next(action);
+
+  const contentOwner =
+    action.payload.contentOwner ??
+    getActiveContentDatabaseOwner() ??
+    { scopeId: "unscoped", databaseKey: "", churchId: "" };
+  const nextOwner = getItemMutationOwner({
+    ...action.payload,
+    contentOwner,
+    _id: action.payload._id ?? currentItem._id,
+    type: action.payload.type ?? currentItem.type,
+  } as typeof currentItem);
+
+  if (!sameItemMutationOwner(currentOwner, nextOwner)) {
+    flushPendingItemMutations(currentOwner);
+  }
+
+  return next({
+    ...action,
+    payload: { ...action.payload, contentOwner },
+  });
+};
+
 const store = configureStore({
   reducer: rootReducer,
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: false,
     }).prepend(
+      itemOwnerTransitionMiddleware,
       songLibraryIndexRepairMiddleware.middleware,
       listenerMiddleware.middleware,
     ),
 });
+
+registerContentDatabaseFlushHandler(flushItemAutosavesForContentDatabase);
 
 const refreshServicePlanningPreviewSongMatches = (listenerApi: {
   getState: () => unknown;

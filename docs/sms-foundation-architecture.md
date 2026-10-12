@@ -204,6 +204,12 @@ Confirmed stored evidence includes a SID, `outcome: confirmed`, or accepted/sent
 
 `providerAcceptedAttemptId` is a sticky acceptance fence on the existing intent. Normally it names the current confirmed attempt. A late callback for an older attempt updates only that attempt's delivery facts and sets the fence, keeping the newer attempt pointer/status intact. The fence blocks another claim or draft adoption. It never falsely confirms the newer attempt. If a newer external call has already begun, recording old acceptance cannot retract it; that contradictory-rejection case needs investigation, not another retry.
 
+### Delayed preview persistence follow-up
+
+`prepareIntentReview` validates content outside the transaction, then uses the existing `mutateIntent` transaction/lock to reread the intent and its linked attempt before saving. Only `preview`, `ready` and definitively failed draft intents without confirmed/unknown evidence may receive a new message and approval snapshot. Ownership, source, batch and attempt identity must still match the validation input. A send/reclaim/adoption that wins the race makes the delayed preview return 409; it cannot alter the message recorded for an accepted send. The returned review uses the state actually committed rather than a reconstructed older intent.
+
+The follow-up is authorized by the explicit delayed-preview finding and preserves ordinary review, deliberate retry, sending and history contracts. Its regression pauses availability-source validation, completes another approved send, changes source text, then releases validation. Memory and transaction-shaped storage both assert an unchanged complete sent intent and one provider call. Replacement-preview cleanup uses a second genuine review/send while the first validation is paused and still preserves the accepted intent. The new availability regressions failed against the unconditional writer before this fix.
+
 ### Transaction and recovery boundaries
 
 Firestore reads both documents before any writes and commits both atomically; transaction conflicts retry with fresh state. Twilio remains outside the transaction. The fallback store is single-process only, with the same per-intent lock for claims/results/recovery/callbacks; its writes are not atomic. Acceptance checkpoints the attempt before intent adoption, making a failed second write recoverable. The outer exception retains the actual provider result and attempts the same reconciliation again rather than overwriting it with unknown.
@@ -228,7 +234,7 @@ Confirmed evidence never regresses; stale writes re-read/retry; authenticated ea
 
 Required checks run after implementation:
 
-- Focused Node set: `notificationBatches`, `notificationIntents`, `smsDeliveryReliability`, `smsMessaging`, `smsConsent`, `smsInboundWebhook`, `smsStatusWebhook`, `notificationLedger`, `assignmentResponseToken` test files: **131 passed, 0 failed, 0 skipped**.
+- Focused Node set: `notificationBatches`, `notificationIntents`, `smsDeliveryReliability`, `smsMessaging`, `smsConsent`, `smsInboundWebhook`, `smsStatusWebhook`, `notificationLedger`, `assignmentResponseToken` test files: **133 passed, 0 failed, 0 skipped**.
 - Composed `teamsApi.test.js` selection `SMS|notification requests|schedule.*(send|email)|send.*schedule`: **8 passed, 0 failed, 0 skipped**, including the real auth-service callback factory, exact signed correlation URL and token-redacted history.
 - `git diff --check`: required final check.
 

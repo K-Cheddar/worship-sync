@@ -37,9 +37,17 @@ import {
 import {
   setItemFormatting,
   updateArrangements,
+  applyOwnedContentMutation,
   updateBibleInfo,
   updateSlides,
 } from "../../../store/itemSlice";
+import {
+  flushPendingItemMutations,
+  getItemMutationOwner,
+  scheduleOwnedItemMutation,
+  type ItemMutationOwner,
+  type PendingItemMutationHandle,
+} from "../../../store/deferredItemMutations";
 import Toggle from "../../../components/Toggle/Toggle";
 import { BibleFontMode, ItemState } from "../../../types";
 import PopoverPanel from "../../../components/PopOver/PopoverPanel";
@@ -50,7 +58,6 @@ import RadioButton, {
   RadioGroup,
 } from "../../../components/RadioButton/RadioButton";
 import { iconColorMap } from "../../../utils/itemTypeMaps";
-import { formatFree } from "../../../utils/overflow";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import {
   DEFAULT_FONT_PX,
@@ -66,9 +73,9 @@ import {
   DropdownMenuTrigger,
 } from "../../../components/ui/DropdownMenu";
 import {
-  cleanItemNewlines,
   itemHasCleanableNewlines,
 } from "../../../utils/itemNewlineCleanup";
+import type { OwnedItemContentMutation } from "../../../utils/ownedItemContentMutation";
 import { BrandAwareColorPicker } from "../../../components/ColorField/ColorField";
 import { nearestFontSizePreset } from "../../../utils/fontSizePresets";
 import { cn } from "../../../utils/cnHelper";
@@ -90,7 +97,7 @@ type SlideToolbarFontSizeFieldProps = {
   value: number | string;
   fontPresetHighlight: number;
   scrollbarWidth: string;
-  fontSizeDebounceRef: MutableRefObject<NodeJS.Timeout | null>;
+  fontSizeDebounceRef: MutableRefObject<PendingItemMutationHandle | null>;
   onChange: (val: string) => void;
   onBlur: () => void;
   onPresetSelect: (px: number) => void;
@@ -121,7 +128,7 @@ const SlideToolbarFontSizeField = memo(function SlideToolbarFontSizeField({
   const handlePresetSelect = useCallback(
     (px: number) => {
       if (fontSizeDebounceRef.current) {
-        clearTimeout(fontSizeDebounceRef.current);
+        fontSizeDebounceRef.current.cancel();
         fontSizeDebounceRef.current = null;
       }
       onPresetSelect(px);
@@ -219,8 +226,10 @@ const SlideEditTools = ({ className }: { className?: string }) => {
   const [isBold, setIsBold] = useState(false);
   const [isItalic, setIsItalic] = useState(false);
   const [isCleaningNewlines, setIsCleaningNewlines] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const fontSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const fontColorTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
+  const fontSizeTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
+  const fontSizeDebounceRef = useRef<PendingItemMutationHandle | null>(null);
+  const timerColorTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
   const fontSizeInputRef = useRef<string | number>("");
   const globalInfo = useContext(GlobalInfoContext);
   const { hostId } = globalInfo || {};
@@ -231,12 +240,24 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     (state) =>
       state.undoable.present.preferences?.scrollbarWidth ?? "thin"
   );
-  const { slides, selectedSlide, selectedBox, timerInfo, type } = item;
+  const {
+    slides,
+    selectedSlide,
+    selectedBox,
+    selectedArrangement,
+    arrangements,
+    timerInfo,
+    type,
+  } = item;
   const { timers } = useSelector((state) => state.timers);
 
   const timer = timers.find((t) => t.id === timerInfo?.id);
 
   const slide = slides[selectedSlide];
+  const itemOwner = getItemMutationOwner(item);
+  const itemOwnerRef = useRef(itemOwner);
+  itemOwnerRef.current = itemOwner;
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
     const fSize = slide?.boxes?.[selectedBox]?.fontSize ?? DEFAULT_FONT_PX;
@@ -257,60 +278,106 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         updateSlides({
           slides: updatedItem.slides,
           formattedSections: updatedItem.formattedSections,
+          expectedOwner: itemOwner ?? undefined,
         })
       );
       if (updatedItem.arrangements.length > 0) {
         dispatch(
-          updateArrangements({ arrangements: updatedItem.arrangements })
+          updateArrangements({
+            arrangements: updatedItem.arrangements,
+            expectedOwner: itemOwner ?? undefined,
+          })
         );
       }
       if (updatedItem.bibleInfo) {
-        dispatch(updateBibleInfo({ bibleInfo: updatedItem.bibleInfo }));
+        dispatch(updateBibleInfo({
+          bibleInfo: updatedItem.bibleInfo,
+          expectedOwner: itemOwner ?? undefined,
+        }));
       }
     },
-    [dispatch]
+    [dispatch, itemOwner]
   );
 
+  const getSelectedTarget = useCallback(() => {
+    if (!itemOwner || !slide?.id) return null;
+    const sectionNum = slide.name.match(/Section (\d+)/)?.[1];
+    return {
+      owner: itemOwner,
+      slideId: slide.id,
+      slideIndex: selectedSlide,
+      sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
+      arrangementId:
+        type === "song" ? arrangements[selectedArrangement]?.id : undefined,
+      boxIndex: selectedBox,
+    };
+  }, [
+    arrangements,
+    itemOwner,
+    selectedArrangement,
+    selectedBox,
+    selectedSlide,
+    slide?.id,
+    slide?.name,
+    type,
+  ]);
+
   const runWithFormatting = useCallback(
-    (fn: () => void) => {
+    (
+      owner: ItemMutationOwner,
+      mutation: OwnedItemContentMutation,
+      onFinished?: () => void,
+    ) => {
       dispatch(setItemFormatting(true));
-      setTimeout(() => {
+      scheduleOwnedItemMutation(owner, 0, () => {
         try {
-          fn();
+          dispatch(applyOwnedContentMutation({ owner, mutation }));
         } finally {
           dispatch(setItemFormatting(false));
+          if (isMountedRef.current) onFinished?.();
         }
-      }, 0);
+      });
     },
     [dispatch]
   );
 
   const applyFontSize = useCallback(
-    (val: number) => {
+    (val: number, target = getSelectedTarget()) => {
+      if (!target) return;
+      fontSizeTimeoutRef.current?.cancel();
+      fontSizeDebounceRef.current?.cancel();
+      fontSizeDebounceRef.current = null;
       const clamped = clampFontSize(val);
-      setFontSize(clamped);
+      if (isMountedRef.current) setFontSize(clamped);
       fontSizeInputRef.current = clamped;
-      runWithFormatting(() => {
-        const updatedItem = updateBoxProperties({
-          updatedProperties: { fontSize: clamped },
-          item,
-          shouldFormatItem: true,
-        });
-        updateItem(updatedItem);
+      runWithFormatting(target.owner, {
+        kind: "boxProperties",
+        ...target,
+        properties: { fontSize: clamped },
+        formatItem: true,
       });
     },
-    [item, runWithFormatting, updateItem]
+    [getSelectedTarget, runWithFormatting]
   );
 
   const _updateFontSize = (val: number) => {
+    const target = getSelectedTarget();
+    if (!target) return;
+    fontSizeDebounceRef.current?.cancel();
+    fontSizeDebounceRef.current = null;
     const clamped = clampFontSize(val);
-    setFontSize(clamped);
+    if (isMountedRef.current) setFontSize(clamped);
     fontSizeInputRef.current = clamped;
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => applyFontSize(clamped), 250);
+    fontSizeTimeoutRef.current?.cancel();
+    fontSizeTimeoutRef.current = scheduleOwnedItemMutation(
+      target.owner,
+      250,
+      () => applyFontSize(clamped, target),
+    );
   };
 
-  const commitFontSizeFromInput = useCallback(() => {
+  const commitFontSizeFromInput = useCallback((target = getSelectedTarget()) => {
+    if (!target) return;
     const inputVal = fontSizeInputRef.current;
     const raw =
       typeof inputVal === "string"
@@ -325,24 +392,28 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         ? fallback
         : raw;
     const clamped = clampFontSize(val);
-    setFontSize(clamped);
+    if (isMountedRef.current) setFontSize(clamped);
     fontSizeInputRef.current = clamped;
-    applyFontSize(clamped);
-  }, [slide, selectedBox, applyFontSize]);
+    applyFontSize(clamped, target);
+  }, [slide, selectedBox, applyFontSize, getSelectedTarget]);
 
   const handleFontSizeBlur = () => {
-    if (fontSizeDebounceRef.current) {
-      clearTimeout(fontSizeDebounceRef.current);
-      fontSizeDebounceRef.current = null;
-    }
-    commitFontSizeFromInput();
+    fontSizeDebounceRef.current?.cancel();
+    fontSizeDebounceRef.current = null;
+    commitFontSizeFromInput(getSelectedTarget());
   };
 
   const handleFontSizeChange = (val: string) => {
+    const target = getSelectedTarget();
+    if (!target) return;
     setFontSize(val);
     fontSizeInputRef.current = val;
-    if (fontSizeDebounceRef.current) clearTimeout(fontSizeDebounceRef.current);
-    fontSizeDebounceRef.current = setTimeout(commitFontSizeFromInput, 1000);
+    fontSizeDebounceRef.current?.cancel();
+    fontSizeDebounceRef.current = scheduleOwnedItemMutation(
+      target.owner,
+      1000,
+      () => commitFontSizeFromInput(target),
+    );
   };
 
   const _updateBrightness = (val: number) => {
@@ -372,23 +443,25 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     if (val.includes("NaN")) {
       return;
     }
-
-    // Clear any existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-
-    // Set new timeout
-    timeoutRef.current = setTimeout(() => {
-      setFontColor(val);
-
-      const updatedItem = updateBoxProperties({
-        updatedProperties: { fontColor: val },
-        item,
-        shouldApplyToAll: true,
-      });
-      updateItem(updatedItem);
-    }, 250);
+    const target = getSelectedTarget();
+    if (!target) return;
+    fontColorTimeoutRef.current?.cancel();
+    fontColorTimeoutRef.current = scheduleOwnedItemMutation(
+      target.owner,
+      250,
+      () => {
+      if (isMountedRef.current) setFontColor(val);
+      dispatch(applyOwnedContentMutation({
+        owner: target.owner,
+        mutation: {
+          kind: "boxProperties",
+          ...target,
+          properties: { fontColor: val },
+          applyToAll: true,
+        },
+      }));
+      },
+    );
   };
 
   const _updateTimerColor = (val: string) => {
@@ -396,64 +469,68 @@ const SlideEditTools = ({ className }: { className?: string }) => {
       return;
     }
 
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-
-    timeoutRef.current = setTimeout(() => {
-      setTimerColor(val);
+    const target = getSelectedTarget();
+    if (!target) return;
+    timerColorTimeoutRef.current?.cancel();
+    timerColorTimeoutRef.current = scheduleOwnedItemMutation(
+      target.owner,
+      250,
+      () => {
+      if (isMountedRef.current) setTimerColor(val);
 
       if (timerInfo?.id) {
         dispatch(updateTimerColor({ id: timerInfo?.id, color: val, hostId }));
       }
-    }, 250);
+      },
+    );
   };
 
   const _updateIsBold = () => {
+    const target = getSelectedTarget();
+    if (!target) return;
     setIsBold(!isBold);
-    runWithFormatting(() => {
-      const updatedItem = updateBoxProperties({
-        updatedProperties: { isBold: !isBold },
-        item,
-        shouldFormatItem: true,
-        shouldApplyToAll: true,
-      });
-      updateItem(updatedItem);
+    runWithFormatting(target.owner, {
+      kind: "boxProperties",
+      ...target,
+      properties: { isBold: !isBold },
+      formatItem: true,
+      applyToAll: true,
     });
   };
 
   const _updateIsItalic = () => {
+    const target = getSelectedTarget();
+    if (!target) return;
     setIsItalic(!isItalic);
-    runWithFormatting(() => {
-      const updatedItem = updateBoxProperties({
-        updatedProperties: { isItalic: !isItalic },
-        item,
-        shouldFormatItem: true,
-        shouldApplyToAll: true,
-      });
-      updateItem(updatedItem);
+    runWithFormatting(target.owner, {
+      kind: "boxProperties",
+      ...target,
+      properties: { isItalic: !isItalic },
+      formatItem: true,
+      applyToAll: true,
     });
   };
 
   const _updateAlignment = (align: "left" | "center" | "right") => {
+    const target = getSelectedTarget();
+    if (!target) return;
     setAlignment(align);
-    runWithFormatting(() => {
-      const updatedItem = updateBoxProperties({
-        updatedProperties: { align },
-        item,
-        shouldApplyToAll: true,
-        shouldFormatItem: true,
-      });
-      updateItem(updatedItem);
+    runWithFormatting(target.owner, {
+      kind: "boxProperties",
+      ...target,
+      properties: { align },
+      formatItem: true,
+      applyToAll: true,
     });
   };
 
-  // Cleanup timeout on unmount
+  // The owner-transition middleware also flushes work because this toolbar may
+  // stay mounted while the selected item changes.
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      isMountedRef.current = false;
+      flushPendingItemMutations(itemOwnerRef.current);
     };
   }, []);
 
@@ -467,15 +544,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
   const handleRemoveExtraNewlines = useCallback(() => {
     if (!itemHasCleanableNewlines(item)) return;
+    const target = getSelectedTarget();
+    if (!target) return;
     setIsCleaningNewlines(true);
-    runWithFormatting(() => {
-      try {
-        updateItem(cleanItemNewlines(item));
-      } finally {
-        setIsCleaningNewlines(false);
-      }
-    });
-  }, [item, runWithFormatting, updateItem]);
+    runWithFormatting(target.owner, {
+      kind: "cleanNewlines",
+      arrangementId: target.arrangementId,
+    }, () => setIsCleaningNewlines(false));
+  }, [getSelectedTarget, item, runWithFormatting]);
 
   const currentFontPx = useMemo(() => {
     const raw =
@@ -504,6 +580,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <Icon svg={ALargeSmall} className="border-b border-black" />
         <Button
           svg={Minus}
+          aria-label="Decrease font size"
           variant="tertiary"
           onClick={() => {
             const num =
@@ -524,6 +601,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         />
         <Button
           svg={Plus}
+          aria-label="Increase font size"
           variant="tertiary"
           onClick={() => {
             const num =
@@ -538,6 +616,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
           TriggeringButton={
             <Button
               variant="tertiary"
+              aria-label="Font color"
               className="border-b-2"
               svg={Baseline}
               style={{ borderColor: fontColor }}
@@ -553,11 +632,13 @@ const SlideEditTools = ({ className }: { className?: string }) => {
 
         <Button
           variant={isBold ? "secondary" : "tertiary"}
+          aria-label="Bold"
           svg={Bold}
           onClick={() => _updateIsBold()}
         />
         <Button
           variant={isItalic ? "secondary" : "tertiary"}
+          aria-label="Italic"
           svg={Italic}
           onClick={() => _updateIsItalic()}
         />
@@ -565,16 +646,19 @@ const SlideEditTools = ({ className }: { className?: string }) => {
         <div className="flex gap-1 items-center">
           <Button
             variant={alignment === "left" ? "secondary" : "tertiary"}
+            aria-label="Align left"
             svg={AlignLeft}
             onClick={() => _updateAlignment("left")}
           />
           <Button
             variant={alignment === "center" ? "secondary" : "tertiary"}
+            aria-label="Align center"
             svg={AlignCenter}
             onClick={() => _updateAlignment("center")}
           />
           <Button
             variant={alignment === "right" ? "secondary" : "tertiary"}
+            aria-label="Align right"
             svg={AlignRight}
             onClick={() => _updateAlignment("right")}
           />
@@ -587,6 +671,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
             TriggeringButton={
               <Button
                 variant="tertiary"
+                aria-label="Timer color"
                 className="border-b-2"
                 svg={Timer}
                 style={{ borderColor: timerColor }}
@@ -607,14 +692,14 @@ const SlideEditTools = ({ className }: { className?: string }) => {
               value={slide.overflow === "fit" ? "fit" : "separate"}
               onValueChange={(v) => {
                 const overflow = v as "fit" | "separate";
-                runWithFormatting(() => {
-                  const updatedItem = formatFree({
-                    ...item,
-                    slides: slides.map((s, index) =>
-                      index === selectedSlide ? { ...s, overflow } : s
-                    ),
-                  });
-                  updateItem(updatedItem);
+                const target = getSelectedTarget();
+                if (!target) return;
+                runWithFormatting(target.owner, {
+                  kind: "overflow",
+                  slideId: target.slideId,
+                  slideIndex: target.slideIndex,
+                  sectionNum: target.sectionNum,
+                  value: overflow,
                 });
               }}
               className="flex flex-wrap md:flex-nowrap items-center gap-1"

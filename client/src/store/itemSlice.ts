@@ -38,6 +38,15 @@ import {
 } from "../utils/localImageAssets";
 import { replaceMediaReferencesInItem } from "../utils/mediaReferenceReplacement";
 import type { AppDispatch, RootState } from "./store";
+import {
+  getItemMutationOwner,
+  sameItemMutationOwner,
+  type ItemMutationOwner,
+} from "./deferredItemMutations";
+import {
+  applyOwnedItemContentMutation,
+  type OwnedItemContentMutation,
+} from "../utils/ownedItemContentMutation";
 
 const defaultShouldSendTo: ShouldSendTo = {
   projector: true,
@@ -148,6 +157,7 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
     ...snap,
     shouldSkipTitle: snap.shouldSkipTitle ?? false,
     background: snap.background ?? "",
+    formattedSections: snap.formattedSections ?? [],
     bibleInfo: snap.bibleInfo ?? defaultBibleInfoForCompare,
     arrangements: snap.arrangements ?? [],
     slides: snap.slides ?? [],
@@ -217,6 +227,7 @@ const applyItemDataToState = (
   state.name = payload.name || state.name;
   state.type = payload.type || state.type;
   state._id = payload._id || state._id;
+  state.contentOwner = "contentOwner" in payload ? payload.contentOwner : undefined;
   state.listId = nextListId || state.listId;
   if ("background" in payload && payload.background !== undefined) {
     state.background = payload.background;
@@ -231,8 +242,7 @@ const applyItemDataToState = (
   state.shouldSkipTitle = payload.shouldSkipTitle || false;
   state.arrangements = payload.arrangements || [];
   state.slides = payload.slides || [];
-  state.formattedSections =
-    payload.formattedSections || state.formattedSections;
+  state.formattedSections = payload.formattedSections || [];
   state.bibleInfo = payload.bibleInfo || {
     book: "",
     chapter: "",
@@ -375,6 +385,35 @@ export const itemSlice = createSlice({
       action: PayloadAction<FormattedSection[]>,
     ) => {
       state.formattedSections = [...action.payload];
+      state.hasPendingUpdate = true;
+    },
+    applyOwnedContentUpdate: (
+      state,
+      action: PayloadAction<{
+        owner: ItemMutationOwner;
+        snapshot: ItemState;
+        update: Partial<
+          Pick<ItemState, "slides" | "arrangements" | "formattedSections">
+        >;
+      }>,
+    ) => {
+      if (
+        !sameItemMutationOwner(
+          getItemMutationOwner(state),
+          action.payload.owner,
+        )
+      ) {
+        return;
+      }
+      if (action.payload.update.slides) {
+        state.slides = [...action.payload.update.slides];
+      }
+      if (action.payload.update.arrangements) {
+        state.arrangements = [...action.payload.update.arrangements];
+      }
+      if (action.payload.update.formattedSections) {
+        state.formattedSections = [...action.payload.update.formattedSections];
+      }
       state.hasPendingUpdate = true;
     },
     setSongMetadata: (
@@ -608,8 +647,17 @@ export const setSelectedArrangement = createAsyncThunk(
 
 export const updateBoxes = createAsyncThunk(
   "item/updateBoxes",
-  async (args: { boxes: Box[] }, { dispatch, getState }) => {
+  async (
+    args: { boxes: Box[]; expectedOwner?: ItemMutationOwner },
+    { dispatch, getState },
+  ) => {
     const item = getState().undoable.present.item;
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(getItemMutationOwner(item), args.expectedOwner)
+    ) {
+      return;
+    }
     let arrangements = [...item.arrangements];
     if (item.arrangements[item.selectedArrangement]?.slides?.length > 0) {
       arrangements = arrangements.map((arrangement, index) => {
@@ -642,10 +690,17 @@ export const updateArrangements = createAsyncThunk(
     args: {
       arrangements: Arrangment[];
       selectedArrangement?: number;
+      expectedOwner?: ItemMutationOwner;
     },
     { dispatch, getState },
   ) => {
     const item = getState().undoable.present.item;
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(getItemMutationOwner(item), args.expectedOwner)
+    ) {
+      return;
+    }
     const { selectedArrangement: currentArrangement } = item;
     const { selectedArrangement, arrangements } = args;
     const newSlides =
@@ -1013,10 +1068,20 @@ export const removeSlidesByIds = createAsyncThunk(
 export const updateSlides = createAsyncThunk(
   "item/updateSlides",
   async (
-    args: { slides: ItemSlideType[]; formattedSections?: FormattedSection[] },
+    args: {
+      slides: ItemSlideType[];
+      formattedSections?: FormattedSection[];
+      expectedOwner?: ItemMutationOwner;
+    },
     { dispatch, getState },
   ) => {
     const item = getState().undoable.present.item;
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(getItemMutationOwner(item), args.expectedOwner)
+    ) {
+      return;
+    }
     const oldSlides = item.slides;
     const newSlides = args.slides;
 
@@ -1041,8 +1106,41 @@ export const updateSlides = createAsyncThunk(
 
 export const updateBibleInfo = createAsyncThunk(
   "item/updateBibleInfo",
-  async (args: { bibleInfo: BibleInfo }, { dispatch }) => {
+  async (
+    args: { bibleInfo: BibleInfo; expectedOwner?: ItemMutationOwner },
+    { dispatch, getState },
+  ) => {
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(
+        getItemMutationOwner(getState().undoable.present.item),
+        args.expectedOwner,
+      )
+    ) {
+      return;
+    }
     dispatch(_updateBibleInfo(args.bibleInfo));
+  },
+);
+
+export const applyOwnedContentMutation = createAsyncThunk(
+  "item/applyOwnedContentMutation",
+  async (
+    args: { owner: ItemMutationOwner; mutation: OwnedItemContentMutation },
+    { dispatch, getState },
+  ) => {
+    const item = getState().undoable.present.item;
+    if (!sameItemMutationOwner(getItemMutationOwner(item), args.owner)) {
+      return false;
+    }
+    const update = applyOwnedItemContentMutation(item, args.mutation);
+    if (!update) return false;
+    dispatch(itemSlice.actions.applyOwnedContentUpdate({
+      owner: args.owner,
+      snapshot: { ...item, ...update, hasPendingUpdate: true },
+      update,
+    }));
+    return true;
   },
 );
 
@@ -1066,6 +1164,7 @@ export const {
   _updateTimerInfo,
   syncLiveTimerInfo,
   _updateFormattedSections,
+  applyOwnedContentUpdate,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,

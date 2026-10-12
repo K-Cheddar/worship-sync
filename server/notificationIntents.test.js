@@ -10,7 +10,7 @@ import { createSmsStatusWebhookHandler } from "./smsStatusWebhook.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { measureSmsMessage } from "./smsMessage.js";
 
-const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, validateReplacementCandidate, beforeSetDoc } = {}) => {
+const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, validateReplacementCandidate, beforeSetDoc, resolveAvailabilityNotificationContext } = {}) => {
   const collections = new Map();
   const storeFor = (collection) => {
     if (!collections.has(collection)) collections.set(collection, new Map());
@@ -142,13 +142,13 @@ const createHarness = ({ providerSend, firestore = false, requireTeamsEdit, vali
         }),
       };
     },
-    resolveAvailabilityNotificationContext: async (intent) => ({
+    resolveAvailabilityNotificationContext: resolveAvailabilityNotificationContext || (async (intent) => ({
       form: storeFor("teamIntakeForms").get(intent.formId),
       recipient: storeFor("teamIntakeRecipients").get(intent.recipientId),
       member: storeFor("teamRosterMembers").get(intent.memberId),
       church: storeFor("churches").get(churchId),
       publicUrl: "https://www.worshipsync.net/a/secure-token",
-    }),
+    })),
     resolveScheduleNotificationContext: async (intent) => ({
       schedule: storeFor("teamSchedules").get(intent.sourceId),
       member,
@@ -826,21 +826,90 @@ for (const firestore of [false, true]) {
 
 for (const firestore of [false, true]) {
   test(`replacement preview cleanup cannot delete an intent accepted concurrently (${firestore ? "transaction" : "memory"})`, async () => {
-    let h; let interleaved = false;
-    h = createHarness({ firestore, beforeSetDoc: async (collection, id, data) => {
-      if (collection !== "notificationIntents" || !data.approvalSnapshot || interleaved) return;
-      interleaved = true;
-      h.storeFor(collection).set(id, { ...h.storeFor(collection).get(id), ...data });
-      assert.equal((await h.send(id)).payload.success, true);
-      throw new Error("preview response persistence failed after concurrent send");
+    let h;
+    let candidateChecks = 0;
+    let releaseValidation;
+    let signalValidation;
+    const paused = new Promise((resolve) => { signalValidation = resolve; });
+    const release = new Promise((resolve) => { releaseValidation = resolve; });
+    h = createHarness({ firestore, validateReplacementCandidate: async () => {
+      candidateChecks++;
+      if (candidateChecks === 2) {
+        signalValidation();
+        await release;
+      }
+      return { schedule: h.schedule, member: h.member, occurrence: h.schedule.occurrences[0],
+        church: { churchId: h.churchId, name: "First Church" }, position: { name: "Worship" }, holderId: "" };
     } });
-    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
-    await h.handler.prepareReplacementInvitation({ params: { churchId: h.churchId }, body: { scheduleId: h.schedule.scheduleId, occurrenceId: "occ_1", cellKey: "position::0", memberId: h.member.memberId } }, res);
-    assert.equal(res.statusCode, 500);
-    const retained = [...h.storeFor("notificationIntents").values()][0];
+    const response = () => ({ statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } });
+    const res = response();
+    const preparing = h.handler.prepareReplacementInvitation({ params: { churchId: h.churchId }, body: { scheduleId: h.schedule.scheduleId, occurrenceId: "occ_1", cellKey: "position::0", memberId: h.member.memberId } }, res);
+    await paused;
+    const intentId = [...h.storeFor("notificationIntents").values()][0].intentId;
+    try {
+      const otherPreview = response();
+      await h.handler.getIntentPreview({ params: { churchId: h.churchId, intentId } }, otherPreview);
+      assert.equal(otherPreview.statusCode, 200);
+      assert.equal((await h.send(intentId)).payload.success, true);
+    } finally {
+      releaseValidation();
+    }
+    await preparing;
+    assert.equal(res.statusCode, 409);
+    const retained = h.storeFor("notificationIntents").get(intentId);
     assert.equal(retained.status, "sent");
     assert.equal(retained.providerMessageId, "SM1");
-    assert.equal((await h.send(retained.intentId)).statusCode, 409);
+    assert.equal((await h.send(intentId)).statusCode, 409);
+    assert.equal(h.providerCalls, 1);
+  });
+}
+
+
+for (const firestore of [false, true]) {
+  test(`delayed preview cannot overwrite message history after another request sends (${firestore ? "transaction" : "memory"})`, async () => {
+    let releaseValidation;
+    let signalValidation;
+    const validationPaused = new Promise((resolve) => { signalValidation = resolve; });
+    const validationRelease = new Promise((resolve) => { releaseValidation = resolve; });
+    let pauseNextValidation = false;
+    let sentBody;
+    let h;
+    h = createHarness({ firestore,
+      providerSend: async ({ body }) => { sentBody = body; return { providerMessageId: "SMpreviewRace", status: "accepted" }; },
+      resolveAvailabilityNotificationContext: async (intent) => {
+        if (pauseNextValidation) {
+          pauseNextValidation = false;
+          signalValidation();
+          await validationRelease;
+        }
+        return {
+          form: h.storeFor("teamIntakeForms").get(intent.formId),
+          recipient: h.storeFor("teamIntakeRecipients").get(intent.recipientId),
+          member: h.storeFor("teamRosterMembers").get(intent.memberId),
+          church: h.storeFor("churches").get(h.churchId),
+          publicUrl: "https://www.worshipsync.net/a/secure-token",
+        };
+      },
+    });
+    const { intent } = await h.preview();
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    pauseNextValidation = true;
+    const delayedPreview = h.handler.getIntentPreview({ params: { churchId: h.churchId, intentId: intent.intentId } }, res);
+    await validationPaused;
+    let sent;
+    try {
+      assert.equal((await h.send(intent.intentId)).payload.success, true);
+      sent = structuredClone(h.storeFor("notificationIntents").get(intent.intentId));
+      assert.equal(sent.message, sentBody);
+      assert.equal(sent.status, "sent");
+      h.form.name = "Changed form content after the send";
+    } finally {
+      releaseValidation();
+    }
+    await delayedPreview;
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.payload.success, false);
+    assert.deepEqual(h.storeFor("notificationIntents").get(intent.intentId), sent);
     assert.equal(h.providerCalls, 1);
   });
 }

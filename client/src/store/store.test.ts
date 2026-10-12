@@ -333,11 +333,11 @@ describe("item content integrity investigation", () => {
     expect(db.get).not.toHaveBeenCalledWith("song-B");
   });
 
-  it("loses A edits when an edit of B cancels A before debounce completes", async () => {
+  it("saves pending A edits under A when an edit of B starts another autosave", async () => {
     const { docs, select, edit, tick } = setup();
     select("song-A"); edit("A lost"); select("song-B"); edit("B edited");
     await tick();
-    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-A")?.name).toBe("A lost");
     expect(docs.get("song-B")?.name).toBe("B edited");
     expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
   });
@@ -355,7 +355,7 @@ describe("item content integrity investigation", () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  it("cancels A after its delayed get resolves when B starts a newer save", async () => {
+  it("finishes A after its delayed get resolves while B starts a newer save", async () => {
     const { docs, select, edit, tick, db } = setup();
     const held = deferred<Fixture>();
     db.get.mockImplementation((id: string) => id === "song-A"
@@ -364,27 +364,30 @@ describe("item content integrity investigation", () => {
     select("song-B"); edit("B saved");
     held.resolve(clone(docs.get("song-A")!)); await flushListenerEffects();
     await tick();
-    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-A")?.name).toBe("A canceled");
     expect(docs.get("song-B")?.name).toBe("B saved");
-    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-A" }));
     expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-B" }));
   });
 
-  it("persists stale free-A sections into free-B when the incoming doc lacks them", async () => {
+  it("does not inherit stale free-A sections when free-B has none", async () => {
     const { docs, select, edit, tick } = setup();
     select("free-A"); select("free-B"); edit("B renamed");
     await tick();
-    expect(docs.get("free-B")?.formattedSections).toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("free-B")?.formattedSections).not.toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("free-B")?.formattedSections).toEqual([]);
     expect(docs.get("free-B")?.slides).toEqual(fixture("free-B", "free").slides);
   });
 
-  it("carries custom sections through a song and back into another custom document", async () => {
+  it("keeps custom sections with their custom item across song navigation", async () => {
     const { docs, select, edit, tick } = setup();
     select("free-A"); select("song-A"); edit("Song renamed"); await tick();
-    expect(docs.get("song-A")?.formattedSections).toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("song-A")?.formattedSections).toEqual([]);
     expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
     select("free-B"); edit("Free renamed"); await tick();
-    expect(docs.get("free-B")?.formattedSections).toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("free-B")?.formattedSections).toEqual([]);
+    expect(docs.get("free-B")?.formattedSections).not.toEqual(docs.get("free-A")?.formattedSections);
   });
 
   it("overwrites a second client's newer content by fetching its latest revision", async () => {
@@ -439,11 +442,11 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-B")?.name).toBe("song-B");
   });
 
-  it("rapid back-and-forth navigation keeps the last surviving payload paired with its ID", async () => {
+  it("rapid back-and-forth navigation saves each pending payload under its own ID", async () => {
     const { docs, select, edit, tick } = setup();
     select("song-A"); edit("A lost"); select("song-B"); edit("B survives");
     select("song-A"); select("song-B"); await tick();
-    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-A")?.name).toBe("A lost");
     expect(docs.get("song-B")?.name).toBe("B survives");
     expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
   });

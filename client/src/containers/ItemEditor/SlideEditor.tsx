@@ -38,8 +38,16 @@ import {
   setSongLinks,
   updateArrangements,
   updateSlides,
+  applyOwnedContentMutation,
   setRestoreFocusToBox,
 } from "../../store/itemSlice";
+import {
+  flushPendingItemMutations,
+  getItemMutationOwner,
+  scheduleOwnedItemMutation,
+  type PendingItemMutationHandle,
+  type ItemMutationOwner,
+} from "../../store/deferredItemMutations";
 import BibleItemActions from "./BibleItemActions";
 import { setName, updateBoxes } from "../../store/itemSlice";
 import { formatBible, formatFree, formatSong } from "../../utils/overflow";
@@ -102,6 +110,7 @@ import type { PresentationControllerMode } from "../../context/presentationContr
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import { getFreeSectionNumber } from "../../utils/freeSectionNames";
+import type { OwnedItemContentMutation } from "../../utils/ownedItemContentMutation";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -165,6 +174,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   } = item;
   const itemRef = useRef(item);
   itemRef.current = item;
+  const itemOwner = getItemMutationOwner(item);
+  const itemOwnerRef = useRef(itemOwner);
+  itemOwnerRef.current = itemOwner;
   const showEditorSkeleton = isLoading || isSectionLoading;
 
   const arrangement = arrangements[selectedArrangement];
@@ -249,11 +261,15 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     isMobile ? "calc(47.25vw + 60px)" : "23.625vw"
   );
 
-  const reformatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const boxEditTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingBoxEditRef = useRef<DisplayEditorChangeInfo | null>(null);
+  const reformatTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
+  const boxEditTimeoutRef = useRef<PendingItemMutationHandle | null>(null);
+  const pendingBoxEditRef = useRef<{
+    changeInfo: DisplayEditorChangeInfo;
+    owner: ItemMutationOwner;
+  } | null>(null);
   const cursorPositionsRef = useRef<Record<number, number>>({});
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const isEditorMountedRef = useRef(true);
   const [isReformatting, setIsReformatting] = useState(false);
   const itemTypeLabel = useMemo(() => getItemTypeLabel(type), [type]);
 
@@ -389,13 +405,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [selectedSlide, restoreFocusToBox, dispatch]);
 
   useEffect(() => {
+    isEditorMountedRef.current = true;
     return () => {
-      if (reformatTimeoutRef.current) {
-        clearTimeout(reformatTimeoutRef.current);
-      }
-      if (boxEditTimeoutRef.current) {
-        clearTimeout(boxEditTimeoutRef.current);
-      }
+      isEditorMountedRef.current = false;
+      flushPendingItemMutations(itemOwnerRef.current);
     };
   }, []);
 
@@ -563,7 +576,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     box,
     cursorPosition,
     lastKeyPressed,
-  }: DisplayEditorChangeInfo) => {
+    expectedOwner: expectedOwnerOverride,
+  }: DisplayEditorChangeInfo & { expectedOwner?: ItemMutationOwner }) => {
     if (!canEdit) {
       return;
     }
@@ -586,6 +600,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     }
 
     const currentItem = itemRef.current;
+    const expectedOwner =
+      expectedOwnerOverride ?? getItemMutationOwner(currentItem) ?? undefined;
     const newBoxes = boxes.map((b, i) =>
       i === index
         ? {
@@ -600,7 +616,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     );
 
     if (type === "timer" || type === "service-time") {
-      dispatch(updateBoxes({ boxes: newBoxes }));
+      dispatch(updateBoxes({ boxes: newBoxes, expectedOwner }));
     }
 
     const updatedSlides = currentItem.slides.map((slide, slideIndex) => {
@@ -624,7 +640,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         item: updatedItem,
         mode: currentItem.bibleInfo?.fontMode || "separate",
       });
-      dispatch(updateSlides({ slides: formattedItem.slides }));
+      dispatch(updateSlides({ slides: formattedItem.slides, expectedOwner }));
     }
 
     if (type === "free") {
@@ -664,7 +680,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
             cursorPosition,
           );
         }
-        dispatch(updateSlides({ slides: formattedItem.slides }));
+        dispatch(updateSlides({ slides: formattedItem.slides, expectedOwner }));
         return;
       }
 
@@ -729,6 +745,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       dispatch(updateSlides({
         slides: formattedItem.slides,
         formattedSections: formattedItem.formattedSections,
+        expectedOwner,
       }));
     }
 
@@ -741,7 +758,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
 
       if (box.excludeFromOverflow || selectedSlide === 0) {
-        dispatch(updateBoxes({ boxes: newBoxes }));
+        dispatch(updateBoxes({ boxes: newBoxes, expectedOwner }));
         return;
       }
 
@@ -756,7 +773,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       );
 
       if (lyricIndex === -1) {
-        dispatch(updateBoxes({ boxes: newBoxes }));
+        dispatch(updateBoxes({ boxes: newBoxes, expectedOwner }));
         return;
       }
 
@@ -805,7 +822,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       });
 
       if (shouldDeleteCurrentSlide) {
-        dispatch(updateArrangements({ arrangements: formattedItem.arrangements }));
+        dispatch(updateArrangements({
+          arrangements: formattedItem.arrangements,
+          expectedOwner,
+        }));
         return;
       }
 
@@ -847,7 +867,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         );
       }
 
-      dispatch(updateArrangements({ arrangements: arrangementsWithBox }));
+      dispatch(updateArrangements({
+        arrangements: arrangementsWithBox,
+        expectedOwner,
+      }));
     }
   }, [
     canEdit,
@@ -861,10 +884,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   ]);
 
   const clearPendingBoxEdit = useCallback(() => {
-    if (boxEditTimeoutRef.current) {
-      clearTimeout(boxEditTimeoutRef.current);
-      boxEditTimeoutRef.current = null;
-    }
+    boxEditTimeoutRef.current?.cancel();
+    boxEditTimeoutRef.current = null;
     pendingBoxEditRef.current = null;
   }, []);
 
@@ -875,13 +896,19 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const flushPendingBoxEdit = useCallback(
     (override?: DisplayEditorChangeInfo) => {
-      const pending = override ?? pendingBoxEditRef.current;
+      const pending = override
+        ? { changeInfo: override, owner: itemOwnerRef.current }
+        : pendingBoxEditRef.current;
       clearPendingBoxEdit();
 
       if (!pending) return;
 
       setIsReformatting(false);
-      applyBoxChange({ ...pending, commitMode: "immediate" });
+      applyBoxChange({
+        ...pending.changeInfo,
+        commitMode: "immediate",
+        expectedOwner: pending.owner ?? undefined,
+      });
     },
     [applyBoxChange, clearPendingBoxEdit]
   );
@@ -889,9 +916,11 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   const scheduleBoxEdit = useCallback(
     (changeInfo: DisplayEditorChangeInfo) => {
       clearPendingBoxEdit();
-      pendingBoxEditRef.current = changeInfo;
+      const owner = itemOwnerRef.current;
+      if (!owner) return;
+      pendingBoxEditRef.current = { changeInfo, owner };
       setIsReformatting(true);
-      boxEditTimeoutRef.current = setTimeout(() => {
+      boxEditTimeoutRef.current = scheduleOwnedItemMutation(owner, BOX_EDIT_DEBOUNCE_MS, () => {
         const pending = pendingBoxEditRef.current;
         pendingBoxEditRef.current = null;
         boxEditTimeoutRef.current = null;
@@ -902,10 +931,14 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         }
 
         startTransition(() => {
-          applyBoxChange({ ...pending, commitMode: "immediate" });
+          applyBoxChange({
+            ...pending.changeInfo,
+            commitMode: "immediate",
+            expectedOwner: pending.owner,
+          });
         });
         setIsReformatting(false);
-      }, BOX_EDIT_DEBOUNCE_MS);
+      });
     },
     [applyBoxChange, clearPendingBoxEdit]
   );
@@ -1110,166 +1143,75 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (!canEdit) return;
 
       // Cursor position is tracked in SectionTextEditor component
+      const owner = itemOwner;
+      if (!owner) return;
 
-      // Optimistic update: Update formattedSections immediately for instant feedback
-      // For songs, use arrangement slides; for others, use item slides
       const currentSlides = type === "song" && arrangement?.slides ? arrangement.slides : slides;
       const currentSlide = currentSlides?.[selectedSlide];
-      if (!currentSlide) return;
+      if (!currentSlide?.id) return;
+
+      let mutation: OwnedItemContentMutation;
 
       if (type === "free") {
-        const currentItem = itemRef.current;
         const currentSectionMatch = currentSlide.name?.match(/Section (\d+)/);
         const currentSectionNum = currentSectionMatch
           ? parseInt(currentSectionMatch[1])
           : 1;
-
-        const formattedSections = currentItem.formattedSections || [];
-        const updatedFormattedSections = formattedSections.map((section) => {
-          if (section.sectionNum === currentSectionNum) {
-            return {
-              ...section,
-              words: newText,
-            };
-          }
-          return section;
-        });
-
-        if (!updatedFormattedSections.find((s) => s.sectionNum === currentSectionNum)) {
-          updatedFormattedSections.push({
+        dispatch(applyOwnedContentMutation({
+          owner,
+          mutation: {
+            kind: "sectionTextDraft",
+            slideId: currentSlide.id,
+            slideIndex: selectedSlide,
             sectionNum: currentSectionNum,
-            words: newText,
-            slideSpan: 1,
-          });
-        }
-
-        // Optimistic update - update state immediately
-        dispatch(
-          updateSlides({
-            slides: currentItem.slides, // Keep current slides for now
-            formattedSections: updatedFormattedSections,
-          })
+            value: newText,
+          },
+        }));
+        mutation = {
+          kind: "sectionText",
+          slideId: currentSlide.id,
+          slideIndex: selectedSlide,
+          sectionNum: currentSectionNum,
+          value: newText,
+        };
+      } else if (type === "song") {
+        const targetArrangement = item.arrangements[selectedArrangement];
+        const targetLyric = targetArrangement?.formattedLyrics.find((lyric) =>
+          slideNameMatchesLyric(currentSlide.name, lyric.name),
         );
+        if (!targetArrangement || !targetLyric) return;
+        mutation = {
+          kind: "sectionText",
+          slideId: currentSlide.id,
+          slideIndex: selectedSlide,
+          arrangementId: targetArrangement.id,
+          sectionId: targetLyric.id,
+          sectionName: targetLyric.name,
+          value: newText,
+        };
+      } else {
+        mutation = {
+          kind: "boxWords",
+          slideId: currentSlide.id,
+          slideIndex: selectedSlide,
+          boxIndex: selectedBox,
+          value: newText,
+        };
       }
 
-      // Clear any pending reformatting
-      if (reformatTimeoutRef.current) {
-        clearTimeout(reformatTimeoutRef.current);
-      }
+      reformatTimeoutRef.current?.cancel();
 
-      // Debounce the actual reformatting
       setIsReformatting(true);
-      reformatTimeoutRef.current = setTimeout(() => {
-        try {
-          if (type === "song") {
-            const formattedLyrics =
-              item.arrangements[item.selectedArrangement]?.formattedLyrics || [];
-            const _index = formattedLyrics.findIndex((e) =>
-              slideNameMatchesLyric(currentSlide.name, e.name)
-            );
-
-            if (_index === -1) {
-              setIsReformatting(false);
-              return;
-            }
-
-            const updatedArrangements = item.arrangements.map((arr, idx) => {
-              if (idx === item.selectedArrangement) {
-                return {
-                  ...arr,
-                  formattedLyrics: formattedLyrics.map((lyric, i) => {
-                    if (i === _index) {
-                      return {
-                        ...lyric,
-                        words: newText,
-                      };
-                    }
-                    return lyric;
-                  }),
-                };
-              }
-              return arr;
-            });
-
-            const _item = formatSong(
-              {
-                ...item,
-                arrangements: updatedArrangements,
-                selectedArrangement,
-              },
-            );
-
-            dispatch(updateArrangements({ arrangements: _item.arrangements }));
-          }
-
-          if (type === "free") {
-            const currentItem = itemRef.current;
-            const currentSectionMatch = currentSlide.name?.match(/Section (\d+)/);
-            const currentSectionNum = currentSectionMatch
-              ? parseInt(currentSectionMatch[1])
-              : 1;
-
-            const formattedSections = currentItem.formattedSections || [];
-            const updatedFormattedSections = formattedSections.map((section) => {
-              if (section.sectionNum === currentSectionNum) {
-                return {
-                  ...section,
-                  words: newText,
-                };
-              }
-              return section;
-            });
-
-            if (!updatedFormattedSections.find((s) => s.sectionNum === currentSectionNum)) {
-              updatedFormattedSections.push({
-                sectionNum: currentSectionNum,
-                words: newText,
-                slideSpan: 1,
-              });
-            }
-
-            const updatedItem = {
-              ...currentItem,
-              formattedSections: updatedFormattedSections,
-            };
-
-            const _item = formatFree(updatedItem);
-            dispatch(
-              updateSlides({
-                slides: _item.slides,
-                formattedSections: _item.formattedSections,
-              })
-            );
-          } else {
-            // For other types (bible, timer, etc.), update the box words directly
-            const updatedSlides = item.slides.map((slide, index) => {
-              if (index === selectedSlide) {
-                const updatedBoxes = slide.boxes.map((box, boxIndex) => {
-                  if (boxIndex === selectedBox) {
-                    return {
-                      ...box,
-                      words: newText,
-                    };
-                  }
-                  return box;
-                });
-                return {
-                  ...slide,
-                  boxes: updatedBoxes,
-                };
-              }
-              return slide;
-            });
-            dispatch(updateSlides({ slides: updatedSlides }));
-          }
-        } catch (error) {
-          console.error("Error reformatting section:", error);
-          // Show error toast if available
-          // Could use toast context here if needed
-        } finally {
-          setIsReformatting(false);
-        }
-      }, 300); // 300ms debounce
+      reformatTimeoutRef.current = scheduleOwnedItemMutation(owner, 300, () => {
+        void dispatch(applyOwnedContentMutation({ owner, mutation }))
+          .unwrap()
+          .catch((error) => {
+            console.error("Error reformatting section:", error);
+          })
+          .finally(() => {
+            if (isEditorMountedRef.current) setIsReformatting(false);
+          });
+      });
     },
     [
       canEdit,
@@ -1278,6 +1220,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       selectedBox,
       type,
       item,
+      itemOwner,
       selectedArrangement,
       arrangement,
       dispatch,

@@ -10,13 +10,20 @@ import {
 
 import PouchDB from "pouchdb-browser";
 import { Cloudinary } from "@cloudinary/url-gen";
-import { GlobalInfoContext } from "./globalInfo";
+import { GlobalInfoContext, globalFireDbInfo } from "./globalInfo";
 import { useLocation } from "react-router-dom";
 import { useDispatch } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
 import { MAX_INITIAL_SESSION_RETRIES, MAX_REPLICATION_AUTH_RETRIES } from "../constants";
 import { seedOfflineGuestDatabase } from "../utils/offlineGuestSeed";
+import {
+  flushContentDatabaseBeforeTeardown,
+  flushPendingItemMutationsForContentDatabase,
+  getActiveContentDatabaseOwner,
+  getContentDatabaseForOwner,
+  setActiveContentDatabase,
+} from "../store/deferredItemMutations";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -67,6 +74,40 @@ export const ControllerInfoContext =
 export let globalDb: PouchDB.Database | undefined = undefined;
 export let globalBibleDb: PouchDB.Database | undefined = undefined;
 export let globalBroadcastRef: BroadcastChannel | undefined = undefined;
+
+export const setGlobalContentDatabase = (
+  databaseInstance: PouchDB.Database | undefined,
+  scope?: { databaseKey: string; churchId: string },
+) => {
+  if (!databaseInstance || !scope) {
+    const previousOwner = getActiveContentDatabaseOwner();
+    if (previousOwner) {
+      flushPendingItemMutationsForContentDatabase(previousOwner.scopeId);
+    }
+    globalDb = databaseInstance;
+    setActiveContentDatabase(null);
+    return;
+  }
+
+  const databaseKey = scope.databaseKey.toLowerCase();
+  const churchId = scope.churchId || "";
+  const scopeId = JSON.stringify([
+    churchId,
+    databaseKey,
+    databaseInstance.name,
+  ]);
+  const owner = { scopeId, databaseKey, churchId };
+  const previousOwner = getActiveContentDatabaseOwner();
+  if (
+    previousOwner &&
+    (previousOwner.scopeId !== owner.scopeId ||
+      getContentDatabaseForOwner(previousOwner) !== databaseInstance)
+  ) {
+    flushPendingItemMutationsForContentDatabase(previousOwner.scopeId);
+  }
+  globalDb = databaseInstance;
+  setActiveContentDatabase(owner, databaseInstance);
+};
 
 const DEMO_DATABASE_KEY = "demo";
 const GUEST_DATABASE_NAME = "worship-sync-demo-guest";
@@ -481,7 +522,10 @@ const ControllerInfoProvider = ({ children }: any) => {
           setDbProgress(100);
           setDb(localDb);
           setIsDbSetup(true);
-          globalDb = localDb;
+          setGlobalContentDatabase(localDb, {
+            databaseKey: broadcastDatabaseKey,
+            churchId: globalFireDbInfo.churchId || "",
+          });
           if (broadcastDatabaseKey) {
             updateGlobalBroadcast(broadcastDatabaseKey);
           }
@@ -586,7 +630,10 @@ const ControllerInfoProvider = ({ children }: any) => {
             setDbProgress(100);
             setDb(localDb);
             setIsDbSetup(true);
-            globalDb = localDb;
+            setGlobalContentDatabase(localDb, {
+              databaseKey: activeDatabaseKey,
+              churchId: globalFireDbInfo.churchId || "",
+            });
             if (broadcastDatabaseKey) {
               updateGlobalBroadcast(broadcastDatabaseKey);
             }
@@ -733,7 +780,11 @@ const ControllerInfoProvider = ({ children }: any) => {
     await replicateRef.current?.cancel();
     await bibleReplicateRef.current?.cancel();
     remoteDbRef.current = null;
-    globalDb = undefined;
+    const previousContentOwner = getActiveContentDatabaseOwner();
+    if (previousContentOwner) {
+      await flushContentDatabaseBeforeTeardown(previousContentOwner.scopeId);
+    }
+    setGlobalContentDatabase(undefined);
     globalBibleDb = undefined;
     const mainDb = db;
     const bibleDbInstance = bibleDb;
