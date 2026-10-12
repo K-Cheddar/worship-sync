@@ -18480,7 +18480,16 @@ export const createTeamsAuthHandlers = ({
           COLLECTIONS.servicePlans,
           buildServicePlanDocId(churchId, planKey),
         );
-        if (!servicePlan || servicePlan.churchId !== churchId) {
+        // A plan-only workstation gets the sanitized current-service viewer
+        // projection, but not this separate assignment-list endpoint.
+        const planOnlyWorkstation =
+          reader?.sessionKind === "workstation" &&
+          reader.device?.serviceWorkspaceAccess !== true;
+        if (
+          !servicePlan ||
+          servicePlan.churchId !== churchId ||
+          planOnlyWorkstation
+        ) {
           return res.json({ success: true, assignments: [] });
         }
         return res.json({

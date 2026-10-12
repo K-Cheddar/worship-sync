@@ -46,6 +46,7 @@ import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
 import { calendarMonthRange, shiftRange } from "./rangeSelection";
 import { setServerTimeOffset } from "../../utils/serverTime";
+import { serviceDateTimeInTimeZone } from "../../utils/teamScheduleOccurrences";
 
 let mockState: unknown;
 const mockDispatch = jest.fn();
@@ -332,13 +333,23 @@ const octoberSaturdayService = (serviceId: string, positionId: string): TeamServ
   positionRequirements: [{ positionId, count: 1 }],
 });
 
+const newYorkOctoberStart = (day: number, time: string) => {
+  const startsAt = serviceDateTimeInTimeZone(
+    `2026-10-${String(day).padStart(2, "0")}`,
+    time,
+    "America/New_York",
+  );
+  if (!startsAt) throw new Error(`Could not resolve October ${day} at ${time}.`);
+  return startsAt.toISOString();
+};
+
 const octoberServiceOccurrences = (
   serviceId: string,
   name: string,
   positionId: string,
   days: number[],
 ) => days.map((day) => {
-  const startsAt = new Date(2026, 9, day, 10).toISOString();
+  const startsAt = newYorkOctoberStart(day, "10:00");
   return {
     occurrenceId: `${serviceId}@${startsAt}`,
     serviceId,
@@ -1451,7 +1462,7 @@ describe("Teams", () => {
     const vocalId = "position-vocal";
     const memberId = "member-praise";
     const savedOccurrences = [3, 10, 17, 24, 31].map((day) => {
-      const startsAt = new Date(2026, 9, day, 11).toISOString();
+      const startsAt = newYorkOctoberStart(day, "11:00");
       return {
         occurrenceId: `${worshipId}@${startsAt}`,
         serviceId: worshipId,
@@ -1584,9 +1595,12 @@ describe("Teams", () => {
     const generatedOccurrences = ensureBody.occurrences;
     if (!generatedOccurrences) throw new Error("The schedule period had no generated occurrences.");
     expect(generatedOccurrences).toHaveLength(5);
-    expect(generatedOccurrences.every((occurrence) =>
-      occurrence.name === "Worship Experience" && new Date(occurrence.startsAt).getHours() === 11,
-    )).toBe(true);
+    expect(generatedOccurrences.map((occurrence) => occurrence.name)).toEqual(
+      Array(5).fill("Worship Experience"),
+    );
+    expect(generatedOccurrences.map((occurrence) => occurrence.startsAt)).toEqual(
+      [3, 10, 17, 24, 31].map((day) => newYorkOctoberStart(day, "11:00")),
+    );
   });
 
   it("assigns a microphone from the selected team's schedule", async () => {

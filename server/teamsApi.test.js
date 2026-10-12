@@ -7950,28 +7950,6 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
     },
     shareToken: "raw-schedule-token",
   });
-  const churchBeforeViewerCatalogs = await getDoc(
-    COLLECTIONS.churches,
-    context.churchId,
-  );
-  await setDoc(COLLECTIONS.churches, context.churchId, {
-    ...churchBeforeViewerCatalogs,
-    servicePlanMicrophones: [{
-      id: "viewer-mic",
-      name: "Blue",
-      type: "Headset",
-      color: "#2563eb",
-    }],
-    serviceEquipment: [{
-      id: "viewer-iem",
-      name: "Red IEM",
-      category: "iem",
-      subtype: "wireless-beltpack",
-    }],
-    logoUrl: "https://example.com/church.png",
-    primaryColor: "#123456",
-    secondaryColor: "#abcdef",
-  });
   const viewerRead = await callHandler(authHandlers.getServicePlan, {
     context: viewerContext,
     params: { planKey },
@@ -8012,6 +7990,29 @@ test("service plan endpoints: create, read, update, delete, permission gating, a
   ]) {
     assert.equal(servicesEditorSerialized.includes(privateRosterValue), false, privateRosterValue);
   }
+  // Creating the editor context reseeds the church fixture, so add catalogs after it.
+  const churchBeforeViewerCatalogs = await getDoc(
+    COLLECTIONS.churches,
+    context.churchId,
+  );
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    ...churchBeforeViewerCatalogs,
+    servicePlanMicrophones: [{
+      id: "viewer-mic",
+      name: "Blue",
+      type: "Headset",
+      color: "#2563eb",
+    }],
+    serviceEquipment: [{
+      id: "viewer-iem",
+      name: "Red IEM",
+      category: "iem",
+      subtype: "wireless-beltpack",
+    }],
+    logoUrl: "https://example.com/church.png",
+    primaryColor: "#123456",
+    secondaryColor: "#abcdef",
+  });
   const viewerPayload = await callHandler(authHandlers.getServicePlanViewer, {
     context: planOnlyViewerContext,
     params: { planKey: viewerPlanKey },
@@ -15763,10 +15764,18 @@ test("team-owned entity mutations authorize source and target teams", async (t) 
     createTeam("AV"),
     createTeam("Youth"),
   ]);
-  const createPosition = async (team) => (await callHandler(authHandlers.createTeamPosition, {
-    context: owner,
-    body: { name: `${team.name} position`, teamId: team.teamId },
-  })).payload.position;
+  // Positions must have distinct names within a team.
+  const createPosition = async (team, suffix = "") => {
+    const result = await callHandler(authHandlers.createTeamPosition, {
+      context: owner,
+      body: {
+        name: `${team.name} position${suffix ? ` ${suffix}` : ""}`,
+        teamId: team.teamId,
+      },
+    });
+    assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+    return result.payload.position;
+  };
   const createRole = async (team) => (await callHandler(authHandlers.createTeamRole, {
     context: owner,
     body: { name: `${team.name} role`, teamId: team.teamId },
@@ -15776,7 +15785,7 @@ test("team-owned entity mutations authorize source and target teams", async (t) 
     body: { name: `${team.name} area`, teamId: team.teamId },
   })).payload.area;
   const [worshipPosition, secondWorshipPosition, movableWorshipPosition, avPosition] = await Promise.all([
-    createPosition(worship), createPosition(worship), createPosition(worship), createPosition(av),
+    createPosition(worship, "1"), createPosition(worship, "2"), createPosition(worship, "3"), createPosition(av),
   ]);
   const [worshipRole, secondWorshipRole, movableWorshipRole, avRole] = await Promise.all([
     createRole(worship), createRole(worship), createRole(worship), createRole(av),
@@ -15794,7 +15803,7 @@ test("team-owned entity mutations authorize source and target teams", async (t) 
     createLevel(movableWorshipArea, "Movable Worship level"),
     createLevel(avArea, "AV level"),
   ]);
-  const membershipPosition = await createPosition(worship);
+  const membershipPosition = await createPosition(worship, "membership");
   const membershipRole = await createRole(worship);
   const membershipArea = await createArea(worship);
   const membershipLevel = await createLevel(membershipArea, "Membership reader level");

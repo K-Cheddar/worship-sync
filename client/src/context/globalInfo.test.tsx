@@ -105,6 +105,8 @@ jest.mock("../api/auth", () => ({
     }
   },
   getAuthBootstrap: jest.fn(),
+  authenticatedApiFetch: (path: RequestInfo | URL, options?: RequestInit) =>
+    fetch(path, options),
   getSharedDataToken: jest.fn(() =>
     Promise.resolve({ success: true, token: "test-token", database: "main" })
   ),
@@ -325,6 +327,24 @@ const TeamsLiveProbe = () => {
       <div data-testid="broad-teams-read">{String(context?.hasBroadTeamsReadAccess)}</div>
   </div>;
 };
+
+const teamsStreamRequests = (fetchMock: jest.Mock) =>
+  fetchMock.mock.calls.filter(([input]) =>
+    String(input).includes("api/churches/church-1/teams/stream"),
+  );
+
+const openTeamsStreamResponse = () =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
 
 const ContextProbe = () => {
   const context = useContext(GlobalInfoContext);
@@ -599,21 +619,26 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     ["normalized booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" } }, false],
     ["default workstation", { ...loggedInWorkstationBootstrap, permissions: { services: "view" } }, false],
     ["display", loggedInDisplayBootstrap, false],
-  ])("gates full Teams EventSource access for %s", async (_name, bootstrap, allowed) => {
-    const original = global.EventSource;
-    const construct = jest.fn(() => ({ close: jest.fn() }));
-    global.EventSource = construct as unknown as typeof EventSource;
-    try {
-      (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(bootstrap);
-      const { unmount } = renderProvider(<TeamsLiveProbe />);
-      await waitFor(() => expect(screen.getByTestId("teams-live-church")).toHaveTextContent("church-1"));
-      expect(screen.getByTestId("teams-live-capability")).toHaveTextContent(String(allowed));
-      expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent(String(allowed));
-      expect(construct).toHaveBeenCalledTimes(allowed ? 1 : 0);
-      unmount();
-    } finally {
-      global.EventSource = original;
-    }
+  ])("gates authenticated Teams live stream access for %s", async (_name, bootstrap, allowed) => {
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockResolvedValue(openTeamsStreamResponse());
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(bootstrap);
+    const { unmount } = renderProvider(<TeamsLiveProbe />);
+    await waitFor(() => expect(screen.getByTestId("teams-live-church")).toHaveTextContent("church-1"));
+    expect(screen.getByTestId("teams-live-capability")).toHaveTextContent(String(allowed));
+    expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent(String(allowed));
+    const requests = teamsStreamRequests(fetchMock);
+    expect(requests.map(([, options]) => options)).toEqual(
+      allowed
+        ? [
+            expect.objectContaining({
+              method: "GET",
+              headers: expect.objectContaining({ Accept: "text/event-stream" }),
+            }),
+          ]
+        : [],
+    );
+    unmount();
   });
 
   it.each([
@@ -664,19 +689,14 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
       displayWithBroadPermission,
     );
-    const original = global.EventSource;
-    const construct = jest.fn(() => ({ close: jest.fn() }));
-    global.EventSource = construct as unknown as typeof EventSource;
-    try {
-      renderProvider(<TeamsLiveProbe />);
-      await waitFor(() =>
-        expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent("true"),
-      );
-      expect(screen.getByTestId("teams-live-capability")).toHaveTextContent("false");
-      expect(construct).not.toHaveBeenCalled();
-    } finally {
-      global.EventSource = original;
-    }
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockResolvedValue(openTeamsStreamResponse());
+    renderProvider(<TeamsLiveProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent("true"),
+    );
+    expect(screen.getByTestId("teams-live-capability")).toHaveTextContent("false");
+    expect(teamsStreamRequests(fetchMock)).toHaveLength(0);
   });
 
   it("does not sign shared-data auth out while initial bootstrap is loading", async () => {
