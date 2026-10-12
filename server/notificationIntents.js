@@ -1,3 +1,4 @@
+import { claimReviewedNotificationBatch, executeReviewedNotificationBatch, notificationBatchReviewVersion } from "./notificationBatches.js";
 import { isChurchMessagingReady, normalizeChurchMessagingConfig } from "./churchMessagingConfig.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
@@ -615,7 +616,7 @@ export const createNotificationIntentHandlers = ({
         return { invalidated: true, errorMessage: "The recipient, phone number, consent, source, or message changed. Review and confirm the current preview again.", statusCode: 409 };
       }
       const sendStartedAt = nowIso();
-      const next = { ...current, status: "sending", approvedByUid: actorUid, approvedAt: sendStartedAt, sendStartedAt, updatedAt: sendStartedAt };
+      const next = { ...current, status: "sending", attemptId, approvedByUid: actorUid, approvedAt: sendStartedAt, sendStartedAt, updatedAt: sendStartedAt };
       return { next, validated };
     };
     if (db) {
@@ -1336,11 +1337,7 @@ export const createNotificationIntentHandlers = ({
       batch = {
         ...batch, status: "prepared", selectedMemberIds: memberIds,
         recipients: rows, intentIds,
-        reviewVersion: hashValue(JSON.stringify({
-          batchId,
-          selectedMemberIds: memberIds,
-          recipients: rows.map((row) => ({ intentId: row.intentId || "", approvalVersion: row.approvalVersion || "", segmentCount: row.segmentCount || 0 })),
-        })),
+        reviewVersion: notificationBatchReviewVersion(hashValue, { batchId, selectedMemberIds: memberIds, recipients: rows }),
         preparedAt: nowIso(), updatedAt: nowIso(),
       };
       await setDoc(COLLECTIONS.notificationBatches, batchId, batch, { merge: true });
@@ -1396,14 +1393,10 @@ export const createNotificationIntentHandlers = ({
       const requestedApprovalVersion = normalize(req.body?.approvalVersion);
       const db = requireFirestore();
       let batch;
-      const claim = (current) => {
-        if (!current || current.churchId !== churchId) throw httpError(404, "Message batch not found.");
-        if (!requestedApprovalVersion || requestedApprovalVersion !== current.reviewVersion) throw httpError(409, "This batch preview changed or expired. Review the current batch and confirm again.");
-        if (current.status === "dispatching" && !isStaleSending({ sendStartedAt: current.dispatchStartedAt })) throw httpError(409, "This message batch is already being sent.");
-        const recoverableStatus = current.status === "dispatching" ? "partial" : current.status;
-        if (!["prepared", "partial"].includes(recoverableStatus)) throw httpError(409, "This message batch has already been completed.");
-        return { ...current, status: "dispatching", approvedByUid: admin.user.uid, confirmedAt: nowIso(), dispatchStartedAt: nowIso(), updatedAt: nowIso() };
-      };
+      const claim = (current) => claimReviewedNotificationBatch({
+        current, churchId, approvalVersion: requestedApprovalVersion,
+        actorUid: admin.user.uid, now: nowIso(), isStaleSending, httpError,
+      });
       if (db) {
         batch = await db.runTransaction(async (transaction) => {
           const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
@@ -1421,59 +1414,25 @@ export const createNotificationIntentHandlers = ({
           return next;
         });
       }
-      const selectedIds = new Set(batch.intentIds || []);
-      const results = [];
-      for (const intentId of selectedIds) {
-        const current = await getDoc(COLLECTIONS.notificationIntents, intentId);
-        const batchRecipient = (batch.recipients || []).find((row) => row.intentId === intentId);
-        if (current?.status === "sending" && isStaleSending(current)) {
-          await markUnknownAfterInterruption(current);
-          results.push({ intentId, status: "unknown", outcome: "unknown" });
-          continue;
-        }
-        if (current?.batchId !== batchId || batchRecipient?.approvalVersion !== current?.approvalSnapshot?.approvalVersion) {
-          results.push({ intentId, status: current?.status || "missing", outcome: "not_sent", error: "Review expired or changed." });
-          continue;
-        }
-        if (!current || current.churchId !== churchId || !["preview", "ready"].includes(current.status)) {
-          results.push({ intentId, status: current?.status || "missing", outcome: current?.outcome || "" });
-          continue;
-        }
-        const sendRes = {
-          statusCode: 200,
-          status(code) { this.statusCode = code; return this; },
-          json(payload) { this.payload = payload; return this; },
-        };
-        await sendIntent({ ...req, params: { ...req.params, churchId, intentId }, body: { confirmed: true, approvalVersion: batchRecipient.approvalVersion } }, sendRes);
-        const refreshed = await getDoc(COLLECTIONS.notificationIntents, intentId);
-        results.push({ intentId, status: refreshed?.status || "failed", outcome: refreshed?.outcome || (sendRes.payload?.success ? "confirmed" : ""), errorMessage: sendRes.payload?.errorMessage || "" });
-      }
-      const errorByIntentId = new Map(results.filter((row) => row.errorMessage).map((row) => [row.intentId, row.errorMessage]));
-      const refreshedRecipients = await Promise.all((batch.recipients || []).map(async (row) => {
-        const intent = row.intentId ? await getDoc(COLLECTIONS.notificationIntents, row.intentId) : null;
-        const errorMessage = errorByIntentId.get(row.intentId) || "";
-        const currentSnapshot = intent?.approvalSnapshot;
-        return {
-          ...row,
-          status: intent?.status || row.status,
-          attemptId: intent?.attemptId || "",
-          outcome: intent?.outcome || "",
-          approvalVersion: currentSnapshot?.approvalVersion || "",
-          eligible: Boolean(currentSnapshot?.approvalVersion && Number(currentSnapshot.expiresAt) > Date.now() && ["preview", "ready"].includes(intent?.status)),
-          exclusionReason: errorMessage || (!currentSnapshot && ["preview", "ready"].includes(intent?.status) ? "This message needs a fresh preview." : row.exclusionReason),
-          ...( /opted out/i.test(errorMessage) ? { eligibilityStatus: "opted_out" } : {}),
-        };
-      }));
-      const allDone = refreshedRecipients.every((row) => !["preview", "ready", "sending"].includes(row.status));
-      const anyFailure = refreshedRecipients.some((row) => ["failed", "unknown"].includes(row.status));
-      const nextBatch = {
-        ...batch,
-        status: allDone && !anyFailure ? "sent" : "partial",
-        recipients: refreshedRecipients,
-        lastDispatchResults: results,
-        completedAt: nowIso(),
-        updatedAt: nowIso(),
-      };
+      const nextBatch = await executeReviewedNotificationBatch({
+        batch,
+        getIntent: (intentId) => getDoc(COLLECTIONS.notificationIntents, intentId),
+        matchesSource: (intent) => intent.sourceType === "team_intake_recipient" && intent.formId === batch.formId && intent.intentType === batch.intentType && ["availability_request", "availability_reminder"].includes(intent.intentType),
+        isStaleSending,
+        markUnknownAfterInterruption,
+        nowIso,
+        sendReviewedIntent: async ({ intentId, approvalVersion }) => {
+          // Compatibility adapter: retain the current authenticated manual-send
+          // entry point while the batch executor stays independent of Express.
+          const sendRes = {
+            statusCode: 200,
+            status(code) { this.statusCode = code; return this; },
+            json(payload) { this.payload = payload; return this; },
+          };
+          await sendIntent({ ...req, params: { ...req.params, churchId, intentId }, body: { confirmed: true, approvalVersion } }, sendRes);
+          return sendRes.payload;
+        },
+      });
       await setDoc(COLLECTIONS.notificationBatches, batchId, nextBatch, { merge: true });
       return res.json({ success: true, batch: await formatBatchDetail(nextBatch) });
     } catch (error) {

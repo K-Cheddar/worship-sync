@@ -11817,6 +11817,58 @@ test("individual intake recipient creation validates the full set before writing
   );
 });
 
+test("availability SMS batch uses the composed auth handlers and preserves accepted-send protection", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("foundation_sms_batch");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship", members: [{ firstName: "Batch", lastName: "Recipient" }],
+  });
+  const memberId = memberIds.Batch;
+  const phoneNumber = "+19545551235";
+  await setDoc("teamRosterMembers", memberId, { phoneNumber }, { merge: true });
+  await seedSmsConsentForServerTests({ churchId: context.churchId, phoneNumber, status: "opted_in" });
+  await setDoc("churchMessagingConfigs", context.churchId, {
+    churchId: context.churchId, provider: "twilio", providerAccountId: "AC_test",
+    messagingServiceId: "MG_test", registrationStatus: "approved", enabled: true,
+  }, { merge: false });
+  const form = await callHandler(authHandlers.createTeamIntakeForm, {
+    context, body: {
+      name: "Batch form", startDate: calendarDaysFromToday(0), endDate: calendarDaysFromToday(30),
+      responseDeadline: calendarDaysFromToday(30), teamIds: [teamId], enabledFields: ["notes"], active: true,
+    },
+  });
+  assert.equal(form.statusCode, 200);
+  const body = { formId: form.payload.form.formId, memberIds: [memberId], intentType: "availability_request", requestKey: "batch_request" };
+  const fake = createFakeSmsProvider({ response: { providerMessageId: "SM_foundation_batch", status: "accepted" } });
+  setSmsProviderForServerTests(fake);
+  try {
+    const prepared = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body });
+    assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+    const batch = prepared.payload.batch;
+    assert.equal(batch.summary.eligible, 1);
+    assert.equal(fake.calls.length, 0);
+    const repeated = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body });
+    assert.equal(repeated.payload.batch.batchId, batch.batchId);
+    assert.equal(repeated.payload.batch.approvalVersion, batch.approvalVersion);
+    const unconfirmed = await callHandler(authHandlers.dispatchAvailabilityBatch, { context, params: { batchId: batch.batchId }, body: { approvalVersion: batch.approvalVersion } });
+    assert.equal(unconfirmed.statusCode, 400);
+    const sent = await callHandler(authHandlers.dispatchAvailabilityBatch, {
+      context, params: { batchId: batch.batchId }, body: { confirmed: true, approvalVersion: batch.approvalVersion },
+    });
+    assert.equal(sent.statusCode, 200, JSON.stringify(sent.payload));
+    assert.equal(sent.payload.batch.summary.sent, 1);
+    assert.match(fake.calls[0].body, /\/a\/r_/);
+    const intent = await getDoc("notificationIntents", batch.intentIds[0]);
+    await setDoc("smsDeliveryAttempts", intent.attemptId, { status: "undelivered" }, { merge: true });
+    const again = await callHandler(authHandlers.prepareAvailabilityBatch, { context, body: { ...body, requestKey: "new_request" } });
+    assert.equal(again.payload.batch.summary.eligible, 0);
+    assert.equal(again.payload.batch.recipients[0].status, "sent");
+    assert.equal(fake.calls.length, 1);
+  } finally {
+    setSmsProviderForServerTests(null);
+  }
+});
+
 test("individual intake SMS records one shared notification attempt and blocks duplicate accepted sends", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("individual_intake_sms");
