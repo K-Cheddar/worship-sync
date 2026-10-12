@@ -325,6 +325,164 @@ test("selected-Team availability creation, read, SMS, and response application s
   const recipientToken = link.payload.publicUrl.split("/a/")[1];
   assert.ok(recipientToken);
 
+  for (const teamIds of [[av.teamId], [worship.teamId, av.teamId]]) {
+    const locked = await callHandler(authHandlers.updateTeamIntakeForm, {
+      context: bothTeamManager,
+      params: { formId },
+      body: makeAvailabilityForm(teamIds),
+    });
+    assert.equal(locked.statusCode, 409, JSON.stringify(locked.payload));
+    assert.match(JSON.stringify(locked.payload), /locked.*requests.*issued/i);
+  }
+  assert.deepEqual((await getDoc(COLLECTIONS.teamIntakeForms, formId)).teamIds, [worship.teamId]);
+  const detailsOnlyUpdate = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context: bothTeamManager,
+    params: { formId },
+    body: {
+      ...makeAvailabilityForm([worship.teamId], "Updated availability name"),
+      responseDeadline: dateFromToday(10),
+    },
+  });
+  assert.equal(detailsOnlyUpdate.statusCode, 200, JSON.stringify(detailsOnlyUpdate.payload));
+  assert.equal(detailsOnlyUpdate.payload.form.name, "Updated availability name");
+  assert.equal(detailsOnlyUpdate.payload.form.responseDeadline, dateFromToday(10));
+  assert.equal(detailsOnlyUpdate.payload.form.hasIssuedRecipientRequests, true);
+
+  const reorderForm = await callHandler(authHandlers.createTeamIntakeForm, {
+    context: owner,
+    body: makeAvailabilityForm([worship.teamId, av.teamId], "Reorder availability"),
+  });
+  assert.equal(reorderForm.statusCode, 200, JSON.stringify(reorderForm.payload));
+  const reorderFormId = reorderForm.payload.form.formId;
+  const reorderRecipient = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context: owner,
+    params: { formId: reorderFormId },
+    body: { memberIds: [worshipMemberId] },
+  });
+  assert.equal(reorderRecipient.statusCode, 200, JSON.stringify(reorderRecipient.payload));
+  const reordered = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context: owner,
+    params: { formId: reorderFormId },
+    body: makeAvailabilityForm([av.teamId, worship.teamId], "Reorder availability"),
+  });
+  assert.equal(reordered.statusCode, 200, JSON.stringify(reordered.payload));
+  assert.deepEqual(reordered.payload.form.teamIds, [av.teamId, worship.teamId]);
+  const revokedRecipientId = reorderRecipient.payload.recipients[0].recipientId;
+  const revokedLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context: owner,
+    params: { recipientId: revokedRecipientId },
+  });
+  const revokedToken = revokedLink.payload.publicUrl.split("/a/")[1];
+  assert.equal((await callHandler(authHandlers.revokeTeamIntakeRecipient, {
+    context: owner,
+    params: { recipientId: revokedRecipientId },
+  })).statusCode, 200);
+  const revokedPreview = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: revokedToken, recipientOnly: "true" },
+  }), revokedPreview);
+  assert.equal(revokedPreview.statusCode, 404);
+  const revokedSubmission = createRes();
+  await authHandlers.submitTeamIntake(createReq({
+    query: { token: revokedToken, recipientOnly: "true" },
+    body: {},
+  }), revokedSubmission);
+  assert.equal(revokedSubmission.statusCode, 404);
+  const revokedRequestStillLocks = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context: owner,
+    params: { formId: reorderFormId },
+    body: makeAvailabilityForm([worship.teamId]),
+  });
+  assert.equal(revokedRequestStillLocks.statusCode, 409);
+
+  const generalFormPayload = {
+    ...makeAvailabilityForm([worship.teamId], "General intake scope"),
+    purpose: "general_intake",
+    enabledFields: ["firstName"],
+  };
+  const generalFormResult = await callHandler(authHandlers.createTeamIntakeForm, {
+    context: owner,
+    body: generalFormPayload,
+  });
+  assert.equal(generalFormResult.statusCode, 200, JSON.stringify(generalFormResult.payload));
+  const generalFormId = generalFormResult.payload.form.formId;
+  assert.equal((await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context: owner,
+    params: { formId: generalFormId },
+    body: { memberIds: [worshipMemberId] },
+  })).statusCode, 200);
+  const generalScopeUpdate = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context: owner,
+    params: { formId: generalFormId },
+    body: { ...generalFormPayload, teamIds: [av.teamId] },
+  });
+  assert.equal(generalScopeUpdate.statusCode, 200, JSON.stringify(generalScopeUpdate.payload));
+  assert.deepEqual(generalScopeUpdate.payload.form.teamIds, [av.teamId]);
+
+  const multiTeamForm = await callHandler(authHandlers.createTeamIntakeForm, {
+    context: owner,
+    body: makeAvailabilityForm([worship.teamId, av.teamId], "Multi-Team availability"),
+  });
+  assert.equal(multiTeamForm.statusCode, 200, JSON.stringify(multiTeamForm.payload));
+  const multiTeamFormId = multiTeamForm.payload.form.formId;
+  const multiTeamRecipient = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context: owner,
+    params: { formId: multiTeamFormId },
+    body: { memberIds: [worshipMemberId] },
+  });
+  assert.equal(multiTeamRecipient.statusCode, 200, JSON.stringify(multiTeamRecipient.payload));
+  const multiTeamLink = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+    context: owner,
+    params: { recipientId: multiTeamRecipient.payload.recipients[0].recipientId },
+  });
+  assert.equal(multiTeamLink.statusCode, 200, JSON.stringify(multiTeamLink.payload));
+  const multiTeamToken = multiTeamLink.payload.publicUrl.split("/a/")[1];
+  const addSecondMembership = await callHandler(authHandlers.updateTeam, {
+    context: owner,
+    params: { teamId: av.teamId },
+    body: { name: "AV", memberIds: [avMemberId, worshipMemberId] },
+  });
+  assert.equal(addSecondMembership.statusCode, 200, JSON.stringify(addSecondMembership.payload));
+  assert.equal((await callHandler(authHandlers.updateTeam, {
+    context: owner,
+    params: { teamId: worship.teamId },
+    body: { name: "Worship", memberIds: [] },
+  })).statusCode, 200);
+  const accessThroughRemainingTeam = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: multiTeamToken, recipientOnly: "true" },
+  }), accessThroughRemainingTeam);
+  assert.equal(accessThroughRemainingTeam.statusCode, 200, JSON.stringify(accessThroughRemainingTeam.payload));
+  assert.equal((await callHandler(authHandlers.updateTeam, {
+    context: owner,
+    params: { teamId: av.teamId },
+    body: { name: "AV", memberIds: [avMemberId] },
+  })).statusCode, 200);
+  const multiTeamMemberBefore = await getDoc(COLLECTIONS.teamRosterMembers, worshipMemberId);
+  const outsideAllTeamsPreview = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: multiTeamToken, recipientOnly: "true" },
+  }), outsideAllTeamsPreview);
+  assert.equal(outsideAllTeamsPreview.statusCode, 404);
+  const outsideAllTeamsSubmission = createRes();
+  await authHandlers.submitTeamIntake(createReq({
+    query: { token: multiTeamToken, recipientOnly: "true" },
+    body: { occurrenceAvailability: { [multiTeamForm.payload.form.availabilityOccurrences[0].occurrenceId]: "available" } },
+  }), outsideAllTeamsSubmission);
+  assert.equal(outsideAllTeamsSubmission.statusCode, 404);
+  assert.deepEqual(
+    (await getDoc(COLLECTIONS.teamRosterMembers, worshipMemberId)).serviceAvailability,
+    multiTeamMemberBefore.serviceAvailability,
+  );
+  assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: multiTeamFormId },
+  ])).length, 0);
+  assert.equal((await callHandler(authHandlers.updateTeam, {
+    context: owner,
+    params: { teamId: worship.teamId },
+    body: { name: "Worship", memberIds: [worshipMemberId] },
+  })).statusCode, 200);
+
   const avForm = await callHandler(authHandlers.createTeamIntakeForm, {
     context: owner,
     body: makeAvailabilityForm([av.teamId], "AV availability"),
@@ -424,13 +582,27 @@ test("selected-Team availability creation, read, SMS, and response application s
       body: { formId: scopeForm.payload.form.formId, intentType: "availability_request", memberIds: [worshipMemberId], requestKey: "phase3a-stale-scope" },
     });
     assert.equal(staleScopeBatch.statusCode, 200);
-    assert.equal((await callHandler(authHandlers.updateTeamIntakeForm, {
+    const staleScopeUpdate = await callHandler(authHandlers.updateTeamIntakeForm, {
       context: bothTeamManager,
       params: { formId: scopeForm.payload.form.formId },
       body: makeAvailabilityForm([worship.teamId, av.teamId], "Scope change check"),
+    });
+    assert.equal(staleScopeUpdate.statusCode, 409, JSON.stringify(staleScopeUpdate.payload));
+    assert.equal((await callHandler(authHandlers.updateTeam, {
+      context: owner,
+      params: { teamId: worship.teamId },
+      body: { name: "Worship", memberIds: [] },
     })).statusCode, 200);
-    assert.equal((await dispatch(staleScopeBatch.payload.batch)).statusCode, 403);
+    assert.deepEqual((await getDoc(COLLECTIONS.teams, worship.teamId)).memberIds, []);
+    const staleScopeDispatch = await dispatch(staleScopeBatch.payload.batch);
+    assert.equal(staleScopeDispatch.statusCode, 200, JSON.stringify(staleScopeDispatch.payload));
+    assert.equal(staleScopeDispatch.payload.batch.status, "partial");
     assert.equal(provider.calls.length, 1);
+    assert.equal((await callHandler(authHandlers.updateTeam, {
+      context: owner,
+      params: { teamId: worship.teamId },
+      body: { name: "Worship", memberIds: [worshipMemberId] },
+    })).statusCode, 200);
 
     const permissionForm = await callHandler(authHandlers.createTeamIntakeForm, {
       context: worshipManager,
@@ -487,6 +659,32 @@ test("selected-Team availability creation, read, SMS, and response application s
   const response = afterResponse.payload.availabilityResponses.find((row) => row.formId === formId);
   assert.equal(response.occurrenceAvailability[occurrenceId], "available");
 
+  const recipientBeforeCrossChurchCheck = await getDoc(
+    COLLECTIONS.teamIntakeRecipients,
+    recipientId,
+  );
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    churchId: `${owner.churchId}_other`,
+  }, { merge: true });
+  const crossChurchPreview = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: recipientToken, recipientOnly: "true" },
+  }), crossChurchPreview);
+  assert.equal(crossChurchPreview.statusCode, 404);
+  const crossChurchSubmission = createRes();
+  await authHandlers.submitTeamIntake(createReq({
+    query: { token: recipientToken, recipientOnly: "true" },
+    body: { occurrenceAvailability: { [occurrenceId]: "unavailable" } },
+  }), crossChurchSubmission);
+  assert.equal(crossChurchSubmission.statusCode, 404);
+  assert.deepEqual(
+    (await getDoc(COLLECTIONS.teamRosterMembers, worshipMemberId)).serviceAvailability,
+    savedMember.serviceAvailability,
+  );
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    churchId: owner.churchId,
+  }, { merge: true });
+
   const formerMemberManager = await createHumanContext("phase3a_former_manager", {
     churchId: owner.churchId,
     role: "member",
@@ -503,6 +701,42 @@ test("selected-Team availability creation, read, SMS, and response application s
     body: { name: "Worship", memberIds: [] },
   });
   assert.equal(removedFromTeam.statusCode, 200, JSON.stringify(removedFromTeam.payload));
+  const previousSubmission = await getDoc(
+    COLLECTIONS.teamIntakeSubmissions,
+    submitted.payload.submissionId,
+  );
+  const previousMemberState = await getDoc(
+    COLLECTIONS.teamRosterMembers,
+    worshipMemberId,
+  );
+  const unavailablePreview = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: recipientToken, recipientOnly: "true" },
+  }), unavailablePreview);
+  assert.equal(unavailablePreview.statusCode, 404);
+  assert.match(JSON.stringify(unavailablePreview.payload), /no longer available/i);
+  const unavailableSubmission = createRes();
+  await authHandlers.submitTeamIntake(createReq({
+    query: { token: recipientToken, recipientOnly: "true" },
+    body: { occurrenceAvailability: { [occurrenceId]: "unavailable" } },
+  }), unavailableSubmission);
+  assert.equal(unavailableSubmission.statusCode, 404);
+  assert.match(JSON.stringify(unavailableSubmission.payload), /no longer available/i);
+  const memberAfterUnavailableSubmission = await getDoc(
+    COLLECTIONS.teamRosterMembers,
+    worshipMemberId,
+  );
+  assert.deepEqual(memberAfterUnavailableSubmission.serviceAvailability, previousMemberState.serviceAvailability);
+  assert.equal(memberAfterUnavailableSubmission.email, previousMemberState.email);
+  assert.equal(memberAfterUnavailableSubmission.notes, previousMemberState.notes);
+  assert.deepEqual(
+    await getDoc(COLLECTIONS.teamIntakeSubmissions, submitted.payload.submissionId),
+    previousSubmission,
+  );
+  assert.equal(
+    (await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId)).respondedAt,
+    recipientBeforeCrossChurchCheck.respondedAt || submitted.payload.submittedAt,
+  );
 
   const restrictedData = await callHandler(authHandlers.getTeamAvailabilityManagementData, {
     context: formerMemberManager,

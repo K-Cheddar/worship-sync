@@ -293,9 +293,13 @@ const IntakeManager = ({
   const recipientSmsSendLockRef = useRef(false);
   const editingFormHasIssuedRequests = Boolean(editing && (
     intakeRecipients.some((recipient) => recipient.formId === editing.formId) ||
+    editing.hasIssuedRecipientRequests ||
     submissions.some((submission) => submission.formId === editing.formId) ||
     (editing.submissionCount || 0) > 0
   ));
+  const editingTeamScopeLocked = Boolean(
+    editing?.purpose === "team_availability" && editingFormHasIssuedRequests,
+  );
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
@@ -655,8 +659,17 @@ const IntakeManager = ({
           editing.formId,
           payload,
         );
-        onFormSaved(response.form);
-        setSelectedForm(response.form);
+        const savedForm = editing.purpose === "team_availability"
+          ? {
+              ...response.form,
+              hasIssuedRecipientRequests: Boolean(
+                editing.hasIssuedRecipientRequests ||
+                response.form.hasIssuedRecipientRequests,
+              ),
+            }
+          : response.form;
+        onFormSaved(savedForm);
+        setSelectedForm(savedForm);
         setShowEditForm(false);
         setShowSendForm(false);
         setEditing(null);
@@ -1592,20 +1605,47 @@ const IntakeManager = ({
           emptyText="No fields selected."
         />
       ) : null}
-      <EntityMultiSelect
-        label="Teams to collect for"
-        description={isAvailabilityFormEditor
-          ? "Choose one or more Teams. Availability forms always need an explicit Team scope."
-          : "Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."}
-        options={teams.filter((team) => !availabilityOnly || managedTeamIds.includes(team.teamId)).map((team) => ({
-          id: team.teamId,
-          label: team.name,
-          archived: Boolean(team.archivedAt),
-        }))}
-        value={draft.teamIds}
-        onChange={updateDraftTeamIds}
-        emptyText="No teams yet."
-      />
+      {editingTeamScopeLocked ? (
+        <fieldset
+          className="min-w-0"
+          aria-label="Teams to collect for"
+        >
+          <legend className="p-1 text-sm font-semibold">
+            Teams to collect for ({draft.teamIds.length} selected)
+          </legend>
+          <p className="mb-2 px-1 text-xs text-gray-400">
+            Team selection is locked because availability requests have already been issued.
+          </p>
+          <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-gray-700 bg-gray-950/60 p-2">
+            {draft.teamIds.map((teamId) => {
+              const team = teams.find((item) => item.teamId === teamId);
+              return (
+                <div
+                  key={teamId}
+                  className="rounded-md border border-cyan-400/60 bg-cyan-400/10 px-2.5 py-2 text-sm text-cyan-50"
+                >
+                  {team?.name || teamId}
+                </div>
+              );
+            })}
+          </div>
+        </fieldset>
+      ) : (
+        <EntityMultiSelect
+          label="Teams to collect for"
+          description={isAvailabilityFormEditor
+            ? "Choose one or more Teams. Availability forms always need an explicit Team scope."
+            : "Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."}
+          options={teams.filter((team) => !availabilityOnly || managedTeamIds.includes(team.teamId)).map((team) => ({
+            id: team.teamId,
+            label: team.name,
+            archived: Boolean(team.archivedAt),
+          }))}
+          value={draft.teamIds}
+          onChange={updateDraftTeamIds}
+          emptyText="No teams yet."
+        />
+      )}
       {editingFormHasIssuedRequests ? (
         <p className="text-sm text-gray-300">Availability services: {draft.availabilityServices.map(({ name }) => name).join(", ") || "None"}</p>
       ) : (

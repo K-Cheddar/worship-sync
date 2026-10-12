@@ -1,6 +1,6 @@
 import { type ContextType } from "react";
 import { useState } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import IntakeManager from "./IntakeManager";
@@ -387,6 +387,72 @@ test("changing an unsent availability form's Teams reconciles its selected servi
   );
 });
 
+test("an issued availability request locks Team selection but allows name and deadline edits", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = {
+    occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-18T14:00:00.000Z",
+    serviceDate: "2026-10-18",
+  };
+  const issuedForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    hasIssuedRecipientRequests: true,
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({
+    success: true,
+    form: { ...issuedForm, name: "October availability updated", responseDeadline: "2026-10-20" },
+  });
+  renderManager({
+    availabilityOnly: true,
+    forms: [issuedForm],
+    intakeRecipients: [],
+    services: [{
+      id: "saved-service",
+      serviceId: "saved-service",
+      churchId: "church-1",
+      name: "Saved service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: savedOccurrence.startsAt,
+    }],
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
+  expect(within(teamScope).getByText("Team selection is locked because availability requests have already been issued.")).toBeInTheDocument();
+  expect(within(teamScope).getByText("Worship")).toBeInTheDocument();
+  expect(within(teamScope).queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.getByText("Availability services: Saved service")).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText(/^Name/i), " updated");
+  fireEvent.change(screen.getByLabelText(/^Response deadline/i), {
+    target: { value: "2026-10-20" },
+  });
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    issuedForm.formId,
+    expect.objectContaining({
+      name: "October availability updated",
+      responseDeadline: "2026-10-20",
+      teamIds: ["team-1"],
+      availabilityOccurrences: [savedOccurrence],
+    }),
+  ));
+
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByText("Team selection is locked because availability requests have already been issued.")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Teams to collect for" })).toHaveTextContent("Worship");
+});
+
 test("general intake editing still shows its supported fields and wording", async () => {
   const user = userEvent.setup();
   const generalForm: TeamIntakeForm = {
@@ -754,7 +820,7 @@ test("successful form edits return to the form view with Send form available", a
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
 
-test("saving a form with existing recipients preserves its covered occurrence snapshot", async () => {
+test("saving an availability form with issued requests preserves its Team scope and occurrence snapshot", async () => {
   const user = userEvent.setup();
   const savedOccurrence = { occurrenceId: "saved-occurrence", serviceId: "old-service", name: "Saved service", startsAt: "2026-10-11T14:00:00.000Z" };
   const issuedForm = { ...form, purpose: "team_availability", enabledFields: ["availability"], availabilityServices: [{ serviceId: "old-service", name: "Saved service" }], availabilityOccurrences: [savedOccurrence] } as TeamIntakeForm;
@@ -771,14 +837,15 @@ test("saving a form with existing recipients preserves its covered occurrence sn
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.getByText(/already has private links or responses/)).toBeInTheDocument();
   const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
-  await user.click(within(teamScope).getByRole("checkbox", { name: "AV" }));
-  await user.click(within(teamScope).getByRole("checkbox", { name: "Worship" }));
+  expect(within(teamScope).getByText("Team selection is locked because availability requests have already been issued.")).toBeInTheDocument();
+  expect(within(teamScope).getByText("Worship")).toBeInTheDocument();
+  expect(within(teamScope).queryByRole("checkbox")).not.toBeInTheDocument();
   expect(screen.getByText("Availability services: Saved service")).toBeInTheDocument();
   await user.type(screen.getByLabelText(/^Name/i), " updated");
   await user.click(screen.getByRole("button", { name: "Save form" }));
 
   await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({
-    teamIds: ["team-2"],
+    teamIds: ["team-1"],
     availabilityServices: [{ serviceId: "old-service", name: "Saved service" }],
     availabilityOccurrences: [savedOccurrence],
   })));

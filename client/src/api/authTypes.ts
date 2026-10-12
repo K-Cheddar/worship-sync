@@ -699,6 +699,8 @@ export type TeamIntakeForm = {
   notesMessage?: string;
   publicUrl?: string;
   submissionCount?: number;
+  /** Derived from recipient records; includes revoked requests. */
+  hasIssuedRecipientRequests?: boolean;
   archivedAt?: string | null;
 };
 
