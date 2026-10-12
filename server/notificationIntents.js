@@ -115,6 +115,7 @@ export const createNotificationIntentHandlers = ({
   queryDocs,
   requireFirestore,
   requireTeamsEdit,
+  authorizeSchedule = async (req, churchId) => ({ admin: await requireTeamsEdit(req, churchId), scoped: false }),
   authorizeAvailabilityForm = async () => {
     throw httpError(403, "Availability form access required.");
   },
@@ -144,7 +145,7 @@ export const createNotificationIntentHandlers = ({
     .replace(/(?:https?:\/\/[^\s]+)?\/a\/[^\s?#]+/gi, "[private response link]")
     .replace(/(?:https?:\/\/[^\s]+)?\/(?:schedule-response|teams\/intake)\/[^\s?#]+/gi, "[private response link]");
 
-  const accessFingerprintFor = ({ admin, scoped } = {}) => {
+  const accessFingerprintFor = ({ admin, scoped, schedule } = {}) => {
     if (!scoped) return "";
     const teamScopes = admin?.permissions?.teamScopes || {};
     return hashValue(JSON.stringify({
@@ -152,6 +153,7 @@ export const createNotificationIntentHandlers = ({
       role: admin?.role || "",
       teams: admin?.permissions?.teams || "none",
       teamScopes: Object.fromEntries(Object.entries(teamScopes).sort(([a], [b]) => a.localeCompare(b))),
+      ...(schedule ? { scheduleId: schedule.scheduleId || schedule.id, teamId: schedule.teamId } : {}),
     }));
   };
 
@@ -173,7 +175,7 @@ export const createNotificationIntentHandlers = ({
   const authorizeIntent = async (req, churchId, intent) => {
     if (!intent || intent.churchId !== churchId) throw httpError(404, "Message preview not found.");
     if (intent.sourceType === "team_schedule") {
-      return { admin: await requireTeamsEdit(req, churchId), scoped: false };
+      return authorizeScheduleSource(req, churchId, intent.sourceId, intent.cellKey);
     }
     if (intent.sourceType !== "team_intake_recipient" || !intent.formId) {
       throw httpError(404, "Message preview not found.");
@@ -192,6 +194,12 @@ export const createNotificationIntentHandlers = ({
       throw httpError(404, "Message preview not found.");
     }
     return access;
+  };
+
+  const authorizeScheduleSource = async (req, churchId, scheduleId, cellKey = "", records = null) => {
+    const schedule = records ? records.schedule : await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+    if (!schedule || schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+    return { schedule, ...await authorizeSchedule(req, churchId, schedule, cellKey) };
   };
 
   const listIntentPage = async ({ churchId, filters, limit, cursor }) => {
@@ -523,16 +531,16 @@ export const createNotificationIntentHandlers = ({
     return approvalVersionFor(intent, validated) === snapshot.approvalVersion;
   };
 
-  const reviewedIntentProjection = (reviewed) => ({
+  const reviewedIntentProjection = (reviewed, { scoped = false } = {}) => ({
     ...safeIntentProjection(reviewed.intent, {
       approvalVersion: reviewed.approvalVersion,
       segmentCount: measureSmsMessage(reviewed.validated.message).segmentCount,
-      phoneNumberSnapshot: reviewed.validated.phoneNumber || "",
+      phoneNumberSnapshot: scoped ? "" : reviewed.validated.phoneNumber || "",
       maskedPhoneNumber: reviewed.validated.phoneNumber ? `••• ••• ${reviewed.validated.phoneNumber.slice(-4)}` : "",
       previewEligible: reviewed.eligible,
       previewError: reviewed.eligible ? "" : "This volunteer is not currently eligible for SMS.",
     }),
-    message: reviewed.validated.message,
+    message: scoped ? redactPersonalizedLinks(reviewed.validated.message) : reviewed.validated.message,
   });
 
   const safeIntentProjection = (intent, extra = {}) => {
@@ -608,7 +616,8 @@ export const createNotificationIntentHandlers = ({
       const scheduleId = normalize(req.query?.scheduleId);
       if (formId && scheduleId) throw httpError(400, "Choose an intake form or schedule history view.");
       const formAccess = formId ? await authorizeForm(req, churchId, formId) : null;
-      if (!formId) await requireTeamsEdit(req, churchId);
+      let scheduleAccess = scheduleId ? await authorizeScheduleSource(req, churchId, scheduleId) : null;
+      if (!formId && !scheduleId) await requireTeamsEdit(req, churchId);
       const filters = formId
         ? [{ field: "formId", value: formId }]
         : scheduleId
@@ -636,12 +645,16 @@ export const createNotificationIntentHandlers = ({
         }
         intents = inScope;
       }
+      // Authorize every persisted row before loading attempt details or recovery.
+      if (scheduleAccess) {
+        scheduleAccess = await authorizeScheduleSource(req, churchId, scheduleId, intents.map((intent) => intent.cellKey));
+      }
       const attemptByIntentId = await loadAttemptsForIntents(churchId, intents);
       const recipients = formId
         ? await listChurchDocs(COLLECTIONS.teamIntakeRecipients, churchId, [{ field: "formId", value: formId }], 1000)
         : [];
       const recipientById = new Map(recipients.map((recipient) => [recipient.recipientId || recipient.id, recipient]));
-      const schedule = scheduleId ? await getDoc(COLLECTIONS.teamSchedules, scheduleId) : null;
+      const schedule = scheduleAccess?.schedule || null;
       const enriched = await Promise.all(intents.map(async (intent) => {
         let currentIntent = intent;
         if (intent.status === "sending" && isStaleSending(intent)) {
@@ -1045,13 +1058,14 @@ export const createNotificationIntentHandlers = ({
     try {
       await assertCsrf(req);
       const churchId = normalize(req.params.churchId);
-      const admin = await requireTeamsEdit(req, churchId);
       if (automaticSendsDisabled !== true) throw httpError(403, "Automatic notification sends are disabled by the server.");
       const scheduleId = normalize(req.body?.scheduleId);
       const occurrenceId = normalize(req.body?.occurrenceId);
       const cellKey = normalize(req.body?.cellKey);
       const memberId = normalize(req.body?.memberId);
       if (!scheduleId || !occurrenceId || !cellKey || !memberId) throw httpError(400, "Choose a schedule vacancy and replacement candidate.");
+      const access = await authorizeScheduleSource(req, churchId, scheduleId, cellKey);
+      const admin = access.admin;
       const context = await validateReplacementCandidate({ churchId, scheduleId, occurrenceId, cellKey, memberId });
       const schedule = context.schedule;
       const church = await getDoc(COLLECTIONS.churches, churchId);
@@ -1060,7 +1074,10 @@ export const createNotificationIntentHandlers = ({
       const intentId = intentIdFor(hashValue, churchId, key);
       const existing = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (existing?.replacementResolvedAt) throw httpError(409, "This replacement invitation was already resolved and cannot be resent.");
-      if (existing) return res.json({ success: true, intent: reviewedIntentProjection(await prepareIntentReview({ intentId, ...existing })) });
+      if (existing) {
+        const currentAccess = await authorizeIntent(req, churchId, existing);
+        return res.json({ success: true, intent: reviewedIntentProjection(await prepareIntentReview({ intentId, ...existing }, { authorizationFingerprint: accessFingerprintFor(currentAccess) }), currentAccess) });
+      }
       const otherVacancyIntent = (await listChurchDocs(COLLECTIONS.notificationIntents, churchId, [
         { field: "sourceId", value: scheduleId },
         { field: "sourceType", value: "team_schedule" },
@@ -1134,8 +1151,9 @@ export const createNotificationIntentHandlers = ({
       }
       await setDoc(COLLECTIONS.notificationBatches, vacancyClaimId, { status: "active", expiresAt: 0 }, { merge: true });
       const savedIntent = await getDoc(COLLECTIONS.notificationIntents, intentId) || { intentId, ...intent };
-      const reviewed = await prepareIntentReview(savedIntent);
-      return res.json({ success: true, intent: reviewedIntentProjection(reviewed) });
+      const currentAccess = await authorizeIntent(req, churchId, savedIntent);
+      const reviewed = await prepareIntentReview(savedIntent, { authorizationFingerprint: accessFingerprintFor(currentAccess) });
+      return res.json({ success: true, intent: reviewedIntentProjection(reviewed, currentAccess) });
       } catch (error) {
         if (createdIntent) await deleteDoc(COLLECTIONS.notificationIntents, intentId).catch(() => {});
         if (acquiredVacancyClaim) {
@@ -1152,7 +1170,6 @@ export const createNotificationIntentHandlers = ({
     try {
       await assertCsrf(req);
       const churchId = normalize(req.params.churchId);
-      const admin = await requireTeamsEdit(req, churchId);
       const intentId = normalize(req.params.intentId);
       const db = requireFirestore();
       const resolve = async (transaction = null) => {
@@ -1162,6 +1179,12 @@ export const createNotificationIntentHandlers = ({
           ? snapshot?.exists ? { intentId: snapshot.id, ...snapshot.data() } : null
           : await getDoc(COLLECTIONS.notificationIntents, intentId);
         if (!intent || intent.churchId !== churchId || intent.intentType !== "replacement_request") throw httpError(404, "Replacement invitation not found.");
+        if (intent.sourceType !== "team_schedule") throw httpError(404, "Replacement invitation not found.");
+        const scheduleSnapshot = transaction
+          ? await transaction.get(db.collection(COLLECTIONS.teamSchedules).doc(intent.sourceId))
+          : null;
+        const records = transaction ? { schedule: scheduleSnapshot?.exists ? { scheduleId: scheduleSnapshot.id, ...scheduleSnapshot.data() } : null } : null;
+        const { admin } = await authorizeScheduleSource(req, churchId, intent.sourceId, intent.cellKey, records);
         if (["sending", "unknown"].includes(intent.status)) throw httpError(409, "The provider outcome is active or uncertain. Review SMS delivery history before closing this invitation.");
         if (intent.replacementResolvedAt) return intent;
         const resolvedAt = nowIso();

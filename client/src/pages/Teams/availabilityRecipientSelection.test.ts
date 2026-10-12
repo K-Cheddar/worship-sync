@@ -47,7 +47,7 @@ it("reports SMS, scope, revoked, and responded exclusions without making them se
 
   expect(rows.map(({ member: item, eligible, reason }) => [item.memberId, eligible, reason])).toEqual([
     ["eligible", true, ""],
-    ["no-mobile", false, "Missing or invalid phone"],
+    ["no-mobile", false, "No mobile number"],
     ["outside", false, "Outside this form’s team scope"],
     ["responded", false, "Already responded"],
     ["revoked", false, "Response link revoked"],

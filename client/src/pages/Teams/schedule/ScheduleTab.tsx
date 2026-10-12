@@ -104,6 +104,7 @@ import {
   getNotificationIntents,
   getNotificationIntentPreview,
   resolveReplacementNotificationIntent,
+  prepareReplacementNotificationIntent,
   sendNotificationIntent,
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
@@ -1164,6 +1165,7 @@ const ScheduleTab = ({
     let awaitingConfirmation = false;
     try {
       const preview = await getNotificationIntentPreview(churchId, intent.intentId);
+      if (latestScheduleRef.current?.scheduleId !== intent.sourceId || latestScheduleRef.current?.churchId !== churchId) return;
       if (!preview.preview.eligible) {
         showToast("This volunteer is no longer eligible for SMS. Review the current assignment and consent.", "error");
         return;
@@ -6243,6 +6245,7 @@ const ScheduleTab = ({
               ) : null}
               {canEdit && selectedSchedule ? (
                 <ScheduleMessagesPanel
+                  key={`${churchId}:${selectedSchedule.scheduleId}`}
                   open={scheduleMessagesOpen}
                   onOpenChange={setScheduleMessagesOpen}
                   intents={scheduleNotificationIntents}
@@ -6259,6 +6262,23 @@ const ScheduleTab = ({
                   onSend={(intent) => void handleSendScheduleIntent(intent)}
                   onCloseInvitation={(intent) => void handleResolveReplacementIntent(intent)}
                   onLoadOlder={() => void loadOlderScheduleNotifications()}
+                  replacementVacancies={!scheduleMessagesOpen || selectedSchedule.scheduleId.startsWith("virtual:") ? [] : scheduleOccurrences.flatMap((occurrence) => scheduleColumns.flatMap((column) => {
+                    if (!isOccurrenceStaffingSlot(column, requirementsByOccurrence.get(occurrence.occurrenceId), selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId])) return [];
+                    const cell = selectedSchedule.assignments?.[occurrence.occurrenceId]?.[column.columnKey];
+                    const holderId = typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+                    if (holderId && selectedSchedule.responses?.[occurrence.occurrenceId]?.[column.columnKey]?.response !== "declined") return [];
+                    return [{ occurrenceId: occurrence.occurrenceId, cellKey: column.columnKey,
+                      label: `${occurrence.name} · ${formatOccurrenceRowLabel(occurrence, { sharedWeekday: null, sharedTime: null }, serviceTimeZone)} · ${column.label}`,
+                      memberIds: activeTeamMembers.filter((member) => member.memberId !== holderId && member.positionIds.includes(column.positionId) && member.serviceAvailability?.[occurrence.occurrenceId] !== "unavailable").map((member) => member.memberId),
+                    }];
+                  }))}
+                  onPrepareReplacement={async (vacancy, memberId) => {
+                    const scheduleId = selectedSchedule.scheduleId;
+                    const result = await prepareReplacementNotificationIntent(churchId, { scheduleId, occurrenceId: vacancy.occurrenceId, cellKey: vacancy.cellKey, memberId });
+                    if (latestScheduleRef.current?.scheduleId !== scheduleId || latestScheduleRef.current?.churchId !== churchId) return;
+                    setScheduleNotificationIntents((current) => mergeScheduleNotificationIntents(current, [result.intent]));
+                    await handleSendScheduleIntent(result.intent);
+                  }}
                 />
               ) : null}
               {scheduleSmsPreview ? <SmsConfirmationModal

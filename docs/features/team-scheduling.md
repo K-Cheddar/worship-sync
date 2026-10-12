@@ -86,6 +86,8 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 ## Product decisions
 
+Phase 3B (product-owner request, 2026-10-12): administrators and church-wide Teams editors retain schedule messaging access. Current editors of the persisted schedule's Team may inspect its message history, review and explicitly send individual SMS, and prepare/resolve replacement invitations. Read-only or unrelated-Team access does not grant these actions. Authorization is repeated immediately before dispatch; an old approval is not a permission grant. Combined occurrence identity does not combine Team permissions. Scoped operators cannot manage messaging for legacy schedules with inconsistent assignment position ownership; administrators can review those records. Existing identities, email sending, personalized responses, manual confirmation, consent and uncertain-send safeguards remain intact. This phase changes neither publication nor bulk/background sending. See the [endpoint audit and next-step plan](../team-schedule-messaging-phase-3b.md).
+
 The approved request leaves technical mechanisms open. The audit records two material semantic questions that affect generated occurrences and identity:
 
 - How should a recurrence landing in a nonexistent spring-forward wall time be handled: omit that occurrence, move it forward, or apply another explicit rule?

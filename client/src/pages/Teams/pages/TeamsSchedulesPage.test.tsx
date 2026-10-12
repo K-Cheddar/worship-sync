@@ -8,8 +8,8 @@ jest.mock("../../../api/auth", () => ({ getTeamAvailabilityManagementData: jest.
 jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
 jest.mock("../schedule/ScheduleTab", () => ({
   __esModule: true,
-  default: ({ data }: { data: { members: { memberId: string; serviceAvailability?: Record<string, string> }[] } }) => (
-    <output data-testid="schedule-member-availability">
+  default: ({ data, canEdit }: { canEdit: boolean; data: { members: { memberId: string; serviceAvailability?: Record<string, string> }[] } }) => (
+    <output data-testid="schedule-member-availability" data-can-edit={String(canEdit)}>
       {JSON.stringify(data.members.map(({ memberId, serviceAvailability }) => ({ memberId, serviceAvailability })))}
     </output>
   ),
@@ -62,4 +62,24 @@ test("loads scoped service-date answers into the existing schedule assignment vi
     '"serviceAvailability":{"service@2026-10-18T10:00:00.000Z":"available"}',
   );
   expect(mockGetTeamAvailabilityManagementData).toHaveBeenCalledWith("church-1");
+  expect(screen.getByTestId("schedule-member-availability")).toHaveAttribute("data-can-edit", "true");
+});
+
+test.each([
+  ["worship", "true"],
+  ["av", "false"],
+])("schedule messaging receives current Team edit authority for %s", async (teamId, expected) => {
+  mockUseTeamsPage.mockReturnValue({
+    pageData: { teams: [], members: [], schedules: [{ scheduleId: "schedule-1", teamId }] },
+    churchId: "church-1",
+    selectedScheduleId: "schedule-1",
+    scheduleDrafts: {},
+    canEditTeams: false,
+    canEditAnyTeam: true,
+    canEditTeam: (id: string) => id === "worship",
+    editableMemberIds: new Set(),
+    serviceTimeZone: "UTC",
+  } as unknown as ReturnType<typeof useTeamsPage>);
+  render(<MemoryRouter><TeamsSchedulesPage /></MemoryRouter>);
+  expect(screen.getByTestId("schedule-member-availability")).toHaveAttribute("data-can-edit", expected);
 });

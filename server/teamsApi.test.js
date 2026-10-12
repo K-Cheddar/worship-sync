@@ -10958,6 +10958,133 @@ test("declining an assignment records a vacancy without messaging the volunteer 
   );
 });
 
+test("Phase 3B schedule messaging uses current Team ownership through production composition", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("phase3b");
+  const worship = await seedAssignedSchedule(admin, "phase3b_worship", { link: false });
+  const av = await seedAssignedSchedule(admin, "phase3b_av", { link: false });
+  const manager = async (suffix, teamScopes, teams = "none") => createHumanContext(`phase3b_${suffix}`, {
+    churchId: admin.churchId, role: "member", appAccess: "view", permissions: { teams, teamScopes },
+  });
+  const worshipManager = await manager("worship", { [worship.media.teamId]: "edit" });
+  const bothManager = await manager("both", { [worship.media.teamId]: "edit", [av.media.teamId]: "edit" });
+  const reader = await manager("reader", { [worship.media.teamId]: "view" });
+  const broad = await manager("broad", {}, "edit");
+  const foreign = await createAdminContext("phase3b_foreign");
+  const phoneNumber = "+19545551333";
+  await seedSmsConsentForServerTests({ churchId: admin.churchId, phoneNumber, status: "opted_in" });
+  await setDoc("churchMessagingConfigs", admin.churchId, {
+    churchId: admin.churchId, provider: "twilio", providerAccountId: "AC_test",
+    messagingServiceId: "MG_test", registrationStatus: "approved", enabled: true,
+  });
+  const fake = createFakeSmsProvider({ response: { providerMessageId: "SM_phase3b", status: "accepted" } });
+  const emails = [];
+  setSmsProviderForServerTests(fake);
+  setSendEmailForServerTests(async (message) => emails.push(message));
+  const history = (context, scheduleId) => callHandler(authHandlers.listIntents, { context, query: { scheduleId } });
+  const preview = (context, intentId) => callHandler(authHandlers.getIntentPreview, { context, params: { intentId } });
+  const send = (context, intentId, approvalVersion) => callHandler(authHandlers.sendIntent, { context, params: { intentId }, body: { confirmed: true, approvalVersion } });
+  try {
+    // Shared combined occurrence, separate Team owners. No cross-Team access.
+    const avSchedule = await getDoc("teamSchedules", av.scheduleId);
+    await setDoc("teamSchedules", av.scheduleId, {
+      occurrences: avSchedule.occurrences.map((occ) => ({ ...occ, occurrenceId: worship.occurrenceId, serviceIds: ["worship", "av"] })),
+      assignments: { [worship.occurrenceId]: avSchedule.assignments[av.occurrenceId] },
+    }, { merge: true });
+    for (const fixture of [worship, av]) {
+      await setDoc("teamRosterMembers", fixture.memberId, { phoneNumber, email: `${fixture.memberId}@example.test` }, { merge: true });
+      const emailed = await callHandler(authHandlers.sendTeamSchedule, { context: bothManager, params: { scheduleId: fixture.scheduleId } });
+      assert.equal(emailed.statusCode, 200, JSON.stringify(emailed.payload));
+      assert.equal(emailed.payload.notified, 1);
+    }
+    assert.equal(emails.length, 2);
+    assert.equal(fake.calls.length, 0, "email and draft creation do not send SMS");
+    const worshipIntent = (await history(admin, worship.scheduleId)).payload.intents[0];
+    const avIntent = (await history(admin, av.scheduleId)).payload.intents[0];
+    for (const context of [admin, broad, bothManager]) {
+      for (const scheduleId of [worship.scheduleId, av.scheduleId]) assert.equal((await history(context, scheduleId)).statusCode, 200);
+      assert.equal((await preview(context, avIntent.intentId)).statusCode, 200);
+    }
+    const allowed = await preview(worshipManager, worshipIntent.intentId);
+    assert.equal(allowed.statusCode, 200);
+    assert.doesNotMatch(allowed.payload.preview.message, /schedule-response\/[A-Za-z0-9_-]{10}/);
+    assert.notEqual(allowed.payload.preview.phoneNumberSnapshot, phoneNumber);
+    assert.equal((await history(worshipManager, worship.scheduleId)).payload.intents.length, 1);
+    for (const [context, scheduleId, intentId] of [
+      [worshipManager, av.scheduleId, avIntent.intentId],
+      [reader, worship.scheduleId, worshipIntent.intentId],
+      [foreign, worship.scheduleId, worshipIntent.intentId],
+    ]) {
+      const denied = await history(context, scheduleId);
+      assert.ok([403, 404].includes(denied.statusCode));
+      assert.equal(denied.payload.intents, undefined);
+      assert.ok([403, 404].includes((await preview(context, intentId)).statusCode));
+      assert.ok([403, 404].includes((await send(context, intentId, allowed.payload.preview.approvalVersion)).statusCode));
+    }
+    assert.equal((await callHandler(authHandlers.listIntents, { context: worshipManager })).statusCode, 403);
+    assert.equal((await callHandler(authHandlers.listIntents, { context: worshipManager, query: { scheduleId: worship.scheduleId, cursor: avIntent.intentId } })).statusCode, 400);
+    assert.equal(fake.calls.length, 0);
+    // Revoke persisted authority after review; old approval is not a send grant.
+    const membership = (await queryDocs("memberships", [{ field: "churchId", value: admin.churchId }, { field: "userId", value: "teams_api_admin_phase3b_worship" }]))[0];
+    const originalPermissions = membership.permissions;
+    await setDoc("memberships", membership.membershipId, { permissions: { ...originalPermissions, teamScopes: {} } }, { merge: true });
+    assert.equal((await send(worshipManager, worshipIntent.intentId, allowed.payload.preview.approvalVersion)).statusCode, 403);
+    assert.equal(fake.calls.length, 0);
+    await setDoc("memberships", membership.membershipId, { permissions: originalPermissions }, { merge: true });
+    // A changed persisted owner cannot be overridden with a request Team ID.
+    await setDoc("teamSchedules", worship.scheduleId, { teamId: av.media.teamId }, { merge: true });
+    assert.equal((await history(worshipManager, worship.scheduleId)).statusCode, 403);
+    assert.equal((await preview(worshipManager, worshipIntent.intentId)).statusCode, 403);
+    await setDoc("teamSchedules", worship.scheduleId, { teamId: worship.media.teamId }, { merge: true });
+    // Fail closed for legacy mixed position ownership, even for a multi-Team manager.
+    const saved = await getDoc("teamSchedules", worship.scheduleId);
+    await setDoc("teamSchedules", worship.scheduleId, { assignments: { ...saved.assignments, [worship.occurrenceId]: { ...saved.assignments[worship.occurrenceId], [av.cellKey]: av.memberId } } }, { merge: true });
+    assert.equal((await history(bothManager, worship.scheduleId)).statusCode, 403);
+    assert.equal((await history(admin, worship.scheduleId)).statusCode, 200);
+    await setDoc("teamSchedules", worship.scheduleId, { assignments: saved.assignments }, { merge: true });
+    const fresh = await preview(worshipManager, worshipIntent.intentId);
+    assert.equal((await send(worshipManager, worshipIntent.intentId, fresh.payload.preview.approvalVersion)).statusCode, 200);
+    const avPreview = await preview(bothManager, avIntent.intentId);
+    assert.equal((await send(bothManager, avIntent.intentId, avPreview.payload.preview.approvalVersion)).statusCode, 200);
+    assert.equal(fake.calls.length, 2);
+
+    const candidate = await callHandler(authHandlers.createTeamRosterMember, { context: admin, body: { firstName: "Replacement", lastName: "Volunteer", positionIds: [worship.media.positionIds.Camera], blockoutDates: [] } });
+    assert.equal(candidate.statusCode, 200, JSON.stringify(candidate.payload));
+    const candidateId = candidate.payload.member.memberId;
+    await setDoc("teamRosterMembers", candidateId, { phoneNumber }, { merge: true });
+    const prepare = (context, overrides = {}) => callHandler(authHandlers.prepareReplacementInvitation, {
+      context, body: { scheduleId: worship.scheduleId, occurrenceId: worship.occurrenceId, cellKey: worship.cellKey, memberId: candidateId, teamId: worship.media.teamId, ...overrides },
+    });
+    assert.equal((await prepare(worshipManager)).statusCode, 409, "occupied, non-declined assignment");
+    await setDoc("teamSchedules", worship.scheduleId, { responses: { [worship.occurrenceId]: { [worship.cellKey]: { memberId: worship.memberId, response: "declined" } } } }, { merge: true });
+    assert.ok([400, 409].includes((await prepare(worshipManager, { memberId: av.memberId })).statusCode), "candidate must qualify for owning Team");
+    assert.equal((await prepare(worshipManager, { cellKey: av.cellKey })).statusCode, 403);
+    assert.equal((await prepare(worshipManager, { scheduleId: av.scheduleId })).statusCode, 403);
+    assert.equal((await prepare(reader)).statusCode, 403);
+    const invitation = await prepare(worshipManager);
+    assert.equal(invitation.statusCode, 200, JSON.stringify(invitation.payload));
+    assert.equal(fake.calls.length, 2, "replacement preparation makes no provider call");
+    assert.equal(invitation.payload.intent.phoneNumberSnapshot, "");
+    assert.equal((await send(worshipManager, invitation.payload.intent.intentId, invitation.payload.intent.approvalVersion)).statusCode, 200);
+    assert.equal(fake.calls.length, 3);
+    const resolve = (context) => callHandler(authHandlers.resolveReplacementInvitation, { context, params: { intentId: invitation.payload.intent.intentId } });
+    const avManager = await manager("av", { [av.media.teamId]: "edit" });
+    assert.equal((await resolve(avManager)).statusCode, 403);
+    assert.equal((await resolve(reader)).statusCode, 403);
+    assert.equal((await resolve(foreign)).statusCode, 404);
+    assert.equal((await resolve(worshipManager)).statusCode, 200);
+    assert.equal((await getDoc("teamSchedules", worship.scheduleId)).assignments[worship.occurrenceId][worship.cellKey].primaryMemberId, worship.memberId);
+    const retained = await history(worshipManager, worship.scheduleId);
+    assert.equal(retained.payload.intents.length, 2);
+    assert.ok(retained.payload.intents.every((intent) => intent.attemptStatus === "accepted"));
+    await setDoc("teamSchedules", worship.scheduleId, { archivedAt: new Date().toISOString() }, { merge: true });
+    assert.equal((await history(admin, worship.scheduleId)).payload.intents.length, 2, "archiving preserves administrator history access");
+  } finally {
+    setSmsProviderForServerTests(null);
+    setSendEmailForServerTests(null);
+  }
+});
+
 test("sending a schedule notifies once and is idempotent", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_sched");

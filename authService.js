@@ -6848,6 +6848,8 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   queryDocs,
   requireFirestore,
   requireTeamsEdit: requireTeamsEditSession,
+  authorizeSchedule: (...args) =>
+    teamsAuthHandlers.requireTeamScheduleNotificationEdit(...args),
   authorizeAvailabilityForm: (...args) =>
     teamsAuthHandlers.requireTeamAvailabilityFormEdit(...args),
   isAvailabilityRecipientInFormScope: (...args) =>

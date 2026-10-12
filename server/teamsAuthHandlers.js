@@ -3744,6 +3744,30 @@ export const createTeamsAuthHandlers = ({
       await collectMemberTeamIds(member, churchId),
     );
 
+  // A combined occurrence does not change the schedule's Team ownership.
+  // Legacy mixed/unknown position ownership cannot grant a scoped operator
+  // access to a whole-schedule response link or message history.
+  const requireTeamScheduleNotificationEdit = async (req, churchId, schedule, cellKey = "") => {
+    if (!schedule || schedule.churchId !== churchId) {
+      throw httpError(404, "Schedule not found.");
+    }
+    const admin = await requireTeamsEditForTeamIds(req, churchId, [schedule.teamId].filter(Boolean));
+    const scoped = admin.role !== "admin" && admin.permissions?.teams !== "edit";
+    if (scoped) {
+      const positionIds = new Set([
+        ...Object.values(schedule.assignments || {}).flatMap((row) => Object.keys(row || {})),
+        ...(Array.isArray(cellKey) ? cellKey : cellKey ? [cellKey] : []),
+      ].map((key) => String(key).split(SCHEDULE_SLOT_KEY_SEPARATOR)[0]));
+      for (const positionId of positionIds) {
+        const position = await getDoc(COLLECTIONS.teamPositions, positionId);
+        if (!position || position.churchId !== churchId || position.teamId !== schedule.teamId) {
+          throw httpError(403, "This schedule has inconsistent Team ownership. Ask a church administrator to review it.");
+        }
+      }
+    }
+    return { admin, scoped };
+  };
+
   // Add a member to each given team's roster. Tolerant of stale/foreign/archived
   // team ids (skipped), since callers may pass ids from intake forms that could
   // be out of date. Returns the team ids whose roster actually changed.
@@ -10914,6 +10938,7 @@ export const createTeamsAuthHandlers = ({
     prepareAvailabilityNotificationRecipients,
     resolveAvailabilityNotificationContext,
     resolveScheduleNotificationContext,
+    requireTeamScheduleNotificationEdit,
     requireTeamAvailabilityFormEdit,
     isAvailabilityRecipientInFormScope,
     async exportPortableData(req, res) {

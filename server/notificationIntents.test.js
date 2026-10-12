@@ -13,6 +13,7 @@ const createHarness = ({
   providerSend,
   firestore = false,
   requireTeamsEdit,
+  authorizeSchedule,
   authorizeAvailabilityForm,
   isAvailabilityRecipientInFormScope,
   validateReplacementCandidate,
@@ -112,6 +113,7 @@ const createHarness = ({
     queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
     requireFirestore: () => firestore ? db : null,
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
+    ...(authorizeSchedule ? { authorizeSchedule } : {}),
     authorizeAvailabilityForm: authorizeAvailabilityForm || (async () => {
       throw Object.assign(new Error("Availability form access required."), { statusCode: 403 });
     }),
@@ -215,6 +217,61 @@ const createHarness = ({
   };
   return { collections, storeFor, handler, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
+
+for (const firestore of [false, true]) {
+  test(`schedule authorization is rechecked after claim before provider (${firestore ? "transaction fake" : "memory"})`, async () => {
+    let allowed = true;
+    let checks = 0;
+    const h = createHarness({ firestore, authorizeSchedule: async () => {
+      checks += 1;
+      if (!allowed) throw Object.assign(new Error("Teams edit access required"), { statusCode: 403 });
+      // Preparation/review succeed; permission is lost on the final dispatch check.
+      if (checks === 3) allowed = false;
+      return { admin: { user: { uid: "manager" }, permissions: { teamScopes: { team_a: "edit" } } }, scoped: true };
+    } });
+    h.schedule.sentAt = "2026-10-01T00:00:00Z";
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+    await h.handler.saveEventIntents({ churchId: h.churchId, schedule: h.schedule, intentType: "assignment_notification", entries: [{ memberId: h.member.memberId, occurrenceId: "occ_1", cellKey: "position::0" }] });
+    const intent = [...h.storeFor("notificationIntents").values()][0];
+    const preview = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+    await h.handler.getIntentPreview({ params: { churchId: h.churchId, intentId: intent.intentId } }, preview);
+    assert.equal(preview.statusCode, 200);
+    assert.doesNotMatch(preview.payload.preview.message, /secure-token/);
+    assert.notEqual(preview.payload.preview.phoneNumberSnapshot, h.phoneNumber);
+    assert.equal(h.providerCalls, 0);
+    // First send authorization succeeds but the final read rejects.
+    checks = 2;
+    const result = await h.send(intent.intentId);
+    assert.equal(result.statusCode, 403);
+    assert.equal(h.providerCalls, 0);
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "failed");
+    assert.equal([...h.storeFor("smsDeliveryAttempts").values()][0].outcome, "not_sent");
+  });
+
+  test(`replacement resolution checks current source ownership (${firestore ? "transaction fake" : "memory"})`, async () => {
+    let allowed = true;
+    const h = createHarness({ firestore, authorizeSchedule: async () => {
+      if (!allowed) throw Object.assign(new Error("Teams edit access required"), { statusCode: 403 });
+      return { admin: { user: { uid: "manager" }, permissions: { teamScopes: { team_a: "edit" } } }, scoped: true };
+    } });
+    const invoke = async (handler, input) => {
+      const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(payload) { this.payload = payload; return this; } };
+      await handler(input, res);
+      return res;
+    };
+    const prepared = await invoke(h.handler.prepareReplacementInvitation, { params: { churchId: h.churchId }, body: { scheduleId: h.schedule.scheduleId, occurrenceId: "occ_1", cellKey: "position::0", memberId: "member_b" } });
+    assert.equal(prepared.statusCode, 200);
+    assert.equal(prepared.payload.intent.phoneNumberSnapshot, "");
+    assert.ok(prepared.payload.intent.approvalVersion);
+    assert.equal(h.providerCalls, 0);
+    allowed = false;
+    const params = { churchId: h.churchId, intentId: prepared.payload.intent.intentId };
+    assert.equal((await invoke(h.handler.resolveReplacementInvitation, { params })).statusCode, 403);
+    assert.equal(h.storeFor("notificationIntents").get(params.intentId).replacementResolvedAt, undefined);
+    allowed = true;
+    assert.equal((await invoke(h.handler.resolveReplacementInvitation, { params })).statusCode, 200);
+  });
+}
 
 test("availability preview is church-scoped and does not call the provider", async () => {
   const h = createHarness();

@@ -325,7 +325,7 @@ test("team and name filters compose, and selection survives filter changes", asy
   expect(screen.getByText("2 selected")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Clear" }));
   expect(screen.getByText("0 selected")).toBeInTheDocument();
-  expect(screen.getByText("Missing or invalid phone")).toBeInTheDocument();
+  expect(screen.getByText("No mobile number")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Terry Taylor" })).toBeDisabled();
 });
 

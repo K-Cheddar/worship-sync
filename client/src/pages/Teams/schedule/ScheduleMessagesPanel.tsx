@@ -2,6 +2,7 @@ import type { NotificationIntent, TeamRosterMember } from "../../../api/authType
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer/Drawer";
 import { scheduleMemberName } from "../teamsUtils";
+import ScheduleReplacementInvitationForm, { type ScheduleReplacementVacancy } from "./ScheduleReplacementInvitationForm";
 
 type ScheduleMessageCounts = {
   requested: number;
@@ -28,6 +29,8 @@ type ScheduleMessagesPanelProps = {
   onSend: (intent: NotificationIntent) => void;
   onCloseInvitation: (intent: NotificationIntent) => void;
   onLoadOlder: () => void;
+  replacementVacancies?: ScheduleReplacementVacancy[];
+  onPrepareReplacement?: (vacancy: ScheduleReplacementVacancy, memberId: string) => Promise<void>;
 };
 
 const ScheduleMessagesPanel = ({
@@ -44,6 +47,8 @@ const ScheduleMessagesPanel = ({
   onSend,
   onCloseInvitation,
   onLoadOlder,
+  replacementVacancies = [],
+  onPrepareReplacement,
 }: ScheduleMessagesPanelProps) => (
   <Drawer
     isOpen={open}
@@ -75,6 +80,7 @@ const ScheduleMessagesPanel = ({
       </div>
     </div>
 
+    {onPrepareReplacement ? <ScheduleReplacementInvitationForm vacancies={replacementVacancies} members={members} duplicateFirstNames={duplicateFirstNames} onPrepare={onPrepareReplacement} /> : null}
     {loading && intents.length === 0 ? (
       <p className="text-sm text-gray-400" role="status">Loading schedule messages…</p>
     ) : intents.length === 0 ? (
