@@ -658,6 +658,7 @@ test("interrupted bulk dispatch marks in-flight attempts uncertain and can resum
     memberId: h.member.memberId, idempotencyKey: "interrupted-intent", message: "Preview only", now: "2026-09-25T10:00:00.000Z",
   });
   intent.intentId = "intent_interrupted";
+  intent.batchId = "batch_interrupted";
   intent.status = "sending";
   intent.sendStartedAt = "2020-01-01T00:00:00.000Z";
   intent.attemptId = "attempt_interrupted";
@@ -815,4 +816,51 @@ test("concurrent replacement preparation claims one vacancy and failed preparati
   const claim = [...interrupted.storeFor("notificationBatches").values()][0];
   assert.equal(claim.status, "released");
   assert.equal(interrupted.storeFor("notificationIntents").size, 0);
+});
+
+for (const firestore of [false, true]) {
+  test(`send claim checkpoints its attempt identity before provider work (${firestore ? "transaction fake" : "memory"})`, async () => {
+    const h = createHarness({ firestore, providerSend: async () => {
+      const sending = [...h.storeFor("notificationIntents").values()].find((intent) => intent.status === "sending");
+      assert.ok(sending.attemptId);
+      const attempt = h.storeFor("smsDeliveryAttempts").get(sending.attemptId);
+      assert.equal(attempt.notificationIntentId, sending.intentId);
+      assert.equal(attempt.status, "pending");
+      return { providerMessageId: "SM_checkpoint", status: "accepted" };
+    } });
+    const { batch } = await h.preview();
+    assert.equal((await h.dispatch(batch.batchId)).statusCode, 200);
+    assert.equal(h.providerCalls, 1);
+  });
+}
+
+test("availability dispatch cannot recover another church or feature's stale intent", async () => {
+  for (const foreign of [{ churchId: "church_b" }, { sourceType: "team_schedule" }, { batchId: "other_batch" }]) {
+    const h = createHarness();
+    const { batch, intent } = await h.preview();
+    h.storeFor("notificationIntents").set(intent.intentId, {
+      ...intent, status: "sending", sendStartedAt: "2020-01-01T00:00:00.000Z", ...foreign,
+    });
+    const res = await h.dispatch(batch.batchId);
+    assert.equal(res.statusCode, 200);
+    assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "sending");
+    assert.equal(h.providerCalls, 0);
+  }
+});
+
+test("batch consent withdrawal or expired individual approval never calls provider", async () => {
+  for (const invalidate of [
+    (h, intent) => { intent.approvalSnapshot.expiresAt = Date.now() - 1; },
+    (h) => h.storeFor("smsConsents").delete(smsConsentIdForChurchPhone(h.churchId, h.phoneNumber)),
+    (h) => { h.storeFor("smsConsents").get(smsConsentIdForChurchPhone(h.churchId, h.phoneNumber)).status = "pending"; },
+  ]) {
+    const h = createHarness({ firestore: true });
+    const { batch, intent } = await h.preview();
+    invalidate(h, intent);
+    const result = await h.dispatch(batch.batchId);
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.payload.batch.status, "partial");
+    assert.equal(result.payload.batch.recipients[0].eligible, false);
+    assert.equal(h.providerCalls, 0);
+  }
 });
