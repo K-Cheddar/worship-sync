@@ -939,6 +939,7 @@ const FilteredItems = ({
                 color="#84cc16"
                 component="link"
                 to={createLink}
+                aria-label={`Create a new ${createLabel}`}
               >
                 Create a new {createLabel}
               </Button>
@@ -969,8 +970,10 @@ const FilteredItems = ({
         )}
         <div
           ref={listScrollRef}
+          data-testid="filtered-items-results"
           className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 sm:px-2"
           role="list"
+          aria-busy={isSearchLoading}
         >
           <div
             className="relative"

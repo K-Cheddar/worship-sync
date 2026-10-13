@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { expect, type Browser, type Page } from "@playwright/test";
+import { allowedE2EAuthOrigins } from "./authOrigins";
 
 type AuthStateFiles = { authFile: string; metadataFile: string };
 
@@ -318,11 +319,13 @@ const readAuthenticatedIdentity = async (
   return { email: expectedEmail, tenantLabel, tenantIdFingerprint: "" };
 };
 
-const captureTenantFingerprint = (page: Page) => {
+const captureTenantFingerprint = (page: Page, allowedOrigins: Set<string>) => {
   let latestBootstrap: Promise<string | null> | null = null;
   page.on("response", (response) => {
-    const pathname = new URL(response.url()).pathname;
+    const responseURL = new URL(response.url());
+    const pathname = responseURL.pathname;
     if (
+      !allowedOrigins.has(responseURL.origin) ||
       !response.ok() ||
       !(
         pathname.endsWith("/api/auth/me") ||
@@ -356,11 +359,15 @@ const captureTenantFingerprint = (page: Page) => {
   return async () => (latestBootstrap ? await latestBootstrap : null);
 };
 
-const captureInitialServerSession = async (page: Page) => {
+const captureInitialServerSession = async (
+  page: Page,
+  allowedOrigins: Set<string>,
+) => {
   let response;
   try {
     response = await page.waitForResponse(
       (candidate) =>
+        allowedOrigins.has(new URL(candidate.url()).origin) &&
         new URL(candidate.url()).pathname.endsWith("/api/auth/me"),
       { timeout: 45_000 },
     );
@@ -418,7 +425,7 @@ const observeSilentSessionRecovery = async (
   baseURL: string,
   expectedDeviceIdentity: string,
 ) => {
-  const appOrigin = new URL(baseURL).origin;
+  const allowedOrigins = allowedE2EAuthOrigins(baseURL);
   let attempts = 0;
   let blockedRequest = false;
   let recoveryResponse: Promise<RecoveryResponse> | null = null;
@@ -427,7 +434,7 @@ const observeSilentSessionRecovery = async (
     const request = response.request();
     if (
       request.method() !== "POST" ||
-      new URL(response.url()).origin !== appOrigin ||
+      !allowedOrigins.has(new URL(response.url()).origin) ||
       !new URL(response.url()).pathname.endsWith("/api/auth/session")
     ) {
       return;
@@ -479,7 +486,7 @@ const observeSilentSessionRecovery = async (
     const request = route.request();
     const requestURL = new URL(request.url());
     const pathname = requestURL.pathname;
-    if (requestURL.origin !== appOrigin) {
+    if (!allowedOrigins.has(requestURL.origin)) {
       blockedRequest = true;
       await route.abort("blockedbyclient");
       return;
@@ -626,8 +633,12 @@ export async function validateSavedSession(
     }
 
     const page = await context.newPage();
-    const initialServerSessionPromise = captureInitialServerSession(page);
-    const getTenantFingerprint = captureTenantFingerprint(page);
+    const allowedOrigins = allowedE2EAuthOrigins(baseURL);
+    const initialServerSessionPromise = captureInitialServerSession(
+      page,
+      allowedOrigins,
+    );
+    const getTenantFingerprint = captureTenantFingerprint(page, allowedOrigins);
     const recovery = await observeSilentSessionRecovery(
       page,
       baseURL,
@@ -809,7 +820,10 @@ export function requireReusableSavedSession(session: SessionCheck) {
 export async function performRealPasswordSignIn(page: Page, baseURL: string) {
   const email = requiredEnv("E2E_TEST_EMAIL");
   const password = requiredEnv("E2E_TEST_PASSWORD");
-  const getTenantFingerprint = captureTenantFingerprint(page);
+  const getTenantFingerprint = captureTenantFingerprint(
+    page,
+    allowedE2EAuthOrigins(baseURL),
+  );
   await page.goto(makeAppURL(baseURL, "/login"), { waitUntil: "domcontentloaded" });
   await expect(page.getByLabel("Email")).toBeVisible();
   const signInButton = page.getByRole("button", { name: "Sign in", exact: true });

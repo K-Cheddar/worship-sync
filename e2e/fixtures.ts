@@ -1,5 +1,6 @@
 import { test as base, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
+import { allowedE2EAuthOrigins } from "./authOrigins";
 
 type BrowserDiagnostic = {
   kind: "console_error" | "page_error" | "request_failed" | "http_error";
@@ -66,6 +67,49 @@ const clearAuthenticationInputs = async (page: Page) => {
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
     const diagnostics: BrowserDiagnostic[] = [];
+    const blockedEmailGeneratingAuthRequests: { count: number } = { count: 0 };
+    const blockedMailSlurpRequests: { count: number } = { count: 0 };
+    const blockedUntrustedAuthRequests: { count: number } = { count: 0 };
+
+    if (testInfo.project.name === "chromium") {
+      const trustedAuthOrigins = process.env.E2E_BASE_URL
+        ? allowedE2EAuthOrigins(process.env.E2E_BASE_URL)
+        : new Set<string>();
+      await page.route(/\/api\/auth(?:\/|$)/, async (route) => {
+        const request = route.request();
+        if (!trustedAuthOrigins.has(new URL(request.url()).origin)) {
+          blockedUntrustedAuthRequests.count += 1;
+          await route.abort("blockedbyclient");
+          return;
+        }
+        if (request.method() !== "POST") {
+          await route.continue();
+          return;
+        }
+
+        let body: Record<string, unknown> = {};
+        try {
+          body = request.postDataJSON() as Record<string, unknown>;
+        } catch {
+          // An unreadable auth POST is unsafe for the normal controller suite.
+        }
+        const pathname = new URL(request.url()).pathname;
+        const isNoEmailSessionRenewal =
+          pathname === "/api/auth/session" && body.requestNewCode === false;
+        if (isNoEmailSessionRenewal) {
+          await route.continue();
+          return;
+        }
+
+        blockedEmailGeneratingAuthRequests.count += 1;
+        await route.abort("blockedbyclient");
+      });
+
+      await page.route(/mailslurp\.com/i, async (route) => {
+        blockedMailSlurpRequests.count += 1;
+        await route.abort("blockedbyclient");
+      });
+    }
 
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -109,20 +153,42 @@ export const test = base.extend({
       });
     });
 
+    let testFailure: unknown;
     try {
       await use(page);
     } catch (error) {
+      testFailure = error;
       await clearAuthenticationInputs(page);
-      throw error;
     } finally {
       await clearAuthenticationInputs(page);
-      const report = JSON.stringify(diagnostics, null, 2);
+      const report = JSON.stringify(
+        {
+          blockedEmailGeneratingAuthRequests: blockedEmailGeneratingAuthRequests.count,
+          blockedMailSlurpRequests: blockedMailSlurpRequests.count,
+          blockedUntrustedAuthRequests: blockedUntrustedAuthRequests.count,
+          diagnostics,
+        },
+        null,
+        2,
+      );
       await writeFile(testInfo.outputPath("browser-diagnostics.json"), report);
       await testInfo.attach("browser-diagnostics.json", {
         body: Buffer.from(report),
         contentType: "application/json",
       });
     }
+
+    if (
+      !testFailure &&
+      (blockedEmailGeneratingAuthRequests.count > 0 ||
+        blockedMailSlurpRequests.count > 0 ||
+        blockedUntrustedAuthRequests.count > 0)
+    ) {
+      throw new Error(
+        `The controller test safety guard blocked ${blockedEmailGeneratingAuthRequests.count} unsafe auth POST(s), ${blockedMailSlurpRequests.count} MailSlurp request(s), and ${blockedUntrustedAuthRequests.count} untrusted auth request(s). See sanitized browser-diagnostics.json.`,
+      );
+    }
+    if (testFailure) throw testFailure;
   },
 });
 
