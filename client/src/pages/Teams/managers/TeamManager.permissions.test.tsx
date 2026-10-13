@@ -60,6 +60,7 @@ const renderManager = (
     onRosterMemberSaved?: (member: TeamRosterMember) => void;
     onRosterMemberRemoved?: (memberId: string) => void;
     onRosterMutationReconcile?: (memberId: string) => void;
+    onSaved?: (team: TeamRecord) => void;
   } = {},
 ) =>
   render(
@@ -71,7 +72,7 @@ const renderManager = (
               teams={overrides.teams ?? [worship, av]} positions={overrides.positions ?? []} roles={overrides.roles ?? []} qualificationAreas={overrides.qualificationAreas ?? []}
               members={[overrides.member ?? member]} data={{ ...data, teams: overrides.teams ?? [worship, av], members: [overrides.member ?? member], qualificationLevels: overrides.qualificationLevels ?? [] }} canEditTeams={permissions.canEditTeams ?? false}
               canEditTeam={permissions.canEditTeam ?? ((teamId) => teamId === worship.teamId)}
-              onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
+              onSaved={overrides.onSaved ?? jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()}
               onRosterMemberSaved={overrides.onRosterMemberSaved}
               onRosterMemberRemoved={overrides.onRosterMemberRemoved}
               onRosterMutationReconcile={overrides.onRosterMutationReconcile}
@@ -94,11 +95,12 @@ beforeEach(() => {
 
 it("lets a scoped manager edit team settings and manage only that team's roster", async () => {
   const user = userEvent.setup();
+  const onSaved = jest.fn();
   jest.mocked(updateTeam).mockResolvedValue({
     success: true,
     team: { ...worship, name: "Worship and Music", memberIds: ["member-1"] },
   } as never);
-  renderManager();
+  renderManager(TEAMS_SECTION_PATHS.groups, {}, { onSaved });
 
   expect(screen.getByRole("button", { name: "Edit Worship" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Edit AV" })).not.toBeInTheDocument();
@@ -131,8 +133,11 @@ it("lets a scoped manager edit team settings and manage only that team's roster"
     icon: expect.objectContaining({ source: "lucide", name: "Camera" }),
     usesMicrophoneAssignments: true,
     usesIemAssignments: true,
-    memberIds: ["member-1"],
   }));
+  const [, , settingsPayload] = jest.mocked(updateTeam).mock.calls[0];
+  expect(settingsPayload).not.toHaveProperty("memberIds");
+  expect(settingsPayload).not.toHaveProperty("baseMemberIds");
+  expect(onSaved.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ memberIds: ["member-1"] }));
 });
 
 it("searches safe candidate results and adds the selected person", async () => {

@@ -132,7 +132,25 @@ test("recent message send uses the fresh preview approval version and refreshes 
 
   await waitFor(() => expect(mockSendIntent).toHaveBeenCalledWith("church_1", "intent_1", "fresh-approval-v3"));
   await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
-  expect(await screen.findByRole("status")).toHaveTextContent("Your text message was sent. Delivery updates may take a moment.");
+  expect(await screen.findByText("Your text message was sent. Delivery updates may take a moment.")).toBeInTheDocument();
+});
+
+test("a confirmed send stays successful when message history cannot be refreshed", async () => {
+  const user = userEvent.setup();
+  mockGetIntents
+    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
+    .mockRejectedValueOnce(new Error("History temporarily unavailable."));
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Your text message was sent, but we couldn't refresh message history. Try refreshing it.",
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not verify consent and message history");
+  expect(screen.getByRole("alert")).not.toHaveTextContent(/wasn't sent|could not send/i);
+  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
 });
 
 test("recent message send keeps an uncertain provider outcome visible", async () => {
@@ -149,6 +167,26 @@ test("recent message send keeps an uncertain provider outcome visible", async ()
 
   expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't confirm whether this text was sent. Check message history before trying again.");
   await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
+});
+
+test("a definitive provider rejection stays a failure when the API rejects the send request", async () => {
+  const user = userEvent.setup();
+  mockGetIntents
+    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
+    .mockResolvedValueOnce({ success: true, intents: [{ ...recentIntent, status: "failed", attemptOutcome: "failed" }], nextCursor: "", limit: 50 });
+  mockSendIntent.mockRejectedValue(Object.assign(new Error("The SMS provider rejected this message."), {
+    status: 502,
+    details: { success: false, outcome: "failed", errorMessage: "The SMS provider rejected this message." },
+  }));
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("The SMS provider rejected this message.");
+  await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
+  expect(screen.getByRole("alert")).not.toHaveTextContent("We couldn't confirm whether this text was sent");
+  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
 });
 
 test("recent message confirmation ignores duplicate Send activation", async () => {
@@ -269,7 +307,99 @@ test("restored batch status refreshes after an individual send and removes the o
   expect(await screen.findByRole("heading", { name: "Message status · October availability" })).toBeInTheDocument();
   expect(await screen.findAllByText(/Sent · Waiting for delivery confirmation/)).toHaveLength(2);
   expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
+  expect(await screen.findByText("Your text message was sent. Delivery updates may take a moment.")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(mockGetBatch).toHaveBeenCalledTimes(2);
+});
+
+test("an unknown send outcome remains visible while its related batch refreshes", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
+  mockGetIntents
+    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
+    .mockRejectedValueOnce(new Error("History temporarily unavailable."));
+  mockGetBatch
+    .mockResolvedValueOnce({ success: true, batch })
+    .mockResolvedValueOnce({ success: true, batch });
+  mockSendIntent.mockResolvedValue({ success: false, outcome: "unknown" });
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  expect(await screen.findByText(/We couldn't confirm whether this text was sent/)).toBeInTheDocument();
+  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+test("a failed batch refresh does not replace confirmed send feedback", async () => {
+  const user = userEvent.setup();
+  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
+  mockGetIntents
+    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
+    .mockResolvedValueOnce({ success: true, intents: [{ ...recentIntent, status: "sent" }], nextCursor: "", limit: 50 });
+  mockGetBatch
+    .mockResolvedValueOnce({ success: true, batch })
+    .mockRejectedValueOnce(new Error("Batch status temporarily unavailable."));
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Your text message was sent. Delivery updates may take a moment. Batch status couldn't be refreshed. Refresh the page to check it.",
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("heading", { name: "Message status · October availability" })).not.toBeInTheDocument();
+});
+
+test("a delayed related-batch refresh from a previous form cannot replace the current form state", async () => {
+  const user = userEvent.setup();
+  const novemberForm = {
+    formId: "form_2", name: "November availability", startDate: "2026-11-01", endDate: "2026-11-30", active: true,
+  };
+  mockUseTeamsPage.mockReturnValue({
+    churchId: "church_1",
+    canEditTeams: true,
+    pageData: {
+      intakeForms: [
+        { formId: "form_1", name: "October availability", startDate: "2026-10-01", endDate: "2026-10-31", active: true },
+        novemberForm,
+      ],
+      schedules: [], teams: [], positions: [], intakeRecipients: [],
+      smsEligibilityByMemberId: { member_1: { status: "enabled", eligible: true } },
+      members: [{ memberId: "member_1", firstName: "Rae", lastName: "Rivera", churchId: "church_1", phoneNumber: "+15555550123", positionIds: [] }],
+    },
+  } as unknown as ReturnType<typeof useTeamsPage>);
+  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
+  let resolveRelatedBatch!: (value: Awaited<ReturnType<typeof getAvailabilityNotificationBatch>>) => void;
+  let resolveHistoryRefresh!: (value: Awaited<ReturnType<typeof getNotificationIntents>>) => void;
+  mockGetBatch
+    .mockResolvedValueOnce({ success: true, batch })
+    .mockReturnValueOnce(new Promise((resolve) => { resolveRelatedBatch = resolve; }));
+  mockGetIntents
+    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
+    .mockReturnValueOnce(new Promise((resolve) => { resolveHistoryRefresh = resolve; }))
+    .mockResolvedValue({ success: true, intents: [], nextCursor: "", limit: 50 });
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+  await waitFor(() => expect(mockSendIntent).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(mockGetBatch).toHaveBeenCalledTimes(2));
+
+  const formSelect = screen.getByRole("combobox", { name: /Intake form/ });
+  fireEvent.change(formSelect, { target: { value: "form_2" } });
+  await waitFor(() => expect(formSelect).toHaveValue("form_2"));
+  await act(async () => {
+    resolveRelatedBatch({ success: true, batch: { ...batch, status: "sent" } });
+    resolveHistoryRefresh({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
+  });
+
+  expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).not.toBeChecked();
+  expect(screen.queryByRole("heading", { name: "Message status · November availability" })).not.toBeInTheDocument();
 });
 
 test("Messages waits for complete history before enabling recipient selection", async () => {

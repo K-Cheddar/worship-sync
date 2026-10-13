@@ -376,20 +376,25 @@ const TeamsMessagesPage = () => {
     }
   };
 
-  const refreshRelatedBatch = async (relatedBatch: NotificationBatch | null, ownerChurch: string, ownerFormId: string, intentId: string) => {
-    if (!relatedBatch || !relatedBatch.intentIds.includes(intentId)) return;
+  const refreshRelatedBatch = async (
+    relatedBatch: NotificationBatch | null,
+    ownerChurch: string,
+    ownerFormId: string,
+    ownerIntentType: typeof intentType,
+    intentId: string,
+  ) => {
+    if (!relatedBatch || !relatedBatch.intentIds.includes(intentId)) return true;
     setActiveBatch((current) => current?.batchId === relatedBatch.batchId ? null : current);
     try {
       const latest = await getAvailabilityNotificationBatch(ownerChurch, relatedBatch.batchId);
       const currentBatch = activeBatchRef.current;
       if (
-        churchIdRef.current === ownerChurch && formIdRef.current === ownerFormId &&
+        currentBatchContextRef.current === `${ownerChurch}:${ownerFormId}:${ownerIntentType}` &&
         (!currentBatch || currentBatch.batchId === relatedBatch.batchId)
       ) setActiveBatch(latest.batch);
+      return true;
     } catch {
-      if (churchIdRef.current === ownerChurch && formIdRef.current === ownerFormId) {
-        setError("Message history was refreshed, but batch status couldn't be refreshed. Check message history before trying again.");
-      }
+      return false;
     }
   };
 
@@ -403,32 +408,102 @@ const TeamsMessagesPage = () => {
     individualSmsSendLockRef.current = true;
     const ownerChurch = preview.churchId;
     const ownerFormId = preview.formId;
+    const ownerContextIdentity = `${ownerChurch}:${ownerFormId}:${preview.intentType}`;
     const relatedBatch = activeBatch?.churchId === ownerChurch && activeBatch.formId === ownerFormId && activeBatch.intentIds.includes(preview.intentId)
       ? activeBatch
       : null;
     setIndividualSmsPreview(null);
     setSending(true);
     setError("");
+    setNotice("");
+    let sendFeedback = "";
+    let sendOutcome: "accepted" | "rejected" | "unknown" = "unknown";
     try {
-      const response = await sendNotificationIntent(ownerChurch, preview.intentId, preview.approvalVersion);
-      if (churchIdRef.current !== ownerChurch || formIdRef.current !== ownerFormId) return;
-      setSelectedMemberIds((current) => current.filter((memberId) => memberId !== preview.memberId));
-      if (response.success && !relatedBatch) setNotice("Your text message was sent. Delivery updates may take a moment.");
-      else setError(response.outcome === "failed"
-        ? response.errorMessage || "This text message wasn't sent. Review message history before preparing a retry."
-        : "We couldn't confirm whether this text was sent. Check message history before trying again.");
       try {
-        await refreshIntents();
-      } catch {
-        if (churchIdRef.current === ownerChurch && formIdRef.current === ownerFormId) setError("The send result was recorded, but message history couldn't be refreshed. Try refreshing message history.");
-      }
-      await refreshRelatedBatch(relatedBatch, ownerChurch, ownerFormId, preview.intentId);
-    } catch (caught) {
-      if (churchIdRef.current === ownerChurch && formIdRef.current === ownerFormId) {
+        const response = await sendNotificationIntent(ownerChurch, preview.intentId, preview.approvalVersion);
+        if (currentBatchContextRef.current !== ownerContextIdentity) return;
         setSelectedMemberIds((current) => current.filter((memberId) => memberId !== preview.memberId));
-        setError(caught instanceof Error ? caught.message : "We couldn't confirm whether this text was sent. Check message history before trying again.");
-        try { await refreshIntents(); } catch { /* Preserve the send outcome message. */ }
-        await refreshRelatedBatch(relatedBatch, ownerChurch, ownerFormId, preview.intentId);
+        if (response.success) {
+          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
+            ? response.intent || { ...intent, status: "sent" }
+            : intent));
+          sendOutcome = "accepted";
+          sendFeedback = "Your text message was sent. Delivery updates may take a moment.";
+        } else if (response.outcome === "failed") {
+          sendOutcome = "rejected";
+          sendFeedback = response.errorMessage || "This text message wasn't sent. Review message history before preparing a retry.";
+        } else {
+          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
+            ? { ...intent, status: "unknown" }
+            : intent));
+          sendFeedback = "We couldn't confirm whether this text was sent. Check message history before trying again.";
+        }
+      } catch (caught) {
+        if (currentBatchContextRef.current !== ownerContextIdentity) return;
+        setSelectedMemberIds((current) => current.filter((memberId) => memberId !== preview.memberId));
+        const errorRecord = caught instanceof Error
+          ? caught as Error & { status?: number; details?: unknown }
+          : null;
+        const errorDetails = errorRecord?.details && typeof errorRecord.details === "object"
+          ? errorRecord.details as { outcome?: unknown; errorMessage?: unknown }
+          : null;
+        const definiteRejection = errorDetails?.outcome === "failed" ||
+          (errorDetails?.outcome !== "unknown" && typeof errorRecord?.status === "number" &&
+            errorRecord.status >= 400 && errorRecord.status < 500 && errorRecord.status !== 409);
+        const uncertainOutcome = !definiteRejection;
+        sendOutcome = uncertainOutcome ? "unknown" : "rejected";
+        if (errorDetails?.outcome === "failed") {
+          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
+            ? { ...intent, status: "failed", attemptOutcome: "failed" }
+            : intent));
+        } else if (uncertainOutcome) {
+          setIntents((current) => current.map((intent) => intent.intentId === preview.intentId
+            ? { ...intent, status: "unknown" }
+            : intent));
+        }
+        if (uncertainOutcome) {
+          sendFeedback = "We couldn't confirm whether this text was sent. Check message history before trying again.";
+        } else if (typeof errorDetails?.errorMessage === "string") {
+          sendFeedback = errorDetails.errorMessage;
+        } else {
+          sendFeedback = errorRecord?.message || "This text message wasn't sent. Review message history before preparing a retry.";
+        }
+      }
+
+      if (currentBatchContextRef.current !== ownerContextIdentity) return;
+      if (sendOutcome === "accepted") setNotice(sendFeedback);
+      else setError(sendFeedback);
+
+      const [historyRefresh, batchRefresh] = await Promise.allSettled([
+        refreshIntents(),
+        refreshRelatedBatch(relatedBatch, ownerChurch, ownerFormId, preview.intentType, preview.intentId),
+      ]);
+      if (currentBatchContextRef.current !== ownerContextIdentity) return;
+
+      const historyRefreshFailed = historyRefresh.status === "rejected";
+      const batchRefreshFailed = batchRefresh.status === "rejected" ||
+        (batchRefresh.status === "fulfilled" && !batchRefresh.value);
+      if (historyRefreshFailed || batchRefreshFailed) {
+        let refreshFeedback: string;
+        if (historyRefreshFailed && batchRefreshFailed) {
+          refreshFeedback = "Message history and batch status couldn't be refreshed. Refresh the page to check both.";
+        } else if (historyRefreshFailed) {
+          refreshFeedback = "Message history couldn't be refreshed. Try refreshing it.";
+        } else {
+          refreshFeedback = "Batch status couldn't be refreshed. Refresh the page to check it.";
+        }
+
+        if (sendOutcome === "accepted" && historyRefreshFailed && !batchRefreshFailed) {
+          setNotice("Your text message was sent, but we couldn't refresh message history. Try refreshing it.");
+        } else if (sendOutcome === "accepted" && historyRefreshFailed && batchRefreshFailed) {
+          setNotice("Your text message was sent. We couldn't refresh message history or batch status. Refresh the page to check both.");
+        } else if (sendOutcome === "unknown" && historyRefreshFailed) {
+          setError(`We couldn't confirm whether this text was sent. ${refreshFeedback} Try again after refreshing message history.`);
+        } else if (sendOutcome === "accepted") {
+          setNotice(`${sendFeedback} ${refreshFeedback}`);
+        } else {
+          setError(`${sendFeedback} ${refreshFeedback}`);
+        }
       }
     } finally {
       individualSmsSendLockRef.current = false;

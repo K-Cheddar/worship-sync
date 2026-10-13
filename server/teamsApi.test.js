@@ -16691,7 +16691,6 @@ test("scoped Team managers can change settings but cannot change the roster or T
   const settings = {
     name: "Worship and Music", description: "Updated description", icon: "Guitar",
     usesMicrophoneAssignments: true, usesIemAssignments: true,
-    memberIds: ["member-a"],
   };
   const allowed = await run(authHandlers.updateTeam, scoped, { teamId: worship.teamId }, settings);
   assert.equal(allowed.statusCode, 200);
