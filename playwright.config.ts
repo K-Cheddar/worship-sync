@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import dotenv from "dotenv";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 dotenv.config({ quiet: true });
@@ -21,6 +22,34 @@ try {
 }
 
 const authFile = resolve("playwright/.auth/worshipsync-user.json");
+const controllerSpec = resolve("e2e/controller.spec.ts");
+const cliArgs = process.argv.slice(2);
+const requestedProjects = cliArgs.flatMap((arg, index) => {
+  if (arg.startsWith("--project=")) {
+    return arg.slice("--project=".length).split(",");
+  }
+  if (arg === "--project") {
+    return (cliArgs[index + 1] ?? "").split(",");
+  }
+  return [];
+});
+if (
+  requestedProjects.includes("chromium") &&
+  !existsSync(controllerSpec)
+) {
+  throw new Error(
+    "No controller browser test exists at e2e/controller.spec.ts. Refusing to run authentication setup alone as a successful controller test.",
+  );
+}
+const traceFlagIndex = cliArgs.indexOf("--trace");
+const requestedTrace = cliArgs.find((arg) => arg.startsWith("--trace="))?.split("=", 2)[1]
+  ?? (traceFlagIndex >= 0 ? cliArgs[traceFlagIndex + 1] : undefined);
+if (requestedTrace && requestedTrace !== "off") {
+  throw new Error(
+    "Playwright tracing is disabled for authenticated WorshipSync tests because traces can contain reusable auth request data. Use the HTML report and sanitized browser diagnostics instead.",
+  );
+}
+
 const localDevelopmentHosts = new Set([
   "localhost",
   "127.0.0.1",
@@ -60,6 +89,17 @@ export default defineConfig({
       },
     },
     {
+      name: "auth",
+      testMatch: /auth\.spec\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        browserName: "chromium",
+        storageState: { cookies: [], origins: [] },
+        screenshot: "off",
+        trace: "off",
+      },
+    },
+    {
       name: "chromium",
       testMatch: /controller\.spec\.ts$/,
       dependencies: ["setup"],
@@ -68,7 +108,7 @@ export default defineConfig({
         browserName: "chromium",
         storageState: authFile,
         screenshot: "only-on-failure",
-        trace: "retain-on-failure",
+        trace: "off",
       },
     },
   ],
