@@ -1,16 +1,14 @@
 import { randomBytes } from "node:crypto";
 import {
   approveReviewedScheduleBatch,
-  claimApprovedScheduleBatch,
   claimReviewedNotificationBatch,
+  createScheduleBatchStoreOperations,
   createScheduleBatchDispatcher,
   executeReviewedNotificationBatch,
   notificationBatchReviewVersion,
   ownsScheduleBatchLease,
-  releaseScheduleBatchLease,
-  renewScheduleBatchLease,
-  updateScheduleBatchRecipient,
 } from "./notificationBatches.js";
+import { resolveScheduleSmsDispatchConfig } from "./scheduleSmsDispatchConfig.js";
 import { isChurchMessagingReady, normalizeChurchMessagingConfig } from "./churchMessagingConfig.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
@@ -46,9 +44,9 @@ export const NOTIFICATION_INTENT_STATUSES = Object.freeze([
 ]);
 export const NOTIFICATION_SEND_STALE_AFTER_MS = 2 * 60 * 1000;
 export const NOTIFICATION_PREVIEW_TTL_MS = 10 * 60 * 1000;
-// Keep production dispatch closed until real Firestore contention, recovery,
-// privacy and deployed Heroku process behavior have been verified.
-export const SCHEDULE_BULK_DISPATCH_READY = false;
+// The explicit environment switch stays off by default. Segment pacing is
+// mandatory so a future activation cannot inherit an unverified send rate.
+export const SCHEDULE_BULK_DISPATCH_READY = resolveScheduleSmsDispatchConfig().enabled;
 
 // This foundation has no automatic send path. Keep this server-side kill
 // switch hard-disabled until a separately reviewed product change authorizes it.
@@ -157,8 +155,11 @@ export const createNotificationIntentHandlers = ({
   setDoc,
   automaticSendsDisabled = AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
   scheduleBulkDispatchReady = SCHEDULE_BULK_DISPATCH_READY,
+  scheduleSmsDispatchConfig = resolveScheduleSmsDispatchConfig(),
+  logger = console,
 }) => {
   const reconcileDelivery = createSmsDeliveryReconciler({ COLLECTIONS, getDoc, setDoc, requireFirestore, nowIso });
+  const isScheduleBulkDispatchReady = () => Boolean(scheduleBulkDispatchReady && requireFirestore());
   const memoryClaims = new Map();
   const backgroundScheduleRequests = new WeakMap();
   let scheduleBatchDispatcher = null;
@@ -953,7 +954,7 @@ export const createNotificationIntentHandlers = ({
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
       const readBackgroundApproval = async () => {
-        if (!backgroundContext || !scheduleBulkDispatchReady) throw httpError(503, "Bulk schedule SMS is not ready for dispatch.");
+        if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, "Bulk schedule SMS is not ready for dispatch.");
         const batch = await getBatchForChurch(backgroundContext.batchId, churchId);
         if (!ownsScheduleBatchLease(batch, backgroundContext.ownership) || batch.status !== "dispatching") {
           throw httpError(409, "This schedule dispatcher no longer owns the batch.");
@@ -1700,6 +1701,10 @@ export const createNotificationIntentHandlers = ({
       return res.json({
         success: true,
         historyComplete: true,
+          dispatchEnabled: isScheduleBulkDispatchReady(),
+          dispatchReadinessMessage: isScheduleBulkDispatchReady()
+            ? ""
+            : scheduleSmsDispatchConfig.readinessMessage || "Bulk schedule SMS requires Firestore and explicit server-side readiness configuration.",
         privacySafe: Boolean(access.scoped),
         hasPreparedSelection: Boolean(existingBatch),
         scheduleId,
@@ -2321,11 +2326,16 @@ export const createNotificationIntentHandlers = ({
         const access = await authorizeScheduleSource(req, churchId, existingBatch.scheduleId);
         if (existingBatch.sourceType !== "team_schedule" || existingBatch.event !== "initial") throw httpError(404, "Message batch not found.");
         if (access.schedule.published === false) throw httpError(409, "Publish this schedule before sending it.");
+        if (existingBatch.status === "paused") {
+          throw httpError(409, "This batch paused after management access changed. Review the remaining messages again and approve the new review to resume.");
+        }
+        const approvalAlreadyRecorded = existingBatch.approval?.reviewVersion === existingBatch.reviewVersion &&
+          ["approved", "dispatching", "complete", "partial"].includes(existingBatch.status);
         if (req.body?.confirmed !== true || normalize(req.body?.approvalVersion) !== existingBatch.reviewVersion) {
           throw httpError(409, "This schedule review changed. Review the current messages again.");
         }
-        if (!scheduleBulkDispatchReady) {
-          throw httpError(503, "Bulk schedule SMS is disabled until safe background dispatch and restart recovery are ready.");
+        if (!isScheduleBulkDispatchReady()) {
+          throw httpError(503, scheduleSmsDispatchConfig.readinessMessage || "Bulk schedule SMS requires Firestore and explicit server-side readiness configuration.");
         }
         const actorUid = access.admin?.user?.uid || "";
         const authorizationFingerprint = accessFingerprintFor({ ...access, schedule: access.schedule });
@@ -2396,6 +2406,14 @@ export const createNotificationIntentHandlers = ({
           }
         }
         const detail = await scheduleInitialBatchDetail(batch, { privacySafe: access.scoped });
+        if (!approvalAlreadyRecorded) {
+          logger.info?.("schedule_sms.batch_approved", {
+            batchId: batch.batchId,
+            scheduleId: batch.scheduleId,
+            recipientCount: batch.approval?.recipients?.length || 0,
+            totalSegments: (batch.approval?.recipients || []).reduce((sum, recipient) => sum + Number(recipient.segmentCount || 0), 0),
+          });
+        }
         res.json({
           success: true,
           batch: detail,
@@ -2518,74 +2536,9 @@ export const createNotificationIntentHandlers = ({
     };
   };
 
-  const createScheduleBatchStoreOperations = () => {
-    const persistBatchChange = async (batchId, update) => {
-      const db = requireFirestore();
-      if (db) {
-        return db.runTransaction(async (transaction) => {
-          const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
-          const snapshot = await transaction.get(ref);
-          const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
-          const next = update(current);
-          if (next) transaction.set(ref, next, { merge: false });
-          return next;
-        });
-      }
-      return runMemoryClaim(batchId, async () => {
-        const current = await getDoc(COLLECTIONS.notificationBatches, batchId);
-        const next = update(current);
-        if (next) await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
-        return next;
-      });
-    };
-    return {
-      listCandidates: async () => {
-        const filters = [
-          { field: "intentType", value: "schedule_initial_notification" },
-          { field: "status", op: "in", value: ["approved", "dispatching"] },
-        ];
-        const db = requireFirestore();
-        if (db) {
-          const snapshot = await db.collection(COLLECTIONS.notificationBatches)
-            .where("intentType", "==", "schedule_initial_notification")
-            .where("status", "in", ["approved", "dispatching"])
-            .orderBy("dispatchPriorityAt", "asc")
-            .limit(30)
-            .get();
-          return snapshot.docs.map((doc) => ({ batchId: doc.id, ...doc.data() }));
-        }
-        return (await queryDocs(COLLECTIONS.notificationBatches, filters, { limit: 30 }))
-          .sort((left, right) => Number(left.dispatchPriorityAt || 0) - Number(right.dispatchPriorityAt || 0));
-      },
-      claim: async (candidate, ownerToken, now, leaseMs) => {
-        const db = requireFirestore();
-        if (db) {
-          return db.runTransaction(async (transaction) => {
-            const ref = db.collection(COLLECTIONS.notificationBatches).doc(candidate.batchId);
-            const snapshot = await transaction.get(ref);
-            const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
-            const next = claimApprovedScheduleBatch({ current, churchId: candidate.churchId, ownerToken, now, leaseMs, httpError });
-            if (next) transaction.set(ref, next, { merge: false });
-            return next;
-          });
-        }
-        return runMemoryClaim(candidate.batchId, async () => {
-          const current = await getDoc(COLLECTIONS.notificationBatches, candidate.batchId);
-          const next = claimApprovedScheduleBatch({ current, churchId: candidate.churchId, ownerToken, now, leaseMs, httpError });
-          if (next) await setDoc(COLLECTIONS.notificationBatches, candidate.batchId, next, { merge: false });
-          return next;
-        });
-      },
-      renew: (batchId, ownership, now, leaseMs) => persistBatchChange(batchId, (current) =>
-        renewScheduleBatchLease({ current, ownership, now, leaseMs })),
-      saveRecipientProgress: (batchId, ownership, memberId, patch) => persistBatchChange(batchId, (current) =>
-        updateScheduleBatchRecipient({ current, ownership, memberId, patch, now: Date.now() })),
-      release: (batchId, ownership, now, status) => persistBatchChange(batchId, (current) =>
-        releaseScheduleBatchLease({ current, ownership, now, status })),
-    };
-  };
-
-  const scheduleBatchStore = createScheduleBatchStoreOperations();
+  const scheduleBatchStore = createScheduleBatchStoreOperations({
+    requireFirestore, COLLECTIONS, getDoc, setDoc, queryDocs, runMemoryClaim, httpError,
+  });
   scheduleBatchDispatcher = createScheduleBatchDispatcher({
     ...scheduleBatchStore,
     isStillAuthorized: async (batch) => {
@@ -2600,6 +2553,7 @@ export const createNotificationIntentHandlers = ({
         return false;
       }
     },
+    ...scheduleSmsDispatchConfig,
     processRecipient: async ({ batch, recipient, ownership }) => {
       const intent = await getDoc(COLLECTIONS.notificationIntents, recipient.intentId);
       if (!intent || intent.churchId !== batch.churchId || intent.batchId !== batch.batchId ||
@@ -2614,15 +2568,13 @@ export const createNotificationIntentHandlers = ({
     },
     getRecipientState: (recipient, batch) => currentScheduleRecipientState(batch, recipient),
     createOwnerToken: () => randomBytes(24).toString("base64url"),
-    pollIntervalMs: 5000,
-    leaseMs: 90000,
-    maxRecipientsPerRun: 2,
+    logger,
   });
 
   const startScheduleBatchDispatcher = () => {
-    if (scheduleBulkDispatchReady && requireFirestore()) scheduleBatchDispatcher.start();
+    if (isScheduleBulkDispatchReady()) scheduleBatchDispatcher.start();
   };
-  const stopScheduleBatchDispatcher = () => scheduleBatchDispatcher.stop();
+  const stopScheduleBatchDispatcher = (options) => scheduleBatchDispatcher.stop(options);
 
   const dispatchAutomatically = async () => {
     throw httpError(403, "Automatic notification sends are disabled by the server.");

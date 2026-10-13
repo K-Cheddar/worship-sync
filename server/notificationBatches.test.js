@@ -4,6 +4,7 @@ import {
   approveReviewedScheduleBatch,
   claimApprovedScheduleBatch,
   claimReviewedNotificationBatch,
+  createScheduleBatchStoreOperations,
   createScheduleBatchDispatcher,
   executeReviewedNotificationBatch,
   notificationBatchReviewVersion,
@@ -179,6 +180,10 @@ test("schedule approval is durable, exact-version and idempotent", () => {
   assert.equal(approved.approval.actorUid, "manager");
   assert.deepEqual(approved.approval.recipients, input.approvedRecipients);
   assert.equal(approveReviewedScheduleBatch({ ...input, current: approved, actorUid: "another-manager" }), approved);
+  assert.throws(() => approveReviewedScheduleBatch({
+    ...input,
+    current: { ...approved, status: "paused" },
+  }), /no longer available for approval/i);
   for (const change of [
     { approvalVersion: "stale" }, { churchId: "another-church" },
     { current: { ...batch, status: "preparing" } },
@@ -219,6 +224,186 @@ test("lease expiry permits transfer but fences the old owner's progress and comp
   assert.equal(updateScheduleBatchRecipient({ current: transferred, ownership: { ownerToken: "old", generation: 1 }, memberId: "one", patch: { status: "sent" }, now: 160 }), null);
   assert.equal(releaseScheduleBatchLease({ current: transferred, ownership: { ownerToken: "old", generation: 1 }, now: 160, status: "complete" }), null);
   assert.equal(renewScheduleBatchLease({ current: transferred, ownership: { ownerToken: "old", generation: 1 }, now: 160, leaseMs: 50 }), null);
+});
+
+test("recipient progress skips writes when the persisted row is already current", () => {
+  const approved = approveReviewedScheduleBatch({
+    current: makeScheduleBatch(), churchId: "church", scheduleId: "schedule",
+    approvalVersion: "approved-review", actorUid: "manager", now: "approved",
+    approvedRecipients: [
+      { memberId: "one", intentId: "one", approvalVersion: "review-one", status: "sent" },
+    ], httpError,
+  });
+  const claimed = claimApprovedScheduleBatch({ current: approved, churchId: "church", ownerToken: "owner", now: 100, leaseMs: 500, httpError });
+  const unchanged = updateScheduleBatchRecipient({
+    current: claimed,
+    ownership: { ownerToken: "owner", generation: 1 },
+    memberId: "one",
+    patch: { status: claimed.recipients[0].status },
+    now: 200,
+  });
+  assert.equal(unchanged, claimed);
+});
+
+test("the Firestore-style shared coordinator caps provider concurrency across dispatcher instances", async () => {
+  const batches = new Map();
+  const candidate = approveReviewedScheduleBatch({
+    current: {
+      ...makeScheduleBatch(), status: "prepared", recipients: [
+        { memberId: "one", intentId: "one", approvalVersion: "review-one", status: "ready", segmentCount: 1 },
+      ],
+    },
+    churchId: "church", scheduleId: "schedule", approvalVersion: "approved-review",
+    actorUid: "manager", now: new Date(1).toISOString(),
+    approvedRecipients: [{ memberId: "one", intentId: "one", approvalVersion: "review-one", status: "preview", segmentCount: 1 }],
+    httpError,
+  });
+  batches.set(candidate.batchId, candidate);
+  const tails = new Map();
+  const runMemoryClaim = (key, task) => {
+    const previous = tails.get(key) || Promise.resolve();
+    const current = previous.then(task, task);
+    tails.set(key, current.then(() => undefined, () => undefined));
+    return current;
+  };
+  const operations = createScheduleBatchStoreOperations({
+    requireFirestore: () => null,
+    COLLECTIONS: { notificationBatches: "notificationBatches" },
+    getDoc: async (collection, id) => collection === "notificationBatches" ? batches.get(id) || null : null,
+    setDoc: async (collection, id, value) => { if (collection === "notificationBatches") batches.set(id, value); },
+    queryDocs: async () => [...batches.values()],
+    runMemoryClaim,
+    httpError,
+  });
+  const states = new Map([["one", { status: "ready" }]]);
+  const calls = [];
+  let active = 0;
+  let maximumActive = 0;
+  let resolveProvider;
+  const providerBarrier = new Promise((resolve) => { resolveProvider = resolve; });
+  const makeDispatcher = (id) => createScheduleBatchDispatcher({
+    ...operations,
+    isStillAuthorized: async () => true,
+    processRecipient: async ({ recipient }) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      calls.push(recipient.intentId);
+      if (calls.length === 1) await providerBarrier;
+      states.set(recipient.intentId, { status: "sent" });
+      active -= 1;
+      return {};
+    },
+    getRecipientState: async (recipient) => states.get(recipient.intentId),
+    createOwnerToken: () => id,
+    logger: { info() {}, error() {} },
+  });
+  const first = makeDispatcher("owner-one");
+  const second = makeDispatcher("owner-two");
+  const firstRun = first.runOnce();
+  while (calls.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  await second.runOnce();
+  assert.equal(calls.length, 1, "a second process is fenced while the app-wide provider lease is held");
+  assert.equal(maximumActive, 1);
+  resolveProvider();
+  await firstRun;
+  await first.stop();
+  await second.stop();
+});
+
+test("shared provider pacing accounts for approved SMS segments rather than recipient count", async () => {
+  const store = new Map();
+  const tails = new Map();
+  const runMemoryClaim = (key, task) => {
+    const previous = tails.get(key) || Promise.resolve();
+    const current = previous.then(task, task);
+    tails.set(key, current.then(() => undefined, () => undefined));
+    return current;
+  };
+  const operations = createScheduleBatchStoreOperations({
+    requireFirestore: () => null,
+    COLLECTIONS: { notificationBatches: "notificationBatches" },
+    getDoc: async (_collection, id) => store.get(id) || null,
+    setDoc: async (_collection, id, value) => { store.set(id, value); },
+    queryDocs: async () => [],
+    runMemoryClaim,
+    httpError,
+  });
+  const ownership = await operations.claimCoordinator("owner", 1000, 90_000);
+  assert.deepEqual(ownership, { ownerToken: "owner", generation: 1 });
+  assert.equal(await operations.reserveProviderWindow(ownership, 1000, 90_000, 1, 2), 0);
+  assert.equal(await operations.reserveProviderWindow(ownership, 1000, 90_000, 1, 3), 2000);
+  assert.equal(await operations.reserveProviderWindow(ownership, 3000, 90_000, 1, 1), 3000);
+  const saved = store.get("__schedule_sms_dispatch_coordinator__");
+  assert.equal(saved.nextSendAvailableAt, 7000);
+  await operations.releaseCoordinator(ownership, 4000);
+  assert.equal(store.get("__schedule_sms_dispatch_coordinator__").dispatchOwnerToken, "");
+});
+
+test("concurrent provider execution obeys the configured request cap and avoids the old final full-batch sweep", async () => {
+  const recipients = Array.from({ length: 100 }, (_, index) => ({
+    memberId: `member-${index}`,
+    intentId: `intent-${index}`,
+    approvalVersion: `review-${index}`,
+    status: "ready",
+    segmentCount: index % 3 === 0 ? 2 : 1,
+  }));
+  let batch = approveReviewedScheduleBatch({
+    current: { ...makeScheduleBatch(), status: "prepared", recipients },
+    churchId: "church", scheduleId: "schedule", approvalVersion: "approved-review",
+    actorUid: "manager", now: new Date(1).toISOString(), approvedRecipients: recipients, httpError,
+  });
+  const states = new Map(recipients.map((recipient) => [recipient.intentId, { status: "ready" }]));
+  const progressReads = [];
+  let active = 0;
+  let maximumActive = 0;
+  const dispatcher = createScheduleBatchDispatcher({
+    listCandidates: async () => [batch],
+    claim: async (candidate, ownerToken, now, leaseMs) => {
+      const next = claimApprovedScheduleBatch({ current: batch, churchId: "church", ownerToken, now, leaseMs, httpError });
+      if (next) batch = next;
+      return next;
+    },
+    renew: async (batchId, owner, now, leaseMs) => {
+      const next = renewScheduleBatchLease({ current: batch, ownership: owner, now, leaseMs });
+      if (next) batch = next;
+      return next;
+    },
+    saveRecipientProgress: async (batchId, owner, memberId, patch, now) => {
+      const next = updateScheduleBatchRecipient({ current: batch, ownership: owner, memberId, patch, now });
+      if (next) batch = next;
+      return next;
+    },
+    release: async (batchId, owner, now, status) => {
+      const next = releaseScheduleBatchLease({ current: batch, ownership: owner, now, status });
+      if (next) batch = next;
+      return next;
+    },
+    isStillAuthorized: async () => true,
+    processRecipient: async ({ recipient }) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      states.set(recipient.intentId, { status: "sent" });
+      active -= 1;
+      return {};
+    },
+    getRecipientState: async (recipient) => {
+      progressReads.push(recipient.intentId);
+      return states.get(recipient.intentId);
+    },
+    reserveProviderWindow: async () => 0,
+    createOwnerToken: () => "owner",
+    now: () => 200,
+    maxRecipientsPerRun: 10,
+    maxConcurrentProviderRequests: 2,
+    logger: { info() {}, error() {} },
+  });
+  await dispatcher.runOnce();
+  assert.equal(batch.status, "approved");
+  assert.equal(maximumActive, 2);
+  assert.equal(progressReads.length, 20, "one pre-send and one post-send state read per processed recipient; no 100-row completion sweep");
+  assert.equal(batch.recipients.filter((recipient) => recipient.status === "sent").length, 10);
+  await dispatcher.stop();
 });
 
 test("dispatcher resumes approved work, persists each recipient, and never retries accepted or unknown intents", async () => {

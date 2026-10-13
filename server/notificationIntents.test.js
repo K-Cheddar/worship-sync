@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { deleteApp, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import {
   AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
   createNotificationIntentHandlers,
@@ -18,6 +21,7 @@ import { approveReviewedScheduleBatch } from "./notificationBatches.js";
 const createHarness = ({
   providerSend,
   firestore = false,
+  firestoreDb = null,
   requireTeamsEdit,
   authorizeSchedule,
   authorizeScheduleActor,
@@ -26,6 +30,7 @@ const createHarness = ({
   isAvailabilityRecipientInFormScope,
   validateReplacementCandidate,
   beforeSetDoc,
+  logger = { info() {}, warn() {}, error() {} },
 } = {}) => {
   const collections = new Map();
   const storeFor = (collection) => {
@@ -125,7 +130,13 @@ const createHarness = ({
       return run;
     },
   };
-  const getDoc = async (collection, id) => storeFor(collection).get(id) || null;
+  const getDoc = async (collection, id) => {
+    if (firestoreDb) {
+      const snapshot = await firestoreDb.collection(collection).doc(id).get();
+      if (snapshot.exists) return { id: snapshot.id, ...snapshot.data() };
+    }
+    return storeFor(collection).get(id) || null;
+  };
   const handler = createNotificationIntentHandlers({
     COLLECTIONS: {
       notificationIntents: "notificationIntents", smsDeliveryAttempts: "smsDeliveryAttempts",
@@ -139,12 +150,15 @@ const createHarness = ({
     assertCsrf: async () => undefined,
     createId: (prefix) => `${prefix}_${++nextId}`,
     getDoc,
-    deleteDoc: async (collection, id) => storeFor(collection).delete(id),
+    deleteDoc: async (collection, id) => {
+      storeFor(collection).delete(id);
+      if (firestoreDb) await firestoreDb.collection(collection).doc(id).delete();
+    },
     hashValue,
     httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
     nowIso,
     queryDocs: async (collection, filters = []) => [...storeFor(collection).values()].filter((item) => filters.every((filter) => filter.op === "in" ? filter.value.includes(item[filter.field]) : item[filter.field] === filter.value)),
-    requireFirestore: () => firestore ? db : null,
+    requireFirestore: () => firestoreDb || (firestore ? db : null),
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
     ...(authorizeSchedule ? { authorizeSchedule } : {}),
     authorizeScheduleActor: authorizeScheduleActor || (async ({ churchId: targetChurchId, scheduleId }) => ({
@@ -154,6 +168,7 @@ const createHarness = ({
       churchId: targetChurchId,
     })),
     scheduleBulkDispatchReady,
+    logger,
     authorizeAvailabilityForm: authorizeAvailabilityForm || (async () => {
       throw Object.assign(new Error("Availability form access required."), { statusCode: 403 });
     }),
@@ -255,6 +270,7 @@ const createHarness = ({
       if (beforeSetDoc) await beforeSetDoc(collection, id, data);
       const current = storeFor(collection).get(id) || {};
       storeFor(collection).set(id, merge ? { ...current, ...data } : { ...data });
+      if (firestoreDb) await firestoreDb.collection(collection).doc(id).set(data, { merge });
     },
   });
   const makeResponse = () => ({
@@ -284,7 +300,13 @@ const createHarness = ({
     await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
     return res;
   };
-  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
+  const seedFirestore = async () => {
+    if (!firestoreDb) throw new Error("A Firestore database is required to seed the emulator harness.");
+    for (const [collection, rows] of collections) {
+      for (const [id, data] of rows) await firestoreDb.collection(collection).doc(id).set(data);
+    }
+  };
+  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, seedFirestore, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
 
 for (const firestore of [false, true]) {
@@ -1401,6 +1423,79 @@ test("approved schedule batch pauses when the original operator loses Team manag
   await h.handler.stopScheduleBatchDispatcher();
 });
 
+test("revocation during an in-flight schedule send preserves acceptance and requires a new review before resuming", async () => {
+  let permitted = true;
+  let calls = 0;
+  let resolveProvider;
+  let notifyProviderStarted;
+  const providerStarted = new Promise((resolve) => { notifyProviderStarted = resolve; });
+  const firstProviderResponse = new Promise((resolve) => { resolveProvider = resolve; });
+  let h;
+  h = createHarness({
+    firestore: true,
+    scheduleBulkDispatchReady: true,
+    authorizeScheduleActor: async ({ scheduleId }) => {
+      if (!permitted) throw Object.assign(new Error("Teams edit access required"), { statusCode: 403 });
+      return { admin: { user: { uid: "admin_a" } }, scoped: false, schedule: await h.getDoc("teamSchedules", scheduleId) };
+    },
+    providerSend: async () => {
+      calls += 1;
+      if (calls === 1) {
+        notifyProviderStarted();
+        return firstProviderResponse;
+      }
+      return { providerMessageId: `SM_revoked_${calls}`, status: "accepted" };
+    },
+  });
+  h.schedule.published = true;
+  h.schedule.assignments = { occ_1: { "position::0": h.member.memberId, "position::1": "member_b" } };
+  const prepared = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId, "member_b"] },
+  }, prepared);
+  assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+  const approved = await h.dispatch(prepared.payload.batch.batchId);
+  assert.equal(approved.statusCode, 200);
+  for (let attempt = 0; attempt < 100 && h.providerCalls === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.providerCalls, 1, "the approved batch enters its first provider call");
+  await providerStarted;
+
+  permitted = false;
+  resolveProvider({ providerMessageId: "SM_accepted_before_revocation", status: "accepted" });
+  for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status !== "paused"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status, "paused");
+  assert.equal(h.storeFor("notificationIntents").get(prepared.payload.batch.intentIds[0]).status, "sent");
+  assert.equal(h.providerCalls, 1, "the unsent second recipient pauses while accepted work is preserved");
+
+  permitted = true;
+  const staleApproval = await h.dispatch(approved.payload.batch.batchId);
+  assert.equal(staleApproval.statusCode, 409, "restored access cannot resume the old approval directly");
+  assert.match(staleApproval.payload.errorMessage, /Review the remaining messages again/);
+
+  const freshReview = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId, "member_b"] },
+  }, freshReview);
+  assert.equal(freshReview.statusCode, 200, JSON.stringify(freshReview.payload));
+  assert.notEqual(freshReview.payload.batch.approvalVersion, approved.payload.batch.approvalVersion);
+  assert.equal(freshReview.payload.batch.intentIds.length, 1);
+  const resumed = await h.dispatch(freshReview.payload.batch.batchId);
+  assert.equal(resumed.statusCode, 200);
+  for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(freshReview.payload.batch.batchId).status !== "complete"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.providerCalls, 2);
+  assert.equal(calls, 2);
+  assert.equal(h.storeFor("notificationIntents").get(prepared.payload.batch.intentIds[0]).status, "sent");
+  await h.handler.stopScheduleBatchDispatcher();
+});
+
 
 for (const firestore of [false, true]) {
   test(`older accepted-attempt fence blocks another deliberately prepared claim (${firestore ? "transaction" : "memory"})`, async () => {
@@ -1433,3 +1528,232 @@ for (const firestore of [false, true]) {
     assert.equal(h.providerCalls, 1);
   });
 }
+
+const firestoreEmulatorAvailable = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+const firestoreEmulatorProjectId = "demo-worshipsync";
+
+const clearFirestoreEmulator = async () => {
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
+  const url = new URL(`http://${emulatorHost}`);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(url.hostname), "Firestore cleanup is restricted to a local emulator host");
+  const response = await fetch(`http://${emulatorHost}/emulator/v1/projects/${firestoreEmulatorProjectId}/databases/(default)/documents`, { method: "DELETE" });
+  assert.equal(response.status, 200, "Firestore emulator database was cleared before the integration case");
+};
+
+test("Firestore emulator fences competing client sends with one provider request", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const projectId = firestoreEmulatorProjectId;
+  const app = initializeApp({ projectId }, `notification-intent-race-${randomUUID()}`);
+  const db = getFirestore(app);
+  let signalProviderStarted;
+  let releaseProvider;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  try {
+    const h = createHarness({
+      firestoreDb: db,
+      providerSend: async () => {
+        signalProviderStarted();
+        await providerGate;
+        return { providerMessageId: "SM_emulator_race", status: "accepted" };
+      },
+    });
+    await h.seedFirestore();
+    const { intent } = await h.preview();
+    const first = h.send(intent.intentId);
+    const second = h.send(intent.intentId);
+    await providerStarted;
+    const fastest = await Promise.race([
+      first.then((result) => ({ result })),
+      second.then((result) => ({ result })),
+    ]);
+    assert.equal(fastest.result.statusCode, 409, "one competing request is rejected while the other owns the Firestore intent claim");
+    releaseProvider();
+    const results = await Promise.all([first, second]);
+    assert.deepEqual(results.map((result) => result.statusCode).sort(), [200, 409]);
+    assert.equal(h.providerCalls, 1);
+    const savedIntent = await db.collection("notificationIntents").doc(intent.intentId).get();
+    assert.equal(savedIntent.data().status, "sent");
+    const attempts = await db.collection("smsDeliveryAttempts").where("notificationIntentId", "==", intent.intentId).get();
+    assert.equal(attempts.size, 1);
+  } finally {
+    releaseProvider?.();
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator commits repeated schedule confirmation before one approved batch starts", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const projectId = firestoreEmulatorProjectId;
+  const app = initializeApp({ projectId }, `schedule-confirmation-${randomUUID()}`);
+  const db = getFirestore(app);
+  let signalProviderStarted;
+  let releaseProvider;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  let h;
+  try {
+    h = createHarness({
+      firestoreDb: db,
+      scheduleBulkDispatchReady: true,
+      providerSend: async () => {
+        signalProviderStarted();
+        await providerGate;
+        return { providerMessageId: "SM_emulator_approved", status: "accepted" };
+      },
+    });
+    h.schedule.published = true;
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareScheduleInitialSmsBatch({
+      params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+      body: { memberIds: [h.member.memberId] },
+    }, prepared);
+    assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+
+    const confirmations = await Promise.all([
+      h.dispatch(prepared.payload.batch.batchId),
+      h.dispatch(prepared.payload.batch.batchId),
+    ]);
+    assert.deepEqual(confirmations.map((result) => result.statusCode), [200, 200]);
+    await providerStarted;
+    assert.equal(h.providerCalls, 1);
+    releaseProvider();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const saved = await db.collection("notificationBatches").doc(prepared.payload.batch.batchId).get();
+      if (saved.data()?.status === "complete") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const batch = await db.collection("notificationBatches").doc(prepared.payload.batch.batchId).get();
+    assert.equal(batch.data().status, "complete");
+    assert.equal(batch.data().approval.actorUid, "admin_a");
+    const intent = await db.collection("notificationIntents").doc(prepared.payload.batch.intentIds[0]).get();
+    assert.equal(intent.data().status, "sent");
+    const attempts = await db.collection("smsDeliveryAttempts").where("notificationIntentId", "==", intent.id).get();
+    assert.equal(attempts.size, 1);
+    assert.equal(h.providerCalls, 1);
+  } finally {
+    releaseProvider?.();
+    if (h) await h.handler.stopScheduleBatchDispatcher({ timeoutMs: 1000 });
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator rechecks consent between schedule recipients after an in-flight acceptance", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `schedule-consent-${randomUUID()}`);
+  const db = getFirestore(app);
+  let signalProviderStarted;
+  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
+  let h;
+  try {
+    h = createHarness({
+      firestoreDb: db,
+      scheduleBulkDispatchReady: true,
+      providerSend: async () => {
+        signalProviderStarted();
+        await db.collection("smsConsents").doc(smsConsentIdForChurchPhone("church_a", "+14155550123")).update({
+          status: "opted_out",
+          optedOutAt: new Date().toISOString(),
+        });
+        return { providerMessageId: "SM_before_opt_out", status: "accepted" };
+      },
+    });
+    h.schedule.published = true;
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId, "position::1": "member_b" } };
+    await h.seedFirestore();
+    const prepared = h.makeResponse();
+    await h.handler.prepareScheduleInitialSmsBatch({
+      params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+      body: { memberIds: [h.member.memberId, "member_b"] },
+    }, prepared);
+    assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
+    const approved = await h.dispatch(prepared.payload.batch.batchId);
+    assert.equal(approved.statusCode, 200);
+    await providerStarted;
+
+    let batch;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      batch = await db.collection("notificationBatches").doc(prepared.payload.batch.batchId).get();
+      if (["complete", "partial"].includes(batch.data()?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const persisted = batch.data();
+    assert.equal(h.providerCalls, 1, "the second recipient is revalidated after opt-out and never reaches the provider");
+    assert.equal(persisted.recipients.filter((row) => row.status === "sent").length, 1);
+    assert.equal(persisted.recipients.filter((row) => row.status === "excluded").length, 1);
+    const consent = await db.collection("smsConsents").doc(smsConsentIdForChurchPhone("church_a", "+14155550123")).get();
+    assert.equal(consent.data().status, "opted_out");
+  } finally {
+    if (h) await h.handler.stopScheduleBatchDispatcher({ timeoutMs: 1000 });
+    await deleteApp(app);
+  }
+});
+
+test("Firestore emulator preserves callback evidence through duplicate, delayed, and interrupted provider responses", { skip: !firestoreEmulatorAvailable }, async () => {
+  await clearFirestoreEmulator();
+  const projectId = firestoreEmulatorProjectId;
+  const app = initializeApp({ projectId }, `notification-callback-race-${randomUUID()}`);
+  const db = getFirestore(app);
+  let callbackUrl = "";
+  let webhook;
+  let h;
+  const invokeCallback = async (status) => {
+    const res = h.makeResponse();
+    await webhook({
+      headers: { "x-twilio-signature": "emulator-test" },
+      body: { MessageSid: "SM_emulator_callback", MessageStatus: status, To: h.phoneNumber, AccountSid: "AC1" },
+    }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.payload.success, true);
+    return res.payload;
+  };
+  try {
+    h = createHarness({
+      firestoreDb: db,
+      providerSend: async ({ statusCallbackUrl }) => {
+        callbackUrl = statusCallbackUrl;
+        await invokeCallback("delivered");
+        throw Object.assign(new Error("Provider response was interrupted after acceptance."), { code: "ECONNRESET" });
+      },
+    });
+    await h.seedFirestore();
+    webhook = createSmsStatusWebhookHandler({
+      queryDocs: async () => [],
+      getDoc: h.getDoc,
+      requireFirestore: () => db,
+      COLLECTIONS: { smsDeliveryAttempts: "smsDeliveryAttempts", notificationIntents: "notificationIntents" },
+      setDoc: async () => undefined,
+      nowIso: () => new Date().toISOString(),
+      validateSignature: () => true,
+      normalizeStatus: (value) => String(value || "").toLowerCase(),
+      getCallbackUrl: () => callbackUrl,
+      getAuthToken: () => "AC1",
+    });
+    const { intent } = await h.preview();
+    const send = await h.send(intent.intentId);
+    assert.ok(send.statusCode >= 500, "the simulated provider response was lost after the callback confirmed acceptance");
+    assert.equal(h.providerCalls, 1);
+
+    const duplicate = await invokeCallback("delivered");
+    assert.equal(duplicate.updated, false, "a duplicate callback is idempotent");
+    const delayed = await invokeCallback("sent");
+    assert.equal(delayed.updated, false, "a delayed lower-rank callback cannot overwrite delivered state");
+
+    const savedIntent = await db.collection("notificationIntents").doc(intent.intentId).get();
+    assert.equal(savedIntent.data().status, "sent");
+    const attempts = await db.collection("smsDeliveryAttempts").where("notificationIntentId", "==", intent.intentId).get();
+    assert.equal(attempts.size, 1);
+    assert.equal(attempts.docs[0].data().status, "delivered");
+    assert.equal(attempts.docs[0].data().providerMessageId, "SM_emulator_callback");
+
+    const restarted = createHarness({ firestoreDb: db });
+    restarted.storeFor("notificationIntents").set(intent.intentId, savedIntent.data());
+    const retry = await restarted.send(intent.intentId);
+    assert.equal(retry.statusCode, 409);
+    assert.equal(restarted.providerCalls, 0, "accepted work remains fenced after process restart");
+  } finally {
+    await deleteApp(app);
+  }
+});

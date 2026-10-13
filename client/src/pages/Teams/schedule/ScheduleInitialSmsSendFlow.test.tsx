@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NotificationBatch, ScheduleInitialSmsRecipient, TeamSchedule } from "../../../api/authTypes";
 import {
+  dispatchAvailabilityNotificationBatch,
   getAvailabilityNotificationBatch,
   getScheduleInitialSmsRecipients,
   prepareScheduleInitialSmsBatch,
@@ -10,12 +11,13 @@ import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 
 jest.mock("../../../api/auth", () => ({
   getScheduleInitialSmsRecipients: jest.fn(),
+  dispatchAvailabilityNotificationBatch: jest.fn(),
   prepareScheduleInitialSmsBatch: jest.fn(),
   getAvailabilityNotificationBatch: jest.fn(),
-  dispatchAvailabilityNotificationBatch: jest.fn(),
 }));
 
 const mockedGetRecipients = jest.mocked(getScheduleInitialSmsRecipients);
+const mockedDispatchBatch = jest.mocked(dispatchAvailabilityNotificationBatch);
 const mockedPrepareBatch = jest.mocked(prepareScheduleInitialSmsBatch);
 const mockedGetBatch = jest.mocked(getAvailabilityNotificationBatch);
 
@@ -47,6 +49,8 @@ const makeRecipient = (
 const recipientsResponse = (recipients: ScheduleInitialSmsRecipient[]) => ({
   success: true,
   historyComplete: true,
+  dispatchEnabled: false,
+  dispatchReadinessMessage: "Bulk schedule SMS is paused until the server is ready for safe dispatch and restart recovery.",
   privacySafe: true,
   hasPreparedSelection: false,
   scheduleId: "schedule-1",
@@ -155,6 +159,64 @@ describe("ScheduleInitialSmsSendFlow", () => {
     expect(screen.getByText((_content, element) => element?.tagName === "P" && element.textContent?.startsWith("2 selected"))).toBeInTheDocument();
   });
 
+  it("confirms with fake delivery, recovers progress in a second client, and keeps accepted recipients blocked", async () => {
+    const user = userEvent.setup();
+    const alice = makeRecipient("alice", "Alice Able");
+    const reviewed: NotificationBatch = {
+      ...preparedBatch,
+      selectedMemberIds: ["alice"],
+      intentIds: ["intent-alice"],
+      recipients: [preparedBatch.recipients[0]],
+      summary: { ...preparedBatch.summary, selected: 1, eligible: 1, awaitingDispatch: 1, totalSegments: 2 },
+    };
+    const approved: NotificationBatch = {
+      ...reviewed,
+      status: "approved",
+      recipients: reviewed.recipients.map((row) => ({ ...row, status: "ready" })),
+      summary: { ...reviewed.summary, awaitingExecution: 1, sending: 0 },
+    };
+    const dispatching: NotificationBatch = {
+      ...approved,
+      status: "dispatching",
+      recipients: approved.recipients.map((row) => ({ ...row, status: "sent", attemptStatus: "accepted" })),
+      summary: { ...approved.summary, awaitingExecution: 0, sent: 1, alreadySent: 1 },
+    };
+    mockedGetRecipients.mockResolvedValueOnce({
+      ...recipientsResponse([alice]),
+      dispatchEnabled: true,
+      dispatchReadinessMessage: "",
+    });
+    mockedPrepareBatch.mockResolvedValueOnce({ success: true, batch: reviewed, privacySafe: true });
+    mockedDispatchBatch.mockResolvedValueOnce({ success: true, batch: approved });
+    mockedGetBatch.mockResolvedValue({ success: true, batch: dispatching });
+
+    const { unmount: unmountFirstClient } = renderFlow();
+    await user.click(await screen.findByRole("button", { name: "Review 1 message" }));
+    expect(await screen.findByText(/Messages are ready to review/)).toBeInTheDocument();
+    const sendButton = await screen.findByRole("button", { name: "Send 1 message" });
+    expect(sendButton).toBeEnabled();
+    await user.click(sendButton);
+    await waitFor(() => expect(mockedDispatchBatch).toHaveBeenCalledWith("church-1", "batch-1", "review-1"));
+    expect(await screen.findByText(/Approved messages are being processed/)).toBeInTheDocument();
+    unmountFirstClient();
+
+    mockedGetRecipients.mockResolvedValueOnce({
+      ...recipientsResponse([makeRecipient("alice", "Alice Able", { eligible: false, previousDeliveryStatus: "accepted", status: "sent" })]),
+      dispatchEnabled: true,
+      dispatchReadinessMessage: "",
+      currentBatch: dispatching,
+      selectedMemberIds: ["alice"],
+    });
+    const { unmount: unmountSecondClient } = renderFlow();
+    expect(await screen.findByRole("checkbox", { name: "Alice Able" })).toBeDisabled();
+    expect(await screen.findByText(/1 accepted by provider/)).toBeInTheDocument();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 3100)); });
+    expect(mockedGetBatch).toHaveBeenCalledWith("church-1", "batch-1");
+    expect(await screen.findAllByText(/Accepted by provider/)).toHaveLength(2);
+    expect(screen.queryByText(/Sending unavailable/)).not.toBeInTheDocument();
+    unmountSecondClient();
+  });
+
   it("defaults to first-send members, requires explicit retry selection, preserves selection through search, and saves a gated message review", async () => {
     const user = userEvent.setup();
     renderFlow();
@@ -178,7 +240,7 @@ describe("ScheduleInitialSmsSendFlow", () => {
     await waitFor(() => expect(mockedPrepareBatch).toHaveBeenCalledWith("church-1", "schedule-1", ["alice", "bob"]));
     expect(await screen.findByText(/Messages are ready to review/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sending unavailable" })).toBeDisabled();
-    expect(screen.getByText(/paused until dispatch can safely continue and recover after a restart/)).toBeInTheDocument();
+    expect(screen.getByText(/paused until the server is ready for safe dispatch and restart recovery/)).toBeInTheDocument();
     expect(screen.getByText(/3 expected SMS segments/)).toBeInTheDocument();
     await user.click(screen.getAllByText("View message")[0]);
     expect(screen.getAllByText(/Reply here: \[private response link\]/)).toHaveLength(2);

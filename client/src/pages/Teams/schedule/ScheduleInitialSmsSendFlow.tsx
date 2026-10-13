@@ -11,7 +11,7 @@ import {
 } from "../../../api/auth";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
 
-const DISPATCH_READINESS_MESSAGE = "Review is saved. Bulk SMS sending is paused until dispatch can safely continue and recover after a restart.";
+const DISPATCH_READINESS_MESSAGE = "Bulk schedule SMS is paused until the server is ready for safe dispatch and restart recovery.";
 
 const formatAssignmentDate = (assignment: ScheduleInitialSmsRecipient["assignments"][number], timeZone: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(assignment.serviceDate || "")) {
@@ -57,6 +57,8 @@ const ScheduleInitialSmsSendFlow = ({
   const [selectedOnLoad, setSelectedOnLoad] = useState<string[]>([]);
   const [hasPreparedSelection, setHasPreparedSelection] = useState(false);
   const [privacySafe, setPrivacySafe] = useState(false);
+  const [dispatchEnabled, setDispatchEnabled] = useState(false);
+  const [dispatchReadinessMessage, setDispatchReadinessMessage] = useState(DISPATCH_READINESS_MESSAGE);
   const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
   const [selectedRetryIds, setSelectedRetryIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
@@ -97,6 +99,8 @@ const ScheduleInitialSmsSendFlow = ({
       setRows(response.recipients || []);
       setSummary(response.summary);
       setPrivacySafe(Boolean(response.privacySafe));
+      setDispatchEnabled(response.dispatchEnabled === true);
+      setDispatchReadinessMessage(response.dispatchReadinessMessage || DISPATCH_READINESS_MESSAGE);
       setSelectedOnLoad(response.selectedMemberIds || []);
       setHasPreparedSelection(Boolean(response.hasPreparedSelection));
       setServerBatch(response.currentBatch || null);
@@ -349,7 +353,7 @@ const ScheduleInitialSmsSendFlow = ({
       {loadError ? <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100"><span>{loadError}</span><Button variant="secondary" disabled={loading || busy} isLoading={loading} onClick={() => void loadRecipients()}>Retry status check</Button></div> : null}
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
       {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
-      {visibleBatch ? <AvailabilityBatchReview batch={visibleBatch} formName={scheduleName} busy={busy || loading} privacySafe={privacySafe} readinessMessage={batchIsActive ? "Approved messages are being processed. You can close this panel and return to the schedule later." : DISPATCH_READINESS_MESSAGE} onConfirm={reviewedBatch ? () => void confirmBatch() : undefined} /> : null}
+      {visibleBatch ? <AvailabilityBatchReview batch={visibleBatch} formName={scheduleName} busy={busy || loading} privacySafe={privacySafe} readinessMessage={batchIsActive ? "Approved messages are being processed. You can close this panel and return to the schedule later." : dispatchEnabled ? "" : dispatchReadinessMessage} onConfirm={reviewedBatch ? () => void confirmBatch() : undefined} /> : null}
     </section>
   );
 };

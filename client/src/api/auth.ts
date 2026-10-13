@@ -1536,6 +1536,8 @@ export const getScheduleInitialSmsRecipients = async (
 ) => apiFetch<{
   success: boolean;
   historyComplete: boolean;
+  dispatchEnabled: boolean;
+  dispatchReadinessMessage: string;
   privacySafe: boolean;
   hasPreparedSelection: boolean;
   currentBatch?: NotificationBatch | null;

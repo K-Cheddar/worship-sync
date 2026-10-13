@@ -6916,8 +6916,8 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
 
 export const startScheduleInitialSmsBatchDispatcher = () =>
   notificationIntentHandlers.startScheduleBatchDispatcher();
-export const stopScheduleInitialSmsBatchDispatcher = () =>
-  notificationIntentHandlers.stopScheduleBatchDispatcher();
+export const stopScheduleInitialSmsBatchDispatcher = (options) =>
+  notificationIntentHandlers.stopScheduleBatchDispatcher(options);
 
 const isInviteSmsConsentEnabled = () =>
   process.env.SMS_INVITE_CONSENT_ENABLED === "true";

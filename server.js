@@ -4143,14 +4143,29 @@ const shutdownWebProcess = async (signal) => {
   if (shutdownStarted) return;
   shutdownStarted = true;
   console.log(`Received ${signal}; stopping schedule SMS dispatch and closing the web server.`);
+  const forcedExit = setTimeout(() => {
+    console.error("Web process shutdown reached its 25-second deadline; persisted dispatcher leases will recover on another process.");
+    process.exit(0);
+  }, 25_000);
+  forcedExit.unref?.();
   const serverClosed = activeHttpServer
     ? new Promise((resolve) => activeHttpServer.close(resolve))
     : Promise.resolve();
-  await stopScheduleInitialSmsBatchDispatcher().catch((error) => {
-    console.error("Could not stop schedule SMS dispatch cleanly:", error?.message || error);
-  });
+  let dispatcherStopped = false;
+  try {
+    dispatcherStopped = await stopScheduleInitialSmsBatchDispatcher({ timeoutMs: 20_000 });
+  } catch (error) {
+    console.error("Could not stop schedule SMS dispatch cleanly:", error?.code || error?.name || "shutdown_error");
+  }
   activeHttpServer?.closeAllConnections?.();
-  await serverClosed;
+  let serverStopped = false;
+  let closeTimeout;
+  await Promise.race([
+    serverClosed.then(() => { serverStopped = true; }),
+    new Promise((resolve) => { closeTimeout = setTimeout(resolve, 5_000); }),
+  ]);
+  if (closeTimeout) clearTimeout(closeTimeout);
+  if (dispatcherStopped && serverStopped) clearTimeout(forcedExit);
 };
 
 process.once("SIGTERM", () => void shutdownWebProcess("SIGTERM"));

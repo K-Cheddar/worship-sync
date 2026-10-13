@@ -7,6 +7,7 @@
     "test": "npm run test:server",
     "test:provider-storage": "node --import tsx --test server/churchStorageQuota.test.js server/providerStorageService.test.js server/providerStorageBackfill.test.js server/providerStorageBackfillCli.test.js",
     "test:server": "node scripts/run-server-tests.mjs",
+    "benchmark:schedule-sms-dispatch": "node --import tsx scripts/benchmark-schedule-sms-dispatcher.mjs",
     "migrate:auth": "node scripts/migrate-auth.js",
     "migrate:auth:dry-run": "node scripts/migrate-auth.js --dry-run",
     "migrate:rtdb": "node scripts/migrate-rtdb.js",
