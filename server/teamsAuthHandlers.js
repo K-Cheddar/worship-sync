@@ -95,8 +95,9 @@ import {
   logicalOccurrenceIdForGroup,
   logicalOccurrenceIdForService,
   matchOccurrencesByIdentity,
+  resolveOccurrenceIdentity,
   serviceDateTimeInTimeZone,
-} from "../shared/teamScheduleOccurrences.js";
+} from "../shared/teamScheduleOccurrences.ts";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -11042,9 +11043,10 @@ export const createTeamsAuthHandlers = ({
         const type = String(req.params.type || "")
           .trim()
           .toLowerCase();
-        const timeZone = String(req.query?.timeZone || "UTC").trim();
-        if (!isValidPortableTimeZone(timeZone))
-          throw httpError(400, "Choose a valid time zone for this export.");
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
         if (type === "all") {
           const datasets = buildPortableDatasets(
             await readPortableDatasets(churchId),

@@ -6,13 +6,13 @@ import type {
   TeamScheduleSummary,
   TeamService,
 } from "../../../api/authTypes";
-import { formatPlainDate, parsePlainDate } from "@/utils/plainDate";
+import { formatPlainDate, parsePlainDate } from "../../../utils/plainDate";
 import { calendarDateInTimeZone } from "../../../utils/teamScheduleOccurrences";
 import {
   generateScheduleOccurrences,
   getOccurrenceDate,
   matchOccurrencesByIdentity,
-} from "@/utils/teamScheduleOccurrences";
+} from "../../../utils/teamScheduleOccurrences";
 import {
   parseSlotKey,
   resolveOccurrenceRequirements,
@@ -20,7 +20,7 @@ import {
 } from "./scheduleRequirements";
 import { isHydratedSchedule } from "../../../api/authTypes";
 import { calendarMonthRange } from "../rangeSelection";
-import { serverDate } from "@/utils/serverTime";
+import { serverDate } from "../../../utils/serverTime";
 
 export type TeamSchedulePeriod = {
   occurrences: TeamScheduleOccurrence[];
@@ -59,7 +59,6 @@ export const buildTeamSchedulePeriod = ({
       .filter((position) => position.teamId === id)
       .map((position) => position.positionId)),
   ]));
-  const teamPositionIds = new Set([...positionIdsByTeam.values()].flatMap((ids) => [...ids]));
   const activeServices = services.filter((service) => !service.archivedAt);
   const allServiceById = new Map(activeServices.map((service) => [service.serviceId, service]));
   const selectedSchedules = schedules
@@ -105,6 +104,18 @@ export const buildTeamSchedulePeriod = ({
       }),
     );
   };
+  const hasStoredLegacySlotForOccurrence = (teamIdForSlots: string, occurrence: TeamScheduleOccurrence) => {
+    if (occurrence.groupId) return false;
+    const slotKeys = additionalSlotsByTeam.get(teamIdForSlots);
+    if (!slotKeys?.size) return false;
+    return [...slotKeys.keys()].some((storedId) => {
+      const legacy = storedId.match(/^(.+)@(.+)$/);
+      if (!legacy || legacy[1] !== occurrence.serviceId) return false;
+      const instant = new Date(legacy[2]);
+      return !Number.isNaN(instant.getTime()) &&
+        calendarDateInTimeZone(instant, timeZone || "UTC") === getOccurrenceDate(occurrence, timeZone);
+    });
+  };
 
   const generated = generateScheduleOccurrences({
     services: activeServices,
@@ -119,13 +130,22 @@ export const buildTeamSchedulePeriod = ({
 
   generated.forEach((occurrence) => {
     const occurrenceServiceIds = occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId];
+    const matchedSavedOccurrenceIds = new Set<string>();
+    let hasAmbiguousPersistedKeyCollision = false;
     const requirementsByPosition = new Map<string, PositionRequirement>();
     let relevant = false;
     selectedTeamIds.forEach((selectedTeamId) => {
       const teamPositionIdsForSchedule = [...(positionIdsByTeam.get(selectedTeamId) || [])];
       const teamScheduleOccurrences = scheduleOccurrencesByTeam.get(selectedTeamId) || [];
-      const savedMatch = matchOccurrencesByIdentity(teamScheduleOccurrences, [occurrence], timeZone)
-        .matches.get(occurrence.occurrenceId);
+      const identityMatch = matchOccurrencesByIdentity(teamScheduleOccurrences, [occurrence], timeZone);
+      const savedMatch = identityMatch.matches.get(occurrence.occurrenceId);
+      if (!savedMatch && identityMatch.ambiguousCurrentIds.has(occurrence.occurrenceId) &&
+          teamScheduleOccurrences.some((saved) => saved.occurrenceId === occurrence.occurrenceId)) {
+        hasAmbiguousPersistedKeyCollision = true;
+      }
+      if (savedMatch) {
+        matchedSavedOccurrenceIds.add(savedMatch.occurrenceId);
+      }
       const teamRequirements = new Map<string, PositionRequirement>();
       occurrenceServiceIds.forEach((serviceId) => {
         const service = allServiceById.get(serviceId);
@@ -142,7 +162,7 @@ export const buildTeamSchedulePeriod = ({
       const hasExplicitTeamSlot = hasTeamSlot(selectedTeamId, [
         occurrence.occurrenceId,
         ...(savedMatch ? [savedMatch.occurrenceId] : []),
-      ]);
+      ]) || hasStoredLegacySlotForOccurrence(selectedTeamId, occurrence);
       if (!teamRequirements.size && !hasExplicitTeamSlot) return;
       relevant = true;
       teamRequirements.forEach((requirement, positionId) => {
@@ -150,15 +170,79 @@ export const buildTeamSchedulePeriod = ({
         if (!current || current.count < requirement.count) requirementsByPosition.set(positionId, requirement);
       });
     });
-    if (!relevant) return;
+    if (!relevant || hasAmbiguousPersistedKeyCollision) return;
 
     const requirements = [...requirementsByPosition.values()];
+    // A single team view has one safe legacy key. A union view with different
+    // per-team keys cannot choose one key for every saved assignment map.
+    const displayOccurrence = matchedSavedOccurrenceIds.size === 1
+      ? { ...occurrence, occurrenceId: [...matchedSavedOccurrenceIds][0] }
+      : occurrence;
     occurrences.push({
-      ...occurrence,
+      ...displayOccurrence,
       positionRequirements: requirements,
     });
-    requirementsByOccurrence.set(occurrence.occurrenceId, requirements);
+    requirementsByOccurrence.set(displayOccurrence.occurrenceId, requirements);
     occurrenceServiceIds.forEach((serviceId) => serviceIds.add(serviceId));
+  });
+
+  // Keep unmatched persisted rows in the period so their existing assignment
+  // and equipment map keys remain visible while a caller surfaces ambiguity.
+  selectedSchedules.forEach((schedule) => {
+    const teamPositionIds = positionIdsByTeam.get(schedule.teamId) || new Set<string>();
+    const safelyMatchedIds = matchOccurrencesByIdentity(
+      scheduleOccurrencesByTeam.get(schedule.teamId) || [],
+      generated,
+      timeZone,
+    ).matchedStoredIds;
+    (schedule.occurrences || []).forEach((saved) => {
+      if (safelyMatchedIds.has(saved.occurrenceId) ||
+          occurrences.some((occurrence) => occurrence.occurrenceId === saved.occurrenceId)) return;
+      const savedDate = getOccurrenceDate(saved, timeZone);
+      if (!savedDate || savedDate < startDate || savedDate > endDate) return;
+      const requirementsByPosition = new Map<string, PositionRequirement>();
+      sanitizePositionRequirements(saved.positionRequirements)
+        .filter((requirement) => teamPositionIds.has(requirement.positionId))
+        .forEach((requirement) => requirementsByPosition.set(requirement.positionId, requirement));
+      if (requirementsByPosition.size === 0) {
+        (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId]).forEach((serviceId) => {
+          const currentService = allServiceById.get(serviceId);
+          sanitizePositionRequirements(currentService?.positionRequirements)
+            .filter((requirement) => teamPositionIds.has(requirement.positionId))
+            .forEach((requirement) => requirementsByPosition.set(requirement.positionId, requirement));
+        });
+      }
+      const savedSlotKeys = [
+        ...("assignments" in schedule ? Object.keys(schedule.assignments?.[saved.occurrenceId] || {}) : []),
+        ...("responses" in schedule ? Object.keys(schedule.responses?.[saved.occurrenceId] || {}) : []),
+        ...("microphoneAssignments" in schedule
+          ? Object.keys(schedule.microphoneAssignments?.[saved.occurrenceId] || {})
+          : []),
+        ...("iemAssignments" in schedule
+          ? Object.keys(schedule.iemAssignments?.[saved.occurrenceId] || {})
+          : []),
+        ...("additionalPositionSlots" in schedule
+          ? schedule.additionalPositionSlots?.[saved.occurrenceId] || []
+          : []),
+      ];
+      let hasTeamStoredData = false;
+      savedSlotKeys.forEach((slotKey) => {
+        const slot = parseSlotKey(slotKey);
+        if (!slot || !teamPositionIds.has(slot.positionId)) return;
+        hasTeamStoredData = true;
+        const current = requirementsByPosition.get(slot.positionId);
+        const count = Math.max(current?.count || 0, slot.slot + 1);
+        if (!current || current.count < count) {
+          requirementsByPosition.set(slot.positionId, { positionId: slot.positionId, count });
+        }
+      });
+      const visibleRequirements = [...requirementsByPosition.values()];
+      if (!visibleRequirements.length && !hasTeamSlot(schedule.teamId, [saved.occurrenceId]) && !hasTeamStoredData) return;
+      occurrences.push({ ...saved, positionRequirements: visibleRequirements });
+      requirementsByOccurrence.set(saved.occurrenceId, visibleRequirements);
+      (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId])
+        .forEach((serviceId) => serviceIds.add(serviceId));
+    });
   });
 
   return {
@@ -231,7 +315,7 @@ export const findInitialTeamSchedulePeriod = ({
     endDate: searchEnd,
     timeZone,
   });
-  const generatedFuture = generatedFutureAll.filter((occurrence) => {
+  const generatedFuture = generatedFutureAll.flatMap((occurrence) => {
     const occurrenceServiceIds = occurrence.serviceIds?.length
       ? occurrence.serviceIds
       : [occurrence.serviceId];
@@ -252,13 +336,18 @@ export const findInitialTeamSchedulePeriod = ({
         const slot = parseSlotKey(slotKey);
         return Boolean(slot && teamPositionIds.has(slot.positionId));
       });
-    }) || additionalPositionSlots && (
+    }) || (additionalPositionSlots && (
       additionalPositionSlots[occurrence.occurrenceId] || []
     ).some((slotKey) => {
       const slot = parseSlotKey(slotKey);
       return Boolean(slot && teamPositionIds.has(slot.positionId));
-    });
-    return hasTeamRequirement || hasTeamSlot;
+    }));
+    if (!hasTeamRequirement && !hasTeamSlot) return [];
+    const uniqueSavedMatch = matchingSaved.length === 1 ? matchingSaved[0].saved : null;
+    return [{
+      ...occurrence,
+      ...(uniqueSavedMatch ? { occurrenceId: uniqueSavedMatch.occurrenceId } : {}),
+    }];
   });
   const savedFuture = schedules
     .filter((schedule) => !schedule.archivedAt && schedule.teamId === teamId)

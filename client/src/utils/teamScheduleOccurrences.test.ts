@@ -10,6 +10,7 @@ import {
   isOccurrenceOnCalendarDay,
   isOccurrenceToday,
   occurrenceIdsMatch,
+  preserveStoredOccurrenceIds,
   serviceDateTimeInTimeZone,
 } from "./teamScheduleOccurrences";
 
@@ -103,6 +104,68 @@ describe("generateScheduleOccurrences", () => {
     ]);
   });
 
+  it("keeps a recurring occurrence identity when its configured time changes", () => {
+    const previous = generateScheduleOccurrences({
+      services: [service({ serviceId: "sabbath", dayOfWeek: 6, time: "10:00" })],
+      serviceIds: ["sabbath"],
+      startDate: "2026-10-03",
+      endDate: "2026-10-03",
+      timeZone: "America/New_York",
+    })[0];
+    const updated = generateScheduleOccurrences({
+      services: [service({ serviceId: "sabbath", dayOfWeek: 6, time: "11:00" })],
+      serviceIds: ["sabbath"],
+      startDate: "2026-10-03",
+      endDate: "2026-10-03",
+      timeZone: "America/New_York",
+    })[0];
+
+    expect(updated.logicalOccurrenceId).toBe(previous.logicalOccurrenceId);
+    expect(updated.occurrenceId).toBe(previous.occurrenceId);
+    expect(updated.startsAt).not.toBe(previous.startsAt);
+  });
+
+  it("keeps same-name, same-time services distinct by service ID", () => {
+    const occurrences = generateScheduleOccurrences({
+      services: [
+        service({ serviceId: "service-one", name: "Worship", time: "10:00" }),
+        service({ serviceId: "service-two", name: "Worship", time: "10:00" }),
+      ],
+      serviceIds: ["service-one", "service-two"],
+      startDate: "2026-10-04",
+      endDate: "2026-10-04",
+      timeZone: "America/New_York",
+    });
+
+    expect(occurrences.map(({ occurrenceId }) => occurrenceId)).toEqual([
+      "service-one@2026-10-04",
+      "service-two@2026-10-04",
+    ]);
+  });
+
+  it("keeps a one-time schedule occurrence on its configured date despite a countdown override", () => {
+    const scheduled = service({
+      serviceId: "special",
+      reccurence: "one_time",
+      dateTimeISO: "2026-11-01T14:00:00.000Z",
+      overrideDateTimeISO: "2026-10-15T10:00:00.000Z",
+    });
+    const occurrences = generateScheduleOccurrences({
+      services: [scheduled],
+      serviceIds: [scheduled.serviceId],
+      startDate: "2026-11-01",
+      endDate: "2026-11-01",
+      timeZone: "America/New_York",
+    });
+
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]).toMatchObject({
+      logicalOccurrenceId: "special@2026-11-01",
+      serviceDate: "2026-11-01",
+      startsAt: "2026-11-01T14:00:00.000Z",
+    });
+  });
+
   it("uses the church timezone when the operator is in a different timezone", () => {
     const occurrences = generateScheduleOccurrences({
       services: [
@@ -143,8 +206,8 @@ describe("generateScheduleOccurrences", () => {
     ).toBe("2026-10-05");
   });
 
-  it("moves a nonexistent spring-forward service time to the first valid wall time", () => {
-    const [occurrence] = generateScheduleOccurrences({
+  it("omits a recurring service whose spring-forward wall time does not exist", () => {
+    const occurrences = generateScheduleOccurrences({
       services: [service({ dayOfWeek: 0, time: "02:30" })],
       serviceIds: ["service"],
       startDate: "2026-03-08",
@@ -152,10 +215,7 @@ describe("generateScheduleOccurrences", () => {
       timeZone: "America/New_York",
     });
 
-    expect(occurrence).toMatchObject({
-      serviceDate: "2026-03-08",
-      startsAt: "2026-03-08T07:30:00.000Z",
-    });
+    expect(occurrences).toEqual([]);
   });
 
   it("chooses the earlier instant for an ambiguous fall-back service time", () => {
@@ -476,6 +536,46 @@ describe("generateScheduleOccurrences", () => {
   });
 });
 
+describe("legacy schedule occurrence compatibility", () => {
+  it("preserves a persisted timestamp ID for the same service and local recurrence date", () => {
+    const saved = {
+      occurrenceId: "sabbath@2026-10-03T14:00:00.000Z",
+      serviceId: "sabbath",
+      name: "Sabbath",
+      startsAt: "2026-10-03T14:00:00.000Z",
+    } satisfies TeamScheduleOccurrence;
+    const current = {
+      occurrenceId: "sabbath@2026-10-03",
+      logicalOccurrenceId: "sabbath@2026-10-03",
+      serviceId: "sabbath",
+      name: "Sabbath",
+      startsAt: "2026-10-03T15:00:00.000Z",
+      serviceDate: "2026-10-03",
+    } satisfies TeamScheduleOccurrence;
+
+    expect(preserveStoredOccurrenceIds([saved], [current], "America/New_York")?.[0].occurrenceId)
+      .toBe(saved.occurrenceId);
+  });
+
+  it("refuses to rekey a saved group when its membership changes", () => {
+    const saved = {
+      occurrenceId: "group:combined@2026-10-03",
+      serviceId: "school",
+      serviceIds: ["school", "worship"],
+      groupId: "combined",
+      name: "School & Worship",
+      startsAt: "2026-10-03T14:00:00.000Z",
+      serviceDate: "2026-10-03",
+    } satisfies TeamScheduleOccurrence;
+    const current = {
+      ...saved,
+      serviceIds: ["school", "new-worship"],
+    };
+
+    expect(preserveStoredOccurrenceIds([saved], [current], "America/New_York")).toBeNull();
+  });
+});
+
 describe("filterServicesWithOccurrencesInRange", () => {
   const sunday = service({ serviceId: "sunday", name: "Sunday", dayOfWeek: 0 });
   const pastRetreat = service({
@@ -650,9 +750,9 @@ describe("getSharedOccurrenceTiming", () => {
 });
 
 describe("serviceDateTimeInTimeZone", () => {
-  it("keeps spring-forward gaps and fall-back overlaps on the established wall-clock policy", () => {
-    expect(serviceDateTimeInTimeZone("2026-03-08", "02:30", "America/New_York")?.toISOString())
-      .toBe("2026-03-08T07:30:00.000Z");
+  it("omits spring-forward gaps and uses the earlier fall-back instant", () => {
+    expect(serviceDateTimeInTimeZone("2026-03-08", "02:30", "America/New_York"))
+      .toBeNull();
     expect(serviceDateTimeInTimeZone("2026-11-01", "01:30", "America/New_York")?.toISOString())
       .toBe("2026-11-01T05:30:00.000Z");
   });

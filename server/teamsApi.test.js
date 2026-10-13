@@ -19,6 +19,8 @@ import twilio from "twilio";
 import { createHash } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
+import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
+import { generateScheduleOccurrences } from "../client/src/utils/teamScheduleOccurrences.ts";
 
 import { addTeamsSseClient, removeTeamsSseClient } from "../server/teamsSse.js";
 import {
@@ -1648,6 +1650,9 @@ test("generated grouped schedules validate and persist service-local dates", asy
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("generated_schedule_local_timezone");
   const { teamId } = await seedTeam(context, { teamName: "Worship" });
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
   seedChurchServiceTimesForServerTests({
     churchId: context.churchId,
     services: [
@@ -1707,6 +1712,238 @@ test("generated grouped schedules validate and persist service-local dates", asy
       serviceDate: "2026-10-03",
     }],
   );
+});
+
+test("client-generated mixed-team groups use church time and keep ensure access team-scoped", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("mixed_team_occurrence");
+  const media = await seedTeam(admin, {
+    teamName: "Media",
+    positions: [{ name: "Camera" }],
+  });
+  const worship = await seedTeam(admin, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }],
+  });
+  await setDoc(COLLECTIONS.churches, admin.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  assert.equal((await getDoc(COLLECTIONS.churches, admin.churchId)).serviceTimeZone, "America/New_York");
+  const churchServices = [
+    {
+      id: "sabbath-school",
+      serviceId: "sabbath-school",
+      name: "Sabbath School",
+      serviceGroupId: "sabbath-morning",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "22:30",
+      positionRequirements: [{ positionId: media.positionIds.Camera, count: 1 }],
+    },
+    {
+      id: "divine-worship",
+      serviceId: "divine-worship",
+      name: "Divine Worship",
+      serviceGroupId: "sabbath-morning",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "23:30",
+      positionRequirements: [{ positionId: worship.positionIds.Vocal, count: 1 }],
+    },
+  ];
+  seedChurchServiceTimesForServerTests({ churchId: admin.churchId, services: churchServices });
+  const positions = [
+    { positionId: media.positionIds.Camera, teamId: media.teamId },
+    { positionId: worship.positionIds.Vocal, teamId: worship.teamId },
+  ];
+  const mediaPeriod = buildTeamSchedulePeriod({
+    services: churchServices,
+    positions,
+    teamId: media.teamId,
+    startDate: "2026-10-04",
+    endDate: "2026-10-04",
+    timeZone: "America/New_York",
+  });
+  assert.equal(mediaPeriod.occurrences.length, 1);
+  assert.deepEqual(mediaPeriod.serviceIds, ["sabbath-school", "divine-worship"]);
+  assert.deepEqual(mediaPeriod.occurrences[0].serviceIds, ["sabbath-school", "divine-worship"]);
+  assert.equal(mediaPeriod.occurrences[0].occurrenceId, "group:sabbath-morning@2026-10-04");
+  assert.equal(mediaPeriod.occurrences[0].startsAt, "2026-10-05T02:30:00.000Z");
+  assert.deepEqual(mediaPeriod.occurrences[0].positionRequirements, [
+    { positionId: media.positionIds.Camera, count: 1 },
+  ]);
+
+  // The timezone supplied here deliberately differs from the church setting.
+  const baseBody = {
+    name: "October 2026",
+    startDate: "2026-10-04",
+    endDate: "2026-10-04",
+    timeZone: "Pacific/Auckland",
+    serviceIds: mediaPeriod.serviceIds,
+    occurrences: JSON.parse(JSON.stringify(mediaPeriod.occurrences)),
+  };
+  const scopedEditor = await createHumanContext("mixed_team_media_editor", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [media.teamId]: "edit" } },
+  });
+  const readOnly = await createHumanContext("mixed_team_read_only", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "view" },
+  });
+  // Creating test memberships may seed the church document; configure the
+  // authoritative timezone after those fixtures exist.
+  await setDoc(COLLECTIONS.churches, admin.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  const mediaResult = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context: scopedEditor,
+    body: { ...baseBody, teamId: media.teamId },
+  });
+  assert.equal(mediaResult.statusCode, 200, JSON.stringify(mediaResult.payload));
+  assert.deepEqual({
+    occurrenceId: mediaResult.payload.schedule.occurrences[0].occurrenceId,
+    logicalOccurrenceId: mediaResult.payload.schedule.occurrences[0].logicalOccurrenceId,
+    serviceDate: mediaResult.payload.schedule.occurrences[0].serviceDate,
+    startsAt: mediaResult.payload.schedule.occurrences[0].startsAt,
+    serviceIds: mediaResult.payload.schedule.occurrences[0].serviceIds,
+    positionRequirements: mediaResult.payload.schedule.occurrences[0].positionRequirements,
+  }, {
+    occurrenceId: "group:sabbath-morning@2026-10-04",
+    logicalOccurrenceId: "group:sabbath-morning@2026-10-04",
+    serviceDate: "2026-10-04",
+    startsAt: "2026-10-05T02:30:00.000Z",
+    serviceIds: ["sabbath-school", "divine-worship"],
+    positionRequirements: [{ positionId: media.positionIds.Camera, count: 1 }],
+  });
+
+  const scopedOtherTeam = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context: scopedEditor,
+    body: {
+      ...baseBody,
+      teamId: worship.teamId,
+      occurrences: buildTeamSchedulePeriod({
+        services: churchServices,
+        positions,
+        teamId: worship.teamId,
+        startDate: baseBody.startDate,
+        endDate: baseBody.endDate,
+        timeZone: "America/New_York",
+      }).occurrences,
+    },
+  });
+  assert.equal(scopedOtherTeam.statusCode, 403);
+
+  const readOnlyResult = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context: readOnly,
+    body: { ...baseBody, teamId: media.teamId },
+  });
+  assert.equal(readOnlyResult.statusCode, 403);
+
+  const worshipPeriod = buildTeamSchedulePeriod({
+    services: churchServices,
+    positions,
+    teamId: worship.teamId,
+    startDate: baseBody.startDate,
+    endDate: baseBody.endDate,
+    timeZone: "America/New_York",
+  });
+  const adminResult = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context: admin,
+    body: { ...baseBody, teamId: worship.teamId, occurrences: worshipPeriod.occurrences },
+  });
+  assert.equal(adminResult.statusCode, 200, JSON.stringify(adminResult.payload));
+  assert.deepEqual(adminResult.payload.schedule.occurrences[0].positionRequirements, [
+    { positionId: worship.positionIds.Vocal, count: 1 },
+  ]);
+});
+
+test("server occurrence validation shares spring-gap and fall-fold rules with the client", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("occurrence_dst_policy");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  const springService = {
+    id: "spring-service",
+    serviceId: "spring-service",
+    name: "Spring Service",
+    reccurence: "weekly",
+    dayOfWeek: 0,
+    time: "02:30",
+  };
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: [springService] });
+  assert.deepEqual(generateScheduleOccurrences({
+    services: [springService],
+    serviceIds: [springService.serviceId],
+    startDate: "2026-03-08",
+    endDate: "2026-03-08",
+    timeZone: "America/New_York",
+  }), []);
+  const shiftedSpring = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "Spring 2026",
+      teamId,
+      startDate: "2026-03-08",
+      endDate: "2026-03-08",
+      timeZone: "UTC",
+      serviceIds: [springService.serviceId],
+      occurrences: [{
+        occurrenceId: "spring-service@2026-03-08",
+        logicalOccurrenceId: "spring-service@2026-03-08",
+        serviceId: springService.serviceId,
+        name: springService.name,
+        startsAt: "2026-03-08T07:30:00.000Z",
+        serviceDate: "2026-03-08",
+      }],
+    },
+  });
+  assert.equal(shiftedSpring.statusCode, 400);
+
+  const fallService = { ...springService, id: "fall-service", serviceId: "fall-service", name: "Fall Service", time: "01:30" };
+  seedChurchServiceTimesForServerTests({ churchId: context.churchId, services: [fallService] });
+  const [fallOccurrence] = generateScheduleOccurrences({
+    services: [fallService],
+    serviceIds: [fallService.serviceId],
+    startDate: "2026-11-01",
+    endDate: "2026-11-01",
+    timeZone: "America/New_York",
+  });
+  assert.equal(fallOccurrence.startsAt, "2026-11-01T05:30:00.000Z");
+  const acceptedEarlier = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "Fall 2026",
+      teamId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-01",
+      timeZone: "Pacific/Auckland",
+      serviceIds: [fallService.serviceId],
+      occurrences: [fallOccurrence],
+    },
+  });
+  assert.equal(acceptedEarlier.statusCode, 200, JSON.stringify(acceptedEarlier.payload));
+  const rejectedLater = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "Fall later instant",
+      teamId,
+      startDate: "2026-11-01",
+      endDate: "2026-11-01",
+      timeZone: "America/Los_Angeles",
+      serviceIds: [fallService.serviceId],
+      occurrences: [{
+        ...fallOccurrence,
+        startsAt: "2026-11-01T06:30:00.000Z",
+      }],
+    },
+  });
+  assert.equal(rejectedLater.statusCode, 400);
 });
 
 test("church service timezone is stored separately from Chat browser hints", async (t) => {
@@ -4922,7 +5159,7 @@ test("service plan assignments expose only the selected plan's serving roster", 
     params: { planKey },
   });
 
-  assert.equal(result.statusCode, 200);
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
   assert.deepEqual(result.payload.assignments, [
     { teamId, teamName: "Worship", role: "Keys", name: "Avery Stone" },
   ]);
@@ -14309,6 +14546,40 @@ test("portable CSV transfer requires an admin and export reads complete schedule
   assert.equal(archive.body.readUInt32LE(0), 0x04034b50);
 });
 
+test("portable schedule export uses the church timezone instead of the client timezone", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("portable_export_church_timezone");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
+  await setDoc("teamSchedules", "utc_midnight_export", {
+    scheduleId: "utc_midnight_export",
+    churchId: context.churchId,
+    name: "Saturday evening",
+    teamId,
+    startDate: "2020-01-04",
+    endDate: "2020-01-04",
+    serviceIds: ["service"],
+    occurrences: [{
+      occurrenceId: "service@2020-01-05T02:30:00.000Z",
+      serviceId: "service",
+      name: "Service",
+      startsAt: "2020-01-05T02:30:00.000Z",
+      serviceDate: "2020-01-04",
+    }],
+    assignments: {},
+  });
+
+  const exported = await callHandler(authHandlers.exportPortableData, {
+    context,
+    params: { type: "schedules" },
+    query: { timeZone: "Pacific/Auckland" },
+  });
+  assert.equal(exported.statusCode, 200);
+  assert.match(String(exported.body), /Saturday evening,2020-01-04,2020-01-04,,2020-01-04,21:30/);
+});
+
 test("portable schedule import validates and preserves the schedule assignment model", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("data_transfer_schedule_import");
@@ -14316,6 +14587,9 @@ test("portable schedule import validates and preserves the schedule assignment m
     teamName: "Worship",
     positions: [{ name: "Keys" }],
   });
+  await setDoc(COLLECTIONS.churches, context.churchId, {
+    serviceTimeZone: "America/New_York",
+  }, { merge: true });
   const positionId = positionIds.Keys;
   const member = await callHandler(authHandlers.createTeamRosterMember, {
     context,
@@ -14566,7 +14840,7 @@ test("portable schedule import validates and preserves the schedule assignment m
       query: { timeZone: "Not/A_Time_Zone" },
     },
   );
-  assert.equal(invalidTimeZoneExport.statusCode, 400);
+  assert.equal(invalidTimeZoneExport.statusCode, 200);
   const roundTripInspection = await callHandler(
     authHandlers.inspectPortableImport,
     { context, body: { type: "schedules", csv: exportedScheduleCsv } },
@@ -15137,7 +15411,7 @@ test("generated period rejects incomplete canonical reuse without overwriting an
   assert.deepEqual(await getDoc("teamSchedules", scheduleId), before);
 });
 
-test("generated ensure reuses semantically equivalent occurrences after service IDs change", async (t) => {
+test("generated ensure does not substitute another service with the same name and timestamp", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("semantic_id_drift");
   const { teamId } = await seedTeam(context, { teamName: "Media" });
@@ -15148,10 +15422,66 @@ test("generated ensure reuses semantically equivalent occurrences after service 
   await setDoc("teamSchedules", schedule.scheduleId, schedule);
   const before = await getDoc("teamSchedules", schedule.scheduleId);
   const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body: { name: "October", teamId, startDate: schedule.startDate, endDate: schedule.endDate, timeZone: "UTC", serviceIds: ["new"], occurrences: [current] } });
-  assert.equal(result.statusCode, 200);
+  assert.equal(result.statusCode, 409);
+  assert.match(result.payload.errorMessage, /cannot be matched safely/i);
+  assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
+});
+
+test("legacy timestamp occurrence IDs remain readable when a recurring service time changes", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("legacy_occurrence_id_read");
+  const { teamId } = await seedTeam(context, { teamName: "Media" });
+  const oldOccurrence = {
+    occurrenceId: "sabbath@2026-10-03T10:00:00.000Z",
+    serviceId: "sabbath",
+    name: "Sabbath",
+    startsAt: "2026-10-03T10:00:00.000Z",
+  };
+  const currentOccurrence = {
+    occurrenceId: "sabbath@2026-10-03",
+    logicalOccurrenceId: "sabbath@2026-10-03",
+    serviceId: "sabbath",
+    name: "Sabbath",
+    startsAt: "2026-10-03T11:00:00.000Z",
+    serviceDate: "2026-10-03",
+  };
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{ id: "sabbath", name: "Sabbath", reccurence: "weekly", dayOfWeek: 6, time: "11:00" }],
+  });
+  const schedule = {
+    scheduleId: "legacy-schedule",
+    churchId: context.churchId,
+    name: "October",
+    teamId,
+    source: "custom",
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    serviceIds: ["sabbath"],
+    occurrences: [oldOccurrence],
+    assignments: { [oldOccurrence.occurrenceId]: { "camera::0": { primaryMemberId: "member" } } },
+    microphoneAssignments: { [oldOccurrence.occurrenceId]: { "camera::0": ["mic"] } },
+  };
+  await setDoc("teamSchedules", schedule.scheduleId, schedule);
+  const before = await getDoc("teamSchedules", schedule.scheduleId);
+  const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
+    context,
+    body: {
+      name: "October",
+      teamId,
+      startDate: schedule.startDate,
+      endDate: schedule.endDate,
+      timeZone: "UTC",
+      serviceIds: ["sabbath"],
+      occurrences: [currentOccurrence],
+    },
+  });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
   assert.equal(result.payload.created, false);
   assert.equal(result.payload.schedule.scheduleId, schedule.scheduleId);
   assert.deepEqual(await getDoc("teamSchedules", schedule.scheduleId), before);
+  assert.ok(result.payload.schedule.assignments[oldOccurrence.occurrenceId]);
+  assert.ok(result.payload.schedule.microphoneAssignments[oldOccurrence.occurrenceId]);
 });
 
 // Iteration 3: effective Teams access is deliberately limited to these two reads.
@@ -17246,7 +17576,7 @@ test("team-scoped plan status does not expose unrelated plans or plan roster pro
     context: servicesViewer,
     params: { planKey: ownPlanKey },
   });
-  assert.equal(assignments.statusCode, 200);
+    assert.equal(assignments.statusCode, 200, JSON.stringify(assignments.payload));
   assert.deepEqual(assignments.payload.assignments, [{
     teamId: fixture.ids.worship,
     teamName: "worship",

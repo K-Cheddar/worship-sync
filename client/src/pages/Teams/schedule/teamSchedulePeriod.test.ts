@@ -43,9 +43,8 @@ describe("buildTeamSchedulePeriod", () => {
     expect(worship.occurrences).toHaveLength(1);
   });
 
-  it("filters unrelated group services before grouping team occurrences", () => {
-    const grouped = buildTeamSchedulePeriod({
-      services: [
+  it("uses complete combined membership with requirements scoped to the selected team", () => {
+    const services = [
         service({
           serviceId: "media-part",
           serviceGroupId: "combined",
@@ -56,25 +55,45 @@ describe("buildTeamSchedulePeriod", () => {
           serviceGroupId: "combined",
           positionRequirements: [{ positionId: "vocal", count: 1 }],
         }),
-      ],
+      ];
+    const media = buildTeamSchedulePeriod({
+      services,
       positions,
       teamId: "media",
       startDate: "2026-10-03",
       endDate: "2026-10-03",
     });
-
-    expect(grouped.occurrences).toHaveLength(1);
-    expect(grouped.occurrences[0]).toMatchObject({
-      occurrenceId: "media-part@2026-10-03T10:00:00.000Z",
-      serviceId: "media-part",
+    const worship = buildTeamSchedulePeriod({
+      services,
+      positions,
+      teamId: "worship",
+      startDate: "2026-10-03",
+      endDate: "2026-10-03",
     });
-    expect(grouped.serviceIds).toEqual(["media-part"]);
-    expect(grouped.requirementsByOccurrence.get(grouped.occurrences[0].occurrenceId)).toEqual([
+
+    expect(media.occurrences).toHaveLength(1);
+    expect(worship.occurrences).toHaveLength(1);
+    expect(media.occurrences[0]).toMatchObject({
+      occurrenceId: "group:combined@2026-10-03",
+      logicalOccurrenceId: "group:combined@2026-10-03",
+      serviceId: "media-part",
+      serviceIds: ["media-part", "worship-part"],
+    });
+    expect(worship.occurrences[0]).toMatchObject({
+      occurrenceId: media.occurrences[0].occurrenceId,
+      logicalOccurrenceId: media.occurrences[0].logicalOccurrenceId,
+      serviceIds: media.occurrences[0].serviceIds,
+    });
+    expect(media.serviceIds).toEqual(["media-part", "worship-part"]);
+    expect(media.requirementsByOccurrence.get(media.occurrences[0].occurrenceId)).toEqual([
       { positionId: "camera", count: 1 },
+    ]);
+    expect(worship.requirementsByOccurrence.get(worship.occurrences[0].occurrenceId)).toEqual([
+      { positionId: "vocal", count: 1 },
     ]);
   });
 
-  it("does not pull an unrelated same-date group member into the team occurrence", () => {
+  it("shares group identity across teams while showing only applicable staffing positions", () => {
     const generated = buildTeamSchedulePeriod({
       services: [
         service({
@@ -102,11 +121,11 @@ describe("buildTeamSchedulePeriod", () => {
       timeZone: "America/New_York",
     });
 
-    expect(generated.serviceIds).toEqual(["worship-experience"]);
+    expect(generated.serviceIds).toEqual(["sabbath-school", "worship-experience"]);
     expect(generated.occurrences).toHaveLength(5);
-    expect(generated.occurrences.every((occurrence) => occurrence.serviceId === "worship-experience")).toBe(true);
-    expect(generated.occurrences.every((occurrence) => occurrence.name === "Worship Experience")).toBe(true);
-    expect(generated.occurrences.every((occurrence) => occurrence.startsAt.endsWith("T15:00:00.000Z"))).toBe(true);
+    expect(generated.occurrences.every((occurrence) => occurrence.serviceIds?.join(",") === "sabbath-school,worship-experience")).toBe(true);
+    expect(generated.occurrences.every((occurrence) => occurrence.name === "Sabbath School & Worship Experience")).toBe(true);
+    expect(generated.occurrences.every((occurrence) => occurrence.startsAt.endsWith("T14:00:00.000Z"))).toBe(true);
     expect(generated.requirementsByOccurrence.get(generated.occurrences[0].occurrenceId)).toEqual([
       { positionId: "vocal", count: 1 },
     ]);
@@ -183,7 +202,7 @@ describe("buildTeamSchedulePeriod", () => {
     expect(generated.occurrences).toHaveLength(2);
     expect(generated.occurrences.find((occurrence) => occurrence.groupId === "combined")).toMatchObject({
       occurrenceId: "group:combined@2026-10-03",
-      serviceIds: ["worship-part", "media-part"],
+      serviceIds: ["media-part", "worship-part"],
       serviceDate: "2026-10-03",
     });
   });
@@ -224,6 +243,110 @@ describe("buildTeamSchedulePeriod", () => {
     expect(generated.requirementsByOccurrence.get(savedOccurrence.occurrenceId)).toEqual([
       { positionId: "vocal", count: 1 },
     ]);
+  });
+
+  it("keeps an ambiguous legacy occurrence visible without adopting its assignments", () => {
+    const legacyOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: "legacy-service@2026-10-18T10:00:00.000Z",
+      serviceId: "legacy-service",
+      name: "Same service",
+      startsAt: "2026-10-18T10:00:00.000Z",
+      serviceDate: "2026-10-18",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    };
+    const assignments = {
+      [legacyOccurrence.occurrenceId]: { "camera::0": { primaryMemberId: "legacy-member" } },
+    };
+    const generated = buildTeamSchedulePeriod({
+      services: [service({
+        serviceId: "new-service",
+        name: "Same service",
+        dateTimeISO: "2026-10-18T10:00:00.000Z",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "legacy-schedule",
+        churchId: "church-1",
+        teamId: "media",
+        name: "Media schedule",
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        serviceIds: ["legacy-service"],
+        occurrences: [legacyOccurrence],
+        assignments,
+      }],
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+    });
+
+    expect(generated.occurrences.map((occurrence) => occurrence.occurrenceId)).toEqual([
+      "new-service@2026-10-18",
+      legacyOccurrence.occurrenceId,
+    ]);
+    expect(generated.occurrences[1]).toMatchObject({
+      serviceId: "legacy-service",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    });
+    expect(generated.requirementsByOccurrence.get(legacyOccurrence.occurrenceId)).toEqual([
+      { positionId: "camera", count: 1 },
+    ]);
+    expect(assignments[legacyOccurrence.occurrenceId]["camera::0"].primaryMemberId).toBe("legacy-member");
+  });
+
+  it("does not reuse a grouped occurrence key after its service membership changes", () => {
+    const savedOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: "group:combined@2026-10-18",
+      logicalOccurrenceId: "group:combined@2026-10-18",
+      serviceId: "media-part",
+      groupId: "combined",
+      serviceIds: ["media-part", "old-worship-part"],
+      name: "Old combined service",
+      startsAt: "2026-10-18T10:00:00.000Z",
+      serviceDate: "2026-10-18",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    };
+    const generated = buildTeamSchedulePeriod({
+      services: [
+        service({
+          serviceId: "media-part",
+          serviceGroupId: "combined",
+          dateTimeISO: "2026-10-18T10:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({
+          serviceId: "new-worship-part",
+          serviceGroupId: "combined",
+          dateTimeISO: "2026-10-18T10:00:00.000Z",
+          positionRequirements: [{ positionId: "vocal", count: 1 }],
+        }),
+      ],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "grouped-schedule",
+        churchId: "church-1",
+        teamId: "media",
+        name: "Media schedule",
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        serviceIds: ["media-part", "old-worship-part"],
+        occurrences: [savedOccurrence],
+        assignments: { [savedOccurrence.occurrenceId]: { "camera::0": { primaryMemberId: "member" } } },
+      }],
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      timeZone: "UTC",
+    });
+
+    expect(generated.occurrences).toEqual([expect.objectContaining({
+      occurrenceId: savedOccurrence.occurrenceId,
+      serviceIds: ["media-part", "old-worship-part"],
+      name: "Old combined service",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    })]);
   });
 
   it("keeps a scheduled explicit team slot when no position requirement exists", () => {
@@ -317,7 +440,7 @@ describe("findInitialTeamSchedulePeriod", () => {
     expect(result.nextOccurrence?.serviceId).toBe("october");
   });
 
-  it("uses the occurrence calendar month in the requested timezone when UTC is in the next month", () => {
+  it("uses the church service date in the requested timezone when UTC is in the next month", () => {
     const startsAt = "2026-10-01T05:00:00.000Z";
     const result = findInitialTeamSchedulePeriod({
       services: [service({
@@ -333,11 +456,11 @@ describe("findInitialTeamSchedulePeriod", () => {
 
     expect(result).toMatchObject({ start: "2026-09-01", end: "2026-09-30" });
     expect(result.nextOccurrence).toMatchObject({
-      occurrenceId: `late-september@${startsAt}`,
+      occurrenceId: "late-september@2026-09-30",
       startsAt,
     });
     expect(result.period.occurrences.map((occurrence) => occurrence.occurrenceId)).toContain(
-      `late-september@${startsAt}`,
+      "late-september@2026-09-30",
     );
   });
 
@@ -357,11 +480,11 @@ describe("findInitialTeamSchedulePeriod", () => {
 
     expect(result).toMatchObject({ start: "2026-10-01", end: "2026-10-31" });
     expect(result.nextOccurrence).toMatchObject({
-      occurrenceId: `october-service@${startsAt}`,
+      occurrenceId: "october-service@2026-10-01",
       startsAt,
     });
     expect(result.period.occurrences.map((occurrence) => occurrence.occurrenceId)).toContain(
-      `october-service@${startsAt}`,
+      "october-service@2026-10-01",
     );
   });
 
@@ -500,7 +623,7 @@ describe("findInitialTeamSchedulePeriod", () => {
 
     expect(result.start).toBe("2026-12-01");
     expect(result.nextOccurrence).toEqual(savedOccurrence);
-    expect(result.period.occurrences).toEqual([]);
+    expect(result.period.occurrences).toEqual([savedOccurrence]);
   });
 
   it("opens October when the next relevant service is October 3", () => {
@@ -517,7 +640,7 @@ describe("findInitialTeamSchedulePeriod", () => {
 
     expect(result).toMatchObject({ start: "2026-10-01", end: "2026-10-31", preset: "upcoming" });
     expect(result.period.occurrences.map((item) => item.occurrenceId)).toContain(
-      "october@2026-10-03T10:00:00.000Z",
+      "october@2026-10-03",
     );
   });
 

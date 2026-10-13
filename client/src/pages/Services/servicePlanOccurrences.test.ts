@@ -96,4 +96,21 @@ describe("getOneTimeServiceOccurrence", () => {
     });
     expect(getOneTimeServiceOccurrence([oneTime], oneTime)).toBeNull();
   });
+
+  it("does not let a temporary countdown override move a one-time plan occurrence", () => {
+    const oneTime = service({
+      serviceId: "fundraiser",
+      reccurence: "one_time",
+      dateTimeISO: "2026-10-11T14:00:00.000Z",
+      overrideDateTimeISO: "2026-10-15T10:00:00.000Z",
+    });
+    const occurrence = getOneTimeServiceOccurrence([oneTime], oneTime, "America/New_York");
+
+    expect(occurrence).toMatchObject({
+      occurrenceId: "fundraiser@2026-10-11",
+      logicalOccurrenceId: "fundraiser@2026-10-11",
+      startsAt: "2026-10-11T14:00:00.000Z",
+      serviceDate: "2026-10-11",
+    });
+  });
 });

@@ -90,12 +90,12 @@ Phase 3B (product-owner request, 2026-10-12): administrators and church-wide Tea
 
 Phase 3C implementation status (product-owner request, 2026-10-12): a published schedule can be reviewed for an initial grouped SMS without first sending email. The persisted schedule's current Team controls access; each roster member has one stable initial identity and one message containing their current primary assignments and one schedule response link. Scoped review masks full phone numbers and response tokens. Draft schedules are blocked, while legacy schedules without publication metadata remain Published. Publishing still never sends; `sentAt` retains its existing send-history meaning. Recipient selection and personalized batch review are implemented, but bulk dispatch remains disabled pending safe continuation and restart recovery. This status is implementation progress, not an end-to-end sending capability. See the [Phase 3C handoff](../team-schedule-messaging-phase-3c.md).
 
-The approved request leaves technical mechanisms open. The audit records two material semantic questions that affect generated occurrences and identity:
+The Phase 2 product-owner request (2026-10-12) finalizes two occurrence rules:
 
-- How should a recurrence landing in a nonexistent spring-forward wall time be handled: omit that occurrence, move it forward, or apply another explicit rule?
-- Does a one-time service’s override timestamp change the scheduled occurrence used by team schedules and service plans, or is it only a live countdown adjustment?
+- **D1 — Daylight-saving transitions:** Omit a recurring occurrence when its configured church-local wall time falls in the spring-forward gap. Do not move it. During fall-back, use the earlier instant for an ambiguous local time. Client generation and server validation use the same rules. Preserve historical records created under earlier behavior.
+- **D2 — Countdown override:** `overrideDateTimeISO` temporarily adjusts a live countdown. It does not change the scheduled occurrence, identity, start time, service date, team assignments, availability, or service-plan association. Permanent changes use the service definition fields. Timer and live-service controls retain their existing override behavior.
 
-These questions are not answered by the contract. See the [decision log](../team-scheduling-foundation-phase-1.md#decision-log).
+These decisions were explicitly approved in the Phase 2 request; the [decision log](../team-scheduling-foundation-phase-1.md#decision-log) records the authorization and implementation boundary.
 
 ## Implementation references
 

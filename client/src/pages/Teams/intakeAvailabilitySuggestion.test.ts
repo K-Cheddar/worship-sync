@@ -1,5 +1,6 @@
 import type { TeamIntakeForm, TeamPosition, TeamSchedule, TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
+import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { getUpcomingAvailabilitySuggestion } from "./intakeAvailabilitySuggestion";
 
 const service: TeamService = {
@@ -451,6 +452,70 @@ describe("getUpcomingAvailabilitySuggestion", () => {
       endDate: "2026-11-30",
       occurrenceCount: 5,
     });
+  });
+
+  it("keeps a one-time service on its scheduled availability date despite a countdown override", () => {
+    const oneTime: TeamService = {
+      ...service,
+      serviceId: "special-service",
+      name: "Special service",
+      reccurence: "one_time",
+      dateTimeISO: "2026-11-01T14:00:00.000Z",
+      overrideDateTimeISO: "2026-10-15T10:00:00.000Z",
+    };
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [oneTime],
+      forms: [],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.startDate).toBe("2026-11-01");
+    expect(result?.missingOccurrences).toHaveLength(1);
+    expect(result?.missingOccurrences[0]).toMatchObject({
+      logicalOccurrenceId: "special-service@2026-11-01",
+      serviceDate: "2026-11-01",
+      startsAt: "2026-11-01T14:00:00.000Z",
+    });
+  });
+
+  it("uses the same combined identity for availability and service-plan lookup", () => {
+    const groupedServices: TeamService[] = [
+      {
+        ...service,
+        serviceId: "school",
+        name: "Sabbath School",
+        reccurence: "one_time",
+        dateTimeISO: "2026-10-11T14:00:00.000Z",
+        serviceGroupId: "sabbath-morning",
+      },
+      {
+        ...service,
+        serviceId: "worship",
+        name: "Divine Worship",
+        reccurence: "one_time",
+        dateTimeISO: "2026-10-11T15:00:00.000Z",
+        serviceGroupId: "sabbath-morning",
+      },
+    ];
+    const [planOccurrence] = generateScheduleOccurrences({
+      services: groupedServices,
+      serviceIds: groupedServices.map(({ serviceId }) => serviceId),
+      startDate: "2026-10-11",
+      endDate: "2026-10-11",
+      timeZone: "America/New_York",
+    });
+    const suggestion = getUpcomingAvailabilitySuggestion({
+      services: groupedServices,
+      forms: [],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(suggestion?.missingOccurrences[0].occurrenceId).toBe(planOccurrence.occurrenceId);
+    expect(suggestion?.missingOccurrences[0].logicalOccurrenceId).toBe(planOccurrence.logicalOccurrenceId);
+    expect(planOccurrence.occurrenceId).toBe("group:sabbath-morning@2026-10-11");
+    expect(getServicePlanKey(planOccurrence)).toBe(suggestion?.missingOccurrences[0].logicalOccurrenceId);
   });
 
   it("starts with the month of the next service across a month boundary", () => {

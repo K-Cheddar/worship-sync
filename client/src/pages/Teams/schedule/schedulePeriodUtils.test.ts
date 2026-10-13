@@ -387,9 +387,15 @@ describe("findReusablePeriodSchedule", () => {
     expect(custom.assignments?.[savedOccurrences[0].occurrenceId]).toEqual({ "position::0": { primaryMemberId: "member" } });
   });
 
-  it("reuses equivalent occurrences after service IDs change", () => {
+  it("does not match a different service by name and timestamp", () => {
     const saved = schedule({ occurrences: [{ ...occurrence, serviceId: "old", occurrenceId: "old@date" }] });
-    expect(findReusablePeriodSchedule({ schedules: [saved], ...target }).schedule).toBe(saved);
+    saved.assignments = { "old@date": { "position::0": { primaryMemberId: "member" } } };
+    expect(findReusablePeriodSchedule({ schedules: [saved], ...target })).toEqual({
+      schedule: null,
+      ambiguous: true,
+    });
+    expect(saved.occurrences?.[0].occurrenceId).toBe("old@date");
+    expect(saved.assignments?.["old@date"]).toEqual({ "position::0": { primaryMemberId: "member" } });
   });
 
   it("rejects a schedule missing a newly relevant service at the same time", () => {

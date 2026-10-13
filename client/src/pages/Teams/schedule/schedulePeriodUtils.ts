@@ -1,7 +1,6 @@
 import { parsePlainDate } from "@/utils/plainDate";
 import type { TeamScheduleOccurrence, TeamScheduleSummary } from "../../../api/authTypes";
-import { calendarDateInTimeZone, getOccurrenceDate } from "@/utils/teamScheduleOccurrences";
-import { hasOccurrenceIdentityAmbiguity, matchOccurrencesByIdentity } from "../../../../shared/teamScheduleOccurrences.js";
+import { calendarDateInTimeZone, getOccurrenceDate, hasOccurrenceIdentityAmbiguity, matchOccurrencesByIdentity } from "@/utils/teamScheduleOccurrences";
 import { RANGE_PRESET_OPTIONS, resolveRangePreset, type RangePreset } from "../rangeSelection";
 
 export type SchedulePeriodPreset = RangePreset;

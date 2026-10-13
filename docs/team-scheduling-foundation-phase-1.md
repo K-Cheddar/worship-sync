@@ -231,17 +231,16 @@ Severity reflects user impact and data risk under the approved contract. “Conf
 
 ### D1 — Nonexistent local recurrence time
 
-- **Question:** When a recurring service’s configured local time does not exist during a spring-forward transition, should the occurrence be skipped per RFC recurrence behavior, moved forward to the first valid time, or follow another rule?
-- **Why it matters:** It changes whether a schedule row exists and which instant server validation accepts.
-- **Current evidence:** Client moves forward; server rejects that shifted instant.
-- **Status:** Requires product-owner decision before Phase 2 defines shared behavior.
+- **Approved behavior:** Omit the occurrence when its configured wall-clock time does not exist in the church timezone during spring-forward. Do not shift it. During fall-back, choose the earlier instant.
+- **Why it matters:** It defines whether a schedule row exists and which instant server validation accepts.
+- **Authorization:** Explicitly finalized in the Phase 2 product-owner request, 2026-10-12. The client generator and server validator must agree.
+- **Compatibility boundary:** Preserve historical records created under prior behavior; do not rewrite or delete them as part of Phase 2.
 
 ### D2 — One-time service override meaning
 
-- **Question:** Does overrideDateTimeISO change the logical scheduled service occurrence for team schedules and service plans, or only adjust the live countdown temporarily?
-- **Why it matters:** The current service-plan helper can query the override date while occurrence generation reads the base date.
-- **Current evidence:** The type describes it as taking precedence over dateTimeISO and clearing when time passes; Team/Plan occurrence generation does not consistently apply it.
-- **Status:** Requires product-owner decision before Phase 2 changes occurrence generation.
+- **Approved behavior:** `overrideDateTimeISO` is a temporary live countdown adjustment. It does not change scheduled occurrence identity or time, service date, assignments, availability, or service-plan association. Permanent schedule changes use service definition fields.
+- **Why it matters:** Schedule, availability, and service-plan lookup must follow the same durable scheduled occurrence while live controls may temporarily count down to an adjusted time.
+- **Authorization:** Explicitly finalized in the Phase 2 product-owner request, 2026-10-12. Preserve override use in timers and live-service controls.
 
 No other product decision is needed to document conflict handling: the approved contract says to apply unambiguous changes and ask the operator when values cannot safely coexist.
 
@@ -325,6 +324,8 @@ No production code, schema, persisted document, or existing test file was change
 
 
 ### Execution results
+
+These are the original Phase 1 audit results and runtime observations. Phase 2 reran the focused client suites and the full server API suite under Node 24 on this branch; the reported service-plan snapshot failure passed both the Node 24 baseline and the final suite. See the [Phase 2 implementation record](team-scheduling-foundation-phase-2.md) for current verification and the implemented behavior.
 
 - Client: 6 focused suites passed, 160 tests passed. Suites: teamScheduleOccurrences, teamSchedulePeriod, schedulePeriodUtils, scheduleDraftUtils, intakeAvailabilitySuggestion, and servicePlanOccurrences.
 - Server: server/teamsApi.test.js ran 228 tests; 227 passed and 1 failed. The failing test is “service plan endpoints: create, read, update, delete, permission gating, and SSE” at server/teamsApi.test.js:8040. It throws “Cannot read properties of undefined (reading '0')” while asserting workstationSnapshot.servingTeams[0].members. An isolated rerun of that test reproduced the same failure. It is a service-plan snapshot assertion, not a generated team-schedule assertion. The current checkout includes the concurrent availability-form edit described above; its diff does not touch service-plan snapshot assembly, but a clean-branch baseline was not established, so the failure is reported without assigning a cause.

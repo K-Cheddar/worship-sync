@@ -5746,8 +5746,8 @@ const ScheduleTab = ({
                 <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-amber-100">
                     {refreshBlocked
-                      ? "This schedule can’t be refreshed safely. Review its services in Service Setup before updating it. Existing rows and assignments have been kept."
-                      : "This schedule no longer matches its services (grouping or timing changed). Refresh it to update the rows — assignments are kept where the service and date still line up."}
+                      ? "These saved occurrence rows cannot be matched one-to-one to current services. Assignments and equipment remain preserved. Review the saved schedule before creating a replacement."
+                      : "The scheduled time or occurrence details changed. Refresh the snapshot; its saved occurrence IDs and related schedule records will be kept."}
                   </p>
                   <Button
                     variant="secondary"

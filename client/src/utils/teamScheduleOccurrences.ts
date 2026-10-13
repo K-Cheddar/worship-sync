@@ -12,21 +12,20 @@ import {
   occurrenceIdentityListsMatch,
   occurrenceScheduleDetailsMatch as compareOccurrenceScheduleDetails,
   serviceDateTimeInTimeZone,
-} from "../../../shared/teamScheduleOccurrences.js";
+} from "../../../shared/teamScheduleOccurrences";
 
 export {
   calendarDateInTimeZone,
   logicalOccurrenceIdForGroup,
   logicalOccurrenceIdForService,
   occurrenceIdentityListsMatch,
-  occurrenceScheduleDetailsMatch,
   hasOccurrenceIdentityAmbiguity,
   resolveOccurrenceIdentity,
   sameOccurrenceIdentity,
   matchOccurrencesByIdentity,
   preserveStoredOccurrenceIds,
   serviceDateTimeInTimeZone,
-} from "../../../shared/teamScheduleOccurrences.js";
+} from "../../../shared/teamScheduleOccurrences";
 
 const toOccurrence = (
   service: TeamService,
