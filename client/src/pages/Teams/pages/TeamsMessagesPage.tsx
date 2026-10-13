@@ -498,7 +498,9 @@ const TeamsMessagesPage = () => {
         } else if (sendOutcome === "accepted" && historyRefreshFailed && batchRefreshFailed) {
           setNotice("Your text message was sent. We couldn't refresh message history or batch status. Refresh the page to check both.");
         } else if (sendOutcome === "unknown" && historyRefreshFailed) {
-          setError(`We couldn't confirm whether this text was sent. ${refreshFeedback} Try again after refreshing message history.`);
+          setError(batchRefreshFailed
+            ? "We couldn't confirm whether this text was sent, and message history and batch status couldn't be refreshed. Refresh the page before deciding whether to try again."
+            : "We couldn't confirm whether this text was sent, and message history couldn't be refreshed. Try refreshing it before deciding whether to try again.");
         } else if (sendOutcome === "accepted") {
           setNotice(`${sendFeedback} ${refreshFeedback}`);
         } else {
