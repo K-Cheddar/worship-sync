@@ -337,55 +337,51 @@ const captureTenantFingerprint = (page: Page) => {
   return async () => (latestBootstrap ? await latestBootstrap : null);
 };
 
-const captureInitialServerSession = (page: Page) => {
-  let firstAuthResponse: Promise<
-    | { status: "authenticated"; tenantIdFingerprint: string }
-    | { status: "unauthenticated" }
-    | { status: "unavailable" }
-  > | null = null;
+const captureInitialServerSession = async (page: Page) => {
+  let response;
+  try {
+    response = await page.waitForResponse(
+      (candidate) =>
+        new URL(candidate.url()).pathname.endsWith("/api/auth/me"),
+      { timeout: 45_000 },
+    );
+  } catch {
+    return { status: "unavailable" as const };
+  }
 
-  page.on("response", (response) => {
-    if (
-      firstAuthResponse ||
-      new URL(response.url()).pathname !== "/api/auth/me"
-    ) {
-      return;
-    }
+  if (!response.ok()) {
+    return response.status() === 401 || response.status() === 403
+      ? { status: "unauthenticated" as const }
+      : { status: "unavailable" as const };
+  }
 
-    firstAuthResponse = response
-      .json()
-      .then((payload: unknown) => {
-        if (!response.ok()) {
-          return response.status() === 401 || response.status() === 403
-            ? { status: "unauthenticated" as const }
-            : { status: "unavailable" as const };
-        }
-        if (!payload || typeof payload !== "object") {
-          return { status: "unavailable" as const };
-        }
-        const outer = payload as Record<string, unknown>;
-        const bootstrap =
-          outer.bootstrap && typeof outer.bootstrap === "object"
-            ? (outer.bootstrap as Record<string, unknown>)
-            : outer;
-        if (
-          bootstrap.authenticated !== true ||
-          bootstrap.sessionKind !== "human"
-        ) {
-          return { status: "unauthenticated" as const };
-        }
-        if (typeof bootstrap.churchId !== "string" || !bootstrap.churchId.trim()) {
-          return { status: "unavailable" as const };
-        }
-        return {
-          status: "authenticated" as const,
-          tenantIdFingerprint: fingerprint(bootstrap.churchId.trim()),
-        };
-      })
-      .catch(() => ({ status: "unavailable" as const }));
-  });
-
-  return async () => (firstAuthResponse ? await firstAuthResponse : null);
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { status: "unavailable" as const };
+  }
+  if (!payload || typeof payload !== "object") {
+    return { status: "unavailable" as const };
+  }
+  const outer = payload as Record<string, unknown>;
+  const bootstrap =
+    outer.bootstrap && typeof outer.bootstrap === "object"
+      ? (outer.bootstrap as Record<string, unknown>)
+      : outer;
+  if (
+    bootstrap.authenticated !== true ||
+    bootstrap.sessionKind !== "human"
+  ) {
+    return { status: "unauthenticated" as const };
+  }
+  if (typeof bootstrap.churchId !== "string" || !bootstrap.churchId.trim()) {
+    return { status: "unavailable" as const };
+  }
+  return {
+    status: "authenticated" as const,
+    tenantIdFingerprint: fingerprint(bootstrap.churchId.trim()),
+  };
 };
 
 export async function validateSavedSession(
@@ -462,9 +458,13 @@ export async function validateSavedSession(
     }
 
     const page = await context.newPage();
-    const getInitialServerSession = captureInitialServerSession(page);
+    const initialServerSessionPromise = captureInitialServerSession(page);
     const getTenantFingerprint = captureTenantFingerprint(page);
-    await page.route("**/api/auth/session", (route) => route.abort("blockedbyclient"));
+    let sessionRecoveryRequested = false;
+    await page.route("**/api/auth/session", async (route) => {
+      sessionRecoveryRequested = true;
+      await route.abort("blockedbyclient");
+    });
     try {
       await page.goto(makeAppURL(baseURL, "/"), { waitUntil: "domcontentloaded" });
     } catch {
@@ -485,13 +485,7 @@ export async function validateSavedSession(
       };
     }
 
-    const initialServerSession = await getInitialServerSession();
-    if (!initialServerSession) {
-      return {
-        status: "infrastructure-error",
-        reason: "WorshipSync did not return an auth bootstrap while checking the saved server session cookie.",
-      };
-    }
+    const initialServerSession = await initialServerSessionPromise;
     if (initialServerSession.status === "unavailable") {
       return {
         status: "infrastructure-error",
@@ -516,6 +510,12 @@ export async function validateSavedSession(
       return {
         status: "invalid",
         reason: "WorshipSync did not recognize the saved session.",
+      };
+    }
+    if (sessionRecoveryRequested) {
+      return {
+        status: "invalid",
+        reason: "WorshipSync attempted automatic server-session recovery; the saved server session was not sufficient.",
       };
     }
     if (!(await hasRuntimeFirebaseIndexedDB(page).catch(() => false))) {
