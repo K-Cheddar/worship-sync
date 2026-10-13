@@ -23,9 +23,9 @@ import { cn } from "@/utils/cnHelper";
 import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sidebar";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
+import ChurchServiceTimeZoneGate from "./components/ChurchServiceTimeZoneGate";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
-import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
 import {
   TeamsNavigationGuardProvider,
   usePendingTeamsNavigation,
@@ -277,7 +277,9 @@ const TeamsAndServicesRoutes = () => (
         path="schedules"
         element={
           <TeamsSectionRoute routePath="schedules">
-            <TeamsSchedulesPage />
+            <ChurchServiceTimeZoneGate area="Schedules">
+              <TeamsSchedulesPage />
+            </ChurchServiceTimeZoneGate>
           </TeamsSectionRoute>
         }
       />
@@ -325,7 +327,9 @@ const TeamsAndServicesRoutes = () => (
         path="forms"
         element={
           <TeamsSectionRoute routePath="forms">
-            <TeamsFormsPage />
+            <ChurchServiceTimeZoneGate area="Availability forms">
+              <TeamsFormsPage />
+            </ChurchServiceTimeZoneGate>
           </TeamsSectionRoute>
         }
       />
@@ -333,7 +337,9 @@ const TeamsAndServicesRoutes = () => (
         path="services"
         element={
           <TeamsSectionRoute routePath="services">
-            <TeamsPlansPage />
+            <ChurchServiceTimeZoneGate area="Service Plans">
+              <TeamsPlansPage />
+            </ChurchServiceTimeZoneGate>
           </TeamsSectionRoute>
         }
       />
@@ -410,22 +416,8 @@ const TeamsNoAccess = () => (
 );
 
 const TeamsAndServicesContent = () => {
-  const { accessDenied, canViewServices, serviceTimeZoneStatus } = useTeamsPage();
-  const churchTimeZone = useChurchServiceTimeZone();
+  const { accessDenied, canViewServices } = useTeamsPage();
   if (accessDenied && !canViewServices) return <TeamsNoAccess />;
-  if (serviceTimeZoneStatus === "loading") {
-    return <main className="p-6 text-sm text-gray-600">Loading church time zone…</main>;
-  }
-  if (serviceTimeZoneStatus === "error") {
-    return (
-      <main className="p-6 text-sm text-red-700">
-        Could not load the church time zone. Scheduling is unavailable until it loads.
-        <button className="ml-2 underline" onClick={() => void churchTimeZone.refresh()}>
-          Retry
-        </button>
-      </main>
-    );
-  }
   return <TeamsAndServicesRoutes />;
 };
 

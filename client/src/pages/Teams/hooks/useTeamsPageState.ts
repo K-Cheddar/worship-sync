@@ -55,6 +55,7 @@ import {
 } from "./useTeamsLiveSync";
 import {
   isHydratedSchedule,
+  type TeamPosition,
   type TeamSchedule,
   type TeamScheduleSummary,
 } from "../../../api/authTypes";
@@ -178,6 +179,9 @@ export const useTeamsPageState = (
   // remain so a bootstrap/SSE can't apply a server snapshot missing not-yet-saved
   // edits.
   const pendingTeamsSavesRef = useRef(0);
+  const positionReorderQueuesRef = useRef(new Map<string, Promise<void>>());
+  const positionReorderVersionsRef = useRef(new Map<string, number>());
+  const persistedPositionsByTeamRef = useRef(new Map<string, TeamPosition[]>());
   // Set while an inbound (bootstrap/SSE) change is being applied so it isn't mistaken
   // for a local edit — applying a remote update must not start the local-edit
   // cooldown (which would needlessly defer further inbound syncs).
@@ -223,6 +227,19 @@ export const useTeamsPageState = (
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    if (pendingTeamsSavesRef.current > 0 || !churchId) return;
+    const positionsByTeam = new Map<string, TeamPosition[]>();
+    data.positions.forEach((position) => {
+      const current = positionsByTeam.get(position.teamId) || [];
+      current.push(position);
+      positionsByTeam.set(position.teamId, current);
+    });
+    positionsByTeam.forEach((positions, teamId) => {
+      persistedPositionsByTeamRef.current.set(`${churchId}:${teamId}`, positions);
+    });
+  }, [churchId, data.positions]);
 
   useEffect(() => {
     selectedScheduleIdRef.current = selectedScheduleId;
@@ -625,13 +642,22 @@ export const useTeamsPageState = (
     [updateDataLocal],
   );
 
-  // Persist a new position order for one team. Optimistically renumbers the
-  // affected positions (and re-sorts the list so schedule columns follow), then
-  // calls the API and reverts on failure.
+  // Persist a new position order for one team. Each drag updates the view at
+  // once, while that team's requests stay in order so an older save cannot land
+  // after a newer selection. Other teams keep independent save queues.
   const reorderPositions = useCallback(
     async (teamId: string, orderedPositionIds: string[]) => {
       if (!canEditAnyTeam || !canEditTeam(teamId)) return;
-      const previousPositions = dataRef.current.positions;
+      const churchIdAtStart = churchId;
+      const scopeKey = `${churchIdAtStart}:${teamId}`;
+      const version = (positionReorderVersionsRef.current.get(scopeKey) || 0) + 1;
+      positionReorderVersionsRef.current.set(scopeKey, version);
+      const initialTeamPositions = dataRef.current.positions.filter(
+        (position) => position.teamId === teamId,
+      );
+      if (!persistedPositionsByTeamRef.current.has(scopeKey)) {
+        persistedPositionsByTeamRef.current.set(scopeKey, initialTeamPositions);
+      }
       const orderById = new Map(
         orderedPositionIds.map((positionId, index) => [positionId, index]),
       );
@@ -645,21 +671,81 @@ export const useTeamsPageState = (
           ),
         ),
       }));
+      const previousRequest = positionReorderQueuesRef.current.get(scopeKey) || Promise.resolve();
+      const persist = previousRequest.then(async () => {
+        const result = await reorderTeamPositions(churchIdAtStart, {
+          teamId,
+          positionIds: orderedPositionIds,
+        });
+        if (churchIdRef.current !== churchIdAtStart) return result;
+
+        const persisted = persistedPositionsByTeamRef.current.get(scopeKey) || initialTeamPositions;
+        const persistedById = new Map(persisted.map((position) => [position.positionId, position]));
+        result.positions.forEach((position) => persistedById.set(position.positionId, position));
+        const nextPersisted = [...persistedById.values()];
+        persistedPositionsByTeamRef.current.set(scopeKey, nextPersisted);
+
+        if (positionReorderVersionsRef.current.get(scopeKey) === version) {
+          updateDataLocal((current) => ({
+            ...current,
+            positions: sortPositionsByOrder([
+              ...current.positions.filter((position) => position.teamId !== teamId),
+              ...nextPersisted,
+            ]),
+          }));
+        }
+        return result;
+      });
+      const handled = persist.catch(async (error: unknown) => {
+        const isCurrentRequest =
+          churchIdRef.current === churchIdAtStart &&
+          positionReorderVersionsRef.current.get(scopeKey) === version;
+        if (isCurrentRequest) {
+          let authoritativePositions: TeamPosition[] | null = null;
+          try {
+            const response = await getTeamsBootstrap(churchIdAtStart);
+            const serverPositions = buildTeamsDataFromBootstrap(response).positions
+              .filter((position) => position.teamId === teamId);
+            authoritativePositions = serverPositions;
+          } catch {
+            // Fall back to the last confirmed save below. The original save
+            // error remains visible so this reconciliation is never a success signal.
+          }
+
+          if (
+            churchIdRef.current === churchIdAtStart &&
+            positionReorderVersionsRef.current.get(scopeKey) === version
+          ) {
+            const savedPositions = authoritativePositions ||
+              persistedPositionsByTeamRef.current.get(scopeKey) || initialTeamPositions;
+            if (authoritativePositions) {
+              persistedPositionsByTeamRef.current.set(scopeKey, authoritativePositions);
+            }
+            updateDataLocal((current) => ({
+              ...current,
+              positions: sortPositionsByOrder([
+                ...current.positions.filter((position) => position.teamId !== teamId),
+                ...savedPositions,
+              ]),
+            }));
+            showApiErrorToast(showToast, error, "Could not reorder positions.");
+          }
+        }
+        throw error;
+      });
+      const queueEntry = handled.then(() => undefined, () => undefined);
+      positionReorderQueuesRef.current.set(scopeKey, queueEntry);
       try {
-        // Gate inbound sync on the real save (same as schedule edits) so a slow
-        // reorder can't be reverted by a bootstrap landing mid-request.
-        await trackTeamsSave(
-          reorderTeamPositions(churchId, {
-            teamId,
-            positionIds: orderedPositionIds,
-          }),
-        );
-      } catch (error) {
-        updateDataLocal((current) => ({
-          ...current,
-          positions: previousPositions,
-        }));
-        showApiErrorToast(showToast, error, "Could not reorder positions.");
+        // Keep remote bootstrap/push application and the global save indicator
+        // pending through both persistence and any failure reconciliation.
+        await trackTeamsSave(handled);
+      } catch {
+        // The current request's failure was reported after authoritative
+        // reconciliation; event handlers should not leak a rejected promise.
+      } finally {
+        if (positionReorderQueuesRef.current.get(scopeKey) === queueEntry) {
+          positionReorderQueuesRef.current.delete(scopeKey);
+        }
       }
     },
     [
@@ -1042,6 +1128,14 @@ export const useTeamsPageState = (
         }
         return;
       }
+      if (event.type === "team-positions-reordered") {
+        if (isLocalEditCoolingDown()) {
+          scheduleDeferredBackgroundRefresh();
+        } else {
+          void backgroundRefresh();
+        }
+        return;
+      }
       // Service plans aren't part of TeamsData — the Plans page keeps its own
       // summary list — so just bump a revision the page can watch to refetch,
       // rather than trying to merge the plan into this dataset.
@@ -1058,6 +1152,7 @@ export const useTeamsPageState = (
       ) onTemplateEvent?.(event);
     },
     [
+      backgroundRefresh,
       isLocalEditCoolingDown,
       removeData,
       scheduleDeferredBackgroundRefresh,

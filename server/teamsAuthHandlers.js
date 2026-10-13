@@ -236,6 +236,7 @@ export const createTeamsAuthHandlers = ({
   // transactions. Serialize writes to one schedule so they retain the same
   // no-lost-update guarantee as Firestore transactions.
   const inMemoryScheduleSaveQueues = new Map();
+  const inMemoryTeamPositionReorderQueues = new Map();
   const inMemoryTeamRosterMutationQueues = new Map();
   const inMemoryRosterMemberMutationQueues = new Map();
   const inMemoryPortableMemberQueues = new Map();
@@ -265,6 +266,18 @@ export const createTeamsAuthHandlers = ({
     void settled.finally(() => {
       if (inMemoryScheduleSaveQueues.get(scheduleId) === settled) {
         inMemoryScheduleSaveQueues.delete(scheduleId);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryTeamPositionReorder = (scopeKey, task) => {
+    const previous = inMemoryTeamPositionReorderQueues.get(scopeKey) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryTeamPositionReorderQueues.set(scopeKey, settled);
+    void settled.finally(() => {
+      if (inMemoryTeamPositionReorderQueues.get(scopeKey) === settled) {
+        inMemoryTeamPositionReorderQueues.delete(scopeKey);
       }
     });
     return run;
@@ -3765,11 +3778,17 @@ export const createTeamsAuthHandlers = ({
     const admin = await requireTeamsEditForTeamIds(req, churchId, [schedule.teamId].filter(Boolean));
     const scoped = admin.role !== "admin" && admin.permissions?.teams !== "edit";
     if (scoped) {
-      const positionIds = new Set([
+      const assignedCellKeys = [
         ...Object.values(schedule.assignments || {}).flatMap((row) => Object.keys(row || {})),
         ...(Array.isArray(cellKey) ? cellKey : cellKey ? [cellKey] : []),
-      ].map((key) => String(key).split(SCHEDULE_SLOT_KEY_SEPARATOR)[0]));
+      ];
+      const positionIds = new Set(assignedCellKeys.map((key) =>
+        String(key).split(SCHEDULE_SLOT_KEY_SEPARATOR)[0].trim(),
+      ));
       for (const positionId of positionIds) {
+        if (!positionId) {
+          throw httpError(403, "This schedule has inconsistent Team ownership. Ask a church administrator to review it.");
+        }
         const position = await getDoc(COLLECTIONS.teamPositions, positionId);
         if (!position || position.churchId !== churchId || position.teamId !== schedule.teamId) {
           throw httpError(403, "This schedule has inconsistent Team ownership. Ask a church administrator to review it.");
@@ -15396,10 +15415,10 @@ export const createTeamsAuthHandlers = ({
         if (schedule.published === false) {
           throw httpError(409, "Publish this schedule before sending it.");
         }
-        const admin = await requireTeamsEditForTeamIds(
+        const { admin } = await requireTeamScheduleNotificationEdit(
           req,
           req.params.churchId,
-          [schedule.teamId].filter(Boolean),
+          schedule,
         );
 
         const [members, positions, teams] = await Promise.all([
@@ -17106,48 +17125,101 @@ export const createTeamsAuthHandlers = ({
         if (!positionIds.length) {
           throw httpError(400, "No positions to reorder.");
         }
-        // Every id must be an existing position in this church owned by the team
-        // (archived included — order applies to the whole list).
-        const positions = await Promise.all(
-          positionIds.map(async (positionId) => {
-            const position = await assertTeamEntityInChurch(
-              "position",
-              positionId,
-              churchId,
-              { label: "Position", active: false },
-            );
+        const validatePositions = (positions) => {
+          positions.forEach((position) => {
+            if (position.churchId !== churchId) {
+              throw httpError(404, "Position not found.");
+            }
             if (position.teamId !== team.teamId) {
               throw httpError(400, "That position is not part of this team.");
             }
-            return position;
-          }),
-        );
-        const now = nowIso();
-        await Promise.all(
-          positionIds.map((positionId, index) =>
-            setDoc(
-              COLLECTIONS.teamPositions,
-              positionId,
-              {
+          });
+          return positions;
+        };
+        const db = requireFirestore();
+        let positions;
+        if (db) {
+          positions = await db.runTransaction(async (transaction) => {
+            const teamRef = db.collection(COLLECTIONS.teams).doc(team.teamId);
+            const teamSnapshot = await transaction.get(teamRef);
+            const currentTeam = readTransactionTeamEntity(
+              teamSnapshot,
+              "teamId",
+              "Team",
+              { active: false },
+            );
+            if (currentTeam.churchId !== churchId) {
+              throw httpError(404, "Team not found.");
+            }
+            const refs = positionIds.map((positionId) =>
+              db.collection(COLLECTIONS.teamPositions).doc(positionId),
+            );
+            const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+            const currentPositions = validatePositions(snapshots.map((snapshot) => {
+              const position = readTransactionTeamEntity(
+                snapshot,
+                "positionId",
+                "Position",
+                { active: false },
+              );
+              return position;
+            }));
+            const now = nowIso();
+            refs.forEach((ref, index) => {
+              transaction.set(ref, {
                 order: index,
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
-              },
-              { merge: true },
-            ),
-          ),
-        );
+              }, { merge: true });
+            });
+            return currentPositions.map((position, index) => ({
+              ...position,
+              order: index,
+              updatedAt: now,
+              updatedByUid: admin.user.uid,
+            }));
+          });
+        } else {
+          positions = await enqueueInMemoryTeamPositionReorder(
+            `${churchId}:${team.teamId}`,
+            async () => {
+              const currentPositions = validatePositions(await Promise.all(
+                positionIds.map(async (positionId) => {
+                  const position = await assertTeamEntityInChurch(
+                    "position",
+                    positionId,
+                    churchId,
+                    { active: false, label: "Position" },
+                  );
+                  return position;
+                }),
+              ));
+              const now = nowIso();
+              await Promise.all(positionIds.map((positionId, index) =>
+                setDoc(
+                  COLLECTIONS.teamPositions,
+                  positionId,
+                  { order: index, updatedAt: now, updatedByUid: admin.user.uid },
+                  { merge: true },
+                ),
+              ));
+              return currentPositions.map((position, index) => ({
+                ...position,
+                order: index,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+              }));
+            },
+          );
+        }
         await addSecurityEvent({
           type: "team_positions_reordered",
           churchId,
           userId: admin.user.uid,
           teamId: team.teamId,
         });
-        const reordered = positions.map((position, index) => ({
-          ...position,
-          order: index,
-        }));
-        return res.json({ success: true, positions: reordered });
+        emitTeamsEvent(churchId, "team-positions-reordered");
+        return res.json({ success: true, positions });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not reorder positions.");
       }

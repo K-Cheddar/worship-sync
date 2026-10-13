@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -36,71 +37,98 @@ export const ChurchServiceTimeZoneProvider = ({
       (globalInfo.sessionKind === "human" ||
         globalInfo.sessionKind === "workstation"),
   );
-  const [status, setStatus] = useState<TimeZoneStatus>("loading");
-  const [resolvedChurchId, setResolvedChurchId] = useState("");
-  const [timeZone, setTimeZone] = useState<string | null>(null);
-  const [isConfigured, setIsConfigured] = useState(false);
-  const [legacyTimeZoneSuggestion, setLegacyTimeZoneSuggestion] =
-    useState<string | null>(null);
+  const churchIdRef = useRef(churchId);
+  churchIdRef.current = churchId;
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(false);
+  const [requestState, setRequestState] = useState<{
+    churchId: string;
+    requestId: number;
+    status: TimeZoneStatus;
+  } | null>(null);
+  const [loadedTimeZone, setLoadedTimeZone] = useState<{
+    churchId: string;
+    timeZone: string;
+    isConfigured: boolean;
+    legacyTimeZoneSuggestion: string | null;
+  } | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (!canRead) return;
-    setStatus("loading");
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const loadForChurch = useCallback(async (requestedChurchId: string) => {
+    const requestId = ++requestIdRef.current;
+    if (mountedRef.current) {
+      setRequestState({ churchId: requestedChurchId, requestId, status: "loading" });
+    }
     try {
-      const result = await getChurchServiceTimeZone(churchId);
-      setResolvedChurchId(churchId);
-      setTimeZone(result.serviceTimeZone);
-      setIsConfigured(result.isConfigured);
-      setLegacyTimeZoneSuggestion(result.legacyTimeZoneSuggestion || null);
-      setStatus("ready");
+      const result = await getChurchServiceTimeZone(requestedChurchId);
+      if (
+        !mountedRef.current ||
+        churchIdRef.current !== requestedChurchId ||
+        requestIdRef.current !== requestId
+      ) return;
+      setLoadedTimeZone({
+        churchId: requestedChurchId,
+        timeZone: result.serviceTimeZone,
+        isConfigured: result.isConfigured,
+        legacyTimeZoneSuggestion: result.legacyTimeZoneSuggestion || null,
+      });
+      setRequestState({ churchId: requestedChurchId, requestId, status: "ready" });
     } catch (error) {
-      setResolvedChurchId(churchId);
-      setStatus("error");
+      if (
+        mountedRef.current &&
+        churchIdRef.current === requestedChurchId &&
+        requestIdRef.current === requestId
+      ) {
+        setRequestState({ churchId: requestedChurchId, requestId, status: "error" });
+      }
       throw error;
     }
-  }, [canRead, churchId]);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    if (!canRead || !churchId || churchIdRef.current !== churchId) return;
+    await loadForChurch(churchId);
+  }, [canRead, churchId, loadForChurch]);
 
   useEffect(() => {
     if (!canRead) {
-      setTimeZone(null);
-      setResolvedChurchId(churchId);
-      setIsConfigured(false);
-      setLegacyTimeZoneSuggestion(null);
-      setStatus(churchId ? "error" : "loading");
+      const requestId = ++requestIdRef.current;
+      setRequestState({
+        churchId,
+        requestId,
+        status: churchId ? "error" : "loading",
+      });
       return;
     }
-    let cancelled = false;
-    setStatus("loading");
-    void getChurchServiceTimeZone(churchId)
-      .then((result) => {
-        if (cancelled) return;
-        setResolvedChurchId(churchId);
-        setTimeZone(result.serviceTimeZone);
-        setIsConfigured(result.isConfigured);
-        setLegacyTimeZoneSuggestion(result.legacyTimeZoneSuggestion || null);
-        setStatus("ready");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setResolvedChurchId(churchId);
-          setStatus("error");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canRead, churchId]);
+    void loadForChurch(churchId).catch(() => undefined);
+    return undefined;
+  }, [canRead, churchId, loadForChurch]);
 
   const value = useMemo(
-    () => ({
-      status: resolvedChurchId === churchId ? status : "loading",
-      timeZone: resolvedChurchId === churchId ? timeZone : null,
-      isConfigured: resolvedChurchId === churchId && isConfigured,
-      legacyTimeZoneSuggestion:
-        resolvedChurchId === churchId ? legacyTimeZoneSuggestion : null,
-      refresh,
-    }),
-    [churchId, isConfigured, legacyTimeZoneSuggestion, refresh, resolvedChurchId, status, timeZone],
+    () => {
+      const requestStatus = requestState?.churchId === churchId
+        ? requestState.status
+        : "loading";
+      const hasChurchData = canRead && loadedTimeZone?.churchId === churchId;
+      return {
+        status: canRead ? requestStatus : churchId ? "error" : "loading",
+        // Keep the last good value visible during a refresh or a transient
+        // failure, but never expose another church's cached setting.
+        timeZone: hasChurchData ? loadedTimeZone.timeZone : null,
+        isConfigured: hasChurchData && loadedTimeZone.isConfigured,
+        legacyTimeZoneSuggestion: hasChurchData
+          ? loadedTimeZone.legacyTimeZoneSuggestion
+          : null,
+        refresh,
+      };
+    },
+    [canRead, churchId, loadedTimeZone, refresh, requestState],
   );
 
   return (

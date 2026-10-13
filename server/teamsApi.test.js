@@ -11681,6 +11681,112 @@ test("sending a schedule notifies once and is idempotent", async (t) => {
   assert.ok(occurrenceId);
 });
 
+test("schedule email sending checks assignment position ownership before side effects", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("send_position_ownership");
+  const valid = await seedAssignedSchedule(admin, "send_position_valid", { link: false });
+  const otherTeam = await seedAssignedSchedule(admin, "send_position_other", { link: false });
+  const scopedManager = await createHumanContext("send_position_scoped", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [valid.media.teamId]: "edit" } },
+  });
+  const emails = [];
+  setSendEmailForServerTests(async (message) => emails.push(message));
+  try {
+    await setDoc("teamRosterMembers", valid.memberId, { email: "valid@church.test" }, { merge: true });
+    const administratorSend = await callHandler(authHandlers.sendTeamSchedule, {
+      context: admin,
+      params: { scheduleId: valid.scheduleId },
+    });
+    assert.equal(administratorSend.statusCode, 200, JSON.stringify(administratorSend.payload));
+    assert.equal(administratorSend.payload.notified, 1);
+    assert.equal(emails.length, 1, "administrators can still send a valid schedule");
+
+    await setDoc("teamRosterMembers", otherTeam.memberId, { email: "scoped@church.test" }, { merge: true });
+    const combinedSchedule = await getDoc("teamSchedules", otherTeam.scheduleId);
+    await setDoc("teamSchedules", otherTeam.scheduleId, {
+      occurrences: combinedSchedule.occurrences.map((occurrence) => ({
+        ...occurrence,
+        serviceIds: ["service-one", "service-two"],
+      })),
+    }, { merge: true });
+    const scopedSend = await callHandler(authHandlers.sendTeamSchedule, {
+      context: scopedManager,
+      params: { scheduleId: otherTeam.scheduleId },
+    });
+    assert.equal(scopedSend.statusCode, 403, "an unrelated-team manager cannot send");
+    assert.equal(emails.length, 1);
+
+    const authorizedManager = await createHumanContext("send_position_authorized", {
+      churchId: admin.churchId,
+      role: "member",
+      appAccess: "view",
+      permissions: { teams: "none", teamScopes: { [otherTeam.media.teamId]: "edit" } },
+    });
+    const authorizedSend = await callHandler(authHandlers.sendTeamSchedule, {
+      context: authorizedManager,
+      params: { scheduleId: otherTeam.scheduleId },
+    });
+    assert.equal(authorizedSend.statusCode, 200, JSON.stringify(authorizedSend.payload));
+    assert.equal(authorizedSend.payload.notified, 1, "combined occurrences remain sendable");
+    assert.equal(emails.length, 2);
+
+    const mixedSchedule = await seedAssignedSchedule(admin, "send_position_mixed", { link: false });
+    await setDoc("teamRosterMembers", mixedSchedule.memberId, { email: "mixed@church.test" }, { merge: true });
+    const mixed = await getDoc("teamSchedules", mixedSchedule.scheduleId);
+    await setDoc("teamSchedules", mixedSchedule.scheduleId, {
+      assignments: {
+        ...mixed.assignments,
+        [mixedSchedule.occurrenceId]: {
+          ...mixed.assignments[mixedSchedule.occurrenceId],
+          [`${otherTeam.media.positionIds.Camera}::0`]: otherTeam.memberId,
+        },
+      },
+    }, { merge: true });
+
+    const foreignPositionSend = await callHandler(authHandlers.sendTeamSchedule, {
+      context: scopedManager,
+      params: { scheduleId: mixedSchedule.scheduleId },
+    });
+    assert.equal(foreignPositionSend.statusCode, 403);
+    assert.equal(emails.length, 2, "no email is sent for mixed Team ownership");
+    assert.equal((await getDoc("teamSchedules", mixedSchedule.scheduleId)).sentAt, undefined);
+    assert.equal((await queryDocs("notificationIntents", [
+      { field: "churchId", value: admin.churchId },
+      { field: "sourceId", value: mixedSchedule.scheduleId },
+    ])).length, 0, "failed authorization creates no send-related intent");
+
+    const unknownSchedule = await seedAssignedSchedule(admin, "send_position_unknown", { link: false });
+    await setDoc("teamRosterMembers", unknownSchedule.memberId, { email: "unknown@church.test" }, { merge: true });
+    const unknown = await getDoc("teamSchedules", unknownSchedule.scheduleId);
+    await setDoc("teamSchedules", unknownSchedule.scheduleId, {
+      assignments: {
+        ...unknown.assignments,
+        [unknownSchedule.occurrenceId]: {
+          ...unknown.assignments[unknownSchedule.occurrenceId],
+          "missing-position::0": unknownSchedule.memberId,
+        },
+      },
+    }, { merge: true });
+
+    const unknownPositionSend = await callHandler(authHandlers.sendTeamSchedule, {
+      context: scopedManager,
+      params: { scheduleId: unknownSchedule.scheduleId },
+    });
+    assert.equal(unknownPositionSend.statusCode, 403);
+    assert.equal(emails.length, 2, "unknown position ownership fails closed before email");
+    assert.equal((await getDoc("teamSchedules", unknownSchedule.scheduleId)).sentAt, undefined);
+    assert.equal((await queryDocs("notificationIntents", [
+      { field: "churchId", value: admin.churchId },
+      { field: "sourceId", value: unknownSchedule.scheduleId },
+    ])).length, 0);
+  } finally {
+    setSendEmailForServerTests(null);
+  }
+});
+
 test("assignment email uses the church timezone across UTC midnight", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("send_timezone_midnight");
@@ -16489,6 +16595,17 @@ test("team-owned entity mutations authorize source and target teams", async (t) 
   assert.equal((await run(authHandlers.updateTeamPosition, scoped, { positionId: movableWorshipPosition.positionId }, { name: "Move denied", teamId: av.teamId })).statusCode, 403);
   assert.equal((await run(authHandlers.updateTeamPosition, bothTeams, { positionId: movableWorshipPosition.positionId }, { name: "Move allowed", teamId: av.teamId })).statusCode, 200);
   assert.equal((await run(authHandlers.reorderTeamPositions, scoped, {}, { teamId: worship.teamId, positionIds: [worshipPosition.positionId] })).statusCode, 200);
+  const reorderedWorship = await run(authHandlers.reorderTeamPositions, scoped, {}, {
+    teamId: worship.teamId,
+    positionIds: [secondWorshipPosition.positionId, worshipPosition.positionId],
+  });
+  assert.equal(reorderedWorship.statusCode, 200);
+  assert.deepEqual(reorderedWorship.payload.positions.map(({ positionId, order }) => ({ positionId, order })), [
+    { positionId: secondWorshipPosition.positionId, order: 0 },
+    { positionId: worshipPosition.positionId, order: 1 },
+  ]);
+  assert.equal((await getDoc(COLLECTIONS.teamPositions, secondWorshipPosition.positionId)).order, 0);
+  assert.equal((await getDoc(COLLECTIONS.teamPositions, worshipPosition.positionId)).order, 1);
   assert.equal((await run(authHandlers.reorderTeamPositions, scoped, {}, { teamId: av.teamId, positionIds: [avPosition.positionId] })).statusCode, 403);
   assert.equal((await run(authHandlers.archiveTeamPosition, scoped, { positionId: worshipPosition.positionId })).statusCode, 200);
   assert.equal((await run(authHandlers.archiveTeamPosition, scoped, { positionId: avPosition.positionId })).statusCode, 403);

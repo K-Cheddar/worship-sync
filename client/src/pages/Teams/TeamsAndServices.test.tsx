@@ -178,14 +178,16 @@ jest.mock("../../api/auth", () => ({
   removeTeamScheduleGuest: jest.fn(),
 }));
 
+const mockChurchServiceTimeZone = {
+  status: "ready" as "loading" | "ready" | "error",
+  timeZone: "America/New_York" as string | null,
+  isConfigured: true,
+  legacyTimeZoneSuggestion: null,
+  refresh: jest.fn().mockResolvedValue(undefined),
+};
+
 jest.mock("../../context/churchServiceTimeZone", () => ({
-  useChurchServiceTimeZone: () => ({
-    status: "ready",
-    timeZone: "America/New_York",
-    isConfigured: true,
-    legacyTimeZoneSuggestion: null,
-    refresh: jest.fn(),
-  }),
+  useChurchServiceTimeZone: () => mockChurchServiceTimeZone,
 }));
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
@@ -541,6 +543,9 @@ describe("Teams", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockChurchServiceTimeZone.status = "ready";
+    mockChurchServiceTimeZone.timeZone = "America/New_York";
+    mockChurchServiceTimeZone.isConfigured = true;
     lazyRouteTestControl.reset();
     originalLocationHref = window.location.href;
     originalMatchMedia = window.matchMedia;
@@ -661,6 +666,32 @@ describe("Teams", () => {
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     await waitForTeamsBootstrap();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps unrelated sections navigable when the church time zone request fails", async () => {
+    const user = userEvent.setup();
+    mockChurchServiceTimeZone.status = "error";
+    mockChurchServiceTimeZone.timeZone = null;
+    mockChurchServiceTimeZone.isConfigured = false;
+    mockChurchServiceTimeZone.refresh.mockRejectedValue(new Error("offline"));
+
+    renderTeams("/teams-and-services/members");
+    expect(
+      await screen.findAllByRole("button", { name: /Create member/i }),
+    ).not.toHaveLength(0);
+    expect(screen.queryByText(/Could not load the church time zone/i)).not.toBeInTheDocument();
+
+    await openTeamsNavigationIfNeeded(user);
+    await user.click(screen.getByRole("link", { name: /^Services$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Service Plans dates are unavailable/i);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(mockChurchServiceTimeZone.refresh).toHaveBeenCalledTimes(1);
+
+    await openTeamsNavigationIfNeeded(user);
+    await user.click(screen.getByRole("link", { name: /^Members$/i }));
+    expect(
+      await screen.findAllByRole("button", { name: /Create member/i }),
+    ).not.toHaveLength(0);
   });
 
   it("shows the selected route shell while a lazy section import is pending", async () => {

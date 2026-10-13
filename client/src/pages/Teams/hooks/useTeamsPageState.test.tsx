@@ -58,6 +58,41 @@ const flushMicrotasks = async () =>
     await Promise.resolve();
   });
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const makePositionBootstrap = () => ({
+  ...emptyBootstrap,
+  teams: [
+    { teamId: "worship", churchId: "church-1", name: "Worship" },
+    { teamId: "av", churchId: "church-1", name: "AV" },
+  ],
+  positions: [
+    { churchId: "church-1", positionId: "worship-a", teamId: "worship", name: "Keys", order: 0 },
+    { churchId: "church-1", positionId: "worship-b", teamId: "worship", name: "Vocals", order: 1 },
+    { churchId: "church-1", positionId: "av-a", teamId: "av", name: "Camera", order: 0 },
+    { churchId: "church-1", positionId: "av-b", teamId: "av", name: "Audio", order: 1 },
+  ],
+});
+
+const positionsResponse = (teamId: string, positionIds: string[]) => ({
+  success: true,
+  positions: positionIds.map((positionId, order) => ({
+    churchId: "church-1",
+    positionId,
+    teamId,
+    name: positionId,
+    order,
+  })),
+});
+
 describe("useTeamsPageState bootstrap recovery", () => {
   let churchId: string;
   let canUseTeamsLiveSync: boolean;
@@ -279,6 +314,165 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
+  it("serializes rapid reorders for one team and persists the latest selected order", async () => {
+    const bootstrap = makePositionBootstrap();
+    mockGetTeamsBootstrap.mockResolvedValue(bootstrap as never);
+    const firstSave = deferred<ReturnType<typeof positionsResponse>>();
+    const secondSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset();
+    reorderMock
+      .mockReturnValueOnce(firstSave.promise as never)
+      .mockReturnValueOnce(secondSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let firstRequest!: Promise<void>;
+    let secondRequest!: Promise<void>;
+    act(() => {
+      firstRequest = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(1);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
+
+    act(() => {
+      secondRequest = result.current.reorderPositions("worship", ["worship-a", "worship-b"]);
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    expect(reorderMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstSave.resolve(positionsResponse("worship", ["worship-b", "worship-a"]));
+      await firstRequest;
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(2);
+    expect(reorderMock).toHaveBeenNthCalledWith(2, "church-1", {
+      teamId: "worship",
+      positionIds: ["worship-a", "worship-b"],
+    });
+
+    await act(async () => {
+      secondSave.resolve(positionsResponse("worship", ["worship-a", "worship-b"]));
+      await secondRequest;
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    unmount();
+  });
+
+  it("keeps a newer reorder when an earlier save fails", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(makePositionBootstrap() as never);
+    const failedSave = deferred<ReturnType<typeof positionsResponse>>();
+    const latestSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset();
+    reorderMock
+      .mockReturnValueOnce(failedSave.promise as never)
+      .mockReturnValueOnce(latestSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let earlierRequest!: Promise<void>;
+    let latestRequest!: Promise<void>;
+    act(() => {
+      earlierRequest = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+      latestRequest = result.current.reorderPositions("worship", ["worship-a", "worship-b"]);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      failedSave.reject(new Error("network error"));
+      await earlierRequest;
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+
+    await act(async () => {
+      latestSave.resolve(positionsResponse("worship", ["worship-a", "worship-b"]));
+      await latestRequest;
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    unmount();
+  });
+
+  it("reorders different teams independently when responses resolve in the opposite order", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(makePositionBootstrap() as never);
+    const worshipSave = deferred<ReturnType<typeof positionsResponse>>();
+    const avSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset();
+    reorderMock
+      .mockReturnValueOnce(worshipSave.promise as never)
+      .mockReturnValueOnce(avSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let worshipRequest!: Promise<void>;
+    let avRequest!: Promise<void>;
+    act(() => {
+      worshipRequest = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+      avRequest = result.current.reorderPositions("av", ["av-b", "av-a"]);
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      avSave.resolve(positionsResponse("av", ["av-b", "av-a"]));
+      await avRequest;
+    });
+    await act(async () => {
+      worshipSave.resolve(positionsResponse("worship", ["worship-b", "worship-a"]));
+      await worshipRequest;
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "av")
+      .map((position) => position.positionId)).toEqual(["av-b", "av-a"]);
+    unmount();
+  });
+
+  it("restores the authoritative team order when the latest reorder fails", async () => {
+    const bootstrap = makePositionBootstrap();
+    mockGetTeamsBootstrap.mockResolvedValue(bootstrap as never);
+    const failedSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset().mockReturnValueOnce(failedSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+    });
+    await flushMicrotasks();
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
+
+    await act(async () => {
+      failedSave.reject(new Error("network error"));
+      await request;
+    });
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    unmount();
+  });
+
   it("clears a previously authorized projection after a bootstrap 403 and stops retrying", async () => {
     canUseTeamsLiveSync = false;
     mockGetTeamsBootstrap.mockResolvedValueOnce({
@@ -353,6 +547,37 @@ describe("useTeamsPageState bootstrap recovery", () => {
       type: "service-plan-template-removed",
       templateId: "template-1",
     });
+    unmount();
+  });
+
+  it("refreshes position order after a reorder from another editor", async () => {
+    const initial = makePositionBootstrap();
+    const reordered = {
+      ...initial,
+      positions: initial.positions.map((position) => ({
+        ...position,
+        order: position.positionId === "worship-a" ? 1 :
+          position.positionId === "worship-b" ? 0 : position.order,
+      })),
+    };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce(initial as never)
+      .mockResolvedValueOnce(reordered as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+
+    act(() => mockConnections[0].handlers.onMessage(
+      JSON.stringify({ type: "team-positions-reordered" }),
+    ));
+    await flushMicrotasks();
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
     unmount();
   });
 
