@@ -13,11 +13,12 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import { ToastProvider } from "../../../context/toastContext";
-import { TeamsNavigationGuardProvider } from "../TeamsNavigationGuardContext";
+import { TeamsNavigationGuardProvider, useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import ScheduleEditForm from "./ScheduleEditForm";
 import { buildScheduleCopyDraft } from "./scheduleDraftUtils";
 
 jest.mock("../../../api/auth", () => ({
+  AuthApiError: class AuthApiError extends Error {},
   archiveTeamSchedule: jest.fn(),
   createTeamSchedule: jest.fn(),
   deleteTeamSchedule: jest.fn(),
@@ -25,6 +26,11 @@ jest.mock("../../../api/auth", () => ({
 }));
 
 const mockUpdateTeamSchedule = jest.mocked(updateTeamSchedule);
+
+const NavigationProbe = () => {
+  const { requestNavigation } = useTeamsNavigationGuard();
+  return <button type="button" onClick={() => requestNavigation("/elsewhere")}>Leave schedule editor</button>;
+};
 
 describe("ScheduleEditForm", () => {
   beforeEach(() => {
@@ -121,6 +127,7 @@ describe("ScheduleEditForm", () => {
               setSelectedScheduleId={jest.fn()}
               onCancel={onCancel}
             />
+            <NavigationProbe />
           </ToastProvider>
         </TeamsNavigationGuardProvider>
       </MemoryRouter>,
@@ -148,7 +155,89 @@ describe("ScheduleEditForm", () => {
     });
     await waitFor(() => expect(onScheduleSaved).toHaveBeenCalledTimes(2));
     expect(onScheduleSaved).toHaveBeenNthCalledWith(2, authoritativeSchedule);
+    expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Leave schedule editor" }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("does not select the saved schedule after the editor moves to another schedule", async () => {
+    const user = userEvent.setup();
+    const service: TeamService = {
+      id: "service-sunday", serviceId: "service-sunday", churchId: "church-1",
+      name: "Sunday", timerType: "countdown", reccurence: "one_time",
+      dateTimeISO: "2026-07-05T10:00:00.000Z",
+    };
+    const firstSchedule: TeamSchedule = {
+      scheduleId: "schedule-first",
+      churchId: "church-1",
+      name: "First schedule",
+      teamId: "team-main",
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: [service.serviceId],
+      occurrences: [],
+      assignments: {},
+    };
+    const secondSchedule: TeamSchedule = {
+      ...firstSchedule,
+      scheduleId: "schedule-second",
+      name: "Second schedule",
+    };
+    const team: TeamRecord = {
+      teamId: "team-main", churchId: "church-1", name: "Main Team", memberIds: [],
+    };
+    let resolveSave: (value: Awaited<ReturnType<typeof updateTeamSchedule>>) => void = () => undefined;
+    mockUpdateTeamSchedule.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveSave = resolve; }),
+    );
+    const setSelectedScheduleId = jest.fn();
+    const renderEditor = (schedule: TeamSchedule) => (
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              mode="edit"
+              draftKey={schedule.scheduleId}
+              selectedSchedule={schedule}
+              positions={[]}
+              defaultTeamId={team.teamId}
+              defaultServiceIds={[service.serviceId]}
+              defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}
+              services={[service]}
+              activeTeams={[team]}
+              schedules={[firstSchedule, secondSchedule]}
+              seedSchedules={[firstSchedule, secondSchedule]}
+              churchId="church-1"
+              canEdit
+              onDraftChange={jest.fn()}
+              onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
+              onScheduleSaved={jest.fn()}
+              onScheduleRemoved={jest.fn()}
+              setSelectedScheduleId={setSelectedScheduleId}
+              onCancel={jest.fn()}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>
+    );
+    const view = render(renderEditor(firstSchedule));
+
+    await user.clear(screen.getByRole("textbox", { name: /^Name:?$/i }));
+    await user.type(screen.getByRole("textbox", { name: /^Name:?$/i }), "First edited");
+    await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+    await waitFor(() => expect(mockUpdateTeamSchedule).toHaveBeenCalledTimes(1));
+
+    view.rerender(renderEditor(secondSchedule));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Second schedule"));
+    await act(async () => resolveSave({
+      success: true,
+      schedule: { ...firstSchedule, name: "First edited" },
+    }));
+
+    expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Second schedule");
+    expect(setSelectedScheduleId).not.toHaveBeenCalled();
   });
 
   it("limits generated-period editing to metadata and submits its stored identity", async () => {
@@ -341,6 +430,134 @@ describe("ScheduleEditForm", () => {
     expect(onDraftClear).toHaveBeenCalledWith("new:custom");
     expect(setSelectedScheduleId).toHaveBeenCalledWith(created.scheduleId);
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("removes the optimistic schedule when a create request fails and keeps the draft", async () => {
+    const user = userEvent.setup();
+    jest.mocked(createTeamSchedule).mockRejectedValueOnce(new Error("Create failed"));
+    const service: TeamService = {
+      id: "service-sunday", serviceId: "service-sunday", churchId: "church-1",
+      name: "Sunday", timerType: "countdown", reccurence: "one_time",
+      dateTimeISO: "2026-07-05T10:00:00.000Z",
+    };
+    const team: TeamRecord = {
+      teamId: "team-main", churchId: "church-1", name: "Main Team", memberIds: [],
+    };
+    const onScheduleSaved = jest.fn();
+    const onScheduleRemoved = jest.fn();
+    render(
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              mode="create-custom"
+              draftKey="new:custom"
+              selectedSchedule={null}
+              positions={[]}
+              defaultTeamId={team.teamId}
+              defaultServiceIds={[service.serviceId]}
+              defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}
+              services={[service]}
+              activeTeams={[team]}
+              schedules={[]}
+              seedSchedules={[]}
+              churchId="church-1"
+              canEdit
+              onDraftChange={jest.fn()}
+              onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
+              onScheduleSaved={onScheduleSaved}
+              onScheduleRemoved={onScheduleRemoved}
+              setSelectedScheduleId={jest.fn()}
+              onCancel={jest.fn()}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: /^Name:?$/i }), "Recoverable draft");
+    await user.click(screen.getByRole("button", { name: /Create schedule/i }));
+    await waitFor(() => expect(createTeamSchedule).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onScheduleRemoved).toHaveBeenCalledWith(
+      expect.stringMatching(/^local-schedule-/),
+    ));
+
+    expect(onScheduleSaved).toHaveBeenCalledWith(expect.objectContaining({
+      name: "Recoverable draft",
+      scheduleId: expect.stringMatching(/^local-schedule-/),
+    }));
+    expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Recoverable draft");
+  });
+
+  it("rolls a failed schedule save back to a newer incoming server record", async () => {
+    const user = userEvent.setup();
+    const service: TeamService = {
+      id: "service-sunday", serviceId: "service-sunday", churchId: "church-1",
+      name: "Sunday", timerType: "countdown", reccurence: "one_time",
+      dateTimeISO: "2026-07-05T10:00:00.000Z",
+    };
+    const schedule: TeamSchedule = {
+      scheduleId: "schedule-remote",
+      churchId: "church-1",
+      name: "Original schedule",
+      teamId: "team-main",
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      serviceIds: [service.serviceId],
+      occurrences: [],
+      assignments: {},
+    };
+    const remoteSchedule = { ...schedule, name: "Remote update" };
+    const team: TeamRecord = {
+      teamId: "team-main", churchId: "church-1", name: "Main Team", memberIds: [],
+    };
+    let rejectSave: (error: Error) => void = () => undefined;
+    mockUpdateTeamSchedule.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectSave = reject; }),
+    );
+    const onScheduleSaved = jest.fn();
+    const renderEditor = (selectedSchedule: TeamSchedule) => (
+      <MemoryRouter>
+        <TeamsNavigationGuardProvider>
+          <ToastProvider>
+            <ScheduleEditForm
+              mode="edit"
+              draftKey={schedule.scheduleId}
+              selectedSchedule={selectedSchedule}
+              positions={[]}
+              defaultTeamId={team.teamId}
+              defaultServiceIds={[service.serviceId]}
+              defaultRange={{ startDate: "2026-07-01", endDate: "2026-07-31" }}
+              services={[service]}
+              activeTeams={[team]}
+              schedules={[selectedSchedule]}
+              seedSchedules={[selectedSchedule]}
+              churchId="church-1"
+              canEdit
+              onDraftChange={jest.fn()}
+              onDraftFlush={jest.fn()}
+              onDraftClear={jest.fn()}
+              onScheduleSaved={onScheduleSaved}
+              onScheduleRemoved={jest.fn()}
+              setSelectedScheduleId={jest.fn()}
+              onCancel={jest.fn()}
+            />
+          </ToastProvider>
+        </TeamsNavigationGuardProvider>
+      </MemoryRouter>
+    );
+    const view = render(renderEditor(schedule));
+
+    await user.clear(screen.getByRole("textbox", { name: /^Name:?$/i }));
+    await user.type(screen.getByRole("textbox", { name: /^Name:?$/i }), "Local edit");
+    await user.click(screen.getByRole("button", { name: /Save schedule/i }));
+    await waitFor(() => expect(mockUpdateTeamSchedule).toHaveBeenCalledTimes(1));
+    view.rerender(renderEditor(remoteSchedule));
+
+    await act(async () => rejectSave(new Error("Save failed")));
+    expect(onScheduleSaved).toHaveBeenNthCalledWith(2, remoteSchedule);
+    expect(screen.getByRole("textbox", { name: /^Name:?$/i })).toHaveValue("Local edit");
   });
 
   it("points operators to create a team when none exist", () => {

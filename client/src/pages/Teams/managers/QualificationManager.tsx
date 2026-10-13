@@ -87,12 +87,18 @@ const QualificationManager = ({
     description: "",
     icon: "",
   });
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const editorSessionRef = useRef(0);
   const [levelDrafts, setLevelDrafts] = useState<
     Record<string, TeamQualificationLevelPayload>
   >({});
   const [newLevelName, setNewLevelName] = useState("");
   const [newLevelRank, setNewLevelRank] = useState("1");
-  const [levelSavingKey, setLevelSavingKey] = useState("");
+  const [levelSavingKeys, setLevelSavingKeys] = useState<Set<string>>(() => new Set());
+  const newLevelDraftRef = useRef({ name: newLevelName, rank: newLevelRank });
+  newLevelDraftRef.current = { name: newLevelName, rank: newLevelRank };
+  const levelSaveSnapshotsRef = useRef(new Map<string, TeamQualificationLevelPayload | { name: string; rank: string }>());
   // Areas with a save currently in flight, keyed by areaId (or CREATE_SAVING_KEY
   // for a new area). Tracking per-editor keeps the Save spinner on the area
   // actually saving and lets editing continue back-to-back in the background.
@@ -106,6 +112,7 @@ const QualificationManager = ({
   // operator has since switched areas — without rebinding the panel or clobbering
   // the other area's level drafts.
   const editingRef = useRef<TeamQualificationArea | null>(null);
+  const areaSaveSnapshotsRef = useRef(new Map<string, TeamQualificationAreaPayload>());
   useEffect(() => {
     editingRef.current = editing;
   }, [editing]);
@@ -175,17 +182,17 @@ const QualificationManager = ({
     );
     setNewLevelName("");
     setNewLevelRank(String((areaLevelList.at(-1)?.rank || 0) + 1));
-    setLevelSavingKey("");
   };
 
   const reset = () => {
+    editorSessionRef.current += 1;
+    editingRef.current = null;
     setEditing(null);
     setShowCreate(false);
     setDraft({ teamId: creationTeamId, name: "", description: "", icon: "" });
     setLevelDrafts({});
     setNewLevelName("");
     setNewLevelRank("1");
-    setLevelSavingKey("");
   };
 
   const cancelEditing = () => {
@@ -198,6 +205,8 @@ const QualificationManager = ({
 
   const openAreaEditor = (area: TeamQualificationArea) => {
     if (!canEditTeam(area.teamId)) return;
+    editorSessionRef.current += 1;
+    editingRef.current = area;
     setShowFilters(false);
     setEditing(area);
     setSelectedTeamId(area.teamId);
@@ -250,6 +259,9 @@ const QualificationManager = ({
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
+    const editorSession = editorSessionRef.current;
+    const submittedDraft = draft;
+    areaSaveSnapshotsRef.current.set(savingKey, submittedDraft);
     setSavingIds((prev) => new Set(prev).add(savingKey));
     const localAreaId = wasEditing?.areaId || `local-area-${generateRandomId()}`;
     const payload: TeamQualificationAreaPayload = {
@@ -272,24 +284,36 @@ const QualificationManager = ({
       const response = wasEditing
         ? await updateTeamQualificationArea(churchId, wasEditing.areaId, payload)
         : await createTeamQualificationArea(churchId, payload);
-      if (!wasEditing) {
-        onAreaSaved(response.area, localAreaId);
-      }
-      // Saving commits data; Back or Cancel is responsible for leaving this editor.
-      if (wasEditing) {
-        if (editingRef.current?.areaId === wasEditing.areaId) {
+      onAreaSaved(response.area, wasEditing ? undefined : localAreaId);
+      if (editorSessionRef.current === editorSession) {
+        if (wasEditing) {
+          if (editingRef.current?.areaId === wasEditing.areaId) {
+            editingRef.current = response.area;
+            setEditing(response.area);
+          }
+        } else if (editingRef.current === null) {
+          // Newly created and still on the create form: adopt the created area so
+          // its levels can be added and a subsequent Save updates it.
+          editingRef.current = response.area;
           setEditing(response.area);
+          resetLevelDrafts(response.area);
         }
-      } else if (editingRef.current === null) {
-        // Newly created and still on the create form: adopt the created area so
-        // its levels can be added and a subsequent Save updates it.
-        setEditing(response.area);
-        resetLevelDrafts(response.area);
+        if (JSON.stringify(draftRef.current) === JSON.stringify(submittedDraft)) {
+          const savedDraft: TeamQualificationAreaPayload = {
+            teamId: response.area.teamId,
+            name: response.area.name,
+            description: response.area.description || "",
+            icon: response.area.icon || "",
+          };
+          draftRef.current = savedDraft;
+          setDraft(savedDraft);
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification area.");
       onArchived();
     } finally {
+      areaSaveSnapshotsRef.current.delete(savingKey);
       setSavingIds((prev) => {
         const next = new Set(prev);
         next.delete(savingKey);
@@ -302,7 +326,7 @@ const QualificationManager = ({
   // currently open, so a background save elsewhere never spins or disables it.
   const currentEditorKey = editing ? editing.areaId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
-  const hasPendingAreaChanges = editing
+  const areaDraftDiffersFromSaved = editing
     ? JSON.stringify(draft) !==
     JSON.stringify({
       teamId: editing.teamId,
@@ -312,6 +336,12 @@ const QualificationManager = ({
     })
     : JSON.stringify(draft) !==
     JSON.stringify({ teamId: creationTeamId, name: "", description: "", icon: "" });
+  const pendingAreaSaveDraft = areaSaveSnapshotsRef.current.get(currentEditorKey);
+  const hasPendingAreaChanges = areaDraftDiffersFromSaved && !(
+    savingIds.has(currentEditorKey) &&
+    pendingAreaSaveDraft &&
+    JSON.stringify(draft) === JSON.stringify(pendingAreaSaveDraft)
+  );
   const savedLevelDrafts = editing
     ? Object.fromEntries(
       levels
@@ -338,10 +368,33 @@ const QualificationManager = ({
       ) + 1,
     )
     : "1";
-  const hasPendingLevelChanges =
-    JSON.stringify(levelDrafts) !== JSON.stringify(savedLevelDrafts) ||
-    Boolean(newLevelName) ||
-    newLevelRank !== defaultNewLevelRank;
+  const hasChangedLevel = Object.entries(savedLevelDrafts).some(([levelId, savedDraft]) => {
+    const currentDraft = levelDrafts[levelId] || savedDraft;
+    if (JSON.stringify(currentDraft) === JSON.stringify(savedDraft)) return false;
+    const submittedDraft = levelSaveSnapshotsRef.current.get(`${editing?.areaId}:${levelId}`);
+    return !(
+      levelSavingKeys.has(`${editing?.areaId}:${levelId}`) &&
+      submittedDraft &&
+      JSON.stringify(currentDraft) === JSON.stringify(submittedDraft)
+    );
+  });
+  const newLevelDiffersFromSaved = Boolean(newLevelName) || newLevelRank !== defaultNewLevelRank;
+  const submittedNewLevel = editing
+    ? levelSaveSnapshotsRef.current.get(`${editing.areaId}:new`)
+    : undefined;
+  const hasPendingLevelChanges = hasChangedLevel || (
+    newLevelDiffersFromSaved && !(
+      editing &&
+      levelSavingKeys.has(`${editing.areaId}:new`) &&
+      submittedNewLevel &&
+      "name" in submittedNewLevel &&
+      newLevelName === submittedNewLevel.name &&
+      newLevelRank === submittedNewLevel.rank
+    )
+  );
+  const isNewLevelSaving = Boolean(
+    editing && levelSavingKeys.has(`${editing.areaId}:new`),
+  );
   // The draft starts empty while the list is displayed, so it can differ from
   // the default team before an editor has ever been opened. Only an open form
   // represents work that the operator could discard.
@@ -351,10 +404,11 @@ const QualificationManager = ({
 
   const saveLevel = async (levelId?: string) => {
     if (!canEditArea || !editing || !canEditTeam(editing.teamId)) return;
+    const saveAreaId = editing.areaId;
     const payload = levelId
       ? levelDrafts[levelId]
       : {
-        areaId: editing.areaId,
+        areaId: saveAreaId,
         name: newLevelName.trim(),
         rank: Number(newLevelRank),
         description: "",
@@ -362,12 +416,16 @@ const QualificationManager = ({
     if (!payload?.areaId || !payload.name.trim() || !Number.isFinite(payload.rank)) {
       return;
     }
-    const savingKey = levelId ? `level:${levelId}` : "level:new";
-    setLevelSavingKey(savingKey);
+    const savingKey = `${saveAreaId}:${levelId || "new"}`;
+    if (levelSavingKeys.has(savingKey)) return;
+    const submittedNewLevel = { name: newLevelName, rank: newLevelRank };
+    const submittedLevelDraft = levelId ? { ...payload } : null;
+    levelSaveSnapshotsRef.current.set(savingKey, submittedLevelDraft || submittedNewLevel);
+    setLevelSavingKeys((current) => new Set(current).add(savingKey));
     const localLevel: TeamQualificationLevel = {
       churchId,
       levelId: levelId || `local-level-${generateRandomId()}`,
-      areaId: payload.areaId,
+      areaId: saveAreaId,
       name: payload.name.trim(),
       description: payload.description || "",
       rank: payload.rank,
@@ -375,30 +433,53 @@ const QualificationManager = ({
         ? levels.find((level) => level.levelId === levelId)?.archivedAt || null
         : null,
     };
-    onLevelSaved(localLevel);
     try {
       const response = levelId
         ? await updateTeamQualificationLevel(churchId, levelId, payload)
         : await createTeamQualificationLevel(churchId, payload);
       if (!levelId) {
         onLevelSaved(response.level, localLevel.levelId);
-        setNewLevelName("");
-        setNewLevelRank(String(payload.rank + 1));
+      } else {
+        onLevelSaved(response.level);
       }
-      setLevelDrafts((current) => ({
-        ...current,
-        [response.level.levelId]: {
+      if (editingRef.current?.areaId === saveAreaId) {
+        const savedLevelDraft: TeamQualificationLevelPayload = {
           areaId: response.level.areaId,
           name: response.level.name,
           description: response.level.description || "",
           rank: response.level.rank,
-        },
-      }));
+        };
+        setLevelDrafts((current) => {
+          if (editingRef.current?.areaId !== saveAreaId) return current;
+          if (levelId) {
+            const currentDraft = current[levelId];
+            if (
+              !submittedLevelDraft ||
+              JSON.stringify(currentDraft) !== JSON.stringify(submittedLevelDraft)
+            ) return current;
+          }
+          return { ...current, [response.level.levelId]: savedLevelDraft };
+        });
+        if (
+          !levelId &&
+          newLevelDraftRef.current.name === submittedNewLevel.name &&
+          newLevelDraftRef.current.rank === submittedNewLevel.rank
+        ) {
+          setNewLevelName("");
+          setNewLevelRank(String(payload.rank + 1));
+        }
+      }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this qualification level.");
       onArchived();
     } finally {
-      setLevelSavingKey("");
+      levelSaveSnapshotsRef.current.delete(savingKey);
+      setLevelSavingKeys((current) => {
+        if (!current.has(savingKey)) return current;
+        const next = new Set(current);
+        next.delete(savingKey);
+        return next;
+      });
     }
   };
 
@@ -591,6 +672,7 @@ const QualificationManager = ({
                   description: level.description || "",
                   rank: level.rank,
                 });
+                const isLevelSaving = levelSavingKeys.has(`${editing.areaId}:${level.levelId}`);
                 return (
                   <div
                     key={level.levelId}
@@ -626,18 +708,18 @@ const QualificationManager = ({
                     <Button
                       variant="tertiary"
                       aria-label={
-                        levelSavingKey === `level:${level.levelId}`
+                        isLevelSaving
                           ? `Saving ${level.name}`
                           : !hasPendingLevelChanges
                             ? `Saved ${level.name}`
                             : `Save ${level.name}`
                       }
-                      aria-busy={levelSavingKey === `level:${level.levelId}` || undefined}
-                      disabled={!canEditArea || levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges}
-                      svg={levelSavingKey === `level:${level.levelId}` || !hasPendingLevelChanges ? undefined : Save}
+                      aria-busy={isLevelSaving || undefined}
+                      disabled={!canEditArea || isLevelSaving || !hasPendingLevelChanges}
+                      svg={isLevelSaving || !hasPendingLevelChanges ? undefined : Save}
                       onClick={() => void saveLevel(level.levelId)}
                     >
-                      {levelSavingKey === `level:${level.levelId}` ? "Saving…" : !hasPendingLevelChanges ? <><Check aria-hidden="true" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}
+                      {isLevelSaving ? "Saving…" : !hasPendingLevelChanges ? <><Check aria-hidden="true" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}
                     </Button>
                   </div>
                 );
@@ -664,11 +746,11 @@ const QualificationManager = ({
                 <Button
                   variant="secondary"
                   svg={Plus}
-                  aria-busy={levelSavingKey === "level:new" || undefined}
-                  disabled={!canEditArea || levelSavingKey === "level:new" || !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))}
+                  aria-busy={isNewLevelSaving || undefined}
+                  disabled={!canEditArea || isNewLevelSaving || !newLevelName.trim() || !Number.isFinite(Number(newLevelRank))}
                   onClick={() => void saveLevel()}
                 >
-                  {levelSavingKey === "level:new" ? "Creating…" : "Add level"}
+                  {isNewLevelSaving ? "Creating…" : "Add level"}
                 </Button>
               </div>
             </div>

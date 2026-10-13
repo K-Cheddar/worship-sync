@@ -330,6 +330,106 @@ describe("MemberManager member preferences", () => {
     expect(screen.getByLabelText(/^First name/i)).toHaveValue("Sky");
   });
 
+  it("does not apply Member A's delayed save to Member B after navigation", async () => {
+    const user = userEvent.setup();
+    const secondMember: TeamRosterMember = {
+      ...worshipMember,
+      memberId: "member-2",
+      firstName: "Jo",
+      lastName: "Smith",
+    };
+    let resolveUpdate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockUpdateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveUpdate = resolve; }),
+    );
+    renderManager({
+      data: joinedData({ members: [worshipMember, secondMember] }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rae saved");
+    await user.click(saveButton());
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+
+    await openMember(user, /Jo Smith/);
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("Jo");
+
+    await act(async () => resolveUpdate({
+      success: true,
+      member: { ...worshipMember, firstName: "Rae saved" },
+    }));
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("Jo");
+  });
+
+  it("preserves newer edits made to the same member while a save is pending", async () => {
+    const user = userEvent.setup();
+    let resolveUpdate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockUpdateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveUpdate = resolve; }),
+    );
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rae submitted");
+    await user.click(saveButton());
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+
+    await user.clear(screen.getByLabelText(/^Last name/));
+    await user.type(screen.getByLabelText(/^Last name/), "Newer");
+    await act(async () => resolveUpdate({
+      success: true,
+      member: { ...worshipMember, firstName: "Rae submitted", lastName: "Kim" },
+    }));
+
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("Rae submitted");
+    expect(screen.getByLabelText(/^Last name/)).toHaveValue("Newer");
+  });
+
+  it("keeps a member's edits recoverable when an update fails", async () => {
+    const user = userEvent.setup();
+    let rejectUpdate: (error: Error) => void = () => undefined;
+    mockUpdateTeamRosterMember.mockImplementation(
+      () => new Promise((_, reject) => { rejectUpdate = reject; }),
+    );
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^Last name/));
+    await user.type(screen.getByLabelText(/^Last name/), "Submitted");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    await act(async () => rejectUpdate(new Error("Save failed")));
+
+    expect(screen.getByLabelText(/^Last name/)).toHaveValue("Submitted");
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
+    expect(screen.getByText("Save failed")).toBeInTheDocument();
+  });
+
+  it("does not adopt a completed create into a newly opened create form", async () => {
+    const user = userEvent.setup();
+    let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockCreateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+    renderManager();
+    await openCreateForm(user);
+    await fillName(user);
+    await user.click(saveButton());
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledTimes(1));
+
+    await openCreateForm(user);
+    expect(screen.getByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("");
+
+    await act(async () => resolveCreate({
+      success: true,
+      member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
+    }));
+    expect(screen.getByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("");
+  });
+
   it("formats a U.S. phone number while it is entered", async () => {
     const user = userEvent.setup();
     renderManager();
@@ -833,6 +933,68 @@ describe("MemberManager team membership", () => {
     expect(body.teamIds).toEqual([]);
     // The emptied roster comes back so the Teams tab updates immediately.
     await waitFor(() => expect(onTeamSaved).toHaveBeenCalledWith(worshipTeam));
+  });
+
+  it("keeps a removed team unchecked and clean after the server confirms its roster", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, positionIds: [] },
+      teams: [{ ...worshipTeam, memberIds: [] }],
+    });
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.click(worshipTeamCheckbox());
+    await user.click(saveButton());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(worshipTeamCheckbox()).not.toBeChecked();
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a newly added team selected after the server confirms its roster", async () => {
+    const user = userEvent.setup();
+    const memberWithoutPositions = { ...worshipMember, positionIds: [] };
+    const joinedMedia = { ...mediaTeam, memberIds: [memberWithoutPositions.memberId] };
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: memberWithoutPositions,
+      teams: [joinedMedia],
+    });
+    renderManager({
+      data: joinedData({
+        members: [memberWithoutPositions],
+        positions: [vocalPosition, producerPosition],
+        teams: [{ ...worshipTeam, memberIds: [memberWithoutPositions.memberId] }, mediaTeam],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
+    await user.click(saveButton());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toBeChecked();
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  });
+
+  it("uses the existing roster baseline when a successful save omits unchanged teams", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, firstName: "Rachel" },
+    });
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rachel");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(worshipTeamCheckbox()).toBeChecked();
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
   });
 
   it("applies the rosters the server changed when saving", async () => {

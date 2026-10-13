@@ -1,7 +1,13 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType, SVGProps } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import {
+  HashRouter,
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
 import TeamsAndServices from "./TeamsAndServices";
 import { TeamsPageProvider } from "./TeamsPageContext";
@@ -48,6 +54,39 @@ import { calendarMonthRange, shiftRange } from "./rangeSelection";
 import { setServerTimeOffset } from "../../utils/serverTime";
 import { serviceDateTimeInTimeZone } from "../../utils/teamScheduleOccurrences";
 
+jest.mock("../../utils/lazyRoute", () => {
+  const react = jest.requireActual("react") as typeof import("react");
+  const testControl = {
+    delayNextImport: false,
+    delayedImports: [] as Array<() => Promise<void>>,
+    reset: () => {
+      testControl.delayNextImport = false;
+      testControl.delayedImports.length = 0;
+    },
+  };
+
+  return {
+    lazyRoute: <T extends import("react").ComponentType<any>>(
+      load: () => Promise<{ default: T }>,
+    ) => {
+      return react.lazy(() => {
+        if (!testControl.delayNextImport) return load();
+        testControl.delayNextImport = false;
+        return new Promise<{ default: T }>((resolve, reject) => {
+          testControl.delayedImports.push(async () => {
+            try {
+              resolve(await load());
+            } catch (error) {
+              reject(error);
+            }
+          });
+        });
+      });
+    },
+    __testControl: testControl,
+  };
+});
+
 let mockState: unknown;
 const mockDispatch = jest.fn();
 let originalMatchMedia: typeof window.matchMedia;
@@ -65,9 +104,17 @@ jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
   <div>User</div>
 ));
 
-jest.mock("../../components/HomeToolbarMenu/HomeToolbarMenu", () => () => (
-  <button type="button">Menu</button>
-));
+jest.mock("../../components/HomeToolbarMenu/HomeToolbarMenu", () => {
+  const react = jest.requireActual("react") as typeof import("react");
+  return ({
+    mobileMenuRenderer,
+  }: {
+    mobileMenuRenderer?: (menuItems: import("../../types").MenuItemType[]) => import("react").ReactNode;
+  }) =>
+    window.matchMedia("(max-width: 640px)").matches && mobileMenuRenderer
+      ? mobileMenuRenderer([])
+      : react.createElement("button", { type: "button" }, "Menu");
+});
 
 jest.mock("./pages/TeamsFormsPage", () => ({
   __esModule: true,
@@ -168,6 +215,12 @@ const mockCreateTeamRosterMember = jest.mocked(createTeamRosterMember);
 const mockCreateTeamSchedule = jest.mocked(createTeamSchedule);
 const mockAddTeamSchedulePositionSlot = jest.mocked(addTeamSchedulePositionSlot);
 const mockUpdateTeam = jest.mocked(updateTeam);
+const lazyRouteTestControl = jest.requireMock("../../utils/lazyRoute")
+  .__testControl as {
+    delayNextImport: boolean;
+    delayedImports: Array<() => Promise<void>>;
+    reset: () => void;
+  };
 const sundayOccurrenceId = "service-sunday@2026-07-05T10:00:00.000Z";
 
 type TeamsBootstrapResponse = Awaited<ReturnType<typeof getTeamsBootstrap>>;
@@ -397,6 +450,24 @@ const renderTeams = (
     </MemoryRouter>,
   );
 
+const renderTeamsWithHashRouter = (initialPath: string) => {
+  window.history.replaceState({}, "", `/#${initialPath}`);
+  return render(
+    <HashRouter>
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext() as ContextType<typeof GlobalInfoContext>}
+      >
+        <ToastProvider>
+          <Routes>
+            <Route path="/teams-and-services/*" element={<TeamsAndServices />} />
+          </Routes>
+          <TeamsLocationProbe />
+        </ToastProvider>
+      </GlobalInfoContext.Provider>
+    </HashRouter>,
+  );
+};
+
 const waitForTeamsBootstrap = async () => {
   await screen.findByRole("heading", { name: /^Schedules$/i }, { timeout: 8000 });
 };
@@ -451,6 +522,7 @@ describe("Teams", () => {
   // Coverage + suite load makes lazy routes and schedule grids slower than the
   // default 5s Jest budget; keep headroom without masking real hangs.
   jest.setTimeout(30_000);
+  let originalLocationHref = "";
 
   // Warm the lazy route chunks used by these tests so the first visit does not
   // sit in Suspense while findBy polls — under CI load that race can hang until
@@ -469,6 +541,8 @@ describe("Teams", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    lazyRouteTestControl.reset();
+    originalLocationHref = window.location.href;
     originalMatchMedia = window.matchMedia;
     // Prefer the table layout in these tests so cell roles and grid assertions
     // stay stable; production defaults to the card ("board") layout.
@@ -514,6 +588,7 @@ describe("Teams", () => {
     setServerTimeOffset(0);
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
+    window.history.replaceState({}, "", originalLocationHref);
   });
 
   it("confirms guest removal in-app, preserves cancel and blocks duplicate activation", async () => {
@@ -585,6 +660,121 @@ describe("Teams", () => {
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
     await waitForTeamsBootstrap();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the selected route shell while a lazy section import is pending", async () => {
+    const user = userEvent.setup();
+    renderTeamsWithHashRouter("/teams-and-services/members");
+    expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
+
+    lazyRouteTestControl.delayNextImport = true;
+    await user.click(screen.getByRole("link", { name: "Qualifications" }));
+
+    expect(window.location.hash).toBe("#/teams-and-services/qualifications");
+    expect(document.title).toBe("Qualifications | WorshipSync");
+    expect(screen.getByRole("link", { name: "Qualifications" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getAllByRole("heading", { name: /Qualifications/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("status", { name: "Loading qualifications" })).toBeInTheDocument();
+    expect(lazyRouteTestControl.delayedImports).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /Create area/i })).not.toBeInTheDocument();
+
+    await act(async () => lazyRouteTestControl.delayedImports[0]());
+
+    expect(await screen.findByRole("button", { name: /Create area/i })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading qualifications" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Qualifications" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps rapid section changes on the latest destination while imports resolve", async () => {
+    const user = userEvent.setup();
+    renderTeamsWithHashRouter("/teams-and-services/members");
+    expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
+
+    lazyRouteTestControl.delayNextImport = true;
+    await user.click(screen.getByRole("link", { name: "Templates" }));
+    expect(lazyRouteTestControl.delayedImports).toHaveLength(1);
+    expect(screen.getByRole("status", { name: "Loading templates" })).toBeInTheDocument();
+
+    lazyRouteTestControl.delayNextImport = true;
+    await user.click(screen.getByRole("link", { name: "Team roles" }));
+    expect(screen.getByRole("link", { name: "Team roles" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("status", { name: "Loading team roles" })).toBeInTheDocument();
+    expect(lazyRouteTestControl.delayedImports).toHaveLength(2);
+
+    await act(async () => lazyRouteTestControl.delayedImports[0]());
+    expect(screen.getByRole("status", { name: "Loading team roles" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create role/i })).not.toBeInTheDocument();
+
+    await act(async () => lazyRouteTestControl.delayedImports[1]());
+    expect((await screen.findAllByRole("button", { name: /Create role/i })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("status", { name: "Loading team roles" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Team roles" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores browser Back while a destination import is still pending", async () => {
+    const user = userEvent.setup();
+    renderTeamsWithHashRouter("/teams-and-services/members");
+    expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
+
+    lazyRouteTestControl.delayNextImport = true;
+    await user.click(screen.getByRole("link", { name: "Teams" }));
+    expect(screen.getByRole("status", { name: "Loading teams" })).toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      });
+    });
+
+    expect(window.location.hash).toBe("#/teams-and-services/members");
+    expect(screen.getByRole("link", { name: "Members" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.queryByRole("status", { name: "Loading teams" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Create member/i }).length).toBeGreaterThan(0);
+
+    await act(async () => lazyRouteTestControl.delayedImports[0]());
+    expect(screen.getAllByRole("button", { name: /Create member/i }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /Create team/i })).not.toBeInTheDocument();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the pending destination in mobile navigation and closes its drawer", async () => {
+    const user = userEvent.setup();
+    window.matchMedia = makeMatchMedia(true);
+    renderTeamsWithHashRouter("/teams-and-services/members");
+    expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: /Open menu/i }));
+    const drawer = screen.getByRole("dialog", { name: "Menu" });
+    lazyRouteTestControl.delayNextImport = true;
+    await user.click(within(drawer).getByRole("link", { name: "Messages" }));
+
+    expect(window.location.hash).toBe("#/teams-and-services/messages");
+    expect(screen.queryByRole("dialog", { name: "Menu" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: /Messages/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("status", { name: "Loading messages" })).toBeInTheDocument();
+
+    await act(async () => lazyRouteTestControl.delayedImports[0]());
+    expect(await screen.findByRole("heading", { name: "Volunteer messages" })).toBeInTheDocument();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
   });
 
   it("combines app actions and workspace sections in the mobile menu drawer", async () => {
@@ -693,6 +883,11 @@ describe("Teams", () => {
       expect(
         await screen.findByRole("dialog", { name: /Unsaved changes/i }),
       ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /^Equipment$/i, hidden: true })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(screen.queryByRole("status", { name: "Loading plans" })).not.toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: /^Stay$/i }));
       await waitFor(() => {
@@ -704,6 +899,10 @@ describe("Teams", () => {
       await user.click(screen.getByRole("link", { name: /^Services$/i }));
       await user.click(
         await screen.findByRole("button", { name: /Discard changes/i }),
+      );
+      expect(screen.getByRole("link", { name: /^Services$/i })).toHaveAttribute(
+        "aria-current",
+        "page",
       );
       expect(
         await screen.findByRole("heading", { name: /^Services$/i }),
@@ -1445,9 +1644,11 @@ describe("Teams", () => {
     }));
     renderTeams();
     await waitForTeamsBootstrap();
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
+    await user.click(screen.getByRole("button", { name: /^October 2026 Oct 1/i }));
     const refresh = await screen.findByRole("button", { name: "Refresh schedule" });
     expect(refresh).toBeDisabled();
-    expect(screen.getByText(/This schedule can’t be refreshed safely/)).toBeInTheDocument();
+    expect(screen.getByText(/These saved occurrence rows cannot be matched one-to-one to current services/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Saturday service Camera, Avery/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Saturday service on Oct 31/i })).toBeInTheDocument();
     await user.click(refresh);
@@ -1458,6 +1659,7 @@ describe("Teams", () => {
   it("keeps the saved Praise Team 11 AM Worship Experience schedule across Setup drift", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     const worshipId = "worship-experience";
     const vocalId = "position-vocal";
     const memberId = "member-praise";
@@ -1513,13 +1715,16 @@ describe("Teams", () => {
     renderTeams();
     await waitForTeamsBootstrap();
 
+    await user.click(screen.getByRole("button", { name: "Schedule: October 2026" }));
+    await user.click(screen.getByRole("button", { name: /^October 2026 Oct 1/i }));
+
     expect(await screen.findByRole("button", { name: /Worship Experience Vocal, Morgan/i })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Vocal, (?:Morgan|Empty)/i })).toHaveLength(5);
     expect(screen.queryByRole("button", { name: /Sabbath School & Worship Experience/i })).not.toBeInTheDocument();
     expect(mockEnsureTeamScheduleForPeriod).not.toHaveBeenCalled();
   });
 
-  it("creates a new period from only the team's relevant grouped services", async () => {
+  it("creates a new period with shared grouped services and only the team's staffing needs", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
@@ -1582,7 +1787,6 @@ describe("Teams", () => {
     await waitForTeamsBootstrap();
     const emptyCells = await screen.findAllByRole("button", { name: /Worship Experience Vocal, Empty/i });
     expect(emptyCells).toHaveLength(5);
-    expect(screen.queryByRole("button", { name: /Sabbath School & Worship Experience/i })).not.toBeInTheDocument();
     await user.click(emptyCells[0]);
     await screen.findByRole("combobox", { name: /Worship Experience Vocal/i });
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
@@ -1591,15 +1795,18 @@ describe("Teams", () => {
     expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
     const ensureBody = mockEnsureTeamScheduleForPeriod.mock.calls[0]?.[1];
     if (!ensureBody) throw new Error("The new schedule period was not requested.");
-    expect(ensureBody.serviceIds).toEqual([worshipId]);
+    expect(ensureBody.serviceIds).toEqual(["sabbath-school", worshipId]);
     const generatedOccurrences = ensureBody.occurrences;
     if (!generatedOccurrences) throw new Error("The schedule period had no generated occurrences.");
     expect(generatedOccurrences).toHaveLength(5);
     expect(generatedOccurrences.map((occurrence) => occurrence.name)).toEqual(
-      Array(5).fill("Worship Experience"),
+      Array(5).fill("Sabbath School & Worship Experience"),
     );
+    expect(generatedOccurrences.every((occurrence) =>
+      occurrence.positionRequirements?.every(({ positionId: requirementPositionId }) => requirementPositionId === vocalId),
+    )).toBe(true);
     expect(generatedOccurrences.map((occurrence) => occurrence.startsAt)).toEqual(
-      [3, 10, 17, 24, 31].map((day) => newYorkOctoberStart(day, "11:00")),
+      [3, 10, 17, 24, 31].map((day) => newYorkOctoberStart(day, "10:00")),
     );
   });
 

@@ -251,6 +251,10 @@ const IntakeManager = ({
       }
     : emptyDraft();
   const [draft, setDraft] = useState<TeamIntakeFormPayload>(makeEmptyDraft);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const editorSessionRef = useRef(0);
+  const submitDraftSnapshotsRef = useRef(new Map<number, typeof draft>());
   const [editing, setEditing] = useState<TeamIntakeForm | null>(null);
   const [selectedForm, setSelectedForm] = useState<TeamIntakeForm | null>(null);
   const [smsDeliveryAttempts, setSmsDeliveryAttempts] = useState<
@@ -341,9 +345,15 @@ const IntakeManager = ({
         notesMessage: editing.notesMessage || "",
       }))
     : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(makeEmptyDraft()));
-  useTeamsUnsavedChanges(hasPendingChanges);
+  const submittedDraftForSession = submitDraftSnapshotsRef.current.get(editorSessionRef.current);
+  const hasUnsubmittedChanges = hasPendingChanges && !(
+    submittedDraftForSession &&
+    JSON.stringify(normalizeDraft(draft)) === JSON.stringify(normalizeDraft(submittedDraftForSession))
+  );
+  useTeamsUnsavedChanges(hasUnsubmittedChanges);
 
   const closePanel = () => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(false);
@@ -355,6 +365,7 @@ const IntakeManager = ({
   };
 
   const openCreate = () => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(true);
@@ -366,6 +377,7 @@ const IntakeManager = ({
   };
 
   const openFormSubmissions = (form: TeamIntakeForm) => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(form);
     setShowCreate(false);
@@ -377,6 +389,7 @@ const IntakeManager = ({
   };
 
   const openFormEditor = (form: TeamIntakeForm) => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(form);
     setShowCreate(false);
@@ -404,6 +417,7 @@ const IntakeManager = ({
   };
 
   const cancelFormEdit = () => {
+    editorSessionRef.current += 1;
     if (showCreate) {
       closePanel();
       return;
@@ -652,48 +666,63 @@ const IntakeManager = ({
       showToast("Choose at least one service date for this availability form.", "neutral");
       return;
     }
+    const editingAtSubmit = editing;
+    const submittedDraft = draft;
+    const editorSession = editorSessionRef.current;
+    submitDraftSnapshotsRef.current.set(editorSession, submittedDraft);
     setSaving(true);
     try {
-      if (editing) {
+      let savedForm: TeamIntakeForm;
+      if (editingAtSubmit) {
         const response = await updateTeamIntakeForm(
           churchId,
-          editing.formId,
+          editingAtSubmit.formId,
           payload,
         );
-        const savedForm = editing.purpose === "team_availability"
+        savedForm = editingAtSubmit.purpose === "team_availability"
           ? {
               ...response.form,
               hasIssuedRecipientRequests: Boolean(
-                editing.hasIssuedRecipientRequests ||
+                editingAtSubmit.hasIssuedRecipientRequests ||
                 response.form.hasIssuedRecipientRequests,
               ),
             }
           : response.form;
         onFormSaved(savedForm);
-        setSelectedForm(savedForm);
-        setShowEditForm(false);
-        setShowSendForm(false);
-        setEditing(null);
-        setDraft(makeEmptyDraft());
       } else {
         const response = await createTeamIntakeForm(churchId, payload);
+        savedForm = response.form;
         onFormSaved(response.form);
-        if (response.publicToken) {
+        if (editorSessionRef.current === editorSession && response.publicToken) {
           setLastCreatedPublicUrl(
             response.publicUrl ||
               buildTeamIntakePublicUrl(response.publicToken),
           );
         }
-        setSelectedForm(response.form);
-        setShowCreate(false);
-        setShowEditForm(false);
+      }
+      if (editorSessionRef.current === editorSession) {
+        const hasNewerEdits = JSON.stringify(normalizeDraft(draftRef.current)) !==
+          JSON.stringify(normalizeDraft(submittedDraft));
+        setSelectedForm(savedForm);
         setShowSendForm(false);
-        setEditing(null);
-        setDraft(makeEmptyDraft());
+        if (hasNewerEdits) {
+          // Rebase post-submit edits on the confirmed record and keep them
+          // available for another save.
+          setShowCreate(false);
+          setShowEditForm(true);
+          setEditing(savedForm);
+        } else {
+          editorSessionRef.current += 1;
+          setShowCreate(false);
+          setShowEditForm(false);
+          setEditing(null);
+          setDraft(makeEmptyDraft());
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this intake form.");
     } finally {
+      submitDraftSnapshotsRef.current.delete(editorSession);
       setSaving(false);
     }
   };
@@ -759,6 +788,7 @@ const IntakeManager = ({
       } : upcomingAvailabilitySuggestion.draft);
       return;
     }
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(true);

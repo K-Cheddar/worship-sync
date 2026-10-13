@@ -1,10 +1,11 @@
-import { NavLink } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import Icon from "../../../components/Icon/Icon";
 import { cn } from "@/utils/cnHelper";
+import type { TeamsNavSection } from "../teamsNavSections";
 import {
-  type TeamsNavSection,
-} from "../teamsNavSections";
-import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+  usePendingTeamsNavigation,
+  useTeamsNavigationGuard,
+} from "../TeamsNavigationGuardContext";
 import { useTeamsPage } from "../TeamsPageContext";
 
 type TeamsSidebarNavProps = {
@@ -27,30 +28,37 @@ const SectionLinkList = ({
   collapsed?: boolean;
 }) => {
   const { requestNavigation } = useTeamsNavigationGuard();
+  const { pathname: pendingPathname } = usePendingTeamsNavigation();
+  const location = useLocation();
+  const activePath = pendingPathname || location.pathname;
 
   return (
     <div className={cn("flex flex-col", collapsed ? "items-center gap-2" : "gap-1")}>
-      {sections.map((section) => (
-        <NavLink
-          key={section.path}
-          to={section.path}
-          aria-label={section.label}
-          title={collapsed ? section.label : undefined}
-          onClick={(event) => {
-            if (
-              event.button !== 0
-              || event.metaKey
-              || event.altKey
-              || event.ctrlKey
-              || event.shiftKey
-            ) {
-              return;
-            }
-            event.preventDefault();
-            requestNavigation(section.path, { onNavigated: onNavigate });
-          }}
-          className={({ isActive }) =>
-            cn(
+      {sections.map((section) => {
+        const isActive =
+          activePath === section.path ||
+          activePath.startsWith(`${section.path}/`);
+        return (
+          <Link
+            key={section.path}
+            to={section.path}
+            aria-label={section.label}
+            aria-current={isActive ? "page" : undefined}
+            title={collapsed ? section.label : undefined}
+            onClick={(event) => {
+              if (
+                event.button !== 0
+                || event.metaKey
+                || event.altKey
+                || event.ctrlKey
+                || event.shiftKey
+              ) {
+                return;
+              }
+              event.preventDefault();
+              requestNavigation(section.path, { onNavigated: onNavigate });
+            }}
+            className={cn(
               // Border (not ring) so overflow scrollports do not clip the active outline.
               "group rounded-lg border text-left text-sm transition-colors",
               collapsed
@@ -59,15 +67,15 @@ const SectionLinkList = ({
               isActive
                 ? "border-cyan-400/40 bg-cyan-500/15 text-white"
                 : "border-transparent text-gray-200 hover:bg-gray-800 hover:text-white",
-            )
-          }
-        >
-          <Icon svg={section.icon} size="md" className="shrink-0 text-cyan-300" />
-          {!collapsed ? (
-            <span className="min-w-0 truncate font-semibold">{section.label}</span>
-          ) : null}
-        </NavLink>
-      ))}
+            )}
+          >
+            <Icon svg={section.icon} size="md" className="shrink-0 text-cyan-300" />
+            {!collapsed ? (
+              <span className="min-w-0 truncate font-semibold">{section.label}</span>
+            ) : null}
+          </Link>
+        );
+      })}
     </div>
   );
 };

@@ -131,6 +131,10 @@ const PositionManager = ({
     defaultMicrophoneId: "",
     defaultIemId: "",
   });
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const editorSessionRef = useRef(0);
+  const saveDraftSnapshotsRef = useRef(new Map<string, PositionDraft>());
   const [microphones, setMicrophones] = useState<ServicePlanMicrophone[]>([]);
   const [iems, setIems] = useState<ServiceEquipment[]>([]);
   // Positions with a save currently in flight, keyed by positionId (or
@@ -229,6 +233,7 @@ const PositionManager = ({
   );
 
   const reset = () => {
+    editorSessionRef.current += 1;
     setEditing(null);
     setShowCreate(false);
     setDraft({
@@ -308,6 +313,9 @@ const PositionManager = ({
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
+    const editorSession = editorSessionRef.current;
+    const submittedDraft = draft;
+    saveDraftSnapshotsRef.current.set(savingKey, submittedDraft);
     setSavingIds((prev) => new Set(prev).add(savingKey));
     const localPositionId = wasEditing?.positionId || `local-position-${generateRandomId()}`;
     const payload = {
@@ -341,29 +349,33 @@ const PositionManager = ({
       const response = wasEditing
         ? await updateTeamPosition(churchId, wasEditing.positionId, payload)
         : await createTeamPosition(churchId, payload);
-      if (!wasEditing) {
-        onSaved(response.position, localPositionId);
-      }
-      // Saving commits data; Back or Cancel is responsible for leaving this editor.
-      if (wasEditing) {
-        // The operator may have switched to a different position while this save
-        // was in flight. Only refresh the selected record if they're still on
-        // the one we just saved; otherwise leave their current edit untouched so
-        // the panel never rebinds to a stale position and overwrites another.
-        setEditing((current) =>
-          current?.positionId === wasEditing.positionId ? savedRecord : current,
-        );
-      } else {
-        // Newly created: adopt the saved record so a subsequent Save updates it
-        // instead of creating a duplicate — but only if the create form is still
-        // the active editor and the operator hasn't selected another position.
-        const created = response.position;
-        setEditing((current) => (current === null ? created : current));
+      onSaved(response.position, wasEditing ? undefined : localPositionId);
+      if (editorSessionRef.current === editorSession) {
+        if (wasEditing) {
+          setEditing((current) =>
+            current?.positionId === wasEditing.positionId ? response.position : current,
+          );
+        } else {
+          setEditing((current) => (current === null ? response.position : current));
+        }
+        if (JSON.stringify(draftRef.current) === JSON.stringify(submittedDraft)) {
+          const savedDraft: PositionDraft = {
+            name: response.position.name,
+            description: response.position.description || "",
+            icon: response.position.icon || "",
+            qualificationAreaId: response.position.qualificationAreaId || "",
+            defaultMicrophoneId: response.position.defaultMicrophoneId || "",
+            defaultIemId: response.position.defaultIemId || "",
+          };
+          draftRef.current = savedDraft;
+          setDraft(savedDraft);
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this position.");
       onArchived();
     } finally {
+      saveDraftSnapshotsRef.current.delete(savingKey);
       setSavingIds((prev) => {
         const next = new Set(prev);
         next.delete(savingKey);
@@ -377,7 +389,7 @@ const PositionManager = ({
   // disables this button.
   const currentEditorKey = editing ? editing.positionId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
-  const hasPendingChanges = editing
+  const draftDiffersFromSaved = editing
     ? JSON.stringify(draft) !==
     JSON.stringify({
       name: editing.name,
@@ -396,14 +408,17 @@ const PositionManager = ({
       defaultMicrophoneId: "",
       defaultIemId: "",
     });
-  // A save already in flight for this editor is not an unsaved change: the
-  // operator committed it, and `editing` only catches up when the response
-  // lands. Without this, switching positions mid-save falsely prompts to
-  // discard work that is already on its way to the server.
-  useTeamsUnsavedChanges(hasPendingChanges && !isSavingCurrent);
+  const pendingSaveDraft = saveDraftSnapshotsRef.current.get(currentEditorKey);
+  const hasPendingChanges = draftDiffersFromSaved && !(
+    isSavingCurrent &&
+    pendingSaveDraft &&
+    JSON.stringify(draft) === JSON.stringify(pendingSaveDraft)
+  );
+  useTeamsUnsavedChanges(hasPendingChanges);
 
   const openPositionEditor = useCallback((position: TeamPosition) => {
     if (!canEditTeam(position.teamId)) return;
+    editorSessionRef.current += 1;
     setShowFilters(false);
     setEditing(position);
     setSelectedTeamId(position.teamId);

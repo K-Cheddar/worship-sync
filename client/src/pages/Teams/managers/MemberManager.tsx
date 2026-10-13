@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { Camera, Plus, X } from "lucide-react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
@@ -225,9 +225,27 @@ const MemberManager = ({
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
   const [recordingSmsConsentFor, setRecordingSmsConsentFor] = useState<TeamRosterMember | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [draft, setDraft] = useState<TeamRosterMemberPayload>(() =>
+  const [draft, setDraftState] = useState<TeamRosterMemberPayload>(() =>
     buildMemberDraft(null, []),
   );
+  const draftRevisionRef = useRef(0);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const setDraft = useCallback((next: SetStateAction<TeamRosterMemberPayload>) => {
+    draftRevisionRef.current += 1;
+    setDraftState(next);
+  }, []);
+  const activeEditorSessionRef = useRef(0);
+  const profileImageSelectionRevisionRef = useRef(0);
+  const saveDraftSnapshotsRef = useRef(new Map<string, {
+    draft: TeamRosterMemberPayload;
+    pendingImage: File | null;
+    imageRevision: number;
+  }>());
+  const [savedMembershipBaseline, setSavedMembershipBaseline] = useState<{
+    memberId: string;
+    teamIds: string[];
+  } | null>(null);
   const [profileImageUploading, setProfileImageUploading] = useState(false);
   const [pendingProfileImage, setPendingProfileImage] = useState<File | null>(null);
   const [pendingProfileImagePreviewUrl, setPendingProfileImagePreviewUrl] =
@@ -262,15 +280,19 @@ const MemberManager = ({
 
   const openMemberEditor = useCallback(
     (member: TeamRosterMember) => {
+      activeEditorSessionRef.current += 1;
+      profileImageSelectionRevisionRef.current += 1;
       setShowFilters(false);
       setShowDesiredPositions(false);
       setPendingProfileImage(null);
       setPendingProfileImagePreviewUrl("");
       setEditing(member);
       setShowCreate(true);
-      setDraft(buildMemberDraft(member, readMemberTeamIds(member, data.teams)));
+      const teamIds = readMemberTeamIds(member, data.teams);
+      setSavedMembershipBaseline({ memberId: member.memberId, teamIds });
+      setDraft(buildMemberDraft(member, teamIds));
     },
-    [data.teams],
+    [data.teams, setDraft],
   );
 
   const selectMember = useCallback((member: TeamRosterMember) => {
@@ -293,11 +315,14 @@ const MemberManager = ({
     if (!teamId || !canEdit || consumedCreateLocationKeyRef.current === location.key) return;
     if (!data.teams.some((team) => team.teamId === teamId && !team.archivedAt)) return;
     consumedCreateLocationKeyRef.current = location.key;
+    activeEditorSessionRef.current += 1;
+    profileImageSelectionRevisionRef.current += 1;
     setEditing(null);
+    setSavedMembershipBaseline(null);
     setDraft(buildMemberDraft(null, [teamId]));
     setShowCreate(true);
     navigate(location.pathname, { replace: true, state: { ...(state || {}), teamsCreateMember: undefined } });
-  }, [canEdit, data.teams, location.key, location.pathname, location.state, navigate]);
+  }, [canEdit, data.teams, location.key, location.pathname, location.state, navigate, setDraft]);
 
   useEffect(() => {
     const editMemberId = pendingEditMemberIdRef.current;
@@ -403,8 +428,12 @@ const MemberManager = ({
   );
   // Teams the member belongs to right now, i.e. before anything in this draft.
   const joinedTeamIds = useMemo(
-    () => (editing ? readMemberTeamIds(editing, data.teams) : []),
-    [data.teams, editing],
+    () => editing
+      ? savedMembershipBaseline?.memberId === editing.memberId
+        ? savedMembershipBaseline.teamIds
+        : readMemberTeamIds(editing, data.teams)
+      : [],
+    [data.teams, editing, savedMembershipBaseline],
   );
 
   const membersInListScope = useMemo(
@@ -437,8 +466,11 @@ const MemberManager = ({
       removeToast(profileImageSelectionToastIdRef.current);
       profileImageSelectionToastIdRef.current = null;
     }
+    activeEditorSessionRef.current += 1;
+    profileImageSelectionRevisionRef.current += 1;
     setEditing(null);
     setShowCreate(false);
+    setSavedMembershipBaseline(null);
     setDraft(buildMemberDraft(null, []));
     setShowDesiredPositions(false);
     setProfileImageUploading(false);
@@ -455,6 +487,7 @@ const MemberManager = ({
       showToast("Profile images must be 5 MB or smaller.", "error");
       return;
     }
+    profileImageSelectionRevisionRef.current += 1;
     setPendingProfileImage(file);
     setPendingProfileImagePreviewUrl(URL.createObjectURL(file));
     if (profileImageSelectionToastIdRef.current) {
@@ -714,6 +747,14 @@ const MemberManager = ({
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
+    const editorSession = activeEditorSessionRef.current;
+    const submittedDraftRevision = draftRevisionRef.current;
+    const submittedImageRevision = profileImageSelectionRevisionRef.current;
+    saveDraftSnapshotsRef.current.set(savingKey, {
+      draft,
+      pendingImage: pendingProfileImage,
+      imageRevision: submittedImageRevision,
+    });
     setSavingIds((prev) => new Set(prev).add(savingKey));
     if (profileImageSelectionToastIdRef.current) {
       removeToast(profileImageSelectionToastIdRef.current);
@@ -803,6 +844,21 @@ const MemberManager = ({
             ? body.profileImagePublicId
             : response.member.profileImagePublicId || "",
       };
+      // The response's team documents may still be waiting for the parent page
+      // to propagate them back through props. Overlay them locally before
+      // deriving the saved membership baseline.
+      const teamsAfterSave = response.teams?.length
+        ? response.teams.reduce((currentTeams, savedTeam) => {
+            const index = currentTeams.findIndex(
+              (team) => team.teamId === savedTeam.teamId,
+            );
+            if (index < 0) return [...currentTeams, savedTeam];
+            return currentTeams.map((team, teamIndex) =>
+              teamIndex === index ? savedTeam : team,
+            );
+          }, data.teams)
+        : data.teams;
+      const finalTeamIds = readMemberTeamIds(finalMember, teamsAfterSave);
       const profileImagePublicIdToDelete =
         previousProfileImagePublicId &&
         previousProfileImagePublicId !== body.profileImagePublicId
@@ -811,21 +867,25 @@ const MemberManager = ({
       if (profileImagePublicIdToDelete) {
         void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image", churchId);
       }
-      if (!profileImageUploadFailed) {
-        setPendingProfileImage(null);
-        setPendingProfileImagePreviewUrl("");
-        setDraft(
-          buildMemberDraft(
-            finalMember,
-            readMemberTeamIds(finalMember, data.teams),
-          ),
-        );
+      if (
+        activeEditorSessionRef.current === editorSession &&
+        draftRevisionRef.current === submittedDraftRevision &&
+        profileImageSelectionRevisionRef.current === submittedImageRevision
+      ) {
+        if (!profileImageUploadFailed) {
+          setPendingProfileImage(null);
+          setPendingProfileImagePreviewUrl("");
+        }
+        const savedDraft = buildMemberDraft(finalMember, finalTeamIds);
+        draftRef.current = savedDraft;
+        setDraftState(savedDraft);
       }
       if (!wasEditing) {
         onSaved(finalMember, localMemberId);
-      } else if (!profileImageUploadFailed) {
-        // The first optimistic save predates the Cloudinary upload. Reconcile
-        // the list with the final member record once the image is linked.
+      } else {
+        // Reconcile the optimistic list record with the server response after
+        // the member update has committed, even if the optional image upload
+        // failed.
         onSaved(finalMember, wasEditing.memberId);
       }
       // The server reconciles `team.memberIds` from the teams (and positions)
@@ -837,19 +897,29 @@ const MemberManager = ({
         showToast("You can choose the image again and save to retry.", "error");
       }
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (activeEditorSessionRef.current === editorSession) {
+        setSavedMembershipBaseline({
+          memberId: finalMember.memberId,
+          teamIds: finalTeamIds,
+        });
+      }
       if (wasEditing) {
         // The operator may have switched to a different member while this save
         // was in flight. Only refresh the selected record if they're still on
         // the one we just saved, so the panel never rebinds to a stale member.
-        setEditing((current) =>
-          current?.memberId === wasEditing.memberId ? finalMember : current,
-        );
+        if (activeEditorSessionRef.current === editorSession) {
+          setEditing((current) =>
+            current?.memberId === wasEditing.memberId ? finalMember : current,
+          );
+        }
       } else {
         // Newly created: adopt the saved record so a subsequent Save updates it
         // instead of creating a duplicate — but only if the create form is still
         // the active editor and the operator hasn't selected another member.
         const created = finalMember;
-        setEditing((current) => (current === null ? created : current));
+        if (activeEditorSessionRef.current === editorSession) {
+          setEditing((current) => (current === null ? created : current));
+        }
       }
     } catch (error) {
       if (uploadedProfileImagePublicId) {
@@ -858,6 +928,7 @@ const MemberManager = ({
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();
     } finally {
+      saveDraftSnapshotsRef.current.delete(savingKey);
       setSavingIds((prev) => {
         const next = new Set(prev);
         next.delete(savingKey);
@@ -871,10 +942,18 @@ const MemberManager = ({
   // disables it.
   const currentEditorKey = editing ? editing.memberId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
-  const hasPendingChanges =
+  const draftDiffersFromSaved =
     JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
       JSON.stringify(buildMemberDraft(editing, joinedTeamIds)) ||
     Boolean(pendingProfileImage || pendingProfileImagePreviewUrl);
+  const pendingSaveSnapshot = saveDraftSnapshotsRef.current.get(currentEditorKey);
+  const hasPendingChanges = draftDiffersFromSaved && !(
+    isSavingCurrent &&
+    pendingSaveSnapshot &&
+    JSON.stringify(pendingSaveSnapshot.draft) === JSON.stringify(draft) &&
+    pendingSaveSnapshot.pendingImage === pendingProfileImage &&
+    pendingSaveSnapshot.imageRevision === profileImageSelectionRevisionRef.current
+  );
   useTeamsUnsavedChanges(hasPendingChanges);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
@@ -1086,6 +1165,7 @@ const MemberManager = ({
           requestDiscardAction(() => {
             setShowFilters(false);
             reset();
+            activeEditorSessionRef.current += 1;
             setShowCreate(true);
           });
         }}
@@ -1515,6 +1595,7 @@ const MemberManager = ({
                     variant="textLink"
                     disabled={!canEditActiveMember || profileImageUploading}
                   onClick={() => {
+                    profileImageSelectionRevisionRef.current += 1;
                     setPendingProfileImage(null);
                     setPendingProfileImagePreviewUrl("");
                     setDraft((current) => ({

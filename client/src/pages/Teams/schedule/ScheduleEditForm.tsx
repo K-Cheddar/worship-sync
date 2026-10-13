@@ -87,6 +87,20 @@ const ScheduleEditForm = ({
   const { showToast } = useToast();
   const editingSchedule = mode === "edit" ? selectedSchedule : null;
   const scheduleForDraft = editingSchedule;
+  const editorKey = `${draftKey}:${mode}:${scheduleForDraft?.scheduleId || "new"}`;
+  const activeEditorKeyRef = useRef(editorKey);
+  activeEditorKeyRef.current = editorKey;
+  const activeDraftKeyRef = useRef(draftKey);
+  activeDraftKeyRef.current = draftKey;
+  const latestSchedulesRef = useRef(seedSchedules);
+  latestSchedulesRef.current = seedSchedules;
+  const editorGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const pendingCreatedAdoptionRef = useRef<{
+    scheduleId: string;
+    draft: TeamSchedulePayload;
+    baseline: TeamSchedulePayload;
+  } | null>(null);
   const [draft, setDraft] = useState<TeamSchedulePayload>(() =>
     buildScheduleDraft({
       persistedDraft,
@@ -116,10 +130,28 @@ const ScheduleEditForm = ({
   const syncedBaselineRef = useRef(draft);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
 
   useEffect(() => {
+    editorGenerationRef.current += 1;
+    const createdAdoption = pendingCreatedAdoptionRef.current;
+    if (createdAdoption && createdAdoption.scheduleId === scheduleForDraft?.scheduleId) {
+      pendingCreatedAdoptionRef.current = null;
+      skipNextPersistRef.current = true;
+      skipNextPersistedDraftResetRef.current = true;
+      syncedBaselineRef.current = createdAdoption.baseline;
+      draftRef.current = createdAdoption.draft;
+      setDraft(createdAdoption.draft);
+      return;
+    }
     const nextDraft = buildScheduleDraft({
       persistedDraft,
       selectedSchedule: scheduleForDraft,
@@ -129,6 +161,7 @@ const ScheduleEditForm = ({
     });
     skipNextPersistRef.current = true;
     syncedBaselineRef.current = nextDraft;
+    draftRef.current = nextDraft;
     setDraft(nextDraft);
     // Defaults are read from the render that opened this schedule/draft. Do not
     // re-seed when create defaults recalculate (schedules sync, team filter
@@ -163,6 +196,7 @@ const ScheduleEditForm = ({
     }
     skipNextPersistRef.current = true;
     syncedBaselineRef.current = nextDraft;
+    draftRef.current = nextDraft;
     setDraft(nextDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- remote draft/schedule sync only
   }, [persistedDraft, mode, scheduleForDraft]);
@@ -270,7 +304,16 @@ const ScheduleEditForm = ({
   const saveSchedule = async (confirmedOccurrenceConflictFingerprint?: string) => {
     if (!canEdit) return;
     const isCreate = mode !== "edit";
+    const saveEditorKey = editorKey;
+    const saveDraftKey = draftKey;
+    const saveGeneration = editorGenerationRef.current;
+    const isActiveSave = () =>
+      mountedRef.current &&
+      activeEditorKeyRef.current === saveEditorKey &&
+      editorGenerationRef.current === saveGeneration;
     const occurrenceDataSource = editingSchedule || copySourceSchedule;
+    let localScheduleId: string | null = null;
+    let optimisticSchedule: TeamSchedule | null = null;
     const currentDraft = draftRef.current;
     const resolvedName = resolveScheduleNameForSave({
       name: currentDraft.name || "",
@@ -358,9 +401,9 @@ const ScheduleEditForm = ({
           : {}),
       };
       setSaving(true);
-      const localScheduleId =
+      localScheduleId =
         editingSchedule?.scheduleId || `local-schedule-${generateRandomId()}`;
-      const optimisticSchedule: TeamSchedule = {
+      optimisticSchedule = {
         churchId,
         scheduleId: localScheduleId,
         name: payload.name.trim(),
@@ -385,33 +428,85 @@ const ScheduleEditForm = ({
       const response = editingSchedule
         ? await updateTeamSchedule(churchId, editingSchedule.scheduleId, payload)
         : await createTeamSchedule(churchId, payload);
-      if (isCreate) {
+      const responseDraft = buildScheduleDraft({
+        persistedDraft: undefined,
+        selectedSchedule: response.schedule,
+        defaultTeamId,
+        defaultServiceIds,
+        defaultRange,
+      });
+      const latestDraft = draftRef.current;
+      const hasNewerEdits = !scheduleDraftsMatch(latestDraft, draftForSave);
+      if (isCreate && localScheduleId) {
         onScheduleSaved(response.schedule, localScheduleId);
-        // Drop this intent-specific draft after a successful create. Skip the
-        // unmount flush so cleanup cannot rewrite the cleared key.
-        skipUnmountFlushRef.current = true;
-        skipNextPersistedDraftResetRef.current = true;
-        syncedBaselineRef.current = draftForSave;
-        onDraftClear(draftKey);
       } else {
         onScheduleSaved(response.schedule);
       }
-      setSelectedScheduleId(response.schedule.scheduleId);
-      setScheduleConflictWarning(null);
+      if (isCreate) {
+        // Drop this intent-specific draft after a successful create. Skip the
+        // unmount flush so cleanup cannot rewrite the cleared key.
+        if (isActiveSave()) {
+          skipUnmountFlushRef.current = true;
+          skipNextPersistedDraftResetRef.current = true;
+          syncedBaselineRef.current = responseDraft;
+          pendingCreatedAdoptionRef.current = hasNewerEdits
+            ? {
+                scheduleId: response.schedule.scheduleId,
+                draft: latestDraft,
+                baseline: responseDraft,
+              }
+            : null;
+          onDraftClear(saveDraftKey);
+        } else if (activeDraftKeyRef.current !== saveDraftKey) {
+          onDraftClear(saveDraftKey);
+        }
+      } else if (isActiveSave()) {
+        syncedBaselineRef.current = responseDraft;
+        if (!hasNewerEdits) {
+          draftRef.current = responseDraft;
+          setDraft(responseDraft);
+        }
+      }
+      if (isActiveSave()) {
+        setSelectedScheduleId(response.schedule.scheduleId);
+        setScheduleConflictWarning(null);
+      }
     } catch (error) {
+      const rollbackOptimisticSchedule = () => {
+        if (isCreate) {
+          if (localScheduleId) onScheduleRemoved(localScheduleId);
+          return;
+        }
+        if (!editingSchedule) return;
+        const latestSchedule = latestSchedulesRef.current.find(
+          (schedule) => schedule.scheduleId === editingSchedule.scheduleId,
+        );
+        // `upsertData` stores the optimistic object by reference. If a newer
+        // bootstrap/SSE record has replaced it, keep that newer authoritative
+        // record instead of restoring the stale snapshot captured at submit.
+        if (latestSchedule) {
+          onScheduleSaved(
+            latestSchedule === optimisticSchedule
+              ? editingSchedule
+              : { ...editingSchedule, ...latestSchedule },
+          );
+        }
+      };
       const details = (error as { details?: unknown } | null)?.details;
       if (details && typeof details === "object") {
         const conflict = details as { conflictFingerprint?: unknown; occurrenceConflicts?: unknown };
         if (typeof conflict.conflictFingerprint === "string" && Array.isArray(conflict.occurrenceConflicts)) {
-          setScheduleConflictWarning({
-            fingerprint: conflict.conflictFingerprint,
-            conflicts: conflict.occurrenceConflicts as Array<{ teamId?: string; scheduleName?: string; conflictingOccurrenceId?: string; occurrenceId: string }>,
-          });
-          if (editingSchedule) onScheduleSaved(editingSchedule);
+          if (isActiveSave()) {
+            setScheduleConflictWarning({
+              fingerprint: conflict.conflictFingerprint,
+              conflicts: conflict.occurrenceConflicts as Array<{ teamId?: string; scheduleName?: string; conflictingOccurrenceId?: string; occurrenceId: string }>,
+            });
+          }
+          rollbackOptimisticSchedule();
           return;
         }
       }
-      if (editingSchedule) onScheduleSaved(editingSchedule);
+      rollbackOptimisticSchedule();
       showApiErrorToast(showToast, error, "Could not save this schedule.");
     } finally {
       setSaving(false);

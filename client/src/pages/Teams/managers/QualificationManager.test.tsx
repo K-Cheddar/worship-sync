@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import QualificationManager from "./QualificationManager";
@@ -430,4 +430,84 @@ it("removes a saved qualification area icon without changing its levels", async 
   await user.click(screen.getByRole("button", { name: "Save qualification area" }));
   await waitFor(() => expect(updateTeamQualificationArea).toHaveBeenCalledWith("church-1", area.areaId, expect.objectContaining({ icon: "" })));
   expect(updateTeamQualificationLevel).not.toHaveBeenCalled();
+});
+
+it("rebases the qualification area name from the server after normalization", async () => {
+  const user = userEvent.setup();
+  const area: TeamQualificationArea = {
+    churchId: "church-1", areaId: "area-audio", teamId: activeTeam.teamId, name: "Audio",
+  };
+  jest.mocked(updateTeamQualificationArea).mockReset().mockResolvedValue({
+    success: true,
+    area: { ...area, name: "Media" },
+  } as never);
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.qualifications]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <QualificationManager areas={[area]} levels={[]} teams={[activeTeam]} canEditTeam={() => true}
+            onAreaSaved={jest.fn()} onLevelSaved={jest.fn()} onArchived={jest.fn()} onAreaRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByText("Audio"));
+  await user.clear(screen.getByLabelText(/^Area name:?$/));
+  await user.type(screen.getByLabelText(/^Area name:?$/), " Media ");
+  await user.click(screen.getByRole("button", { name: "Save qualification area" }));
+
+  await waitFor(() => expect(updateTeamQualificationArea).toHaveBeenCalledWith(
+    "church-1", area.areaId, expect.objectContaining({ name: "Media" }),
+  ));
+  expect(screen.getByLabelText(/^Area name:?$/)).toHaveValue("Media");
+  await user.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+});
+
+it("lets the operator switch areas during a level save without applying its response to the next area", async () => {
+  const user = userEvent.setup();
+  const firstArea: TeamQualificationArea = {
+    churchId: "church-1", areaId: "area-audio", teamId: activeTeam.teamId, name: "Audio",
+  };
+  const secondArea: TeamQualificationArea = {
+    churchId: "church-1", areaId: "area-lighting", teamId: activeTeam.teamId, name: "Lighting",
+  };
+  const firstLevel: TeamQualificationLevel = {
+    churchId: "church-1", levelId: "level-beginner", areaId: firstArea.areaId, name: "Beginner", rank: 1,
+  };
+  let resolveLevelSave: (value: { success: true; level: TeamQualificationLevel }) => void = () => undefined;
+  jest.mocked(updateTeamQualificationLevel).mockReset().mockImplementation(
+    () => new Promise((resolve) => { resolveLevelSave = resolve; }),
+  );
+  render(
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.qualifications]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <QualificationManager areas={[firstArea, secondArea]} levels={[firstLevel]} teams={[activeTeam]} canEditTeam={() => true}
+            onAreaSaved={jest.fn()} onLevelSaved={jest.fn()} onArchived={jest.fn()} onAreaRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Edit Audio" }));
+  const levelNameInput = screen.getByDisplayValue("Beginner");
+  await user.clear(levelNameInput);
+  await user.type(levelNameInput, "Intermediate");
+  await user.click(screen.getByRole("button", { name: "Save Beginner" }));
+  await waitFor(() => expect(updateTeamQualificationLevel).toHaveBeenCalledWith(
+    "church-1", firstLevel.levelId, expect.objectContaining({ name: "Intermediate" }),
+  ));
+
+  await user.click(screen.getByRole("button", { name: "Edit Lighting" }));
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  await user.clear(screen.getByLabelText(/^Area name:?$/));
+  await user.type(screen.getByLabelText(/^Area name:?$/), "Lighting newer");
+
+  await act(async () => resolveLevelSave({
+    success: true,
+    level: { ...firstLevel, name: "Intermediate" },
+  }));
+  expect(screen.getByLabelText(/^Area name:?$/)).toHaveValue("Lighting newer");
 });

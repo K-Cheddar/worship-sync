@@ -82,6 +82,35 @@ it("keeps an edited role open after Save and navigates with restore state only o
   }));
 });
 
+it("rebases a normalized role name from the server without a false discard prompt", async () => {
+  const user = userEvent.setup();
+  jest.mocked(updateTeamRole).mockResolvedValue({
+    success: true,
+    role: { ...role, name: "Worship Lead" },
+  } as never);
+  render(
+    <MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.roles, state: { teamsReturnTo: returnTo } }]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamRoleManager roles={[role]} teams={[team]} canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByText("Lead"));
+  await user.clear(screen.getByLabelText(/^Name:?$/));
+  await user.type(screen.getByLabelText(/^Name:?$/), " Worship Lead ");
+  await user.click(screen.getByRole("button", { name: "Save role" }));
+
+  await waitFor(() => expect(updateTeamRole).toHaveBeenCalledWith(
+    "church-1", role.roleId, expect.objectContaining({ name: "Worship Lead" }),
+  ));
+  expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Worship Lead");
+  await user.click(screen.getAllByRole("button", { name: "Back to team" }).at(-1)!);
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+});
+
 it("creates a role with its selected icon and renders icons with a fallback for legacy roles", async () => {
   const user = userEvent.setup();
   const onSaved = jest.fn();

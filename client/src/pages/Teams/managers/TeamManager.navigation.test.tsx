@@ -124,3 +124,33 @@ it("preserves an existing legacy icon when saving another team field", async () 
 
   await waitFor(() => expect(updateTeam).toHaveBeenCalledWith("church-1", legacyTeam.teamId, expect.objectContaining({ icon: "Music" })));
 });
+
+it("rebases a normalized team name from the server without a false discard prompt", async () => {
+  const user = userEvent.setup();
+  jest.mocked(updateTeam).mockResolvedValue({
+    success: true,
+    team: { ...team, name: "Media" },
+  } as never);
+  render(
+    <MemoryRouter initialEntries={[{ pathname: TEAMS_SECTION_PATHS.groups, state: { teamsReturnTo: returnTo } }]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamManager teams={[team]} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
+            data={data} canEditTeams canEditTeam={() => true} onSaved={jest.fn()} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>,
+  );
+
+  await user.click(screen.getByText("Worship"));
+  await user.clear(screen.getByLabelText(/^Name:?$/));
+  await user.type(screen.getByLabelText(/^Name:?$/), " Media ");
+  await user.click(screen.getByRole("button", { name: "Save team" }));
+
+  await waitFor(() => expect(updateTeam).toHaveBeenCalledWith(
+    "church-1", team.teamId, expect.objectContaining({ name: "Media" }),
+  ));
+  expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Media");
+  await user.click(screen.getByRole("button", { name: "Back to schedule" }));
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+});

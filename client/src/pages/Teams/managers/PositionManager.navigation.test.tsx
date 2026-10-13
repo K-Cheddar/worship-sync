@@ -210,6 +210,27 @@ describe("PositionManager return navigation", () => {
     expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
   }, 20_000);
 
+  it("rebases a normalized position name from the server and stays clean", async () => {
+    const user = userEvent.setup();
+    jest.mocked(updateTeamPosition).mockResolvedValue({
+      success: true,
+      position: { ...position, name: "Lead Vocal" },
+    } as never);
+    renderManager();
+
+    await user.click(screen.getByText("Vocal"));
+    await user.clear(screen.getByLabelText(/^Name:?$/));
+    await user.type(screen.getByLabelText(/^Name:?$/), " Lead Vocal ");
+    await user.click(screen.getByRole("button", { name: "Save position" }));
+
+    await waitFor(() => expect(updateTeamPosition).toHaveBeenCalledWith(
+      "church-1", position.positionId, expect.objectContaining({ name: "Lead Vocal" }),
+    ));
+    expect(screen.getByLabelText(/^Name:?$/)).toHaveValue("Lead Vocal");
+    await user.click(screen.getAllByRole("button", { name: "Back to teams" }).at(-1)!);
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  });
+
   it("keeps AV visible and read-only while create defaults to Worship", async () => {
     const user = userEvent.setup();
     const created = { ...position, positionId: "new-worship-position", name: "New keys" };

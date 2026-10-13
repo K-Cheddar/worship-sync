@@ -1,6 +1,7 @@
 import {
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -25,10 +26,14 @@ import TeamsSidebarNav from "./components/TeamsSidebarNav";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
 import { useChurchServiceTimeZone } from "../../context/churchServiceTimeZone";
-import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
+import {
+  TeamsNavigationGuardProvider,
+  usePendingTeamsNavigation,
+} from "./TeamsNavigationGuardContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
 import { lazyRoute } from "../../utils/lazyRoute";
+import { getPageTitle } from "../../utils/pageTitles";
 import {
   getActiveTeamsNavSection,
   getFirstAvailableTeamsNavPath,
@@ -58,29 +63,75 @@ const TeamsSectionLoadingFallback = () => {
   return getTeamsSectionSkeleton(activeSection.routePath);
 };
 
-const TeamsSectionErrorFallback = () => (
-  <div
-    className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-700/60 bg-red-950/30 p-6 text-center"
-    role="alert"
-  >
-    <Icon svg={ListChecks} size="lg" className="text-red-300" />
-    <div className="space-y-1">
-      <h3 className="text-base font-semibold text-red-100">
-        This section could not load.
-      </h3>
-      <p className="text-sm text-red-100/80">
-        Try again, or open another section from the sidebar.
-      </p>
-    </div>
-    <Button type="button" onClick={() => window.location.reload()}>
-      Reload page
-    </Button>
-  </div>
-);
+const isTeamsSectionPath = (pathname: string, routePath: string) => {
+  const sectionPath = `/teams-and-services/${routePath}`;
+  return pathname === sectionPath || pathname.startsWith(`${sectionPath}/`);
+};
 
-const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
-  <ErrorBoundary fallback={<TeamsSectionErrorFallback />}>
-    <Suspense fallback={<TeamsSectionLoadingFallback />}>{children}</Suspense>
+const TeamsSectionReady = ({ routePath }: { routePath: string }) => {
+  const location = useLocation();
+  const { pathname, clear } = usePendingTeamsNavigation();
+
+  useLayoutEffect(() => {
+    if (
+      pathname === location.pathname &&
+      isTeamsSectionPath(location.pathname, routePath)
+    ) {
+      clear();
+    }
+  }, [clear, location.pathname, pathname, routePath]);
+
+  return null;
+};
+
+const TeamsSectionErrorFallback = ({ routePath }: { routePath: string }) => {
+  const location = useLocation();
+  const { pathname, clear } = usePendingTeamsNavigation();
+
+  useLayoutEffect(() => {
+    if (
+      pathname === location.pathname &&
+      isTeamsSectionPath(location.pathname, routePath)
+    ) {
+      clear();
+    }
+  }, [clear, location.pathname, pathname, routePath]);
+
+  return (
+    <div
+      className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-700/60 bg-red-950/30 p-6 text-center"
+      role="alert"
+    >
+      <Icon svg={ListChecks} size="lg" className="text-red-300" />
+      <div className="space-y-1">
+        <h3 className="text-base font-semibold text-red-100">
+          This section could not load.
+        </h3>
+        <p className="text-sm text-red-100/80">
+          Try again, or open another section from the sidebar.
+        </p>
+      </div>
+      <Button type="button" onClick={() => window.location.reload()}>
+        Reload page
+      </Button>
+    </div>
+  );
+};
+
+const TeamsSectionRoute = ({
+  children,
+  routePath,
+}: {
+  children: ReactNode;
+  routePath: string;
+}) => (
+  <ErrorBoundary fallback={<TeamsSectionErrorFallback routePath={routePath} />}>
+    <Suspense fallback={<TeamsSectionLoadingFallback />}>
+      <>
+        {children}
+        <TeamsSectionReady routePath={routePath} />
+      </>
+    </Suspense>
   </ErrorBoundary>
 );
 
@@ -106,19 +157,37 @@ const TeamsAndServicesIndexRedirect = () => {
 const TeamsAndServicesLayout = () => {
   const { loading, toolbarLogos, churchName, availableNavSections } = useTeamsPage();
   const location = useLocation();
+  const pendingNavigation = usePendingTeamsNavigation();
   useTeamsAbandonedReturnCleanup();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const storedRoute = getStoredTeamsAndServicesRoute();
+  const pendingPath =
+    pendingNavigation.pathname &&
+    isTeamsNavPathAvailable(pendingNavigation.pathname, availableNavSections)
+    ? pendingNavigation.pathname
+    : null;
   const activePath =
-    location.pathname === "/teams-and-services"
+    pendingPath || (location.pathname === "/teams-and-services"
       ? storedRoute && isTeamsNavPathAvailable(storedRoute, availableNavSections)
         ? storedRoute
         : getFirstAvailableTeamsNavPath(availableNavSections)
-      : location.pathname;
+      : location.pathname);
   const activeSection = useMemo(
     () => getActiveTeamsNavSection(activePath),
     [activePath],
   );
+
+  useLayoutEffect(() => {
+    if (pendingPath) {
+      document.title = getPageTitle(pendingPath);
+    }
+  }, [pendingPath]);
+
+  useEffect(() => {
+    if (pendingNavigation.pathname && !pendingPath) {
+      pendingNavigation.clear();
+    }
+  }, [pendingNavigation, pendingPath]);
 
   useEffect(() => {
     saveTeamsAndServicesRoute(location.pathname);
@@ -169,7 +238,20 @@ const TeamsAndServicesLayout = () => {
             {loading ? (
               getTeamsSectionSkeleton(activeSection.routePath)
             ) : (
-              <Outlet />
+              <>
+                <div
+                  className={cn(
+                    "flex min-h-0 flex-1 flex-col",
+                    pendingPath && "hidden",
+                  )}
+                  aria-hidden={pendingPath ? true : undefined}
+                >
+                  <Outlet />
+                </div>
+                {pendingPath
+                  ? getTeamsSectionSkeleton(activeSection.routePath)
+                  : null}
+              </>
             )}
           </div>
         </div>
@@ -186,7 +268,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="messages"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="messages">
             <TeamsMessagesPage />
           </TeamsSectionRoute>
         }
@@ -194,7 +276,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="schedules"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="schedules">
             <TeamsSchedulesPage />
           </TeamsSectionRoute>
         }
@@ -202,7 +284,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="members"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="members">
             <TeamsMembersPage />
           </TeamsSectionRoute>
         }
@@ -210,7 +292,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="positions"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="positions">
             <TeamsPositionsPage />
           </TeamsSectionRoute>
         }
@@ -218,7 +300,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="groups"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="groups">
             <TeamsGroupsPage />
           </TeamsSectionRoute>
         }
@@ -226,7 +308,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="roles"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="roles">
             <TeamsRolesPage />
           </TeamsSectionRoute>
         }
@@ -234,7 +316,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="qualifications"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="qualifications">
             <TeamsQualificationsPage />
           </TeamsSectionRoute>
         }
@@ -242,7 +324,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="forms"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="forms">
             <TeamsFormsPage />
           </TeamsSectionRoute>
         }
@@ -250,7 +332,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="services"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="services">
             <TeamsPlansPage />
           </TeamsSectionRoute>
         }
@@ -258,7 +340,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="templates"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="templates">
             <TeamsTemplatesPage />
           </TeamsSectionRoute>
         }
@@ -266,7 +348,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="microphones"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="microphones">
             <TeamsMicrophonesPage />
           </TeamsSectionRoute>
         }
@@ -274,7 +356,7 @@ const TeamsAndServicesRoutes = () => (
       <Route
         path="service-setup"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="service-setup">
             <TeamsServiceSettingsPage />
           </TeamsSectionRoute>
         }

@@ -169,6 +169,10 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 test("late form history failures do not publish an error toast after Forms unmounts", async () => {
   const user = userEvent.setup();
   let rejectHistory!: (error: Error) => void;
@@ -727,7 +731,7 @@ test.each([
       availabilityOccurrences: [
         existingOccurrence,
         expect.objectContaining({
-          occurrenceId: "power-up@2026-10-14T14:00:00.000Z",
+          occurrenceId: "power-up@2026-10-14",
           serviceId: "power-up",
           startsAt: "2026-10-14T14:00:00.000Z",
         }),
@@ -736,6 +740,31 @@ test.each([
   ));
   expect(createTeamIntakeForm).not.toHaveBeenCalled();
   jest.useRealTimers();
+});
+
+test("a delayed form save cannot close a different form opened before it settles", async () => {
+  const user = userEvent.setup();
+  const otherForm = { ...form, formId: "form-2", name: "Other form" };
+  const savedForm = { ...form, name: "Updated availability" };
+  let resolveUpdate: (value: { success: true; form: TeamIntakeForm }) => void = () => undefined;
+  jest.mocked(updateTeamIntakeForm).mockImplementation(
+    () => new Promise((resolve) => { resolveUpdate = resolve; }),
+  );
+  renderManager({ forms: [form, otherForm] });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.clear(screen.getByLabelText(/^Name/i));
+  await user.type(screen.getByLabelText(/^Name/i), "Updated availability");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledTimes(1));
+
+  await user.click(screen.getByRole("button", { name: "Edit Other form" }));
+  expect(screen.getByRole("heading", { name: "Other form" })).toBeInTheDocument();
+  await act(async () => resolveUpdate({ success: true, form: savedForm }));
+
+  expect(screen.getByRole("heading", { name: "Other form" })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
 });
 
 test("an existing form view exposes Send form", async () => {

@@ -123,6 +123,10 @@ const TeamManager = ({
     usesMicrophoneAssignments: false,
     usesIemAssignments: false,
   });
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const editorSessionRef = useRef(0);
+  const saveDraftSnapshotsRef = useRef(new Map<string, TeamPayload>());
   // Teams with a save currently in flight, keyed by teamId (or CREATE_SAVING_KEY
   // for a new team). Tracking per-editor keeps the Save spinner on the team
   // actually saving and lets editing continue back-to-back in the background.
@@ -163,6 +167,7 @@ const TeamManager = ({
   );
 
   const reset = () => {
+    editorSessionRef.current += 1;
     setEditing(null);
     setShowCreate(false);
     setDraft({
@@ -180,6 +185,7 @@ const TeamManager = ({
   };
 
   const startEditingTeam = useCallback((team: TeamRecord) => {
+    editorSessionRef.current += 1;
     setTeamProfileMember(null);
     setEditing(team);
     setShowCreate(true);
@@ -243,19 +249,23 @@ const TeamManager = ({
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
+    const editorSession = editorSessionRef.current;
+    const submittedDraft = draft;
+    saveDraftSnapshotsRef.current.set(savingKey, submittedDraft);
     setSavingIds((prev) => new Set(prev).add(savingKey));
     const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
     const authoritativeTeam = wasEditing ? currentEditingTeam : null;
     const savedMemberIds = authoritativeTeam?.memberIds || [];
+    const payload: TeamPayload = { ...draft, name: draft.name.trim() };
     const optimisticTeam: TeamRecord = {
       churchId,
       teamId: localTeamId,
-      name: draft.name.trim(),
-      description: draft.description || "",
-      icon: draft.icon || "",
-      memberIds: wasEditing && !canEditTeams ? savedMemberIds : draft.memberIds,
-      usesMicrophoneAssignments: Boolean(draft.usesMicrophoneAssignments),
-      usesIemAssignments: Boolean(draft.usesIemAssignments),
+      name: payload.name,
+      description: payload.description || "",
+      icon: payload.icon || "",
+      memberIds: wasEditing && !canEditTeams ? savedMemberIds : payload.memberIds,
+      usesMicrophoneAssignments: Boolean(payload.usesMicrophoneAssignments),
+      usesIemAssignments: Boolean(payload.usesIemAssignments),
       archivedAt: wasEditing?.archivedAt || null,
     };
     const savedRecord = wasEditing
@@ -265,32 +275,37 @@ const TeamManager = ({
     try {
       const response = wasEditing
         ? await updateTeam(churchId, wasEditing.teamId, {
-          ...draft,
-          memberIds: canEditTeams ? draft.memberIds : savedMemberIds,
+          ...payload,
+          memberIds: canEditTeams ? payload.memberIds : savedMemberIds,
         })
-        : await createTeam(churchId, draft);
-      if (!wasEditing) {
-        onSaved(response.team, localTeamId);
-      }
-      // Saving commits data; Back or Cancel is responsible for leaving this editor.
-      if (wasEditing) {
-        // The operator may have switched to a different team while this save was
-        // in flight. Only refresh the selected record if they're still on the
-        // one we just saved, so the panel never rebinds to a stale team.
-        setEditing((current) =>
-          current?.teamId === wasEditing.teamId ? savedRecord : current,
-        );
-      } else {
-        // Newly created: adopt the saved record so a subsequent Save updates it
-        // instead of creating a duplicate — but only if the create form is still
-        // the active editor and the operator hasn't selected another team.
-        const created = response.team;
-        setEditing((current) => (current === null ? created : current));
+        : await createTeam(churchId, payload);
+      onSaved(response.team, wasEditing ? undefined : localTeamId);
+      if (editorSessionRef.current === editorSession) {
+        if (wasEditing) {
+          setEditing((current) =>
+            current?.teamId === wasEditing.teamId ? response.team : current,
+          );
+        } else {
+          setEditing((current) => (current === null ? response.team : current));
+        }
+        if (JSON.stringify(draftRef.current) === JSON.stringify(submittedDraft)) {
+          const savedDraft: TeamPayload = {
+            name: response.team.name,
+            description: response.team.description || "",
+            icon: response.team.icon || "",
+            memberIds: response.team.memberIds || [],
+            usesMicrophoneAssignments: Boolean(response.team.usesMicrophoneAssignments),
+            usesIemAssignments: Boolean(response.team.usesIemAssignments),
+          };
+          draftRef.current = savedDraft;
+          setDraft(savedDraft);
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this team.");
       onArchived();
     } finally {
+      saveDraftSnapshotsRef.current.delete(savingKey);
       setSavingIds((prev) => {
         const next = new Set(prev);
         next.delete(savingKey);
@@ -303,7 +318,7 @@ const TeamManager = ({
   // currently open, so a background save elsewhere never spins or disables it.
   const currentEditorKey = editing ? editing.teamId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
-  const hasPendingChanges = editing
+  const draftDiffersFromSaved = editing
     ? JSON.stringify({ ...draft, memberIds: [...draft.memberIds].sort() }) !==
       JSON.stringify({
         name: editing.name,
@@ -322,6 +337,12 @@ const TeamManager = ({
         usesMicrophoneAssignments: false,
         usesIemAssignments: false,
       });
+  const pendingSaveDraft = saveDraftSnapshotsRef.current.get(currentEditorKey);
+  const hasPendingChanges = draftDiffersFromSaved && !(
+    isSavingCurrent &&
+    pendingSaveDraft &&
+    JSON.stringify(draft) === JSON.stringify(pendingSaveDraft)
+  );
   useTeamsUnsavedChanges(hasPendingChanges);
 
   const formatNameList = (names: string[]) =>
