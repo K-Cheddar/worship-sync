@@ -2,9 +2,10 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import { GlobalInfoContext } from "../../../context/globalInfo";
+import { ToastProvider } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
 import { createNewSlide } from "../../../utils/slideCreation";
-import type { DBItem } from "../../../types";
+import type { DBItem, ItemContentOwner } from "../../../types";
 import {
   flushContentDatabaseBeforeTeardown,
   setActiveContentDatabase,
@@ -78,6 +79,55 @@ const {
 const FormattedTextEditor = require("./FormattedTextEditor").default;
 const SlideEditTools = require("./SlideEditTools").default;
 const SlideEditor = require("../../ItemEditor/SlideEditor").default;
+const LyricsEditor = require("../../ItemEditor/LyricsEditor").default;
+
+const makeSongDocument = (
+  base: DBItem,
+  options: {
+    name: string;
+    revision: string;
+    arrangementId: string;
+    lyricId: string;
+    words: string;
+  },
+): DBItem => {
+  const titleSlide = createNewSlide({
+    type: "Title",
+    name: "Title",
+    words: ["", `${options.name} title`],
+  });
+  titleSlide.id = `${options.arrangementId}-title`;
+  const verseSlide = createNewSlide({
+    type: "Section",
+    name: "Verse 1",
+    words: ["", options.words],
+  });
+  verseSlide.id = `${options.arrangementId}-verse`;
+  const slides = [titleSlide, verseSlide];
+
+  return {
+    ...base,
+    _rev: options.revision,
+    name: options.name,
+    type: "song",
+    selectedArrangement: 0,
+    slides,
+    formattedSections: undefined,
+    arrangements: [{
+      id: options.arrangementId,
+      name: "Master",
+      slides,
+      formattedLyrics: [{
+        id: options.lyricId,
+        type: "Verse",
+        name: "Verse 1",
+        words: options.words,
+        slideSpan: 1,
+      }],
+      songOrder: [{ id: `${options.arrangementId}-order`, name: "Verse 1" }],
+    }],
+  };
+};
 
 describe("delayed formatted text content integrity", () => {
   beforeEach(() => {
@@ -547,5 +597,149 @@ describe("delayed formatted text content integrity", () => {
     expect(mockDocs.get("free-A")?.slides[0].formattedTextDisplayInfo?.textColor).toBe("#123456");
     expect(mockDocs.get("free-B")).toEqual(beforeB);
     expect(mockDb.put).toHaveBeenCalledTimes(1);
+  });
+
+  it("manually accepts a pending remote song without adopting remote ownership", async () => {
+    const localSong = makeSongDocument(mockDocs.get("free-A")!, {
+      name: "Song A local",
+      revision: "1-original",
+      arrangementId: "A-local-arrangement",
+      lyricId: "A-local-lyric",
+      words: "A local lyrics",
+    });
+    const remoteSong = makeSongDocument(localSong, {
+      name: "Song A remote",
+      revision: "2-remote",
+      arrangementId: "A-remote-arrangement",
+      lyricId: "A-remote-lyric",
+      words: "A remote lyrics",
+    });
+    (remoteSong as DBItem & { contentOwner?: ItemContentOwner }).contentOwner = {
+      scopeId: "untrusted-church/database-b",
+      databaseKey: "database-b",
+      churchId: "untrusted-church",
+    };
+    mockDocs.set("free-A", clone(remoteSong));
+    store.dispatch(setActiveItem(clone(localSong)));
+    store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
+    store.dispatch(itemSlice.actions.setHasPendingUpdate(true));
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remoteSong));
+
+    const { unmount } = render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext()}>
+          <ToastProvider><LyricsEditor /></ToastProvider>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+    await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+    fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
+
+    const activeItem = store.getState().undoable.present.item;
+    expect(activeItem.name).toBe("Song A remote");
+    expect(activeItem.contentOwner).toEqual(mockActiveOwner);
+    expect(activeItem.arrangements[0].id).toBe("A-remote-arrangement");
+    expect(activeItem.arrangements[0].formattedLyrics[0]).toEqual(
+      expect.objectContaining({ id: "A-remote-lyric", words: "A remote lyrics" }),
+    );
+    expect(activeItem.pendingRemoteItem).toBeNull();
+    unmount();
+  });
+
+  it("automatically reloads remote lyrics and autosaves formatting under the same verified owner", async () => {
+    const localSong = makeSongDocument(mockDocs.get("free-A")!, {
+      name: "Song A local",
+      revision: "1-original",
+      arrangementId: "A-local-arrangement",
+      lyricId: "A-local-lyric",
+      words: "A local lyrics",
+    });
+    const remoteSong = makeSongDocument(localSong, {
+      name: "Song A remote",
+      revision: "2-remote",
+      arrangementId: "A-remote-arrangement",
+      lyricId: "A-remote-lyric",
+      words: "A remote lyrics",
+    });
+    (remoteSong as DBItem & { contentOwner?: ItemContentOwner }).contentOwner = {
+      scopeId: "untrusted-church/database-b",
+      databaseKey: "database-b",
+      churchId: "untrusted-church",
+    };
+    mockDocs.set("free-A", clone(remoteSong));
+    store.dispatch(setActiveItem(clone(localSong)));
+    store.dispatch(itemSlice.actions.setIsLyricsEditorOpen(true));
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remoteSong));
+
+    const { unmount } = render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext()}>
+          <ToastProvider><LyricsEditor /></ToastProvider>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+    await act(async () => { await jest.advanceTimersByTimeAsync(0); });
+
+    let activeItem = store.getState().undoable.present.item;
+    expect(activeItem.name).toBe("Song A remote");
+    expect(activeItem.contentOwner).toEqual(mockActiveOwner);
+    expect(activeItem.arrangements[0].id).toBe("A-remote-arrangement");
+    expect(activeItem.hasRemoteUpdate).toBe(false);
+    unmount();
+
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext()}>
+          <MemoryRouter initialEntries={["/controller/item/a/list-a"]}>
+            <SlideEditTools />
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: "Choose color #123456" })[0]);
+    await act(async () => { await jest.advanceTimersByTimeAsync(1800); });
+
+    activeItem = store.getState().undoable.present.item;
+    const savedSong = mockDocs.get("free-A")!;
+    expect(activeItem.contentOwner).toEqual(mockActiveOwner);
+    expect(savedSong.name).toBe("Song A remote");
+    expect(savedSong.arrangements[0].id).toBe("A-remote-arrangement");
+    expect(savedSong.arrangements[0].formattedLyrics[0]).toEqual(
+      expect.objectContaining({ id: "A-remote-lyric", words: "A remote lyrics" }),
+    );
+    expect(savedSong.arrangements[0].slides[1].boxes[1].fontColor).toBe("#123456");
+    expect(mockDb.put).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a remote apply across church scope and assigns the next item the active church owner", () => {
+    const itemA = clone(mockDocs.get("free-A"))!;
+    store.dispatch(setActiveItem(itemA));
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate({
+      ...itemA,
+      name: "Stale church A remote content",
+    }));
+
+    const ownerB = {
+      scopeId: "other-church/database-b",
+      databaseKey: "database-b",
+      churchId: "other-church",
+    };
+    const itemB = {
+      ...clone(itemA),
+      name: "Same ID in church B",
+      contentOwner: mockActiveOwner,
+    } as DBItem & { contentOwner: typeof mockActiveOwner };
+    mockDatabaseBDocs.set(itemB._id, clone(itemB));
+    setActiveContentDatabase(ownerB, mockDatabaseB as never);
+    mockCurrentDb = mockDatabaseB;
+
+    act(() => store.dispatch(itemSlice.actions.applyPendingRemoteItem()));
+    expect(store.getState().undoable.present.item.name).toBe("free-A");
+    expect(store.getState().undoable.present.item.contentOwner).toEqual(mockActiveOwner);
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+
+    store.dispatch(setActiveItem(itemB));
+    expect(store.getState().undoable.present.item.name).toBe("Same ID in church B");
+    expect(store.getState().undoable.present.item.contentOwner).toEqual(ownerB);
   });
 });

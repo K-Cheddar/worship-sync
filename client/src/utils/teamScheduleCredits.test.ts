@@ -7,6 +7,7 @@ import type {
 import {
   buildTeamScheduleCreditEntries,
   findTeamScheduleCreditEntryForHeading,
+  getGeneratedScheduleCreditId,
   teamScheduleCreditHeadingMatches,
 } from "./teamScheduleCredits";
 
@@ -118,11 +119,13 @@ describe("buildTeamScheduleCreditEntries", () => {
 
     expect(entries).toEqual([
       {
+        positionId: "audio",
         heading: "Audio Engineer",
         names: "",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
       },
       {
+        positionId: "camera",
         heading: "Camera",
         names: "Alice Jones",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
@@ -196,11 +199,13 @@ describe("buildTeamScheduleCreditEntries", () => {
 
     expect(entries).toEqual([
       {
+        positionId: "audio",
         heading: "Audio Engineer",
         names: "",
         sourceLabel: "Media schedule: July Media - Afternoon Worship",
       },
       {
+        positionId: "camera",
         heading: "Camera",
         names: "Bob Smith",
         sourceLabel: "Media schedule: July Media - Afternoon Worship",
@@ -233,11 +238,13 @@ describe("buildTeamScheduleCreditEntries", () => {
 
     expect(entries).toEqual([
       {
+        positionId: "audio",
         heading: "Audio Engineer",
         names: "Bob Smith",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
       },
       {
+        positionId: "camera",
         heading: "Camera",
         names: "Alice Jones\nJordan Taylor\nJordan Smith\nBob Smith",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
@@ -338,6 +345,15 @@ describe("buildTeamScheduleCreditEntries", () => {
 });
 
 describe("teamScheduleCreditHeadingMatches", () => {
+  it("builds a stable generated credit ID from the schedule position identity", () => {
+    expect(getGeneratedScheduleCreditId("camera::position/1")).toBe(
+      "generated-schedule-camera%3A%3Aposition%2F1",
+    );
+    expect(getGeneratedScheduleCreditId("camera")).not.toBe(
+      getGeneratedScheduleCreditId("audio"),
+    );
+  });
+
   it("matches plural/generic credit headings to Teams position names", () => {
     expect(teamScheduleCreditHeadingMatches("Camera Operators", "Camera")).toBe(
       true,
@@ -352,6 +368,7 @@ describe("teamScheduleCreditHeadingMatches", () => {
       findTeamScheduleCreditEntryForHeading(
         [
           {
+            positionId: "camera",
             heading: "Camera",
             names: "Alice Jones",
             sourceLabel: "Media schedule: July Media - Sabbath Worship",
@@ -360,6 +377,7 @@ describe("teamScheduleCreditHeadingMatches", () => {
         "Camera Operators",
       ),
     ).toEqual({
+      positionId: "camera",
       heading: "Camera",
       names: "Alice Jones",
       sourceLabel: "Media schedule: July Media - Sabbath Worship",

@@ -25,7 +25,7 @@ export type OwnedItemContentMutation =
   | {
       kind: "boxProperties";
       slideId: string;
-      slideIndex: number;
+      targetBoxId?: string;
       sectionNum?: number;
       arrangementId?: string;
       boxIndex: number;
@@ -38,7 +38,7 @@ export type OwnedItemContentMutation =
   | {
       kind: "formattedText";
       slideId: string;
-      slideIndex: number;
+      targetBoxId?: string;
       sectionNum?: number;
       field: FormattedTextField;
       value: string | number | boolean;
@@ -46,8 +46,6 @@ export type OwnedItemContentMutation =
     }
   | {
       kind: "sectionText";
-      slideId: string;
-      slideIndex: number;
       sectionNum?: number;
       arrangementId?: string;
       sectionId?: string;
@@ -56,15 +54,13 @@ export type OwnedItemContentMutation =
     }
   | {
       kind: "sectionTextDraft";
-      slideId: string;
-      slideIndex: number;
       sectionNum: number;
       value: string;
     }
   | {
       kind: "boxWords";
       slideId: string;
-      slideIndex: number;
+      targetBoxId?: string;
       sectionNum?: number;
       boxIndex: number;
       value: string;
@@ -72,7 +68,8 @@ export type OwnedItemContentMutation =
   | {
       kind: "overflow";
       slideId: string;
-      slideIndex: number;
+      targetBoxId?: string;
+      boxIndex: number;
       sectionNum?: number;
       value: "fit" | "separate";
     }
@@ -129,28 +126,26 @@ const defaultFormattedTextInfo: FormattedTextDisplayInfo = {
 const findSlideIndex = (
   slides: ItemSlideType[],
   slideId: string,
-  fallbackIndex: number,
-  sectionNum?: number,
+  targetBoxId?: string,
 ) => {
-  const exactIndex = slides.findIndex((slide) => slide.id === slideId);
-  if (exactIndex !== -1) return exactIndex;
-  if (sectionNum !== undefined) {
-    const sectionSlides = slides
-      .map((slide, index) => ({ slide, index }))
-      .filter(({ slide }) =>
-        Number(slide.name.match(/Section (\d+)/)?.[1]) === sectionNum,
-      );
-    if (sectionSlides.length > 0) {
-      return sectionSlides.reduce((closest, candidate) =>
-        Math.abs(candidate.index - fallbackIndex) <
-        Math.abs(closest.index - fallbackIndex)
-          ? candidate
-          : closest,
-      ).index;
-    }
-  }
-  return slides[fallbackIndex] ? fallbackIndex : -1;
+  const idMatches = slides
+    .map((slide, index) => ({ slide, index }))
+    .filter(({ slide }) => slide.id === slideId);
+  if (idMatches.length === 1) return idMatches[0].index;
+  if (idMatches.length > 1 || !targetBoxId) return -1;
+
+  // formatFree can regenerate slide IDs while retaining the originating boxes.
+  // A unique box ID preserves that logical target without relying on its old index.
+  const boxMatches = slides
+    .map((slide, index) => ({ slide, index }))
+    .filter(({ slide }) => slide.boxes.some((box) => box.id === targetBoxId));
+  return boxMatches.length === 1 ? boxMatches[0].index : -1;
 };
+
+const findFreeSectionSlideIndex = (item: ItemState, sectionNum: number) =>
+  item.slides.findIndex(
+    (slide) => Number(slide.name.match(/^Section\s+(\d+)/)?.[1]) === sectionNum,
+  );
 
 export const applyOwnedItemContentMutation = (
   item: ItemState,
@@ -174,10 +169,15 @@ export const applyOwnedItemContentMutation = (
     const targetSlideIndex = findSlideIndex(
       item.slides,
       mutation.slideId,
-      mutation.slideIndex,
-      mutation.sectionNum,
+      mutation.targetBoxId,
     );
     if (targetSlideIndex === -1) return null;
+    if (
+      mutation.targetBoxId &&
+      !item.slides[targetSlideIndex]?.boxes.some(
+        (box) => box.id === mutation.targetBoxId,
+      )
+    ) return null;
     const currentInfo =
       item.slides[targetSlideIndex]?.formattedTextDisplayInfo ??
       defaultFormattedTextInfo;
@@ -224,14 +224,8 @@ export const applyOwnedItemContentMutation = (
     }
 
     if (item.type === "free" && mutation.sectionNum !== undefined) {
-      if (
-        findSlideIndex(
-          item.slides,
-          mutation.slideId,
-          mutation.slideIndex,
-          mutation.sectionNum,
-        ) === -1
-      ) return null;
+      const sectionSlideIndex = findFreeSectionSlideIndex(item, mutation.sectionNum);
+      if (sectionSlideIndex === -1) return null;
       const formattedSections = item.formattedSections || [];
       const updatedSections = formattedSections.map((section) =>
         section.sectionNum === mutation.sectionNum
@@ -245,7 +239,11 @@ export const applyOwnedItemContentMutation = (
           slideSpan: 1,
         });
       }
-      const updated = formatFree({ ...item, formattedSections: updatedSections });
+      const updated = formatFree({
+        ...item,
+        formattedSections: updatedSections,
+        selectedSlide: sectionSlideIndex,
+      });
       return {
         slides: updated.slides,
         formattedSections: updated.formattedSections,
@@ -257,12 +255,7 @@ export const applyOwnedItemContentMutation = (
   if (mutation.kind === "sectionTextDraft") {
     if (
       item.type !== "free" ||
-      findSlideIndex(
-        item.slides,
-        mutation.slideId,
-        mutation.slideIndex,
-        mutation.sectionNum,
-      ) === -1
+      findFreeSectionSlideIndex(item, mutation.sectionNum) === -1
     ) {
       return null;
     }
@@ -289,10 +282,15 @@ export const applyOwnedItemContentMutation = (
   const targetSlideIndex = findSlideIndex(
     target.slides,
     mutation.slideId,
-    mutation.slideIndex,
-    "sectionNum" in mutation ? mutation.sectionNum : undefined,
+    mutation.targetBoxId,
   );
   if (targetSlideIndex === -1) return null;
+  const targetSlide = target.slides[targetSlideIndex];
+  if (!targetSlide) return null;
+  const resolvedBoxIndex = mutation.targetBoxId
+    ? targetSlide.boxes.findIndex((box) => box.id === mutation.targetBoxId)
+    : mutation.boxIndex;
+  if (resolvedBoxIndex < 0) return null;
 
   if (mutation.kind === "boxWords") {
     const slides = target.slides.map((slide, slideIndex) =>
@@ -301,7 +299,7 @@ export const applyOwnedItemContentMutation = (
         : {
             ...slide,
             boxes: slide.boxes.map((box, boxIndex) =>
-              boxIndex === mutation.boxIndex
+              boxIndex === resolvedBoxIndex
                 ? { ...box, words: mutation.value }
                 : box,
             ),
@@ -322,7 +320,12 @@ export const applyOwnedItemContentMutation = (
     const slides = item.slides.map((slide, slideIndex) =>
       slideIndex === targetSlideIndex ? { ...slide, overflow: mutation.value } : slide,
     );
-    const updated = formatFree({ ...item, slides });
+    const updated = formatFree({
+      ...item,
+      slides,
+      selectedSlide: targetSlideIndex,
+      selectedBox: resolvedBoxIndex,
+    });
     return { slides: updated.slides };
   }
 
@@ -330,7 +333,7 @@ export const applyOwnedItemContentMutation = (
     ...item,
     selectedArrangement: target.arrangementIndex,
     selectedSlide: targetSlideIndex,
-    selectedBox: mutation.boxIndex,
+    selectedBox: resolvedBoxIndex,
   };
   const updated = updateBoxProperties({
     updatedProperties: mutation.properties,

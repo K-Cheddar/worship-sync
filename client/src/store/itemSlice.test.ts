@@ -601,5 +601,77 @@ describe("itemSlice", () => {
         }),
       );
     });
+
+    it("preserves verified ownership and ignores ownership in an accepted remote document", () => {
+      const ownerA = {
+        scopeId: "church-a/database-a",
+        databaseKey: "database-a",
+        churchId: "church-a",
+      };
+      const untrustedOwner = {
+        scopeId: "church-b/database-b",
+        databaseKey: "database-b",
+        churchId: "church-b",
+      };
+      const remoteItem = {
+        _id: "song-a",
+        name: "Remote Song A",
+        type: "song",
+        selectedArrangement: 0,
+        arrangements: [],
+        slides: [],
+        contentOwner: untrustedOwner,
+      } as any;
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "song-a",
+          name: "Local Song A",
+          type: "song",
+          contentOwner: ownerA,
+          pendingRemoteItem: remoteItem,
+          hasRemoteUpdate: true,
+        },
+      });
+
+      store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+
+      expect(store.getState().item.name).toBe("Remote Song A");
+      expect(store.getState().item.contentOwner).toEqual(ownerA);
+      expect(store.getState().item.hasRemoteUpdate).toBe(false);
+    });
+
+    it("rejects a buffered remote document for a different active item", () => {
+      const ownerA = {
+        scopeId: "church-a/database-a",
+        databaseKey: "database-a",
+        churchId: "church-a",
+      };
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "song-a",
+          name: "Song A",
+          type: "song",
+          contentOwner: ownerA,
+          pendingRemoteItem: {
+            _id: "song-b",
+            name: "Song B",
+            type: "song",
+            arrangements: [],
+            slides: [],
+          } as any,
+          hasRemoteUpdate: true,
+        },
+      });
+
+      store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+
+      expect(store.getState().item._id).toBe("song-a");
+      expect(store.getState().item.name).toBe("Song A");
+      expect(store.getState().item.contentOwner).toEqual(ownerA);
+      expect(store.getState().item.pendingRemoteItem).toBeNull();
+      expect(store.getState().item.hasRemoteUpdate).toBe(false);
+    });
   });
 });

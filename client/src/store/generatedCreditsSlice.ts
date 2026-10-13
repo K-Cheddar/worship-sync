@@ -3,6 +3,8 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 export type GeneratedCreditItemStatus =
   | "pending"
   | "updating"
+  | "creating"
+  | "created"
   | "updated"
   | "unchanged"
   | "unmatched"
@@ -53,7 +55,7 @@ export const generatedCreditsSlice = createSlice({
       action: PayloadAction<{
         generatedAt: string;
         items: Array<Omit<GeneratedCreditItem, "status" | "error"> & {
-          status?: Extract<GeneratedCreditItemStatus, "unmatched">;
+          status?: Extract<GeneratedCreditItemStatus, "unmatched" | "creating">;
         }>;
         warning?: string | null;
       }>,
@@ -89,7 +91,7 @@ export const generatedCreditsSlice = createSlice({
       state,
       action: PayloadAction<{
         creditId: string;
-        status: Extract<GeneratedCreditItemStatus, "updated" | "unchanged">;
+        status: Extract<GeneratedCreditItemStatus, "created" | "updated" | "unchanged">;
       }>,
     ) => {
       const item = state.items.find((entry) => entry.creditId === action.payload.creditId);

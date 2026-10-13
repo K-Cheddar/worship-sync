@@ -560,14 +560,20 @@ export const ensureCreditsIndexDoc = async (
     if ((e as { status?: number }).status !== 404) throw e;
   }
   const now = new Date().toISOString();
-  await db.put({
-    _id: scopedId,
-    outlineId,
-    creditIds: [],
-    createdAt: now,
-    updatedAt: now,
-    docType: "credits",
-  } as unknown as DBCredits);
+  try {
+    await db.put({
+      _id: scopedId,
+      outlineId,
+      creditIds: [],
+      createdAt: now,
+      updatedAt: now,
+      docType: "credits",
+    } as unknown as DBCredits);
+  } catch (error) {
+    if (!isPouchRevisionConflict(error)) throw error;
+    // Another controller created the same outline index after our initial read.
+    await db.get(scopedId);
+  }
 };
 
 /**
@@ -625,26 +631,87 @@ export type GeneratedCreditWriteResult = {
   doc: DBCredit;
   changed: boolean;
   textChanged: boolean;
+  /** Present only when createIfMissing appended a new ID to the outline index. */
+  addedToIndex?: boolean;
+  /** True when createIfMissing persisted a previously missing credit row. */
+  creditDocCreated?: boolean;
+  indexDoc?: DBCredits;
 };
 
-/** Persist generated fields only, preserving concurrent edits to the rest of the credit. */
+/** Persist generated fields while preserving concurrent edits; optionally create/index a deterministic new row. */
 export const putGeneratedCreditDoc = async (
   db: PouchDB.Database,
   outlineId: string,
-  credit: Pick<CreditsInfo, "id" | "text"> & { generatedSource: string },
+  credit: Pick<CreditsInfo, "id" | "text"> & {
+    generatedSource: string;
+    /** Creates a visible generated credit when its deterministic ID is not stored yet. */
+    createIfMissing?: boolean;
+    heading?: string;
+  },
 ): Promise<GeneratedCreditWriteResult | null> => {
   try {
+    if (credit.createIfMissing && credit.heading === undefined) {
+      throw new Error("A heading is required when creating a generated credit.");
+    }
     const docId = getCreditDocId(outlineId, credit.id);
+    let indexDoc: DBCredits | undefined;
+    let addedToIndex: boolean | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const existing: DBCredit = await db.get(docId);
+      let existing: DBCredit;
+      let createdDoc = false;
+      try {
+        existing = (await db.get(docId)) as DBCredit;
+      } catch (error) {
+        if (
+          !credit.createIfMissing
+          || credit.heading === undefined
+          || typeof error !== "object"
+          || error === null
+          || !("status" in error)
+          || error.status !== 404
+        ) {
+          throw error;
+        }
+        const now = new Date().toISOString();
+        existing = {
+          _id: docId,
+          outlineId,
+          id: credit.id,
+          heading: credit.heading,
+          text: "",
+          createdAt: now,
+          updatedAt: now,
+          docType: "credit",
+        } as DBCredit;
+        createdDoc = true;
+      }
+
       const textChanged = existing.text !== credit.text;
       const changed = textChanged
+        || createdDoc
+        || (credit.createIfMissing && existing.heading !== credit.heading)
         || existing.generatedBaselineText !== credit.text
         || existing.generatedSource !== credit.generatedSource
         || existing.generatedTextOverridden !== false;
 
-      if (!changed) return { doc: existing, changed: false, textChanged: false };
+      if (!changed) {
+        if (!credit.createIfMissing) {
+          return { doc: existing, changed: false, textChanged: false };
+        }
+        const indexResult = await appendCreditIdToIndex(db, outlineId, credit.id);
+        return {
+          doc: existing,
+          changed: false,
+          textChanged: false,
+          addedToIndex: indexResult.added,
+          creditDocCreated: false,
+          ...(indexResult.added ? { indexDoc: indexResult.doc } : {}),
+        };
+      }
 
+      if (credit.createIfMissing && credit.heading !== undefined) {
+        existing.heading = credit.heading;
+      }
       existing.text = credit.text;
       existing.generatedBaselineText = credit.text;
       existing.generatedSource = credit.generatedSource;
@@ -653,10 +720,26 @@ export const putGeneratedCreditDoc = async (
 
       try {
         const result = await db.put(existing);
+        const doc = {
+          ...existing,
+          ...(result?.rev ? { _rev: result.rev } : {}),
+        } as DBCredit;
+        if (credit.createIfMissing) {
+          const indexResult = await appendCreditIdToIndex(db, outlineId, credit.id);
+          addedToIndex = indexResult.added;
+          indexDoc = indexResult.doc;
+        }
         return {
-          doc: { ...existing, ...(result?.rev ? { _rev: result.rev } : {}) },
+          doc,
           changed: true,
           textChanged,
+          ...(credit.createIfMissing
+            ? {
+                addedToIndex,
+                creditDocCreated: createdDoc,
+                ...(addedToIndex && indexDoc ? { indexDoc } : {}),
+              }
+            : {}),
         };
       } catch (error) {
         if (!isPouchRevisionConflict(error) || attempt === 1) throw error;
@@ -668,6 +751,34 @@ export const putGeneratedCreditDoc = async (
     return null;
   }
 };
+
+/** Add an ID to the latest outline index without replacing concurrent additions. */
+async function appendCreditIdToIndex(
+  db: PouchDB.Database,
+  outlineId: string,
+  creditId: string,
+): Promise<{ doc: DBCredits; added: boolean }> {
+  await ensureCreditsIndexDoc(db, outlineId);
+  const indexId = getCreditsDocId(outlineId);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const index = (await db.get(indexId)) as DBCredits;
+    const creditIds = Array.isArray(index.creditIds) ? index.creditIds : [];
+    if (creditIds.includes(creditId)) return { doc: index, added: false };
+
+    index.creditIds = [...creditIds, creditId];
+    index.updatedAt = new Date().toISOString();
+    try {
+      const result = await db.put(index);
+      return {
+        doc: { ...index, ...(result?.rev ? { _rev: result.rev } : {}) },
+        added: true,
+      };
+    } catch (error) {
+      if (!isPouchRevisionConflict(error) || attempt === 2) throw error;
+    }
+  }
+  throw new Error("Could not update the credits index.");
+}
 
 export const updateAllDocs = async (
   dispatch: Function,

@@ -36,6 +36,24 @@ const StatusBadge = ({ status }: { status: GeneratedCreditItemStatus }) => {
     );
   }
 
+  if (status === "created") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-green-900/60 px-1 py-0.5 text-[10px] font-medium text-green-200">
+        <Check size={10} />
+        Created
+      </span>
+    );
+  }
+
+  if (status === "creating") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-cyan-900/60 px-1 py-0.5 text-[10px] font-medium text-cyan-200">
+        <Spinner width="10px" borderWidth="2px" />
+        Creating
+      </span>
+    );
+  }
+
   if (status === "unchanged") {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-700 px-1 py-0.5 text-[10px] font-medium text-zinc-200">
@@ -178,6 +196,7 @@ const GeneratedCreditsFloatingWindow = () => {
                 const isActive = state.activeCreditId === item.creditId;
                 const hasTextChange = item.previousText !== item.nextText;
                 const isUnmatched = item.status === "unmatched";
+                const isCreated = item.status === "created" || item.status === "creating";
                 return (
                   <li
                     key={item.creditId}
@@ -206,8 +225,7 @@ const GeneratedCreditsFloatingWindow = () => {
                         {item.nextText.trim() ? (
                           <>
                             <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
-                              This scheduled role had assigned names, but no credit
-                              heading matched it.
+                              This role may already be covered by a grouped credit, so no separate credit was created. Review the role headings before generating again.
                             </div>
                             <div>
                               <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
@@ -224,6 +242,15 @@ const GeneratedCreditsFloatingWindow = () => {
                           </div>
                         )}
                       </>
+                    ) : isCreated ? (
+                      <div>
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                          Generated names
+                        </div>
+                        <div className="wrap-break-word whitespace-pre-line text-xs text-zinc-200">
+                          {item.nextText}
+                        </div>
+                      </div>
                     ) : hasTextChange ? (
                       <>
                         {item.previousText.trim() ? (

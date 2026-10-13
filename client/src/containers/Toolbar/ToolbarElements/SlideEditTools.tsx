@@ -305,7 +305,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     return {
       owner: itemOwner,
       slideId: slide.id,
-      slideIndex: selectedSlide,
+      targetBoxId: slide.boxes?.[selectedBox]?.id,
       sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
       arrangementId:
         type === "song" ? arrangements[selectedArrangement]?.id : undefined,
@@ -316,7 +316,7 @@ const SlideEditTools = ({ className }: { className?: string }) => {
     itemOwner,
     selectedArrangement,
     selectedBox,
-    selectedSlide,
+    slide?.boxes,
     slide?.id,
     slide?.name,
     type,
@@ -697,7 +697,8 @@ const SlideEditTools = ({ className }: { className?: string }) => {
                 runWithFormatting(target.owner, {
                   kind: "overflow",
                   slideId: target.slideId,
-                  slideIndex: target.slideIndex,
+                  targetBoxId: target.targetBoxId,
+                  boxIndex: target.boxIndex,
                   sectionNum: target.sectionNum,
                   value: overflow,
                 });

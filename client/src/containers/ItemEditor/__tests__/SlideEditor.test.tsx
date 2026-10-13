@@ -1131,8 +1131,6 @@ describe("SlideEditor", () => {
       }),
       mutation: {
         kind: "sectionTextDraft",
-        slideId: "s1",
-        slideIndex: 0,
         sectionNum: 1,
         value: "Updated section text",
       },
@@ -1146,8 +1144,6 @@ describe("SlideEditor", () => {
       owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
       mutation: {
         kind: "sectionText",
-        slideId: "s1",
-        slideIndex: 0,
         sectionNum: 1,
         value: "Updated section text",
       },
@@ -1218,8 +1214,6 @@ describe("SlideEditor", () => {
       owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
       mutation: {
         kind: "sectionTextDraft",
-        slideId: "section-4-0",
-        slideIndex: 0,
         sectionNum: 4,
         value: "Updated section text",
       },
@@ -1369,8 +1363,6 @@ describe("SlideEditor", () => {
         owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
         mutation: {
           kind: "sectionText",
-          slideId: "s1",
-          slideIndex: 0,
           sectionNum: 1,
           value: "Updated section text",
         },

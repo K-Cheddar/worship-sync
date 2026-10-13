@@ -5,6 +5,10 @@
   "scripts": {
     "start": "tsx server.js",
     "test": "npm run test:server",
+    "test:e2e:controller": "playwright test --project=chromium",
+    "test:e2e:controller:headed": "playwright test --project=chromium --headed",
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:trace": "playwright show-trace",
     "test:provider-storage": "node --import tsx --test server/churchStorageQuota.test.js server/providerStorageService.test.js server/providerStorageBackfill.test.js server/providerStorageBackfillCli.test.js",
     "test:server": "node scripts/run-server-tests.mjs",
     "migrate:auth": "node scripts/migrate-auth.js",
@@ -72,6 +76,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@playwright/test": "^1.64.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/exec": "^7.1.0",

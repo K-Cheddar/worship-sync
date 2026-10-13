@@ -3765,6 +3765,32 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
   const currentItem = (api.getState() as RootState).undoable.present.item;
   const currentOwner = getItemMutationOwner(currentItem);
 
+  const activeDatabaseOwner = getActiveContentDatabaseOwner();
+  const itemBelongsToActiveDatabase = activeDatabaseOwner
+    ? currentItem.contentOwner?.scopeId === activeDatabaseOwner.scopeId &&
+      currentItem.contentOwner.databaseKey === activeDatabaseOwner.databaseKey &&
+      currentItem.contentOwner.churchId === activeDatabaseOwner.churchId
+    : !currentItem.contentOwner ||
+      currentItem.contentOwner.scopeId === "unscoped";
+
+  if (
+    itemSlice.actions.bufferRemoteItemUpdate.match(action) &&
+    !itemBelongsToActiveDatabase
+  ) {
+    return action;
+  }
+
+  if (itemSlice.actions.applyPendingRemoteItem.match(action)) {
+    if (
+      !itemBelongsToActiveDatabase ||
+      currentItem.pendingRemoteItem?._id !== currentItem._id
+    ) {
+      api.dispatch(itemSlice.actions.discardPendingRemoteItem());
+      return action;
+    }
+    return next(action);
+  }
+
   if (
     itemSlice.actions.setSelectedSlide.match(action) ||
     itemSlice.actions._setSelectedArrangement.match(action) ||
@@ -3780,8 +3806,7 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
   if (!itemSlice.actions.setActiveItem.match(action)) return next(action);
 
   const contentOwner =
-    action.payload.contentOwner ??
-    getActiveContentDatabaseOwner() ??
+    activeDatabaseOwner ??
     { scopeId: "unscoped", databaseKey: "", churchId: "" };
   const nextOwner = getItemMutationOwner({
     ...action.payload,

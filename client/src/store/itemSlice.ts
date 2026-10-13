@@ -8,6 +8,7 @@ import {
   FormattedSection,
   ItemSlideType,
   ItemState,
+  ItemContentOwner,
   MediaType,
   ServiceItem,
   SongAudio,
@@ -208,7 +209,10 @@ const getSlideCount = (
 const applyItemDataToState = (
   state: ItemState,
   payload: Partial<ItemState> | DBItem,
-  options?: { preserveSelection?: boolean },
+  options?: {
+    preserveSelection?: boolean;
+    contentOwner?: ItemContentOwner | null;
+  },
 ) => {
   const preserveSelection = options?.preserveSelection ?? false;
   const nextListId = "listId" in payload ? payload.listId : undefined;
@@ -227,7 +231,11 @@ const applyItemDataToState = (
   state.name = payload.name || state.name;
   state.type = payload.type || state.type;
   state._id = payload._id || state._id;
-  state.contentOwner = "contentOwner" in payload ? payload.contentOwner : undefined;
+  state.contentOwner = options && "contentOwner" in options
+    ? options.contentOwner ?? undefined
+    : "contentOwner" in payload
+      ? payload.contentOwner
+      : undefined;
   state.listId = nextListId || state.listId;
   if ("background" in payload && payload.background !== undefined) {
     state.background = payload.background;
@@ -499,8 +507,17 @@ export const itemSlice = createSlice({
     },
     applyPendingRemoteItem: (state) => {
       if (!state.pendingRemoteItem) return;
+      if (state.pendingRemoteItem._id !== state._id) {
+        state.pendingRemoteItem = null;
+        state.hasRemoteUpdate = false;
+        return;
+      }
+      // The remote document is content only. Keep the owner already verified
+      // for this active document; never adopt runtime ownership from the payload.
+      const contentOwner = state.contentOwner ?? null;
       applyItemDataToState(state, state.pendingRemoteItem, {
         preserveSelection: true,
+        contentOwner,
       });
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);

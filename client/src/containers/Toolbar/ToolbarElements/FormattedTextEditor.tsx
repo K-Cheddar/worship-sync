@@ -126,7 +126,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
       mutation: {
         kind: "formattedText",
         slideId: selectedSlide.id,
-        slideIndex: item.selectedSlide,
+        targetBoxId: selectedSlide.boxes?.[item.selectedBox]?.id,
         sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
         field,
         value: updatedValue,
@@ -171,7 +171,7 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
           mutation: {
             kind: "formattedText",
             slideId: selectedSlide.id,
-            slideIndex: item.selectedSlide,
+            targetBoxId: selectedSlide.boxes?.[item.selectedBox]?.id,
             sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
             field,
             value: updatedValue,

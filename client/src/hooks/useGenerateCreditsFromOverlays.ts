@@ -4,7 +4,11 @@ import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { putGeneratedCreditDoc } from "../utils/dbUtils";
 import { getTeamsBootstrap } from "../api/auth";
-import { selectCredit, updateCreditFromGeneration } from "../store/creditsSlice";
+import {
+  addCredit,
+  selectCredit,
+  updateCreditFromGeneration,
+} from "../store/creditsSlice";
 import {
   completeGeneratedCreditItem,
   completeGeneratedCredits,
@@ -19,6 +23,7 @@ import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImpo
 import type { CreditsInfo } from "../types";
 import {
   buildTeamScheduleCreditEntries,
+  getGeneratedScheduleCreditId,
   findTeamScheduleCreditEntryForHeading,
   type TeamScheduleCreditEntry,
 } from "../utils/teamScheduleCredits";
@@ -37,6 +42,10 @@ const PARTICIPANT_EVENT_KEYS = [
   "behind the pulpit",
 ];
 const CREDIT_GENERATION_STEP_DELAY_MS = 350;
+const creditSaveFailureMessage = (detail?: string) =>
+  detail
+    ? `Could not save this credit: ${detail}. Generate again to retry.`
+    : "Could not save this credit. Generate again to retry.";
 
 type GeneratedCreditDetail = {
   sourceLabel: string;
@@ -52,6 +61,19 @@ type PlannedGeneratedCreditUpdate = {
   previousText: string;
   sourceLabel: string;
 };
+
+type PlannedGeneratedCreditCreation = {
+  credit: CreditsInfo & {
+    generatedBaselineText: string;
+    generatedSource: string;
+    generatedTextOverridden: false;
+  };
+  sourceLabel: string;
+};
+
+type GeneratedCreditWriteResult = NonNullable<
+  Awaited<ReturnType<typeof putGeneratedCreditDoc>>
+>;
 
 const waitForCreditGenerationStep = () =>
   new Promise((resolve) =>
@@ -190,6 +212,7 @@ export function useGenerateCreditsFromOverlays() {
       let schedule: TeamScheduleCreditEntry[] = [];
       let scheduleLoaded = false;
       let scheduleError: string | null = null;
+      let scheduleIncomplete = false;
       // The bootstrap only hydrates schedules around today. A service outside
       // that window comes back as a summary, and generating from it would write
       // blank credits that read exactly like an unstaffed service.
@@ -197,16 +220,23 @@ export function useGenerateCreditsFromOverlays() {
       if (churchId) {
         try {
           const teamsBootstrap = await getTeamsBootstrap(churchId);
-          const credits = buildTeamScheduleCreditEntries({
-            schedules: teamsBootstrap.schedules || [],
-            positions: teamsBootstrap.positions || [],
-            members: teamsBootstrap.members || [],
-            teams: teamsBootstrap.teams || [],
-            servicePlanKey,
-          });
-          schedule = credits.entries;
-          scheduleUnavailable = credits.scheduleUnavailable;
-          scheduleLoaded = credits.scheduleLoaded;
+          if (teamsBootstrap.truncated) {
+            // The bootstrap only reports that some collection hit its cap, not
+            // which one. Do not treat a missing position or member as unassigned.
+            scheduleUnavailable = true;
+            scheduleIncomplete = true;
+          } else {
+            const credits = buildTeamScheduleCreditEntries({
+              schedules: teamsBootstrap.schedules || [],
+              positions: teamsBootstrap.positions || [],
+              members: teamsBootstrap.members || [],
+              teams: teamsBootstrap.teams || [],
+              servicePlanKey,
+            });
+            schedule = credits.entries;
+            scheduleUnavailable = credits.scheduleUnavailable;
+            scheduleLoaded = credits.scheduleLoaded;
+          }
         } catch (error) {
           console.error("Error generating credits from Teams schedule:", error);
           scheduleError =
@@ -220,10 +250,11 @@ export function useGenerateCreditsFromOverlays() {
       const matchedScheduleEntries = new Set<TeamScheduleCreditEntry>();
 
       let updatedList = list.map((credit) => {
-        const scheduleEntry = findTeamScheduleCreditEntryForHeading(
-          schedule,
-          credit.heading,
-        );
+        const scheduleEntry =
+          schedule.find(
+            (entry) =>
+              getGeneratedScheduleCreditId(entry.positionId) === credit.id,
+          ) ?? findTeamScheduleCreditEntryForHeading(schedule, credit.heading);
 
         if (scheduleEntry) {
           matchedScheduleEntries.add(scheduleEntry);
@@ -333,17 +364,40 @@ export function useGenerateCreditsFromOverlays() {
             },
           ];
         });
-      const unmatchedScheduleItems = schedule
+      const unmatchedAssignedScheduleEntries = schedule
         .filter((entry) => !matchedScheduleEntries.has(entry))
-        .filter((entry) => entry.names.trim())
-        .map((entry, index) => ({
-          creditId: `schedule-miss-${index}-${entry.heading}`,
-          creditHeading: entry.heading,
-          sourceLabel: entry.sourceLabel || "Media schedule",
-          previousText: "",
-          nextText: entry.names,
-          status: "unmatched" as const,
-        }));
+        .filter((entry) => entry.names.trim());
+      const ambiguousScheduleEntries = unmatchedAssignedScheduleEntries.filter(
+        (entry) => list.some((credit) =>
+          findTeamScheduleCreditEntryForHeading([entry], credit.heading),
+        ),
+      );
+      const unmatchedScheduleItems = ambiguousScheduleEntries.map((entry) => ({
+        creditId: `schedule-miss-${entry.positionId}`,
+        creditHeading: entry.heading,
+        sourceLabel: entry.sourceLabel || "Media schedule",
+        previousText: "",
+        nextText: entry.names,
+        status: "unmatched" as const,
+      }));
+      const plannedCreations: PlannedGeneratedCreditCreation[] =
+        unmatchedAssignedScheduleEntries
+          .filter((entry) => !ambiguousScheduleEntries.includes(entry))
+          .map((entry) => {
+            const names = normalizeGeneratedCreditText(entry.names);
+            const sourceLabel = entry.sourceLabel || "Media schedule";
+            return {
+              credit: {
+                id: getGeneratedScheduleCreditId(entry.positionId),
+                heading: entry.heading,
+                text: names,
+                generatedBaselineText: names,
+                generatedSource: sourceLabel,
+                generatedTextOverridden: false,
+              },
+              sourceLabel,
+            };
+          });
       const unmatchedOverlayItems = list.flatMap((credit) => {
         const eventKey = PARTICIPANT_EVENT_KEYS.find((key) =>
           credit.heading.toLowerCase().includes(key),
@@ -371,20 +425,31 @@ export function useGenerateCreditsFromOverlays() {
               previousText,
               nextText: credit.text,
             })),
+            ...plannedCreations.map(({ credit, sourceLabel }) => ({
+              creditId: credit.id,
+              creditHeading: credit.heading,
+              sourceLabel,
+              previousText: "",
+              nextText: credit.text,
+              status: "creating" as const,
+            })),
             ...unmatchedScheduleItems,
             ...unmatchedOverlayItems,
           ],
           warning: scheduleError
             ? "Media schedule was unavailable. Other sources will still be applied."
             : scheduleUnavailable
-              ? "This service's media schedule hasn't loaded, so its names were left out. Open it in Teams first, then generate again."
+              ? scheduleIncomplete
+                ? "Teams data was incomplete, so schedule names were left out. Check the schedule in Teams, then generate again."
+                : "This service's media schedule hasn't loaded, so its names were left out. Open it in Teams first, then generate again."
               : null,
         }),
       );
 
-      const docsToBroadcast: NonNullable<
-        Awaited<ReturnType<typeof putGeneratedCreditDoc>>
-      >["doc"][] = [];
+      const docsToBroadcast: Array<
+        GeneratedCreditWriteResult["doc"]
+        | NonNullable<GeneratedCreditWriteResult["indexDoc"]>
+      > = [];
       let hadPersistenceError = false;
       for (const { credit, previousText } of plannedUpdates) {
         dispatch(setGeneratedCreditActive(credit.id));
@@ -408,7 +473,7 @@ export function useGenerateCreditsFromOverlays() {
             dispatch(
               failGeneratedCreditItem({
                 creditId: credit.id,
-                error: "Could not save this credit.",
+                error: creditSaveFailureMessage(),
               }),
             );
             continue;
@@ -425,7 +490,7 @@ export function useGenerateCreditsFromOverlays() {
               dispatch(
                 failGeneratedCreditItem({
                   creditId: credit.id,
-                  error: "Could not save this credit.",
+                error: creditSaveFailureMessage(),
                 }),
               );
               continue;
@@ -437,10 +502,11 @@ export function useGenerateCreditsFromOverlays() {
             dispatch(
               failGeneratedCreditItem({
                 creditId: credit.id,
-                error:
+                error: creditSaveFailureMessage(
                   error instanceof Error && error.message.trim()
                     ? error.message
-                    : "Could not save this credit.",
+                    : undefined,
+                ),
               }),
             );
             continue;
@@ -467,13 +533,96 @@ export function useGenerateCreditsFromOverlays() {
         );
       }
 
+      for (const { credit } of plannedCreations) {
+        dispatch(setGeneratedCreditActive(credit.id));
+        await waitForCreditGenerationStep();
+
+        if (!db || !outlineIdForCredits) {
+          hadPersistenceError = true;
+          dispatch(failGeneratedCreditItem({
+            creditId: credit.id,
+            error: creditSaveFailureMessage(),
+          }));
+          continue;
+        }
+
+        try {
+          const result = await putGeneratedCreditDoc(db, outlineIdForCredits, {
+            id: credit.id,
+            heading: credit.heading,
+            text: credit.text,
+            generatedSource: credit.generatedSource,
+            createIfMissing: true,
+          });
+          if (!result) {
+            hadPersistenceError = true;
+            dispatch(failGeneratedCreditItem({
+              creditId: credit.id,
+              error: creditSaveFailureMessage(),
+            }));
+            continue;
+          }
+
+          if (result.changed || result.addedToIndex) docsToBroadcast.push(result.doc);
+          if (result.indexDoc) docsToBroadcast.push(result.indexDoc);
+
+          if (isGenerationOwnerCurrent()) {
+            const latestCredits = store.getState().undoable.present.credits.list;
+            const latestCredit = latestCredits.find(
+              (candidate: CreditsInfo) => candidate.id === credit.id,
+            );
+            const generatedFields = {
+              text: credit.text,
+              generatedBaselineText: credit.text,
+              generatedSource: credit.generatedSource,
+              generatedTextOverridden: false as const,
+            };
+
+            if (latestCredit) {
+              dispatch(updateCreditFromGeneration({
+                ...latestCredit,
+                ...generatedFields,
+              }));
+            } else {
+              const lastCredit = latestCredits[latestCredits.length - 1];
+              if (lastCredit) dispatch(selectCredit(lastCredit.id));
+              dispatch(addCredit({
+                id: credit.id,
+                heading: result.doc.heading ?? credit.heading,
+                ...(result.doc.hidden === undefined ? {} : { hidden: result.doc.hidden }),
+                ...generatedFields,
+              }));
+            }
+          }
+
+          dispatch(completeGeneratedCreditItem({
+            creditId: credit.id,
+            status: result.addedToIndex || result.creditDocCreated
+              ? "created"
+              : result.textChanged
+                ? "updated"
+                : "unchanged",
+          }));
+        } catch (error) {
+          hadPersistenceError = true;
+          dispatch(failGeneratedCreditItem({
+            creditId: credit.id,
+            error: creditSaveFailureMessage(
+              error instanceof Error && error.message.trim()
+                ? error.message
+                : undefined,
+            ),
+          }));
+        }
+      }
+
       // This helper posts through the active BroadcastChannel, which may have switched churches
       // while the captured PouchDB write was in flight.
       if (docsToBroadcast.length > 0 && isGenerationDatabaseCurrent()) {
         broadcastCreditsUpdate(docsToBroadcast);
       }
 
-      if (isGenerationDatabaseCurrent()) {
+      if (isGenerationOwnerCurrent()) {
         await flushCreditsHistoryFromLatestList(
           dispatch,
           () => store.getState(),

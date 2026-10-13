@@ -1161,16 +1161,12 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           owner,
           mutation: {
             kind: "sectionTextDraft",
-            slideId: currentSlide.id,
-            slideIndex: selectedSlide,
             sectionNum: currentSectionNum,
             value: newText,
           },
         }));
         mutation = {
           kind: "sectionText",
-          slideId: currentSlide.id,
-          slideIndex: selectedSlide,
           sectionNum: currentSectionNum,
           value: newText,
         };
@@ -1182,8 +1178,6 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         if (!targetArrangement || !targetLyric) return;
         mutation = {
           kind: "sectionText",
-          slideId: currentSlide.id,
-          slideIndex: selectedSlide,
           arrangementId: targetArrangement.id,
           sectionId: targetLyric.id,
           sectionName: targetLyric.name,
@@ -1193,7 +1187,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         mutation = {
           kind: "boxWords",
           slideId: currentSlide.id,
-          slideIndex: selectedSlide,
+          targetBoxId: currentSlide.boxes?.[selectedBox]?.id,
           boxIndex: selectedBox,
           value: newText,
         };

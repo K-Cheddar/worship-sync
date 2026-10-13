@@ -19,6 +19,7 @@ import { resolveMemberMinorStatus } from "../pages/Teams/memberPreferences";
 import { getServicePlanKey } from "./servicePlanKeys";
 
 export type TeamScheduleCreditEntry = {
+  positionId: string;
   heading: string;
   names: string;
   sourceLabel: string;
@@ -56,6 +57,10 @@ export type TeamScheduleCreditsResult = {
   /** A matching schedule occurrence was hydrated, including a genuinely empty one. */
   scheduleLoaded: boolean;
 };
+
+/** Stable credit ID for a scheduled position across generation retries and refreshes. */
+export const getGeneratedScheduleCreditId = (positionId: string) =>
+  `generated-schedule-${encodeURIComponent(positionId)}`;
 
 type ScheduleOccurrenceWithOwner = {
   schedule: TeamSchedule | TeamScheduleSummary;
@@ -313,6 +318,7 @@ export const buildTeamScheduleCreditEntries = ({
   const entries = teamPositions.map((position) => {
     const names = namesByPositionId.get(position.positionId) || [];
     return {
+      positionId: position.positionId,
       heading: position.name,
       names: names.join("\n"),
       sourceLabel: buildScheduleSourceLabel({

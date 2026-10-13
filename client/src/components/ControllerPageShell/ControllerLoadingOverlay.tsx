@@ -59,7 +59,10 @@ const ControllerLoadingOverlay = ({
     );
 
   return (
-    <div className="fixed top-0 left-0 z-50 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8">
+    <div
+      data-testid="controller-loading-overlay"
+      className="fixed top-0 left-0 z-50 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8"
+    >
       {isFailed ? (
         <>
           {connectionStatus?.message && (
