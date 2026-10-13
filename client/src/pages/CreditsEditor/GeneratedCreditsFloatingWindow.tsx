@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { AlertCircle, Check, Circle, XCircle } from "lucide-react";
 import { useDispatch, useSelector } from "../../hooks";
 import FloatingWindow, {
@@ -14,6 +14,9 @@ import {
 } from "../../store/generatedCreditsSlice";
 import { getControllerRightPanelWidthPx } from "../../utils/controllerPanelLayout";
 import { cn } from "../../utils/cnHelper";
+import { ControllerInfoContext } from "../../context/controllerInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
 
 const MARGIN = 16;
 
@@ -81,6 +84,15 @@ const StatusBadge = ({ status }: { status: GeneratedCreditItemStatus }) => {
     );
   }
 
+  if (status === "skipped") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-amber-900/60 px-1 py-0.5 text-[10px] font-medium text-amber-200">
+        <AlertCircle size={10} />
+        Skipped
+      </span>
+    );
+  }
+
   return (
     <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-800 px-1 py-0.5 text-[10px] font-medium text-zinc-400">
       <Circle size={9} />
@@ -96,6 +108,25 @@ const GeneratedCreditsFloatingWindow = () => {
   const state = useSelector(
     (s: RootState) => s.generatedCredits ?? initialGeneratedCreditsState,
   );
+  const outlineId = useSelector(
+    (s: RootState) =>
+      s.undoable?.present?.itemLists?.selectedList?._id ??
+      s.undoable?.present?.itemLists?.activeList?._id ??
+      "",
+  );
+  const { db } = useContext(ControllerInfoContext) ?? {};
+  const { churchId = "" } = useContext(GlobalInfoContext) ?? {};
+  const activeDatabaseOwner = getActiveContentDatabaseOwner();
+  const databaseKey =
+    activeDatabaseOwner?.churchId === churchId
+      ? activeDatabaseOwner.databaseKey
+      : typeof db?.name === "string"
+        ? db.name
+        : "";
+  const databaseScopeId =
+    activeDatabaseOwner?.churchId === churchId
+      ? activeDatabaseOwner.scopeId
+      : "";
   const prevRestoreIdRef = useRef(state.restoreId);
 
   useEffect(() => {
@@ -115,6 +146,15 @@ const GeneratedCreditsFloatingWindow = () => {
   }, [state.activeCreditId]);
 
   if (state.dismissed || state.status === "idle") return null;
+  if (
+    state.owner &&
+    (state.owner.churchId !== churchId ||
+      state.owner.databaseKey !== databaseKey ||
+      state.owner.databaseScopeId !== databaseScopeId ||
+      state.owner.outlineId !== outlineId)
+  ) {
+    return null;
+  }
 
   const windowWidth = getControllerRightPanelWidthPx(window.innerWidth);
   const maxWindowHeight = Math.max(window.innerHeight - MARGIN * 2, 240);
@@ -128,6 +168,8 @@ const GeneratedCreditsFloatingWindow = () => {
       ? "Updating"
       : state.status === "failed"
         ? "Failed"
+        : state.status === "detached"
+          ? "Paused"
         : "Complete";
 
   const handleClose = () => {
@@ -170,6 +212,12 @@ const GeneratedCreditsFloatingWindow = () => {
           </p>
         ) : null}
 
+        {state.detachedReason ? (
+          <p className="rounded bg-amber-950/50 px-2 py-1 text-xs text-amber-200">
+            {state.detachedReason}
+          </p>
+        ) : null}
+
         {state.error ? (
           <p className="rounded bg-red-950/50 px-2 py-1 text-xs text-red-200">
             {state.error}
@@ -196,6 +244,7 @@ const GeneratedCreditsFloatingWindow = () => {
                 const isActive = state.activeCreditId === item.creditId;
                 const hasTextChange = item.previousText !== item.nextText;
                 const isUnmatched = item.status === "unmatched";
+                const isSkipped = item.status === "skipped";
                 const isCreated = item.status === "created" || item.status === "creating";
                 return (
                   <li
@@ -220,9 +269,29 @@ const GeneratedCreditsFloatingWindow = () => {
                       </div>
                       <StatusBadge status={item.status} />
                     </div>
-                    {isUnmatched ? (
+                    {isSkipped ? (
+                      <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
+                        {item.reason}
+                      </div>
+                    ) : isUnmatched ? (
                       <>
-                        {item.nextText.trim() ? (
+                        {item.reason ? (
+                          <>
+                            <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
+                              {item.reason}
+                            </div>
+                            {item.creditId.startsWith("schedule-miss-") && item.nextText.trim() ? (
+                              <div>
+                                <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                                  Scheduled names
+                                </div>
+                                <div className="wrap-break-word whitespace-pre-line text-xs text-zinc-200">
+                                  {item.nextText}
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : item.nextText.trim() ? (
                           <>
                             <div className="rounded bg-amber-950/40 px-2 py-1 text-xs text-amber-100">
                               This role may already be covered by a grouped credit, so no separate credit was created. Review the role headings before generating again.

@@ -572,7 +572,14 @@ export type TeamSchedule = TeamScheduleSummary & {
 export const isHydratedSchedule = (
   schedule: TeamScheduleSummary | TeamSchedule | null | undefined,
 ): schedule is TeamSchedule =>
-  Boolean(schedule) && schedule?.assignmentsOmitted !== true;
+  Boolean(
+    schedule &&
+      schedule.assignmentsOmitted !== true &&
+      "assignments" in schedule &&
+      typeof schedule.assignments === "object" &&
+      schedule.assignments !== null &&
+      !Array.isArray(schedule.assignments),
+  );
 
 /**
  * Keeps only the schedules that carry assignments. Safe for consumers scoped to

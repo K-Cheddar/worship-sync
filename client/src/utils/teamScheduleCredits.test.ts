@@ -8,6 +8,7 @@ import {
   buildTeamScheduleCreditEntries,
   findTeamScheduleCreditEntryForHeading,
   getGeneratedScheduleCreditId,
+  resolveTeamScheduleCreditMatches,
   teamScheduleCreditHeadingMatches,
 } from "./teamScheduleCredits";
 
@@ -284,7 +285,7 @@ describe("buildTeamScheduleCreditEntries", () => {
         members,
         schedules: [],
       }),
-    ).toEqual({ entries: [], scheduleUnavailable: false, scheduleLoaded: false });
+    ).toEqual({ entries: [], positions: [], availability: "missing" });
 
     expect(
       buildTeamScheduleCreditEntries({
@@ -300,7 +301,14 @@ describe("buildTeamScheduleCreditEntries", () => {
           }),
         ],
       }),
-    ).toEqual({ entries: [], scheduleUnavailable: false, scheduleLoaded: false });
+    ).toEqual({
+      entries: [],
+      positions: [
+        { positionId: "audio", heading: "Audio Engineer" },
+        { positionId: "camera", heading: "Camera" },
+      ],
+      availability: "missing",
+    });
   });
 
   // An empty roster and a roster we never fetched look identical once the
@@ -323,7 +331,52 @@ describe("buildTeamScheduleCreditEntries", () => {
         now: new Date("2026-07-04T10:30:00.000Z"),
         schedules: [{ ...summary, assignmentsOmitted: true }],
       }),
-    ).toEqual({ entries: [], scheduleUnavailable: true, scheduleLoaded: false });
+    ).toEqual({
+      entries: [],
+      positions: [
+        { positionId: "audio", heading: "Audio Engineer" },
+        { positionId: "camera", heading: "Camera" },
+      ],
+      availability: "unhydrated",
+    });
+  });
+
+  it("treats a schedule without its assignments map as unhydrated", () => {
+    const { assignments: _assignments, ...summary } = schedule(
+      "2026-07-04T10:00:00.000Z",
+      { "occ-1": { "camera::0": { primaryMemberId: "m1" } } },
+    );
+
+    const result = buildTeamScheduleCreditEntries({
+      teams,
+      positions,
+      members,
+      now: new Date("2026-07-04T10:30:00.000Z"),
+      schedules: [summary],
+    });
+
+    expect(result.availability).toBe("unhydrated");
+    expect(result.entries).toEqual([]);
+    expect(result.positions).toHaveLength(2);
+  });
+
+  it("treats assignments that reference missing roster members as incomplete", () => {
+    const result = buildTeamScheduleCreditEntries({
+      teams,
+      positions,
+      members: [],
+      now: new Date("2026-07-04T10:30:00.000Z"),
+      schedules: [schedule("2026-07-04T10:00:00.000Z", {
+        "occ-1": { "camera::0": { primaryMemberId: "missing-member" } },
+      })],
+    });
+
+    expect(result.availability).toBe("incomplete");
+    expect(result.entries).toEqual([]);
+    expect(result.positions.map(({ heading }) => heading)).toEqual([
+      "Audio Engineer",
+      "Camera",
+    ]);
   });
 
   it("reports hydrated empty assignments as loaded for every schedule position", () => {
@@ -335,8 +388,7 @@ describe("buildTeamScheduleCreditEntries", () => {
       schedules: [schedule("2026-07-04T10:00:00.000Z", { "occ-1": {} })],
     });
 
-    expect(result.scheduleLoaded).toBe(true);
-    expect(result.scheduleUnavailable).toBe(false);
+    expect(result.availability).toBe("loaded");
     expect(result.entries).toEqual([
       expect.objectContaining({ heading: "Audio Engineer", names: "" }),
       expect.objectContaining({ heading: "Camera", names: "" }),
@@ -382,6 +434,94 @@ describe("teamScheduleCreditHeadingMatches", () => {
       names: "Alice Jones",
       sourceLabel: "Media schedule: July Media - Sabbath Worship",
     });
+  });
+
+  it("uses a stable position ID before heading matching", () => {
+    const entries = [
+      { positionId: "audio-engineer", heading: "Audio Engineer", names: "Alex", sourceLabel: "Media schedule" },
+      { positionId: "audio-technician", heading: "Audio Technician", names: "Jordan", sourceLabel: "Media schedule" },
+    ];
+    const resolution = resolveTeamScheduleCreditMatches(entries, [
+      { id: getGeneratedScheduleCreditId("audio-engineer"), heading: "Audio" },
+    ]);
+
+    expect(resolution.matchedEntriesByCreditIndex.get(0)).toBe(0);
+    expect(resolution.ambiguousCreditIndexes.size).toBe(0);
+    expect(resolution.ambiguousEntryIndexes.size).toBe(0);
+  });
+
+  it("matches a unique exact heading one-to-one", () => {
+    const entries = [
+      { positionId: "camera", heading: "Camera", names: "Alice", sourceLabel: "Media schedule" },
+    ];
+    const resolution = resolveTeamScheduleCreditMatches(entries, [
+      { id: "camera-credit", heading: "Camera" },
+    ]);
+
+    expect(resolution.matchedEntriesByCreditIndex.get(0)).toBe(0);
+    expect(resolution.ambiguousCreditIndexes.size).toBe(0);
+    expect(resolution.ambiguousEntryIndexes.size).toBe(0);
+  });
+
+  it("marks a credit matching multiple scheduled positions as ambiguous", () => {
+    const entries = [
+      { positionId: "audio-engineer", heading: "Audio Engineer", names: "Alex", sourceLabel: "Media schedule" },
+      { positionId: "audio-technician", heading: "Audio Technician", names: "Jordan", sourceLabel: "Media schedule" },
+    ];
+    const resolution = resolveTeamScheduleCreditMatches(entries, [
+      { id: "credit-audio", heading: "Audio" },
+    ]);
+
+    expect(resolution.matchedEntriesByCreditIndex.size).toBe(0);
+    expect([...resolution.ambiguousCreditIndexes]).toEqual([0]);
+    expect([...resolution.ambiguousEntryIndexes].sort()).toEqual([0, 1]);
+    expect(findTeamScheduleCreditEntryForHeading(entries, "Audio")).toBeUndefined();
+  });
+
+  it("marks a scheduled position matching multiple credits as ambiguous", () => {
+    const entries = [
+      { positionId: "camera", heading: "Camera", names: "Alice", sourceLabel: "Media schedule" },
+    ];
+    const resolution = resolveTeamScheduleCreditMatches(entries, [
+      { id: "camera-exact", heading: "Camera" },
+      { id: "camera-operators", heading: "Camera Operators" },
+    ]);
+
+    expect(resolution.matchedEntriesByCreditIndex.size).toBe(0);
+    expect([...resolution.ambiguousCreditIndexes].sort()).toEqual([0, 1]);
+    expect([...resolution.ambiguousEntryIndexes]).toEqual([0]);
+  });
+
+  it("keeps match outcomes the same when credits and schedule entries are reordered", () => {
+    const entries = [
+      { positionId: "audio-engineer", heading: "Audio Engineer", names: "Alex", sourceLabel: "Media schedule" },
+      { positionId: "audio-technician", heading: "Audio Technician", names: "Jordan", sourceLabel: "Media schedule" },
+      { positionId: "camera", heading: "Camera", names: "Sam", sourceLabel: "Media schedule" },
+    ];
+    const credits = [
+      { id: "audio", heading: "Audio" },
+      { id: "camera-credit", heading: "Camera Operators" },
+    ];
+    const summarize = (
+      scheduleEntries: typeof entries,
+      existingCredits: typeof credits,
+    ) => {
+      const result = resolveTeamScheduleCreditMatches(scheduleEntries, existingCredits);
+      return {
+        matches: [...result.matchedEntriesByCreditIndex].map(([creditIndex, entryIndex]) => [
+          existingCredits[creditIndex].id,
+          scheduleEntries[entryIndex].positionId,
+        ]).sort(),
+        ambiguousCredits: [...result.ambiguousCreditIndexes]
+          .map((index) => existingCredits[index].id).sort(),
+        ambiguousEntries: [...result.ambiguousEntryIndexes]
+          .map((index) => scheduleEntries[index].positionId).sort(),
+      };
+    };
+
+    expect(summarize(entries, credits)).toEqual(
+      summarize([...entries].reverse(), [...credits].reverse()),
+    );
   });
 
   it("does not match a broader producer heading to a generic producer position", () => {

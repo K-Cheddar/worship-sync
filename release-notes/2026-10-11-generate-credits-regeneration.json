@@ -3,5 +3,5 @@
   "date": "2026-10-11",
   "type": "fixed",
   "title": "Refresh generated credits",
-  "description": "Generate Credits refreshes matching names, adds missing assigned schedule credits, preserves concurrent credit edits, and reports results and save failures."
+  "description": "Generate Credits refreshes matching names and adds assigned schedule credits. It preserves other credit fields, clears empty loaded positions, and reports unavailable schedules or ambiguous headings."
 }
