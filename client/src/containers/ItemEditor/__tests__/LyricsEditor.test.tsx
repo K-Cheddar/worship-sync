@@ -31,8 +31,8 @@ const mockUpdateArrangements = jest.fn((payload: any) => ({
   type: "item/updateArrangements",
   payload,
 }));
-const mockDiscardPendingRemoteItem = jest.fn(() => ({
-  type: "item/discardPendingRemoteItem",
+const mockKeepLocalItemChanges = jest.fn(() => ({
+  type: "item/keepLocalItemChanges",
 }));
 const mockApplyPendingRemoteItem = jest.fn(() => ({
   type: "item/applyPendingRemoteItem",
@@ -54,7 +54,7 @@ jest.mock("../../../hooks", () => ({
 jest.mock("../../../store/itemSlice", () => ({
   setIsLyricsEditorOpen: (value: boolean) => mockSetIsLyricsEditorOpen(value),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
-  discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
+  keepLocalItemChanges: () => mockKeepLocalItemChanges(),
   applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
   setSongMetadata: (value: unknown) => mockSetSongMetadata(value),
 }));
@@ -787,9 +787,9 @@ describe("LyricsEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Keep Editing Mine" }));
 
-    expect(mockDiscardPendingRemoteItem).toHaveBeenCalled();
+    expect(mockKeepLocalItemChanges).toHaveBeenCalled();
     expect(mockDispatch).toHaveBeenCalledWith({
-      type: "item/discardPendingRemoteItem",
+      type: "item/keepLocalItemChanges",
     });
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
