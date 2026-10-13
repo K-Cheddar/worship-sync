@@ -138,6 +138,25 @@ const IntakeFormStatusBadge = ({ active }: { active: boolean }) => (
   </span>
 );
 
+const messageIntentStatusLabel = (status: NotificationIntent["status"]) => {
+  if (status === "sent") return "Sent";
+  if (status === "unknown") return "Could not confirm whether it was sent";
+  if (status === "failed") return "Failed";
+  if (status === "sending") return "Sending";
+  if (status === "suppressed") return "Not sent";
+  return "Ready to send";
+};
+
+const deliveryAttemptStatusLabel = (status: SmsDeliveryAttempt["status"]) => {
+  if (status === "delivered") return "Delivered";
+  if (status === "pending") return "Waiting for delivery confirmation";
+  if (status === "failed" || status === "undelivered") return "Delivery failed";
+  if (status === "accepted" || status === "sent") return "Sent · Waiting for delivery confirmation";
+  if (status === "sending") return "Sending";
+  if (status === "unknown") return "Could not confirm whether this was sent";
+  return "";
+};
+
 const IntakeFormDetails = ({
   startDate,
   endDate,
@@ -838,7 +857,8 @@ const IntakeManager = ({
   const handleAvailabilityBatchUpdated = (batch: NotificationBatch) => {
     if (batch.churchId !== churchIdRef.current || !batch.formId) return;
     batch.intakeRecipients?.forEach(onRecipientSaved);
-    refreshFormMessageState(batch.formId);
+    const hasOutcome = batch.summary.sent > 0 || batch.summary.failed > 0 || batch.summary.uncertain > 0 || (batch.summary.sending || 0) > 0;
+    if (batch.status !== "prepared" || hasOutcome) refreshFormMessageState(batch.formId);
   };
 
   const openSendForm = () => {
@@ -1021,7 +1041,7 @@ const IntakeManager = ({
         recipient.recipientId,
       );
       if (!prepared.preview.eligible) {
-        showToast("This volunteer is not currently eligible for SMS. Check the phone number and church consent.", "error");
+        showToast("This volunteer can't receive a text message right now. Check the phone number and consent.", "error");
         return;
       }
       const recipientName = memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null);
@@ -1036,7 +1056,7 @@ const IntakeManager = ({
       });
       awaitingConfirmation = true;
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not prepare this SMS.");
+      showApiErrorToast(showToast, error, "Could not prepare this text message.");
     } finally {
       if (!awaitingConfirmation) setRecipientActionKey("");
     }
@@ -1051,15 +1071,21 @@ const IntakeManager = ({
       const response = await sendNotificationIntent(churchId, preview.intentId, preview.approvalVersion);
       if (preview.recipient) onRecipientSaved(preview.recipient);
       const attempt = response.attempt;
-      if (!attempt) throw new Error(response.errorMessage || "The provider outcome is uncertain. Refresh delivery history before trying again.");
+      if (!attempt || attempt.outcome === "unknown" || (attempt.status === "pending" && attempt.outcome !== "confirmed")) {
+        throw new Error("We couldn't confirm whether this text was sent. Refresh delivery history before trying again.");
+      }
       setSmsDeliveryAttempts((current) => [
         ...current.filter((currentAttempt) => currentAttempt.attemptId !== attempt.attemptId),
         attempt,
       ]);
       onSmsDeliveryAttemptSaved?.(attempt);
-      showToast("SMS accepted by the provider.", "success");
+      const confirmedSent = attempt.outcome === "confirmed" || ["accepted", "sent", "delivered", "undelivered"].includes(attempt.status);
+      showToast(
+        confirmedSent ? "Your text message was sent. Delivery updates may take a moment." : "This text message wasn't sent. Review delivery history before preparing a retry.",
+        confirmedSent ? "success" : "error",
+      );
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not send this SMS.");
+      showApiErrorToast(showToast, error, "Could not send this text message. Check delivery history before trying again.");
     } finally {
       recipientSmsSendLockRef.current = false;
       setRecipientActionKey("");
@@ -1862,12 +1888,12 @@ const IntakeManager = ({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-100">
-              {availabilityOnly ? "Personalized availability links" : "Individual links and manual SMS"}
+              {availabilityOnly ? "Personalized availability links" : "Individual links and text messages"}
             </h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-400">
               {availabilityOnly
-                ? "Create private links to share, or use Send form to review and manually send SMS requests."
-                : "For offline sharing or one-off SMS. Use Send form above for the normal invitation workflow."}
+                ? "Create private links to share, or use Send form to review and send text messages."
+                : "For offline sharing or one-off text messages. Use Send form above for the normal invitation workflow."}
             </p>
           </div>
           <Button
@@ -1884,12 +1910,12 @@ const IntakeManager = ({
           <span>Invited <strong className="text-gray-200">{intakeMessageCounts.invited}</strong></span>
           <span>Delivered <strong className="text-gray-200">{intakeMessageCounts.delivered}</strong></span>
           <span>Responded <strong className="text-gray-200">{intakeMessageCounts.responded}</strong></span>
-          <span>Waiting <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
+          <span>Waiting for a response <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
         </div>
         {intakeMessageCounts.failed || intakeMessageCounts.uncertain || (!availabilityOnly && intakeMessageCounts.optedOut) ? (
           <p className="text-xs text-amber-200">{[
             intakeMessageCounts.failed ? `${intakeMessageCounts.failed} failed` : "",
-            intakeMessageCounts.uncertain ? `${intakeMessageCounts.uncertain} uncertain` : "",
+            intakeMessageCounts.uncertain ? `${intakeMessageCounts.uncertain} message${intakeMessageCounts.uncertain === 1 ? "" : "s"} could not be confirmed` : "",
             !availabilityOnly && intakeMessageCounts.optedOut ? `${intakeMessageCounts.optedOut} opted out` : "",
           ].filter(Boolean).join(" · ")}</p>
         ) : null}
@@ -1947,23 +1973,23 @@ const IntakeManager = ({
                     latestDeliveryStatus === "undelivered" || latestIntent?.status === "failed"
                   ? "Failed"
                   : latestDeliveryOutcome === "unknown" || latestIntent?.status === "unknown"
-                    ? "Delivery uncertain"
+                    ? "Could not confirm whether this was sent"
                     : latestDeliveryStatus === "pending"
-                      ? "Sending"
+                      ? "Waiting for delivery confirmation"
                       : latestSmsAttempt || latestIntent?.status === "sent"
                         ? "Sent"
                         : "";
               let smsStatus = "Ready to send";
               if (availabilityOnly) {
-                smsStatus = deliveryStatus || (smsEligibility.eligible ? "SMS ready" : "Not eligible for SMS");
+                smsStatus = deliveryStatus || (smsEligibility.eligible ? "Text message ready" : "Not eligible to receive text messages");
               } else if (recipient?.respondedAt) {
                 smsStatus = "Responded";
               } else if (smsEligibility.status === "no_mobile") {
                 smsStatus = "No mobile number";
               } else if (smsEligibility.status === "consent_needed") {
-                smsStatus = "SMS consent needed";
+                smsStatus = "Text message consent needed";
               } else if (smsEligibility.status === "opted_out") {
-                smsStatus = "SMS opted out";
+                smsStatus = "This phone number opted out";
               } else {
                 smsStatus = deliveryStatus || smsStatus;
               }
@@ -2005,7 +2031,7 @@ const IntakeManager = ({
                         smsStatus === "Delivered" || smsStatus === "Responded"
                           ? "border-emerald-500/40 text-emerald-200"
                           : smsStatus === "Failed" ||
-                              smsStatus === "SMS opted out"
+                              smsStatus === "This phone number opted out"
                             ? "border-red-500/40 text-red-200"
                             : smsStatus === "Ready to send"
                               ? "border-sky-500/40 text-sky-200"
@@ -2017,7 +2043,7 @@ const IntakeManager = ({
                         : `${status} · ${smsStatus}`}
                     </span>
                     {reminderCount > 0 ? <span className="text-gray-400">{reminderCount} reminder{reminderCount === 1 ? "" : "s"}</span> : null}
-                    {latestIntent?.status === "unknown" ? <span className="text-amber-200">Delivery uncertain</span> : null}
+                    {latestIntent?.status === "unknown" ? <span className="text-amber-200">Could not confirm whether this was sent</span> : null}
                     {recipient && !recipient.revokedAt ? (
                       <>
                         {!availabilityOnly ? <Button
@@ -2033,12 +2059,12 @@ const IntakeManager = ({
                             recipient.respondedAt
                               ? "This member has already responded"
                               : smsEligibility.eligible
-                              ? "Send this intake request by SMS"
+                              ? "Send this intake request by text message"
                               : smsStatus
                           }
                           onClick={() => void sendRecipientSms(recipient)}
                         >
-                          Send SMS
+                          Send text message
                         </Button> : null}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -2051,7 +2077,7 @@ const IntakeManager = ({
                             {recipientIntents.length ? <>
                               <DropdownMenuSeparator />
                               <DropdownMenuLabel className="text-xs text-gray-300">Message history</DropdownMenuLabel>
-                              <ul className="space-y-1 px-2 pb-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul>
+                              <ul className="space-y-1 px-2 pb-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {messageIntentStatusLabel(intent.status)}{intent.attemptStatus ? ` · ${deliveryAttemptStatusLabel(intent.attemptStatus)}` : ""}</li>)}</ul>
                             </> : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -2093,7 +2119,7 @@ const IntakeManager = ({
           </Button>
         </div>
         {activeRecipients.length === 0 ? (
-          <p className="rounded-md border border-gray-700 p-4 text-sm text-gray-300">No personalized requests yet. Select Team members below to create private links or prepare an SMS request.</p>
+          <p className="rounded-md border border-gray-700 p-4 text-sm text-gray-300">No personalized requests yet. Select Team members below to create private links or prepare a text message.</p>
         ) : (
           <div className="overflow-x-auto rounded-md border border-gray-700">
             <table className="min-w-full border-collapse text-left text-sm">

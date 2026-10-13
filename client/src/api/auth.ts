@@ -1281,6 +1281,8 @@ export type TeamRosterMemberPayload = {
    * own `positionIds`. Omit it entirely to leave membership alone.
    */
   teamIds?: string[];
+  /** Baseline for applying only this editor's membership changes. */
+  baseTeamIds?: string[];
   serviceAvailability?: TeamRosterMember["serviceAvailability"];
   teamMemberships?: TeamRosterMember["teamMemberships"];
   qualifications?: TeamRosterMember["qualifications"];
@@ -1308,6 +1310,12 @@ export type TeamPayload = {
   memberIds: string[];
   usesMicrophoneAssignments?: boolean;
   usesIemAssignments?: boolean;
+};
+
+export type TeamUpdatePayload = Omit<TeamPayload, "memberIds"> & {
+  memberIds?: string[];
+  /** Baseline used to merge explicit roster changes with the current roster. */
+  baseMemberIds?: string[];
 };
 
 export type TeamRolePayload = {
@@ -1789,6 +1797,8 @@ type TeamRosterMemberSaveResponse = {
   member: TeamRosterMember;
   /** Teams whose rosters changed (member added). Absent when none did. */
   teams?: TeamRecord[];
+  /** Current roster memberships after an explicit membership edit. */
+  membershipTeamIds?: string[];
 };
 
 export const createTeamRosterMember = async (
@@ -2388,7 +2398,7 @@ export const createTeam = async (churchId: string, body: TeamPayload) =>
 export const updateTeam = async (
   churchId: string,
   teamId: string,
-  body: TeamPayload,
+  body: TeamUpdatePayload,
 ) =>
   apiFetch<{ success: boolean; team: TeamRecord }>(
     `api/churches/${churchId}/teams/${teamId}`,

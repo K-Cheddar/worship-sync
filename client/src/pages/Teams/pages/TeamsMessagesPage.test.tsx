@@ -99,10 +99,10 @@ const recentIntent = {
 async function openRecentMessages(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
-  await screen.findByRole("button", { name: "Send one SMS" });
-  await user.click(screen.getByRole("button", { name: "Send one SMS" }));
+  await screen.findByRole("button", { name: "Send individually" });
+  await user.click(screen.getByRole("button", { name: "Send individually" }));
   expect(mockGetIntentPreview).toHaveBeenCalledWith("church_1", "intent_1");
-  await screen.findByRole("dialog", { name: "Send this SMS?" });
+  await screen.findByRole("dialog", { name: "Send this text message?" });
 }
 
 test("recent message SMS review shows the fresh server snapshot and Cancel does not send", async () => {
@@ -111,14 +111,14 @@ test("recent message SMS review shows the fresh server snapshot and Cancel does 
   render(<TeamsMessagesPage />);
 
   await openRecentMessages(user);
-  const dialog = screen.getByRole("dialog", { name: "Send this SMS?" });
+  const dialog = screen.getByRole("dialog", { name: "Send this text message?" });
   expect(within(dialog).getByText("Rae Rivera")).toBeInTheDocument();
   expect(within(dialog).getByText("+15555550987")).toBeInTheDocument();
   expect(within(dialog).getByText("Exact server message for Rae.")).toBeInTheDocument();
-  expect(within(dialog).getByText("2 SMS segments.")).toBeInTheDocument();
+  expect(within(dialog).getByText("This longer message counts as 2 texts.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-  expect(screen.queryByRole("dialog", { name: "Send this SMS?" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Send this text message?" })).not.toBeInTheDocument();
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
 
@@ -132,7 +132,7 @@ test("recent message send uses the fresh preview approval version and refreshes 
 
   await waitFor(() => expect(mockSendIntent).toHaveBeenCalledWith("church_1", "intent_1", "fresh-approval-v3"));
   await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
-  expect(await screen.findByRole("status")).toHaveTextContent("SMS accepted by the provider.");
+  expect(await screen.findByRole("status")).toHaveTextContent("Your text message was sent. Delivery updates may take a moment.");
 });
 
 test("recent message send keeps an uncertain provider outcome visible", async () => {
@@ -140,14 +140,14 @@ test("recent message send keeps an uncertain provider outcome visible", async ()
   mockGetIntents.mockResolvedValue({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 });
   mockSendIntent.mockResolvedValue({
     success: false,
-    errorMessage: "The provider outcome is uncertain. Review SMS history before retrying.",
+    outcome: "unknown",
   });
   render(<TeamsMessagesPage />);
 
   await openRecentMessages(user);
   await user.click(screen.getByRole("button", { name: /^Send$/ }));
 
-  expect(await screen.findByRole("status")).toHaveTextContent("The provider outcome is uncertain.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't confirm whether this text was sent. Check message history before trying again.");
   await waitFor(() => expect(mockGetIntents.mock.calls.length).toBeGreaterThanOrEqual(2));
 });
 
@@ -158,7 +158,7 @@ test("recent message confirmation ignores duplicate Send activation", async () =
   render(<TeamsMessagesPage />);
 
   await openRecentMessages(user);
-  const sendButton = within(screen.getByRole("dialog", { name: "Send this SMS?" })).getByRole("button", { name: /^Send$/ });
+  const sendButton = within(screen.getByRole("dialog", { name: "Send this text message?" })).getByRole("button", { name: /^Send$/ });
   fireEvent.click(sendButton);
   fireEvent.click(sendButton);
 
@@ -173,22 +173,103 @@ test("only sends after confirmation and dispatches the explicitly prepared batch
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
 
   await waitFor(() => expect(mockPrepare).toHaveBeenCalledWith("church_1", expect.objectContaining({
     intentType: "availability_request", formId: "form_1", memberIds: ["member_1"],
   })));
-  expect(await screen.findByText(/secure response/)).toBeInTheDocument();
-  await user.click(await screen.findByText("View message"));
-  expect(await screen.findByText(/Church: please respond at/)).toBeInTheDocument();
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  expect(within(confirmation).getByText("October availability")).toBeInTheDocument();
+  expect(within(confirmation).getByText("1 volunteer will receive a text message.")).toBeInTheDocument();
+  expect(within(confirmation).getByText("This longer message counts as 2 texts.")).toBeInTheDocument();
+  expect(mockDispatch).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByText("View message"));
+  expect(await within(confirmation).findByText(/Church: please respond at/)).toBeInTheDocument();
   expect(mockDispatch).not.toHaveBeenCalled();
 
-  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
-  expect(await screen.findByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
-  expect(screen.getByText(/Send exactly 1 selected message/)).toBeInTheDocument();
-  expect(mockDispatch).not.toHaveBeenCalled();
-  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
+  expect(within(confirmation).getByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
   await waitFor(() => expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1"));
+});
+
+test("cancelling the group confirmation sends nothing and allows a fresh review", async () => {
+  const user = userEvent.setup();
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+
+  expect(mockDispatch).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
+  expect(mockDispatch).not.toHaveBeenCalled();
+});
+
+test("a pending preparation cannot open a review from a previous church", async () => {
+  const user = userEvent.setup();
+  let resolvePreparation!: (value: Awaited<ReturnType<typeof prepareAvailabilityNotificationBatch>>) => void;
+  mockPrepare.mockReturnValueOnce(new Promise((resolve) => { resolvePreparation = resolve; }));
+  const view = render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await waitFor(() => expect(mockPrepare).toHaveBeenCalledTimes(1));
+
+  const initialContext = mockUseTeamsPage.mock.results[mockUseTeamsPage.mock.results.length - 1].value as ReturnType<typeof useTeamsPage>;
+  mockUseTeamsPage.mockReturnValue({ ...initialContext, churchId: "church_2" });
+  view.rerender(<TeamsMessagesPage />);
+  await act(async () => resolvePreparation({ success: true, batch }));
+
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /Message status/ })).not.toBeInTheDocument();
+});
+
+test("rapid group confirmation sends the reviewed batch once", async () => {
+  const user = userEvent.setup();
+  mockDispatch.mockImplementation(() => new Promise(() => {}));
+  render(<TeamsMessagesPage />);
+  await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
+  await user.click(screen.getByRole("option", { name: /October availability/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const send = within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Send 1 message" });
+  fireEvent.click(send);
+  fireEvent.click(send);
+
+  expect(mockDispatch).toHaveBeenCalledTimes(1);
+  expect(mockDispatch).toHaveBeenCalledWith("church_1", "batch_1", "batch-review-v1");
+});
+
+test("restored batch status refreshes after an individual send and removes the old send action", async () => {
+  const user = userEvent.setup();
+  const sentIntent = { ...recentIntent, status: "sent" as const, attemptId: "attempt-1", attemptStatus: "accepted" as const };
+  const sentBatch: NotificationBatch = {
+    ...batch,
+    status: "sent",
+    summary: { ...batch.summary, sent: 1, awaitingDispatch: 0 },
+    recipients: batch.recipients.map((recipient) => ({ ...recipient, status: "sent", attemptStatus: "accepted" })),
+  };
+  window.localStorage.setItem("worshipsync:last-notification-batch:church_1:form_1", "batch_1");
+  mockGetIntents
+    .mockResolvedValueOnce({ success: true, intents: [recentIntent], nextCursor: "", limit: 50 })
+    .mockResolvedValueOnce({ success: true, intents: [sentIntent], nextCursor: "", limit: 50 });
+  mockGetBatch
+    .mockResolvedValueOnce({ success: true, batch })
+    .mockResolvedValueOnce({ success: true, batch: sentBatch });
+  render(<TeamsMessagesPage />);
+
+  await openRecentMessages(user);
+  await user.click(screen.getByRole("button", { name: /^Send$/ }));
+
+  expect(await screen.findByRole("heading", { name: "Message status · October availability" })).toBeInTheDocument();
+  expect(await screen.findAllByText(/Sent · Waiting for delivery confirmation/)).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Send individually" })).not.toBeInTheDocument();
+  expect(mockGetBatch).toHaveBeenCalledTimes(2);
 });
 
 test("Messages waits for complete history before enabling recipient selection", async () => {
@@ -200,7 +281,7 @@ test("Messages waits for complete history before enabling recipient selection", 
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
   expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Review 0 messages" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review and send 0 messages" })).toBeDisabled();
 
   await act(async () => resolveHistory({ success: true, intents: [], nextCursor: "", limit: 100 }));
   expect(screen.getByRole("checkbox", { name: "Rae Rivera" })).toBeEnabled();
@@ -336,15 +417,13 @@ test("changing recipients after cancelling confirmation invalidates the reviewed
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
-  expect(screen.getByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /Message status/ })).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Recipients changed");
 });
 
@@ -367,12 +446,13 @@ test("changing the intake form invalidates the active batch", async () => {
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /November availability/ }));
-  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Form changed");
 });
 
@@ -383,12 +463,13 @@ test("changing the message type invalidates the active batch", async () => {
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
 
   await user.click(screen.getByRole("combobox", { name: /Message/ }));
   await user.click(screen.getByRole("option", { name: "Remind nonresponders" }));
-  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Message type changed");
 });
 
@@ -407,12 +488,12 @@ test("select all is indeterminate for some visible selections and prepares only 
     },
   } as unknown as ReturnType<typeof useTeamsPage>);
   render(<TeamsMessagesPage />);
-  expect(screen.getByRole("button", { name: "Review 0 messages" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review and send 0 messages" })).toBeDisabled();
   await user.click(screen.getByRole("combobox", { name: /Intake form/ }));
   await user.click(screen.getByRole("option", { name: /October availability/ }));
   await user.click(screen.getByRole("checkbox", { name: "Rae Rivera" }));
   expect(screen.getByRole("checkbox", { name: /Select all 2 eligible shown/ })).toHaveAttribute("data-state", "indeterminate");
-  expect(screen.getByRole("button", { name: "Review 1 message" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
   await waitFor(() => expect(mockPrepare).toHaveBeenCalledWith("church_1", expect.objectContaining({ memberIds: ["member_1"] })));
 });

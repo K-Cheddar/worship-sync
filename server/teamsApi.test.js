@@ -2483,6 +2483,126 @@ test("team icons accept legacy and structured refs with validated colors", async
   }
 });
 
+test("team roster saves preserve changes made after the editor baseline", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("team_roster_delta");
+  const teamResponse = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Praise", memberIds: [] },
+  });
+  const teamId = teamResponse.payload.team.teamId;
+  const createdMembers = [];
+  for (const [firstName, lastName] of [
+    ["Base", "Member"],
+    ["Concurrent", "Member"],
+    ["Requested", "Member"],
+    ["Later", "Member"],
+  ]) {
+    const response = await callHandler(authHandlers.createTeamRosterMember, {
+      context,
+      body: { firstName, lastName, positionIds: [], blockoutDates: [] },
+    });
+    assert.equal(response.statusCode, 200);
+    createdMembers.push(response.payload.member.memberId);
+  }
+  const [baseMemberId, concurrentMemberId, requestedMemberId, laterMemberId] = createdMembers;
+
+  // Another admin adds a roster member after this editor loaded its baseline.
+  await setDoc(COLLECTIONS.teams, teamId, {
+    memberIds: [baseMemberId, concurrentMemberId],
+  }, { merge: true });
+  const rosterEdit = await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: {
+      name: "Praise",
+      description: "Roster updated from a stale editor",
+      baseMemberIds: [baseMemberId],
+      memberIds: [requestedMemberId],
+    },
+  });
+  assert.equal(rosterEdit.statusCode, 200);
+  assert.deepEqual(
+    [...rosterEdit.payload.team.memberIds].sort(),
+    [concurrentMemberId, requestedMemberId].sort(),
+  );
+
+  // A settings-only save after another roster change keeps the live roster.
+  await setDoc(COLLECTIONS.teams, teamId, {
+    memberIds: [...rosterEdit.payload.team.memberIds, laterMemberId],
+  }, { merge: true });
+  const settingsEdit = await callHandler(authHandlers.updateTeam, {
+    context,
+    params: { teamId },
+    body: { name: "Praise", description: "Description only" },
+  });
+  assert.equal(settingsEdit.statusCode, 200);
+  assert.deepEqual(
+    [...settingsEdit.payload.team.memberIds].sort(),
+    [concurrentMemberId, requestedMemberId, laterMemberId].sort(),
+  );
+});
+
+test("member roster edits merge explicit deltas and omitted membership is a no-op", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_roster_delta");
+  const worship = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Worship", memberIds: [] },
+  });
+  const praise = await callHandler(authHandlers.createTeam, {
+    context,
+    body: { name: "Praise", memberIds: [] },
+  });
+  const worshipId = worship.payload.team.teamId;
+  const praiseId = praise.payload.team.teamId;
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Avery",
+      lastName: "Stone",
+      positionIds: [],
+      blockoutDates: [],
+      teamIds: [worshipId],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const memberId = created.payload.member.memberId;
+
+  // Praise membership was added by another admin after the editor loaded.
+  await setDoc(COLLECTIONS.teams, praiseId, { memberIds: [memberId] }, { merge: true });
+  const membershipEdit = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: {
+      firstName: "Avery",
+      lastName: "Stone",
+      positionIds: [],
+      blockoutDates: [],
+      baseTeamIds: [worshipId],
+      teamIds: [],
+    },
+  });
+  assert.equal(membershipEdit.statusCode, 200);
+  assert.deepEqual(membershipEdit.payload.membershipTeamIds, [praiseId]);
+  assert.deepEqual((await getDoc(COLLECTIONS.teams, worshipId)).memberIds, []);
+
+  // A later profile-only save omits teamIds and must leave Praise untouched.
+  const profileEdit = await callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId },
+    body: {
+      firstName: "Avery Updated",
+      lastName: "Stone",
+      positionIds: [],
+      blockoutDates: [],
+    },
+  });
+  assert.equal(profileEdit.statusCode, 200);
+  assert.deepEqual(profileEdit.payload.membershipTeamIds, [praiseId]);
+  assert.deepEqual((await getDoc(COLLECTIONS.teams, praiseId)).memberIds, [memberId]);
+});
+
 test("portable team import and export preserve structured icon refs", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("portable_team_icon");

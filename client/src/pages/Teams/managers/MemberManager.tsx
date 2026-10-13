@@ -124,6 +124,12 @@ const readMemberTeamIds = (member: TeamRosterMember, teams: TeamRecord[]) =>
     ]),
   ).sort();
 
+const sameIdSet = (left: string[], right: string[]) => {
+  const leftIds = new Set(left);
+  const rightIds = new Set(right);
+  return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
+};
+
 /**
  * The editor's draft for a member, or a blank one for the create form. Kept in
  * one place because the same shape is needed to seed the form, to reset it, and
@@ -667,7 +673,7 @@ const MemberManager = ({
 
   const copySmsOptInLink = async () => {
     if (!navigator.clipboard?.writeText) {
-      showToast("Couldn't copy the SMS opt-in link.", "error");
+      showToast("Couldn't copy the text message consent link.", "error");
       return;
     }
 
@@ -676,9 +682,9 @@ const MemberManager = ({
         `/sms-opt-in/${encodeURIComponent(churchId)}`,
       );
       await navigator.clipboard.writeText(url);
-      showToast("SMS opt-in link copied.");
+      showToast("Text message consent link copied.");
     } catch {
-      showToast("Couldn't copy the SMS opt-in link.", "error");
+      showToast("Couldn't copy the text message consent link.", "error");
     }
   };
 
@@ -760,12 +766,28 @@ const MemberManager = ({
       removeToast(profileImageSelectionToastIdRef.current);
       profileImageSelectionToastIdRef.current = null;
     }
-    let body = {
+    const membershipChanged = wasEditing
+      ? !sameIdSet(draft.teamIds || [], joinedTeamIds)
+      : true;
+    let body: TeamRosterMemberPayload = {
       ...draft,
       blockoutDates: draft.blockoutDates.filter(
         (range) => range.startDate || range.endDate,
       ),
     };
+    if (wasEditing && membershipChanged) {
+      body = {
+        ...body,
+        teamIds: draft.teamIds || [],
+        baseTeamIds: joinedTeamIds,
+      };
+    } else if (wasEditing) {
+      // Keep the server's current roster when this save only changes member
+      // details or positions. An omitted teamIds field is a no-op for roster
+      // membership, while the server still adds teams required by positions.
+      delete body.teamIds;
+      delete body.baseTeamIds;
+    }
     const previousProfileImagePublicId = wasEditing?.profileImagePublicId || "";
     const profileImageToUpload = pendingProfileImage;
     let profileImageUploadFailed = false;
@@ -858,7 +880,8 @@ const MemberManager = ({
             );
           }, data.teams)
         : data.teams;
-      const finalTeamIds = readMemberTeamIds(finalMember, teamsAfterSave);
+      const finalTeamIds = response.membershipTeamIds ||
+        readMemberTeamIds(finalMember, teamsAfterSave);
       const profileImagePublicIdToDelete =
         previousProfileImagePublicId &&
         previousProfileImagePublicId !== body.profileImagePublicId
@@ -1317,15 +1340,15 @@ const MemberManager = ({
                       !editing.archivedAt &&
                       data.smsEligibilityByMemberId?.[editing.memberId]?.status === "consent_needed" &&
                       isValidSmsPhone(editing.phoneNumber)
-                      ? [{ text: "Record SMS consent", onClick: () => setRecordingSmsConsentFor(editing) }]
+                      ? [{ text: "Record text message consent", onClick: () => setRecordingSmsConsentFor(editing) }]
                       : []),
                     ...(canEditActiveMember ? [
                     {
-                      text: "Copy SMS opt-in link",
+                      text: "Copy text message consent link",
                       onClick: () => void copySmsOptInLink(),
                     },
                     {
-                      text: "Open SMS opt-in page",
+                      text: "Open text message consent page",
                       onClick: () => {
                         window.open(
                           buildShareablePublicPathUrl(
@@ -1453,7 +1476,7 @@ const MemberManager = ({
           />
           {editing && data.smsEligibilityByMemberId?.[editing.memberId] ? (
             <p role="status" className="text-xs text-gray-300">
-              SMS status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
+              Text message status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
             </p>
           ) : null}
           {/* Account link. Separate from the email above on purpose: an address is

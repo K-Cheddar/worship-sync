@@ -154,3 +154,35 @@ it("rebases a normalized team name from the server without a false discard promp
   await user.click(screen.getByRole("button", { name: "Back to schedule" }));
   expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
 });
+
+it("omits an unchanged roster when a team settings save sees a newer roster", async () => {
+  const user = userEvent.setup();
+  const remoteTeam = { ...team, memberIds: ["member-added-remotely"] };
+  const onSaved = jest.fn();
+  jest.mocked(updateTeam).mockResolvedValue({
+    success: true,
+    team: { ...remoteTeam, description: "Updated description" },
+  } as never);
+  const tree = (teams: TeamRecord[]) => (
+    <MemoryRouter initialEntries={[TEAMS_SECTION_PATHS.groups]}>
+      <GlobalInfoContext.Provider value={{ churchId: "church-1", churchBranding: { colors: [] } } as never}>
+        <ToastProvider><TeamsNavigationGuardProvider>
+          <TeamManager teams={teams} positions={[]} roles={[]} qualificationAreas={[]} members={[]}
+            data={{ ...data, teams }} canEditTeams canEditTeam={() => true} onSaved={onSaved} onArchived={jest.fn()} onRemoved={jest.fn()} />
+        </TeamsNavigationGuardProvider></ToastProvider>
+      </GlobalInfoContext.Provider>
+    </MemoryRouter>
+  );
+  const view = render(tree([team]));
+
+  await user.click(screen.getByText("Worship"));
+  view.rerender(tree([remoteTeam]));
+  await user.type(screen.getByLabelText(/^Description/i), "Updated description");
+  await user.click(screen.getByRole("button", { name: "Save team" }));
+
+  await waitFor(() => expect(updateTeam).toHaveBeenCalledTimes(1));
+  const [, , body] = jest.mocked(updateTeam).mock.calls[0];
+  expect(body).not.toHaveProperty("memberIds");
+  expect(body).not.toHaveProperty("baseMemberIds");
+  expect(onSaved.mock.calls[0][0].memberIds).toEqual(remoteTeam.memberIds);
+});

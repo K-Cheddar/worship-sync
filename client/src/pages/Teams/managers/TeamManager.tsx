@@ -19,6 +19,7 @@ import {
   searchTeamRosterCandidates,
   type TeamRosterCandidate,
   type TeamPayload,
+  type TeamUpdatePayload,
 } from "../../../api/auth";
 import type { TeamRecord, TeamPosition, TeamQualificationArea, TeamRole, TeamRosterMember } from "../../../api/authTypes";
 import generateRandomId from "../../../utils/generateRandomId";
@@ -57,6 +58,12 @@ import type { TeamsData } from "../types";
 // Key used to track an in-flight save for the create form, which has no team id
 // yet. Existing teams are tracked by their own teamId.
 const CREATE_SAVING_KEY = "__create__";
+
+const sameIdSet = (left: string[], right: string[]) => {
+  const leftIds = new Set(left);
+  const rightIds = new Set(right);
+  return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
+};
 
 type TeamManagerProps = {
   teams: TeamRecord[];
@@ -256,14 +263,26 @@ const TeamManager = ({
     const localTeamId = wasEditing?.teamId || `local-team-${generateRandomId()}`;
     const authoritativeTeam = wasEditing ? currentEditingTeam : null;
     const savedMemberIds = authoritativeTeam?.memberIds || [];
+    const membershipChanged = Boolean(
+      wasEditing && canEditTeams &&
+      !sameIdSet(draft.memberIds, wasEditing.memberIds || []),
+    );
     const payload: TeamPayload = { ...draft, name: draft.name.trim() };
+    const { memberIds: submittedMemberIds, ...settingsPayload } = payload;
+    const updatePayload: TeamUpdatePayload = membershipChanged
+      ? {
+          ...settingsPayload,
+          memberIds: submittedMemberIds,
+          baseMemberIds: wasEditing?.memberIds || [],
+        }
+      : settingsPayload;
     const optimisticTeam: TeamRecord = {
       churchId,
       teamId: localTeamId,
       name: payload.name,
       description: payload.description || "",
       icon: payload.icon || "",
-      memberIds: wasEditing && !canEditTeams ? savedMemberIds : payload.memberIds,
+      memberIds: wasEditing && !membershipChanged ? savedMemberIds : payload.memberIds,
       usesMicrophoneAssignments: Boolean(payload.usesMicrophoneAssignments),
       usesIemAssignments: Boolean(payload.usesIemAssignments),
       archivedAt: wasEditing?.archivedAt || null,
@@ -275,8 +294,7 @@ const TeamManager = ({
     try {
       const response = wasEditing
         ? await updateTeam(churchId, wasEditing.teamId, {
-          ...payload,
-          memberIds: canEditTeams ? payload.memberIds : savedMemberIds,
+          ...updatePayload,
         })
         : await createTeam(churchId, payload);
       onSaved(response.team, wasEditing ? undefined : localTeamId);

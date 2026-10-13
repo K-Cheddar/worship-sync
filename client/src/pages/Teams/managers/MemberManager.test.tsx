@@ -931,8 +931,34 @@ describe("MemberManager team membership", () => {
     await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalled());
     const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
     expect(body.teamIds).toEqual([]);
+    expect(body.baseTeamIds).toEqual(["team-worship"]);
     // The emptied roster comes back so the Teams tab updates immediately.
     await waitFor(() => expect(onTeamSaved).toHaveBeenCalledWith(worshipTeam));
+  });
+
+  it("omits unchanged membership on a profile-only save and rebases from the server", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, firstName: "Rachel" },
+      membershipTeamIds: ["team-media", "team-worship"],
+    });
+    renderManager({
+      data: joinedData({
+        teams: [{ ...worshipTeam, memberIds: ["member-1"] }, mediaTeam],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rachel");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
+    expect(body).not.toHaveProperty("teamIds");
+    expect(body).not.toHaveProperty("baseTeamIds");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toBeChecked();
   });
 
   it("keeps a removed team unchecked and clean after the server confirms its roster", async () => {
@@ -1391,7 +1417,7 @@ describe("MemberManager roster contact information", () => {
       await user.click(screen.getByRole("button", { name: /Member actions/i }));
 
       await user.click(
-        screen.getByRole("menuitem", { name: /Open SMS opt-in page/i }),
+        screen.getByRole("menuitem", { name: /Open text message consent page/i }),
       );
       expect(open).toHaveBeenCalledWith(
         `${window.location.origin}/sms-opt-in/church-1`,
@@ -1401,7 +1427,7 @@ describe("MemberManager roster contact information", () => {
 
       await user.click(screen.getByRole("button", { name: /Member actions/i }));
       await user.click(
-        screen.getByRole("menuitem", { name: /Copy SMS opt-in link/i }),
+        screen.getByRole("menuitem", { name: /Copy text message consent link/i }),
       );
       expect(writeText).toHaveBeenCalledWith(
         `${window.location.origin}/sms-opt-in/church-1`,
@@ -1492,11 +1518,11 @@ describe("MemberManager SMS consent recording", () => {
       onSmsConsentRecorded,
     });
     await openMember(user, /Rae Kim/);
-    expect(screen.getByRole("status")).toHaveTextContent("SMS status: Consent needed");
+    expect(screen.getByRole("status")).toHaveTextContent("Text message status: Consent needed");
     await user.click(screen.getByRole("button", { name: "Member actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Record SMS consent" }));
+    await user.click(screen.getByRole("menuitem", { name: "Record text message consent" }));
 
-    const dialog = screen.getByRole("dialog", { name: "Record SMS consent" });
+    const dialog = screen.getByRole("dialog", { name: "Record text message consent" });
     expect(within(dialog).getByText("(954) 555-1234")).toBeInTheDocument();
     expect(within(dialog).getByText(/agreed to receive WorshipSync texts about volunteer availability, scheduling, assignments, and related reminders/i)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("radio", { name: "Signed volunteer/ministry form" }));
@@ -1513,7 +1539,7 @@ describe("MemberManager SMS consent recording", () => {
       confirmed: true,
     }));
     expect(onSmsConsentRecorded).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Record SMS consent" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Record text message consent" })).not.toBeInTheDocument());
   });
 
   it("hides the consent action for non-admins and members without a valid phone", async () => {
@@ -1522,14 +1548,14 @@ describe("MemberManager SMS consent recording", () => {
     renderManager({ data: joinedData({ members: [member] }), role: "member" });
     await openMember(user, /Rae Kim/);
     await user.click(screen.getByRole("button", { name: "Member actions" }));
-    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
 
     cleanup();
     const invalidMember = { ...worshipMember, phoneNumber: "555" };
     renderManager({ data: joinedData({ members: [invalidMember] }) });
     await openMember(user, /Rae Kim/);
     await user.click(screen.getAllByRole("button", { name: "Member actions" }).at(-1)!);
-    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1547,9 +1573,9 @@ describe("MemberManager SMS consent recording", () => {
       }),
     });
     await openMember(user, /Rae Kim/);
-    expect(screen.getByRole("status")).toHaveTextContent(`SMS status: ${label}`);
+    expect(screen.getByRole("status")).toHaveTextContent(`Text message status: ${label}`);
     await user.click(screen.getByRole("button", { name: "Member actions" }));
-    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
   });
 });
 

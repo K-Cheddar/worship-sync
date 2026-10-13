@@ -50,7 +50,7 @@ const recipientsResponse = (recipients: ScheduleInitialSmsRecipient[]) => ({
   success: true,
   historyComplete: true,
   dispatchEnabled: false,
-  dispatchReadinessMessage: "Bulk schedule SMS is paused until the server is ready for safe dispatch and restart recovery.",
+  dispatchReadinessMessage: "Schedule text messages aren't available yet. Check back later.",
   privacySafe: true,
   hasPreparedSelection: false,
   scheduleId: "schedule-1",
@@ -133,11 +133,11 @@ describe("ScheduleInitialSmsSendFlow", () => {
     renderFlow();
 
     expect(await screen.findByText(/Approved messages are being processed/)).toBeInTheDocument();
-    expect(screen.getByText(/2 selected · 2 awaiting execution · 0 sending · 0 accepted by provider/)).toBeInTheDocument();
+    expect(screen.getByText(/2 selected · 2 waiting to send/)).toBeInTheDocument();
     expect(screen.queryByText(/secret-token/)).not.toBeInTheDocument();
     await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
     expect(mockedGetBatch).toHaveBeenCalledWith("church-1", "batch-1");
-    expect(await screen.findByText(/1 sending · 1 accepted by provider/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 sending · 1 sent/)).toBeInTheDocument();
     jest.useRealTimers();
   });
 
@@ -154,7 +154,7 @@ describe("ScheduleInitialSmsSendFlow", () => {
     });
     renderFlow();
 
-    expect(await screen.findByText(/Recent schedule SMS batches \(1\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/Recent message batches \(1\)/)).toBeInTheDocument();
     expect(screen.getByText(/Partial results/)).toBeInTheDocument();
     expect(screen.getByText((_content, element) => element?.tagName === "P" && element.textContent?.startsWith("2 selected"))).toBeInTheDocument();
   });
@@ -192,7 +192,7 @@ describe("ScheduleInitialSmsSendFlow", () => {
 
     const { unmount: unmountFirstClient } = renderFlow();
     await user.click(await screen.findByRole("button", { name: "Review 1 message" }));
-    expect(await screen.findByText(/Messages are ready to review/)).toBeInTheDocument();
+    expect(await screen.findAllByText(/Messages are ready to review/)).toHaveLength(2);
     const sendButton = await screen.findByRole("button", { name: "Send 1 message" });
     expect(sendButton).toBeEnabled();
     await user.click(sendButton);
@@ -209,10 +209,10 @@ describe("ScheduleInitialSmsSendFlow", () => {
     });
     const { unmount: unmountSecondClient } = renderFlow();
     expect(await screen.findByRole("checkbox", { name: "Alice Able" })).toBeDisabled();
-    expect(await screen.findByText(/1 accepted by provider/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 sent/)).toBeInTheDocument();
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 3100)); });
     expect(mockedGetBatch).toHaveBeenCalledWith("church-1", "batch-1");
-    expect(await screen.findAllByText(/Accepted by provider/)).toHaveLength(2);
+    expect(await screen.findByText(/Sent · Waiting for delivery confirmation/)).toBeInTheDocument();
     expect(screen.queryByText(/Sending unavailable/)).not.toBeInTheDocument();
     unmountSecondClient();
   });
@@ -238,10 +238,10 @@ describe("ScheduleInitialSmsSendFlow", () => {
 
     await user.click(screen.getByRole("button", { name: "Review 2 messages" }));
     await waitFor(() => expect(mockedPrepareBatch).toHaveBeenCalledWith("church-1", "schedule-1", ["alice", "bob"]));
-    expect(await screen.findByText(/Messages are ready to review/)).toBeInTheDocument();
+    expect(await screen.findAllByText(/Messages are ready to review/)).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Sending unavailable" })).toBeDisabled();
-    expect(screen.getByText(/paused until the server is ready for safe dispatch and restart recovery/)).toBeInTheDocument();
-    expect(screen.getByText(/3 expected SMS segments/)).toBeInTheDocument();
+    expect(screen.getByText(/Schedule text messages aren't available yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Estimated texts: 3/)).toBeInTheDocument();
     await user.click(screen.getAllByText("View message")[0]);
     expect(screen.getAllByText(/Reply here: \[private response link\]/)).toHaveLength(2);
     expect(screen.queryByText(/secret-token/)).not.toBeInTheDocument();

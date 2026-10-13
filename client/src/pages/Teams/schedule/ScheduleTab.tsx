@@ -1179,7 +1179,7 @@ const ScheduleTab = ({
       const preview = await getNotificationIntentPreview(churchId, intent.intentId);
       if (latestScheduleRef.current?.scheduleId !== intent.sourceId || latestScheduleRef.current?.churchId !== churchId) return;
       if (!preview.preview.eligible) {
-        showToast("This volunteer is no longer eligible for SMS. Review the current assignment and consent.", "error");
+        showToast("This volunteer can't receive a text message right now. Check the current assignment and consent.", "error");
         return;
       }
       const memberName = data.members.find((member) => member.memberId === intent.memberId);
@@ -1217,7 +1217,14 @@ const ScheduleTab = ({
     try {
       const result = await sendNotificationIntent(churchId, preview.intent.intentId, preview.approvalVersion);
       await refreshScheduleNotificationHistory(preview.intent.sourceId);
-      showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
+      showToast(
+        result.success
+          ? "Your text message was sent. Delivery updates may take a moment."
+          : result.outcome === "unknown"
+            ? "We couldn't confirm whether this text was sent. Review delivery history before trying again."
+            : result.errorMessage || "This text message wasn't sent. Review delivery history before preparing a retry.",
+        result.success ? "success" : "error",
+      );
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule message.");
       try {
@@ -3293,6 +3300,7 @@ const ScheduleTab = ({
         description: selectedTeam.description,
         icon: selectedTeam.icon,
         memberIds: [...selectedTeam.memberIds, member.memberId],
+        baseMemberIds: selectedTeam.memberIds,
       });
       await enqueueAssignmentSave(async () => {
         const response = await updateTeamScheduleAssignment(
@@ -5267,7 +5275,7 @@ const ScheduleTab = ({
           >
             {selectedSchedule.published === false ? (
               <>
-                <p className="text-sm text-amber-200">Publish this schedule before sending email or SMS.</p>
+                <p className="text-sm text-amber-200">Publish this schedule before sending email or text messages.</p>
                 <Button variant="tertiary" disabled={isSendingSchedule} onClick={() => setIsConfirmingSend(false)}>Close</Button>
               </>
             ) : (
@@ -5293,7 +5301,7 @@ const ScheduleTab = ({
                       setScheduleInitialSmsOpen(true);
                     }}
                   >
-                    Review SMS recipients
+                    Review volunteers for text messages
                   </Button>
                   <Button
                     variant="tertiary"
@@ -6321,7 +6329,7 @@ const ScheduleTab = ({
                   key={`${churchId}:${selectedSchedule.scheduleId}:initial-sms`}
                   isOpen={scheduleInitialSmsOpen}
                   onClose={() => setScheduleInitialSmsOpen(false)}
-                  title="Send schedule by SMS"
+                  title="Send schedule text messages"
                   position="right"
                   size="xl"
                   showBackdrop

@@ -39,7 +39,7 @@ const ScheduleReplacementInvitationForm = ({ vacancies, members, duplicateFirstN
   if (vacancies.length === 0) return null;
   return (
     <details className="mb-4 border-b border-gray-700 pb-4">
-      <summary className="cursor-pointer text-sm text-gray-100">Invite a replacement by SMS</summary>
+      <summary className="cursor-pointer text-sm text-gray-100">Invite a replacement by text message</summary>
       <div className="mt-3 space-y-3">
         <p className="text-xs text-gray-400">Review one invitation before sending. Assign the volunteer separately after they reply.</p>
         <Select label="Vacant or declined assignment" value={vacancyKey} disabled={pending}
@@ -49,7 +49,7 @@ const ScheduleReplacementInvitationForm = ({ vacancies, members, duplicateFirstN
           options={[{ value: "", label: "Choose a volunteer" }, ...candidates.map((member) => ({ value: member.memberId, label: scheduleMemberName(member, duplicateFirstNames) }))]}
           onChange={setMemberId} />
         {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
-        <Button variant="secondary" disabled={pending || !candidates.some((member) => member.memberId === memberId)} isLoading={pending} onClick={() => void prepare()}>Review replacement SMS</Button>
+        <Button variant="secondary" disabled={pending || !candidates.some((member) => member.memberId === memberId)} isLoading={pending} onClick={() => void prepare()}>Review replacement text message</Button>
       </div>
     </details>
   );

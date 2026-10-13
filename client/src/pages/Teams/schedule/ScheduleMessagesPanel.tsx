@@ -33,6 +33,24 @@ type ScheduleMessagesPanelProps = {
   onPrepareReplacement?: (vacancy: ScheduleReplacementVacancy, memberId: string) => Promise<void>;
 };
 
+const deliveryStatusLabel = (intent: NotificationIntent) => {
+  const status = intent.attemptStatus || intent.status;
+  const wasSent = intent.status === "sent" || ["accepted", "sent", "delivered", "undelivered"].includes(status);
+  if (!wasSent && (intent.status === "unknown" || intent.attemptOutcome === "unknown")) {
+    return "We couldn't confirm whether this text was sent";
+  }
+  if (wasSent) {
+    const delivery = status === "delivered" ? "Delivered" : status === "undelivered" || status === "failed" ? "Delivery failed" : ["pending", "accepted", "sent"].includes(status) ? "Waiting for delivery confirmation" : "";
+    return `Sent${delivery ? ` · ${delivery}` : ""}`;
+  }
+  if (status === "sending") return "Sending";
+  if (status === "failed") return "Failed";
+  if (status === "suppressed") return "Not sent";
+  if (status === "preview" || status === "ready") return "Ready to send";
+  if (status === "pending") return "Waiting for delivery confirmation";
+  return status;
+};
+
 const ScheduleMessagesPanel = ({
   open,
   onOpenChange,
@@ -63,20 +81,20 @@ const ScheduleMessagesPanel = ({
   >
     <div className="mb-4 space-y-1">
       <p className="text-sm text-gray-300">
-        Assignment SMS stays in draft until you review and send each message.
+        Assignment text messages stay in draft until you review and send each one.
       </p>
       <div
         className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400"
         aria-label="Schedule message and response counts"
       >
         <span>Loaded {counts.requested}</span>
-        <span>Provider accepted {counts.accepted}</span>
+        <span>Sent {counts.accepted}</span>
         <span>Delivered {counts.delivered}</span>
         <span>Failed {counts.failed}</span>
-        <span>Uncertain {counts.uncertain}</span>
+        <span>Needs a status check {counts.uncertain}</span>
         <span>Volunteer responses {counts.responded}</span>
-        <span>Waiting {counts.waiting}</span>
-        <span>Opted out {counts.optedOut}</span>
+        <span>Waiting for a response {counts.waiting}</span>
+        <span>Phone numbers opted out {counts.optedOut}</span>
       </div>
     </div>
 
@@ -96,14 +114,14 @@ const ScheduleMessagesPanel = ({
             : intent.intentType === "replacement_request"
             ? intent.replacementResolvedAt
               ? "invitation closed"
-              : "awaiting manual follow-up"
+              : "needs a follow-up"
             : getVolunteerResponse(intent);
           const label = intent.intentType === "schedule_initial_notification"
-            ? "Grouped schedule SMS"
+            ? "Schedule text message"
             : intent.intentType === "assignment_notification"
-            ? "Assignment notification"
+            ? "Assignment text message"
             : intent.intentType === "assignment_confirmation"
-              ? "Assignment response"
+              ? "Assignment response message"
               : intent.intentType === "schedule_change"
                 ? "Schedule change"
                 : "Replacement invitation";
@@ -117,7 +135,7 @@ const ScheduleMessagesPanel = ({
                     {label} · {member ? scheduleMemberName(member, duplicateFirstNames) : "Roster member"}
                   </p>
                   <p className="text-xs text-gray-400">
-                    Delivery: {intent.attemptStatus || intent.status} · Volunteer: {assignmentResponse}
+                    {deliveryStatusLabel(intent)} · Volunteer: {assignmentResponse}
                   </p>
                 </div>
                 {actionable ? (
@@ -127,7 +145,7 @@ const ScheduleMessagesPanel = ({
                     isLoading={sendingIntentId === intent.intentId}
                     onClick={() => onSend(intent)}
                   >
-                    Send one SMS
+                    Send text message
                   </Button>
                 ) : null}
                 {intent.intentType === "replacement_request" && !intent.replacementResolvedAt && !["sending", "unknown"].includes(intent.status) ? (
@@ -152,11 +170,11 @@ const ScheduleMessagesPanel = ({
               ) : null}
               {intent.attemptOutcome === "unknown" ? (
                 <p className="mt-1 text-xs text-amber-200">
-                  Provider outcome uncertain. Check SMS delivery history before any further action.
+                  We couldn't confirm whether this text was sent. Check message history before trying again.
                 </p>
               ) : null}
               {intent.intentType === "schedule_initial_notification" && ["preview", "ready"].includes(intent.status) ? (
-                <p className="mt-1 text-xs text-amber-200">Bulk schedule dispatch is paused until safe continuation and restart recovery are ready.</p>
+                <p className="mt-1 text-xs text-amber-200">Schedule text messages are not available right now. Check back later.</p>
               ) : null}
             </article>
           );

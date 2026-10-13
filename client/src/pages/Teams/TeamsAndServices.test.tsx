@@ -4106,9 +4106,9 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     expect(screen.getByRole("menuitem", { name: /Messages 2.*1 pending · 1 delivered · 1 failed/i })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: /Messages/i }));
-    expect(await screen.findByText("Uncertain 1")).toBeInTheDocument();
-    expect(screen.getByText("Delivery: failed · Volunteer: waiting")).toBeInTheDocument();
-    expect(screen.getByText(/Provider outcome uncertain/)).toBeInTheDocument();
+    expect(await screen.findByText("Needs a status check 1")).toBeInTheDocument();
+    expect(screen.getByText("We couldn't confirm whether this text was sent · Volunteer: waiting")).toBeInTheDocument();
+    expect(screen.getByText(/We couldn't confirm whether this text was sent\. Check message history before trying again\./)).toBeInTheDocument();
   });
 
   it("keeps the saved schedule name when a cached edit draft is blank", () => {
@@ -4551,6 +4551,7 @@ describe("Teams", () => {
       "team-main",
       expect.objectContaining({
         memberIds: expect.arrayContaining(["member-new"]),
+        baseMemberIds: scheduleBootstrap.teams[0].memberIds,
       }),
     );
     await waitFor(() => {

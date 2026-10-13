@@ -192,8 +192,8 @@ test("shows the consent reason and keeps Copy link available when SMS is ineligi
   renderManager();
   await openForm(user);
 
-  expect(screen.getByText(/SMS consent needed/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send SMS" })).toBeDisabled();
+  expect(screen.getByText(/Text message consent needed/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send text message" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "More" }));
   const copyItem = within(screen.getByRole("menu")).getByRole("menuitem", { name: "Copy private link" });
   expect(copyItem).not.toHaveAttribute("data-disabled");
@@ -232,9 +232,9 @@ test("availability-only manager hides member intake and consent details", async 
   await openForm(user);
 
   expect(screen.getByText("Availability responses")).toBeInTheDocument();
-  expect(screen.queryByText("Not eligible for SMS")).not.toBeInTheDocument();
-  expect(screen.queryByText(/SMS consent needed|SMS opted out|No mobile number/)).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Send SMS" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Not eligible to receive text messages")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Text message consent needed|This phone number opted out|No mobile number/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send text message" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -509,7 +509,7 @@ test("More preserves history, keyboard focus, Open form, and pending action feed
   await user.click(more);
   const menu = screen.getByRole("menu");
   expect(within(menu).getByText("Message history")).toBeInTheDocument();
-  expect(within(menu).getByText(/Form request · Sent · delivered/)).toBeInTheDocument();
+  expect(within(menu).getByText(/Form request · Sent · Delivered/)).toBeInTheDocument();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(more).toHaveFocus());
   await user.keyboard("{ArrowDown}");
@@ -518,7 +518,7 @@ test("More preserves history, keyboard focus, Open form, and pending action feed
   await waitFor(() => expect(mockGetRecipientLink).toHaveBeenCalledWith("church-1", recipient.recipientId, { markCopied: false }));
   expect(more).toBeEnabled();
   expect(more).toHaveAttribute("aria-busy", "true");
-  expect(screen.getByRole("button", { name: "Send SMS" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send text message" })).toBeDisabled();
   await waitFor(() => expect(more).toHaveFocus());
   await user.click(more);
   expect(screen.getByRole("menuitem", { name: "Copy private link" })).toHaveAttribute("data-disabled");
@@ -577,10 +577,10 @@ test("prevents duplicate SMS activation while the send is pending and updates th
   });
   await openForm(user);
 
-  const sendButton = screen.getByRole("button", { name: "Send SMS" });
+  const sendButton = screen.getByRole("button", { name: "Send text message" });
   await user.click(sendButton);
-  expect(await screen.findByRole("dialog", { name: "Send this SMS?" })).toBeInTheDocument();
-  const dialog = screen.getByRole("dialog", { name: "Send this SMS?" });
+  expect(await screen.findByRole("dialog", { name: "Send this text message?" })).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "Send this text message?" });
   expect(within(dialog).getByText("+19545551234")).toBeInTheDocument();
   expect(within(dialog).getByText(/First Church: respond at/)).toBeInTheDocument();
   expect(mockSendIntent).not.toHaveBeenCalled();
@@ -851,7 +851,6 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   jest.mocked(getTeamIntakeSmsAttempts)
     .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [] })
-    .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [deliveredAttempt] });
   const notificationIntent = {
     intentId: "intent-batch-1", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
@@ -860,7 +859,6 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
     createdAt: "2026-09-29T12:00:00.000Z", updatedAt: "2026-09-29T12:00:00.000Z",
   } as const;
   jest.mocked(getNotificationIntents)
-    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [notificationIntent], nextCursor: "", limit: 50 });
@@ -885,18 +883,17 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Send form" }));
   expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  await screen.findByRole("button", { name: "Send 1 message" });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Send 1 message" })).toBeEnabled());
-  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
-  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
   const counts = screen.getByLabelText("Intake message and response counts");
   await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
   await user.click(screen.getByRole("button", { name: "Close" }));
 
   expect(within(counts).getAllByText("1")).toHaveLength(3);
-  expect(screen.getAllByText("Waiting").length).toBeGreaterThan(1);
+  expect(screen.getByText("Waiting for a response")).toBeInTheDocument();
   expect(screen.queryByText("Not requested")).not.toBeInTheDocument();
   expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId, limit: 100 });
   expect(getTeamIntakeSmsAttempts).toHaveBeenCalledWith("church-1", form.formId);

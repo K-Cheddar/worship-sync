@@ -11,7 +11,7 @@ import {
 } from "../../../api/auth";
 import AvailabilityBatchReview from "../components/AvailabilityBatchReview";
 
-const DISPATCH_READINESS_MESSAGE = "Bulk schedule SMS is paused until the server is ready for safe dispatch and restart recovery.";
+const DISPATCH_READINESS_MESSAGE = "Schedule text messages aren't available yet. Check back later.";
 
 const formatAssignmentDate = (assignment: ScheduleInitialSmsRecipient["assignments"][number], timeZone: string) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(assignment.serviceDate || "")) {
@@ -113,7 +113,7 @@ const ScheduleInitialSmsSendFlow = ({
       }
     } catch (caught) {
       if (loadSequenceRef.current === sequence && currentOwnerRef.current === requestOwner) {
-        setLoadError(caught instanceof Error ? caught.message : "Could not load schedule SMS recipients.");
+        setLoadError(caught instanceof Error ? caught.message : "Could not load schedule volunteers.");
         setRows([]);
       }
     } finally {
@@ -178,7 +178,7 @@ const ScheduleInitialSmsSendFlow = ({
         setServerBatch(response.batch);
       } catch (caught) {
         if (cancelled || sequence !== progressSequenceRef.current || currentOwnerRef.current !== requestOwner) return;
-        setError(caught instanceof Error ? caught.message : "Could not refresh schedule SMS progress.");
+        setError(caught instanceof Error ? caught.message : "Could not refresh schedule message progress.");
         if (timer) clearInterval(timer);
         timer = null;
       }
@@ -256,23 +256,30 @@ const ScheduleInitialSmsSendFlow = ({
       const response = await dispatchAvailabilityNotificationBatch(churchId, reviewedBatch.batchId, reviewedBatch.approvalVersion);
       setServerBatch(response.batch);
       setReviewedBatchState(null);
-      setNotice("Batch approved. Sending will continue while this schedule stays open or you close this panel.");
+    setNotice("Messages are ready to send. Sending will continue if you close this panel.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not approve this schedule SMS batch.");
+      setError(caught instanceof Error ? caught.message : "Could not start sending these schedule messages.");
     } finally {
       setBusy(false);
     }
   };
 
-  const statusReason = (row: ScheduleInitialSmsRecipient) => row.eligible
-    ? row.previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First send · SMS ready"
-    : row.exclusionReason || "Not eligible for SMS.";
+  const statusReason = (row: ScheduleInitialSmsRecipient) => {
+    if (row.eligible) return row.previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First message · ready";
+    if (row.previousDeliveryStatus === "uncertain" || /uncertain|provider outcome/i.test(row.exclusionReason)) {
+      return "We couldn't confirm whether this text was sent. Check message history before trying again.";
+    }
+    if (/SMS consent (?:is )?needed/i.test(row.exclusionReason)) return "Text message consent needed";
+    if (/opted out/i.test(row.exclusionReason)) return "This phone number opted out";
+    if (/not eligible for SMS/i.test(row.exclusionReason)) return "Not eligible to receive text messages";
+    return row.exclusionReason || "Not eligible to receive text messages.";
+  };
 
   return (
     <section className="space-y-4 p-4 sm:p-5" aria-labelledby="schedule-sms-heading">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id="schedule-sms-heading" className="text-lg font-semibold text-white">Send schedule by SMS</h2>
+          <h2 id="schedule-sms-heading" className="text-lg font-semibold text-white">Send schedule text messages</h2>
           <p className="text-sm text-gray-300">{scheduleName} · {teamName} · one message per assigned volunteer</p>
         </div>
         <Button variant="secondary" disabled={busy} onClick={onClose}>Close</Button>
@@ -287,13 +294,13 @@ const ScheduleInitialSmsSendFlow = ({
         <div><dt className="text-gray-400">Already sent</dt><dd className="text-white">{summary.alreadySent}</dd></div>
         <div><dt className="text-gray-400">Consent needed</dt><dd className="text-white">{summary.missingConsent}</dd></div>
         {!privacySafe ? <div><dt className="text-gray-400">Opted out</dt><dd className="text-white">{summary.optedOut}</dd></div> : null}
-        <div><dt className="text-gray-400">Missing/invalid phone</dt><dd className="text-white">{summary.missingPhone}</dd></div>
+        <div><dt className="text-gray-400">No valid phone number</dt><dd className="text-white">{summary.missingPhone}</dd></div>
         <div><dt className="text-gray-400">Failed · retry requires selection</dt><dd className="text-amber-200">{summary.failed}</dd></div>
-        <div><dt className="text-gray-400">Sending or uncertain</dt><dd className="text-amber-200">{summary.uncertain}</dd></div>
+        <div><dt className="text-gray-400">Sending or status unclear</dt><dd className="text-amber-200">{summary.uncertain}</dd></div>
       </dl>
       {recentBatches.length ? (
         <details className="rounded border border-gray-700 bg-gray-950/30 p-3">
-          <summary className="cursor-pointer text-sm font-medium text-gray-200">Recent schedule SMS batches ({recentBatches.length})</summary>
+          <summary className="cursor-pointer text-sm font-medium text-gray-200">Recent message batches ({recentBatches.length})</summary>
           <ul className="mt-2 divide-y divide-gray-800">
             {recentBatches.map((batch) => {
               const approvedAt = new Date(batch.approvedAt);
@@ -302,7 +309,7 @@ const ScheduleInitialSmsSendFlow = ({
               return (
                 <li key={batch.reviewVersion} className="py-2 text-sm text-gray-300">
                   <p>{approvedLabel} · {statusLabel}</p>
-                  <p className="text-xs text-gray-400">{batch.selected} selected · {batch.summary.accepted} accepted · {batch.summary.delivered} delivered · {batch.summary.failed} failed · {batch.summary.uncertain} uncertain · {batch.summary.awaiting} awaiting · {batch.summary.excluded} excluded</p>
+          <p className="text-xs text-gray-400">{batch.selected} selected · {batch.summary.accepted} sent · {batch.summary.delivered} delivered · {batch.summary.failed} failed · {batch.summary.uncertain} message{batch.summary.uncertain === 1 ? "" : "s"} could not be confirmed · {batch.summary.awaiting} waiting to send · {batch.summary.excluded} not included</p>
                 </li>
               );
             })}
@@ -324,7 +331,7 @@ const ScheduleInitialSmsSendFlow = ({
               </div>
               <div className="flex items-center gap-3"><span aria-live="polite" className="text-sm text-gray-300">{selectedIds.length} selected</span><Button variant="textLink" disabled={busy || batchIsActive || !selectedIds.length} onClick={() => updateSelection(selectedIds, false)}>Clear</Button></div>
             </div>
-            <div className="divide-y divide-gray-800" role="list" aria-label="Schedule SMS recipients">
+            <div className="divide-y divide-gray-800" role="list" aria-label="Schedule volunteers">
               {visibleRows.length ? visibleRows.map((row) => (
                 <div key={row.memberId} className="space-y-1 px-3 py-3" role="listitem">
                   <div className="flex flex-wrap items-center gap-3">

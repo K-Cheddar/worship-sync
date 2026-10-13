@@ -97,21 +97,21 @@ export const getAvailabilityRecipientRows = ({
     } else if (previousDeliveryStatus === "sent") {
       reason = "Already sent";
     } else if (previousDeliveryStatus === "uncertain") {
-      reason = "Previous send outcome is uncertain. Check message history before sending again.";
+      reason = "We couldn't confirm whether this text was sent. Check message history before trying again.";
     } else if (previousDeliveryStatus === "handled" && eligibility.status === "opted_out") {
-      reason = "SMS opted out";
+      reason = "This phone number opted out";
     } else if (previousDeliveryStatus === "handled") {
       reason = "This form request was already handled.";
     } else if (intentType === "availability_reminder" && !recipient) {
       reason = "No response link";
     } else if (!eligibility.eligible) {
       reason = !eligibility.status
-        ? "Not eligible for SMS"
+        ? "Not eligible to receive text messages"
         : eligibility.status === "no_mobile"
           ? "No mobile number"
           : eligibility.status === "opted_out"
-            ? "SMS opted out"
-            : "SMS consent needed";
+            ? "This phone number opted out"
+            : "Text message consent needed";
     }
     return {
       member,
