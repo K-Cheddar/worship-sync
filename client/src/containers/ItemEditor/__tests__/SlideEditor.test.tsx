@@ -31,6 +31,10 @@ const mockUpdateArrangements = jest.fn((payload: any) => ({
   type: "item/updateArrangements",
   payload,
 }));
+const mockApplyOwnedContentMutation = jest.fn((payload: any) => ({
+  type: "item/applyOwnedContentMutation",
+  payload,
+}));
 const mockDiscardPendingRemoteItem = jest.fn(() => ({
   type: "item/discardPendingRemoteItem",
 }));
@@ -87,6 +91,8 @@ jest.mock("../../../store/itemSlice", () => ({
   })),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   updateSlides: (payload: any) => mockUpdateSlides(payload),
+  applyOwnedContentMutation: (payload: any) =>
+    mockApplyOwnedContentMutation(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
   updateBoxes: (payload: any) => mockUpdateBoxes(payload),
   discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
@@ -286,6 +292,11 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
       present: {
         item: {
           _id: "default-item",
+          contentOwner: {
+            scopeId: "test-church/test-db",
+            databaseKey: "test-db",
+            churchId: "test-church",
+          },
           name: "Sample Item",
           type: "free",
           arrangements: [],
@@ -429,6 +440,11 @@ const renderWithControllerContexts = () =>
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDispatch.mockImplementation((action: any) =>
+      action?.type === "item/applyOwnedContentMutation"
+        ? { unwrap: async () => true }
+        : undefined,
+    );
     mockActiveControllerType = "presentation";
     displayWindowCapture.className = undefined;
     displayWindowCapture.showBorder = undefined;
@@ -1096,7 +1112,7 @@ describe("SlideEditor", () => {
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 
-  it("updates free section text and dispatches debounced reformat update", () => {
+  it("dispatches owner-bound free section text and reformat mutations", () => {
     jest.useFakeTimers();
     mockFormatFree.mockImplementation((item) => ({
       ...item,
@@ -1107,36 +1123,34 @@ describe("SlideEditor", () => {
     render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
 
-    expect(mockUpdateSlides).toHaveBeenCalledWith({
-      slides: mockState.undoable.present.item.slides,
-      formattedSections: [
-        {
-          sectionNum: 1,
-          words: "Updated section text",
-          slideSpan: 1,
-        },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith({
+      owner: expect.objectContaining({
+        scopeId: "test-church/test-db",
+        itemId: "default-item",
+        itemType: "free",
+      }),
+      mutation: {
+        kind: "sectionTextDraft",
+        slideId: "s1",
+        slideIndex: 0,
+        sectionNum: 1,
+        value: "Updated section text",
+      },
     });
 
     act(() => {
       jest.advanceTimersByTime(300);
     });
 
-    expect(mockFormatFree).toHaveBeenCalled();
-    expect(mockUpdateSlides).toHaveBeenLastCalledWith({
-      slides: [
-        {
-          ...mockState.undoable.present.item.slides[0],
-          name: "Section 1A (formatted)",
-        },
-      ],
-      formattedSections: [
-        {
-          sectionNum: 1,
-          words: "Updated section text",
-          slideSpan: 1,
-        },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith({
+      owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
+      mutation: {
+        kind: "sectionText",
+        slideId: "s1",
+        slideIndex: 0,
+        sectionNum: 1,
+        value: "Updated section text",
+      },
     });
 
     jest.useRealTimers();
@@ -1200,11 +1214,15 @@ describe("SlideEditor", () => {
     expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Section 4");
 
     fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
-    expect(mockUpdateSlides).toHaveBeenCalledWith({
-      slides,
-      formattedSections: [
-        { sectionNum: 4, words: "Updated section text", slideSpan: 3 },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith({
+      owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
+      mutation: {
+        kind: "sectionTextDraft",
+        slideId: "section-4-0",
+        slideIndex: 0,
+        sectionNum: 4,
+        value: "Updated section text",
+      },
     });
 
     // Reopening the editor with the saved item shape keeps the custom name.
@@ -1267,7 +1285,7 @@ describe("SlideEditor", () => {
     expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Psalm 23");
   });
 
-  it("keeps the latest free slide formatting when a debounced text reformat completes", () => {
+  it("sends a stable section intent after a debounced text reformat", () => {
     jest.useFakeTimers();
     mockFormatFree.mockImplementation((item: any) => item);
 
@@ -1313,8 +1331,7 @@ describe("SlideEditor", () => {
     const { rerender } = render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
 
-    mockUpdateSlides.mockClear();
-    mockFormatFree.mockClear();
+    mockApplyOwnedContentMutation.mockClear();
 
     mockState = makeBaseState({
       undoable: {
@@ -1348,21 +1365,17 @@ describe("SlideEditor", () => {
         jest.advanceTimersByTime(300);
       });
 
-      expect(mockFormatFree).toHaveBeenCalledTimes(1);
-      const formattedArg = mockFormatFree.mock.calls[0][0];
-      expect(formattedArg.slides[0].formattedTextDisplayInfo?.backgroundColor).toBe(
-        "#222222",
-      );
-      expect(mockUpdateSlides).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          slides: expect.any(Array),
-          formattedSections: expect.any(Array),
-        }),
-      );
-      expect(
-        mockUpdateSlides.mock.lastCall?.[0].slides[0].formattedTextDisplayInfo
-          ?.backgroundColor,
-      ).toBe("#222222");
+      expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith({
+        owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
+        mutation: {
+          kind: "sectionText",
+          slideId: "s1",
+          slideIndex: 0,
+          sectionNum: 1,
+          value: "Updated section text",
+        },
+      });
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

@@ -604,13 +604,20 @@ export const createNotificationIntentHandlers = ({
       reviewedAt,
       expiresAt: Date.now() + NOTIFICATION_PREVIEW_TTL_MS,
     } : null;
-    await setDoc(COLLECTIONS.notificationIntents, intent.intentId, {
-      message: validated.message,
-      approvalSnapshot: snapshot,
-      updatedAt: reviewedAt,
-    }, { merge: true });
+    const reviewedIntent = await mutateIntent(intent.churchId, intent.intentId, (current, attempt) => {
+      if (!current || current.churchId !== intent.churchId) throw httpError(404, "Message preview not found.");
+      if (!["preview", "ready", "failed"].includes(current.status) || current.providerMessageId ||
+          current.providerAcceptedAttemptId || hasConfirmedSmsEvidence(attempt) || attempt?.outcome === "unknown") {
+        throw httpError(409, "This message is no longer available for preview.");
+      }
+      if (["attemptId", "batchId", "sourceType", "sourceId", "sourceVersion", "intentType", "memberId", "recipientId", "formId", "occurrenceId", "cellKey", "reminderRound"]
+        .some((key) => normalize(current[key]) !== normalize(intent[key]))) {
+        throw httpError(409, "This preview changed or expired. Review the current message and confirm again.");
+      }
+      return { message: validated.message, approvalSnapshot: snapshot, updatedAt: reviewedAt };
+    });
     return {
-      intent: { ...intent, message: validated.message, approvalSnapshot: snapshot },
+      intent: { ...reviewedIntent, intentId: intent.intentId },
       validated,
       approvalVersion,
       eligible: Boolean(approvalVersion),

@@ -581,7 +581,7 @@ const CurrentServiceViewerToolbar = ({
   <div
     role="toolbar"
     aria-label="Current service toolbar"
-    className="relative left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
+    className="sticky top-0 z-20 left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
   >
     <div className="order-1 shrink-0">
       <Button
@@ -632,7 +632,7 @@ const CurrentServiceViewerFrame = ({
   topBar: ReactNode;
   children: ReactNode;
 }) => (
-  <main className="min-h-dvh overflow-x-hidden overflow-y-auto bg-neutral-950 text-neutral-100">
+  <main className="h-dvh overflow-x-hidden overflow-y-auto bg-neutral-950 text-neutral-100">
     <div className="mx-auto max-w-3xl px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6">
       <div className="mb-4">{topBar}</div>
       {children}

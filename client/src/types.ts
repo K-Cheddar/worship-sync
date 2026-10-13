@@ -302,6 +302,13 @@ export type ItemProperties = {
 
 export type BibleFontMode = "fit" | "separate" | "multiple";
 
+/** Runtime owner for an active editor item; never written to the document. */
+export type ItemContentOwner = {
+  scopeId: string;
+  databaseKey: string;
+  churchId: string;
+};
+
 export type BibleInfo = {
   book: string;
   chapter: string;
@@ -311,6 +318,7 @@ export type BibleInfo = {
 };
 
 export type ItemState = ItemProperties & {
+  contentOwner?: ItemContentOwner;
   listId?: string;
   selectedSlide: number;
   selectedBox: number;
