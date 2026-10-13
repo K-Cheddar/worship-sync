@@ -1,16 +1,23 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NotificationBatch, ScheduleInitialSmsRecipient, TeamSchedule } from "../../../api/authTypes";
-import { getScheduleInitialSmsRecipients, prepareScheduleInitialSmsBatch } from "../../../api/auth";
+import {
+  getAvailabilityNotificationBatch,
+  getScheduleInitialSmsRecipients,
+  prepareScheduleInitialSmsBatch,
+} from "../../../api/auth";
 import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 
 jest.mock("../../../api/auth", () => ({
   getScheduleInitialSmsRecipients: jest.fn(),
   prepareScheduleInitialSmsBatch: jest.fn(),
+  getAvailabilityNotificationBatch: jest.fn(),
+  dispatchAvailabilityNotificationBatch: jest.fn(),
 }));
 
 const mockedGetRecipients = jest.mocked(getScheduleInitialSmsRecipients);
 const mockedPrepareBatch = jest.mocked(prepareScheduleInitialSmsBatch);
+const mockedGetBatch = jest.mocked(getAvailabilityNotificationBatch);
 
 const makeRecipient = (
   memberId: string,
@@ -96,6 +103,56 @@ describe("ScheduleInitialSmsSendFlow", () => {
       makeRecipient("unknown", "Una Uncertain", { eligible: false, previousDeliveryStatus: "uncertain", status: "unknown", exclusionReason: "A previous send is active or its provider outcome is uncertain." }),
     ]));
     mockedPrepareBatch.mockResolvedValue({ success: true, batch: preparedBatch, privacySafe: true });
+    mockedGetBatch.mockResolvedValue({ success: true, batch: preparedBatch });
+  });
+
+  it("recovers an approved batch from the server and polls progress while the panel is open", async () => {
+    jest.useFakeTimers();
+    const approvedBatch: NotificationBatch = {
+      ...preparedBatch,
+      status: "approved",
+      recipients: preparedBatch.recipients.map((row) => ({ ...row, status: "preview" })),
+      summary: { ...preparedBatch.summary, awaitingExecution: 2, sending: 0 },
+    };
+    const dispatchingBatch: NotificationBatch = {
+      ...approvedBatch,
+      status: "dispatching",
+      recipients: approvedBatch.recipients.map((row, index) => ({ ...row, status: index === 0 ? "sent" : "sending" })),
+      summary: { ...approvedBatch.summary, awaitingExecution: 0, sending: 1, sent: 1 },
+    };
+    mockedGetRecipients.mockResolvedValue({
+      ...recipientsResponse([makeRecipient("alice", "Alice Able"), makeRecipient("bob", "Bob Baker")]),
+      selectedMemberIds: ["alice", "bob"],
+      currentBatch: approvedBatch,
+    });
+    mockedGetBatch.mockResolvedValue({ success: true, batch: dispatchingBatch });
+    renderFlow();
+
+    expect(await screen.findByText(/Approved messages are being processed/)).toBeInTheDocument();
+    expect(screen.getByText(/2 selected · 2 awaiting execution · 0 sending · 0 accepted by provider/)).toBeInTheDocument();
+    expect(screen.queryByText(/secret-token/)).not.toBeInTheDocument();
+    await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+    expect(mockedGetBatch).toHaveBeenCalledWith("church-1", "batch-1");
+    expect(await screen.findByText(/1 sending · 1 accepted by provider/)).toBeInTheDocument();
+    jest.useRealTimers();
+  });
+
+  it("shows recent batch result summaries after a newer review replaces the current batch", async () => {
+    mockedGetRecipients.mockResolvedValue({
+      ...recipientsResponse([makeRecipient("alice", "Alice Able")]),
+      recentBatches: [{
+        reviewVersion: "old-review",
+        approvedAt: "2026-10-12T15:00:00.000Z",
+        status: "partial",
+        selected: 2,
+        summary: { accepted: 1, delivered: 1, failed: 0, uncertain: 1, awaiting: 0, excluded: 0 },
+      }],
+    });
+    renderFlow();
+
+    expect(await screen.findByText(/Recent schedule SMS batches \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Partial results/)).toBeInTheDocument();
+    expect(screen.getByText((_content, element) => element?.tagName === "P" && element.textContent?.startsWith("2 selected"))).toBeInTheDocument();
   });
 
   it("defaults to first-send members, requires explicit retry selection, preserves selection through search, and saves a gated message review", async () => {

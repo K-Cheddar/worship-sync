@@ -894,7 +894,7 @@ export type NotificationBatch = {
   scheduleId?: string;
   intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification";
   reminderRound?: number;
-  status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
+  status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
   /** Persisted form recipients for the selected batch members, without token secrets. */
@@ -906,6 +906,8 @@ export type NotificationBatch = {
     selected: number;
     eligible: number;
     awaitingDispatch: number;
+    awaitingExecution?: number;
+    sending?: number;
     alreadySent: number;
     excluded: number;
     totalSegments: number;
@@ -916,6 +918,21 @@ export type NotificationBatch = {
     responded?: number;
     waiting?: number;
     optedOut: number;
+  };
+};
+
+export type ScheduleInitialSmsBatchHistoryEntry = {
+  reviewVersion: string;
+  approvedAt: string;
+  status: "complete" | "partial" | "paused";
+  selected: number;
+  summary: {
+    accepted: number;
+    delivered: number;
+    failed: number;
+    uncertain: number;
+    awaiting: number;
+    excluded: number;
   };
 };
 

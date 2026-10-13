@@ -13,12 +13,15 @@ import {
   getScheduleAssignedMemberIds,
   getScheduleMemberAssignments,
 } from "./scheduleInitialSms.js";
+import { approveReviewedScheduleBatch } from "./notificationBatches.js";
 
 const createHarness = ({
   providerSend,
   firestore = false,
   requireTeamsEdit,
   authorizeSchedule,
+  authorizeScheduleActor,
+  scheduleBulkDispatchReady = false,
   authorizeAvailabilityForm,
   isAvailabilityRecipientInFormScope,
   validateReplacementCandidate,
@@ -77,9 +80,31 @@ const createHarness = ({
   };
   let transactionTail = Promise.resolve();
   const db = {
-    collection: (collection) => ({
-      doc: (id) => ({ collection, id }),
-    }),
+    collection: (collection) => {
+      const filters = [];
+      let ordering = null;
+      let maxResults = 100;
+      const query = {
+        doc: (id) => ({ collection, id }),
+        where(field, op, value) { filters.push({ field, op, value }); return query; },
+        orderBy(field, direction) { ordering = { field, direction }; return query; },
+        limit(value) { maxResults = value; return query; },
+        async get() {
+          let rows = [...storeFor(collection).entries()].map(([id, data]) => ({ id, ...data }));
+          rows = rows.filter((item) => filters.every(({ field, op, value }) =>
+            op === "in" ? value.includes(item[field]) : op === ">" ? item[field] > value : item[field] === value));
+          if (ordering) {
+            const direction = ordering.direction === "desc" ? -1 : 1;
+            rows.sort((left, right) => (left[ordering.field] - right[ordering.field]) * direction);
+          }
+          return { docs: rows.slice(0, maxResults).map((row) => ({ id: row.id, data: () => {
+            const { id: _id, ...data } = row;
+            return data;
+          } })) };
+        },
+      };
+      return query;
+    },
     runTransaction: (callback) => {
       const run = transactionTail.then(() => callback({
         get: async (ref) => {
@@ -122,6 +147,13 @@ const createHarness = ({
     requireFirestore: () => firestore ? db : null,
     requireTeamsEdit: requireTeamsEdit || (async () => ({ user: { uid: "admin_a" } })),
     ...(authorizeSchedule ? { authorizeSchedule } : {}),
+    authorizeScheduleActor: authorizeScheduleActor || (async ({ churchId: targetChurchId, scheduleId }) => ({
+      admin: { user: { uid: "admin_a" } },
+      scoped: false,
+      schedule: await getDoc("teamSchedules", scheduleId),
+      churchId: targetChurchId,
+    })),
+    scheduleBulkDispatchReady,
     authorizeAvailabilityForm: authorizeAvailabilityForm || (async () => {
       throw Object.assign(new Error("Availability form access required."), { statusCode: 403 });
     }),
@@ -252,7 +284,7 @@ const createHarness = ({
     await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
     return res;
   };
-  return { collections, storeFor, getDoc, db, handler, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
+  return { collections, storeFor, getDoc, db, handler, makeResponse, preview, send, dispatch, schedule, form, recipient, member, phoneNumber, churchId, get providerCalls() { return providerCalls; } };
 };
 
 for (const firestore of [false, true]) {
@@ -1139,6 +1171,234 @@ test("arbitrary five-digit provider code remains unknown and blocked", async () 
   assert.equal((await h.send(intent.intentId)).payload.outcome, "unknown");
   assert.equal((await h.send(intent.intentId)).statusCode, 409);
   assert.equal(h.providerCalls, 1);
+});
+
+test("schedule confirmation commits promptly and concurrent browser approval dispatches one approved intent", async () => {
+  let releaseProvider;
+  const providerResult = new Promise((resolve) => { releaseProvider = resolve; });
+  const h = createHarness({
+    firestore: true,
+    scheduleBulkDispatchReady: true,
+    providerSend: async () => {
+      return providerResult;
+    },
+  });
+  h.schedule.published = true;
+  h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+  const preparedResponse = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId] },
+  }, preparedResponse);
+  assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+  const prepared = preparedResponse.payload.batch;
+  const [first, second] = await Promise.all([
+    h.dispatch(prepared.batchId), h.dispatch(prepared.batchId),
+  ]);
+  assert.deepEqual([first.statusCode, second.statusCode], [200, 200]);
+  const persisted = h.storeFor("notificationBatches").get(prepared.batchId);
+  assert.equal(persisted.status, "approved");
+  assert.equal(persisted.approval.reviewVersion, prepared.approvalVersion);
+  assert.equal(persisted.approval.recipients[0].message, prepared.recipients[0].message);
+  assert.equal(persisted.approval.actorUid, "admin_a");
+  assert.equal(h.providerCalls, 0, "approval replies before awaiting the provider operation");
+
+  for (let attempt = 0; attempt < 100 && h.providerCalls === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.providerCalls, 1);
+  releaseProvider({ providerMessageId: "SM_approved_once", status: "accepted" });
+  for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(prepared.batchId).status !== "complete"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.storeFor("notificationBatches").get(prepared.batchId).status, "complete");
+  assert.equal(h.storeFor("notificationIntents").get(prepared.intentIds[0]).status, "sent");
+  assert.equal(h.storeFor("smsDeliveryAttempts").size, 1);
+  assert.equal(h.providerCalls, 1);
+  const nextReview = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId] },
+  }, nextReview);
+  assert.equal(nextReview.statusCode, 200);
+  const reopened = h.makeResponse();
+  await h.handler.getScheduleInitialSmsRecipients({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+  }, reopened);
+  assert.equal(reopened.statusCode, 200);
+  assert.equal(reopened.payload.currentBatch, null);
+  assert.equal(reopened.payload.recentBatches[0].status, "complete");
+  assert.equal(reopened.payload.recentBatches[0].summary.accepted, 1);
+  assert.equal(reopened.payload.recentBatches[0].selected, 1);
+  await h.handler.stopScheduleBatchDispatcher();
+});
+
+test("approved schedule execution rechecks current consent and assignment before each provider call", async () => {
+  for (const invalidate of [
+    (h) => h.storeFor("smsConsents").set(smsConsentIdForChurchPhone(h.churchId, h.phoneNumber), {
+      consentId: smsConsentIdForChurchPhone(h.churchId, h.phoneNumber), churchId: h.churchId,
+      phoneNumber: h.phoneNumber, status: "opted_out", optedOutAt: "now",
+    }),
+    (h) => { h.schedule.assignments = { occ_1: { "position::0": "member_b" } }; },
+    (h) => { h.schedule.published = false; },
+  ]) {
+    const h = createHarness({ firestore: true, scheduleBulkDispatchReady: true });
+    h.schedule.published = true;
+    h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+    const preparedResponse = h.makeResponse();
+    await h.handler.prepareScheduleInitialSmsBatch({
+      params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+      body: { memberIds: [h.member.memberId] },
+    }, preparedResponse);
+    assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+    const approved = await h.dispatch(preparedResponse.payload.batch.batchId);
+    assert.equal(approved.statusCode, 200);
+    invalidate(h);
+    for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status === "approved"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(h.providerCalls, 0);
+    const intent = h.storeFor("notificationIntents").get(preparedResponse.payload.batch.intentIds[0]);
+    assert.equal(intent.status, "preview");
+    assert.equal(intent.approvalSnapshot, null);
+    assert.equal(h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status, "complete");
+    await h.handler.stopScheduleBatchDispatcher();
+  }
+});
+
+test("approved schedule execution may outlive preview expiry while preserving the reviewed message", async () => {
+  const h = createHarness({ firestore: true, scheduleBulkDispatchReady: true });
+  h.schedule.published = true;
+  h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+  const preparedResponse = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId] },
+  }, preparedResponse);
+  assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+  const approved = await h.dispatch(preparedResponse.payload.batch.batchId);
+  assert.equal(approved.statusCode, 200);
+  const intent = h.storeFor("notificationIntents").get(preparedResponse.payload.batch.intentIds[0]);
+  const approvedMessage = intent.message;
+  intent.approvalSnapshot.expiresAt = Date.now() - 1;
+  for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status !== "complete"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.providerCalls, 1);
+  assert.equal(h.storeFor("notificationIntents").get(intent.intentId).message, approvedMessage);
+  assert.equal(h.storeFor("notificationIntents").get(intent.intentId).status, "sent");
+  await h.handler.stopScheduleBatchDispatcher();
+});
+
+test("worker startup resumes a persisted approved schedule batch and ignores unapproved drafts", async () => {
+  const h = createHarness({ firestore: true, scheduleBulkDispatchReady: true });
+  h.schedule.published = true;
+  h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+  const preparedResponse = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId] },
+  }, preparedResponse);
+  assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+  const prepared = h.storeFor("notificationBatches").get(preparedResponse.payload.batch.batchId);
+  const intent = h.storeFor("notificationIntents").get(prepared.intentIds[0]);
+  const row = prepared.recipients[0];
+  const approved = approveReviewedScheduleBatch({
+    current: prepared,
+    churchId: h.churchId,
+    scheduleId: h.schedule.scheduleId,
+    approvalVersion: prepared.reviewVersion,
+    actorUid: "admin_a",
+    approvedRecipients: [{
+      memberId: row.memberId, memberName: row.memberName, assignments: row.assignments,
+      intentId: row.intentId, status: "preview", eligible: true, exclusionReason: "",
+      approvalVersion: intent.approvalSnapshot.approvalVersion,
+      sourceFingerprint: intent.approvalSnapshot.sourceFingerprint,
+      segmentCount: intent.approvalSnapshot.segmentCount,
+      maskedPhoneNumber: row.maskedPhoneNumber,
+      message: intent.message,
+      phoneNumberSnapshot: intent.approvalSnapshot.phoneNumberSnapshot,
+    }],
+    now: new Date().toISOString(),
+    httpError: (statusCode, message) => Object.assign(new Error(message), { statusCode }),
+  });
+  h.storeFor("notificationBatches").set(prepared.batchId, approved);
+  h.storeFor("notificationBatches").set("unapproved-draft", {
+    ...prepared, batchId: "unapproved-draft", scheduleId: "another-schedule", status: "prepared",
+    recipients: [], intentIds: [], approval: null,
+    dispatchPriorityAt: approved.dispatchPriorityAt + 1,
+  });
+  h.handler.startScheduleBatchDispatcher();
+  for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(prepared.batchId).status !== "complete"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.providerCalls, 1);
+  assert.equal(h.storeFor("notificationBatches").get(prepared.batchId).status, "complete");
+  assert.equal(h.storeFor("notificationBatches").get("unapproved-draft").status, "prepared");
+  await h.handler.stopScheduleBatchDispatcher();
+});
+
+test("scoped manager progress projection finds the approved batch without private phone or response-link data", async () => {
+  let scoped = false;
+  const h = createHarness({
+    firestore: true,
+    scheduleBulkDispatchReady: true,
+    authorizeSchedule: async (_req, _churchId, schedule) => ({
+      admin: { user: { uid: "admin_a" } }, scoped, schedule,
+    }),
+  });
+  h.schedule.published = true;
+  h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+  const preparedResponse = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId] },
+  }, preparedResponse);
+  assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+  assert.match(preparedResponse.payload.batch.recipients[0].message, /secure-token/);
+  const approved = await h.dispatch(preparedResponse.payload.batch.batchId);
+  assert.equal(approved.statusCode, 200);
+  scoped = true;
+  const progress = h.makeResponse();
+  await h.handler.getScheduleInitialSmsRecipients({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+  }, progress);
+  assert.equal(progress.statusCode, 200);
+  assert.ok(progress.payload.currentBatch, "another authorized device can discover persisted approval");
+  const projection = JSON.stringify(progress.payload.currentBatch);
+  assert.doesNotMatch(projection, /secure-token/);
+  assert.doesNotMatch(projection, /\+14155550123/);
+  assert.match(projection, /0123/);
+  await h.handler.stopScheduleBatchDispatcher();
+});
+
+test("approved schedule batch pauses when the original operator loses Team management access", async () => {
+  let permitted = true;
+  const h = createHarness({
+    firestore: true,
+    scheduleBulkDispatchReady: true,
+    authorizeScheduleActor: async ({ scheduleId }) => {
+      if (!permitted) throw Object.assign(new Error("Teams edit access required"), { statusCode: 403 });
+      return { admin: { user: { uid: "admin_a" } }, scoped: false, schedule: await h.getDoc("teamSchedules", scheduleId) };
+    },
+  });
+  h.schedule.published = true;
+  h.schedule.assignments = { occ_1: { "position::0": h.member.memberId } };
+  const preparedResponse = h.makeResponse();
+  await h.handler.prepareScheduleInitialSmsBatch({
+    params: { churchId: h.churchId, scheduleId: h.schedule.scheduleId },
+    body: { memberIds: [h.member.memberId] },
+  }, preparedResponse);
+  assert.equal(preparedResponse.statusCode, 200, JSON.stringify(preparedResponse.payload));
+  const approved = await h.dispatch(preparedResponse.payload.batch.batchId);
+  assert.equal(approved.statusCode, 200);
+  permitted = false;
+  for (let attempt = 0; attempt < 100 && h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status !== "paused"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(h.storeFor("notificationBatches").get(approved.payload.batch.batchId).status, "paused");
+  assert.equal(h.providerCalls, 0);
+  await h.handler.stopScheduleBatchDispatcher();
 });
 
 

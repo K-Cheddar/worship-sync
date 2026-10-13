@@ -1,5 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { claimReviewedNotificationBatch, executeReviewedNotificationBatch, notificationBatchReviewVersion } from "./notificationBatches.js";
+import {
+  approveReviewedScheduleBatch,
+  claimApprovedScheduleBatch,
+  claimReviewedNotificationBatch,
+  createScheduleBatchDispatcher,
+  executeReviewedNotificationBatch,
+  notificationBatchReviewVersion,
+  ownsScheduleBatchLease,
+  releaseScheduleBatchLease,
+  renewScheduleBatchLease,
+  updateScheduleBatchRecipient,
+} from "./notificationBatches.js";
 import { isChurchMessagingReady, normalizeChurchMessagingConfig } from "./churchMessagingConfig.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
@@ -35,6 +46,8 @@ export const NOTIFICATION_INTENT_STATUSES = Object.freeze([
 ]);
 export const NOTIFICATION_SEND_STALE_AFTER_MS = 2 * 60 * 1000;
 export const NOTIFICATION_PREVIEW_TTL_MS = 10 * 60 * 1000;
+// Keep production dispatch closed until real Firestore contention, recovery,
+// privacy and deployed Heroku process behavior have been verified.
 export const SCHEDULE_BULK_DISPATCH_READY = false;
 
 // This foundation has no automatic send path. Keep this server-side kill
@@ -128,6 +141,7 @@ export const createNotificationIntentHandlers = ({
   requireFirestore,
   requireTeamsEdit,
   authorizeSchedule = async (req, churchId) => ({ admin: await requireTeamsEdit(req, churchId), scoped: false }),
+  authorizeScheduleActor = async () => { throw httpError(403, "Schedule management access is no longer available."); },
   authorizeAvailabilityForm = async () => {
     throw httpError(403, "Availability form access required.");
   },
@@ -142,9 +156,12 @@ export const createNotificationIntentHandlers = ({
   validateTwilioStatusCallbackUrl,
   setDoc,
   automaticSendsDisabled = AUTOMATIC_NOTIFICATION_SENDS_DISABLED,
+  scheduleBulkDispatchReady = SCHEDULE_BULK_DISPATCH_READY,
 }) => {
   const reconcileDelivery = createSmsDeliveryReconciler({ COLLECTIONS, getDoc, setDoc, requireFirestore, nowIso });
   const memoryClaims = new Map();
+  const backgroundScheduleRequests = new WeakMap();
+  let scheduleBatchDispatcher = null;
   const runMemoryClaim = (id, task) => {
     const previous = memoryClaims.get(id) || Promise.resolve();
     const current = previous.then(task, task);
@@ -599,9 +616,9 @@ export const createNotificationIntentHandlers = ({
     };
   };
 
-  const reviewStillMatches = (intent, validated, approvalVersion, authorizationFingerprint = "") => {
+  const reviewStillMatches = (intent, validated, approvalVersion, authorizationFingerprint = "", { allowExpired = false } = {}) => {
     const snapshot = intent.approvalSnapshot;
-    if (!snapshot || !Number(snapshot.expiresAt) || Number(snapshot.expiresAt) <= Date.now()) return false;
+    if (!snapshot || !Number(snapshot.expiresAt) || (!allowExpired && Number(snapshot.expiresAt) <= Date.now())) return false;
     if (!approvalVersion || approvalVersion !== snapshot.approvalVersion) return false;
     if (validated.eligibilityStatus !== "enabled" || validated.message !== intent.message) return false;
     if (snapshot.phoneHash !== hashValue(validated.phoneNumber)) return false;
@@ -796,7 +813,7 @@ export const createNotificationIntentHandlers = ({
     }
   };
 
-  const claimIntent = async ({ intentId, churchId, actorUid, attemptId, approvalVersion, authorizationFingerprint = "" }) => {
+  const claimIntent = async ({ intentId, churchId, actorUid, attemptId, approvalVersion, authorizationFingerprint = "", allowExpiredReview = false }) => {
     const db = requireFirestore();
     const callbackToken = randomBytes(32).toString("hex");
     const claim = async (current, records = null) => {
@@ -815,7 +832,7 @@ export const createNotificationIntentHandlers = ({
         return { invalidated: true, errorMessage: safeErrorMessage(error, "The recipient or source changed. Review a fresh message preview."), statusCode: error.statusCode || 409 };
       }
       validated.availabilityAccessFingerprint = authorizationFingerprint;
-      if (!reviewStillMatches(current, validated, approvalVersion, authorizationFingerprint)) {
+      if (!reviewStillMatches(current, validated, approvalVersion, authorizationFingerprint, { allowExpired: allowExpiredReview })) {
         return { invalidated: true, errorMessage: "The recipient, phone number, consent, source, or message changed. Review and confirm the current preview again.", statusCode: 409 };
       }
       const sendStartedAt = nowIso();
@@ -929,21 +946,47 @@ export const createNotificationIntentHandlers = ({
     let scopedAccess = false;
     let confirmedResult = null;
     try {
-      await assertCsrf(req);
+      const backgroundContext = backgroundScheduleRequests.get(req) || null;
+      if (!backgroundContext) await assertCsrf(req);
       const churchId = normalize(req.params.churchId);
       const intentId = normalize(req.params.intentId);
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
-      const access = await authorizeIntent(req, churchId, currentIntent);
+      const readBackgroundApproval = async () => {
+        if (!backgroundContext || !scheduleBulkDispatchReady) throw httpError(503, "Bulk schedule SMS is not ready for dispatch.");
+        const batch = await getBatchForChurch(backgroundContext.batchId, churchId);
+        if (!ownsScheduleBatchLease(batch, backgroundContext.ownership) || batch.status !== "dispatching") {
+          throw httpError(409, "This schedule dispatcher no longer owns the batch.");
+        }
+        const recipient = (batch.approval?.recipients || []).find((row) => row.intentId === intentId);
+        if (!recipient || recipient.approvalVersion !== currentIntent.approvalSnapshot?.approvalVersion ||
+            recipient.message !== currentIntent.message || currentIntent.batchId !== batch.batchId ||
+            currentIntent.sourceType !== "team_schedule" || currentIntent.sourceId !== batch.scheduleId) {
+          throw httpError(409, "This approved message no longer matches its saved review.");
+        }
+        const access = await authorizeScheduleActor({
+          churchId, scheduleId: batch.scheduleId, actorUid: batch.approval.actorUid,
+        });
+        return { batch, recipient, access };
+      };
+      let backgroundApproval = backgroundContext ? await readBackgroundApproval() : null;
+      const access = backgroundApproval?.access || await authorizeIntent(req, churchId, currentIntent);
       scopedAccess = Boolean(access.scoped);
       const authorizationFingerprint = accessFingerprintFor(access);
-      const admin = access.admin;
-      if (currentIntent.intentType === "schedule_initial_notification") {
+      const actorUid = backgroundApproval?.batch.approval.actorUid || access.admin?.user?.uid;
+      if (currentIntent.intentType === "schedule_initial_notification" && !backgroundContext) {
         throw httpError(503, "Bulk schedule SMS is disabled until safe background dispatch and restart recovery are ready.");
       }
       if (req.body?.confirmed !== true || !normalize(req.body?.approvalVersion)) throw httpError(400, "Review and confirm this exact SMS before sending.");
+      if (backgroundApproval && normalize(req.body.approvalVersion) !== backgroundApproval.recipient.approvalVersion) {
+        throw httpError(409, "This approved message no longer matches its saved review.");
+      }
       attemptId = createId("smsAttempt");
-      const claimed = await claimIntent({ intentId, churchId, actorUid: admin.user.uid, attemptId, approvalVersion: normalize(req.body.approvalVersion), authorizationFingerprint });
+      const claimed = await claimIntent({
+        intentId, churchId, actorUid, attemptId,
+        approvalVersion: normalize(req.body.approvalVersion), authorizationFingerprint,
+        allowExpiredReview: Boolean(backgroundContext),
+      });
       intent = claimed.next;
       const attempt = claimed.attempt;
       let phoneNumber = claimed.validated.phoneNumber;
@@ -951,10 +994,11 @@ export const createNotificationIntentHandlers = ({
       // A final read immediately before the external side effect catches a
       // roster edit, opt-out, schedule change, or disablement after approval.
       const finalCheck = await validateIntent(intent, { responseUrlOverride: intent.approvalSnapshot?.responseUrl || "" });
-      const finalAccess = await authorizeIntent(req, churchId, intent);
+      backgroundApproval = backgroundContext ? await readBackgroundApproval() : null;
+      const finalAccess = backgroundApproval?.access || await authorizeIntent(req, churchId, intent);
       const finalAuthorizationFingerprint = accessFingerprintFor(finalAccess);
       finalCheck.availabilityAccessFingerprint = finalAuthorizationFingerprint;
-      if (!reviewStillMatches(intent, finalCheck, intent.approvalSnapshot?.approvalVersion || "", finalAuthorizationFingerprint)) {
+      if (!reviewStillMatches(intent, finalCheck, intent.approvalSnapshot?.approvalVersion || "", finalAuthorizationFingerprint, { allowExpired: Boolean(backgroundContext) })) {
         throw httpError(409, "The recipient, phone number, consent, source, or message changed. Review and confirm the current preview again.");
       }
       phoneNumber = finalCheck.phoneNumber;
@@ -1054,6 +1098,21 @@ export const createNotificationIntentHandlers = ({
         : errorMessage;
       return res.status(error.statusCode || 500).json({ success: false, errorMessage: scopedErrorMessage, ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
+  };
+
+  const sendApprovedScheduleIntent = async ({ batch, ownership, recipient }) => {
+    const req = {
+      params: { churchId: batch.churchId, intentId: recipient.intentId },
+      body: { confirmed: true, approvalVersion: recipient.approvalVersion },
+    };
+    backgroundScheduleRequests.set(req, { batchId: batch.batchId, ownership });
+    const response = {
+      statusCode: 200,
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { this.payload = payload; return this; },
+    };
+    await sendIntent(req, response);
+    return { ...(response.payload || {}), statusCode: response.statusCode };
   };
 
   const ensureTeamIntakeIntent = async ({ churchId, formId, recipientId, actorUid }) => {
@@ -1508,15 +1567,21 @@ export const createNotificationIntentHandlers = ({
       const intent = intentById.get(row.intentId);
       const attempt = intent?.attemptId ? attemptById.get(intent.attemptId) : null;
       const snapshot = intent?.approvalSnapshot;
+      const approvedRecipient = (batch.approval?.recipients || []).find((item) => item.intentId === row.intentId);
       const { message: storedMessage, ...safeRow } = row;
       delete safeRow.phoneNumberSnapshot;
-      const message = intent?.approvalSnapshot ? intent.message : storedMessage;
-      const awaitingDispatch = Boolean(intent && ["preview", "ready"].includes(intent.status) && snapshot?.approvalVersion && Number(snapshot.expiresAt) > Date.now());
+      const activeApproval = ["approved", "dispatching"].includes(batch.status) &&
+        approvedRecipient?.approvalVersion === snapshot?.approvalVersion;
+      const message = activeApproval
+        ? approvedRecipient.message
+        : intent?.approvalSnapshot ? intent.message : storedMessage;
+      const awaitingDispatch = Boolean(intent && ["preview", "ready"].includes(intent.status) && snapshot?.approvalVersion &&
+        (activeApproval || Number(snapshot.expiresAt) > Date.now()));
       const stale = Boolean(row.sourceStale || (snapshot && row.sourceFingerprint && snapshot.sourceFingerprint !== row.sourceFingerprint));
       const previewError = row.exclusionReason || (stale
         ? "Assignments changed after this review. Review the current schedule again."
         : intent && !awaitingDispatch && ["preview", "ready"].includes(intent.status)
-          ? "This review expired. Review the current schedule again."
+          ? snapshot?.approvalVersion ? "This review expired. Review the current schedule again." : "This message changed after approval. Review the current schedule again."
           : "");
       return {
         ...safeRow,
@@ -1538,8 +1603,10 @@ export const createNotificationIntentHandlers = ({
     });
     const selected = (batch.selectedMemberIds || []).length;
     const accepted = recipients.filter((row) => row.status === "sent" || ["accepted", "sent", "delivered", "undelivered"].includes(row.attemptStatus) || row.attemptOutcome === "confirmed").length;
-    const failed = recipients.filter((row) => row.status === "failed" || ["failed", "undelivered"].includes(row.attemptStatus)).length;
-    const uncertain = recipients.filter((row) => row.status === "unknown" || row.status === "sending" || row.attemptOutcome === "unknown").length;
+    const failed = recipients.filter((row) => row.status === "failed").length;
+    const uncertain = recipients.filter((row) => row.status === "unknown" || row.attemptOutcome === "unknown").length;
+    const sending = recipients.filter((row) => row.status === "sending").length;
+    const awaiting = recipients.filter((row) => row.eligible && ["preview", "ready"].includes(row.status)).length;
     const delivered = recipients.filter((row) => row.attemptStatus === "delivered").length;
     return {
       batchId: batch.batchId,
@@ -1557,11 +1624,13 @@ export const createNotificationIntentHandlers = ({
       summary: {
         requested: selected,
         selected,
-        eligible: recipients.filter((row) => row.eligible).length,
-        awaitingDispatch: recipients.filter((row) => row.eligible).length,
+        eligible: awaiting,
+        awaitingDispatch: awaiting,
+        awaitingExecution: ["approved", "dispatching"].includes(batch.status) ? awaiting : 0,
+        sending,
         alreadySent: accepted,
-        excluded: Math.max(0, recipients.length - recipients.filter((row) => row.eligible).length - accepted),
-        totalSegments: recipients.filter((row) => row.eligible).reduce((sum, row) => sum + Number(row.segmentCount || 0), 0),
+        excluded: Math.max(0, recipients.length - awaiting - sending - accepted - failed - uncertain),
+        totalSegments: awaiting ? recipients.filter((row) => row.eligible).reduce((sum, row) => sum + Number(row.segmentCount || 0), 0) : 0,
         sent: accepted,
         delivered,
         failed,
@@ -1624,6 +1693,10 @@ export const createNotificationIntentHandlers = ({
         };
       });
       const selectedMemberIds = new Set(existingBatch?.selectedMemberIds || []);
+      const currentBatch = existingBatch?.approval &&
+        ["approved", "dispatching", "complete", "partial", "paused"].includes(existingBatch.status)
+        ? await scheduleInitialBatchDetail(existingBatch, { privacySafe: access.scoped })
+        : null;
       return res.json({
         success: true,
         historyComplete: true,
@@ -1632,6 +1705,21 @@ export const createNotificationIntentHandlers = ({
         scheduleId,
         published: schedule.published !== false,
         batchId,
+        currentBatch,
+        recentBatches: (existingBatch?.approvalHistory || []).map((entry) => ({
+          reviewVersion: entry.reviewVersion || "",
+          approvedAt: entry.approvedAt || "",
+          status: entry.status || "partial",
+          selected: Number(entry.selected || entry.recipientCount || 0),
+          summary: {
+            accepted: Number(entry.summary?.accepted || 0),
+            delivered: Number(entry.summary?.delivered || 0),
+            failed: Number(entry.summary?.failed || 0),
+            uncertain: Number(entry.summary?.uncertain || 0),
+            awaiting: Number(entry.summary?.awaiting || 0),
+            excluded: Number(entry.summary?.excluded || 0),
+          },
+        })),
         selectedMemberIds: recipients.filter((row) => row.eligible && selectedMemberIds.has(row.memberId)).map((row) => row.memberId),
         recipients,
         summary: {
@@ -1660,9 +1748,33 @@ export const createNotificationIntentHandlers = ({
       if (existing && (existing.churchId !== churchId || existing.scheduleId !== scheduleId || existing.intentType !== "schedule_initial_notification")) {
         throw httpError(409, "This message batch belongs to a different schedule.");
       }
-      if (existing?.status === "dispatching") throw httpError(409, "This schedule batch is already being processed.");
+      if (["approved", "dispatching"].includes(existing?.status)) {
+        throw httpError(409, "An approved schedule batch is already active. Open its progress before preparing another review.");
+      }
       const now = nowIso();
-      return {
+      const approvalHistory = existing?.approval
+        ? [...(existing.approvalHistory || []), (() => {
+            const recipients = existing.recipients || [];
+            const accepted = recipients.filter((row) => row.status === "sent" ||
+              ["accepted", "sent", "delivered", "undelivered"].includes(row.attemptStatus) || row.attemptOutcome === "confirmed").length;
+            const delivered = recipients.filter((row) => row.attemptStatus === "delivered").length;
+            const failed = recipients.filter((row) => row.status === "failed").length;
+            const uncertain = recipients.filter((row) => row.status === "unknown" || row.attemptOutcome === "unknown").length;
+            const awaiting = recipients.filter((row) => ["preview", "ready", "sending"].includes(row.status)).length;
+            const selected = Number(existing.selectedMemberIds?.length || existing.approval.recipients?.length || 0);
+            return {
+              reviewVersion: existing.approval.reviewVersion,
+              approvedAt: existing.approval.approvedAt,
+              status: existing.status,
+              selected,
+              summary: {
+                accepted, delivered, failed, uncertain, awaiting,
+                excluded: Math.max(0, selected - accepted - failed - uncertain - awaiting),
+              },
+            };
+          })()].slice(-10)
+        : existing?.approvalHistory || [];
+      const next = {
         ...(existing || {}),
         batchId,
         churchId,
@@ -1675,10 +1787,19 @@ export const createNotificationIntentHandlers = ({
         recipients: [],
         intentIds: [],
         reviewGeneration: Number(existing?.reviewGeneration || 0) + 1,
+        approvalHistory,
         createdAt: existing?.createdAt || now,
         createdByUid: existing?.createdByUid || actorUid,
         updatedAt: now,
       };
+      delete next.approval;
+      delete next.approvedByUid;
+      delete next.approvedAt;
+      delete next.approvedReviewVersion;
+      delete next.dispatchOwnerToken;
+      delete next.dispatchLeaseExpiresAt;
+      delete next.dispatchHeartbeatAt;
+      return next;
     };
     if (db) {
       return db.runTransaction(async (transaction) => {
@@ -1873,6 +1994,51 @@ export const createNotificationIntentHandlers = ({
     } catch (error) {
       return res.status(error.statusCode || 500).json({ success: false, errorMessage: safeErrorMessage(error, "Could not prepare schedule SMS."), ...(error?.code === "AUTH_CSRF_MISMATCH" ? { code: error.code } : {}) });
     }
+  };
+
+  const approvedRecipientSnapshot = (row, intent) => ({
+    memberId: row.memberId,
+    memberName: row.memberName,
+    assignments: row.assignments || [],
+    intentId: row.intentId || "",
+    status: intent ? "preview" : "excluded",
+    eligible: Boolean(intent),
+    exclusionReason: intent ? "" : row.exclusionReason || "Not eligible for SMS.",
+    approvalVersion: intent?.approvalSnapshot?.approvalVersion || "",
+    sourceFingerprint: intent?.approvalSnapshot?.sourceFingerprint || "",
+    segmentCount: Number(intent?.approvalSnapshot?.segmentCount || row.segmentCount || 0),
+    maskedPhoneNumber: row.maskedPhoneNumber || "",
+    ...(intent ? { message: intent.message } : {}),
+    ...(intent?.approvalSnapshot?.phoneNumberSnapshot
+      ? { phoneNumberSnapshot: intent.approvalSnapshot.phoneNumberSnapshot }
+      : {}),
+  });
+
+  const readAndValidateScheduleApprovalRecipients = async (batch, authorizationFingerprint) => {
+    const rows = await mapWithConcurrency(batch.recipients || [], 8, async (row) => {
+      if (!row.intentId) return approvedRecipientSnapshot(row, null);
+      const intent = await getDoc(COLLECTIONS.notificationIntents, row.intentId);
+      if (!intent || intent.churchId !== batch.churchId || intent.batchId !== batch.batchId ||
+          intent.sourceType !== "team_schedule" || intent.sourceId !== batch.scheduleId ||
+          intent.memberId !== row.memberId || !["preview", "ready"].includes(intent.status) ||
+          row.approvalVersion !== intent.approvalSnapshot?.approvalVersion ||
+          Number(intent.approvalSnapshot?.expiresAt || 0) <= Date.now()) {
+        throw httpError(409, "A reviewed message changed or expired. Review the current schedule messages again.");
+      }
+      const validated = await validateIntent(intent, {
+        requireConsent: false,
+        responseUrlOverride: intent.approvalSnapshot?.responseUrl || "",
+      });
+      validated.availabilityAccessFingerprint = authorizationFingerprint;
+      if (!reviewStillMatches(intent, validated, row.approvalVersion, authorizationFingerprint)) {
+        throw httpError(409, "Assignments, consent, or permissions changed. Review the current schedule messages again.");
+      }
+      return approvedRecipientSnapshot(row, intent);
+    });
+    if (rows.some((row) => row.intentId && !row.approvalVersion)) {
+      throw httpError(409, "A selected message is no longer available for approval.");
+    }
+    return rows;
   };
 
   const reserveAvailabilityBatch = async ({ churchId, formId, intentType, batchId, actorUid, selectedMemberIds }) => {
@@ -2101,7 +2267,9 @@ export const createNotificationIntentHandlers = ({
           try {
             const validated = await validateIntent(intent, { requireConsent: false, responseUrlOverride: intent.approvalSnapshot?.responseUrl || "" });
             validated.availabilityAccessFingerprint = authorizationFingerprint;
-            if (!reviewStillMatches(intent, validated, row.approvalVersion, authorizationFingerprint)) {
+            if (!reviewStillMatches(intent, validated, row.approvalVersion, authorizationFingerprint, {
+              allowExpired: Boolean(batch.approval?.reviewVersion === batch.reviewVersion && ["approved", "dispatching"].includes(batch.status)),
+            })) {
               return { ...row, sourceStale: true, exclusionReason: "Assignments, consent, or permissions changed. Review the current schedule again." };
             }
           } catch {
@@ -2156,10 +2324,84 @@ export const createNotificationIntentHandlers = ({
         if (req.body?.confirmed !== true || normalize(req.body?.approvalVersion) !== existingBatch.reviewVersion) {
           throw httpError(409, "This schedule review changed. Review the current messages again.");
         }
-        if (!SCHEDULE_BULK_DISPATCH_READY) {
+        if (!scheduleBulkDispatchReady) {
           throw httpError(503, "Bulk schedule SMS is disabled until safe background dispatch and restart recovery are ready.");
         }
-        throw httpError(503, "Schedule SMS dispatch is not configured.");
+        const actorUid = access.admin?.user?.uid || "";
+        const authorizationFingerprint = accessFingerprintFor({ ...access, schedule: access.schedule });
+        let batch = existingBatch;
+        if (existingBatch.approval?.reviewVersion !== existingBatch.reviewVersion ||
+            !["approved", "dispatching", "complete", "partial", "paused"].includes(existingBatch.status)) {
+          const approvedRecipients = await readAndValidateScheduleApprovalRecipients(existingBatch, authorizationFingerprint);
+          const db = requireFirestore();
+          const commit = async (current, schedule, intentsById) => {
+            if (!schedule || schedule.churchId !== churchId || schedule.archivedAt || schedule.published === false) {
+              throw httpError(409, "This schedule is no longer published and available for SMS.");
+            }
+            if (!current || current.reviewVersion !== existingBatch.reviewVersion) {
+              throw httpError(409, "This schedule review changed. Review the current messages again.");
+            }
+            if (current.approval?.reviewVersion === current.reviewVersion &&
+                ["approved", "dispatching", "complete", "partial", "paused"].includes(current.status)) return current;
+            const latestApprovedRecipients = (current.recipients || []).map((row) => {
+              if (!row.intentId) return approvedRecipientSnapshot(row, null);
+              const intent = intentsById.get(row.intentId);
+              const prevalidated = approvedRecipients.find((item) => item.intentId === row.intentId);
+              if (!intent || !prevalidated || intent.churchId !== churchId || intent.batchId !== current.batchId ||
+                  intent.sourceType !== "team_schedule" || intent.sourceId !== current.scheduleId ||
+                  intent.memberId !== row.memberId || !["preview", "ready"].includes(intent.status) ||
+                  intent.approvalSnapshot?.approvalVersion !== row.approvalVersion ||
+                  intent.approvalSnapshot?.approvalVersion !== prevalidated.approvalVersion ||
+                  intent.message !== prevalidated.message || Number(intent.approvalSnapshot?.expiresAt || 0) <= Date.now()) {
+                throw httpError(409, "A reviewed message changed or expired. Review the current schedule messages again.");
+              }
+              return approvedRecipientSnapshot(row, intent);
+            });
+            return approveReviewedScheduleBatch({
+              current, churchId, scheduleId: existingBatch.scheduleId,
+              approvalVersion: normalize(req.body?.approvalVersion), actorUid,
+              approvedRecipients: latestApprovedRecipients, now: nowIso(), httpError,
+            });
+          };
+          if (db) {
+            batch = await db.runTransaction(async (transaction) => {
+              const batchRef = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
+              const scheduleRef = db.collection(COLLECTIONS.teamSchedules).doc(existingBatch.scheduleId);
+              const [batchSnapshot, scheduleSnapshot] = await Promise.all([
+                transaction.get(batchRef), transaction.get(scheduleRef),
+              ]);
+              const current = batchSnapshot.exists ? { batchId: batchSnapshot.id, ...batchSnapshot.data() } : null;
+              const currentSchedule = scheduleSnapshot.exists ? { scheduleId: scheduleSnapshot.id, ...scheduleSnapshot.data() } : null;
+              const intentSnapshots = await Promise.all((current?.intentIds || []).map((intentId) =>
+                transaction.get(db.collection(COLLECTIONS.notificationIntents).doc(intentId)),
+              ));
+              const intentsById = new Map(intentSnapshots.map((snapshot, index) => [
+                current.intentIds[index], snapshot.exists ? { intentId: snapshot.id, ...snapshot.data() } : null,
+              ]));
+              const approved = await commit(current, currentSchedule, intentsById);
+              if (approved !== current) transaction.set(batchRef, approved, { merge: false });
+              return approved;
+            });
+          } else {
+            batch = await runMemoryClaim(batchId, async () => {
+              const [current, currentSchedule] = await Promise.all([
+                getBatchForChurch(batchId, churchId), getDoc(COLLECTIONS.teamSchedules, existingBatch.scheduleId),
+              ]);
+              const intentRows = await Promise.all((current.intentIds || []).map((id) => getDoc(COLLECTIONS.notificationIntents, id)));
+              const intentsById = new Map((current.intentIds || []).map((id, index) => [id, intentRows[index]]));
+              const approved = await commit(current, currentSchedule, intentsById);
+              if (approved !== current) await setDoc(COLLECTIONS.notificationBatches, batchId, approved, { merge: false });
+              return approved;
+            });
+          }
+        }
+        const detail = await scheduleInitialBatchDetail(batch, { privacySafe: access.scoped });
+        res.json({
+          success: true,
+          batch: detail,
+        });
+        scheduleBatchDispatcher?.wake();
+        return;
       }
       if (!existingBatch.formId) throw httpError(404, "Message batch not found.");
       const access = await authorizeForm(req, churchId, existingBatch.formId);
@@ -2215,6 +2457,173 @@ export const createNotificationIntentHandlers = ({
     }
   };
 
+  const currentScheduleRecipientState = async (batch, approvedRecipient) => {
+    const intent = await getDoc(COLLECTIONS.notificationIntents, approvedRecipient.intentId);
+    if (!intent || intent.churchId !== batch.churchId || intent.batchId !== batch.batchId ||
+        intent.sourceType !== "team_schedule" || intent.sourceId !== batch.scheduleId ||
+        intent.memberId !== approvedRecipient.memberId) {
+      return { memberId: approvedRecipient.memberId, intentId: approvedRecipient.intentId, status: "excluded", outcome: "not_sent" };
+    }
+    const attemptIds = [...new Set([intent.attemptId, intent.providerAcceptedAttemptId].filter(Boolean))];
+    const attempts = await Promise.all(attemptIds.map((id) => getDoc(COLLECTIONS.smsDeliveryAttempts, id)));
+    const acceptedAttempt = attempts.find(hasConfirmedSmsEvidence);
+    if (acceptedAttempt && intent.attemptId !== acceptedAttempt.attemptId) {
+      return {
+        memberId: approvedRecipient.memberId,
+        intentId: approvedRecipient.intentId,
+        status: "sent",
+        attemptId: acceptedAttempt.attemptId,
+        attemptStatus: acceptedAttempt.status || "accepted",
+        outcome: "confirmed",
+      };
+    }
+    if (acceptedAttempt && (intent.status !== "sent" || intent.providerAcceptedAttemptId !== acceptedAttempt.attemptId)) {
+      await reconcileDelivery({
+        churchId: batch.churchId,
+        intentId: intent.intentId,
+        attemptId: acceptedAttempt.attemptId,
+        update: {
+          providerMessageId: acceptedAttempt.providerMessageId || "",
+          status: acceptedAttempt.status || "accepted",
+          outcome: "confirmed",
+        },
+      });
+      return currentScheduleRecipientState(batch, approvedRecipient);
+    }
+    if (intent.status === "sending" && isStaleSending(intent)) {
+      await markUnknownAfterInterruption(intent);
+      return currentScheduleRecipientState(batch, approvedRecipient);
+    }
+    if (["preview", "ready"].includes(intent.status) &&
+        intent.approvalSnapshot?.approvalVersion !== approvedRecipient.approvalVersion) {
+      return {
+        memberId: approvedRecipient.memberId,
+        intentId: approvedRecipient.intentId,
+        status: "excluded",
+        outcome: "not_sent",
+        exclusionReason: "This message changed after approval. Review the current schedule again.",
+      };
+    }
+    const attempt = attempts.find((item) => item?.attemptId === intent.attemptId) || null;
+    return {
+      memberId: approvedRecipient.memberId,
+      intentId: approvedRecipient.intentId,
+      status: intent.status,
+      attemptId: intent.attemptId || "",
+      attemptStatus: attempt?.status || "",
+      outcome: intent.outcome || attempt?.outcome || "",
+      exclusionReason: intent.status === "preview" && !intent.approvalSnapshot?.approvalVersion
+        ? "This message is no longer eligible under the approved review."
+        : "",
+    };
+  };
+
+  const createScheduleBatchStoreOperations = () => {
+    const persistBatchChange = async (batchId, update) => {
+      const db = requireFirestore();
+      if (db) {
+        return db.runTransaction(async (transaction) => {
+          const ref = db.collection(COLLECTIONS.notificationBatches).doc(batchId);
+          const snapshot = await transaction.get(ref);
+          const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
+          const next = update(current);
+          if (next) transaction.set(ref, next, { merge: false });
+          return next;
+        });
+      }
+      return runMemoryClaim(batchId, async () => {
+        const current = await getDoc(COLLECTIONS.notificationBatches, batchId);
+        const next = update(current);
+        if (next) await setDoc(COLLECTIONS.notificationBatches, batchId, next, { merge: false });
+        return next;
+      });
+    };
+    return {
+      listCandidates: async () => {
+        const filters = [
+          { field: "intentType", value: "schedule_initial_notification" },
+          { field: "status", op: "in", value: ["approved", "dispatching"] },
+        ];
+        const db = requireFirestore();
+        if (db) {
+          const snapshot = await db.collection(COLLECTIONS.notificationBatches)
+            .where("intentType", "==", "schedule_initial_notification")
+            .where("status", "in", ["approved", "dispatching"])
+            .orderBy("dispatchPriorityAt", "asc")
+            .limit(30)
+            .get();
+          return snapshot.docs.map((doc) => ({ batchId: doc.id, ...doc.data() }));
+        }
+        return (await queryDocs(COLLECTIONS.notificationBatches, filters, { limit: 30 }))
+          .sort((left, right) => Number(left.dispatchPriorityAt || 0) - Number(right.dispatchPriorityAt || 0));
+      },
+      claim: async (candidate, ownerToken, now, leaseMs) => {
+        const db = requireFirestore();
+        if (db) {
+          return db.runTransaction(async (transaction) => {
+            const ref = db.collection(COLLECTIONS.notificationBatches).doc(candidate.batchId);
+            const snapshot = await transaction.get(ref);
+            const current = snapshot.exists ? { batchId: snapshot.id, ...snapshot.data() } : null;
+            const next = claimApprovedScheduleBatch({ current, churchId: candidate.churchId, ownerToken, now, leaseMs, httpError });
+            if (next) transaction.set(ref, next, { merge: false });
+            return next;
+          });
+        }
+        return runMemoryClaim(candidate.batchId, async () => {
+          const current = await getDoc(COLLECTIONS.notificationBatches, candidate.batchId);
+          const next = claimApprovedScheduleBatch({ current, churchId: candidate.churchId, ownerToken, now, leaseMs, httpError });
+          if (next) await setDoc(COLLECTIONS.notificationBatches, candidate.batchId, next, { merge: false });
+          return next;
+        });
+      },
+      renew: (batchId, ownership, now, leaseMs) => persistBatchChange(batchId, (current) =>
+        renewScheduleBatchLease({ current, ownership, now, leaseMs })),
+      saveRecipientProgress: (batchId, ownership, memberId, patch) => persistBatchChange(batchId, (current) =>
+        updateScheduleBatchRecipient({ current, ownership, memberId, patch, now: Date.now() })),
+      release: (batchId, ownership, now, status) => persistBatchChange(batchId, (current) =>
+        releaseScheduleBatchLease({ current, ownership, now, status })),
+    };
+  };
+
+  const scheduleBatchStore = createScheduleBatchStoreOperations();
+  scheduleBatchDispatcher = createScheduleBatchDispatcher({
+    ...scheduleBatchStore,
+    isStillAuthorized: async (batch) => {
+      try {
+        await authorizeScheduleActor({
+          churchId: batch.churchId,
+          scheduleId: batch.scheduleId,
+          actorUid: batch.approval?.actorUid,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    processRecipient: async ({ batch, recipient, ownership }) => {
+      const intent = await getDoc(COLLECTIONS.notificationIntents, recipient.intentId);
+      if (!intent || intent.churchId !== batch.churchId || intent.batchId !== batch.batchId ||
+          intent.sourceType !== "team_schedule" || intent.sourceId !== batch.scheduleId ||
+          intent.memberId !== recipient.memberId) {
+        return { errorMessage: "This approved message is no longer available." };
+      }
+      if (!ownsScheduleBatchLease(await getBatchForChurch(batch.batchId, batch.churchId), ownership)) return {};
+      const result = await sendApprovedScheduleIntent({ batch, ownership, recipient });
+      if ([401, 403].includes(result.statusCode)) return { ...result, pause: true };
+      return result;
+    },
+    getRecipientState: (recipient, batch) => currentScheduleRecipientState(batch, recipient),
+    createOwnerToken: () => randomBytes(24).toString("base64url"),
+    pollIntervalMs: 5000,
+    leaseMs: 90000,
+    maxRecipientsPerRun: 2,
+  });
+
+  const startScheduleBatchDispatcher = () => {
+    if (scheduleBulkDispatchReady && requireFirestore()) scheduleBatchDispatcher.start();
+  };
+  const stopScheduleBatchDispatcher = () => scheduleBatchDispatcher.stop();
+
   const dispatchAutomatically = async () => {
     throw httpError(403, "Automatic notification sends are disabled by the server.");
   };
@@ -2232,6 +2641,8 @@ export const createNotificationIntentHandlers = ({
     prepareScheduleInitialSmsBatch,
     getAvailabilityBatch,
     dispatchAvailabilityBatch,
+    startScheduleBatchDispatcher,
+    stopScheduleBatchDispatcher,
     saveEventIntents,
     dispatchAutomatically,
     automaticSendsDisabled: automaticSendsDisabled === true,

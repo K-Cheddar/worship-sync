@@ -1,6 +1,15 @@
 {
   "indexes": [
     {
+      "collectionGroup": "notificationBatches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "intentType", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dispatchPriorityAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "memberships",
       "queryScope": "COLLECTION",
       "fields": [

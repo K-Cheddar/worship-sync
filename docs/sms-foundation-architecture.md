@@ -1,8 +1,10 @@
 # SMS foundation audit and incremental design
 
-Audited and hardened on 2026-10-12 on `in-progress`. Phase 1 extracts shared batch mechanics; Phase 2 adds monotonic send reconciliation. This work does **not** implement bulk schedule SMS, background execution, or permission redesign. Production infrastructure/configuration was not inspected. Unresolved proposals below are not approved product decisions.
+Audited and hardened on 2026-10-12 on `in-progress`. Phase 1 extracts shared batch mechanics; Phase 2 adds monotonic send reconciliation. The initial audit did not implement bulk schedule SMS, background execution, or permission redesign. The Phase 3D update below supersedes its schedule-dispatch status; Heroku deployment configuration and live Firestore contention remain unverified.
 
-**Phase 3C update on `in-progress-2`:** the first-send schedule adapter, current-Team authorization, distinct per-schedule/member identity, publication check, recipient selection and persisted personalized review are now implemented. The send route is hard-gated because the shared executor is request-bound and still lacks fenced batch progress and restart recovery. See the [Phase 3C handoff](team-schedule-messaging-phase-3c.md). This update does not establish production readiness or change the audit's findings about Heroku capacity and real Firestore behavior.
+**Phase 3C update on `in-progress-2`:** the first-send schedule adapter, current-Team authorization, distinct per-schedule/member identity, publication check, recipient selection and persisted personalized review were implemented. Its dispatch blocker is superseded by the Phase 3D update and [Phase 3D handoff](team-schedule-messaging-phase-3d.md).
+
+**Phase 3D update on `in-progress-2`:** the gated implementation now has durable explicit approval, Firestore-transaction batch leases with generation fencing, recipient progress, current authorization/consent/source checks, startup and polling recovery, authorized server-side progress discovery, and UI recovery/polling. The product owner selected the review-expiry, permission-revocation and restart policies recorded in the [Phase 3D handoff](team-schedule-messaging-phase-3d.md). `SCHEDULE_BULK_DISPATCH_READY` remains `false`: transaction-shaped tests pass, but real Firestore contention and the actual Heroku app/dyno configuration were not verifiable from this workspace.
 
 ## Planning and authorization
 
@@ -100,39 +102,39 @@ Firestore can store approved work and atomic per-intent claims without Redis or 
 
 Required recovery order: inspect accepted attempt evidence -> reconcile intent monotonically -> classify unconfirmed active attempt as blocked unknown -> continue only unclaimed reviewed recipients. Persist progress per item; fence finalization; never let an older dispatcher overwrite newer outcomes. Catch recipient-level application/provider failures so remaining recipients are accounted for; datastore failure can interrupt the run and must remain visible/recoverable. No scheduler may initiate volunteer notifications.
 
-## Confirmed direction and unresolved details
+## Confirmed direction and remaining product scope
 
 Product-owner replies on 2026-10-12 authorize the direction for subsequent work:
 
 - Continue explicitly approved dispatch on the **existing web dyno**, including after app closure. This does not authorize new notification initiation, a scheduler, a worker dyno, or new paid infrastructure. Use persisted approved work, fenced leases and restart recovery; actual hosting capacity/awake behavior must be verified.
 - Send **one message per volunteer per schedule**. The product owner also intends reminders the week before. The original explicit operator initiation/review/approval invariant remains in force for reminders; automatic timed sending has not been requested or approved. Exact reminder identity, eligible subset, date interpretation and content belong to that later feature contract.
 
-Still unresolved: whether approved work may continue beyond the existing ten-minute review expiry, how permission revocation affects approved work, and which restart trigger can resume it on the current dyno. These are consequential design details, not silently selected defaults. Also resolve changed-schedule/removal resend semantics and mixed assignment-response summaries before implementing bulk schedule SMS.
+Resolved on 2026-10-12: approval freezes the reviewed content while current eligibility and consent are checked again immediately before each provider call; unsent recipients pause if the approver loses Team management access; an existing web dyno automatically resumes persisted approved work on startup and through active-process polling. The exact alternatives and tradeoffs are recorded in the [Phase 3D handoff](team-schedule-messaging-phase-3d.md). Changed-schedule/removal resend semantics, reminder timing/eligibility and mixed assignment-response summaries remain separate product scope.
 
 ## Schedule SMS integration status
 
-Phase 3C implements initial preparation and review. Its explicit boundaries are recorded in the [Phase 3C handoff](team-schedule-messaging-phase-3c.md):
+Phase 3C implements initial preparation and review. Phase 3D adds the gated continuation described in the [Phase 3D handoff](team-schedule-messaging-phase-3d.md):
 
 - An existing Published schedule can be reviewed for SMS independently of email. Drafts are blocked; missing publication metadata keeps the legacy Published behavior. The existing email path and `sentAt` meaning remain intact.
 - The Team adapter groups current primary assignments by roster member, checks active roster state, consent, opt-out and phone validity, excludes guests, and authorizes the persisted schedule Team. Scoped views mask full phones and response links.
 - Messages use the existing schedule response page and one secure link per member. The initial identity is stable per church, schedule and member; old assignment-specific drafts are not grouped or adopted as proof of a grouped send.
 - Reviewed recipients, actual messages, segment estimates, approval versions and batch review state are persisted. Opening or preparing the batch never calls the provider. Changed assignments, consent, publication or authority invalidate the review.
-- The dispatch entry points remain hard-disabled. They do not send even when a batch review has an unexpired version. Later reminders, resends, removal notices, assignment-change messages and single-label response summaries remain outside this implementation.
+- The production readiness constant remains hard-disabled. Product approval now persists before any worker can act, and both the direct route and worker require the same server-side readiness dependency. Later reminders, resends, removal notices, assignment-change messages and single-label response summaries remain outside this implementation.
 
 ## Remaining execution and product decisions
 
-1. Implement safe continuation on the selected existing web dyno with fenced batch ownership, durable per-recipient progress, provider deadlines, restart recovery and server-authorized discovery. Reconcile accepted evidence monotonically, preserve uncertain sends as blocked, and continue only unclaimed reviewed recipients. Do not use a request-bound loop or infer stopped work from an expired timestamp.
-2. Resolve how the ten-minute review expiry and permission revocation apply to approved work and define the restart trigger. Verify Firestore transaction contention, Heroku interruption and web-process capacity before enabling the hard gate.
+1. Run a Firestore emulator or live non-production contention/restart suite against approval, competing leases, lease transfer and accepted-result recovery.
+2. Inspect the actual Heroku app's web dyno count/size and process behavior, and exercise shutdown/restart recovery there before enabling the hard gate.
 3. Keep the first-send identity and grouping semantics stable. Separately decide which assignment changes warrant a new message, whether removed volunteers are notified, whether accepted sends can be deliberately resent, reminder timing/eligibility, and how mixed responses should be summarized.
 
 ## Ordered next phases / readiness
 
 1. Phase 2 implements conditional recovery, confirmed-evidence preservation, transactional callbacks and attempt correlation with controlled race/failure tests. Unattributable legacy outcomes remain blocked; no unsafe attribution or automatic retry is added.
 2. Phase 3B and the Phase 3C preparation adapter provide current Team authorization, persisted schedule scope and privacy-safe recipient/review projections.
-3. Complete the execution and recovery work above, resolve expiry and permission-revocation policy, then verify real Firestore contention and representative Heroku interruption.
+3. Complete the real Firestore and Heroku operational verification above before considering a change to the readiness gate.
 4. Keep the grouped initial identity and first-send review; add later reminders or change messages only after their product rules are approved.
 
-Schedule bulk SMS is **not ready to send**. Recipient selection, grouped message preparation and persisted review exist on `in-progress-2`; current source checks and consent validation are in place. The dispatch gate remains closed because existing batch execution is request-bound and lacks fenced progress and restart recovery. Real hosting capacity and production Firestore behavior are unverified.
+Schedule bulk SMS is **not ready to send**. Recipient selection, grouped review, durable approval, fenced dispatch, recovery and progress projection are implemented on `in-progress-2`; the production gate remains closed because production Firestore contention/recovery and actual Heroku process capacity/restarts are unverified. No client-only bypass is available.
 
 ## Verification and review scope
 

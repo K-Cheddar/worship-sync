@@ -28,6 +28,8 @@ import {
   requireBroadTeamsViewSession,
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
+  startScheduleInitialSmsBatchDispatcher,
+  stopScheduleInitialSmsBatchDispatcher,
   setDoc,
 } from "./authService.js";
 import { createAppSessionGuards } from "./server/appSessionGuards.js";
@@ -4129,19 +4131,45 @@ app.get("/{*path}", async (req, res) => {
 
 void restreamService.initializeConnections();
 
+let activeHttpServer = null;
+let shutdownStarted = false;
+
+const startServerBackgroundWork = () => {
+  startIntakeSubmissionDigestRecovery();
+  startScheduleInitialSmsBatchDispatcher();
+};
+
+const shutdownWebProcess = async (signal) => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  console.log(`Received ${signal}; stopping schedule SMS dispatch and closing the web server.`);
+  const serverClosed = activeHttpServer
+    ? new Promise((resolve) => activeHttpServer.close(resolve))
+    : Promise.resolve();
+  await stopScheduleInitialSmsBatchDispatcher().catch((error) => {
+    console.error("Could not stop schedule SMS dispatch cleanly:", error?.message || error);
+  });
+  activeHttpServer?.closeAllConnections?.();
+  await serverClosed;
+};
+
+process.once("SIGTERM", () => void shutdownWebProcess("SIGTERM"));
+process.once("SIGINT", () => void shutdownWebProcess("SIGINT"));
+
 if (isDevelopment) {
   const options = {
     key: fs.readFileSync("./local.worshipsync.net-key.pem"),
     cert: fs.readFileSync("./local.worshipsync.net.pem"),
   };
 
-  https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
+  activeHttpServer = https.createServer(options, app);
+  activeHttpServer.listen(5000, "local.worshipsync.net", () => {
     console.log("HTTPS server running at https://local.worshipsync.net:5000");
-    startIntakeSubmissionDigestRecovery();
+    startServerBackgroundWork();
   });
 } else {
-  app.listen(port, () => {
+  activeHttpServer = app.listen(port, () => {
     console.log(`Listening on port ${port}`);
-    startIntakeSubmissionDigestRecovery();
+    startServerBackgroundWork();
   });
 }

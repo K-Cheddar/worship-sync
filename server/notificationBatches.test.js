@@ -1,6 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimReviewedNotificationBatch, executeReviewedNotificationBatch, notificationBatchReviewVersion } from "./notificationBatches.js";
+import {
+  approveReviewedScheduleBatch,
+  claimApprovedScheduleBatch,
+  claimReviewedNotificationBatch,
+  createScheduleBatchDispatcher,
+  executeReviewedNotificationBatch,
+  notificationBatchReviewVersion,
+  releaseScheduleBatchLease,
+  renewScheduleBatchLease,
+  updateScheduleBatchRecipient,
+} from "./notificationBatches.js";
 
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 const snapshot = { approvalVersion: "review", expiresAt: Date.now() + 600000 };
@@ -144,4 +154,222 @@ test("lost request can resume persisted successful intents without duplication",
   const result = await executeReviewedNotificationBatch(run.args);
   assert.deepEqual(run.sent, ["one", "two"]);
   assert.equal(result.status, "sent");
+});
+
+const makeScheduleBatch = () => ({
+  batchId: "schedule-batch", churchId: "church", scheduleId: "schedule",
+  sourceType: "team_schedule", intentType: "schedule_initial_notification",
+  status: "prepared", reviewVersion: "approved-review",
+  recipients: [
+    { memberId: "one", intentId: "one", approvalVersion: "review-one", status: "preview" },
+    { memberId: "two", intentId: "two", approvalVersion: "review-two", status: "preview" },
+  ],
+});
+
+test("schedule approval is durable, exact-version and idempotent", () => {
+  const batch = makeScheduleBatch();
+  const input = {
+    current: batch, churchId: "church", scheduleId: "schedule",
+    approvalVersion: "approved-review", actorUid: "manager", now: "2026-10-12T15:00:00Z",
+    approvedRecipients: [{ intentId: "one", message: "Approved body", approvalVersion: "review-one" }],
+    httpError,
+  };
+  const approved = approveReviewedScheduleBatch(input);
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.approval.actorUid, "manager");
+  assert.deepEqual(approved.approval.recipients, input.approvedRecipients);
+  assert.equal(approveReviewedScheduleBatch({ ...input, current: approved, actorUid: "another-manager" }), approved);
+  for (const change of [
+    { approvalVersion: "stale" }, { churchId: "another-church" },
+    { current: { ...batch, status: "preparing" } },
+  ]) assert.throws(() => approveReviewedScheduleBatch({ ...input, ...change }));
+});
+
+test("competing dispatchers claim one Firestore-style batch lease", async () => {
+  let batch = approveReviewedScheduleBatch({
+    current: makeScheduleBatch(), churchId: "church", scheduleId: "schedule",
+    approvalVersion: "approved-review", actorUid: "manager", now: "approved",
+    approvedRecipients: [], httpError,
+  });
+  let transactionTail = Promise.resolve();
+  const claim = (ownerToken) => {
+    const run = transactionTail.then(() => {
+      const next = claimApprovedScheduleBatch({ current: batch, churchId: "church", ownerToken, now: 100, leaseMs: 50, httpError });
+      if (next) batch = next;
+      return next;
+    });
+    transactionTail = run.then(() => undefined, () => undefined);
+    return run;
+  };
+  const [first, second] = await Promise.all([claim("owner-a"), claim("owner-b")]);
+  assert.equal([first, second].filter(Boolean).length, 1);
+  assert.equal(batch.dispatchGeneration, 1);
+});
+
+test("lease expiry permits transfer but fences the old owner's progress and completion", () => {
+  let batch = approveReviewedScheduleBatch({
+    current: makeScheduleBatch(), churchId: "church", scheduleId: "schedule",
+    approvalVersion: "approved-review", actorUid: "manager", now: "approved",
+    approvedRecipients: [], httpError,
+  });
+  batch = claimApprovedScheduleBatch({ current: batch, churchId: "church", ownerToken: "old", now: 100, leaseMs: 50, httpError });
+  assert.equal(claimApprovedScheduleBatch({ current: batch, churchId: "church", ownerToken: "contender", now: 120, leaseMs: 50, httpError }), null);
+  const transferred = claimApprovedScheduleBatch({ current: batch, churchId: "church", ownerToken: "new", now: 151, leaseMs: 50, httpError });
+  assert.equal(transferred.dispatchGeneration, 2);
+  assert.equal(updateScheduleBatchRecipient({ current: transferred, ownership: { ownerToken: "old", generation: 1 }, memberId: "one", patch: { status: "sent" }, now: 160 }), null);
+  assert.equal(releaseScheduleBatchLease({ current: transferred, ownership: { ownerToken: "old", generation: 1 }, now: 160, status: "complete" }), null);
+  assert.equal(renewScheduleBatchLease({ current: transferred, ownership: { ownerToken: "old", generation: 1 }, now: 160, leaseMs: 50 }), null);
+});
+
+test("dispatcher resumes approved work, persists each recipient, and never retries accepted or unknown intents", async () => {
+  let batch = approveReviewedScheduleBatch({
+    current: makeScheduleBatch(), churchId: "church", scheduleId: "schedule",
+    approvalVersion: "approved-review", actorUid: "manager", now: "approved",
+    approvedRecipients: [
+      { memberId: "one", intentId: "one", approvalVersion: "review-one", message: "one" },
+      { memberId: "two", intentId: "two", approvalVersion: "review-two", message: "two" },
+    ], httpError,
+  });
+  const states = new Map(["one", "two"].map((id) => [id, { status: "preview" }]));
+  const calls = [];
+  const progress = [];
+  let now = 100;
+  const dispatcher = createScheduleBatchDispatcher({
+    listCandidates: async () => [batch],
+    claim: async (candidate, ownerToken, at, leaseMs) => {
+      const next = claimApprovedScheduleBatch({ current: batch, churchId: "church", ownerToken, now: at, leaseMs, httpError });
+      if (next) batch = next;
+      return next;
+    },
+    renew: async (batchId, owner, at, leaseMs) => {
+      const next = renewScheduleBatchLease({ current: batch, ownership: owner, now: at, leaseMs });
+      if (next) batch = next;
+      return next;
+    },
+    saveRecipientProgress: async (batchId, owner, memberId, state) => {
+      const next = updateScheduleBatchRecipient({ current: batch, ownership: owner, memberId, patch: state, now: now++ });
+      if (next) { batch = next; progress.push(memberId); }
+      return next;
+    },
+    release: async (batchId, owner, at, status) => {
+      const next = releaseScheduleBatchLease({ current: batch, ownership: owner, now: at, status });
+      if (next) batch = next;
+      return next;
+    },
+    isStillAuthorized: async () => true,
+    processRecipient: async ({ recipient }) => {
+      calls.push(recipient.intentId);
+      states.set(recipient.intentId, { status: recipient.intentId === "one" ? "sent" : "unknown" });
+      return {};
+    },
+    getRecipientState: async (recipient) => states.get(recipient.intentId),
+    createOwnerToken: (() => { let n = 0; return () => `owner-${++n}`; })(),
+    now: () => now,
+    maxRecipientsPerRun: 2,
+    logger: { error() {} },
+  });
+
+  await dispatcher.runOnce();
+  assert.deepEqual(calls, ["one", "two"]);
+  assert.deepEqual(progress, ["one", "two"]);
+  assert.equal(batch.status, "partial");
+  await dispatcher.runOnce();
+  assert.deepEqual(calls, ["one", "two"]);
+  await dispatcher.stop();
+});
+
+test("permission revocation pauses approved work without processing recipients", async () => {
+  const batch = approveReviewedScheduleBatch({
+    current: makeScheduleBatch(), churchId: "church", scheduleId: "schedule",
+    approvalVersion: "approved-review", actorUid: "manager", now: "approved",
+    approvedRecipients: [{ memberId: "one", intentId: "one", approvalVersion: "review-one" }], httpError,
+  });
+  let savedStatus = "";
+  let sent = 0;
+  const dispatcher = createScheduleBatchDispatcher({
+    listCandidates: async () => [batch],
+    claim: async (candidate, ownerToken, now, leaseMs) => claimApprovedScheduleBatch({ current: candidate, churchId: "church", ownerToken, now, leaseMs, httpError }),
+    renew: async () => true,
+    saveRecipientProgress: async () => true,
+    release: async (batchId, ownership, now, status) => { savedStatus = status; return true; },
+    isStillAuthorized: async () => false,
+    processRecipient: async () => { sent += 1; },
+    getRecipientState: async () => ({ status: "preview" }),
+    createOwnerToken: () => "owner",
+    logger: { error() {} },
+  });
+  await dispatcher.runOnce();
+  assert.equal(savedStatus, "paused");
+  assert.equal(sent, 0);
+  await dispatcher.stop();
+});
+
+test("bounded dispatch advances past finished recipients and rotates between approved batches", async () => {
+  const batches = new Map();
+  for (const [batchId, approvedAt] of [["batch-a", "2026-10-12T10:00:00.000Z"], ["batch-b", "2026-10-12T10:01:00.000Z"]]) {
+    const current = {
+      ...makeScheduleBatch(), batchId, status: "prepared",
+      reviewVersion: `${batchId}-review`,
+      recipients: ["one", "two", "three"].map((memberId) => ({
+        memberId: `${batchId}-${memberId}`,
+        intentId: `${batchId}-${memberId}`,
+        approvalVersion: `${batchId}-${memberId}-review`,
+        status: "preview",
+      })),
+    };
+    batches.set(batchId, approveReviewedScheduleBatch({
+      current, churchId: "church", scheduleId: "schedule",
+      approvalVersion: current.reviewVersion, actorUid: "manager", now: approvedAt,
+      approvedRecipients: current.recipients, httpError,
+    }));
+  }
+  const states = new Map([...batches.values()].flatMap((batch) =>
+    batch.approval.recipients.map((recipient) => [`${batch.batchId}/${recipient.memberId}`, { status: "preview" }])));
+  const calls = [];
+  let currentTime = Date.parse("2026-10-12T10:02:00.000Z");
+  const dispatcher = createScheduleBatchDispatcher({
+    listCandidates: async () => [...batches.values()].sort((left, right) => left.dispatchPriorityAt - right.dispatchPriorityAt),
+    claim: async (candidate, ownerToken, now, leaseMs) => {
+      const current = batches.get(candidate.batchId);
+      const next = claimApprovedScheduleBatch({ current, churchId: "church", ownerToken, now, leaseMs, httpError });
+      if (next) batches.set(candidate.batchId, next);
+      return next;
+    },
+    renew: async (batchId, ownership, now, leaseMs) => {
+      const next = renewScheduleBatchLease({ current: batches.get(batchId), ownership, now, leaseMs });
+      if (next) batches.set(batchId, next);
+      return next;
+    },
+    saveRecipientProgress: async (batchId, ownership, memberId, patch) => {
+      const next = updateScheduleBatchRecipient({ current: batches.get(batchId), ownership, memberId, patch, now: currentTime++ });
+      if (next) batches.set(batchId, next);
+      return next;
+    },
+    release: async (batchId, ownership, now, status) => {
+      const next = releaseScheduleBatchLease({ current: batches.get(batchId), ownership, now, status });
+      if (next) batches.set(batchId, next);
+      return next;
+    },
+    isStillAuthorized: async () => true,
+    processRecipient: async ({ batch, recipient }) => {
+      calls.push(`${batch.batchId}/${recipient.memberId}`);
+      states.set(`${batch.batchId}/${recipient.memberId}`, { status: "sent" });
+      return {};
+    },
+    getRecipientState: async (recipient, batch) => states.get(`${batch.batchId}/${recipient.memberId}`),
+    createOwnerToken: (() => { let count = 0; return () => `owner-${++count}`; })(),
+    now: () => currentTime++,
+    maxRecipientsPerRun: 1,
+    logger: { error() {} },
+  });
+
+  for (let pass = 0; pass < 6; pass += 1) await dispatcher.runOnce();
+  assert.deepEqual(calls.slice(0, 4), [
+    "batch-a/batch-a-one", "batch-b/batch-b-one",
+    "batch-a/batch-a-two", "batch-b/batch-b-two",
+  ]);
+  assert.equal(calls.length, 6);
+  assert.equal(batches.get("batch-a").status, "complete");
+  assert.equal(batches.get("batch-b").status, "complete");
+  await dispatcher.stop();
 });

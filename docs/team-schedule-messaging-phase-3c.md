@@ -3,6 +3,8 @@
 **Branch:** `in-progress-2`  
 **Status:** INCOMPLETE — recipient selection, message preparation and persisted review are implemented; bulk dispatch stays disabled.
 
+Phase 3D supersedes this handoff's dispatch blocker and unresolved policy questions. Durable approval and the fenced web-dyno dispatcher are now implemented behind the same disabled readiness gate; see [Phase 3D](team-schedule-messaging-phase-3d.md) for current behavior and verification blockers.
+
 ## Before and after
 
 Before this slice, **Send schedule** used the email endpoint, which updated `sentAt` and created individual assignment SMS drafts. There was no independent schedule-wide SMS review or identity.

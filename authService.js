@@ -5359,6 +5359,42 @@ export const requireTeamsEditForTeamSession = async (req, churchId, teamId) => {
   return bootstrap;
 };
 
+export const requireTeamsEditForTeamActor = async ({ actorUid, churchId, teamId }) => {
+  const uid = String(actorUid || "").trim();
+  if (!uid || !churchId) throw httpError(403, "Teams edit access required");
+  const { user, membership, church } = await getHumanContext({ uid, churchId });
+  const permissions = normalizeMembershipPermissions(membership.permissions, membership.role);
+  const actor = { user, church, churchId, role: membership.role, permissions };
+  if (membership.role === "admin" || permissions.teams === "edit") return actor;
+  if (!teamId || !hasTeamScope(permissions, teamId, "edit")) {
+    throw httpError(403, "Teams edit access required");
+  }
+  const team = await getDoc(COLLECTIONS.teams, teamId);
+  if (!team || team.churchId !== churchId || team.archivedAt) {
+    throw httpError(403, "Teams edit access required");
+  }
+  return actor;
+};
+
+export const authorizeScheduleInitialSmsActor = async ({ actorUid, churchId, scheduleId }) => {
+  const schedule = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+  if (!schedule || schedule.churchId !== churchId) throw httpError(404, "Schedule not found.");
+  const admin = await requireTeamsEditForTeamActor({ actorUid, churchId, teamId: schedule.teamId });
+  const scoped = admin.role !== "admin" && admin.permissions?.teams !== "edit";
+  if (scoped) {
+    const positionIds = new Set(Object.values(schedule.assignments || {}).flatMap((cells) =>
+      Object.keys(cells || {}).map((key) => String(key).split("::")[0]),
+    ));
+    for (const positionId of positionIds) {
+      const position = await getDoc(COLLECTIONS.teamPositions, positionId);
+      if (!position || position.churchId !== churchId || position.teamId !== schedule.teamId) {
+        throw httpError(403, "This schedule has inconsistent Team ownership. Ask a church administrator to review it.");
+      }
+    }
+  }
+  return { admin, scoped, schedule: { scheduleId, ...schedule } };
+};
+
 /**
  * Day-level mic chips on Current Service Workspace (and schedule grids).
  * Humans need Teams edit for the owning team. Booth workstations may write
@@ -6852,6 +6888,8 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   requireTeamsEdit: requireTeamsEditSession,
   authorizeSchedule: (...args) =>
     teamsAuthHandlers.requireTeamScheduleNotificationEdit(...args),
+  authorizeScheduleActor: (...args) =>
+    authorizeScheduleInitialSmsActor(...args),
   authorizeAvailabilityForm: (...args) =>
     teamsAuthHandlers.requireTeamAvailabilityFormEdit(...args),
   isAvailabilityRecipientInFormScope: (...args) =>
@@ -6875,6 +6913,11 @@ const notificationIntentHandlers = createNotificationIntentHandlers({
   validateReplacementCandidate: (...args) =>
     teamsAuthHandlers.validateReplacementCandidate(...args),
 });
+
+export const startScheduleInitialSmsBatchDispatcher = () =>
+  notificationIntentHandlers.startScheduleBatchDispatcher();
+export const stopScheduleInitialSmsBatchDispatcher = () =>
+  notificationIntentHandlers.stopScheduleBatchDispatcher();
 
 const isInviteSmsConsentEnabled = () =>
   process.env.SMS_INVITE_CONSENT_ENABLED === "true";

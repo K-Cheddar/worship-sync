@@ -41,6 +41,7 @@ import type {
   NotificationIntentType,
   NotificationBatch,
   ScheduleInitialSmsRecipient,
+  ScheduleInitialSmsBatchHistoryEntry,
   MemberPermissions,
   NotificationCategory,
   NotificationPreference,
@@ -1537,6 +1538,8 @@ export const getScheduleInitialSmsRecipients = async (
   historyComplete: boolean;
   privacySafe: boolean;
   hasPreparedSelection: boolean;
+  currentBatch?: NotificationBatch | null;
+  recentBatches?: ScheduleInitialSmsBatchHistoryEntry[];
   scheduleId: string;
   published: boolean;
   batchId: string;
