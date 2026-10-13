@@ -3,8 +3,12 @@ import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { expect, type Browser, type Page } from "@playwright/test";
 
-const authFile = resolve("playwright/.auth/worshipsync-user.json");
-const metadataFile = resolve("playwright/.auth/worshipsync-user.meta.json");
+type AuthStateFiles = { authFile: string; metadataFile: string };
+
+const defaultAuthFiles: AuthStateFiles = {
+  authFile: resolve("playwright/.auth/worshipsync-user.json"),
+  metadataFile: resolve("playwright/.auth/worshipsync-user.meta.json"),
+};
 const metadataVersion = 1;
 
 export type AuthenticatedIdentity = {
@@ -45,7 +49,12 @@ type SavedStorageState = {
 
 type SavedStorageInspection =
   | { ok: false; reason: string }
-  | { ok: true; cookieValue: string; deviceIdentity: string };
+  | {
+      ok: true;
+      cookieValue: string | null;
+      deviceIdentity: string;
+      hasUsableServerCookie: boolean;
+    };
 
 const serverSessionCookieName = "worshipsync_sid";
 const deviceIdentityKey = "worshipsync_device_id";
@@ -102,9 +111,9 @@ const localDevelopmentHosts = new Set([
 const hasFile = async (path: string) =>
   access(path).then(() => true).catch(() => false);
 
-const readSavedMetadata = async (): Promise<SessionMetadata | null> => {
+const readSavedMetadata = async (path: string): Promise<SessionMetadata | null> => {
   try {
-    const value = JSON.parse(await readFile(metadataFile, "utf8")) as Partial<SessionMetadata>;
+    const value = JSON.parse(await readFile(path, "utf8")) as Partial<SessionMetadata>;
     if (
       value.version !== metadataVersion ||
       typeof value.application !== "string" ||
@@ -122,9 +131,9 @@ const readSavedMetadata = async (): Promise<SessionMetadata | null> => {
   }
 };
 
-const readSavedStorageState = async (): Promise<SavedStorageState | null> => {
+const readSavedStorageState = async (path: string): Promise<SavedStorageState | null> => {
   try {
-    const saved = JSON.parse(await readFile(authFile, "utf8")) as SavedStorageState;
+    const saved = JSON.parse(await readFile(path, "utf8")) as SavedStorageState;
     return saved && Array.isArray(saved.cookies) && Array.isArray(saved.origins)
       ? saved
       : null;
@@ -145,28 +154,37 @@ const matchesCookieHost = (domain: string, hostname: string) => {
 const inspectSavedStorageState = (
   state: SavedStorageState,
   baseURL: string,
+  options: { allowMissingOrExpiredServerCookie?: boolean } = {},
 ): SavedStorageInspection => {
   const hostname = new URL(baseURL).hostname;
-  const cookie = state.cookies?.find(
+  const namedCookies = state.cookies?.filter(
+    (candidate) => candidate.name === serverSessionCookieName,
+  ) ?? [];
+  const cookie = namedCookies.find(
     (candidate) =>
-      candidate.name === serverSessionCookieName &&
       typeof candidate.value === "string" &&
       candidate.value.length > 0 &&
       typeof candidate.domain === "string" &&
       matchesCookieHost(candidate.domain, hostname),
   );
-  if (!cookie) {
+  if (namedCookies.length > 0 && !cookie) {
     return {
       ok: false,
       reason: "The saved Playwright state does not contain the WorshipSync server session cookie.",
     };
   }
-  if (
+  const hasUsableServerCookie = Boolean(cookie && !(
     typeof cookie.expires === "number" &&
     cookie.expires > 0 &&
     cookie.expires <= Date.now() / 1000
-  ) {
-    return { ok: false, reason: "The saved WorshipSync server session cookie has expired." };
+  ));
+  if (!hasUsableServerCookie && !options.allowMissingOrExpiredServerCookie) {
+    return {
+      ok: false,
+      reason: cookie
+        ? "The saved WorshipSync server session cookie has expired."
+        : "The saved Playwright state does not contain the WorshipSync server session cookie.",
+    };
   }
 
   const appOrigin = new URL(baseURL).origin;
@@ -209,8 +227,9 @@ const inspectSavedStorageState = (
 
   return {
     ok: true,
-    cookieValue: cookie.value as string,
+    cookieValue: hasUsableServerCookie ? cookie?.value as string : null,
     deviceIdentity: deviceIdentity.value as string,
+    hasUsableServerCookie,
   };
 };
 
@@ -384,34 +403,180 @@ const captureInitialServerSession = async (page: Page) => {
   };
 };
 
+type RecoveryResponse =
+  | {
+      status: "authenticated";
+      tenantIdFingerprint: string;
+      email: string;
+      deviceId: string;
+    }
+  | { status: "requires-email-code" }
+  | { status: "unavailable" };
+
+const observeSilentSessionRecovery = async (
+  page: Page,
+  baseURL: string,
+  expectedDeviceIdentity: string,
+) => {
+  const appOrigin = new URL(baseURL).origin;
+  let attempts = 0;
+  let blockedRequest = false;
+  let recoveryResponse: Promise<RecoveryResponse> | null = null;
+
+  page.on("response", (response) => {
+    const request = response.request();
+    if (
+      request.method() !== "POST" ||
+      new URL(response.url()).origin !== appOrigin ||
+      !new URL(response.url()).pathname.endsWith("/api/auth/session")
+    ) {
+      return;
+    }
+    recoveryResponse = response
+      .json()
+      .then((payload: unknown): RecoveryResponse => {
+        if (!payload || typeof payload !== "object") return { status: "unavailable" };
+        const outer = payload as Record<string, unknown>;
+        if (outer.requiresEmailCode === true) {
+          return { status: "requires-email-code" };
+        }
+        const bootstrap =
+          outer.bootstrap && typeof outer.bootstrap === "object"
+            ? (outer.bootstrap as Record<string, unknown>)
+            : outer;
+        const user =
+          bootstrap.user && typeof bootstrap.user === "object"
+            ? (bootstrap.user as Record<string, unknown>)
+            : {};
+        const device =
+          bootstrap.device && typeof bootstrap.device === "object"
+            ? (bootstrap.device as Record<string, unknown>)
+            : {};
+        const email = String(user.primaryEmail || user.email || "").trim();
+        const deviceId = String(device.deviceId || "").trim();
+        if (
+          !response.ok() ||
+          bootstrap.authenticated !== true ||
+          bootstrap.sessionKind !== "human" ||
+          typeof bootstrap.churchId !== "string" ||
+          !bootstrap.churchId.trim() ||
+          !email ||
+          !deviceId
+        ) {
+          return { status: "unavailable" };
+        }
+        return {
+          status: "authenticated",
+          tenantIdFingerprint: fingerprint(bootstrap.churchId.trim()),
+          email,
+          deviceId,
+        };
+      })
+      .catch(() => ({ status: "unavailable" }));
+  });
+
+  await page.route("**/api/auth/**", async (route) => {
+    const request = route.request();
+    const requestURL = new URL(request.url());
+    const pathname = requestURL.pathname;
+    if (requestURL.origin !== appOrigin) {
+      blockedRequest = true;
+      await route.abort("blockedbyclient");
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.continue();
+      return;
+    }
+    if (request.method() === "POST" && pathname.endsWith("/api/auth/session")) {
+      attempts += 1;
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        // A malformed or missing body is rejected below.
+      }
+      if (
+        attempts !== 1 ||
+        body.requestNewCode !== false ||
+        typeof body.idToken !== "string" ||
+        !body.idToken.trim() ||
+        body.deviceId !== expectedDeviceIdentity
+      ) {
+        blockedRequest = true;
+        await route.abort("blockedbyclient");
+        return;
+      }
+      await route.continue();
+      return;
+    }
+
+    // These routes can send verification or password recovery email. The
+    // ordinary controller setup must never reach them.
+    blockedRequest = true;
+    await route.abort("blockedbyclient");
+  });
+
+  await page.route("**/identitytoolkit.googleapis.com/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith("/accounts:lookup")) {
+      await route.continue();
+      return;
+    }
+    // Firebase refreshes a persisted user through securetoken.googleapis.com;
+    // every other Identity Toolkit action is outside silent session recovery.
+    blockedRequest = true;
+    await route.abort("blockedbyclient");
+  });
+
+  await page.route("**/securetoken.googleapis.com/**", async (route) => {
+    const body = route.request().postData() || "";
+    if (route.request().method() === "POST" && /(?:^|&)grant_type=refresh_token(?:&|$)/.test(body)) {
+      await route.continue();
+      return;
+    }
+    blockedRequest = true;
+    await route.abort("blockedbyclient");
+  });
+
+  return {
+    attempts: () => attempts,
+    hasBlockedRequest: () => blockedRequest,
+    response: async () => (recoveryResponse ? recoveryResponse : null),
+  };
+};
+
 export async function validateSavedSession(
   browser: Browser,
   baseURL: string,
   email: string,
+  files: AuthStateFiles = defaultAuthFiles,
 ): Promise<SessionCheck> {
-  if (!(await hasFile(authFile))) {
+  if (!(await hasFile(files.authFile))) {
     return { status: "invalid", reason: "The saved Playwright storage-state file is missing." };
   }
-  if (!(await hasFile(metadataFile))) {
+  if (!(await hasFile(files.metadataFile))) {
     return {
       status: "invalid",
       reason: "The saved Playwright session metadata file is missing.",
     };
   }
 
-  const storageState = await readSavedStorageState();
+  const storageState = await readSavedStorageState(files.authFile);
   if (!storageState) {
     return {
       status: "invalid",
       reason: "The saved Playwright storage-state file is malformed or unreadable.",
     };
   }
-  const storageStateInspection = inspectSavedStorageState(storageState, baseURL);
+  const storageStateInspection = inspectSavedStorageState(storageState, baseURL, {
+    allowMissingOrExpiredServerCookie: true,
+  });
   if (!storageStateInspection.ok) {
     return { status: "invalid", reason: storageStateInspection.reason };
   }
 
-  const savedMetadata = await readSavedMetadata();
+  const savedMetadata = await readSavedMetadata(files.metadataFile);
   const expectedMetadata = scopedMetadata(baseURL, email, "", "");
   if (!savedMetadata) {
     return {
@@ -436,7 +601,7 @@ export async function validateSavedSession(
   try {
     context = await browser.newContext({
       baseURL,
-      storageState: authFile,
+      storageState: files.authFile,
       ignoreHTTPSErrors: localDevelopmentHosts.has(new URL(baseURL).hostname),
     });
   } catch {
@@ -450,7 +615,10 @@ export async function validateSavedSession(
     const restoredCookie = (await context.cookies(baseURL)).find(
       (candidate) => candidate.name === serverSessionCookieName,
     );
-    if (!restoredCookie || restoredCookie.value !== storageStateInspection.cookieValue) {
+    if (
+      storageStateInspection.hasUsableServerCookie &&
+      (!restoredCookie || restoredCookie.value !== storageStateInspection.cookieValue)
+    ) {
       return {
         status: "invalid",
         reason: "Playwright did not restore the saved WorshipSync server session cookie.",
@@ -460,11 +628,11 @@ export async function validateSavedSession(
     const page = await context.newPage();
     const initialServerSessionPromise = captureInitialServerSession(page);
     const getTenantFingerprint = captureTenantFingerprint(page);
-    let sessionRecoveryRequested = false;
-    await page.route("**/api/auth/session", async (route) => {
-      sessionRecoveryRequested = true;
-      await route.abort("blockedbyclient");
-    });
+    const recovery = await observeSilentSessionRecovery(
+      page,
+      baseURL,
+      storageStateInspection.deviceIdentity,
+    );
     try {
       await page.goto(makeAppURL(baseURL, "/"), { waitUntil: "domcontentloaded" });
     } catch {
@@ -492,13 +660,6 @@ export async function validateSavedSession(
         reason: "WorshipSync returned an unreadable auth bootstrap while checking the saved server session cookie.",
       };
     }
-    if (initialServerSession.status === "unauthenticated") {
-      return {
-        status: "invalid",
-        reason: "WorshipSync rejected the saved server session cookie (initial auth bootstrap was unauthenticated).",
-      };
-    }
-
     const authState = await waitForAppAuthenticationState(page);
     if (authState === "unavailable") {
       return {
@@ -506,16 +667,44 @@ export async function validateSavedSession(
         reason: "WorshipSync did not finish loading while checking the saved session.",
       };
     }
+    const recoveryResult = await recovery.response();
+    if (recovery.attempts() > 0 && recoveryResult?.status === "requires-email-code") {
+      return {
+        status: "invalid",
+        reason: "Silent server-session recovery requires email verification; use the explicit authentication refresh command.",
+      };
+    }
+    if (recovery.hasBlockedRequest()) {
+      return {
+        status: "invalid",
+        reason: "WorshipSync attempted an authentication request outside silent server-session recovery.",
+      };
+    }
     if (authState !== "authenticated") {
       return {
         status: "invalid",
-        reason: "WorshipSync did not recognize the saved session.",
+        reason:
+          recovery.attempts() > 0
+            ? "WorshipSync could not restore the server session silently from the saved Firebase authentication state."
+            : "WorshipSync did not recognize the saved session.",
       };
     }
-    if (sessionRecoveryRequested) {
+    if (
+      initialServerSession.status === "unauthenticated" &&
+      recovery.attempts() === 0
+    ) {
       return {
         status: "invalid",
-        reason: "WorshipSync attempted automatic server-session recovery; the saved server session was not sufficient.",
+        reason: "WorshipSync rejected the saved server session cookie and did not attempt silent recovery.",
+      };
+    }
+    if (
+      recovery.attempts() > 0 &&
+      (recovery.attempts() !== 1 || recoveryResult?.status !== "authenticated")
+    ) {
+      return {
+        status: "invalid",
+        reason: "WorshipSync could not validate the silent server-session recovery response.",
       };
     }
     if (!(await hasRuntimeFirebaseIndexedDB(page).catch(() => false))) {
@@ -539,11 +728,43 @@ export async function validateSavedSession(
         reason: "WorshipSync did not return an authenticated tenant identity.",
       };
     }
-    if (tenantIdFingerprint !== initialServerSession.tenantIdFingerprint) {
+    if (
+      initialServerSession.status === "authenticated" &&
+      tenantIdFingerprint !== initialServerSession.tenantIdFingerprint
+    ) {
       return {
         status: "invalid",
         reason: "The saved server session and application bootstrap opened different WorshipSync tenants.",
       };
+    }
+    if (recoveryResult?.status === "authenticated") {
+      if (normalizedEmail(recoveryResult.email) !== normalizedEmail(email)) {
+        return {
+          status: "invalid",
+          reason: "Silent server-session recovery authenticated a different configured test account.",
+        };
+      }
+      if (recoveryResult.deviceId !== storageStateInspection.deviceIdentity) {
+        return {
+          status: "invalid",
+          reason: "Silent server-session recovery returned a different controller device identity.",
+        };
+      }
+      if (tenantIdFingerprint !== recoveryResult.tenantIdFingerprint) {
+        return {
+          status: "invalid",
+          reason: "The recovered server session and application bootstrap opened different WorshipSync tenants.",
+        };
+      }
+      if (
+        savedMetadata.tenantIdFingerprint &&
+        recoveryResult.tenantIdFingerprint !== savedMetadata.tenantIdFingerprint
+      ) {
+        return {
+          status: "invalid",
+          reason: "Silent server-session recovery opened a different WorshipSync tenant.",
+        };
+      }
     }
     const identity = { ...accountIdentity, tenantIdFingerprint };
     if (
@@ -556,11 +777,8 @@ export async function validateSavedSession(
         reason: "The saved session opened a different WorshipSync tenant.",
       };
     }
-    if (!savedMetadata.tenantIdFingerprint) {
-      await writeSessionMetadata(baseURL, identity);
-    }
     try {
-      await saveAuthenticatedSession(page, baseURL, identity);
+      await saveAuthenticatedSession(page, baseURL, identity, files);
     } catch {
       return {
         status: "infrastructure-error",
@@ -583,7 +801,7 @@ export function requireReusableSavedSession(session: SessionCheck) {
     session.status === "invalid"
       ? `Saved session cannot be reused: ${session.reason}`
       : `Saved session validation could not complete: ${session.reason}`;
-  const message = `${reason} No sign-in was attempted. To explicitly refresh authentication with one attempt, run npm run test:e2e:auth:refresh.`;
+  const message = `${reason} No password sign-in or verification email was attempted. To explicitly refresh authentication with one attempt, run npm run test:e2e:auth:refresh.`;
   console.error(message);
   throw new Error(message);
 }
@@ -732,24 +950,26 @@ export async function saveAuthenticatedSession(
   page: Page,
   baseURL: string,
   identity: AuthenticatedIdentity,
+  files: AuthStateFiles = defaultAuthFiles,
 ) {
-  await mkdir(dirname(authFile), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(files.authFile), { recursive: true, mode: 0o700 });
   const storageState = await page.context().storageState({ indexedDB: true });
   const storageStateInspection = inspectSavedStorageState(storageState, baseURL);
   if (!storageStateInspection.ok) {
     throw new Error(`Cannot save an incomplete authenticated session: ${storageStateInspection.reason}`);
   }
-  await writeFile(authFile, JSON.stringify(storageState, null, 2), {
+  await writeFile(files.authFile, JSON.stringify(storageState, null, 2), {
     encoding: "utf8",
     mode: 0o600,
   });
-  await chmod(authFile, 0o600);
-  await writeSessionMetadata(baseURL, identity);
+  await chmod(files.authFile, 0o600);
+  await writeSessionMetadata(baseURL, identity, files.metadataFile);
 }
 
 async function writeSessionMetadata(
   baseURL: string,
   identity: AuthenticatedIdentity,
+  path: string,
 ) {
   const metadata = scopedMetadata(
     baseURL,
@@ -757,12 +977,12 @@ async function writeSessionMetadata(
     identity.tenantLabel,
     identity.tenantIdFingerprint,
   );
-  await mkdir(dirname(metadataFile), { recursive: true, mode: 0o700 });
-  await writeFile(metadataFile, JSON.stringify(metadata, null, 2), {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, JSON.stringify(metadata, null, 2), {
     encoding: "utf8",
     mode: 0o600,
   });
-  await chmod(metadataFile, 0o600);
+  await chmod(path, 0o600);
 }
 
 export async function verifyAuthenticatedIdentity(

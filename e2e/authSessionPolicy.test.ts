@@ -14,21 +14,21 @@ const captureConsoleError = async (run: () => void) => {
   return messages;
 };
 
-test("a rejected saved session reports its sanitized reason and explicit refresh command", async () => {
+test("a non-recoverable saved session reports its sanitized reason and explicit refresh command", async () => {
   const mockedValidation = async (): Promise<SessionCheck> => ({
     status: "invalid",
-    reason: "The saved WorshipSync server session cookie has expired.",
+    reason: "Silent server-session recovery could not restore the saved session.",
   });
   const result = await mockedValidation();
   const messages = await captureConsoleError(() => {
     assert.throws(
       () => requireReusableSavedSession(result),
-      /Saved session cannot be reused: The saved WorshipSync server session cookie has expired\. No sign-in was attempted\. To explicitly refresh authentication with one attempt, run npm run test:e2e:auth:refresh\./,
+      /Saved session cannot be reused: Silent server-session recovery could not restore the saved session\. No password sign-in or verification email was attempted\. To explicitly refresh authentication with one attempt, run npm run test:e2e:auth:refresh\./,
     );
   });
 
   assert.deepEqual(messages, [
-    "Saved session cannot be reused: The saved WorshipSync server session cookie has expired. No sign-in was attempted. To explicitly refresh authentication with one attempt, run npm run test:e2e:auth:refresh.",
+    "Saved session cannot be reused: Silent server-session recovery could not restore the saved session. No password sign-in or verification email was attempted. To explicitly refresh authentication with one attempt, run npm run test:e2e:auth:refresh.",
   ]);
 });
 
@@ -41,11 +41,11 @@ test("an infrastructure failure stops with its reason and without attempting sig
   const messages = await captureConsoleError(() => {
     assert.throws(
       () => requireReusableSavedSession(result),
-      /Saved session validation could not complete: Could not reach E2E_BASE_URL while checking the saved session\. No sign-in was attempted\./,
+      /Saved session validation could not complete: Could not reach E2E_BASE_URL while checking the saved session\. No password sign-in or verification email was attempted\./,
     );
   });
 
-  assert.match(messages[0] ?? "", /No sign-in was attempted/);
+  assert.match(messages[0] ?? "", /No password sign-in or verification email was attempted/);
 });
 
 test("a valid saved session is reused", () => {
