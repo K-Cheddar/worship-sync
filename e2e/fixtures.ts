@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 
 type BrowserDiagnostic = {
@@ -50,6 +50,19 @@ const sourceFor = (rawUrl: string): "app" | "external" => {
   }
 };
 
+const clearAuthenticationInputs = async (page: Page) => {
+  await page
+    .locator(
+      'input[type="email"], input[name="email" i], input[autocomplete="username"], input[type="password"], input[autocomplete="current-password"]',
+    )
+    .evaluateAll((inputs) => {
+      for (const input of inputs) {
+        (input as HTMLInputElement).value = "";
+      }
+    })
+    .catch(() => undefined);
+};
+
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
     const diagnostics: BrowserDiagnostic[] = [];
@@ -98,7 +111,11 @@ export const test = base.extend({
 
     try {
       await use(page);
+    } catch (error) {
+      await clearAuthenticationInputs(page);
+      throw error;
     } finally {
+      await clearAuthenticationInputs(page);
       const report = JSON.stringify(diagnostics, null, 2);
       await writeFile(testInfo.outputPath("browser-diagnostics.json"), report);
       await testInfo.attach("browser-diagnostics.json", {

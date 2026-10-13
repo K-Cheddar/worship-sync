@@ -100,6 +100,16 @@ export default defineConfig({
       },
     },
     {
+      name: "auth-refresh",
+      testMatch: /auth\.refresh\.setup\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: { cookies: [], origins: [] },
+        screenshot: "off",
+        trace: "off",
+      },
+    },
+    {
       name: "chromium",
       testMatch: /controller\.spec\.ts$/,
       dependencies: ["setup"],

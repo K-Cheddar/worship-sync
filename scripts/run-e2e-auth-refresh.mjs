@@ -6,10 +6,10 @@ const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const playwrightCLI = resolve(repositoryRoot, "node_modules/@playwright/test/cli.js");
 const child = spawn(
   process.execPath,
-  [playwrightCLI, "test", "--project=chromium", ...process.argv.slice(2)],
+  [playwrightCLI, "test", "--project=auth-refresh"],
   {
     cwd: repositoryRoot,
-    env: { ...process.env, E2E_FORCE_FRESH_AUTH: "1" },
+    env: process.env,
     stdio: "inherit",
   },
 );
