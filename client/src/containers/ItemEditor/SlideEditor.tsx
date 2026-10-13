@@ -29,7 +29,7 @@ import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadg
 import { useDispatch, useSelector } from "../../hooks";
 import {
   applyPendingRemoteItem,
-  discardPendingRemoteItem,
+  keepLocalItemChanges,
   setSelectedBox,
   setSelectedSlide,
   setIsLyricsEditorOpen,
@@ -306,7 +306,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [isLyricsEditorOpen]);
 
   const handleKeepLocalEdits = useCallback(() => {
-    dispatch(discardPendingRemoteItem());
+    dispatch(keepLocalItemChanges());
   }, [dispatch]);
 
   const handleReloadRemote = useCallback(() => {

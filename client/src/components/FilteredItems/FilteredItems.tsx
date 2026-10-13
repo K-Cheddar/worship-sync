@@ -231,8 +231,10 @@ const FilteredItems = ({
     return byId;
   }, [allDocs, effectiveFilter, type]);
 
-  const [filteredList, setFilteredList] =
-    useState<filteredItemsListType[]>(listForFilter);
+  const [{ list: filteredList, query: filteredSearchValue }, setSearchResults] =
+    useState({ list: listForFilter as filteredItemsListType[], query: "" });
+  const setFilteredList = (list: filteredItemsListType[]) =>
+    setSearchResults((previous) => ({ ...previous, list }));
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
     null
@@ -504,7 +506,7 @@ const FilteredItems = ({
   // Search effect
   useEffect(() => {
     const results = searchItems(debouncedSearchValue);
-    setFilteredList(results);
+    setSearchResults({ list: results, query: debouncedSearchValue });
     setIsSearchLoading(false);
     listScrollRef.current?.scrollTo?.({ top: 0 });
   }, [debouncedSearchValue, searchItems]);
@@ -814,7 +816,7 @@ const FilteredItems = ({
   const changeLibraryFilter = (filter: LibraryFilter) => {
     if (filter === effectiveFilter) return;
     onLibraryFilterChange?.(filter);
-    setFilteredList(searchItems(searchValue, filter));
+    setSearchResults({ list: searchItems(searchValue, filter), query: searchValue });
     setDebouncedSearchValue(searchValue);
     setIsSearchLoading(false);
     listScrollRef.current?.scrollTo?.({ top: 0 });
@@ -973,7 +975,8 @@ const FilteredItems = ({
           data-testid="filtered-items-results"
           className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 sm:px-2"
           role="list"
-          aria-busy={isSearchLoading}
+          aria-busy={isSearchLoading || filteredSearchValue !== searchValue}
+          data-search-query={filteredSearchValue}
         >
           <div
             className="relative"

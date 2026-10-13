@@ -191,6 +191,54 @@ export function itemDocMatchesEditorState(
   );
 }
 
+export const ITEM_PERSISTED_FIELDS = [
+  "name",
+  "shouldSkipTitle",
+  "background",
+  "slides",
+  "arrangements",
+  "selectedArrangement",
+  "bibleInfo",
+  "timerInfo",
+  "shouldSendTo",
+  "formattedSections",
+  "songMetadata",
+  "songLinks",
+  "songAudio",
+] as const satisfies readonly (keyof DBItem)[];
+
+export type PersistedItemField = (typeof ITEM_PERSISTED_FIELDS)[number];
+
+export const getItemPersistenceChanges = (
+  item: Partial<ItemState> | DBItem,
+  baseline: DBItem,
+): PersistedItemField[] => {
+  const itemSnapshot = createItemSnapshot(item);
+  if (!itemSnapshot) return [];
+  const current = normalizeSnapshotForEditorCompare(itemSnapshot);
+  const base = normalizeSnapshotForEditorCompare(baseline);
+  return ITEM_PERSISTED_FIELDS.filter(
+    (field) => !_.isEqual(current[field], base[field]),
+  );
+};
+
+export const getItemPersistenceConflicts = (
+  item: Partial<ItemState> | DBItem,
+  baseline: DBItem,
+  latest: DBItem,
+): PersistedItemField[] => {
+  const itemSnapshot = createItemSnapshot(item);
+  if (!itemSnapshot) return [];
+  const current = normalizeSnapshotForEditorCompare(itemSnapshot);
+  const base = normalizeSnapshotForEditorCompare(baseline);
+  const remote = normalizeSnapshotForEditorCompare(latest);
+  return getItemPersistenceChanges(itemSnapshot, baseline).filter(
+    (field) =>
+      !_.isEqual(remote[field], base[field]) &&
+      !_.isEqual(remote[field], current[field]),
+  );
+};
+
 const getSlideCount = (
   item: Partial<ItemState> | DBItem,
   arrangementIndex: number,
@@ -446,10 +494,7 @@ export const itemSlice = createSlice({
       if (state._id !== action.payload.persistedDoc._id) return;
       state.songAudio = action.payload.songAudio;
       if (state.baseItem) {
-        state.baseItem.songAudio = action.payload.songAudio;
-        state.baseItem._rev = action.payload.persistedDoc._rev;
-        state.baseItem.updatedAt = action.payload.persistedDoc.updatedAt;
-        state.baseItem.updatedBy = action.payload.persistedDoc.updatedBy;
+        state.baseItem = createItemSnapshot(action.payload.persistedDoc);
       }
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
@@ -492,9 +537,35 @@ export const itemSlice = createSlice({
     },
     markItemPersisted: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
+      const alreadyEditedFields = new Set(
+        state.baseItem
+          ? getItemPersistenceChanges(state, state.baseItem)
+          : [],
+      );
+      for (const field of ITEM_PERSISTED_FIELDS) {
+        if (alreadyEditedFields.has(field)) continue;
+        (state as unknown as Record<PersistedItemField, unknown>)[field] =
+          action.payload[field];
+      }
       state.baseItem = createItemSnapshot(action.payload);
-      state.pendingRemoteItem = null;
-      state.hasRemoteUpdate = false;
+      state.hasPendingUpdate = getItemPersistenceChanges(
+        state,
+        action.payload,
+      ).length > 0;
+      if (!state.hasPendingUpdate) {
+        state.pendingRemoteItem = null;
+        state.hasRemoteUpdate = false;
+      } else if (state.pendingRemoteItem) {
+        state.pendingRemoteItem = action.payload;
+      }
+    },
+    rebaseItemPersistence: (state, action: PayloadAction<DBItem>) => {
+      if (state._id !== action.payload._id) return;
+      state.baseItem = createItemSnapshot(action.payload);
+      state.hasPendingUpdate = getItemPersistenceChanges(
+        state,
+        action.payload,
+      ).length > 0;
     },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
@@ -523,6 +594,42 @@ export const itemSlice = createSlice({
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+    },
+    keepLocalItemChanges: (state) => {
+      if (!state.pendingRemoteItem) return;
+      state.baseItem = createItemSnapshot(state.pendingRemoteItem);
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
+      state.hasPendingUpdate = !itemDocMatchesEditorState(
+        state.baseItem!,
+        state,
+      );
+    },
+    restorePendingItemEdits: (
+      state,
+      action: PayloadAction<{
+        owner: ItemMutationOwner;
+        desired: ItemState;
+        baseline: DBItem;
+      }>,
+    ) => {
+      if (
+        !sameItemMutationOwner(
+          getItemMutationOwner(state),
+          action.payload.owner,
+        )
+      ) {
+        return;
+      }
+      const { desired, baseline } = action.payload;
+      const changes = getItemPersistenceChanges(desired, baseline);
+      if (changes.length === 0) return;
+      Object.assign(
+        state,
+        Object.fromEntries(changes.map((field) => [field, desired[field]])),
+      );
+      state.baseItem = baseline;
+      state.hasPendingUpdate = true;
     },
     toggleBackgroundTargetSlideId: (state, action: PayloadAction<string>) => {
       if (!state.backgroundTargetSlideIds) state.backgroundTargetSlideIds = [];
@@ -1194,6 +1301,9 @@ export const {
   bufferRemoteItemUpdate,
   discardPendingRemoteItem,
   applyPendingRemoteItem,
+  keepLocalItemChanges,
+  restorePendingItemEdits,
+  rebaseItemPersistence,
   markItemPersisted,
   toggleBackgroundTargetSlideId,
   setBackgroundTargetSlideIds,

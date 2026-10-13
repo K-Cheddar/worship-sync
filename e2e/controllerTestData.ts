@@ -1,10 +1,16 @@
-import { expect, type Locator, type Page } from "./fixtures";
+import { expect, type Locator, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { readDocument, resetLocalOutputs, waitForControllerDatabase } from "./controllerRuntime";
 
-export const TEST_OUTLINE_NAME = "E2E Presentation Controller";
-const projectorEnabledByTests = new WeakSet<Page>();
+// A failed test restarts its worker. A fresh identity prevents that worker
+// from reusing a deleted document or adopting an interrupted worker's records.
+const runId = randomUUID();
+export const TEST_OUTLINE_ID = `e2e-controller-outline-${runId}`;
+export const TEST_OUTLINE_NAME = `E2E Presentation Controller [${runId}]`;
+const songIds = new Map<string, string>();
 
 export const SONG_A = {
-  title: "E2E Presentation Controller Song A - Amber Harbor",
+  title: `E2E Presentation Controller Song A - Amber Harbor [${runId}]`,
   sections: [
     "Amber Harbor dawn paints the shoreline\nAmber lanterns mark the way",
     "Amber Harbor carries the chorus\nAmber voices cross the bay",
@@ -13,7 +19,7 @@ export const SONG_A = {
 } as const;
 
 export const SONG_B = {
-  title: "E2E Presentation Controller Song B - Violet Summit",
+  title: `E2E Presentation Controller Song B - Violet Summit [${runId}]`,
   sections: [
     "Violet Summit wakes above the valley\nViolet clouds reveal the trail",
     "Violet Summit answers the morning\nViolet echoes cross the ridge",
@@ -52,6 +58,7 @@ export const expectSongSections = async (
 };
 
 export const openPresentationController = async (page: Page) => {
+  const started = Date.now();
   await page.goto("/#/home", { waitUntil: "domcontentloaded" });
   await expect(
     page.getByRole("heading", { name: "Controllers", exact: true }),
@@ -59,14 +66,17 @@ export const openPresentationController = async (page: Page) => {
   await page.getByRole("link", { name: /^Presentation\b/ }).click();
   await expect(page).toHaveURL(/#\/controller(?:\/|$)/);
   const startupOverlay = page.getByTestId("controller-loading-overlay");
-  await expect(startupOverlay).toBeVisible();
   await expect(startupOverlay).toBeHidden({
     timeout: 90_000,
   });
   await expect(page.locator("#controller-main")).toBeVisible();
+  await waitForControllerDatabase(page);
   await expect(page.getByRole("link", { name: "Songs", exact: true })).toBeVisible();
   const editMode = page.getByRole("button", { name: "Edit", exact: true });
   await editMode.click();
+  await page.evaluate(async (duration) => {
+    await (window as any).controllerE2EReady?.(duration);
+  }, Date.now() - started);
 };
 
 export const openSongsLibrary = async (page: Page) => {
@@ -77,26 +87,46 @@ export const openSongsLibrary = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "Songs", exact: true })).toBeVisible();
 };
 
-export const songLibraryRow = (page: Page, title: string) =>
-  page
+export const songLibraryRow = (page: Page, title: string) => {
+  const ownedId = songIds.get(title);
+  if (ownedId) return page.getByTestId("filtered-items-results").locator(`[role="listitem"][data-item-id="${ownedId}"]`);
+  return page
     .getByTestId("filtered-items-results")
     .getByRole("button", {
       name: `View song details for ${title}`,
       exact: true,
     })
     .locator('xpath=ancestor::*[@role="listitem"]');
+};
+
+export const waitForSongSearch = async (page: Page, title: string) => {
+  const results = page.getByTestId("filtered-items-results");
+  await expect(results).toHaveAttribute("data-search-query", title);
+  await expect(results).toHaveAttribute("aria-busy", "false");
+};
 
 export const ensureSongExists = async (
   page: Page,
   song: { title: string; sections: readonly string[] },
 ) => {
+  await waitForControllerDatabase(page);
   await openSongsLibrary(page);
   const search = page.getByRole("textbox", { name: "Search:", exact: true });
   await search.fill(song.title);
-  const results = page.getByTestId("filtered-items-results");
-  await expect(results).toHaveAttribute("aria-busy", "false");
+  await waitForSongSearch(page, song.title);
   let row = songLibraryRow(page, song.title);
-  const existingCount = await row.count();
+  // Creation decisions come from the fully hydrated durable library, never
+  // from a temporarily empty virtualized/search result list.
+  const matchingIds: string[] = await page.evaluate((name) => window.__controllerE2EStore.getState().allDocs.allSongDocs
+    .filter((doc: any) => doc.name === name)
+    .map((doc: any) => doc._id), song.title);
+  const existingDocuments = await Promise.all(matchingIds.map((id) => readDocument(page, id)));
+  for (const document of existingDocuments) {
+    expect(document?.e2eFixture?.outlineId).toBe(TEST_OUTLINE_ID);
+    expect(document?.e2eFixture?.owner).toBe("presentation-controller-v1");
+  }
+  const existingCount = existingDocuments.length;
+  if (existingCount === 1) songIds.set(song.title, existingDocuments[0]!._id);
   if (existingCount > 1) {
     throw new Error(`More than one library song has the E2E fixture title: ${song.title}`);
   }
@@ -110,9 +140,15 @@ export const ensureSongExists = async (
     await expect(
       page.getByRole("heading", { name: song.title, exact: true }),
     ).toBeVisible();
+    const createdId = await page.evaluate(() => window.__controllerE2EStore.getState().undoable.present.item._id);
+    const created = await readDocument(page, createdId);
+    expect(created?.name).toBe(song.title);
+    expect(created?.e2eFixture?.outlineId).toBe(TEST_OUTLINE_ID);
+    songIds.set(song.title, createdId);
+    await waitForControllerAutosave(page);
     await openSongsLibrary(page);
     await page.getByRole("textbox", { name: "Search:", exact: true }).fill(song.title);
-    await expect(results).toHaveAttribute("aria-busy", "false");
+    await waitForSongSearch(page, song.title);
     row = songLibraryRow(page, song.title);
   }
 
@@ -137,73 +173,26 @@ export const ensureSongExists = async (
 };
 
 export const selectTestOutline = async (page: Page) => {
+  const document = await readDocument(page, TEST_OUTLINE_ID);
+  expect(document?.e2eFixture?.outlineId).toBe(TEST_OUTLINE_ID);
   const picker = page.getByTestId("controller-outline-picker");
   await picker.click();
   const outlineList = page.getByTestId("controller-outline-list");
-  let fixtureOutline = outlineList.getByRole("button", {
+  const fixtureOutline = outlineList.locator(`li[data-outline-id="${TEST_OUTLINE_ID}"]`).getByRole("button", {
     name: TEST_OUTLINE_NAME,
     exact: true,
   });
-  let count = await fixtureOutline.count();
-  if (count > 1) {
-    throw new Error(`More than one outline is named ${TEST_OUTLINE_NAME}`);
-  }
-
-  if (count === 0) {
-    const selectedOutlineId = await picker.getAttribute("data-outline-id");
-    await page.getByRole("button", { name: "Add New Service", exact: true }).click();
-    await expect(picker).not.toHaveAttribute(
-      "data-outline-id",
-      selectedOutlineId ?? "",
-    );
-    const newOutlineId = await picker.getAttribute("data-outline-id");
-    const newOutlineName = (await picker.innerText()).trim();
-    if (!newOutlineId || !newOutlineName) {
-      throw new Error("The new test outline did not become the selected outline.");
-    }
-    await picker.click();
-    const newOutlineRow = outlineList.locator(
-      `li[data-outline-id="${newOutlineId}"]`,
-    );
-    await expect(newOutlineRow).toBeVisible();
-    await newOutlineRow
-      .getByRole("button", {
-        name: `Rename outline ${newOutlineName}`,
-        exact: true,
-      })
-      .click();
-    const nameInput = newOutlineRow.getByRole("textbox");
-    await expect(nameInput).toHaveCount(1);
-    await expect(nameInput).toBeEnabled();
-    await nameInput.fill(TEST_OUTLINE_NAME);
-    await newOutlineRow
-      .getByRole("button", { name: "Save outline name", exact: true })
-      .click();
-    await expect(
-      newOutlineRow.getByRole("button", { name: TEST_OUTLINE_NAME, exact: true }),
-    ).toBeVisible();
-    await expect(picker).toContainText(TEST_OUTLINE_NAME);
-    await picker.click();
-    fixtureOutline = outlineList.getByRole("button", {
-      name: TEST_OUTLINE_NAME,
-      exact: true,
-    });
-    count = await fixtureOutline.count();
-  }
-
-  if (count !== 1) {
-    throw new Error(`Expected one dedicated E2E outline; found ${count}`);
-  }
+  await expect(fixtureOutline).toHaveCount(1);
   // Selecting an outline immediately closes the popover and detaches this row.
   // Force skips only the transition stability check; the real button handler runs.
-  await fixtureOutline.click({ force: true });
-  await expect(picker).toContainText(TEST_OUTLINE_NAME);
   const selectedOutlineId = await fixtureOutline
     .locator("xpath=ancestor::li[@data-outline-id]")
     .getAttribute("data-outline-id");
   if (!selectedOutlineId) {
     throw new Error("The dedicated E2E outline has no stable identity.");
   }
+  await fixtureOutline.click({ force: true });
+  await expect(picker).toContainText(TEST_OUTLINE_NAME);
   await expect(picker).toHaveAttribute("data-outline-id", selectedOutlineId);
   await expect(page.locator("#service-items-list")).toHaveAttribute(
     "data-outline-id",
@@ -241,6 +230,7 @@ export const cleanFixtureOutline = async (page: Page) => {
   }
   await expect(outlineRows(page)).toHaveCount(0);
   await waitForControllerAutosave(page);
+  await expect.poll(async () => (await readDocument(page, TEST_OUTLINE_ID))?.items).toEqual([]);
 };
 
 export const addLibrarySongResultToOutline = async (
@@ -273,6 +263,8 @@ export const addLibrarySongResultToOutline = async (
 
   await expect(outlineRow).toHaveCount(1);
   await waitForControllerAutosave(page);
+  await expect.poll(async () => (await readDocument(page, TEST_OUTLINE_ID))?.items
+    .filter((entry: any) => entry._id === songIds.get(title)).length).toBe(1);
   return outlineRow;
 };
 
@@ -280,8 +272,7 @@ export const addSongToOutline = async (page: Page, title: string) => {
   await openSongsLibrary(page);
   const search = page.getByRole("textbox", { name: "Search:", exact: true });
   await search.fill(title);
-  const results = page.getByTestId("filtered-items-results");
-  await expect(results).toHaveAttribute("aria-busy", "false");
+  await waitForSongSearch(page, title);
   const libraryRow = songLibraryRow(page, title);
   await expect(libraryRow).toHaveCount(1);
   return addLibrarySongResultToOutline(page, title, libraryRow);
@@ -315,7 +306,6 @@ export const ensureProjectorLive = async (page: Page) => {
   const liveSwitch = preview.getByRole("switch");
   await expect(liveSwitch).toBeVisible();
   if ((await liveSwitch.getAttribute("aria-checked")) !== "true") {
-    projectorEnabledByTests.add(page);
     await liveSwitch.click();
     await expect(liveSwitch).toHaveAttribute("aria-checked", "true");
   }
@@ -340,18 +330,7 @@ export const expectProjectorContent = async (
 };
 
 export const cleanProjectorOutput = async (page: Page) => {
-  if (!projectorEnabledByTests.has(page)) return;
-  const preview = projectorPreview(page);
-  if (!(await preview.count())) {
-    projectorEnabledByTests.delete(page);
-    return;
-  }
-  const liveSwitch = preview.getByRole("switch");
-  if ((await liveSwitch.getAttribute("aria-checked")) === "true") {
-    await liveSwitch.click();
-    await expect(liveSwitch).toHaveAttribute("aria-checked", "false");
-  }
-  projectorEnabledByTests.delete(page);
+  await resetLocalOutputs(page);
 };
 
 export const assertExactOutlineOrder = async (page: Page, titles: string[]) => {

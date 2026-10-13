@@ -8,6 +8,7 @@
 # testing
 /coverage
 /playwright/.auth/
+/playwright/.fixtures/
 /playwright/.browsers/
 /playwright-report/
 /test-results/

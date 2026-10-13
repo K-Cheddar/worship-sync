@@ -95,6 +95,7 @@ const FilteredItem = ({
   return (
     <div
       role="listitem"
+      data-item-id={item._id}
       className={cn(
         "flex min-h-0 flex-col overflow-hidden border-b border-gray-700 transition-colors hover:bg-cyan-500/10",
         alternatingAdminListRowBg(index),

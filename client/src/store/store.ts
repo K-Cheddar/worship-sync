@@ -31,7 +31,12 @@ import {
   updateOutputsFromRemote,
   type RemoteOutputState,
 } from "./presentationSlice";
-import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
+import {
+  getItemPersistenceChanges,
+  getItemPersistenceConflicts,
+  itemDocMatchesEditorState,
+  itemSlice,
+} from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -793,6 +798,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.markItemPersisted.toString(),
+  itemSlice.actions.rebaseItemPersistence.toString(),
   itemSlice.actions.bufferRemoteItemUpdate.toString(),
   itemSlice.actions.discardPendingRemoteItem.toString(),
   itemSlice.actions.applyPendingRemoteItem.toString(),
@@ -944,8 +950,18 @@ type ItemAutosaveDebounce = {
   flush: () => void;
 };
 
+type PendingItemAutosave = {
+  desired: ItemState;
+  baseline: DBItem;
+  database: NonNullable<typeof db>;
+  owner: ReturnType<typeof getItemMutationOwner>;
+  mutationVersion: number;
+};
+
 const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
 const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
+const pendingItemAutosaves = new Map<string, PendingItemAutosave>();
+let itemAutosaveMutationVersion = 0;
 
 const itemAutosaveKey = (item: ItemState) =>
   JSON.stringify([
@@ -1071,12 +1087,6 @@ listenerMiddleware.startListening({
   },
 
   effect: async (_action, listenerApi) => {
-    if (itemSlice.actions.applyPersistedSongAudio.match(_action)) {
-      const item = (listenerApi.getState() as RootState).undoable.present.item;
-      cancelItemAutosaveDebounce(itemAutosaveKey(item));
-      return;
-    }
-
     let state = listenerApi.getState() as RootState;
     let ownedSnapshot: ItemState | undefined;
     if (itemSlice.actions.setActiveItem.match(_action)) {
@@ -1086,15 +1096,52 @@ listenerMiddleware.startListening({
       ownedSnapshot = _action.payload.snapshot;
     }
 
-    // update Item
-    const item = ownedSnapshot ?? state.undoable.present.item;
-    const owner = item.contentOwner;
-    const dbAtStart = owner
-      ? getContentDatabaseForOwner(owner) ??
-        (owner.scopeId === "unscoped" ? db : undefined)
+    const isPersistedAudioUpdate =
+      itemSlice.actions.applyPersistedSongAudio.match(_action);
+    const item = isPersistedAudioUpdate
+      ? (listenerApi.getState() as RootState).undoable.present.item
+      : ownedSnapshot ?? state.undoable.present.item;
+    const contentOwner = item.contentOwner;
+    const owner = getItemMutationOwner(item);
+    const dbAtStart = contentOwner
+      ? getContentDatabaseForOwner(contentOwner) ??
+        (contentOwner.scopeId === "unscoped" ? db : undefined)
       : db;
-    if (!dbAtStart) return;
     const saveKey = itemAutosaveKey(item);
+    const priorPending = pendingItemAutosaves.get(saveKey);
+
+    if (isPersistedAudioUpdate) {
+      cancelItemAutosaveDebounce(saveKey);
+      if (!priorPending) return;
+    }
+
+    const baseline = itemSlice.actions.keepLocalItemChanges.match(_action)
+      ? item.baseItem
+      : isPersistedAudioUpdate
+        ? item.baseItem ?? priorPending?.baseline
+      : priorPending?.baseline ?? item.baseItem;
+    const database = dbAtStart ?? priorPending?.database;
+    if (!database || !baseline) return;
+
+    const mutationVersion = ++itemAutosaveMutationVersion;
+    const nextPending: PendingItemAutosave = {
+      desired: item,
+      baseline,
+      database,
+      owner,
+      mutationVersion,
+    };
+    if (
+      isPersistedAudioUpdate &&
+      getItemPersistenceChanges(item, baseline).length === 0
+    ) {
+      pendingItemAutosaves.delete(saveKey);
+      listenerApi.dispatch(
+        itemSlice.actions.markItemPersisted(_action.payload.persistedDoc),
+      );
+      return;
+    }
+    pendingItemAutosaves.set(saveKey, nextPending);
 
     if (itemSlice.actions.setActiveItem.match(_action)) {
       cancelItemAutosaveDebounce(saveKey);
@@ -1106,53 +1153,115 @@ listenerMiddleware.startListening({
     }
 
     await enqueueItemAutosaveWrite(saveKey, async () => {
-      let db_item: DBItem = await dbAtStart.get(item._id);
+      const currentPending = pendingItemAutosaves.get(saveKey);
+      const desired = currentPending?.mutationVersion === mutationVersion
+        ? currentPending.desired
+        : item;
+      const writeBaseline = currentPending?.baseline ?? baseline;
+      const writeDatabase = currentPending?.database ?? database;
+      let db_item: DBItem = await writeDatabase.get(desired._id);
+      const changedFields = getItemPersistenceChanges(desired, writeBaseline);
+      const conflicts = getItemPersistenceConflicts(
+        desired,
+        writeBaseline,
+        db_item,
+      );
+      if (conflicts.length > 0) {
+        const latestState = listenerApi.getState() as RootState;
+        const activeItem = latestState.undoable.present.item;
+        if (
+          sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          )
+        ) {
+          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+        }
+        return;
+      }
+
+      if (changedFields.length === 0) {
+        const latestState = listenerApi.getState() as RootState;
+        const activeItem = latestState.undoable.present.item;
+        if (
+          sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          )
+        ) {
+          listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+        }
+        if (currentPending?.mutationVersion === mutationVersion) {
+          pendingItemAutosaves.delete(saveKey);
+        }
+        return;
+      }
+
       const updatedAt = new Date().toISOString();
       const nextItem: DBItem = {
         ...db_item,
-        name: item.name,
-        background: item.background,
-        slides: item.slides,
-        arrangements: item.arrangements,
-        selectedArrangement: item.selectedArrangement,
-        bibleInfo: item.bibleInfo,
-        timerInfo: item.timerInfo,
-        songMetadata: item.songMetadata,
-        songLinks: item.songLinks,
-        // R2 attachment flows persist this field out-of-band. Ordinary editor
-        // autosaves must retain the latest durable value instead of their older
-        // Redux snapshot. Keep setSongAudio working for any explicit caller.
-        songAudio: itemSlice.actions.setSongAudio.match(_action)
-          ? item.songAudio
-          : db_item.songAudio,
-        shouldSendTo: item.shouldSendTo,
-        formattedSections: item.formattedSections,
+        ...(Object.fromEntries(
+          changedFields.map((field) => [field, desired[field]]),
+        ) as Partial<DBItem>),
         updatedAt,
       };
       db_item = applyPouchAudit(db_item, nextItem, {
         // Doc came from db.get â€” always an update (legacy rows may lack createdAt).
         isNew: false,
       });
-      const result = await dbAtStart.put(db_item);
+      let result: { rev: string };
+      try {
+        result = await writeDatabase.put(db_item);
+      } catch (error) {
+        if ((error as { status?: number })?.status === 409) {
+          const latest = (await writeDatabase
+            .get(desired._id)
+            .catch(() => null)) as DBItem | null;
+          const latestState = listenerApi.getState() as RootState;
+          const activeItem = latestState.undoable.present.item;
+          if (
+            latest &&
+            sameItemMutationOwner(
+              getItemMutationOwner(activeItem),
+              getItemMutationOwner(desired),
+            )
+          ) {
+            listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
+          }
+        }
+        throw error;
+      }
       db_item = { ...db_item, _rev: result.rev };
+
+      const pendingAfterWrite = pendingItemAutosaves.get(saveKey);
+      if (pendingAfterWrite?.mutationVersion === mutationVersion) {
+        pendingItemAutosaves.delete(saveKey);
+      } else if (
+        pendingAfterWrite &&
+        pendingAfterWrite.mutationVersion > mutationVersion
+      ) {
+        pendingItemAutosaves.set(saveKey, {
+          ...pendingAfterWrite,
+          baseline: db_item,
+        });
+      }
 
       const latestState = listenerApi.getState() as RootState;
       const activeItem = latestState.undoable.present.item;
-      const isSameActiveOwner =
-        activeItem._id === db_item._id &&
-        sameItemMutationOwner(
+      const isSameActiveOwner = sameItemMutationOwner(
           getItemMutationOwner(activeItem),
-          getItemMutationOwner(item),
+          getItemMutationOwner(desired),
         );
       if (isSameActiveOwner) {
-        listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
         listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
       }
 
       const activeDatabaseOwner = getActiveContentDatabaseOwner();
-      const stillInOriginalDatabase = owner
-        ? activeDatabaseOwner?.scopeId === owner.scopeId
-        : db === dbAtStart;
+      const stillInOriginalDatabase = contentOwner
+        ? activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
+          activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
+          activeDatabaseOwner.churchId === contentOwner.churchId
+        : db === writeDatabase;
       if (!stillInOriginalDatabase) return;
 
       listenerApi.dispatch(upsertItemInAllDocs(db_item));
@@ -3551,13 +3660,38 @@ listenerMiddleware.startListening({
 
     reconcileItemSelectionAfterUndoRedo(listenerApi, preservedItemSelection);
 
+    const itemAfterUndoRedo =
+      (listenerApi.getState() as RootState).undoable.present.item;
+    const itemPersistenceChanged = !_.isEqual(
+      sanitizeTransientItemState(itemAfterUndoRedo),
+      sanitizeTransientItemState(previousState.undoable.present.item),
+    );
+    if (itemPersistenceChanged && itemAfterUndoRedo._id) {
+      const owner = getItemMutationOwner(itemAfterUndoRedo);
+      const contentOwner = itemAfterUndoRedo.contentOwner;
+      const itemDatabase = contentOwner
+        ? getContentDatabaseForOwner(contentOwner) ??
+          (contentOwner.scopeId === "unscoped" ? dbAtStart : undefined)
+        : dbAtStart;
+      if (itemDatabase) {
+        const latestPersistedItem = (await itemDatabase
+          .get(itemAfterUndoRedo._id)
+          .catch(() => null)) as DBItem | null;
+        const activeItem =
+          (listenerApi.getState() as RootState).undoable.present.item;
+        if (
+          latestPersistedItem &&
+          sameItemMutationOwner(getItemMutationOwner(activeItem), owner)
+        ) {
+          listenerApi.dispatch(
+            itemSlice.actions.rebaseItemPersistence(latestPersistedItem),
+          );
+        }
+      }
+    }
+
     // Only force update for slices that actually changed during undo/redo
-    if (
-      !_.isEqual(
-        sanitizeTransientItemState(currentState.undoable.present.item),
-        sanitizeTransientItemState(previousState.undoable.present.item),
-      )
-    ) {
+    if (itemPersistenceChanged) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());
     }
 
@@ -3788,6 +3922,7 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
       api.dispatch(itemSlice.actions.discardPendingRemoteItem());
       return action;
     }
+    pendingItemAutosaves.delete(itemAutosaveKey(currentItem));
     return next(action);
   }
 
@@ -3819,10 +3954,25 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
     flushPendingItemMutations(currentOwner);
   }
 
-  return next({
+  const result = next({
     ...action,
     payload: { ...action.payload, contentOwner },
   });
+  const activatedItem = (api.getState() as RootState).undoable.present.item;
+  const pending = pendingItemAutosaves.get(itemAutosaveKey(activatedItem));
+  if (
+    pending &&
+    sameItemMutationOwner(pending.owner, getItemMutationOwner(activatedItem))
+  ) {
+    api.dispatch(
+      itemSlice.actions.restorePendingItemEdits({
+        owner: pending.owner!,
+        desired: pending.desired,
+        baseline: pending.baseline,
+      }),
+    );
+  }
+  return result;
 };
 
 const store = configureStore({

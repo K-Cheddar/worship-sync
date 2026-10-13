@@ -376,28 +376,29 @@ describe("item content integrity investigation", () => {
     select("free-A"); select("free-B"); edit("B renamed");
     await tick();
     expect(docs.get("free-B")?.formattedSections).not.toEqual(docs.get("free-A")?.formattedSections);
-    expect(docs.get("free-B")?.formattedSections).toEqual([]);
+    expect(docs.get("free-B")?.formattedSections).toBeUndefined();
     expect(docs.get("free-B")?.slides).toEqual(fixture("free-B", "free").slides);
   });
 
   it("keeps custom sections with their custom item across song navigation", async () => {
     const { docs, select, edit, tick } = setup();
     select("free-A"); select("song-A"); edit("Song renamed"); await tick();
-    expect(docs.get("song-A")?.formattedSections).toEqual([]);
+    expect(docs.get("song-A")?.formattedSections).toBeUndefined();
     expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
     select("free-B"); edit("Free renamed"); await tick();
-    expect(docs.get("free-B")?.formattedSections).toEqual([]);
+    expect(docs.get("free-B")?.formattedSections).toBeUndefined();
     expect(docs.get("free-B")?.formattedSections).not.toEqual(docs.get("free-A")?.formattedSections);
   });
 
-  it("overwrites a second client's newer content by fetching its latest revision", async () => {
+  it("preserves a second client's content when a local name edit saves", async () => {
     const { docs, select, edit, tick } = setup();
     select("song-A"); edit("Local rename");
     const remote = { ...fixture("song-A"), _rev: "2-remote",
       arrangements: fixture("song-B").arrangements };
     docs.set("song-A", remote);
     await tick();
-    expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
+    expect(docs.get("song-A")?.arrangements).toEqual(remote.arrangements);
+    expect(docs.get("song-A")?.name).toBe("Local rename");
     expect(docs.get("song-A")?._rev).not.toBe(remote._rev);
     expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
   });
@@ -430,7 +431,7 @@ describe("item content integrity investigation", () => {
     errors.mockRestore();
   });
 
-  it("buffers replicated A while local edits are pending, then stale autosave replaces it", async () => {
+  it("detects a same-field remote conflict instead of overwriting either edit", async () => {
     const { docs, select, edit, tick, store } = setup();
     select("song-A"); edit("Local edit");
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
@@ -438,8 +439,56 @@ describe("item content integrity investigation", () => {
     store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     await tick();
-    expect(docs.get("song-A")?.name).toBe("Local edit");
+    expect(docs.get("song-A")).toEqual(remote);
     expect(docs.get("song-B")?.name).toBe("song-B");
+    expect(store.getState().undoable.present.item.name).toBe("Local edit");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(remote);
+  });
+
+  it("does not clear a newer pending indicator when an older save completes", async () => {
+    const { docs, select, edit, tick, db, commit, store } = setup();
+    const firstPut = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      await firstPut.promise;
+      return commit(doc);
+    });
+
+    select("song-A");
+    edit("First edit");
+    await tick();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    edit("Second edit");
+    firstPut.resolve();
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.item.name).toBe("Second edit");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await tick();
+
+    expect(docs.get("song-A")?.name).toBe("Second edit");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("restores and retries a failed item draft when its owner is reopened", async () => {
+    const { docs, select, edit, tick, db, store } = setup();
+    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    db.put.mockRejectedValueOnce(Object.assign(new Error("write failed"), { status: 500 }));
+
+    select("song-A");
+    edit("A pending after failure");
+    await tick();
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+
+    select("song-B");
+    select("song-A");
+    expect(store.getState().undoable.present.item.name).toBe("A pending after failure");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await tick();
+
+    expect(docs.get("song-A")?.name).toBe("A pending after failure");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    errors.mockRestore();
   });
 
   it("rapid back-and-forth navigation saves each pending payload under its own ID", async () => {
@@ -2102,9 +2151,9 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Edited Song",
-        songAudio: undefined,
       }),
     );
+    expect(db.put.mock.calls[0][0]).not.toHaveProperty("songAudio");
   });
 
   it("keeps a delayed item save on its original database and out of the new church state", async () => {

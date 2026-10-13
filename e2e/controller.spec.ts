@@ -1,4 +1,6 @@
-import { test, expect } from "./fixtures";
+import { controllerTest as test } from "./controllerFixtures";
+import { expect } from "./fixtures";
+import { resetLocalOutputs, waitForControllerDatabase } from "./controllerRuntime";
 import {
   SONG_A,
   SONG_B,
@@ -11,7 +13,6 @@ import {
   editorContent,
   expectSongSections,
   ensureProjectorLive,
-  ensureSongExists,
   expectProjectorContent,
   openPresentationController,
   openSongFromOutline,
@@ -21,44 +22,27 @@ import {
   songLibraryRow,
   slideThumbnail,
   waitForControllerAutosave,
+  waitForSongSearch,
 } from "./controllerTestData";
 
 test.beforeEach(async ({ page }) => {
   await openPresentationController(page);
   await cleanFixtureOutline(page);
-  await ensureSongExists(page, SONG_A);
-  await ensureSongExists(page, SONG_B);
-  await cleanFixtureOutline(page);
+  await resetLocalOutputs(page);
 });
 
 test.afterEach(async ({ page }, testInfo) => {
-  const startupOverlay = page.getByTestId("controller-loading-overlay");
-  if (await startupOverlay.isVisible().catch(() => false)) {
-    await testInfo.attach("controller-cleanup-diagnostic.txt", {
-      body: Buffer.from(
-        "Controller UI cleanup could not run because the startup overlay remained visible. Inspect the browser failure details before rerunning; the outline and output could not be verified during teardown.",
-      ),
-      contentType: "text/plain",
-    });
-    if (testInfo.status === "passed") {
-      throw new Error("Controller startup overlay reappeared before E2E cleanup.");
-    }
-    return;
-  }
-
   try {
     await cleanFixtureOutline(page);
     await cleanProjectorOutput(page);
   } catch (error) {
     await testInfo.attach("controller-cleanup-diagnostic.txt", {
       body: Buffer.from(
-        `Controller UI cleanup failed: ${error instanceof Error ? error.name : "Unknown error"}.`,
+        `Controller cleanup failed for ${TEST_OUTLINE_NAME}: ${String(error)}. Worker teardown will attempt exact-ID cleanup.`,
       ),
       contentType: "text/plain",
     });
-    if (testInfo.status === "passed") {
-      throw new Error("Controller UI cleanup did not confirm the empty fixture outline.");
-    }
+    throw error;
   }
 });
 
@@ -66,10 +50,7 @@ test("searches for a known song, adds it once, and opens that outline entry", as
   await openSongsLibrary(page);
   const search = page.getByRole("textbox", { name: "Search:", exact: true });
   await search.fill(SONG_A.title);
-  await expect(page.getByTestId("filtered-items-results")).toHaveAttribute(
-    "aria-busy",
-    "false",
-  );
+  await waitForSongSearch(page, SONG_A.title);
 
   const libraryRow = songLibraryRow(page, SONG_A.title);
   await expect(libraryRow).toHaveCount(1);
@@ -109,10 +90,7 @@ test("opens exact known song details without changing the outline", async ({ pag
 
   await openSongsLibrary(page);
   await page.getByRole("textbox", { name: "Search:", exact: true }).fill(SONG_A.title);
-  await expect(page.getByTestId("filtered-items-results")).toHaveAttribute(
-    "aria-busy",
-    "false",
-  );
+  await waitForSongSearch(page, SONG_A.title);
   const row = songLibraryRow(page, SONG_A.title);
   await expect(row).toHaveCount(1);
   await expect(
@@ -205,6 +183,8 @@ test("persists the dedicated outline order across a browser reload", async ({ pa
     timeout: 90_000,
   });
   await expect(page.locator("#controller-main")).toBeVisible();
+  await waitForControllerDatabase(page);
+  await resetLocalOutputs(page);
   await selectTestOutline(page);
   await expect(page.getByTestId("controller-outline-picker")).toContainText(TEST_OUTLINE_NAME);
   await assertExactOutlineOrder(page, [SONG_A.title, SONG_B.title]);

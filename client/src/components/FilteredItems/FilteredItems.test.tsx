@@ -331,7 +331,12 @@ describe("FilteredItems", () => {
     );
 
     const searchInput = screen.getByLabelText(/Search/);
+    const results = screen.getByTestId("filtered-items-results");
     fireEvent.change(searchInput, { target: { value: "shepherd" } });
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(results).toHaveAttribute("data-search-query", "");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "shepherd"));
+    expect(results).toHaveAttribute("aria-busy", "false");
     expect(await screen.findByTitle(song.name)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
@@ -346,6 +351,10 @@ describe("FilteredItems", () => {
     expect(screen.getByRole("button", { name: "Search external lyrics" })).toBeInTheDocument();
 
     fireEvent.change(searchInput, { target: { value: "harbor choir" } });
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(results).toHaveAttribute("data-search-query", "shepherd");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "harbor choir"));
+    expect(results).toHaveAttribute("aria-busy", "false");
     expect(await screen.findByTitle(song.name)).toBeInTheDocument();
   });
 
