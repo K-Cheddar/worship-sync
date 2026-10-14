@@ -25,15 +25,15 @@ const SmsConfirmationModal = ({
   <Modal
     isOpen={isOpen}
     onClose={onCancel}
-    title="Send this SMS?"
-    description={`Review the SMS for ${recipientName} before sending.`}
+    title="Send this text message?"
+    description={`Review the text message for ${recipientName} before sending.`}
     size="sm"
     busy={busy}
   >
     <div className="space-y-4 text-sm text-gray-200">
       <dl className="space-y-2">
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Recipient</dt>
+          <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Volunteer</dt>
           <dd>{recipientName}</dd>
         </div>
         <div>
@@ -45,7 +45,7 @@ const SmsConfirmationModal = ({
           <dd className="whitespace-pre-wrap break-words">{message}</dd>
         </div>
       </dl>
-      <p>{segmentCount} SMS segment{segmentCount === 1 ? "" : "s"}.</p>
+      {segmentCount > 1 ? <p>This longer message counts as {segmentCount} texts.</p> : null}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" disabled={busy} onClick={onCancel}>Cancel</Button>
         <Button disabled={busy} isLoading={busy} onClick={onSend}>Send</Button>

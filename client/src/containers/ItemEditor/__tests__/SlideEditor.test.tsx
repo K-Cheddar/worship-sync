@@ -3,6 +3,13 @@ import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import SlideEditor from "../SlideEditor";
 import { ToastContext } from "../../../context/toastContext";
 import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
+import { GlobalInfoContext } from "../../../context/globalInfo";
+import {
+  createMockControllerContext,
+  createMockGlobalContext,
+  createMockPouchDB,
+} from "../../../test/mocks";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -22,6 +29,10 @@ const mockUpdateBoxes = jest.fn((payload: any) => ({
 }));
 const mockUpdateArrangements = jest.fn((payload: any) => ({
   type: "item/updateArrangements",
+  payload,
+}));
+const mockApplyOwnedContentMutation = jest.fn((payload: any) => ({
+  type: "item/applyOwnedContentMutation",
   payload,
 }));
 const mockDiscardPendingRemoteItem = jest.fn(() => ({
@@ -80,6 +91,8 @@ jest.mock("../../../store/itemSlice", () => ({
   })),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
   updateSlides: (payload: any) => mockUpdateSlides(payload),
+  applyOwnedContentMutation: (payload: any) =>
+    mockApplyOwnedContentMutation(payload),
   setName: jest.fn((payload: any) => ({ type: "item/setName", payload })),
   updateBoxes: (payload: any) => mockUpdateBoxes(payload),
   discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
@@ -279,6 +292,11 @@ const makeBaseState = (overrides: Partial<any> = {}) => {
       present: {
         item: {
           _id: "default-item",
+          contentOwner: {
+            scopeId: "test-church/test-db",
+            databaseKey: "test-db",
+            churchId: "test-church",
+          },
           name: "Sample Item",
           type: "free",
           arrangements: [],
@@ -406,9 +424,27 @@ const renderWithToastContext = () =>
     </ToastContext.Provider>
   );
 
+const renderWithControllerContexts = () =>
+  render(
+    <ControllerInfoContext.Provider
+      value={createMockControllerContext({ db: createMockPouchDB() }) as never}
+    >
+      <GlobalInfoContext.Provider
+        value={createMockGlobalContext({ access: "full", churchId: "church-1" }) as never}
+      >
+        <SlideEditor access="full" />
+      </GlobalInfoContext.Provider>
+    </ControllerInfoContext.Provider>,
+  );
+
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDispatch.mockImplementation((action: any) =>
+      action?.type === "item/applyOwnedContentMutation"
+        ? { unwrap: async () => true }
+        : undefined,
+    );
     mockActiveControllerType = "presentation";
     displayWindowCapture.className = undefined;
     displayWindowCapture.showBorder = undefined;
@@ -899,6 +935,128 @@ describe("SlideEditor", () => {
     expect(screen.getByLabelText("Song name:")).toBeInTheDocument();
   });
 
+  it("closes controller item details after Redux accepts the updated name", async () => {
+    mockState = makeBaseState({
+      undoable: { present: { item: { _id: "item-1", name: "Sample Item", type: "free" } } },
+    });
+    mockDispatch.mockImplementation((action: any) => {
+      if (action?.type === "item/setName") {
+        mockState.undoable.present.item.name = action.payload.name;
+      }
+      return action;
+    });
+
+    renderWithControllerContexts();
+    fireEvent.click(screen.getByRole("button", { name: "Item details" }));
+    fireEvent.change(screen.getByLabelText(/Item name/i), {
+      target: { value: "Updated item" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: "item/setName",
+        payload: { name: "Updated item" },
+      }),
+    );
+    expect(screen.queryByLabelText(/Item name/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Updated item" })).toBeInTheDocument();
+  });
+
+  it("closes controller song details after an accepted save and reopens in edit mode with current state", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-1",
+            name: "Living Hope",
+            type: "song",
+            selectedArrangement: 1,
+            selectedSlide: 2,
+            songMetadata: {
+              source: "manual",
+              trackName: "Living Hope",
+              artistName: "Phil Wickham",
+              importedAt: "2026-08-06T12:00:00.000Z",
+            },
+            arrangements: [
+              { name: "Original", slides: [], formattedLyrics: [] },
+              { name: "Acoustic", slides: [], formattedLyrics: [] },
+            ],
+          },
+        },
+      },
+    });
+    mockDispatch.mockImplementation((action: any) => {
+      if (action?.type === "item/setName") {
+        mockState.undoable.present.item.name = action.payload.name;
+      }
+      if (action?.type === "item/setSongMetadata") {
+        mockState.undoable.present.item.songMetadata = action.payload;
+      }
+      return action;
+    });
+
+    renderWithControllerContexts();
+    fireEvent.click(screen.getByRole("button", { name: "Song details" }));
+    fireEvent.change(screen.getByLabelText(/Song name/i), {
+      target: { value: "Living Hope (Acoustic)" },
+    });
+    fireEvent.change(screen.getByLabelText(/Artist/i), {
+      target: { value: "Phil Wickham and team" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: "item/setName",
+        payload: { name: "Living Hope (Acoustic)" },
+      }),
+    );
+    expect(screen.queryByLabelText(/Song name/i)).not.toBeInTheDocument();
+    expect(mockState.undoable.present.item).toEqual(
+      expect.objectContaining({
+        _id: "song-1",
+        name: "Living Hope (Acoustic)",
+        selectedArrangement: 1,
+        selectedSlide: 2,
+        songMetadata: expect.objectContaining({
+          artistName: "Phil Wickham and team",
+        }),
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Song details" }));
+    expect(await screen.findByLabelText(/Song name/i)).toHaveValue(
+      "Living Hope (Acoustic)",
+    );
+    expect(screen.getByLabelText(/Artist/i)).toHaveValue("Phil Wickham and team");
+    expect(
+      screen.getByRole("heading", { name: "Song details — Living Hope (Acoustic)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps controller song details open and preserves the draft when its database is unavailable", async () => {
+    mockState = makeBaseState({
+      undoable: { present: { item: { _id: "song-1", name: "Living Hope", type: "song" } } },
+    });
+
+    render(<SlideEditor access="full" />);
+    fireEvent.click(screen.getByRole("button", { name: "Song details" }));
+    fireEvent.change(screen.getByLabelText(/Song name/i), {
+      target: { value: "Living Hope (Acoustic)" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The song library is not available. Try again.",
+    );
+    expect(screen.getByLabelText(/Song name/i)).toHaveValue(
+      "Living Hope (Acoustic)",
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
   it("offers toast actions for remote updates outside lyrics edit mode", async () => {
     mockState = makeBaseState({
       undoable: {
@@ -954,7 +1112,7 @@ describe("SlideEditor", () => {
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 
-  it("updates free section text and dispatches debounced reformat update", () => {
+  it("dispatches owner-bound free section text and reformat mutations", () => {
     jest.useFakeTimers();
     mockFormatFree.mockImplementation((item) => ({
       ...item,
@@ -965,36 +1123,30 @@ describe("SlideEditor", () => {
     render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
 
-    expect(mockUpdateSlides).toHaveBeenCalledWith({
-      slides: mockState.undoable.present.item.slides,
-      formattedSections: [
-        {
-          sectionNum: 1,
-          words: "Updated section text",
-          slideSpan: 1,
-        },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith({
+      owner: expect.objectContaining({
+        scopeId: "test-church/test-db",
+        itemId: "default-item",
+        itemType: "free",
+      }),
+      mutation: {
+        kind: "sectionTextDraft",
+        sectionNum: 1,
+        value: "Updated section text",
+      },
     });
 
     act(() => {
       jest.advanceTimersByTime(300);
     });
 
-    expect(mockFormatFree).toHaveBeenCalled();
-    expect(mockUpdateSlides).toHaveBeenLastCalledWith({
-      slides: [
-        {
-          ...mockState.undoable.present.item.slides[0],
-          name: "Section 1A (formatted)",
-        },
-      ],
-      formattedSections: [
-        {
-          sectionNum: 1,
-          words: "Updated section text",
-          slideSpan: 1,
-        },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith({
+      owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
+      mutation: {
+        kind: "sectionText",
+        sectionNum: 1,
+        value: "Updated section text",
+      },
     });
 
     jest.useRealTimers();
@@ -1058,11 +1210,13 @@ describe("SlideEditor", () => {
     expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Section 4");
 
     fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
-    expect(mockUpdateSlides).toHaveBeenCalledWith({
-      slides,
-      formattedSections: [
-        { sectionNum: 4, words: "Updated section text", slideSpan: 3 },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith({
+      owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
+      mutation: {
+        kind: "sectionTextDraft",
+        sectionNum: 4,
+        value: "Updated section text",
+      },
     });
 
     // Reopening the editor with the saved item shape keeps the custom name.
@@ -1125,7 +1279,7 @@ describe("SlideEditor", () => {
     expect(screen.getByTestId("section-text-editor")).toHaveTextContent("Psalm 23");
   });
 
-  it("keeps the latest free slide formatting when a debounced text reformat completes", () => {
+  it("sends a stable section intent after a debounced text reformat", () => {
     jest.useFakeTimers();
     mockFormatFree.mockImplementation((item: any) => item);
 
@@ -1171,8 +1325,7 @@ describe("SlideEditor", () => {
     const { rerender } = render(<SlideEditor access="full" />);
     fireEvent.click(screen.getByRole("button", { name: "trigger-section-change" }));
 
-    mockUpdateSlides.mockClear();
-    mockFormatFree.mockClear();
+    mockApplyOwnedContentMutation.mockClear();
 
     mockState = makeBaseState({
       undoable: {
@@ -1206,21 +1359,15 @@ describe("SlideEditor", () => {
         jest.advanceTimersByTime(300);
       });
 
-      expect(mockFormatFree).toHaveBeenCalledTimes(1);
-      const formattedArg = mockFormatFree.mock.calls[0][0];
-      expect(formattedArg.slides[0].formattedTextDisplayInfo?.backgroundColor).toBe(
-        "#222222",
-      );
-      expect(mockUpdateSlides).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          slides: expect.any(Array),
-          formattedSections: expect.any(Array),
-        }),
-      );
-      expect(
-        mockUpdateSlides.mock.lastCall?.[0].slides[0].formattedTextDisplayInfo
-          ?.backgroundColor,
-      ).toBe("#222222");
+      expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith({
+        owner: expect.objectContaining({ itemId: "default-item", itemType: "free" }),
+        mutation: {
+          kind: "sectionText",
+          sectionNum: 1,
+          value: "Updated section text",
+        },
+      });
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

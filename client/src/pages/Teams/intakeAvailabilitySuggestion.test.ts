@@ -1,5 +1,6 @@
-import type { TeamIntakeForm, TeamService } from "../../api/authTypes";
+import type { TeamIntakeForm, TeamPosition, TeamSchedule, TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
+import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import { getUpcomingAvailabilitySuggestion } from "./intakeAvailabilitySuggestion";
 
 const service: TeamService = {
@@ -28,6 +29,176 @@ const makeForm = (overrides: Partial<TeamIntakeForm> = {}): TeamIntakeForm => ({
 });
 
 describe("getUpcomingAvailabilitySuggestion", () => {
+  const teamPositions: TeamPosition[] = [
+    { positionId: "vocal", churchId: "church-1", teamId: "worship", name: "Vocal" },
+    { positionId: "camera", churchId: "church-1", teamId: "av", name: "Camera" },
+  ];
+
+  it("suggests only services required by the selected Team", () => {
+    const services: TeamService[] = [
+      { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+      { ...service, serviceId: "av-service", name: "AV", positionRequirements: [{ positionId: "camera", count: 1 }] },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      now: new Date("2026-10-04T16:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.draft.teamIds).toEqual(["worship"]);
+    expect(result?.missingOccurrences.every((occurrence) => occurrence.serviceId === "worship-service")).toBe(true);
+    expect(result?.missingOccurrences.length).toBeGreaterThan(0);
+  });
+
+  it("uses an explicit managed Team list instead of a Team-specific availability template", () => {
+    const services: TeamService[] = [
+      { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+      { ...service, serviceId: "av-service", name: "AV", positionRequirements: [{ positionId: "camera", count: 1 }] },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      teamIds: ["worship", "av"],
+      now: new Date("2026-10-04T16:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.draft.teamIds).toEqual(["worship", "av"]);
+    expect(result?.missingOccurrences.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId])).toEqual(expect.arrayContaining(["worship-service", "av-service"]));
+  });
+
+  it("uses every explicitly supplied church Team when the template is Team-specific", () => {
+    const services: TeamService[] = [
+      { ...service, serviceId: "worship-service", name: "Worship", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+      { ...service, serviceId: "av-service", name: "AV", positionRequirements: [{ positionId: "camera", count: 1 }] },
+      { ...service, serviceId: "unassigned-service", name: "Unassigned service" },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      teamIds: ["worship", "av"],
+      teamScheduleScope: false,
+      now: new Date("2026-10-04T16:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.draft.teamIds).toEqual(["worship", "av"]);
+    expect(result?.missingOccurrences.flatMap((occurrence) => occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId])).toEqual(expect.arrayContaining(["worship-service", "av-service", "unassigned-service"]));
+  });
+
+  it("groups a combined service required by two selected Teams using the service timezone", () => {
+    const services: TeamService[] = [
+      {
+        ...service,
+        serviceId: "worship-part",
+        name: "Worship",
+        reccurence: "one_time",
+        dateTimeISO: "2026-10-18T02:00:00.000Z",
+        serviceGroupId: "combined",
+        positionRequirements: [{ positionId: "vocal", count: 1 }],
+      },
+      {
+        ...service,
+        serviceId: "av-part",
+        name: "AV",
+        reccurence: "one_time",
+        dateTimeISO: "2026-10-18T02:00:00.000Z",
+        serviceGroupId: "combined",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship", "av"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      now: new Date("2026-10-04T16:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.missingOccurrences).toEqual(expect.arrayContaining([expect.objectContaining({
+      occurrenceId: "group:combined@2026-10-17",
+      serviceIds: expect.arrayContaining(["worship-part", "av-part"]),
+      serviceDate: "2026-10-17",
+    })]));
+  });
+
+  it("uses saved occurrence overrides and explicit staffing slots for team suggestions", () => {
+    const oneTimeService: TeamService = {
+      ...service,
+      serviceId: "special-service",
+      name: "Special service",
+      reccurence: "one_time",
+      dateTimeISO: "2026-10-18T14:00:00.000Z",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    };
+    const occurrence: TeamScheduleOccurrence = {
+      occurrenceId: "special-service@2026-10-18T14:00:00.000Z",
+      serviceId: "special-service",
+      name: "Special service",
+      startsAt: "2026-10-18T14:00:00.000Z",
+      serviceDate: "2026-10-18",
+      positionRequirements: [{ positionId: "vocal", count: 1 }],
+    };
+    const schedule: TeamSchedule = {
+      scheduleId: "worship-special",
+      churchId: "church-1",
+      name: "Special schedule",
+      teamId: "worship",
+      startDate: "2026-10-18",
+      endDate: "2026-10-18",
+      serviceIds: [oneTimeService.serviceId],
+      occurrences: [occurrence],
+      assignments: {},
+    };
+    const overrideResult = getUpcomingAvailabilitySuggestion({
+      services: [oneTimeService],
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      schedules: [schedule],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+    });
+
+    expect(overrideResult?.missingOccurrences.map(({ serviceId }) => serviceId)).toEqual(["special-service"]);
+
+    const exceptionService = { ...oneTimeService, positionRequirements: undefined };
+    const explicitSlotSchedule: TeamSchedule = {
+      ...schedule,
+      scheduleId: "worship-exception",
+      occurrences: [{ ...occurrence, positionRequirements: undefined }],
+      additionalPositionSlots: { [occurrence.occurrenceId]: ["vocal::0"] },
+    };
+    const exceptionResult = getUpcomingAvailabilitySuggestion({
+      services: [exceptionService],
+      forms: [makeForm({ purpose: "team_availability", teamIds: ["worship"], startDate: "2026-08-01", endDate: "2026-08-31" })],
+      positions: teamPositions,
+      schedules: [explicitSlotSchedule],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+    });
+    expect(exceptionResult?.missingOccurrences.map(({ serviceId }) => serviceId)).toEqual(["special-service"]);
+  });
+
+  it("leaves general intake suggestions church-wide", () => {
+    const services: TeamService[] = [
+      { ...service, serviceId: "worship-service", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+      { ...service, serviceId: "av-service", positionRequirements: [{ positionId: "camera", count: 1 }] },
+    ];
+    const result = getUpcomingAvailabilitySuggestion({
+      services,
+      forms: [makeForm({ purpose: "general_intake", teamIds: [] })],
+      positions: teamPositions,
+      now: new Date("2026-10-04T16:00:00.000Z"),
+    });
+
+    expect(result?.missingOccurrences.map(({ serviceId }) => serviceId)).toEqual(
+      expect.arrayContaining(["worship-service", "av-service"]),
+    );
+    expect(result?.serviceCount).toBe(2);
+  });
+
   it("suggests the full current month when today is mid-month", () => {
     const result = getUpcomingAvailabilitySuggestion({
       services: [service],
@@ -281,6 +452,70 @@ describe("getUpcomingAvailabilitySuggestion", () => {
       endDate: "2026-11-30",
       occurrenceCount: 5,
     });
+  });
+
+  it("keeps a one-time service on its scheduled availability date despite a countdown override", () => {
+    const oneTime: TeamService = {
+      ...service,
+      serviceId: "special-service",
+      name: "Special service",
+      reccurence: "one_time",
+      dateTimeISO: "2026-11-01T14:00:00.000Z",
+      overrideDateTimeISO: "2026-10-15T10:00:00.000Z",
+    };
+    const result = getUpcomingAvailabilitySuggestion({
+      services: [oneTime],
+      forms: [],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(result?.startDate).toBe("2026-11-01");
+    expect(result?.missingOccurrences).toHaveLength(1);
+    expect(result?.missingOccurrences[0]).toMatchObject({
+      logicalOccurrenceId: "special-service@2026-11-01",
+      serviceDate: "2026-11-01",
+      startsAt: "2026-11-01T14:00:00.000Z",
+    });
+  });
+
+  it("uses the same combined identity for availability and service-plan lookup", () => {
+    const groupedServices: TeamService[] = [
+      {
+        ...service,
+        serviceId: "school",
+        name: "Sabbath School",
+        reccurence: "one_time",
+        dateTimeISO: "2026-10-11T14:00:00.000Z",
+        serviceGroupId: "sabbath-morning",
+      },
+      {
+        ...service,
+        serviceId: "worship",
+        name: "Divine Worship",
+        reccurence: "one_time",
+        dateTimeISO: "2026-10-11T15:00:00.000Z",
+        serviceGroupId: "sabbath-morning",
+      },
+    ];
+    const [planOccurrence] = generateScheduleOccurrences({
+      services: groupedServices,
+      serviceIds: groupedServices.map(({ serviceId }) => serviceId),
+      startDate: "2026-10-11",
+      endDate: "2026-10-11",
+      timeZone: "America/New_York",
+    });
+    const suggestion = getUpcomingAvailabilitySuggestion({
+      services: groupedServices,
+      forms: [],
+      now: new Date("2026-10-04T12:00:00.000Z"),
+      timeZone: "America/New_York",
+    });
+
+    expect(suggestion?.missingOccurrences[0].occurrenceId).toBe(planOccurrence.occurrenceId);
+    expect(suggestion?.missingOccurrences[0].logicalOccurrenceId).toBe(planOccurrence.logicalOccurrenceId);
+    expect(planOccurrence.occurrenceId).toBe("group:sabbath-morning@2026-10-11");
+    expect(getServicePlanKey(planOccurrence)).toBe(suggestion?.missingOccurrences[0].logicalOccurrenceId);
   });
 
   it("starts with the month of the next service across a month boundary", () => {

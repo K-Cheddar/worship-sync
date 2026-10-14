@@ -1,6 +1,6 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { Camera, Plus, X } from "lucide-react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import Button from "../../../components/Button/Button";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Input from "../../../components/Input/Input";
@@ -71,6 +71,7 @@ import {
   sortTeamRosterMembersAlphabetically,
 } from "../teamsUtils";
 import { getMemberListAssignments } from "../memberListAssignments";
+import { hasMemberContactInfo } from "../memberContactInfo";
 import {
   TEAMS_MEMBER_EDIT_SEARCH_PARAM,
   TEAMS_SECTION_PATHS,
@@ -123,6 +124,12 @@ const readMemberTeamIds = (member: TeamRosterMember, teams: TeamRecord[]) =>
     ]),
   ).sort();
 
+const sameIdSet = (left: string[], right: string[]) => {
+  const leftIds = new Set(left);
+  const rightIds = new Set(right);
+  return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
+};
+
 /**
  * The editor's draft for a member, or a blank one for the create form. Kept in
  * one place because the same shape is needed to seed the form, to reset it, and
@@ -167,6 +174,9 @@ type MemberManagerProps = {
   positions: TeamPosition[];
   data: TeamsData;
   canEdit: boolean;
+  canEditAllTeams?: boolean;
+  canManageMemberLifecycle?: boolean;
+  canEditMember?: (member: TeamRosterMember) => boolean;
   onSaved: (member: TeamRosterMember, replaceId?: string) => void;
   /** Applies rosters the server changed by joining this member to a team. */
   onTeamSaved: (team: TeamRecord) => void;
@@ -181,6 +191,9 @@ const MemberManager = ({
   positions,
   data,
   canEdit,
+  canEditAllTeams = true,
+  canManageMemberLifecycle = true,
+  canEditMember: canEditMemberProp,
   onSaved,
   onTeamSaved,
   onArchived,
@@ -192,12 +205,18 @@ const MemberManager = ({
   const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const currentUserId = context?.userId || "";
+  const canEditMember = useCallback(
+    (member: TeamRosterMember) =>
+      canEdit && (canEditMemberProp ? canEditMemberProp(member) : true),
+    [canEdit, canEditMemberProp],
+  );
   /**
    * Inviting and listing church accounts both hit admin-only endpoints
    * (`createInvite`, `listChurchMembers` — both `requireAdminSession`). `canEdit`
    * includes Teams editors, so gating those controls on it alone would show a
    * non-admin an invite that 403s and a picker that is always empty.
-   * Self-claim and unlink stay on `canEdit`: their endpoints take teams-edit.
+   * Account linking stays on `canEditAllTeams`: scoped Team managers do not
+   * receive account-linking authority.
    */
   const isChurchAdmin = context?.role === "admin";
   const [isUpdatingLink, setIsUpdatingLink] = useState(false);
@@ -205,13 +224,34 @@ const MemberManager = ({
   const [churchAccounts, setChurchAccounts] = useState<ChurchMemberRow[]>([]);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
   const [editing, setEditing] = useState<TeamRosterMember | null>(null);
+  const canEditActiveMember = editing
+    ? canEdit && canEditMember(editing)
+    : canEdit;
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState<TeamRosterMember | null>(null);
   const [recordingSmsConsentFor, setRecordingSmsConsentFor] = useState<TeamRosterMember | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [draft, setDraft] = useState<TeamRosterMemberPayload>(() =>
+  const [draft, setDraftState] = useState<TeamRosterMemberPayload>(() =>
     buildMemberDraft(null, []),
   );
+  const draftRevisionRef = useRef(0);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const setDraft = useCallback((next: SetStateAction<TeamRosterMemberPayload>) => {
+    draftRevisionRef.current += 1;
+    setDraftState(next);
+  }, []);
+  const activeEditorSessionRef = useRef(0);
+  const profileImageSelectionRevisionRef = useRef(0);
+  const saveDraftSnapshotsRef = useRef(new Map<string, {
+    draft: TeamRosterMemberPayload;
+    pendingImage: File | null;
+    imageRevision: number;
+  }>());
+  const [savedMembershipBaseline, setSavedMembershipBaseline] = useState<{
+    memberId: string;
+    teamIds: string[];
+  } | null>(null);
   const [profileImageUploading, setProfileImageUploading] = useState(false);
   const [pendingProfileImage, setPendingProfileImage] = useState<File | null>(null);
   const [pendingProfileImagePreviewUrl, setPendingProfileImagePreviewUrl] =
@@ -238,21 +278,27 @@ const MemberManager = ({
   const [showDesiredPositions, setShowDesiredPositions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { returnTo, finishEditing } = useTeamsReturnNavigation();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const pendingEditMemberIdRef = useRef<string | null>(null);
+  const consumedCreateLocationKeyRef = useRef<string | null>(null);
 
   const openMemberEditor = useCallback(
     (member: TeamRosterMember) => {
+      activeEditorSessionRef.current += 1;
+      profileImageSelectionRevisionRef.current += 1;
       setShowFilters(false);
       setShowDesiredPositions(false);
       setPendingProfileImage(null);
       setPendingProfileImagePreviewUrl("");
       setEditing(member);
       setShowCreate(true);
-      setDraft(buildMemberDraft(member, readMemberTeamIds(member, data.teams)));
+      const teamIds = readMemberTeamIds(member, data.teams);
+      setSavedMembershipBaseline({ memberId: member.memberId, teamIds });
+      setDraft(buildMemberDraft(member, teamIds));
     },
-    [data.teams],
+    [data.teams, setDraft],
   );
 
   const selectMember = useCallback((member: TeamRosterMember) => {
@@ -270,13 +316,29 @@ const MemberManager = ({
   }, [canEdit, location.state, searchParams, setSearchParams]);
 
   useEffect(() => {
+    const state = location.state as { teamsCreateMember?: { teamId?: string } } | null;
+    const teamId = state?.teamsCreateMember?.teamId;
+    if (!teamId || !canEdit || consumedCreateLocationKeyRef.current === location.key) return;
+    if (!data.teams.some((team) => team.teamId === teamId && !team.archivedAt)) return;
+    consumedCreateLocationKeyRef.current = location.key;
+    activeEditorSessionRef.current += 1;
+    profileImageSelectionRevisionRef.current += 1;
+    setEditing(null);
+    setSavedMembershipBaseline(null);
+    setDraft(buildMemberDraft(null, [teamId]));
+    setShowCreate(true);
+    navigate(location.pathname, { replace: true, state: { ...(state || {}), teamsCreateMember: undefined } });
+  }, [canEdit, data.teams, location.key, location.pathname, location.state, navigate, setDraft]);
+
+  useEffect(() => {
     const editMemberId = pendingEditMemberIdRef.current;
     if (!editMemberId) return;
     const member = members.find((item) => item.memberId === editMemberId);
     if (!member) return;
     pendingEditMemberIdRef.current = null;
+    if (!canEditMember(member)) return;
     openMemberEditor(member);
-  }, [members, openMemberEditor]);
+  }, [canEditMember, members, openMemberEditor]);
 
   useEffect(() => {
     if (!showCreate) return;
@@ -372,8 +434,12 @@ const MemberManager = ({
   );
   // Teams the member belongs to right now, i.e. before anything in this draft.
   const joinedTeamIds = useMemo(
-    () => (editing ? readMemberTeamIds(editing, data.teams) : []),
-    [data.teams, editing],
+    () => editing
+      ? savedMembershipBaseline?.memberId === editing.memberId
+        ? savedMembershipBaseline.teamIds
+        : readMemberTeamIds(editing, data.teams)
+      : [],
+    [data.teams, editing, savedMembershipBaseline],
   );
 
   const membersInListScope = useMemo(
@@ -406,8 +472,11 @@ const MemberManager = ({
       removeToast(profileImageSelectionToastIdRef.current);
       profileImageSelectionToastIdRef.current = null;
     }
+    activeEditorSessionRef.current += 1;
+    profileImageSelectionRevisionRef.current += 1;
     setEditing(null);
     setShowCreate(false);
+    setSavedMembershipBaseline(null);
     setDraft(buildMemberDraft(null, []));
     setShowDesiredPositions(false);
     setProfileImageUploading(false);
@@ -416,7 +485,7 @@ const MemberManager = ({
   };
 
   const uploadProfileImage = async (file: File) => {
-    if (!canEdit || !file.type.startsWith("image/")) {
+    if (!canEditActiveMember || !file.type.startsWith("image/")) {
       showToast("Choose an image file.", "error");
       return;
     }
@@ -424,6 +493,7 @@ const MemberManager = ({
       showToast("Profile images must be 5 MB or smaller.", "error");
       return;
     }
+    profileImageSelectionRevisionRef.current += 1;
     setPendingProfileImage(file);
     setPendingProfileImagePreviewUrl(URL.createObjectURL(file));
     if (profileImageSelectionToastIdRef.current) {
@@ -440,7 +510,7 @@ const MemberManager = ({
   };
 
   const confirmDelete = async () => {
-    if (!canEdit) return;
+    if (!canEdit || (deleting && !canEditMember(deleting))) return;
     if (!deleting) return;
     const member = deleting;
     if (member.memberId.startsWith("local-")) {
@@ -578,7 +648,7 @@ const MemberManager = ({
    * creates their account and links it here — no address matching involved.
    */
   const inviteMemberToAccount = async (member: TeamRosterMember) => {
-    if (!canEdit || isInviting || !member.email) return;
+    if (!canEdit || !canEditMember(member) || isInviting || !member.email) return;
     setIsInviting(true);
     try {
       await inviteTeamRosterMember(churchId, {
@@ -603,7 +673,7 @@ const MemberManager = ({
 
   const copySmsOptInLink = async () => {
     if (!navigator.clipboard?.writeText) {
-      showToast("Couldn't copy the SMS opt-in link.", "error");
+      showToast("Couldn't copy the text message consent link.", "error");
       return;
     }
 
@@ -612,9 +682,9 @@ const MemberManager = ({
         `/sms-opt-in/${encodeURIComponent(churchId)}`,
       );
       await navigator.clipboard.writeText(url);
-      showToast("SMS opt-in link copied.");
+      showToast("Text message consent link copied.");
     } catch {
-      showToast("Couldn't copy the SMS opt-in link.", "error");
+      showToast("Couldn't copy the text message consent link.", "error");
     }
   };
 
@@ -630,7 +700,7 @@ const MemberManager = ({
     action: "link" | "unlink",
     targetUserId?: string,
   ) => {
-    if (!canEdit || isUpdatingLink) return;
+    if (!canEditAllTeams || !canEditMember(member) || isUpdatingLink) return;
     setIsUpdatingLink(true);
     try {
       if (action === "link") {
@@ -672,7 +742,7 @@ const MemberManager = ({
   };
 
   const submit = async () => {
-    if (!canEdit) return;
+    if (!canEditActiveMember) return;
     const birthdayError = getBirthDateValidationError(draft.birthDate);
     if (birthdayError) {
       showToast(birthdayError, "neutral");
@@ -683,17 +753,41 @@ const MemberManager = ({
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
+    const editorSession = activeEditorSessionRef.current;
+    const submittedDraftRevision = draftRevisionRef.current;
+    const submittedImageRevision = profileImageSelectionRevisionRef.current;
+    saveDraftSnapshotsRef.current.set(savingKey, {
+      draft,
+      pendingImage: pendingProfileImage,
+      imageRevision: submittedImageRevision,
+    });
     setSavingIds((prev) => new Set(prev).add(savingKey));
     if (profileImageSelectionToastIdRef.current) {
       removeToast(profileImageSelectionToastIdRef.current);
       profileImageSelectionToastIdRef.current = null;
     }
-    let body = {
+    const membershipChanged = wasEditing
+      ? !sameIdSet(draft.teamIds || [], joinedTeamIds)
+      : true;
+    let body: TeamRosterMemberPayload = {
       ...draft,
       blockoutDates: draft.blockoutDates.filter(
         (range) => range.startDate || range.endDate,
       ),
     };
+    if (wasEditing && membershipChanged) {
+      body = {
+        ...body,
+        teamIds: draft.teamIds || [],
+        baseTeamIds: joinedTeamIds,
+      };
+    } else if (wasEditing) {
+      // Keep the server's current roster when this save only changes member
+      // details or positions. An omitted teamIds field is a no-op for roster
+      // membership, while the server still adds teams required by positions.
+      delete body.teamIds;
+      delete body.baseTeamIds;
+    }
     const previousProfileImagePublicId = wasEditing?.profileImagePublicId || "";
     const profileImageToUpload = pendingProfileImage;
     let profileImageUploadFailed = false;
@@ -772,6 +866,22 @@ const MemberManager = ({
             ? body.profileImagePublicId
             : response.member.profileImagePublicId || "",
       };
+      // The response's team documents may still be waiting for the parent page
+      // to propagate them back through props. Overlay them locally before
+      // deriving the saved membership baseline.
+      const teamsAfterSave = response.teams?.length
+        ? response.teams.reduce((currentTeams, savedTeam) => {
+            const index = currentTeams.findIndex(
+              (team) => team.teamId === savedTeam.teamId,
+            );
+            if (index < 0) return [...currentTeams, savedTeam];
+            return currentTeams.map((team, teamIndex) =>
+              teamIndex === index ? savedTeam : team,
+            );
+          }, data.teams)
+        : data.teams;
+      const finalTeamIds = response.membershipTeamIds ||
+        readMemberTeamIds(finalMember, teamsAfterSave);
       const profileImagePublicIdToDelete =
         previousProfileImagePublicId &&
         previousProfileImagePublicId !== body.profileImagePublicId
@@ -780,21 +890,25 @@ const MemberManager = ({
       if (profileImagePublicIdToDelete) {
         void deleteCloudinaryAsset(profileImagePublicIdToDelete, "image", churchId);
       }
-      if (!profileImageUploadFailed) {
-        setPendingProfileImage(null);
-        setPendingProfileImagePreviewUrl("");
-        setDraft(
-          buildMemberDraft(
-            finalMember,
-            readMemberTeamIds(finalMember, data.teams),
-          ),
-        );
+      if (
+        activeEditorSessionRef.current === editorSession &&
+        draftRevisionRef.current === submittedDraftRevision &&
+        profileImageSelectionRevisionRef.current === submittedImageRevision
+      ) {
+        if (!profileImageUploadFailed) {
+          setPendingProfileImage(null);
+          setPendingProfileImagePreviewUrl("");
+        }
+        const savedDraft = buildMemberDraft(finalMember, finalTeamIds);
+        draftRef.current = savedDraft;
+        setDraftState(savedDraft);
       }
       if (!wasEditing) {
         onSaved(finalMember, localMemberId);
-      } else if (!profileImageUploadFailed) {
-        // The first optimistic save predates the Cloudinary upload. Reconcile
-        // the list with the final member record once the image is linked.
+      } else {
+        // Reconcile the optimistic list record with the server response after
+        // the member update has committed, even if the optional image upload
+        // failed.
         onSaved(finalMember, wasEditing.memberId);
       }
       // The server reconciles `team.memberIds` from the teams (and positions)
@@ -806,19 +920,29 @@ const MemberManager = ({
         showToast("You can choose the image again and save to retry.", "error");
       }
       // Saving commits data; Back or Cancel is responsible for leaving this editor.
+      if (activeEditorSessionRef.current === editorSession) {
+        setSavedMembershipBaseline({
+          memberId: finalMember.memberId,
+          teamIds: finalTeamIds,
+        });
+      }
       if (wasEditing) {
         // The operator may have switched to a different member while this save
         // was in flight. Only refresh the selected record if they're still on
         // the one we just saved, so the panel never rebinds to a stale member.
-        setEditing((current) =>
-          current?.memberId === wasEditing.memberId ? finalMember : current,
-        );
+        if (activeEditorSessionRef.current === editorSession) {
+          setEditing((current) =>
+            current?.memberId === wasEditing.memberId ? finalMember : current,
+          );
+        }
       } else {
         // Newly created: adopt the saved record so a subsequent Save updates it
         // instead of creating a duplicate — but only if the create form is still
         // the active editor and the operator hasn't selected another member.
         const created = finalMember;
-        setEditing((current) => (current === null ? created : current));
+        if (activeEditorSessionRef.current === editorSession) {
+          setEditing((current) => (current === null ? created : current));
+        }
       }
     } catch (error) {
       if (uploadedProfileImagePublicId) {
@@ -827,6 +951,7 @@ const MemberManager = ({
       showApiErrorToast(showToast, error, "Could not save this member.");
       onArchived();
     } finally {
+      saveDraftSnapshotsRef.current.delete(savingKey);
       setSavingIds((prev) => {
         const next = new Set(prev);
         next.delete(savingKey);
@@ -840,10 +965,18 @@ const MemberManager = ({
   // disables it.
   const currentEditorKey = editing ? editing.memberId : CREATE_SAVING_KEY;
   const isSavingCurrent = savingIds.has(currentEditorKey);
-  const hasPendingChanges =
+  const draftDiffersFromSaved =
     JSON.stringify({ ...draft, teamIds: [...(draft.teamIds || [])].sort() }) !==
       JSON.stringify(buildMemberDraft(editing, joinedTeamIds)) ||
     Boolean(pendingProfileImage || pendingProfileImagePreviewUrl);
+  const pendingSaveSnapshot = saveDraftSnapshotsRef.current.get(currentEditorKey);
+  const hasPendingChanges = draftDiffersFromSaved && !(
+    isSavingCurrent &&
+    pendingSaveSnapshot &&
+    JSON.stringify(pendingSaveSnapshot.draft) === JSON.stringify(draft) &&
+    pendingSaveSnapshot.pendingImage === pendingProfileImage &&
+    pendingSaveSnapshot.imageRevision === profileImageSelectionRevisionRef.current
+  );
   useTeamsUnsavedChanges(hasPendingChanges);
 
   // Positions follow each team's Positions tab order; teams follow the roster list.
@@ -1055,6 +1188,7 @@ const MemberManager = ({
           requestDiscardAction(() => {
             setShowFilters(false);
             reset();
+            activeEditorSessionRef.current += 1;
             setShowCreate(true);
           });
         }}
@@ -1074,7 +1208,7 @@ const MemberManager = ({
         }
         description="Keep roster details and availability current."
         createLabel="Create member"
-        listHeaderActions={<PortableDataActions type="members" teams={data.teams} destinationTeamId={listFilters.teamIds.length === 1 ? listFilters.teamIds[0] : undefined} onImported={onImported} />}
+        listHeaderActions={canEdit ? <PortableDataActions type="members" teams={data.teams} destinationTeamId={listFilters.teamIds.length === 1 ? listFilters.teamIds[0] : undefined} onImported={onImported} /> : null}
         keepCreateActionVisible
         scrollableList
         listToolbar={
@@ -1156,6 +1290,7 @@ const MemberManager = ({
             ) : null}
             {filteredMembers.map((member) => {
               const assignments = memberAssignmentsById.get(member.memberId) || [];
+              const canEditCurrentMember = canEdit && canEditMember(member);
               return (
                 <EntityRow
                   key={member.memberId}
@@ -1168,6 +1303,11 @@ const MemberManager = ({
                     />
                   }
                   detailsInteractive
+                  subtitle={
+                    canEditCurrentMember && !hasMemberContactInfo(member)
+                      ? "No contact info"
+                      : undefined
+                  }
                   leadingVisual={
                     <MemberAvatar
                       profileImageUrl={member.profileImageUrl}
@@ -1177,7 +1317,7 @@ const MemberManager = ({
                   }
                   archived={Boolean(member.archivedAt)}
                   selected={editing?.memberId === member.memberId}
-                  canEdit={canEdit}
+                  canEdit={canEditCurrentMember}
                   onTitleClick={() => selectMember(member)}
                 />
               );
@@ -1190,23 +1330,25 @@ const MemberManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditActiveMember && canManageMemberLifecycle}
                   archiveLabel="Archive member"
                   deleteLabel="Delete member"
                   menuLabel="Member actions"
                   additionalItems={[
                     ...(isChurchAdmin &&
+                      canEditActiveMember &&
                       !editing.archivedAt &&
                       data.smsEligibilityByMemberId?.[editing.memberId]?.status === "consent_needed" &&
                       isValidSmsPhone(editing.phoneNumber)
-                      ? [{ text: "Record SMS consent", onClick: () => setRecordingSmsConsentFor(editing) }]
+                      ? [{ text: "Record text message consent", onClick: () => setRecordingSmsConsentFor(editing) }]
                       : []),
+                    ...(canEditActiveMember ? [
                     {
-                      text: "Copy SMS opt-in link",
+                      text: "Copy text message consent link",
                       onClick: () => void copySmsOptInLink(),
                     },
                     {
-                      text: "Open SMS opt-in page",
+                      text: "Open text message consent page",
                       onClick: () => {
                         window.open(
                           buildShareablePublicPathUrl(
@@ -1217,11 +1359,13 @@ const MemberManager = ({
                         );
                       },
                     },
+                    ] : []),
                   ] satisfies MenuItemType[]}
                   onArchive={
                     editing.archivedAt
                       ? undefined
                       : async () => {
+                        if (!canEditActiveMember) return;
                         const archivedMember = {
                           ...editing,
                           archivedAt: new Date().toISOString(),
@@ -1243,6 +1387,7 @@ const MemberManager = ({
           ) : null
         }
         formFooter={
+          canEditActiveMember ? (
           <FormActionButtons
             pinFooter
             entityLabel="member"
@@ -1252,19 +1397,21 @@ const MemberManager = ({
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
             disabled={
-              !canEdit ||
+              !canEditActiveMember ||
               !draft.firstName.trim() ||
               !draft.lastName.trim() ||
               // The server rejects a malformed address, so blocking here turns
               // a failed round-trip into an inline message.
               Boolean(emailError) ||
               isSavingCurrent ||
-              profileImageUploading
+              profileImageUploading ||
+              (!editing && !canEditAllTeams && (draft.teamIds || []).length === 0)
             }
           />
+          ) : null
         }
       >
-        <fieldset className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
           <legend className="px-1 text-sm font-semibold">Member details</legend>
           <div className="grid gap-3 sm:grid-cols-[minmax(0,0.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <Input
@@ -1329,14 +1476,14 @@ const MemberManager = ({
           />
           {editing && data.smsEligibilityByMemberId?.[editing.memberId] ? (
             <p role="status" className="text-xs text-gray-300">
-              SMS status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
+              Text message status: {smsEligibilityLabel(data.smsEligibilityByMemberId[editing.memberId].status)}
             </p>
           ) : null}
           {/* Account link. Separate from the email above on purpose: an address is
             a contact detail, the link is an identity, and one never implies the
             other. Only shown for saved members — there is nothing to link yet
             while creating one. */}
-          {editing ? (
+          {editing && canEditAllTeams ? (
             <div className="flex flex-col gap-2 text-sm">
               <div className="flex flex-wrap items-center gap-3">
                 {/* Naming the other account would need it on the roster payload;
@@ -1356,7 +1503,7 @@ const MemberManager = ({
                 {editing.userId ? (
                   <Button
                     variant="tertiary"
-                    disabled={!canEdit || isUpdatingLink}
+                    disabled={!canEditActiveMember || isUpdatingLink}
                     isLoading={isUpdatingLink}
                     onClick={() => void updateMemberLink(editing, "unlink")}
                   >
@@ -1372,7 +1519,7 @@ const MemberManager = ({
                   // it would be an action guaranteed to fail.
                   <Button
                     variant="tertiary"
-                    disabled={!canEdit || isUpdatingLink}
+                    disabled={!canEditActiveMember || isUpdatingLink}
                     isLoading={isUpdatingLink}
                     onClick={() => void updateMemberLink(editing, "link")}
                   >
@@ -1384,7 +1531,7 @@ const MemberManager = ({
                 refuses anything else, so showing more would only produce
                 errors. Accounts already linked to another member are excluded
                 rather than shown and rejected. */}
-              {!editing.userId && canEdit && isChurchAdmin ? (
+              {!editing.userId && canEditActiveMember && isChurchAdmin ? (
                 showAccountPicker ? (
                   <SearchableSelect
                     variant="dark"
@@ -1415,7 +1562,7 @@ const MemberManager = ({
                 the reason is discoverable; absent is not.
                 The invite sends to the *saved* address, so an unsaved edit
                 blocks it too — otherwise it would quietly mail the old one. */}
-              {!editing.userId && canEdit && isChurchAdmin ? (
+              {!editing.userId && canEditActiveMember && isChurchAdmin ? (
                 <div className="flex flex-col gap-1">
                   <Button
                     variant="textLink"
@@ -1454,13 +1601,13 @@ const MemberManager = ({
                   <Camera aria-hidden="true" size={22} />
                 </div>
               )}
-              <div className="flex flex-wrap gap-2">
+              {canEditAllTeams ? <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   variant="tertiary"
                   svg={Camera}
                   isLoading={profileImageUploading}
-                  disabled={!canEdit || profileImageUploading}
+                  disabled={!canEditActiveMember || profileImageUploading}
                   onClick={() => profileImageInputRef.current?.click()}
                 >
                   {draft.profileImageUrl ? "Replace image" : "Choose image"}
@@ -1469,8 +1616,9 @@ const MemberManager = ({
                   <Button
                     type="button"
                     variant="textLink"
-                    disabled={!canEdit || profileImageUploading}
+                    disabled={!canEditActiveMember || profileImageUploading}
                   onClick={() => {
+                    profileImageSelectionRevisionRef.current += 1;
                     setPendingProfileImage(null);
                     setPendingProfileImagePreviewUrl("");
                     setDraft((current) => ({
@@ -1483,8 +1631,8 @@ const MemberManager = ({
                     Remove
                   </Button>
                 ) : null}
-              </div>
-              <input
+              </div> : null}
+              {canEditAllTeams ? <input
                 ref={profileImageInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -1495,7 +1643,7 @@ const MemberManager = ({
                   event.target.value = "";
                   if (file) void uploadProfileImage(file);
                 }}
-              />
+              /> : null}
             </div>
           </div>
           <BirthDateField
@@ -1527,7 +1675,7 @@ const MemberManager = ({
             }
           />
         </fieldset>
-        <fieldset className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2 rounded-md border border-gray-700 bg-gray-950/40 p-3 pt-0">
           <legend className="px-1 text-sm font-semibold">Scheduling preferences</legend>
           <div className="flex flex-col gap-1">
             <Select
@@ -1778,7 +1926,7 @@ const MemberManager = ({
             />
           ) : null}
         </div>
-        <fieldset className="space-y-2">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Team roles</legend>
           {roleTeams.length === 0 ? (
             <p className="text-sm text-gray-400">
@@ -1851,7 +1999,7 @@ const MemberManager = ({
             );
           })}
         </fieldset>
-        <fieldset className="space-y-2">
+        <fieldset disabled={!canEditActiveMember} className="space-y-2">
           <legend className="p-1 text-sm font-semibold">Qualifications</legend>
           {data.qualificationAreas.length === 0 ? (
             <p className="text-sm text-gray-400">

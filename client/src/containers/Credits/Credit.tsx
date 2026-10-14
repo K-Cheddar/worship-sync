@@ -50,6 +50,9 @@ type CreditProps = CreditsInfo & {
   readOnly?: boolean;
 };
 
+type EditableCreditField = "heading" | "text" | "hidden";
+type EditableCreditPatch = Pick<CreditsInfo, "id"> & Partial<Pick<CreditsInfo, EditableCreditField>>;
+
 const Credit = ({
   heading,
   text,
@@ -84,7 +87,18 @@ const Credit = ({
   const isFieldFocusedRef = useRef(false);
   /** True once the operator types, until those keystrokes are flushed to Redux and Pouch. */
   const hasUnflushedEditsRef = useRef(false);
+  const pendingFieldsRef = useRef(new Set<EditableCreditField>());
   const renderedIdRef = useRef(id);
+
+  const getPendingCreditPatch = useCallback((): EditableCreditPatch => {
+    const pendingFields = pendingFieldsRef.current;
+    return {
+      id,
+      ...(pendingFields.has("heading") ? { heading: draftHeadingRef.current } : {}),
+      ...(pendingFields.has("text") ? { text: draftTextRef.current } : {}),
+      ...(pendingFields.has("hidden") ? { hidden: hiddenRef.current } : {}),
+    };
+  }, [id]);
 
   const adoptIncomingValues = useCallback(
     (nextHeading: string, nextText: string) => {
@@ -102,6 +116,7 @@ const Credit = ({
     if (renderedIdRef.current !== id) {
       renderedIdRef.current = id;
       hasUnflushedEditsRef.current = false;
+      pendingFieldsRef.current.clear();
       adoptIncomingValues(heading, text);
       return;
     }
@@ -116,54 +131,52 @@ const Credit = ({
   }, [id, heading, text, adoptIncomingValues]);
 
   const persistCredit = useCallback(
-    async (payload: { heading: string; text: string; hidden?: boolean }) => {
+    async (payload: EditableCreditPatch) => {
       if (!db || !outlineId) return;
-      const doc = await putCreditDoc(db, outlineId, { id, ...payload });
+      const doc = await putCreditDoc(db, outlineId, payload);
       if (!doc) return;
       // Our own write is now the newest revision this window knows about, so a later
       // echo of an older revision can be recognised as stale and dropped.
       recordAppliedCreditVersion(doc._id, doc._rev);
-      // Only clear the dirty flag if nothing was typed while the save was in flight.
-      if (
-        draftHeadingRef.current === payload.heading &&
-        draftTextRef.current === payload.text
-      ) {
-        hasUnflushedEditsRef.current = false;
-      }
+      if (Object.prototype.hasOwnProperty.call(payload, "heading")
+        && draftHeadingRef.current === payload.heading) pendingFieldsRef.current.delete("heading");
+      if (Object.prototype.hasOwnProperty.call(payload, "text")
+        && draftTextRef.current === payload.text) pendingFieldsRef.current.delete("text");
+      if (Object.prototype.hasOwnProperty.call(payload, "hidden")
+        && hiddenRef.current === payload.hidden) pendingFieldsRef.current.delete("hidden");
+      hasUnflushedEditsRef.current = pendingFieldsRef.current.has("heading")
+        || pendingFieldsRef.current.has("text");
       broadcastCreditsUpdate([doc]);
     },
-    [db, id, outlineId]
+    [db, outlineId]
   );
 
   const flushDraftToRedux = useCallback(() => {
-    const h = draftHeadingRef.current;
-    const t = draftTextRef.current;
-    const hid = hiddenRef.current;
-    dispatch(updateCredit({ id, heading: h, text: t, hidden: hid }));
-  }, [dispatch, id]);
+    const patch = getPendingCreditPatch();
+    if (Object.keys(patch).length > 1) dispatch(updateCredit(patch));
+  }, [dispatch, getPendingCreditPatch]);
+
+  const persistPendingCredit = useCallback(async () => {
+    const patch = getPendingCreditPatch();
+    if (Object.keys(patch).length <= 1) return;
+    await persistCredit(patch);
+  }, [getPendingCreditPatch, persistCredit]);
 
   const scheduleDebouncedRedux = useCallback(() => {
     if (reduxDebounceRef.current) clearTimeout(reduxDebounceRef.current);
     reduxDebounceRef.current = setTimeout(() => {
       reduxDebounceRef.current = null;
-      const h = draftHeadingRef.current;
-      const t = draftTextRef.current;
-      const hid = hiddenRef.current;
-      dispatch(updateCredit({ id, heading: h, text: t, hidden: hid }));
+      flushDraftToRedux();
     }, REDUX_DEBOUNCE_MS);
-  }, [dispatch, id]);
+  }, [flushDraftToRedux]);
 
   /** Persist to Pouch ~500ms after the last keystroke (independent of Redux debounce). */
   const bumpPersistTimeout = useCallback(() => {
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     persistTimeoutRef.current = setTimeout(() => {
-      persistCredit({
-        heading: draftHeadingRef.current,
-        text: draftTextRef.current,
-        hidden: hiddenRef.current,
-      });
+      void persistPendingCredit();
     }, PERSIST_DEBOUNCE_MS);
-  }, [persistCredit]);
+  }, [persistPendingCredit]);
 
   useEffect(
     () => () => {
@@ -254,10 +267,9 @@ const Credit = ({
       reduxDebounceRef.current = null;
     }
     const nextHidden = !hidden;
-    const h = draftHeadingRef.current;
-    const t = draftTextRef.current;
-    dispatch(updateCredit({ id, heading: h, text: t, hidden: nextHidden }));
     hiddenRef.current = nextHidden;
+    pendingFieldsRef.current.add("hidden");
+    dispatch(updateCredit({ id, hidden: nextHidden }));
     void flushCreditsHistoryFromLatestList(
       dispatch,
       () => store.getState(),
@@ -265,7 +277,7 @@ const Credit = ({
     );
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     persistTimeoutRef.current = setTimeout(
-      () => persistCredit({ heading: h, text: t, hidden: nextHidden }),
+      () => { void persistPendingCredit(); },
       PERSIST_DEBOUNCE_MS
     );
   };
@@ -279,6 +291,7 @@ const Credit = ({
       const v = String(value);
       setDraftHeading(v);
       draftHeadingRef.current = v;
+      pendingFieldsRef.current.add("heading");
       hasUnflushedEditsRef.current = true;
       scheduleDebouncedRedux();
       bumpPersistTimeout();
@@ -291,6 +304,7 @@ const Credit = ({
       const val = String(value);
       setDraftText(val);
       draftTextRef.current = val;
+      pendingFieldsRef.current.add("text");
       hasUnflushedEditsRef.current = true;
       scheduleDebouncedRedux();
       bumpPersistTimeout();
@@ -321,27 +335,28 @@ const Credit = ({
       clearTimeout(persistTimeoutRef.current);
       persistTimeoutRef.current = null;
     }
-    const payload = {
-      heading: draftHeadingRef.current,
-      text: draftTextRef.current,
-      hidden: hiddenRef.current,
-    };
-    if (db && outlineId) {
-      await persistCredit(payload);
-    }
-    hasUnflushedEditsRef.current = false;
+    if (db && outlineId) await persistPendingCredit();
+    hasUnflushedEditsRef.current = pendingFieldsRef.current.has("heading")
+      || pendingFieldsRef.current.has("text");
     await flushCreditsHistoryFromLatestList(
       dispatch,
       () => store.getState(),
       db,
     );
+    if (!isFieldFocusedRef.current && pendingFieldsRef.current.size === 0) {
+      const latestCredit = store.getState().undoable?.present?.credits?.list?.find(
+        (credit: CreditsInfo) => credit.id === id,
+      );
+      if (latestCredit) adoptIncomingValues(latestCredit.heading, latestCredit.text);
+    }
   }, [
     readOnly,
     flushDraftToRedux,
-    persistCredit,
+    persistPendingCredit,
     db,
     outlineId,
     dispatch,
+    id,
     adoptIncomingValues,
     heading,
     text,

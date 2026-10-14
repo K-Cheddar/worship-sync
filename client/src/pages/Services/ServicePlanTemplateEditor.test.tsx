@@ -229,6 +229,25 @@ describe("ServicePlanTemplateEditor", () => {
     expect(screen.getByLabelText(/^Template name/i)).toBeInTheDocument();
   });
 
+  it("reconciles the editor name with the server after an autosave acknowledgment", async () => {
+    const user = userEvent.setup();
+    mockSaveServicePlanTemplate.mockResolvedValue({
+      success: true,
+      template: serverTemplate({ name: "Canonical template name" }),
+    });
+    renderEditor();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
+    setTemplateName("Submitted template name");
+
+    await waitFor(() => expect(mockSaveServicePlanTemplate).toHaveBeenCalled(), {
+      timeout: AUTOSAVE_WAIT_MS,
+    });
+    await screen.findByText("Synced");
+    expect(screen.getByLabelText(/^Template name/i)).toHaveValue("Canonical template name");
+  }, AUTOSAVE_TEST_TIMEOUT_MS);
+
   it("edits standing assignees from a side sheet", async () => {
     const user = userEvent.setup();
     renderEditor();

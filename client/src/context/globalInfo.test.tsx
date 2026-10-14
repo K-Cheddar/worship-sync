@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode, useContext } from "react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import GlobalInfoProvider, {
   GlobalInfoContext,
   globalFireDbInfo,
 } from "./globalInfo";
+import { useTeamsLiveSync } from "../pages/Teams/hooks/useTeamsLiveSync";
 import * as authApi from "../api/auth";
 import { requestAuthRecovery } from "../api/authErrorBus";
 import * as firebaseApps from "../firebase/apps";
@@ -104,6 +105,8 @@ jest.mock("../api/auth", () => ({
     }
   },
   getAuthBootstrap: jest.fn(),
+  authenticatedApiFetch: (path: RequestInfo | URL, options?: RequestInit) =>
+    fetch(path, options),
   getSharedDataToken: jest.fn(() =>
     Promise.resolve({ success: true, token: "test-token", database: "main" })
   ),
@@ -308,6 +311,41 @@ const createDeferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
+const TeamsLiveProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  useTeamsLiveSync(context?.churchId, () => undefined, Boolean(context?.canUseTeamsLiveSync));
+  return <div>
+    <div data-testid="teams-live-church">{context?.churchId}</div>
+    <div data-testid="teams-live-capability">{String(context?.canUseTeamsLiveSync)}</div>
+      <div data-testid="teams-broad-capability">{String(context?.hasBroadTeamsReadAccess)}</div>
+      <div data-testid="can-edit-teams">{String(context?.canEditTeams)}</div>
+      <div data-testid="can-edit-worship">{String(context?.canEditTeam?.("worship"))}</div>
+      <div data-testid="can-edit-av">{String(context?.canEditTeam?.("av"))}</div>
+      <div data-testid="can-view-teams">{String(context?.canViewTeams)}</div>
+      <div data-testid="can-view-services">{String(context?.canViewServices)}</div>
+      <div data-testid="can-edit-services">{String(context?.canEditServices)}</div>
+      <div data-testid="broad-teams-read">{String(context?.hasBroadTeamsReadAccess)}</div>
+  </div>;
+};
+
+const teamsStreamRequests = (fetchMock: jest.Mock) =>
+  fetchMock.mock.calls.filter(([input]) =>
+    String(input).includes("api/churches/church-1/teams/stream"),
+  );
+
+const openTeamsStreamResponse = () =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
+
 const ContextProbe = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
@@ -457,6 +495,34 @@ const CodeActionsProbe = () => {
   );
 };
 
+const VerifyNavigationProbe = () => {
+  const context = useContext(GlobalInfoContext);
+  const location = useLocation();
+  const navigate = useNavigate();
+  if (!context) return null;
+
+  return (
+    <div>
+      <div data-testid="history-path">{location.pathname}</div>
+      <div data-testid="verify-auth-status">{context.authServerStatus}</div>
+      <button
+        type="button"
+        onClick={() =>
+          void context.verifyEmailCode({
+            pendingAuthId: "pending-history-test",
+            code: "123456",
+          })
+        }
+      >
+        Verify email code
+      </button>
+      <button type="button" onClick={() => navigate(-1)}>
+        Go back
+      </button>
+    </div>
+  );
+};
+
 describe("GlobalInfoProvider presentation listener contracts", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -490,6 +556,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     (authApi.createHumanSession as jest.Mock).mockReset();
     (authApi.createChurchAccount as jest.Mock).mockReset();
     (authApi.exchangeDesktopAuth as jest.Mock).mockReset();
+    (authApi.verifyEmailCode as jest.Mock).mockReset();
     (authApi.resendEmailCode as jest.Mock).mockReset();
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(demoBootstrap);
     (authApi.getSharedDataToken as jest.Mock).mockResolvedValue({
@@ -540,6 +607,98 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     }) as jest.Mock;
   });
 
+  it.each([
+    ["admin", { ...loggedInHumanBootstrap, permissions: { teams: "none" } }, true],
+    ["Teams viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "view" } }, false],
+    ["Teams editor", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "edit" } }, true],
+    ["Services editor", { ...loggedInHumanBootstrap, role: "member", permissions: { teams: "none", services: "edit" } }, false],
+    ["scoped manager", { ...loggedInHumanBootstrap, role: "member", permissions: { teamScopes: { worship: "edit" } } }, false],
+    ["membership reader", { ...loggedInHumanBootstrap, role: "member", appAccess: "member", permissions: { teams: "none" } }, false],
+    ["Services viewer", { ...loggedInHumanBootstrap, role: "member", permissions: { services: "view" } }, false],
+    ["booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" }, device: { ...loggedInWorkstationBootstrap.device, serviceWorkspaceAccess: true } }, false],
+    ["normalized booth", { ...loggedInWorkstationBootstrap, permissions: { teams: "view", services: "edit" } }, false],
+    ["default workstation", { ...loggedInWorkstationBootstrap, permissions: { services: "view" } }, false],
+    ["display", loggedInDisplayBootstrap, false],
+  ])("gates authenticated Teams live stream access for %s", async (_name, bootstrap, allowed) => {
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockResolvedValue(openTeamsStreamResponse());
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(bootstrap);
+    const { unmount } = renderProvider(<TeamsLiveProbe />);
+    await waitFor(() => expect(screen.getByTestId("teams-live-church")).toHaveTextContent("church-1"));
+    expect(screen.getByTestId("teams-live-capability")).toHaveTextContent(String(allowed));
+    expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent(String(allowed));
+    const requests = teamsStreamRequests(fetchMock);
+    expect(requests.map(([, options]) => options)).toEqual(
+      allowed
+        ? [
+            expect.objectContaining({
+              method: "GET",
+              headers: expect.objectContaining({ Accept: "text/event-stream" }),
+            }),
+          ]
+        : [],
+    );
+    unmount();
+  });
+
+  it.each([
+    ["no grants", { teams: "none", services: "none", teamScopes: {} }, false],
+    ["Teams view only", { teams: "view", services: "none", teamScopes: {} }, false],
+    ["Teams edit only", { teams: "edit", services: "none", teamScopes: {} }, false],
+    ["team scope only", { teams: "none", services: "none", teamScopes: { worship: "edit" } }, false],
+    ["Services view", { teams: "none", services: "view", teamScopes: {} }, true],
+    ["Services edit", { teams: "none", services: "edit", teamScopes: {} }, true],
+  ])("derives Services navigation independently for %s", async (_name, permissions, allowed) => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      role: "member",
+      permissions,
+    });
+    renderProvider(<TeamsLiveProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("can-view-services")).toHaveTextContent(String(allowed)),
+    );
+  });
+
+  it("derives scoped edit from legacy appAccess member bootstrap", async () => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      role: "member",
+      appAccess: "member",
+      permissions: {
+        teams: "none",
+        services: "none",
+        teamScopes: { worship: "edit" },
+      },
+    });
+    renderProvider(<TeamsLiveProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("can-edit-worship")).toHaveTextContent("true"),
+    );
+    expect(screen.getByTestId("can-edit-teams")).toHaveTextContent("false");
+    expect(screen.getByTestId("can-edit-av")).toHaveTextContent("false");
+    expect(screen.getByTestId("can-view-teams")).toHaveTextContent("true");
+    expect(screen.getByTestId("broad-teams-read")).toHaveTextContent("false");
+  });
+
+  it("keeps broad Teams edit separate from transport eligibility", async () => {
+    const displayWithBroadPermission = {
+      ...loggedInDisplayBootstrap,
+      permissions: { teams: "edit" },
+    };
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
+      displayWithBroadPermission,
+    );
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockResolvedValue(openTeamsStreamResponse());
+    renderProvider(<TeamsLiveProbe />);
+    await waitFor(() =>
+      expect(screen.getByTestId("teams-broad-capability")).toHaveTextContent("true"),
+    );
+    expect(screen.getByTestId("teams-live-capability")).toHaveTextContent("false");
+    expect(teamsStreamRequests(fetchMock)).toHaveLength(0);
+  });
+
   it("does not sign shared-data auth out while initial bootstrap is loading", async () => {
     let resolveBootstrap: ((value: typeof demoBootstrap) => void) | undefined;
     (authApi.getAuthBootstrap as jest.Mock).mockImplementation(
@@ -561,6 +720,53 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     await waitFor(() => expect(signOutMock).toHaveBeenCalledTimes(1));
   });
 
+  it("grants only service-time writes to a Controller-None Services editor", async () => {
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+      ...loggedInHumanBootstrap,
+      role: "member",
+      appAccess: "member",
+      controllerAccess: "none",
+      permissions: { teams: "none", services: "edit", teamScopes: {} },
+    });
+
+    renderProvider(<TeamsLiveProbe />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("can-edit-services")).toHaveTextContent("true"),
+    );
+    expect(globalFireDbInfo.writeCapabilities).toEqual({
+      presentation: false,
+      timers: false,
+      serviceRuntime: false,
+      serviceManagement: true,
+    });
+  });
+
+  it("replaces the login history entry when email-code sign-in completes", async () => {
+    (authApi.verifyEmailCode as jest.Mock).mockResolvedValue({
+      success: true,
+      bootstrap: loggedInHumanBootstrap,
+    });
+    renderProvider(<VerifyNavigationProbe />, ["/before-login", "/login"]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("verify-auth-status")).toHaveTextContent(
+        "online",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Verify email code" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("history-path")).toHaveTextContent("/home"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("history-path")).toHaveTextContent(
+        "/before-login",
+      ),
+    );
+  });
+
   it("marks display sessions as read-only for shared realtime data", async () => {
     (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
       loggedInDisplayBootstrap,
@@ -571,11 +777,67 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     await waitFor(() =>
       expect(firebaseApps.getSharedDataDatabase).toHaveBeenCalled(),
     );
-    expect(globalFireDbInfo.canWriteSharedData).toBe(false);
+    expect(globalFireDbInfo.writeCapabilities).toEqual({
+      presentation: false,
+      timers: false,
+      serviceRuntime: false,
+      serviceManagement: false,
+    });
     expect(
       onValueCallbacks.has("churches/church-1/data/currentServiceWorkspace"),
     ).toBe(false);
   });
+
+  it.each(["music", "full"] as const)(
+    "allows Controller %s runtime writes without Services management access",
+    async (controllerAccess) => {
+      (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+        ...loggedInHumanBootstrap,
+        role: "member",
+        appAccess: controllerAccess,
+        controllerAccess,
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+      });
+
+      renderProvider(<TeamsLiveProbe />);
+
+      await waitFor(() =>
+        expect(globalFireDbInfo.writeCapabilities.serviceRuntime).toBe(true),
+      );
+      expect(screen.getByTestId("can-edit-services")).toHaveTextContent("false");
+      expect(globalFireDbInfo.writeCapabilities).toEqual({
+        presentation: true,
+        timers: true,
+        serviceRuntime: true,
+        serviceManagement: false,
+      });
+    },
+  );
+
+  it.each(["view", "none"] as const)(
+    "does not grant Controller %s runtime writes",
+    async (controllerAccess) => {
+      (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue({
+        ...loggedInHumanBootstrap,
+        role: "member",
+        appAccess: controllerAccess === "none" ? "member" : controllerAccess,
+        controllerAccess,
+        permissions: { teams: "none", services: "none", teamScopes: {} },
+      });
+
+      renderProvider(<TeamsLiveProbe />);
+
+      await waitFor(() =>
+        expect(globalFireDbInfo.writeCapabilities.serviceRuntime).toBe(false),
+      );
+      expect(globalFireDbInfo.writeCapabilities).toEqual({
+        presentation: false,
+        timers: false,
+        serviceRuntime: false,
+        serviceManagement: false,
+      });
+    },
+  );
 
   it("routes storage updates to the current debounced projector, monitor, and stream actions", async () => {
     renderProvider();

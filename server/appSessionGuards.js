@@ -25,7 +25,12 @@ export const createAppSessionGuards = ({
             "Operator",
           sessionKind: bootstrap.sessionKind,
           database: bootstrap.database,
-          access: bootstrap.appAccess || "view",
+          controllerAccess:
+            bootstrap.sessionKind === "human"
+              ? bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view"
+              : undefined,
+          // Compatibility alias for existing workstation and route consumers.
+          access: bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view",
           churchId: bootstrap.churchId || "",
           role: bootstrap.role || "member",
           workstationTokenProvided:
@@ -42,8 +47,11 @@ export const createAppSessionGuards = ({
     }
   };
 
+  const getControllerAccess = (appSession) =>
+    appSession?.controllerAccess ?? appSession?.access;
+
   const requireFullAppAccess = (req, res, next) => {
-    if (req.appSession?.access !== "full") {
+    if (getControllerAccess(req.appSession) !== "full") {
       return res.status(403).json({ error: "Full access is required." });
     }
     next();
@@ -72,8 +80,8 @@ export const createAppSessionGuards = ({
 
   const requireSongAudioEditAccess = (req, res, next) => {
     if (
-      req.appSession?.access !== "full" &&
-      req.appSession?.access !== "music"
+      getControllerAccess(req.appSession) !== "full" &&
+      getControllerAccess(req.appSession) !== "music"
     ) {
       return res.status(403).json({ error: "Music access is required." });
     }
@@ -90,12 +98,11 @@ export const createAppSessionGuards = ({
 
   const hasHumanChurchResourceReadAccess = (req) =>
     req.appSession?.sessionKind === "human" &&
-    ["full", "music", "view"].includes(req.appSession?.access);
+    ["full", "music", "view"].includes(getControllerAccess(req.appSession));
 
-  // Phase-one church resources use the existing app access tiers. Human
-  // full/music/view sessions may browse/read; only full app access may mutate.
-  // A paired workstation is intentionally not a library browser merely
-  // because it belongs to this church.
+  // Resources keep their existing human Full/Music/View capability rule; this
+  // is separate from Teams and Services permission normalization. A paired
+  // workstation is not a library browser merely because it belongs to church.
   const requireChurchResourceBrowseAccess = (req, res, next) => {
     if (!hasHumanChurchResourceReadAccess(req)) {
       return res.status(403).json({
@@ -127,7 +134,7 @@ export const createAppSessionGuards = ({
   const requireChurchResourceEditAccess = (req, res, next) => {
     if (
       req.appSession?.sessionKind !== "human" ||
-      req.appSession?.access !== "full"
+      getControllerAccess(req.appSession) !== "full"
     ) {
       return res.status(403).json({
         error: "Full access is required to manage church resources.",

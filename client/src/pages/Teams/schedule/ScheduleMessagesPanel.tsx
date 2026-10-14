@@ -2,6 +2,7 @@ import type { NotificationIntent, TeamRosterMember } from "../../../api/authType
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer/Drawer";
 import { scheduleMemberName } from "../teamsUtils";
+import ScheduleReplacementInvitationForm, { type ScheduleReplacementVacancy } from "./ScheduleReplacementInvitationForm";
 
 type ScheduleMessageCounts = {
   requested: number;
@@ -28,6 +29,26 @@ type ScheduleMessagesPanelProps = {
   onSend: (intent: NotificationIntent) => void;
   onCloseInvitation: (intent: NotificationIntent) => void;
   onLoadOlder: () => void;
+  replacementVacancies?: ScheduleReplacementVacancy[];
+  onPrepareReplacement?: (vacancy: ScheduleReplacementVacancy, memberId: string) => Promise<void>;
+};
+
+const deliveryStatusLabel = (intent: NotificationIntent) => {
+  const status = intent.attemptStatus || intent.status;
+  const wasSent = intent.status === "sent" || ["accepted", "sent", "delivered", "undelivered"].includes(status);
+  if (!wasSent && (intent.status === "unknown" || intent.attemptOutcome === "unknown")) {
+    return "We couldn't confirm whether this text was sent";
+  }
+  if (wasSent) {
+    const delivery = status === "delivered" ? "Delivered" : status === "undelivered" || status === "failed" ? "Delivery failed" : ["pending", "accepted", "sent"].includes(status) ? "Waiting for delivery confirmation" : "";
+    return `Sent${delivery ? ` · ${delivery}` : ""}`;
+  }
+  if (status === "sending") return "Sending";
+  if (status === "failed") return "Failed";
+  if (status === "suppressed") return "Not sent";
+  if (status === "preview" || status === "ready") return "Ready to send";
+  if (status === "pending") return "Waiting for delivery confirmation";
+  return status;
 };
 
 const ScheduleMessagesPanel = ({
@@ -44,6 +65,8 @@ const ScheduleMessagesPanel = ({
   onSend,
   onCloseInvitation,
   onLoadOlder,
+  replacementVacancies = [],
+  onPrepareReplacement,
 }: ScheduleMessagesPanelProps) => (
   <Drawer
     isOpen={open}
@@ -58,23 +81,24 @@ const ScheduleMessagesPanel = ({
   >
     <div className="mb-4 space-y-1">
       <p className="text-sm text-gray-300">
-        Assignment SMS stays in draft until you review and send each message.
+        Assignment text messages stay in draft until you review and send each one.
       </p>
       <div
         className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400"
         aria-label="Schedule message and response counts"
       >
         <span>Loaded {counts.requested}</span>
-        <span>Provider accepted {counts.accepted}</span>
+        <span>Sent {counts.accepted}</span>
         <span>Delivered {counts.delivered}</span>
         <span>Failed {counts.failed}</span>
-        <span>Uncertain {counts.uncertain}</span>
+        <span>Needs a status check {counts.uncertain}</span>
         <span>Volunteer responses {counts.responded}</span>
-        <span>Waiting {counts.waiting}</span>
-        <span>Opted out {counts.optedOut}</span>
+        <span>Waiting for a response {counts.waiting}</span>
+        <span>Phone numbers opted out {counts.optedOut}</span>
       </div>
     </div>
 
+    {onPrepareReplacement ? <ScheduleReplacementInvitationForm vacancies={replacementVacancies} members={members} duplicateFirstNames={duplicateFirstNames} onPrepare={onPrepareReplacement} /> : null}
     {loading && intents.length === 0 ? (
       <p className="text-sm text-gray-400" role="status">Loading schedule messages…</p>
     ) : intents.length === 0 ? (
@@ -85,19 +109,23 @@ const ScheduleMessagesPanel = ({
       <div className="space-y-2">
         {intents.map((intent) => {
           const member = members.find((item) => item.memberId === intent.memberId);
-          const assignmentResponse = intent.intentType === "replacement_request"
+          const assignmentResponse = intent.intentType === "schedule_initial_notification"
+            ? "per assignment"
+            : intent.intentType === "replacement_request"
             ? intent.replacementResolvedAt
               ? "invitation closed"
-              : "awaiting manual follow-up"
+              : "needs a follow-up"
             : getVolunteerResponse(intent);
-          const label = intent.intentType === "assignment_notification"
-            ? "Assignment notification"
+          const label = intent.intentType === "schedule_initial_notification"
+            ? "Schedule text message"
+            : intent.intentType === "assignment_notification"
+            ? "Assignment text message"
             : intent.intentType === "assignment_confirmation"
-              ? "Assignment response"
+              ? "Assignment response message"
               : intent.intentType === "schedule_change"
                 ? "Schedule change"
                 : "Replacement invitation";
-          const actionable = ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
+          const actionable = intent.intentType !== "schedule_initial_notification" && ["preview", "ready"].includes(intent.status) && intent.previewEligible !== false;
 
           return (
             <article key={intent.intentId} className="rounded border border-gray-700 px-3 py-2">
@@ -107,7 +135,7 @@ const ScheduleMessagesPanel = ({
                     {label} · {member ? scheduleMemberName(member, duplicateFirstNames) : "Roster member"}
                   </p>
                   <p className="text-xs text-gray-400">
-                    Delivery: {intent.attemptStatus || intent.status} · Volunteer: {assignmentResponse}
+                    {deliveryStatusLabel(intent)} · Volunteer: {assignmentResponse}
                   </p>
                 </div>
                 {actionable ? (
@@ -117,7 +145,7 @@ const ScheduleMessagesPanel = ({
                     isLoading={sendingIntentId === intent.intentId}
                     onClick={() => onSend(intent)}
                   >
-                    Send one SMS
+                    Send text message
                   </Button>
                 ) : null}
                 {intent.intentType === "replacement_request" && !intent.replacementResolvedAt && !["sending", "unknown"].includes(intent.status) ? (
@@ -142,8 +170,11 @@ const ScheduleMessagesPanel = ({
               ) : null}
               {intent.attemptOutcome === "unknown" ? (
                 <p className="mt-1 text-xs text-amber-200">
-                  Provider outcome uncertain. Check SMS delivery history before any further action.
+                  We couldn't confirm whether this text was sent. Check message history before trying again.
                 </p>
+              ) : null}
+              {intent.intentType === "schedule_initial_notification" && ["preview", "ready"].includes(intent.status) ? (
+                <p className="mt-1 text-xs text-amber-200">Schedule text messages are not available right now. Check back later.</p>
               ) : null}
             </article>
           );

@@ -127,6 +127,16 @@ jest.mock("../../containers/Overlays/eventParser", () => ({
   getServicePlanningImportDataFromUrl: jest.fn(),
 }));
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 jest.mock("./extractPdfText", () => ({
   extractTextFromPdfFile: jest.fn(),
 }));
@@ -457,6 +467,32 @@ describe("ServicePlanEditor", () => {
       success: true,
       servicePlan: {} as ServicePlan,
     });
+  });
+
+  it("autosaves the canonical church-local plan date across a UTC date boundary", async () => {
+    const localSaturdayOccurrence: TeamScheduleOccurrence = {
+      ...occurrence,
+      occurrenceId: "service-1@2026-10-04T03:30:00.000Z",
+      serviceId: "service-1",
+      startsAt: "2026-10-04T03:30:00.000Z",
+      serviceDate: "2026-10-03",
+    };
+    const user = userEvent.setup();
+    renderEditor({ occurrence: localSaturdayOccurrence });
+    await user.click(await screen.findByRole("button", { name: /Start from scratch/i }));
+    await waitFor(
+      () => expect(mockSaveServicePlan).toHaveBeenCalledWith(
+        "church-1",
+        "service-1@2026-10-03",
+        expect.anything(),
+      ),
+      { timeout: 2_500 },
+    );
+    const [, planKey, body] = mockSaveServicePlan.mock.calls.at(-1)!;
+    expect(planKey).toBe("service-1@2026-10-03");
+    expect(body.date).toBe("2026-10-03");
+    expect(body.startsAt).toBe("2026-10-04T03:30:00.000Z");
+    expect(localSaturdayOccurrence.occurrenceId).toBe("service-1@2026-10-04T03:30:00.000Z");
   });
 
   describe("Equipment tab", () => {
@@ -2820,17 +2856,22 @@ Opening Song to begin the worship experience.
       servicePlan:
         getServicePlanCallCount++ < 2 ? initialPlan : resumedPlan,
     }));
+    const onPlanTimingChange = jest.fn();
 
     try {
       render(
         <StrictMode>
-          {editorTree()}
+          {editorTree({ onPlanTimingChange })}
         </StrictMode>,
       );
       expect(
         await screen.findByLabelText("Live on schedule: Welcome"),
       ).toBeInTheDocument();
       await waitFor(() => expect(mockGetServicePlan).toHaveBeenCalledTimes(2));
+      expect(onPlanTimingChange).toHaveBeenCalledWith(expect.objectContaining({
+        timezone: "UTC",
+        startsAt: initialPlan.startsAt,
+      }));
 
       act(() => {
         Object.defineProperty(document, "visibilityState", {
@@ -2941,8 +2982,8 @@ Opening Song to begin the worship experience.
 
   it("shares from plan actions on narrow layouts and lets an editor make an item live from its row", async () => {
     // Make live only appears on the service's calendar day — pin this
-    // occurrence to "today" (plan timezone = local) so the control is available.
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // occurrence to "today" in the mocked church timezone so the control is available.
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {
@@ -3159,7 +3200,7 @@ Opening Song to begin the worship experience.
   });
 
   it("offers an explicit publish for an unpublished plan", async () => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {
@@ -3221,7 +3262,7 @@ Opening Song to begin the worship experience.
   });
 
   it("scrolls to the live item in view mode when the live element changes", async () => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {
@@ -3323,7 +3364,7 @@ Opening Song to begin the worship experience.
   });
 
   it("follows by default and resumes the same live row inside the plan list", async () => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {
@@ -3383,7 +3424,7 @@ Opening Song to begin the worship experience.
   });
 
   it("preserves the editing viewport and shows Follow live when the live row is outside the plan viewport", async () => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {
@@ -3454,7 +3495,7 @@ Opening Song to begin the worship experience.
   });
 
   it("reconciles on return to Plan and keeps an explicit pause across tabs", async () => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {
@@ -3530,7 +3571,7 @@ Opening Song to begin the worship experience.
   });
 
   it("waits for a collapsed live section's expansion before scrolling", async () => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timeZone = "America/New_York";
     const todayDate = calendarDateInTimeZone(new Date(), timeZone);
     const todayStartsAt = `${todayDate}T14:00:00.000Z`;
     const todayOccurrence: TeamScheduleOccurrence = {

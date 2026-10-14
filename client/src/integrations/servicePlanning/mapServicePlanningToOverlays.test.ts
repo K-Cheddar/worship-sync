@@ -422,7 +422,7 @@ describe("mapServicePlanningRows", () => {
       "Sabbath School Host",
       list,
     );
-    expect(hit?.id).toBe("host");
+    expect(hit.kind === "match" ? hit.overlay.id : null).toBe("host");
   });
 
   it("findOverlayForServicePlanningCandidate ignores non-participant overlays", () => {
@@ -435,7 +435,7 @@ describe("mapServicePlanningRows", () => {
       "Sabbath School Host",
       list,
     );
-    expect(hit?.id).toBe("participant");
+    expect(hit.kind === "match" ? hit.overlay.id : null).toBe("participant");
   });
 
   it("findOverlayForServicePlanningCandidate treats missing types as participant overlays", () => {
@@ -445,7 +445,7 @@ describe("mapServicePlanningRows", () => {
       "Sabbath School Host",
       list,
     );
-    expect(hit?.id).toBe("legacy");
+    expect(hit.kind === "match" ? hit.overlay.id : null).toBe("legacy");
   });
 
   it("findOverlayForServicePlanningCandidate skips overlays already used for duplicate events", () => {
@@ -466,15 +466,16 @@ describe("mapServicePlanningRows", () => {
       list,
       used,
     );
-    expect(first?.id).toBe("cohostA");
-    used.add(first!.id);
+    expect(first.kind === "match" ? first.overlay.id : null).toBe("cohostA");
+    if (first.kind !== "match") throw new Error("Expected first exact overlay match");
+    used.add(first.overlay.id);
     const second = findOverlayForServicePlanningCandidate(
       "Sabbath School Lesson Study",
       "Sabbath School Co-Host",
       list,
       used,
     );
-    expect(second?.id).toBe("cohostB");
+    expect(second.kind === "match" ? second.overlay.id : null).toBe("cohostB");
   });
 
   it("findOverlayForServicePlanningCandidate does not use fuzzy fallback for explicit event slots", () => {
@@ -492,7 +493,7 @@ describe("mapServicePlanningRows", () => {
       list,
     );
 
-    expect(hit).toBeNull();
+    expect(hit).toEqual({ kind: "none" });
   });
 
   it("split: suffix list as RTDB object still maps Host to first token", () => {

@@ -100,6 +100,34 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
+  it("allows Services Edit to open the read-only service viewer without Controller or Teams access", () => {
+    for (const sessionKind of ["human", "workstation"] as const) {
+      expect(
+        isRouteAllowedForSession("/current-service/view", {
+          sessionKind,
+          loginState: "success",
+          access: "none",
+          controllerAccess: "none",
+          permissions: { teams: "none", services: "edit" },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it("continues to deny the service viewer without Teams or Services access", () => {
+    for (const sessionKind of ["human", "workstation"] as const) {
+      expect(
+        isRouteAllowedForSession("/current-service/view", {
+          sessionKind,
+          loginState: "success",
+          access: "none",
+          controllerAccess: "none",
+          permissions: { teams: "none", services: "none" },
+        }),
+      ).toBe(false);
+    }
+  });
+
   it("blocks the read-only current service viewer without service-plan access", () => {
     expect(
       isRouteAllowedForSession("/current-service/view", {
@@ -145,13 +173,42 @@ describe("sessionRouteAccess", () => {
     ).toBe(true);
   });
 
-  it("blocks teams routes for human sessions without Teams access", () => {
+  it.each(["member", "view", "music", "full"] as const)(
+    "allows a %s human to attempt Teams without stored permission",
+    (access) => {
+      const context = {
+        sessionKind: "human" as const,
+        loginState: "success" as const,
+        access,
+        permissions: { teams: "none" as const, services: "none" as const, teamScopes: {} },
+      };
+      expect(isRouteAllowedForSession("/teams-and-services", context)).toBe(true);
+      expect(
+        isRouteAllowedForSession("/teams-and-services/schedules", context),
+      ).toBe(true);
+      expect(isRouteAllowedForSession("/teams-and-services-extra", context)).toBe(
+        false,
+      );
+    },
+  );
+
+  it("keeps view and music restrictions outside the Teams workspace", () => {
+    for (const access of ["view", "music"] as const) {
+      expect(
+        isRouteAllowedForSession("/boards/controller", {
+          sessionKind: "human",
+          loginState: "success",
+          access,
+          permissions: { teams: "none", services: "none", teamScopes: {} },
+        }),
+      ).toBe(false);
+    }
     expect(
-      isRouteAllowedForSession("/teams/schedules", {
+      isRouteAllowedForSession("/projector", {
         sessionKind: "human",
         loginState: "success",
-        access: "full",
-        permissions: { teams: "none" },
+        access: "view",
+        permissions: { teams: "none", services: "none", teamScopes: {} },
       }),
     ).toBe(false);
   });
@@ -342,41 +399,69 @@ describe("sessionRouteAccess", () => {
   });
 });
 
-describe("schedule-only member routing", () => {
-  const member = {
+describe("route ownership with independent Controller access", () => {
+  const noController = {
     loginState: "success",
     sessionKind: "human",
-    access: "member",
+    controllerAccess: "none",
   } as const;
 
-  it("allows only the member surfaces", () => {
-    expect(isRouteAllowedForSession("/my-schedule", member)).toBe(true);
-    expect(isRouteAllowedForSession("/home", member)).toBe(true);
+  it("allows personal routes and a server-authorized Teams attempt", () => {
+    expect(isRouteAllowedForSession("/my-schedule", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/home", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/teams-and-services", noController)).toBe(true);
+    expect(
+      isRouteAllowedForSession("/teams-and-services/schedules", noController),
+    ).toBe(true);
+    expect(isRouteAllowedForSession("/teams", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/resources", noController)).toBe(false);
   });
 
-  it("refuses operator surfaces a hidden link would otherwise leave reachable", () => {
-    // Hiding the cards on Home is presentation only; typing the URL must not
-    // open a read-only controller.
-    expect(isRouteAllowedForSession("/controller", member)).toBe(false);
-    expect(isRouteAllowedForSession("/overlay-controller", member)).toBe(false);
-    expect(isRouteAllowedForSession("/boards/controller", member)).toBe(false);
-    expect(isRouteAllowedForSession("/credits-editor", member)).toBe(false);
-    expect(isRouteAllowedForSession("/account", member)).toBe(false);
-    expect(isRouteAllowedForSession("/teams-and-services", member)).toBe(false);
+  it("refuses Controller and operator surfaces", () => {
+    for (const path of [
+      "/controller",
+      "/aux-controller/abc",
+      "/overlay-controller",
+      "/boards/controller",
+      "/credits-editor",
+    ]) {
+      expect(isRouteAllowedForSession(path, noController)).toBe(false);
+    }
   });
 
-  it("is deny-by-default, so a route added later stays closed", () => {
-    expect(isRouteAllowedForSession("/some-future-operator-page", member)).toBe(
+  it("does not let Controller None suppress explicit Teams or Services access", () => {
+    const scopedManager = {
+      ...noController,
+      permissions: {
+        teams: "none" as const,
+        services: "none" as const,
+        teamScopes: { worship: "edit" as const },
+      },
+    };
+    const servicePlanner = {
+      ...noController,
+      permissions: { teams: "none" as const, services: "edit" as const, teamScopes: {} },
+    };
+    expect(
+      isRouteAllowedForSession("/teams-and-services/schedules", scopedManager),
+    ).toBe(true);
+    expect(isRouteAllowedForSession("/current-service", servicePlanner)).toBe(true);
+    expect(isRouteAllowedForSession("/controller", servicePlanner)).toBe(false);
+    expect(isRouteAllowedForSession("/resources", servicePlanner)).toBe(false);
+  });
+
+  it("keeps view, music, and full Controller behavior", () => {
+    expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "view" })).toBe(true);
+    expect(isRouteAllowedForSession("/resources", { ...noController, controllerAccess: "view" })).toBe(true);
+    expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "music" })).toBe(true);
+    expect(isRouteAllowedForSession("/resources", { ...noController, controllerAccess: "music" })).toBe(true);
+    expect(isRouteAllowedForSession("/controller", { ...noController, controllerAccess: "full" })).toBe(true);
+    expect(isRouteAllowedForSession("/resources", { ...noController, controllerAccess: "full" })).toBe(true);
+  });
+
+  it("keeps future routes closed", () => {
+    expect(isRouteAllowedForSession("/some-future-operator-page", noController)).toBe(
       false,
     );
-  });
-
-  it("leaves view access unchanged", () => {
-    const viewer = {
-      loginState: "success",
-      sessionKind: "human",
-      access: "view",
-    } as const;
-    expect(isRouteAllowedForSession("/controller", viewer)).toBe(true);
   });
 });

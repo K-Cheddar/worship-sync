@@ -6,6 +6,7 @@ import {
   chatDayKey,
   createChatService,
 } from "./chatService.js";
+import { invalidateChurchServiceTimeZone } from "./churchServiceTimeZone.js";
 
 const humanSession = {
   actorId: "user_1",
@@ -58,7 +59,7 @@ test("reads a weekly chat through both weekly and legacy daily storage keys", as
           ? messagesQuery
           : {
               doc: () => ({
-                get: async () => ({ exists: true, data: () => ({ timeZone: "UTC" }) }),
+                get: async () => ({ exists: true, data: () => ({ serviceTimeZone: "UTC" }) }),
               }),
             },
     }),
@@ -89,46 +90,42 @@ test("reads a weekly chat through both weekly and legacy daily storage keys", as
   ]);
 });
 
-test("caches the church timezone before typing heartbeats", async () => {
+test("chat reads the dedicated church timezone and ignores browser hints", async () => {
   let reads = 0;
-  let writes = 0;
+  let serviceTimeZone = "America/New_York";
   const service = createChatService({
     now: () => new Date("2026-08-09T16:00:00.000Z"),
     getFirestore: () => ({
-      collection: () => ({
+      collection: (name) => {
+        assert.equal(name, "churches");
+        return {
         doc: () => ({
           get: async () => {
             reads += 1;
-            return { exists: false };
-          },
-          set: async () => {
-            writes += 1;
+            return { exists: true, data: () => ({ serviceTimeZone }) };
           },
         }),
-      }),
+        };
+      },
     }),
   });
 
-  await service.getContext({
-    churchId: "church_1",
+  const first = await service.getContext({
+    churchId: "church_timezone_test",
     session: humanSession,
-    timeZoneHint: "America/New_York",
+    timeZoneHint: "Pacific/Auckland",
   });
-  await service.updateTyping({
-    churchId: "church_1",
+  serviceTimeZone = "UTC";
+  invalidateChurchServiceTimeZone("church_timezone_test");
+  const second = await service.getContext({
+    churchId: "church_timezone_test",
     session: humanSession,
-    isTyping: true,
-    timeZoneHint: "America/New_York",
-  });
-  await service.updateTyping({
-    churchId: "church_1",
-    session: humanSession,
-    isTyping: false,
     timeZoneHint: "America/New_York",
   });
 
-  assert.equal(reads, 1);
-  assert.equal(writes, 1);
+  assert.equal(first.timeZone, "America/New_York");
+  assert.equal(second.timeZone, "UTC");
+  assert.equal(reads, 2);
 });
 
 test("creates, lists, and idempotently retries a daily message", async () => {
@@ -154,7 +151,7 @@ test("creates, lists, and idempotently retries a daily message", async () => {
   assert.equal(first.text, "Sound check is ready.");
   assert.equal(first.authorId, "user_1");
   assert.equal(first.authorName, "Ada");
-  assert.equal(result.context.timeZone, "America/New_York");
+  assert.equal(result.context.timeZone, "UTC");
   assert.deepEqual(
     result.messages.map((message) => message.messageId),
     [first.messageId],

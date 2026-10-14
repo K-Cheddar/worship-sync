@@ -40,7 +40,12 @@ const loadStoreWithPresentationSync = (
     firebaseDb?: string;
     firebaseReady?: boolean;
     realtimeConnected?: boolean;
-    canWriteSharedData?: boolean;
+    writeCapabilities?: Partial<{
+      presentation: boolean;
+      timers: boolean;
+      serviceRuntime: boolean;
+      serviceManagement: boolean;
+    }>;
   } = {},
 ) => {
   let storeModule: any;
@@ -71,7 +76,13 @@ const loadStoreWithPresentationSync = (
       options.firebaseReady === false
         ? false
         : options.realtimeConnected !== false,
-    canWriteSharedData: options.canWriteSharedData ?? true,
+    writeCapabilities: {
+      presentation: true,
+      timers: true,
+      serviceRuntime: true,
+      serviceManagement: true,
+      ...options.writeCapabilities,
+    },
   };
 
   jest.isolateModules(() => {
@@ -271,6 +282,248 @@ const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
   slides: [],
   shouldSendTo: defaultShouldSendTo,
   ...overrides,
+});
+
+// Characterization tests deliberately assert the current defects. Convert the
+// defect expectations to preservation expectations when the fixes are approved.
+describe("item content integrity investigation", () => {
+  const fixture = (id: string, type = "song") => createSongDoc({
+    _id: id, _rev: "1-original", name: id, type,
+    slides: [createScreenSlide(id + "-slide", id + " exclusive words")],
+    arrangements: type === "song" ? [{
+      id: id + "-arrangement", name: "Master",
+      slides: [createScreenSlide(id + "-arr-slide", id + " exclusive words")],
+      formattedLyrics: [{ id: id + "-section", type: "Verse", name: "Verse",
+        words: id + " exclusive words", slideSpan: 1 }],
+      songOrder: [{ id: id + "-order", name: "Verse" }],
+    }] : [],
+  });
+  type Fixture = ReturnType<typeof fixture> & { _rev?: string; formattedSections?: unknown };
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const setup = () => {
+    const runtime = loadStoreWithItemPersistence();
+    const docs = new Map<string, Fixture>([
+      ["song-A", fixture("song-A")], ["song-B", fixture("song-B")],
+      ["free-A", { ...fixture("free-A", "free"),
+        formattedSections: [{ sectionNum: 1, words: "free-A exclusive words", slideSpan: 1 }] }],
+      ["free-B", fixture("free-B", "free")],
+    ]);
+    let revision = 1;
+    runtime.db.get.mockImplementation(async (id: string) => clone(docs.get(id)));
+    const commit = async (doc: Fixture) => {
+      const current = docs.get(doc._id);
+      if (current?._rev !== doc._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = String(++revision) + "-written";
+      docs.set(doc._id, clone({ ...doc, _rev: rev }));
+      return { ok: true, id: doc._id, rev };
+    };
+    runtime.db.put.mockImplementation(commit);
+    const select = (id: string) => runtime.store.dispatch(
+      runtime.itemSlice.actions.setActiveItem(clone(docs.get(id))),
+    );
+    const edit = (name: string) => runtime.store.dispatch(runtime.itemSlice.actions._setName(name));
+    const tick = async () => { await jest.advanceTimersByTimeAsync(1500); await flushListenerEffects(); };
+    return { ...runtime, docs, select, edit, tick, commit };
+  };
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("saves captured A under A after switching to B during debounce", async () => {
+    const { docs, select, edit, tick, db } = setup();
+    const beforeB = clone(docs.get("song-B"));
+    select("song-A"); edit("A edited"); select("song-B");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A edited");
+    expect(docs.get("song-B")).toEqual(beforeB);
+    expect(db.get).toHaveBeenCalledWith("song-A");
+    expect(db.get).not.toHaveBeenCalledWith("song-B");
+  });
+
+  it("saves pending A edits under A when an edit of B starts another autosave", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("song-A"); edit("A lost"); select("song-B"); edit("B edited");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A lost");
+    expect(docs.get("song-B")?.name).toBe("B edited");
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it("finishes an initiated A put under A without reconciling B", async () => {
+    const { docs, select, edit, tick, db, commit, store, postMessage } = setup();
+    const held = deferred<void>();
+    db.put.mockImplementation(async (doc: Fixture) => { await held.promise; return commit(doc); });
+    select("song-A"); edit("A in flight"); await tick();
+    expect(db.put).toHaveBeenCalledTimes(1);
+    select("song-B"); held.resolve(); await flushListenerEffects(); await flushListenerEffects();
+    expect(docs.get("song-A")?.name).toBe("A in flight");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    expect(store.getState().undoable.present.item._id).toBe("song-B");
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it("finishes A after its delayed get resolves while B starts a newer save", async () => {
+    const { docs, select, edit, tick, db } = setup();
+    const held = deferred<Fixture>();
+    db.get.mockImplementation((id: string) => id === "song-A"
+      ? held.promise : Promise.resolve(clone(docs.get(id))));
+    select("song-A"); edit("A canceled"); await tick();
+    select("song-B"); edit("B saved");
+    held.resolve(clone(docs.get("song-A")!)); await flushListenerEffects();
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("A canceled");
+    expect(docs.get("song-B")?.name).toBe("B saved");
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-A" }));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-B" }));
+  });
+
+  it("does not inherit stale free-A sections when free-B has none", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("free-A"); select("free-B"); edit("B renamed");
+    await tick();
+    expect(docs.get("free-B")?.formattedSections).not.toEqual(docs.get("free-A")?.formattedSections);
+    expect(docs.get("free-B")?.formattedSections).toBeUndefined();
+    expect(docs.get("free-B")?.slides).toEqual(fixture("free-B", "free").slides);
+  });
+
+  it("keeps custom sections with their custom item across song navigation", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("free-A"); select("song-A"); edit("Song renamed"); await tick();
+    expect(docs.get("song-A")?.formattedSections).toBeUndefined();
+    expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
+    select("free-B"); edit("Free renamed"); await tick();
+    expect(docs.get("free-B")?.formattedSections).toBeUndefined();
+    expect(docs.get("free-B")?.formattedSections).not.toEqual(docs.get("free-A")?.formattedSections);
+  });
+
+  it("preserves a second client's content when a local name edit saves", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("song-A"); edit("Local rename");
+    const remote = { ...fixture("song-A"), _rev: "2-remote",
+      arrangements: fixture("song-B").arrangements };
+    docs.set("song-A", remote);
+    await tick();
+    expect(docs.get("song-A")?.arrangements).toEqual(remote.arrangements);
+    expect(docs.get("song-A")?.name).toBe("Local rename");
+    expect(docs.get("song-A")?._rev).not.toBe(remote._rev);
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it("leaves failed writes pending without changing stored content", async () => {
+    const { docs, select, edit, tick, db, store } = setup();
+    const before = clone([...docs]);
+    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    db.put.mockRejectedValue(Object.assign(new Error("write failed"), { status: 500 }));
+    select("song-A"); edit("Failed edit"); await tick();
+    expect([...docs]).toEqual(before);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("preserves the remote revision when a second client writes between get and put", async () => {
+    const { docs, select, edit, tick, db, commit, store } = setup();
+    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote won" };
+    db.put.mockImplementation(async (doc: Fixture) => {
+      docs.set("song-A", remote);
+      return commit(doc);
+    });
+    select("song-A"); edit("Local losing edit"); await tick();
+    expect(docs.get("song-A")).toEqual(remote);
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("detects a same-field remote conflict instead of overwriting either edit", async () => {
+    const { docs, select, edit, tick, store } = setup();
+    select("song-A"); edit("Local edit");
+    const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
+    docs.set("song-A", remote);
+    store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [remote, docs.get("song-B")] });
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    await tick();
+    expect(docs.get("song-A")).toEqual(remote);
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    expect(store.getState().undoable.present.item.name).toBe("Local edit");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(remote);
+  });
+
+  it("does not clear a newer pending indicator when an older save completes", async () => {
+    const { docs, select, edit, tick, db, commit, store } = setup();
+    const firstPut = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      await firstPut.promise;
+      return commit(doc);
+    });
+
+    select("song-A");
+    edit("First edit");
+    await tick();
+    expect(db.put).toHaveBeenCalledTimes(1);
+
+    edit("Second edit");
+    firstPut.resolve();
+    await flushListenerEffects();
+    expect(store.getState().undoable.present.item.name).toBe("Second edit");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await tick();
+
+    expect(docs.get("song-A")?.name).toBe("Second edit");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("restores and retries a failed item draft when its owner is reopened", async () => {
+    const { docs, select, edit, tick, db, store } = setup();
+    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    db.put.mockRejectedValueOnce(Object.assign(new Error("write failed"), { status: 500 }));
+
+    select("song-A");
+    edit("A pending after failure");
+    await tick();
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+
+    select("song-B");
+    select("song-A");
+    expect(store.getState().undoable.present.item.name).toBe("A pending after failure");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await tick();
+
+    expect(docs.get("song-A")?.name).toBe("A pending after failure");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    errors.mockRestore();
+  });
+
+  it("rapid back-and-forth navigation saves each pending payload under its own ID", async () => {
+    const { docs, select, edit, tick } = setup();
+    select("song-A"); edit("A lost"); select("song-B"); edit("B survives");
+    select("song-A"); select("song-B"); await tick();
+    expect(docs.get("song-A")?.name).toBe("A lost");
+    expect(docs.get("song-B")?.name).toBe("B survives");
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it("undo and redo after changing items persist each restored snapshot under its own identity", async () => {
+    const { docs, select, edit, tick, store } = setup();
+    store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    await jest.runOnlyPendingTimersAsync();
+    select("song-A"); edit("A edited"); await tick();
+    select("song-B");
+    store.dispatch({ type: "@@redux-undo/UNDO" }); await tick();
+    expect(docs.get("song-A")?.name).toBe("song-A");
+    expect(docs.get("song-B")?.name).toBe("song-B");
+    store.dispatch({ type: "@@redux-undo/REDO" }); await tick();
+    expect(docs.get("song-A")?.arrangements).toEqual(fixture("song-A").arrangements);
+    expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
 });
 
 const createSongAudio = (id: string) => ({
@@ -1909,9 +2162,9 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Edited Song",
-        songAudio: undefined,
       }),
     );
+    expect(db.put.mock.calls[0][0]).not.toHaveProperty("songAudio");
   });
 
   it("keeps a delayed item save on its original database and out of the new church state", async () => {
@@ -3146,7 +3399,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
-      canWriteSharedData: true,
+      writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
     };
 
     jest.isolateModules(() => {
@@ -3242,7 +3495,7 @@ describe("store module", () => {
       db: undefined as unknown,
       database: "main",
       churchId: "church-main",
-      canWriteSharedData: true,
+      writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
     };
 
     jest.isolateModules(() => {
@@ -3351,7 +3604,7 @@ describe("store module", () => {
           db: "firebase-db",
           database: "main",
           churchId: "church-main",
-          canWriteSharedData: true,
+          writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
         },
         globalHostId: "host-123",
       }));
@@ -3472,7 +3725,7 @@ describe("store module", () => {
       timersSlice,
       setMock,
       runTransactionMock,
-    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: false } });
 
     store.dispatch(
       serviceTimesSlice.actions.initiateServices([
@@ -3516,6 +3769,159 @@ describe("store module", () => {
     expect(runTransactionMock).not.toHaveBeenCalled();
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
     expect(localStorage.getItem("timerInfo")).toContain("Display Timer");
+  });
+
+  it("lets a Controller-None Services editor persist service times without operator writes", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const { store, serviceTimesSlice, timersSlice, presentationSlice, writePresentationSnapshotToFirebase, setMock, updateMock, runTransactionMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: true },
+      });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([]));
+    store.dispatch(serviceTimesSlice.actions.addService({
+      id: "service-plan",
+      name: "Planner edit",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:30:00.000Z",
+    }));
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "timer-1", hostId: "host-123", name: "Operator timer",
+      timerType: "timer", status: "stopped", isActive: false,
+      countdownTime: "00:05", duration: 5, remainingTime: 5,
+      showMinutesOnly: false, time: 100,
+    }));
+    store.dispatch(presentationSlice.actions.updateParticipantOverlayInfo({
+      id: "operator-overlay", name: "Operator overlay", duration: 10,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1600);
+    await writePresentationSnapshotToFirebase(store.getState());
+
+    expect(runTransactionMock).toHaveBeenCalledWith(
+      "churches/church-main/data/services", expect.any(Function), { applyLocally: false },
+    );
+    expect(setMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("persists Controller Service Times countdown overrides for a runtime-only operator", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-05T11:58:00.000Z"));
+    const {
+      store,
+      serviceTimesSlice,
+      refMock,
+      runTransactionMock,
+      updateMock,
+    } = loadStoreWithPresentationSync({
+      writeCapabilities: {
+        presentation: true,
+        timers: true,
+        serviceRuntime: true,
+        serviceManagement: false,
+      },
+    });
+    const scheduledService = {
+      id: "service-runtime",
+      name: "Sunday Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:00:00.000Z",
+    };
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([scheduledService]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-runtime",
+        changes: { overrideDateTimeISO: "2026-04-05T12:11:30.000Z" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(refMock).toHaveBeenCalledWith(
+      "firebase-db",
+      "churches/church-main/data/services",
+    );
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(runTransactionMock.mock.calls[0][1]([scheduledService])).toEqual([
+      expect.objectContaining({
+        ...scheduledService,
+        overrideDateTimeISO: "2026-04-05T12:11:30.000Z",
+      }),
+    ]);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("persists Service Times appearance updates for a runtime-only operator", async () => {
+    const { store, serviceTimesSlice, runTransactionMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: {
+          presentation: true,
+          timers: true,
+          serviceRuntime: true,
+          serviceManagement: false,
+        },
+      });
+    const scheduledService = {
+      id: "service-appearance",
+      name: "Sunday Service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: "2026-04-05T12:00:00.000Z",
+    };
+
+    store.dispatch(
+      serviceTimesSlice.actions.initiateServices([scheduledService]),
+    );
+    store.dispatch(
+      serviceTimesSlice.actions.updateService({
+        id: "service-appearance",
+        changes: { color: "#ffcc00", background: "#101010" },
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(runTransactionMock.mock.calls[0][1]([scheduledService])).toEqual([
+      expect.objectContaining({
+        ...scheduledService,
+        color: "#ffcc00",
+        background: "#101010",
+      }),
+    ]);
+  });
+
+  it("does not persist service path changes when neither Controller nor Services grants write access", async () => {
+    const { store, serviceTimesSlice, runTransactionMock, setMock } =
+      loadStoreWithPresentationSync({
+        writeCapabilities: {
+          presentation: false,
+          timers: false,
+          serviceRuntime: false,
+          serviceManagement: false,
+        },
+      });
+
+    store.dispatch(serviceTimesSlice.actions.initiateServices([]));
+    store.dispatch(
+      serviceTimesSlice.actions.addService({
+        id: "denied-service",
+        name: "Denied Service",
+        timerType: "countdown",
+        reccurence: "one_time",
+        dateTimeISO: "2026-04-05T12:30:00.000Z",
+      }),
+    );
+
+    await flushListenerEffects();
+
+    expect(runTransactionMock).not.toHaveBeenCalled();
+    expect(setMock).not.toHaveBeenCalled();
   });
 
   it("merges a service-time update into Firebase without replacing other services", async () => {
@@ -3983,7 +4389,7 @@ describe("store module", () => {
       writePresentationSnapshotToFirebase,
       presentationSlice,
       updateMock,
-    } = loadStoreWithPresentationSync({ canWriteSharedData: false });
+    } = loadStoreWithPresentationSync({ writeCapabilities: { presentation: false, timers: false, serviceRuntime: false, serviceManagement: false } });
 
     store.dispatch(
       presentationSlice.actions.updateParticipantOverlayInfo({

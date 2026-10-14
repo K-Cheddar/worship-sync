@@ -7,6 +7,16 @@ import {
 } from "./useCurrentServiceOccurrence";
 import { setServerTimeOffset } from "../../utils/serverTime";
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const service = (serviceId: string, dateTimeISO: string): TeamService => ({
   id: serviceId,
   serviceId,
@@ -20,14 +30,9 @@ const service = (serviceId: string, dateTimeISO: string): TeamService => ({
 const morning = service("morning", "2026-07-26T10:00:00.000Z");
 const afternoon = service("afternoon", "2026-07-26T14:00:00.000Z");
 const nextDayMorning = service("next-day", "2026-07-27T10:00:00.000Z");
-const latePrevious = service(
-  "late-previous",
-  new Date(2026, 6, 26, 22, 0).toISOString(),
-);
-const midnightNext = service(
-  "midnight-next",
-  new Date(2026, 6, 27, 0, 0).toISOString(),
-);
+const latePrevious = service("late-previous", "2026-07-27T02:00:00.000Z");
+const midnightNext = service("midnight-next", "2026-07-27T04:00:00.000Z");
+const beforeNewYorkMidnightMs = Date.parse("2026-07-27T03:59:59.500Z");
 
 let latestResult: CurrentServiceOccurrence | null = null;
 let harnessPasses = 0;
@@ -73,7 +78,7 @@ describe("useCurrentServiceOccurrence", () => {
   });
 
   it("refreshes automatic selection when a server offset crosses midnight", () => {
-    const nowMs = new Date(2026, 6, 26, 23, 59, 59, 500).getTime();
+    const nowMs = beforeNewYorkMidnightMs;
     jest.spyOn(Date, "now").mockReturnValue(nowMs);
 
     render(<Harness services={[latePrevious, midnightNext]} />);
@@ -146,7 +151,7 @@ describe("useCurrentServiceOccurrence", () => {
 
   it("refreshes the automatic selection at the server date boundary", () => {
     jest.useFakeTimers();
-    let nowMs = new Date(2026, 6, 26, 23, 59, 59, 500).getTime();
+    let nowMs = beforeNewYorkMidnightMs;
     jest.spyOn(Date, "now").mockImplementation(() => nowMs);
 
     render(<Harness services={[latePrevious, midnightNext]} />);
@@ -162,7 +167,7 @@ describe("useCurrentServiceOccurrence", () => {
 
   it("preserves an explicit occurrence selection across the server date boundary", () => {
     jest.useFakeTimers();
-    let nowMs = new Date(2026, 6, 26, 23, 59, 59, 500).getTime();
+    let nowMs = beforeNewYorkMidnightMs;
     jest.spyOn(Date, "now").mockImplementation(() => nowMs);
 
     render(<Harness services={[latePrevious, midnightNext]} />);

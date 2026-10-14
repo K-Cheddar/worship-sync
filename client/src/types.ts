@@ -302,6 +302,13 @@ export type ItemProperties = {
 
 export type BibleFontMode = "fit" | "separate" | "multiple";
 
+/** Runtime owner for an active editor item; never written to the document. */
+export type ItemContentOwner = {
+  scopeId: string;
+  databaseKey: string;
+  churchId: string;
+};
+
 export type BibleInfo = {
   book: string;
   chapter: string;
@@ -311,6 +318,7 @@ export type BibleInfo = {
 };
 
 export type ItemState = ItemProperties & {
+  contentOwner?: ItemContentOwner;
   listId?: string;
   selectedSlide: number;
   selectedBox: number;
@@ -662,14 +670,15 @@ export type OverlayInfo = {
   updatedAt?: string;
   createdBy?: string;
   updatedBy?: string;
-  /** Provenance for overlays generated from a saved WorshipSync plan. */
+  /** Legacy provenance retained when loading old overlays; it never controls matching. */
   servicePlanSource?: {
     planKey: string;
     elementId: string;
     candidateId: string;
   };
-  /** Last synchronized values, used to detect independent operator overrides. */
+  /** Legacy sync metadata retained for stored-data compatibility; current sync ignores it. */
   servicePlanBaseline?: Partial<Record<"name" | "title" | "event", string>>;
+  /** Legacy sync metadata retained for stored-data compatibility; current sync ignores it. */
   servicePlanOverrides?: Partial<Record<"name" | "title" | "event", boolean>>;
 };
 

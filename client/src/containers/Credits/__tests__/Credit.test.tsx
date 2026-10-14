@@ -203,4 +203,21 @@ describe("Credit row sync guards", () => {
     const [, , payload] = (putCreditDoc as jest.Mock).mock.calls.at(-1);
     expect(payload).toMatchObject({ id: "credit-1", text: "Typed by operator" });
   });
+
+  it("saves a concurrent heading edit without writing its stale text draft", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderCredit();
+
+    const headingField = screen.getByLabelText("Heading");
+    await user.clear(headingField);
+    await user.type(headingField, "Updated heading");
+
+    // Generate Credits updates the record while the heading draft is still active.
+    rerender(<Credit {...baseProps} heading="Band" text="Generated participant" />);
+    await user.tab();
+
+    await waitFor(() => expect(putCreditDoc).toHaveBeenCalled());
+    const [, , payload] = (putCreditDoc as jest.Mock).mock.calls.at(-1);
+    expect(payload).toEqual({ id: "credit-1", heading: "Updated heading" });
+  });
 });

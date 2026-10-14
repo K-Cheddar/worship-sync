@@ -22,7 +22,6 @@ import { findBestServicePlanningSongMatch } from "./findServicePlanningSongMatch
 import { cleanPlanningTitle } from "./cleanPlanningTitle";
 import { parseBibleReference, type ParsedBibleRef } from "./parseBibleReference";
 import { findParticipantTemplateForSync } from "./servicePlanningOverlayClone";
-import { type ServicePlanOverlaySource } from "./servicePlanningOverlayClone";
 import { isOutlineCandidatePresentInList } from "../../utils/servicePlanningOutlineImport";
 import { matchesServicePlanningSectionName } from "./servicePlanningSectionResolution";
 import type { OverlayInfo, ServiceItem } from "../../types";
@@ -36,13 +35,6 @@ import type {
 } from "../../types/servicePlanningImport";
 
 const OVERLAY_PATCH_FIELDS = ["name", "title", "event"] as const;
-
-const candidateSourceId = (elementId: string, sourceIdentity?: string, personIndex = 0) =>
-  `${elementId}:${sourceIdentity || personIndex}`;
-
-/** Normalize an overlay event for exact-duplicate comparison. */
-export const normalizeOverlayEvent = (event?: string): string =>
-  (event || "").toLowerCase().replace(/\s+/g, " ").trim();
 
 export const getChangedOverlayPatch = (
   overlay: OverlayInfo,
@@ -136,27 +128,27 @@ export const overlayPlanHasExecutableChange = (
         claimed.add(target.id);
         continue;
       }
-      // Target overlay is gone — fall through to the existence check below.
     }
 
-    const targetEvent = normalizeOverlayEvent(item.patch.event);
-    const existing = targetEvent
-      ? overlays.find(
-          (o) =>
-            (o.type ?? "participant") === "participant" &&
-            o.id !== item.targetOverlayId &&
-            !claimed.has(o.id) &&
-            normalizeOverlayEvent(o.event) === targetEvent,
-        )
-      : undefined;
+    const excluded = new Set(claimed);
+    if (item.action === "clone" && item.targetOverlayId) {
+      excluded.add(item.targetOverlayId);
+    }
+    const resolution = findOverlayForServicePlanningCandidate(
+      item.elementType,
+      item.patch.event,
+      overlays,
+      excluded,
+    );
 
-    if (existing) {
+    if (resolution.kind === "ambiguous") continue;
+    if (resolution.kind === "match") {
       if (
-        Object.keys(getChangedOverlayPatch(existing, item.patch)).length > 0
+        Object.keys(getChangedOverlayPatch(resolution.overlay, item.patch)).length > 0
       ) {
         return true;
       }
-      claimed.add(existing.id);
+      claimed.add(resolution.overlay.id);
       continue;
     }
 
@@ -211,7 +203,7 @@ export const buildServicePlanningPreview = ({
   const overlayPlan: OverlaySyncPlanItem[] = [];
 
   for (const block of overlayCandidates) {
-    const allCandidatesResolvable = true;
+    let allCandidatesResolvable = true;
     const sectionName = sectionNameByRow.get(block.source) ?? "";
     const sourceRowIndex = sectionRowIndexByRow.get(block.source) ?? -1;
     for (const candidate of block.candidates) {
@@ -224,12 +216,6 @@ export const buildServicePlanningPreview = ({
           title: block.source.title,
           ledBy: block.source.ledBy,
           personIndex: candidate.personIndex,
-          sourcePlanKey: block.source.sourcePlanKey,
-          sourcePlanElementId: block.source.sourcePlanElementId,
-          sourceCandidateId: block.source.sourcePlanElementId
-            ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
-            : undefined,
-          sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
           action: "skip",
           patch: { ...candidate.patch },
@@ -239,19 +225,29 @@ export const buildServicePlanningPreview = ({
         continue;
       }
 
-      const target = findOverlayForServicePlanningCandidate(
+      const resolution = findOverlayForServicePlanningCandidate(
         block.source.elementType,
         candidate.patch.event,
         overlays,
         previewUsedOverlayIds,
-        block.source.sourcePlanKey && block.source.sourcePlanElementId
-          ? {
-              planKey: block.source.sourcePlanKey,
-              elementId: block.source.sourcePlanElementId,
-              candidateId: candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex),
-            } satisfies ServicePlanOverlaySource
-          : undefined,
       );
+      if (resolution.kind === "ambiguous") {
+        allCandidatesResolvable = false;
+        overlayPlan.push({
+          sectionName,
+          sourceRowIndex,
+          elementType: block.source.elementType,
+          title: block.source.title,
+          ledBy: block.source.ledBy,
+          personIndex: candidate.personIndex,
+          rawNameToken: candidate.rawNameToken,
+          action: "skip",
+          patch: { ...candidate.patch },
+          reason: `More than one overlay could match "${candidate.patch.event || block.source.elementType}". Adjust the event mapping before syncing this item.`,
+        });
+        continue;
+      }
+      const target = resolution.kind === "match" ? resolution.overlay : null;
       if (target) {
         previewUsedOverlayIds.add(target.id);
         const changedPatch = getChangedOverlayPatch(target, candidate.patch);
@@ -264,12 +260,6 @@ export const buildServicePlanningPreview = ({
             title: block.source.title,
             ledBy: block.source.ledBy,
             personIndex: candidate.personIndex,
-            sourcePlanKey: block.source.sourcePlanKey,
-            sourcePlanElementId: block.source.sourcePlanElementId,
-            sourceCandidateId: block.source.sourcePlanElementId
-              ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
-              : undefined,
-            sourceValues: { ...candidate.patch },
             rawNameToken: candidate.rawNameToken,
             action: "update",
             placementOnly: true,
@@ -291,18 +281,12 @@ export const buildServicePlanningPreview = ({
           title: block.source.title,
           ledBy: block.source.ledBy,
           personIndex: candidate.personIndex,
-          sourcePlanKey: block.source.sourcePlanKey,
-          sourcePlanElementId: block.source.sourcePlanElementId,
-          sourceCandidateId: block.source.sourcePlanElementId
-            ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
-            : undefined,
-          sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
           action: "update",
           targetOverlayId: target.id,
           targetOverlayName: target.name || undefined,
           targetOverlayEvent: target.event || undefined,
-          patch: changedPatch,
+          patch: { ...candidate.patch },
         });
         if (repeatedOverlayKey) {
           repeatedOverlayKeys.add(repeatedOverlayKey);
@@ -322,12 +306,6 @@ export const buildServicePlanningPreview = ({
           title: block.source.title,
           ledBy: block.source.ledBy,
           personIndex: candidate.personIndex,
-          sourcePlanKey: block.source.sourcePlanKey,
-          sourcePlanElementId: block.source.sourcePlanElementId,
-          sourceCandidateId: block.source.sourcePlanElementId
-            ? `${block.source.sourcePlanElementId}:${candidate.personIndex}`
-            : undefined,
-          sourceValues: { ...candidate.patch },
           rawNameToken: candidate.rawNameToken,
           action: "clone",
           targetOverlayId: template.id,
@@ -348,12 +326,6 @@ export const buildServicePlanningPreview = ({
         title: block.source.title,
         ledBy: block.source.ledBy,
         personIndex: candidate.personIndex,
-        sourcePlanKey: block.source.sourcePlanKey,
-        sourcePlanElementId: block.source.sourcePlanElementId,
-        sourceCandidateId: block.source.sourcePlanElementId
-          ? candidateSourceId(block.source.sourcePlanElementId, candidate.sourceIdentity, candidate.personIndex)
-          : undefined,
-        sourceValues: { ...candidate.patch },
         rawNameToken: candidate.rawNameToken,
         action: "create",
         patch: { ...candidate.patch },

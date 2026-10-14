@@ -11,7 +11,7 @@ import {
   inspectPortableImport,
   previewPortableImport,
 } from "../../api/auth";
-import type { PortableDataType, PortableImportResolution, PortableImportRow, PortablePositionAction, PortableTeamAction, TeamRecord } from "../../api/authTypes";
+import type { PortableDataType, PortableImportIssue, PortableImportResolution, PortableImportRow, PortablePositionAction, PortableTeamAction, TeamRecord } from "../../api/authTypes";
 import { downloadBlob, PORTABLE_DATA_TYPES, PORTABLE_FIELD_LABELS, PORTABLE_FIELD_ORDER } from "./portableDataTransfer";
 import { useToast } from "../../context/toastContext";
 
@@ -44,6 +44,52 @@ type Preview = {
 const relationshipChoiceKey = (row: number, field: string, referenceIndex = 0) => `${row}:${field}:${referenceIndex}`;
 const positionChoiceKey = (teamId: string, sourceValue: string) => JSON.stringify([teamId.trim(), sourceValue.trim().normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ")]);
 const teamChoiceKey = (sourceValue: string) => sourceValue.trim().normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ");
+const teamDestinationLabel = (team: { name: string; isNew?: boolean; ignored?: boolean }) =>
+  `${team.name} (${team.ignored ? "ignored team" : team.isNew ? "new" : "existing"})`;
+const positionIssueChoiceKey = (issue: PortableImportIssue) => {
+  const ownerKey = issue.teamId || (issue.teamOptions || []).map((option) => option.teamId).sort().join(",");
+  return positionChoiceKey(ownerKey, issue.referenceValue || "");
+};
+const positionIssueGroups = (rows: PortableImportRow[]) => {
+  const groups = new Map<string, {
+    teamId: string;
+    teamName: string;
+    teamIsNew?: boolean;
+    sourceValue: string;
+    memberRows: Set<number>;
+    options: Map<string, { id: string; name: string; teamId?: string; teamName?: string }>;
+    teamOptions: Map<string, { teamId: string; name: string; isNew?: boolean; ignored?: boolean }>;
+  }>();
+  rows.forEach((row) => row.issues.filter((issue) => issue.field === "positions"
+    && (issue.teamId || issue.teamOptions?.length)
+    && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).forEach((issue) => {
+    const key = positionIssueChoiceKey(issue);
+    const group = groups.get(key) || {
+      teamId: issue.teamId || "",
+      teamName: issue.teamName || "Choose the owning team",
+      teamIsNew: issue.teamIsNew,
+      sourceValue: issue.referenceValue || "",
+      memberRows: new Set<number>(),
+      options: new Map(),
+      teamOptions: new Map(),
+    };
+    group.memberRows.add(row.row);
+    (issue.teamOptions || []).forEach((option) => group.teamOptions.set(option.teamId, option));
+    (issue.positionOptions || issue.candidates || []).forEach((option) => group.options.set(option.id, {
+      id: option.id,
+      name: option.name,
+      teamId: option.teamId,
+      teamName: option.teamName,
+    }));
+    groups.set(key, group);
+  }));
+  return [...groups.entries()].map(([key, group]) => ({
+    ...group,
+    key,
+    options: [...group.options.values()],
+    teamOptions: [...group.teamOptions.values()],
+  }));
+};
 
 const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImported, teams = [], destinationTeamId: initialTeamId }: PortableDataImportDialogProps) => {
   const { showToast } = useToast();
@@ -62,9 +108,11 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   const [approvedTeamActions, setApprovedTeamActions] = useState<PortableTeamAction[]>([]);
   const [approvedTeamRows, setApprovedTeamRows] = useState<Record<string, number[]>>({});
   const [teamStep, setTeamStep] = useState(false);
+  const [teamResolutionPreview, setTeamResolutionPreview] = useState<Preview | null>(null);
   const [approvedPositionActions, setApprovedPositionActions] = useState<PortablePositionAction[]>([]);
   const [approvedPositionRows, setApprovedPositionRows] = useState<Record<string, number[]>>({});
   const [positionStep, setPositionStep] = useState(false);
+  const [positionResolutionPreview, setPositionResolutionPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"attention" | "error" | "success">("attention");
@@ -92,7 +140,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
   const activeTeams = teams.filter((team) => !team.archivedAt);
   const teamGroups = (() => {
     const groups = new Map<string, { sourceValue: string; memberRows: Set<number>; options: Map<string, string> }>();
-    (preview?.rows || []).forEach((row) => row.issues.filter((issue) => issue.field === "teams" && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).forEach((issue) => {
+    (teamResolutionPreview?.rows || preview?.rows || []).forEach((row) => row.issues.filter((issue) => issue.field === "teams" && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).forEach((issue) => {
       const sourceValue = issue.referenceValue || "";
       const key = teamChoiceKey(sourceValue);
       const group = groups.get(key) || { sourceValue, memberRows: new Set<number>(), options: new Map<string, string>() };
@@ -102,19 +150,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     }));
     return [...groups.entries()].map(([key, group]) => ({ ...group, key, options: [...group.options].map(([id, name]) => ({ id, name })) }));
   })();
-  const positionGroups = (() => {
-    const groups = new Map<string, { teamId: string; teamName: string; sourceValue: string; memberRows: Set<number>; options: Map<string, { id: string; name: string; teamId?: string; teamName?: string }>; teamOptions: Map<string, string> }>();
-    (preview?.rows || []).forEach((row) => row.issues.filter((issue) => issue.field === "positions" && (issue.teamId || issue.teamOptions?.length) && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).forEach((issue) => {
-      const ownerKey = issue.teamId || (issue.teamOptions || []).map((option) => option.teamId).sort().join(",");
-      const key = positionChoiceKey(ownerKey, issue.referenceValue || "");
-      const group = groups.get(key) || { teamId: issue.teamId || "", teamName: issue.teamName || "Choose the owning team", sourceValue: issue.referenceValue || "", memberRows: new Set<number>(), options: new Map(), teamOptions: new Map() };
-      group.memberRows.add(row.row);
-      (issue.teamOptions || []).forEach((option) => group.teamOptions.set(option.teamId, option.name));
-      (issue.positionOptions || issue.candidates || []).forEach((option) => group.options.set(option.id, { id: option.id, name: option.name, teamId: option.teamId, teamName: option.teamName }));
-      groups.set(key, group);
-    }));
-    return [...groups.entries()].map(([key, group]) => ({ ...group, key, options: [...group.options.values()], teamOptions: [...group.teamOptions].map(([teamId, name]) => ({ teamId, name })) }));
-  })();
+  const positionGroups = positionIssueGroups(preview?.rows || []);
   const invalidatePreview = () => {
     previewGenerationRef.current += 1;
     setPreview(null);
@@ -126,9 +162,11 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     setApprovedTeamActions([]);
     setApprovedTeamRows({});
     setTeamStep(false);
+    setTeamResolutionPreview(null);
     setApprovedPositionActions([]);
     setApprovedPositionRows({});
     setPositionStep(false);
+    setPositionResolutionPreview(null);
     setCommitResults([]);
     setExplicitSkips({});
     setCreatedPositionCount(0);
@@ -150,9 +188,11 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     setApprovedTeamActions([]);
     setApprovedTeamRows({});
     setTeamStep(false);
+    setTeamResolutionPreview(null);
     setApprovedPositionActions([]);
     setApprovedPositionRows({});
     setPositionStep(false);
+    setPositionResolutionPreview(null);
     setCommitResults([]);
     setExplicitSkips({});
     setCreatedPositionCount(0);
@@ -256,12 +296,23 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       setPreviewPage(0);
       setRelationshipChoices({});
       const initialPositionChoices: typeof positionChoices = {};
-      result.rows.forEach((row) => row.issues.filter((issue) => issue.field === "positions" && (issue.teamId || issue.teamOptions?.length) && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).forEach((issue) => {
-        const ownerKey = issue.teamId || (issue.teamOptions || []).map((option) => option.teamId).sort().join(",");
-        const key = positionChoiceKey(ownerKey, issue.referenceValue || "");
-        initialPositionChoices[key] = initialPositionChoices[key] || { action: "", positionId: "", name: issue.referenceValue || "", teamId: issue.teamId || "" };
-      }));
-      setPositionChoices(initialPositionChoices);
+      positionIssueGroups(result.rows).forEach((group) => {
+        initialPositionChoices[group.key] = { action: "", positionId: "", name: group.sourceValue, teamId: group.teamId };
+      });
+      const nextPositionChoices = { ...initialPositionChoices };
+      positionIssueGroups(result.rows).forEach((group) => {
+        const previous = positionChoices[group.key];
+        if (!previous) return;
+        const ownerOptions = group.teamOptions.length ? group.teamOptions : group.teamId
+          ? [{ teamId: group.teamId, name: group.teamName, isNew: group.teamIsNew }]
+          : [];
+        const selectedTeamId = previous.teamId || group.teamId || (ownerOptions.length === 1 ? ownerOptions[0].teamId : "");
+        if (ownerOptions.length && !ownerOptions.some((option) => option.teamId === selectedTeamId)) return;
+        const scopedOptions = group.options.filter((option) => !option.teamId || option.teamId === selectedTeamId);
+        if (previous.action === "match" && !scopedOptions.some((option) => option.id === previous.positionId)) return;
+        nextPositionChoices[group.key] = previous;
+      });
+      if (Object.keys(initialPositionChoices).length || !approvedPositionActions.length) setPositionChoices(nextPositionChoices);
       const initialTeamChoices: typeof teamChoices = {};
       const initialTeamRows: Record<string, number[]> = {};
       result.rows.forEach((row) => row.issues.filter((issue) => issue.field === "teams" && issue.referenceValue).forEach((issue) => {
@@ -269,10 +320,22 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         initialTeamChoices[key] = initialTeamChoices[key] || { action: "", teamId: "", name: issue.referenceValue! };
         initialTeamRows[key] = [...new Set([...(initialTeamRows[key] || []), row.row])];
       }));
-      setTeamChoices(initialTeamChoices);
-      setApprovedTeamRows(initialTeamRows);
-      setTeamStep(Object.keys(initialTeamChoices).length > 0);
-      setPositionStep(Object.keys(initialTeamChoices).length === 0 && Object.keys(initialPositionChoices).length > 0);
+      const nextTeamChoices = { ...initialTeamChoices };
+      Object.entries(initialTeamChoices).forEach(([key, initial]) => {
+        const previous = teamChoices[key];
+        if (!previous) return;
+        nextTeamChoices[key] = previous;
+      });
+      setTeamChoices(Object.keys(initialTeamChoices).length || !approvedTeamActions.length
+        ? nextTeamChoices
+        : teamChoices);
+      if (Object.keys(initialTeamRows).length || !approvedTeamActions.length) setApprovedTeamRows(initialTeamRows);
+      const needsTeamResolution = Object.keys(initialTeamChoices).length > 0;
+      const needsPositionResolution = Object.keys(initialPositionChoices).length > 0;
+      if (!approvedTeamActions.length) setTeamResolutionPreview(needsTeamResolution ? result : null);
+      setTeamStep(needsTeamResolution);
+      setPositionStep(!needsTeamResolution && needsPositionResolution);
+      if (!approvedPositionActions.length && needsPositionResolution) setPositionResolutionPreview(result);
       // Keep the exact decisions that were signed into this successful preview.
       // Filtering them here would make the next commit disagree with its token.
       setCommitResults((current) => current.filter((item) => item.status !== "failed"));
@@ -284,6 +347,17 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     } finally {
       if (previewGeneration === previewGenerationRef.current) setBusy(null);
     }
+  };
+
+  const updateTeamChoice = (key: string, choice: typeof teamChoices[string]) => {
+    setTeamChoices((current) => ({ ...current, [key]: choice }));
+    setApprovedTeamActions([]);
+    setApprovedTeamRows({});
+    setPositionFieldErrors({});
+    setApprovedPositionActions([]);
+    setApprovedPositionRows({});
+    setPositionResolutionPreview(null);
+    setPositionStep(false);
   };
 
   const handleApplyTeamActions = async () => {
@@ -313,16 +387,27 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       setPreviewPage(0);
       setRelationshipChoices({});
       const initialPositionChoices: typeof positionChoices = {};
-      result.rows.forEach((row) => row.issues.filter((issue) => issue.field === "positions" && (issue.teamId || issue.teamOptions?.length) && ["missing_reference", "ambiguous_reference", "foreign_or_unknown_reference_id"].includes(issue.code)).forEach((issue) => {
-        const ownerKey = issue.teamId || (issue.teamOptions || []).map((option) => option.teamId).sort().join(",");
-        const key = positionChoiceKey(ownerKey, issue.referenceValue || "");
-        initialPositionChoices[key] = initialPositionChoices[key] || { action: "", positionId: "", name: issue.referenceValue || "", teamId: issue.teamId || "" };
-      }));
+      positionIssueGroups(result.rows).forEach((group) => {
+        const initial = { action: "" as const, positionId: "", name: group.sourceValue, teamId: group.teamId };
+        const previous = positionChoices[group.key];
+        const ownerOptions = group.teamOptions.length ? group.teamOptions : group.teamId
+          ? [{ teamId: group.teamId, name: group.teamName, isNew: group.teamIsNew }]
+          : [];
+        const selectedTeamId = previous?.teamId || group.teamId || (ownerOptions.length === 1 ? ownerOptions[0].teamId : "");
+        const ownerStillEligible = !previous || !ownerOptions.length || ownerOptions.some((option) => option.teamId === selectedTeamId);
+        const scopedOptions = group.options.filter((option) => !option.teamId || option.teamId === selectedTeamId);
+        const positionStillEligible = previous?.action !== "match" || scopedOptions.some((option) => option.id === previous.positionId);
+        initialPositionChoices[group.key] = previous && ownerStillEligible && positionStillEligible
+          ? previous
+          : initial;
+      });
       setPositionChoices(initialPositionChoices);
       setApprovedPositionActions([]);
       setApprovedPositionRows({});
+      const hasPositionIssues = Object.keys(initialPositionChoices).length > 0;
+      setPositionResolutionPreview(hasPositionIssues ? result : null);
       setTeamStep(false);
-      setPositionStep(Object.keys(initialPositionChoices).length > 0);
+      setPositionStep(hasPositionIssues);
       setRowChoices(Object.fromEntries(result.rows.map((row) => [row.row, row.action === "create" ? "create" : row.action === "update" ? `update:${row.matchedId}` : row.action === "review" ? "review" : "skip"])));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not apply these team decisions. Review the file again.");
@@ -347,7 +432,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       else if (choice.action === "match" && !choice.positionId) fieldErrors[group.key] = { field: "position", message: "Choose an existing position." };
       else if (choice.action === "create" && !choice.name.trim()) fieldErrors[group.key] = { field: "name", message: "Enter a name for the new position." };
       if (fieldErrors[group.key]) continue;
-      actions.push({ teamId: selectedTeamId, ...(group.teamOptions.length > 1 ? { teamName: group.teamOptions.find((option) => option.teamId === selectedTeamId)?.name || group.teamName } : {}), sourceValue: group.sourceValue, action: choice.action as "match" | "create" | "ignore", ...(choice.action === "match" ? { positionId: choice.positionId, name: group.options.find((option) => option.id === choice.positionId)?.name } : {}), ...(choice.action === "create" ? { name: choice.name.trim() } : {}) });
+      const selectedTeamName = selectedOwner?.name;
+      actions.push({ teamId: selectedTeamId, ...(selectedTeamName && selectedTeamName !== "Choose the owning team" ? { teamName: selectedTeamName } : {}), sourceValue: group.sourceValue, action: choice.action as "match" | "create" | "ignore", ...(choice.action === "match" ? { positionId: choice.positionId, name: group.options.find((option) => option.id === choice.positionId)?.name } : {}), ...(choice.action === "create" ? { name: choice.name.trim() } : {}) });
     }
     setPositionFieldErrors(fieldErrors);
     const firstError = Object.entries(fieldErrors)[0];
@@ -379,6 +465,29 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     }
   };
 
+  const handleBackToTeams = () => {
+    if (!teamResolutionPreview) return;
+    previewGenerationRef.current += 1;
+    setBusy(null);
+    setPreview(teamResolutionPreview);
+    setTeamStep(true);
+    setPositionStep(false);
+    setApprovedPositionActions([]);
+    setApprovedPositionRows({});
+    setPositionFieldErrors({});
+  };
+
+  const handleBackToPositions = () => {
+    if (!positionResolutionPreview) return;
+    previewGenerationRef.current += 1;
+    setBusy(null);
+    setPreview(positionResolutionPreview);
+    setTeamStep(false);
+    setPositionStep(true);
+    setApprovedPositionActions([]);
+    setApprovedPositionRows({});
+  };
+
   const returnToSetup = () => {
     previewGenerationRef.current += 1;
     setBusy(null);
@@ -389,6 +498,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
     setApprovedPositionActions([]);
     setApprovedPositionRows({});
     setPositionStep(false);
+    setPositionResolutionPreview(null);
   };
 
   const handleCommit = async () => {
@@ -440,9 +550,15 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
       const hasCompletedRows = combinedResults.some((item) => item.status !== "failed")
         || (result.summary.teamsCreated || 0) > 0
         || (result.summary.positionsCreated || 0) > 0;
+      const teamsCreatedForImport = Math.max(createdTeamCount, result.summary.teamsCreated || 0);
+      const positionsCreatedForImport = Math.max(createdPositionCount, result.summary.positionsCreated || 0);
+      const createdDependencySummary = [
+        teamsCreatedForImport ? `${teamsCreatedForImport} ${teamsCreatedForImport === 1 ? "team" : "teams"}` : "",
+        positionsCreatedForImport ? `${positionsCreatedForImport} ${positionsCreatedForImport === 1 ? "position" : "positions"}` : "",
+      ].filter(Boolean).join(" and ");
       const resultMessage = hasFailures
         ? hasCompletedRows
-          ? "Import partially completed. Review the failed rows below."
+          ? `Import partially completed.${createdDependencySummary ? ` ${createdDependencySummary} created for this import.` : ""} Review the failed rows below.`
           : "Import failed. Review the results and try again."
         : `Import finished. Review the results below.${refreshFailed ? " The data was saved, but this page could not refresh. Reload to see the latest data." : ""}`;
       setMessage(resultMessage);
@@ -454,10 +570,8 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         const updated = combinedResults.filter((item) => item.status === "updated").length;
         const unchanged = combinedResults.filter((item) => item.status === "unchanged").length;
         const skipped = Object.values(explicitSkips).filter(Boolean).length;
-        const positionsCreated = Math.max(createdPositionCount, result.summary.positionsCreated || 0);
-        const teamsCreated = Math.max(createdTeamCount, result.summary.teamsCreated || 0);
         const entity = currentType.label;
-        const counts = [created ? `${created} added` : "", updated ? `${updated} updated` : "", unchanged ? `${unchanged} unchanged` : "", skipped ? `${skipped} skipped` : "", teamsCreated ? `${teamsCreated} ${teamsCreated === 1 ? "team" : "teams"} created` : "", positionsCreated ? `${positionsCreated} ${positionsCreated === 1 ? "position" : "positions"} created` : ""].filter(Boolean).join(" · ");
+        const counts = [created ? `${created} added` : "", updated ? `${updated} updated` : "", unchanged ? `${unchanged} unchanged` : "", skipped ? `${skipped} skipped` : "", teamsCreatedForImport ? `${teamsCreatedForImport} ${teamsCreatedForImport === 1 ? "team" : "teams"} created for this import` : "", positionsCreatedForImport ? `${positionsCreatedForImport} ${positionsCreatedForImport === 1 ? "position" : "positions"} created for this import` : ""].filter(Boolean).join(" · ");
         const title = created && !updated && !unchanged && !skipped ? `${entity} imported successfully` : created || updated || skipped ? "Import completed" : "No changes needed";
         const summary = title === "No changes needed" ? `All ${unchanged} ${entity.toLowerCase()} are already up to date.` : counts;
         showToast(refreshFailed ? `${title}. ${summary}. The page could not refresh; reload to see changes.` : `${title}. ${summary}.`, refreshFailed ? "warning" : "success");
@@ -616,7 +730,7 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                   </div>
                 ))}
               </div>
-              {type === "members" && <p className="text-sm text-gray-300">Categories are matched to positions in the selected team. Email and phone don't determine member matches.</p>}
+              {type === "members" && <p className="text-sm text-gray-300">{hasCsvTeamAssignments ? "Positions are matched within each team listed in the CSV." : "Categories are matched to positions in the selected team."} Email and phone don't determine member matches.</p>}
               {type !== "members" && <p className="text-xs text-gray-400">For multiple names, use <span className="font-mono"> | </span>, semicolons, or separate lines. Commas split only when each part matches a known name.</p>}
               {type === "members" && <details className="text-xs text-gray-400"><summary className="cursor-pointer">Unmapped columns are ignored</summary><p className="mt-1 break-words">{inspection.headers.filter((header) => !Object.values(mappings).includes(header)).join(", ") || "No unmapped columns."}</p></details>}
               {type !== "members" && <p className="text-sm text-gray-400">Unmapped columns: {inspection.headers.filter((header) => !Object.values(mappings).includes(header)).join(", ") || "None"}. Unmapped values are ignored.</p>}
@@ -645,9 +759,9 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                     <p className="mt-0.5 text-xs text-gray-400">Used by {group.memberRows.size} {group.memberRows.size === 1 ? "member" : "members"}</p>
                   </div>
                 </div>
-                <Select aria-label={`How to handle team ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.action} onChange={(value) => setTeamChoices((current) => ({ ...current, [group.key]: { ...choice, action: value as typeof choice.action } }))} options={[{ value: "", label: "Choose an option" }, { value: "match", label: "Match an existing team" }, { value: "create", label: `Create ${group.sourceValue}` }, { value: "ignore", label: "Ignore this team's assignments" }]} disabled={Boolean(busy)} />
-                {choice.action === "match" && <Select aria-label={`Existing team for ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.teamId} onChange={(teamId) => setTeamChoices((current) => ({ ...current, [group.key]: { ...choice, teamId } }))} options={[{ value: "", label: "Choose an active team" }, ...options.map((option) => ({ value: option.id, label: option.name }))]} disabled={Boolean(busy)} />}
-                {choice.action === "create" && <Input aria-label={`New team name for ${group.sourceValue}`} label="Team name" labelClassName="text-gray-300" value={choice.name} onChange={(name) => setTeamChoices((current) => ({ ...current, [group.key]: { ...choice, name: String(name) } }))} inputClassName="border-gray-600 bg-gray-900 text-white focus-visible:border-cyan-400/80 focus-visible:ring-cyan-400/30" disabled={Boolean(busy)} />}
+                <Select aria-label={`How to handle team ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.action} onChange={(value) => updateTeamChoice(group.key, { ...choice, action: value as typeof choice.action })} options={[{ value: "", label: "Choose an option" }, { value: "match", label: "Match an existing team" }, { value: "create", label: `Create ${group.sourceValue}` }, { value: "ignore", label: "Ignore this team's assignments" }]} disabled={Boolean(busy)} />
+                {choice.action === "match" && <Select aria-label={`Existing team for ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.teamId} onChange={(teamId) => updateTeamChoice(group.key, { ...choice, teamId })} options={[{ value: "", label: "Choose an active team" }, ...options.map((option) => ({ value: option.id, label: option.name }))]} disabled={Boolean(busy)} />}
+                {choice.action === "create" && <Input aria-label={`New team name for ${group.sourceValue}`} label="Team name" labelClassName="text-gray-300" value={choice.name} onChange={(name) => updateTeamChoice(group.key, { ...choice, name: String(name) })} inputClassName="border-gray-600 bg-gray-900 text-white focus-visible:border-cyan-400/80 focus-visible:ring-cyan-400/30" disabled={Boolean(busy)} />}
                 {choice.action === "ignore" && <p className="text-sm text-gray-300">Members can still be imported, but they won't be assigned to this team or its positions. Existing assignments are preserved, including in Replace mode.</p>}
               </div>;
             })}
@@ -667,9 +781,10 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
             </div>
             {positionGroups.map((group) => {
               const choice = positionChoices[group.key] || { action: "" as const, positionId: "", name: group.sourceValue, teamId: group.teamId };
-              const ownerOptions: Array<{ teamId: string; name: string; ignored?: boolean }> = group.teamOptions.length ? group.teamOptions : group.teamId ? [{ teamId: group.teamId, name: group.teamName }] : [];
+              const ownerOptions: Array<{ teamId: string; name: string; isNew?: boolean; ignored?: boolean }> = group.teamOptions.length ? group.teamOptions : group.teamId ? [{ teamId: group.teamId, name: group.teamName, isNew: group.teamIsNew }] : [];
               const selectedTeamId = choice.teamId || (ownerOptions.length === 1 ? ownerOptions[0].teamId : "");
               const selectedOwner = ownerOptions.find((option) => option.teamId === selectedTeamId);
+              const selectedOwnerLabel = selectedOwner ? teamDestinationLabel(selectedOwner) : "Choose the owning team";
               const scopedPositionOptions = group.options.filter((option) => !option.teamId || option.teamId === selectedTeamId);
               const selectedAction = choice.action === "create" ? { label: "Create new position", Icon: Plus, style: "bg-cyan-400/10 text-cyan-100 ring-cyan-300/25" } : choice.action === "match" ? { label: "Match existing position", Icon: Link2, style: "bg-cyan-400/10 text-cyan-100 ring-cyan-300/25" } : choice.action === "ignore" ? { label: "Import without position", Icon: Minus, style: "bg-gray-700/60 text-gray-300 ring-white/10" } : null;
               const fieldError = positionFieldErrors[group.key];
@@ -677,17 +792,17 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="break-words text-base font-semibold text-white">{group.sourceValue}</p>
-                    <p className="mt-0.5 text-xs text-gray-400">{group.memberRows.size} {group.memberRows.size === 1 ? "member" : "members"} · {selectedTeamId ? ownerOptions.find((option) => option.teamId === selectedTeamId)?.name || group.teamName : "Choose which team owns this position"}</p>
+                    <p className="mt-0.5 text-xs text-gray-400">{group.memberRows.size} {group.memberRows.size === 1 ? "member" : "members"} · Belongs to {selectedOwnerLabel}</p>
                   </div>
                   {selectedAction && <span className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${selectedAction.style}`}><selectedAction.Icon size={14} aria-hidden="true" />{selectedAction.label}</span>}
                 </div>
-                {ownerOptions.length > 1 && <Select aria-label={`Team that owns ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={selectedTeamId} onChange={(teamId) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, teamId, positionId: "", action: "" } })); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} options={[{ value: "", label: "Choose the owning team" }, ...ownerOptions.map((option) => ({ value: option.teamId, label: option.ignored ? `${option.name} (ignored team)` : option.name }))]} ariaInvalid={fieldError?.field === "owner"} errorText={fieldError?.field === "owner" ? fieldError.message : undefined} disabled={Boolean(busy)} />}
+                {ownerOptions.length > 1 && <Select label="Belongs to" aria-label={`Belongs to for ${group.sourceValue}`} labelClassName="text-gray-300" selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={selectedTeamId} onChange={(teamId) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, teamId, positionId: "", action: "" } })); setApprovedPositionActions([]); setApprovedPositionRows({}); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} options={[{ value: "", label: "Choose the owning team" }, ...ownerOptions.map((option) => ({ value: option.teamId, label: teamDestinationLabel(option) }))]} ariaInvalid={fieldError?.field === "owner"} errorText={fieldError?.field === "owner" ? fieldError.message : undefined} disabled={Boolean(busy)} />}
                 {fieldError?.field === "owner" && ownerOptions.length <= 1 && <p className="text-sm text-red-300" role="alert">{fieldError.message}</p>}
-                <Select aria-label={`How to handle ${group.sourceValue} in ${group.teamName}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.action} onChange={(value) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, action: value as typeof choice.action } })); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} options={[{ value: "", label: "Choose an option" }, ...(!selectedOwner?.ignored && scopedPositionOptions.length && selectedTeamId ? [{ value: "match", label: "Match an existing position" }] : []), ...(!selectedOwner?.ignored && selectedTeamId ? [{ value: "create", label: "Create new position" }] : []), { value: "ignore", label: selectedOwner?.ignored ? "Ignore this position with its team" : "Import without this position" }]} ariaInvalid={fieldError?.field === "action"} errorText={fieldError?.field === "action" ? fieldError.message : undefined} disabled={Boolean(busy) || !selectedTeamId} />
-                {choice.action === "match" && <Select aria-label={`Existing position for ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.positionId} onChange={(positionId) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, positionId } })); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} options={[{ value: "", label: "Choose an active position" }, ...scopedPositionOptions.map((option) => ({ value: option.id, label: option.teamName ? `${option.name} · ${option.teamName}` : option.name }))]} ariaInvalid={fieldError?.field === "position"} errorText={fieldError?.field === "position" ? fieldError.message : undefined} disabled={Boolean(busy) || !selectedTeamId} />}
+                <Select aria-label={`How to handle ${group.sourceValue} in ${selectedOwnerLabel}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.action} onChange={(value) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, action: value as typeof choice.action } })); setApprovedPositionActions([]); setApprovedPositionRows({}); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} options={[{ value: "", label: "Choose an option" }, ...(!selectedOwner?.ignored && scopedPositionOptions.length && selectedTeamId ? [{ value: "match", label: "Match an existing position" }] : []), ...(!selectedOwner?.ignored && selectedTeamId ? [{ value: "create", label: "Create new position" }] : []), { value: "ignore", label: selectedOwner?.ignored ? "Ignore this position with its team" : "Import without this position" }]} ariaInvalid={fieldError?.field === "action"} errorText={fieldError?.field === "action" ? fieldError.message : undefined} disabled={Boolean(busy) || !selectedTeamId} />
+                {choice.action === "match" && <Select aria-label={`Existing position for ${group.sourceValue}`} selectClassName="min-h-10 w-full rounded-md border border-gray-600 bg-gray-900 px-3 text-sm text-white focus-visible:ring-2 focus-visible:ring-cyan-400/70" value={choice.positionId} onChange={(positionId) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, positionId } })); setApprovedPositionActions([]); setApprovedPositionRows({}); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} options={[{ value: "", label: "Choose an active position" }, ...scopedPositionOptions.map((option) => ({ value: option.id, label: option.teamName ? `${option.name} · ${option.teamName}` : option.name }))]} ariaInvalid={fieldError?.field === "position"} errorText={fieldError?.field === "position" ? fieldError.message : undefined} disabled={Boolean(busy) || !selectedTeamId} />}
                 {choice.action === "create" && <>
                   <div className="rounded-md bg-gray-950/55 p-3">
-                    <Input aria-label={`New position name for ${group.sourceValue}`} label="Position name" labelClassName="text-gray-300" value={choice.name} onChange={(name) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, name: String(name) } })); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} errorText={fieldError?.field === "name" ? fieldError.message : undefined} inputClassName="border-gray-600 bg-gray-900 text-white focus-visible:border-cyan-400/80 focus-visible:ring-cyan-400/30" disabled={Boolean(busy)} />
+                    <Input aria-label={`New position name for ${group.sourceValue}`} label="Position name" labelClassName="text-gray-300" value={choice.name} onChange={(name) => { setPositionChoices((current) => ({ ...current, [group.key]: { ...choice, name: String(name) } })); setApprovedPositionActions([]); setApprovedPositionRows({}); setPositionFieldErrors((current) => { const next = { ...current }; delete next[group.key]; return next; }); }} errorText={fieldError?.field === "name" ? fieldError.message : undefined} inputClassName="border-gray-600 bg-gray-900 text-white focus-visible:border-cyan-400/80 focus-visible:ring-cyan-400/30" disabled={Boolean(busy)} />
                   </div>
                 </>}
                 {choice.action === "ignore" && <p className="text-sm text-gray-300">These members will be imported without the {group.sourceValue} position. Team membership will still be added.</p>}
@@ -727,9 +842,10 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
                 <span className="rounded-full bg-gray-700 px-2 py-1 text-gray-200">Unchanged {commitResults.filter((item) => item.status === "unchanged").length}</span>
                 <span className="rounded-full bg-red-500/10 px-2 py-1 text-red-200">Failed {commitResults.filter((item) => item.status === "failed").length}</span>
                 <span className="rounded-full bg-gray-700 px-2 py-1 text-gray-200">Skipped {Math.max(0, preview.summary.total - commitResults.length)}</span>
-                {createdTeamCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Teams created {createdTeamCount}</span>}
-                {createdPositionCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Positions created {createdPositionCount}</span>}
+                {createdTeamCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Teams created for this import: {createdTeamCount}</span>}
+                {createdPositionCount > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-200">Positions created for this import: {createdPositionCount}</span>}
               </div>
+              {type === "members" && (createdTeamCount > 0 || createdPositionCount > 0) && <p className="mt-2 text-xs text-gray-300">These totals include teams and positions created by earlier retries of this import.</p>}
               {type === "members" && <Button type="button" variant="tertiary" className="mt-2" onClick={downloadRecoveryRows}>Download failed and skipped rows</Button>}
             </div>}
             {preview.issues.map((issue) => <p key={`${issue.row}-${issue.code}`} className="text-sm text-red-200">Row {issue.row}: {issue.message}</p>)}
@@ -784,8 +900,13 @@ const PortableDataImportDialog = ({ open, onOpenChange, churchId, type, onImport
         </p>}
         </div>
         {inspection && <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-700 bg-gray-900 px-4 py-3">
-          <div>
-            {preview ? <Button type="button" variant="tertiary" onClick={returnToSetup} disabled={Boolean(busy)}>{type === "members" ? "Back to setup and mapping" : "Back to column mapping"}</Button> : <span className="text-xs text-gray-400" aria-live="polite">Step {activeStep}: {stepLabel}</span>}
+          <div className="flex flex-wrap gap-2">
+            {preview ? <>
+              <Button type="button" variant="tertiary" onClick={returnToSetup} disabled={Boolean(busy)}>{type === "members" ? "Back to setup and mapping" : "Back to column mapping"}</Button>
+              {positionStep && approvedTeamActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToTeams} disabled={Boolean(busy)}>Back to teams</Button>}
+              {!teamStep && !positionStep && approvedPositionActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToPositions} disabled={Boolean(busy)}>Back to positions</Button>}
+              {!teamStep && !positionStep && approvedPositionActions.length === 0 && approvedTeamActions.length > 0 && <Button type="button" variant="tertiary" onClick={handleBackToTeams} disabled={Boolean(busy)}>Back to teams</Button>}
+            </> : <span className="text-xs text-gray-400" aria-live="polite">Step {activeStep}: {stepLabel}</span>}
           </div>
           {preview ? teamStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyTeamActions()} disabled={Boolean(busy)} aria-busy={busy === "team-preview"}>{busy === "team-preview" ? "Updating review..." : "Continue to positions"}</Button> : positionStep ? <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handleApplyPositionActions()} disabled={Boolean(busy)} aria-busy={busy === "position-preview"}>{busy === "position-preview" ? "Updating review..." : "Continue to review"}</Button> : requiresRepreview ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : "Review changes again"}</Button> : selectedRows.length === 0 ? <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => onOpenChange(false)} disabled={Boolean(busy)}>Close</Button> : <Button type="button" variant="cta" wrap className="min-h-10 w-full justify-center px-5 sm:w-auto" onClick={() => void handleCommit()} disabled={Boolean(busy)} aria-busy={busy === "commit"}>{busy === "commit" ? <><Spinner size="sm" className="mr-2 shrink-0" />Importing...</> : commitButtonLabel}</Button> : <Button type="button" variant="cta" className="min-h-10 w-full justify-center px-5 sm:w-auto" svg={ArrowRight} iconPosition="right" onClick={() => void handlePreview()} disabled={Boolean(busy) || !fileName || (needsDestinationTeam && !destinationTeamId)} aria-busy={busy === "preview"}>{busy === "preview" ? "Checking rows..." : type === "members" ? "Review changes" : "Review import"}</Button>}
         </footer>}

@@ -30,9 +30,27 @@
  * Pure and unit-tested. The caller supplies the cell reader and the roster.
  */
 
-/** The grid keys blockouts off the calendar day, `TeamScheduleOccurrence.startsAt.slice(0, 10)`. */
-export const occurrenceCalendarDate = (occurrence) =>
-  String(occurrence?.startsAt || "").slice(0, 10);
+/** Resolve a schedule occurrence's service-local calendar date. */
+export const occurrenceCalendarDate = (occurrence, timeZone = "UTC") => {
+  const serviceDate = String(occurrence?.serviceDate || "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return serviceDate;
+  const groupDate = String(occurrence?.occurrenceId || "").match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
+  if (groupDate) return groupDate;
+  const startsAt = new Date(String(occurrence?.startsAt || ""));
+  if (Number.isNaN(startsAt.getTime())) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(startsAt);
+    const value = (type) => parts.find((part) => part.type === type)?.value;
+    return `${value("year")}-${value("month")}-${value("day")}`;
+  } catch {
+    return "";
+  }
+};
 
 /**
  * Mirrors `findBlockoutRangeForDate` on the client. Both sides must agree, or
@@ -85,14 +103,14 @@ export const hasAddedBlockoutRanges = (previousRanges, nextRanges) => {
  */
 export const findNewlyBlockedSlots = (
   schedule,
-  { memberId, previousRanges, nextRanges, readHolder, fromDate = "" },
+  { memberId, previousRanges, nextRanges, readHolder, fromDate = "", timeZone = "UTC" },
 ) => {
   if (!memberId) return [];
   const blocked = [];
   (schedule?.occurrences || []).forEach((occurrence) => {
     const occurrenceId = String(occurrence?.occurrenceId || "");
     if (!occurrenceId) return;
-    const date = occurrenceCalendarDate(occurrence);
+    const date = occurrenceCalendarDate(occurrence, timeZone);
     if (!date || (fromDate && date < fromDate)) return;
     if (!isDateBlocked(nextRanges, date)) return;
     if (isDateBlocked(previousRanges, date)) return;

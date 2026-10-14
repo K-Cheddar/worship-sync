@@ -4,8 +4,12 @@ import { useGenerateCreditsFromOverlays } from "./useGenerateCreditsFromOverlays
 import { ControllerInfoContext } from "../context/controllerInfo";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { getTeamsBootstrap } from "../api/auth";
-import { putCreditDoc } from "../utils/dbUtils";
+import { putGeneratedCreditDoc } from "../utils/dbUtils";
 import { broadcastCreditsUpdate } from "../store/store";
+import { flushCreditsHistoryFromLatestList } from "../utils/creditsHistoryFlush";
+import generatedCreditsReducer, {
+  initialGeneratedCreditsState,
+} from "../store/generatedCreditsSlice";
 
 const mockDispatch = jest.fn();
 
@@ -20,10 +24,12 @@ jest.mock("../api/auth", () => ({
 }));
 
 jest.mock("../utils/dbUtils", () => ({
-  putCreditDoc: jest.fn(),
+  putGeneratedCreditDoc: jest.fn(),
 }));
 
 jest.mock("../store/store", () => ({
+  __esModule: true,
+  default: { getState: () => mockState },
   broadcastCreditsUpdate: jest.fn(),
 }));
 
@@ -47,11 +53,11 @@ const baseMockState = {
         scheduleName: "",
       },
       itemLists: {
-        selectedList: { _id: "outline-1", name: "AM" } as const,
-        activeList: { _id: "outline-1", name: "AM" } as const,
+        selectedList: { _id: "outline-1", name: "AM" },
+        activeList: { _id: "outline-1", name: "AM" },
       },
       overlays: {
-        list: [] as { id: string; name: string; event?: string; type: string }[],
+        list: [] as { id: string; name?: string; event?: string; type: string }[],
       },
     },
   },
@@ -66,12 +72,17 @@ const baseMockState = {
 };
 
 let mockState: typeof baseMockState;
+let mockGeneratedCreditsState = initialGeneratedCreditsState;
+let mockPersistedGeneratedCredits: Map<string, { text: string; source: string }>;
 
 const mockDb = {} as PouchDB.Database;
+const alternateDb = {} as PouchDB.Database;
+let mockContextDb: PouchDB.Database | undefined = mockDb;
+let mockChurchId = "church-1";
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-    <ControllerInfoContext.Provider value={{ db: mockDb } as any}>
+  <GlobalInfoContext.Provider value={{ churchId: mockChurchId } as any}>
+    <ControllerInfoContext.Provider value={{ db: mockContextDb } as any}>
       {children}
     </ControllerInfoContext.Provider>
   </GlobalInfoContext.Provider>
@@ -142,15 +153,53 @@ const teamsBootstrap = {
 describe("useGenerateCreditsFromOverlays", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
-    (putCreditDoc as jest.Mock).mockClear();
+    mockGeneratedCreditsState = initialGeneratedCreditsState;
+    mockDispatch.mockImplementation((action) => {
+      if (action?.type?.startsWith("generatedCredits/")) {
+        mockGeneratedCreditsState = generatedCreditsReducer(
+          mockGeneratedCreditsState,
+          action,
+        );
+      }
+      return action;
+    });
+    (putGeneratedCreditDoc as jest.Mock).mockClear();
     (broadcastCreditsUpdate as jest.Mock).mockClear();
-    (getTeamsBootstrap as jest.Mock).mockResolvedValue(teamsBootstrap);
-    (putCreditDoc as jest.Mock).mockImplementation(async () => ({
-      _id: "doc",
-      id: "c1",
-      heading: "Executive Producers",
-      text: "Alice Jones\nBob Smith",
-    }));
+    (flushCreditsHistoryFromLatestList as jest.Mock).mockClear();
+    mockContextDb = mockDb;
+    mockChurchId = "church-1";
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      schedules: [],
+    });
+    mockPersistedGeneratedCredits = new Map();
+    (putGeneratedCreditDoc as jest.Mock).mockImplementation(async (_db, _outlineId, credit) => {
+      const previous = mockPersistedGeneratedCredits.get(credit.id);
+      const textChanged = previous ? previous.text !== credit.text : true;
+      const changed = !previous || textChanged || previous.source !== credit.generatedSource;
+      mockPersistedGeneratedCredits.set(credit.id, {
+        text: credit.text,
+        source: credit.generatedSource,
+      });
+      return {
+        doc: {
+          _id: `credit-${credit.id}`,
+          id: credit.id,
+          heading: credit.heading ?? "Executive Producers",
+          text: credit.text,
+        },
+        changed,
+        textChanged,
+        ...(credit.createIfMissing
+          ? {
+              addedToIndex: !previous,
+              ...(!previous
+                ? { indexDoc: { _id: "credits-index", creditIds: [credit.id] } }
+                : {}),
+            }
+          : {}),
+      };
+    });
     mockState = JSON.parse(JSON.stringify(baseMockState));
     mockState.undoable.present.credits.list = [
       {
@@ -186,6 +235,7 @@ describe("useGenerateCreditsFromOverlays", () => {
   });
 
   it("selects and updates each credit with Teams schedule names when position matches heading", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(teamsBootstrap);
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
       wrapper,
     });
@@ -206,7 +256,6 @@ describe("useGenerateCreditsFromOverlays", () => {
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
         previousText: "",
         nextText: "Alice Jones\nBob Smith",
-        manualOverride: false,
       },
     ]);
     expect(mockDispatch).toHaveBeenCalledWith(
@@ -223,10 +272,10 @@ describe("useGenerateCreditsFromOverlays", () => {
     expect(mockDispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "generatedCredits/completeGeneratedCreditItem",
-        payload: { creditId: "c1", status: "updated" },
+        payload: expect.objectContaining({ creditId: "c1", status: "updated" }),
       }),
     );
-    expect(putCreditDoc).toHaveBeenCalled();
+    expect(putGeneratedCreditDoc).toHaveBeenCalled();
     expect(broadcastCreditsUpdate).toHaveBeenCalled();
   });
 
@@ -266,6 +315,149 @@ describe("useGenerateCreditsFromOverlays", () => {
     expect(updateAction![0].payload.text.trim()).toBe("Host Name");
   });
 
+  it("leaves matching credits unchanged when the participant overlay source is absent", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Existing host",
+      hidden: false,
+    }];
+    mockState.undoable.present.overlays.list = [];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const report = mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits")?.[0].payload;
+    expect(report.items).toContainEqual(expect.objectContaining({
+      creditId: "c1",
+      sourceLabel: "Participant overlays",
+      previousText: "Existing host",
+      nextText: "",
+      status: "unmatched",
+    }));
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCredits",
+    }));
+  });
+
+  it("does not treat a missing participant name value as an intentional blank", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Existing host",
+      hidden: false,
+    }];
+    mockState.undoable.present.overlays.list = [{
+      id: "welcome",
+      type: "participant",
+      event: "Welcome",
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits")?.[0].payload.items)
+      .toContainEqual(expect.objectContaining({ creditId: "c1", status: "unmatched", nextText: "" }));
+  });
+
+  it("clears matching credit text when its participant overlay is present and intentionally blank", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Existing host",
+      hidden: false,
+    }];
+    mockState.undoable.present.overlays.list = [{
+      id: "welcome",
+      type: "participant",
+      name: "",
+      event: "Welcome",
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const update = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(update?.[0].payload).toEqual(expect.objectContaining({
+      text: "",
+      generatedBaselineText: "",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: false,
+    }));
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", {
+      id: "c1",
+      text: "",
+      generatedSource: "Participant overlays",
+    });
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCreditItem",
+      payload: expect.objectContaining({ creditId: "c1", status: "updated" }),
+    }));
+  });
+
+  it("preserves same-outline heading and visibility edits made while generation is saving", async () => {
+    let resolveWrite: (result: {
+      doc: { _id: string; id: string; heading: string; text: string; hidden: boolean };
+      changed: boolean;
+      textChanged: boolean;
+    }) => void = () => {};
+    (putGeneratedCreditDoc as jest.Mock).mockReturnValueOnce(new Promise((resolve) => {
+      resolveWrite = resolve;
+    }));
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old host",
+      hidden: false,
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let generationPromise!: Promise<void>;
+    act(() => {
+      generationPromise = result.current.generateFromOverlays();
+    });
+    await waitFor(() => expect(putGeneratedCreditDoc).toHaveBeenCalled());
+
+    mockState.undoable.present.credits.list[0] = {
+      ...mockState.undoable.present.credits.list[0],
+      heading: "Updated heading during generation",
+      hidden: true,
+    };
+    await act(async () => {
+      resolveWrite({
+        doc: {
+          _id: "credit-c1",
+          id: "c1",
+          heading: "Stored heading",
+          text: "Welcome Host",
+          hidden: false,
+        },
+        changed: true,
+        textChanged: true,
+      });
+      await generationPromise;
+    });
+
+    const update = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(update?.[0].payload).toEqual(expect.objectContaining({
+      heading: "Updated heading during generation",
+      hidden: true,
+      text: "Welcome Host",
+    }));
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", {
+      id: "c1",
+      text: "Welcome Host",
+      generatedSource: "Participant overlays",
+    });
+  });
+
   it("fills from overlay event mapping for Behind the Pulpit credit heading", async () => {
     (getTeamsBootstrap as jest.Mock).mockResolvedValue({
       ...teamsBootstrap,
@@ -302,8 +494,8 @@ describe("useGenerateCreditsFromOverlays", () => {
     expect(updateAction![0].payload.text.trim()).toBe("Dr. Greg Baldeo");
   });
 
-  it("lists assigned schedule positions that did not match a credit heading", async () => {
-    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+  it("creates an assigned scheduled position that has no matching credit", async () => {
+    const assignedSchedule = {
       ...teamsBootstrap,
       positions: [
         ...teamsBootstrap.positions,
@@ -313,6 +505,13 @@ describe("useGenerateCreditsFromOverlays", () => {
           teamId: "team-media",
           name: "Stream Audio",
           order: 2,
+        },
+        {
+          positionId: "empty-graphics",
+          churchId: "church-1",
+          teamId: "team-media",
+          name: "Graphics",
+          order: 3,
         },
       ],
       members: [
@@ -337,9 +536,14 @@ describe("useGenerateCreditsFromOverlays", () => {
           },
         },
       ],
-    });
+    };
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(assignedSchedule);
+    mockState.undoable.present.credits.list = [
+      { id: "c0", heading: "Opening", text: "", hidden: false },
+      { id: "c1", heading: "Camera Operators", text: "Old Camera", hidden: false },
+    ];
 
-    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), {
       wrapper,
     });
 
@@ -357,15 +561,194 @@ describe("useGenerateCreditsFromOverlays", () => {
         nextText: "Alice Jones",
       }),
       expect.objectContaining({
+        creditId: "generated-schedule-stream-audio",
         creditHeading: "Stream Audio",
         nextText: "Sam Taylor",
         sourceLabel: "Media schedule: July Media - Sabbath Worship",
-        status: "missed",
+        status: "creating",
       }),
     ]);
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", {
+      id: "generated-schedule-stream-audio",
+      heading: "Stream Audio",
+      text: "Sam Taylor",
+      generatedSource: "Media schedule: July Media - Sabbath Worship",
+      createIfMissing: true,
+    });
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "credits/addCredit",
+      payload: expect.objectContaining({
+        id: "generated-schedule-stream-audio",
+        heading: "Stream Audio",
+        text: "Sam Taylor",
+      }),
+    }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCreditItem",
+      payload: expect.objectContaining({
+        creditId: "generated-schedule-stream-audio",
+        status: "created",
+      }),
+    }));
+    const selectLastCreditIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "credits/selectCredit" && call[0].payload === "c1",
+    );
+    const addCreditIndex = mockDispatch.mock.calls.findIndex(
+      (call) => call[0]?.type === "credits/addCredit",
+    );
+    expect(selectLastCreditIndex).toBeLessThan(addCreditIndex);
+
+    const createdCredit = mockDispatch.mock.calls[addCreditIndex][0].payload;
+    mockState.undoable.present.credits.list = [
+      ...mockState.undoable.present.credits.list,
+      createdCredit,
+    ];
+    const updatedSchedule = {
+      ...assignedSchedule,
+      members: assignedSchedule.members.map((member) =>
+        member.memberId === "m3" ? { ...member, firstName: "Samuel" } : member,
+      ),
+    };
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(updatedSchedule);
+    rerender();
+
+    await act(async () => {
+      await result.current.generateFromOverlays();
+    });
+
+    const generatedCreditWrites = (putGeneratedCreditDoc as jest.Mock).mock.calls
+      .filter((call) => call[2].id === "generated-schedule-stream-audio");
+    expect(generatedCreditWrites).toHaveLength(2);
+    expect(generatedCreditWrites[0][2].createIfMissing).toBe(true);
+    expect(generatedCreditWrites[1][2]).not.toHaveProperty("createIfMissing");
+    expect(mockDispatch.mock.calls.filter((call) => call[0]?.type === "credits/addCredit"))
+      .toHaveLength(1);
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "credits/updateCreditFromGeneration",
+      payload: expect.objectContaining({
+        id: "generated-schedule-stream-audio",
+        heading: "Stream Audio",
+        text: "Samuel Taylor",
+      }),
+    }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCreditItem",
+      payload: expect.objectContaining({
+        creditId: "generated-schedule-stream-audio",
+        status: "updated",
+      }),
+    }));
   });
 
-  it("skips putCreditDoc and broadcast when db is missing", async () => {
+  it("leaves a grouped credit unchanged when it matches multiple scheduled positions", async () => {
+    const groupedSchedule = {
+      ...teamsBootstrap,
+      positions: [
+        { positionId: "audio-engineer", churchId: "church-1", teamId: "team-media", name: "Audio Engineer", order: 1 },
+        { positionId: "audio-technician", churchId: "church-1", teamId: "team-media", name: "Audio Technician", order: 2 },
+      ],
+      members: [
+        { memberId: "engineer", churchId: "church-1", firstName: "Alex", lastName: "Engineer", positionIds: ["audio-engineer"], blockoutDates: [] },
+        { memberId: "technician", churchId: "church-1", firstName: "Taylor", lastName: "Technician", positionIds: ["audio-technician"], blockoutDates: [] },
+      ],
+      schedules: [{
+        ...teamsBootstrap.schedules[0],
+        assignments: {
+          "occ-1": {
+            "audio-engineer::0": { primaryMemberId: "engineer" },
+            "audio-technician::0": { primaryMemberId: "technician" },
+          },
+        },
+      }],
+    };
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(groupedSchedule);
+    mockState.undoable.present.credits.list = [
+      { id: "c1", heading: "Audio", text: "Previous audio team", hidden: false },
+    ];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const report = mockDispatch.mock.calls.find(
+      (call) => call[0]?.type === "generatedCredits/startGeneratedCredits",
+    )?.[0].payload;
+    expect(report.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        creditId: "c1",
+        nextText: "Previous audio team",
+        status: "unmatched",
+        reason: "Audio matches more than one scheduled position: Audio Engineer, Audio Technician. No changes were made.",
+      }),
+      expect.objectContaining({
+        creditId: "schedule-miss-audio-engineer",
+        creditHeading: "Audio Engineer",
+        nextText: "Alex Engineer",
+        status: "unmatched",
+      }),
+      expect.objectContaining({
+        creditId: "schedule-miss-audio-technician",
+        creditHeading: "Audio Technician",
+        nextText: "Taylor Technician",
+        status: "unmatched",
+        reason: 'Audio Technician shares the heading "Audio" with multiple scheduled positions: Audio Engineer, Audio Technician. No changes were made.',
+      }),
+    ]));
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/addCredit")).toBe(false);
+  });
+
+  it("leaves both credits unchanged when one scheduled position matches multiple headings", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(teamsBootstrap);
+    mockState.undoable.present.credits.list = [
+      { id: "camera-exact", heading: "Camera", text: "First edit", hidden: false },
+      { id: "camera-operators", heading: "Camera Operators", text: "Second edit", hidden: false },
+    ];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const report = mockDispatch.mock.calls.find(
+      (call) => call[0]?.type === "generatedCredits/startGeneratedCredits",
+    )?.[0].payload;
+    expect(report.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ creditId: "camera-exact", status: "unmatched" }),
+      expect.objectContaining({ creditId: "camera-operators", status: "unmatched" }),
+      expect.objectContaining({ creditId: "schedule-miss-camera", status: "unmatched" }),
+    ]));
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/addCredit")).toBe(false);
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed creation and retries it without appending a duplicate", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue(teamsBootstrap);
+    mockState.undoable.present.credits.list = [];
+    mockState.undoable.present.overlays.list = [];
+    (putGeneratedCreditDoc as jest.Mock).mockResolvedValueOnce(null);
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/failGeneratedCreditItem",
+      payload: expect.objectContaining({
+        creditId: "generated-schedule-camera",
+        error: expect.stringMatching(/generate again to retry/i),
+      }),
+    }));
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/addCredit")).toBe(false);
+
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(mockDispatch.mock.calls.filter((call) => call[0]?.type === "credits/addCredit")).toHaveLength(1);
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCreditItem",
+      payload: expect.objectContaining({ creditId: "generated-schedule-camera", status: "created" }),
+    }));
+  });
+
+  it("reports a save failure and keeps local credits unchanged when db is missing", async () => {
     const NoDbWrapper = ({ children }: { children: React.ReactNode }) => (
       <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
         <ControllerInfoContext.Provider value={{ db: undefined } as any}>
@@ -373,8 +756,14 @@ describe("useGenerateCreditsFromOverlays", () => {
         </ControllerInfoContext.Provider>
       </GlobalInfoContext.Provider>
     );
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old welcome",
+      hidden: false,
+    }];
 
-    (putCreditDoc as jest.Mock).mockClear();
+    (putGeneratedCreditDoc as jest.Mock).mockClear();
     (broadcastCreditsUpdate as jest.Mock).mockClear();
 
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
@@ -385,11 +774,298 @@ describe("useGenerateCreditsFromOverlays", () => {
       await result.current.generateFromOverlays();
     });
 
-    expect(putCreditDoc).not.toHaveBeenCalled();
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
     expect(broadcastCreditsUpdate).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/failGeneratedCreditItem",
+      payload: expect.objectContaining({ creditId: "c1" }),
+    }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/failGeneratedCredits",
+      payload: expect.objectContaining({ error: "Some credits could not be saved." }),
+    }));
   });
 
-  it("continues overlay generation and clears isGenerating after Teams schedule throws", async () => {
+  it("persists to the original outline without updating a newly selected outline", async () => {
+    let resolveBootstrap: (value: typeof teamsBootstrap) => void = () => {};
+    (getTeamsBootstrap as jest.Mock).mockReturnValue(new Promise((resolve) => {
+      resolveBootstrap = resolve;
+    }));
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old outline text",
+      hidden: false,
+    }];
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let generationPromise!: Promise<void>;
+    act(() => {
+      generationPromise = result.current.generateFromOverlays();
+    });
+    await waitFor(() => expect(result.current.isGenerating).toBe(true));
+
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-2", name: "PM" };
+    mockState.undoable.present.itemLists.activeList = { _id: "outline-2", name: "PM" };
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "New outline correction",
+      hidden: true,
+    }];
+    rerender();
+
+    await act(async () => {
+      resolveBootstrap({ ...teamsBootstrap, schedules: [] });
+      await generationPromise;
+    });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
+      text: "Welcome Host",
+    }));
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/selectCredit")).toBe(false);
+    expect(broadcastCreditsUpdate).toHaveBeenCalled();
+  });
+
+  it("keeps a newer outline's progress when an older write completes", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "A old text",
+      hidden: false,
+    }];
+    mockState.undoable.present.overlays.list = [{
+      id: "o1",
+      type: "participant",
+      name: "Generated host",
+      event: "Welcome",
+    }];
+
+    const responseFor = (text: string) => ({
+      doc: { _id: "credit-c1", id: "c1", heading: "Welcome & Reminders", text },
+      changed: true,
+      textChanged: true,
+    });
+    let resolveA!: (value: ReturnType<typeof responseFor>) => void;
+    let resolveB!: (value: ReturnType<typeof responseFor>) => void;
+    const writeA = new Promise<ReturnType<typeof responseFor>>((resolve) => { resolveA = resolve; });
+    const writeB = new Promise<ReturnType<typeof responseFor>>((resolve) => { resolveB = resolve; });
+    (putGeneratedCreditDoc as jest.Mock).mockImplementation((_db, outlineId: string) =>
+      outlineId === "outline-1" ? writeA : writeB,
+    );
+
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let generationA!: Promise<void>;
+    act(() => { generationA = result.current.generateFromOverlays(); });
+    await waitFor(() => expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(1));
+    const operationA = mockGeneratedCreditsState.operationId;
+    expect(mockGeneratedCreditsState.status).toBe("running");
+
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-2", name: "PM" };
+    mockState.undoable.present.itemLists.activeList = { _id: "outline-2", name: "PM" };
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "B old text",
+      hidden: true,
+    }];
+    rerender();
+
+    let generationB!: Promise<void>;
+    act(() => { generationB = result.current.generateFromOverlays(); });
+    await waitFor(() => expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(2));
+    const operationB = mockGeneratedCreditsState.operationId;
+    const reportB = mockGeneratedCreditsState;
+    expect(operationB).not.toBe(operationA);
+    expect(mockGeneratedCreditsState.owner?.outlineId).toBe("outline-2");
+    expect(result.current.isGenerating).toBe(true);
+
+    await act(async () => {
+      resolveA(responseFor("Generated host"));
+      await generationA;
+    });
+
+    expect(mockGeneratedCreditsState).toEqual(reportB);
+    expect(mockGeneratedCreditsState.operationId).toBe(operationB);
+    expect(mockGeneratedCreditsState.status).toBe("running");
+    expect(result.current.isGenerating).toBe(true);
+    expect(putGeneratedCreditDoc).toHaveBeenNthCalledWith(
+      1,
+      mockDb,
+      "outline-1",
+      expect.objectContaining({ id: "c1", text: "Generated host" }),
+    );
+
+    await act(async () => {
+      resolveB(responseFor("Generated host"));
+      await generationB;
+    });
+    expect(mockGeneratedCreditsState.status).toBe("completed");
+    expect(result.current.isGenerating).toBe(false);
+  });
+
+  it("ignores a repeated Generate action while the same outline is saving", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old host",
+      hidden: false,
+    }];
+    const response = {
+      doc: { _id: "credit-c1", id: "c1", heading: "Welcome & Reminders", text: "Welcome Host" },
+      changed: true,
+      textChanged: true,
+    };
+    let resolveWrite!: (value: typeof response) => void;
+    (putGeneratedCreditDoc as jest.Mock).mockReturnValue(
+      new Promise((resolve) => { resolveWrite = resolve; }),
+    );
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let firstGeneration!: Promise<void>;
+    act(() => { firstGeneration = result.current.generateFromOverlays(); });
+    await waitFor(() => expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(1));
+    const operationId = mockGeneratedCreditsState.operationId;
+
+    await act(async () => {
+      await result.current.generateFromOverlays();
+    });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(1);
+    expect(mockDispatch.mock.calls.filter(
+      (call) => call[0]?.type === "generatedCredits/startGeneratedCredits",
+    )).toHaveLength(1);
+    expect(mockGeneratedCreditsState.operationId).toBe(operationId);
+    expect(mockGeneratedCreditsState.status).toBe("running");
+
+    await act(async () => {
+      resolveWrite(response);
+      await firstGeneration;
+    });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(1);
+    expect(mockGeneratedCreditsState.status).toBe("completed");
+  });
+
+  it("freezes progress when the generation view unmounts during a write", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old host",
+      hidden: false,
+    }];
+    const response = {
+      doc: { _id: "credit-c1", id: "c1", heading: "Welcome & Reminders", text: "Welcome Host" },
+      changed: true,
+      textChanged: true,
+    };
+    let resolveWrite!: (value: typeof response) => void;
+    (putGeneratedCreditDoc as jest.Mock).mockReturnValue(
+      new Promise((resolve) => { resolveWrite = resolve; }),
+    );
+
+    const view = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let generation!: Promise<void>;
+    act(() => { generation = view.result.current.generateFromOverlays(); });
+    await waitFor(() => expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(1));
+    const operationId = mockGeneratedCreditsState.operationId;
+    view.unmount();
+    expect(mockGeneratedCreditsState.status).toBe("detached");
+    const detachedReport = mockGeneratedCreditsState;
+
+    await act(async () => {
+      resolveWrite(response);
+      await generation;
+    });
+
+    expect(mockGeneratedCreditsState).toEqual(detachedReport);
+    expect(mockGeneratedCreditsState.operationId).toBe(operationId);
+  });
+
+  it("does not broadcast a saved credit through a newly active church channel", async () => {
+    let resolveBootstrap: (value: typeof teamsBootstrap) => void = () => {};
+    (getTeamsBootstrap as jest.Mock).mockReturnValue(new Promise((resolve) => {
+      resolveBootstrap = resolve;
+    }));
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old church text",
+      hidden: false,
+    }];
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let generationPromise!: Promise<void>;
+    act(() => {
+      generationPromise = result.current.generateFromOverlays();
+    });
+    await waitFor(() => expect(result.current.isGenerating).toBe(true));
+
+    mockChurchId = "church-2";
+    mockContextDb = alternateDb;
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "New church correction",
+      hidden: true,
+    }];
+    rerender();
+
+    await act(async () => {
+      resolveBootstrap({ ...teamsBootstrap, schedules: [] });
+      await generationPromise;
+    });
+
+    expect(getTeamsBootstrap).toHaveBeenCalledWith("church-1");
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
+      text: "Welcome Host",
+    }));
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/selectCredit")).toBe(false);
+    expect(broadcastCreditsUpdate).not.toHaveBeenCalled();
+    expect(flushCreditsHistoryFromLatestList).not.toHaveBeenCalled();
+  });
+
+  it("keeps the durable write scoped to its outline and skips local commits after unmount", async () => {
+    let resolveBootstrap: (value: typeof teamsBootstrap) => void = () => {};
+    (getTeamsBootstrap as jest.Mock).mockReturnValue(new Promise((resolve) => {
+      resolveBootstrap = resolve;
+    }));
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Old outline text",
+      hidden: false,
+    }];
+    const { result, unmount } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    let generationPromise!: Promise<void>;
+    act(() => {
+      generationPromise = result.current.generateFromOverlays();
+    });
+    await waitFor(() => expect(result.current.isGenerating).toBe(true));
+    unmount();
+
+    await act(async () => {
+      resolveBootstrap({ ...teamsBootstrap, schedules: [] });
+      await generationPromise;
+    });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
+      text: "Welcome Host",
+    }));
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/selectCredit")).toBe(false);
+    expect(broadcastCreditsUpdate).not.toHaveBeenCalled();
+    expect(flushCreditsHistoryFromLatestList).not.toHaveBeenCalled();
+  });
+
+  it("continues overlay generation and skips service-plan fallback when Teams schedule throws", async () => {
     (getTeamsBootstrap as jest.Mock).mockRejectedValue(new Error("teams unavailable"));
     const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => { });
     mockState.undoable.present.credits.list = [
@@ -399,6 +1075,15 @@ describe("useGenerateCreditsFromOverlays", () => {
         text: "",
         hidden: false,
       },
+      {
+        id: "band-credit",
+        heading: "Band",
+        text: "Manually corrected band list",
+        hidden: false,
+      },
+    ];
+    mockState.servicePlanningImport.serviceOutline.preview.teamAssignments = [
+      { teamName: "Band", role: "Guitar", name: "Stale Imported Name" },
     ];
 
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), {
@@ -416,6 +1101,23 @@ describe("useGenerateCreditsFromOverlays", () => {
       (c) => c[0]?.type === "credits/updateCreditFromGeneration",
     );
     expect(updateAction![0].payload.text.trim()).toBe("Welcome Host");
+    expect(mockDispatch.mock.calls.some((call) =>
+      call[0]?.type === "credits/updateCreditFromGeneration" &&
+      call[0].payload.id === "band-credit",
+    )).toBe(false);
+    expect((putGeneratedCreditDoc as jest.Mock).mock.calls.some((call) => call[2].id === "band-credit")).toBe(false);
+    const report = mockDispatch.mock.calls.find(
+      (call) => call[0]?.type === "generatedCredits/startGeneratedCredits",
+    )?.[0].payload;
+    expect(report.warning).toBe(
+      "The media schedule couldn't be loaded. Credits based on that schedule were left unchanged. Check it in Teams, then generate again.",
+    );
+    expect(report.items).toContainEqual(expect.objectContaining({
+      creditHeading: "Band",
+      status: "skipped",
+      nextText: "Manually corrected band list",
+      reason: report.warning,
+    }));
 
     consoleSpy.mockRestore();
   });
@@ -437,15 +1139,14 @@ describe("useGenerateCreditsFromOverlays", () => {
       generatedSource: "Participant overlays",
       generatedTextOverridden: false,
     }));
-    expect(putCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
       text: "Welcome Host",
-      generatedBaselineText: "Welcome Host",
       generatedSource: "Participant overlays",
-      generatedTextOverridden: false,
     }));
   });
 
-  it("preserves a genuinely manually edited generated credit during regeneration", async () => {
+  it("keeps a post-service correction until explicit regeneration, then replaces and persists it", async () => {
     mockState.undoable.present.credits.list = [{
       id: "c1",
       heading: "Welcome & Reminders",
@@ -456,23 +1157,31 @@ describe("useGenerateCreditsFromOverlays", () => {
       generatedTextOverridden: true,
     }];
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
-    await act(async () => { await result.current.generateFromOverlays(); });
 
     expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
-    const report = mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits");
-    expect(report?.[0].payload.items[0]).toEqual(expect.objectContaining({
-      previousText: "Corrected by operator",
-      nextText: "Welcome Host",
-      manualOverride: true,
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const update = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(update?.[0].payload).toEqual(expect.objectContaining({
+      text: "Welcome Host",
+      generatedBaselineText: "Welcome Host",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: false,
     }));
     expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "generatedCredits/completeGeneratedCreditItem",
-      payload: { creditId: "c1", status: "preserved" },
+      payload: expect.objectContaining({ creditId: "c1", status: "updated" }),
     }));
-    expect(putCreditDoc).not.toHaveBeenCalled();
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
+      text: "Welcome Host",
+      generatedSource: "Participant overlays",
+    }));
   });
 
-  it.each([undefined, false])("preserves text differing from a known baseline when override is %s", async (override) => {
+  it.each([undefined, false])("regenerates text differing from a baseline when override is %s", async (override) => {
     mockState.undoable.present.credits.list = [{
       id: "c1",
       heading: "Welcome & Reminders",
@@ -485,9 +1194,163 @@ describe("useGenerateCreditsFromOverlays", () => {
     const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
     await act(async () => { await result.current.generateFromOverlays(); });
 
-    const report = mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits");
-    expect(report?.[0].payload.items[0]).toEqual(expect.objectContaining({ manualOverride: true }));
-    expect(putCreditDoc).not.toHaveBeenCalled();
+    const update = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(update?.[0].payload).toEqual(expect.objectContaining({
+      text: "Welcome Host",
+      generatedBaselineText: "Welcome Host",
+      generatedTextOverridden: false,
+    }));
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
+      text: "Welcome Host",
+      generatedSource: "Participant overlays",
+    }));
+  });
+
+  it("reports unchanged on repeated generation after the first generated value is current", async () => {
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "",
+      hidden: false,
+    }];
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+
+    await act(async () => { await result.current.generateFromOverlays(); });
+    const firstUpdate = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(firstUpdate?.[0].payload.text).toBe("Welcome Host");
+
+    mockState.undoable.present.credits.list = [firstUpdate![0].payload];
+    rerender();
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const completedStatuses = mockDispatch.mock.calls
+      .filter((call) => call[0]?.type === "generatedCredits/completeGeneratedCreditItem")
+      .map((call) => call[0].payload.status);
+    expect(completedStatuses).toEqual(["updated", "unchanged"]);
+    expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a persisted text change even when the local credit already matches", async () => {
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Welcome Host",
+      hidden: false,
+      generatedBaselineText: "Welcome Host",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: false,
+    }];
+    mockPersistedGeneratedCredits.set("c1", {
+      text: "Stale persisted host",
+      source: "Participant overlays",
+    });
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", {
+      id: "c1",
+      text: "Welcome Host",
+      generatedSource: "Participant overlays",
+    });
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/completeGeneratedCreditItem",
+      payload: expect.objectContaining({ creditId: "c1", status: "updated" }),
+    }));
+  });
+
+  it("retries only credits that did not persist after a partial generation failure", async () => {
+    const secondCredit = {
+      id: "c2",
+      heading: "Sabbath School",
+      text: "Manual participant correction",
+      hidden: false,
+      generatedBaselineText: "Previous participants",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: true,
+    };
+    mockState.undoable.present.credits.list = [
+      { id: "c1", heading: "Welcome & Reminders", text: "Old welcome", hidden: false },
+      secondCredit,
+    ];
+    mockState.undoable.present.overlays.list.push({
+      id: "ss1",
+      type: "participant",
+      name: "Ruth Taylor",
+      event: "Sabbath School",
+    });
+    (putGeneratedCreditDoc as jest.Mock)
+      .mockResolvedValueOnce({ doc: { id: "c1", text: "Welcome Host" }, changed: true, textChanged: true })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ doc: { id: "c1", text: "Welcome Host" }, changed: false, textChanged: false })
+      .mockResolvedValueOnce({ doc: { id: "c2", text: "Ruth Taylor" }, changed: true, textChanged: true });
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+
+    await act(async () => { await result.current.generateFromOverlays(); });
+    const firstRunUpdates = mockDispatch.mock.calls.filter((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    const firstCreditUpdate = firstRunUpdates.find((call) => call[0].payload.id === "c1");
+    expect(firstCreditUpdate?.[0].payload.text).toBe("Welcome Host");
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/failGeneratedCreditItem",
+      payload: expect.objectContaining({ creditId: "c2" }),
+    }));
+
+    mockState.undoable.present.credits.list = [
+      firstCreditUpdate![0].payload,
+      secondCredit,
+    ];
+    rerender();
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(4);
+    expect((putGeneratedCreditDoc as jest.Mock).mock.calls.map((call) => call[2].id)).toEqual([
+      "c1",
+      "c2",
+      "c1",
+      "c2",
+    ]);
+    const statuses = mockDispatch.mock.calls
+      .filter((call) => call[0]?.type === "generatedCredits/completeGeneratedCreditItem")
+      .map((call) => `${call[0].payload.creditId}:${call[0].payload.status}`);
+    expect(statuses).toEqual([
+      "c1:updated",
+      "c1:unchanged",
+      "c2:updated",
+    ]);
+  });
+
+  it("refreshes Sabbath School credits when participants change and generation is requested again", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({ ...teamsBootstrap, schedules: [] });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Sabbath School",
+      text: "Previous Participants",
+      hidden: false,
+    }];
+    mockState.undoable.present.overlays.list = [
+      { id: "ss1", type: "participant", name: "Naomi Jones", event: "Sabbath School" },
+      { id: "ss2", type: "participant", name: "Peter Smith", event: "Sabbath School" },
+    ];
+    const { result, rerender } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+
+    await act(async () => { await result.current.generateFromOverlays(); });
+    const firstUpdate = mockDispatch.mock.calls.find((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(firstUpdate?.[0].payload.text).toBe("Naomi Jones\nPeter Smith");
+
+    mockState.undoable.present.credits.list = [firstUpdate![0].payload];
+    mockState.undoable.present.overlays.list = [
+      { id: "ss3", type: "participant", name: "Ruth Taylor", event: "Sabbath School" },
+    ];
+    rerender();
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const updates = mockDispatch.mock.calls.filter((call) => call[0]?.type === "credits/updateCreditFromGeneration");
+    expect(updates.map((call) => call[0].payload.text)).toEqual([
+      "Naomi Jones\nPeter Smith",
+      "Ruth Taylor",
+    ]);
+    expect(putGeneratedCreditDoc).toHaveBeenCalledTimes(2);
   });
 
   it("updates a prior generated value after the source value changes", async () => {
@@ -517,8 +1380,10 @@ describe("useGenerateCreditsFromOverlays", () => {
       generatedBaselineText: "Updated Host",
       generatedTextOverridden: false,
     }));
-    expect(putCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
-      generatedBaselineText: "Updated Host",
+    expect(putGeneratedCreditDoc).toHaveBeenCalledWith(mockDb, "outline-1", expect.objectContaining({
+      id: "c1",
+      text: "Updated Host",
+      generatedSource: "Participant overlays",
     }));
   });
 
@@ -563,6 +1428,116 @@ describe("useGenerateCreditsFromOverlays", () => {
     expect(report?.[0].payload.items).not.toContainEqual(expect.objectContaining({
       nextText: "Guitar - Stale Imported Name",
     }));
+  });
+
+  it("does not erase a matching credit when schedule assignments are unavailable", async () => {
+    const { assignments: _assignments, ...summarySchedule } = teamsBootstrap.schedules[0];
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      schedules: [{ ...summarySchedule, assignmentsOmitted: true }],
+    });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Camera Operators",
+      text: "Corrected after service",
+      hidden: false,
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits")?.[0].payload.warning)
+      .toMatch(/hasn't loaded/i);
+    expect(mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits")?.[0].payload.items)
+      .toContainEqual(expect.objectContaining({
+        creditHeading: "Camera Operators",
+        status: "skipped",
+        nextText: "Corrected after service",
+      }));
+  });
+
+  it("reports a missing schedule separately and leaves its credits unchanged", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      schedules: [],
+    });
+    mockState.undoable.present.credits.list = [{
+      id: "camera-credit",
+      heading: "Camera Operators",
+      text: "Corrected after service",
+      hidden: false,
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    const report = mockDispatch.mock.calls.find(
+      (call) => call[0]?.type === "generatedCredits/startGeneratedCredits",
+    )?.[0].payload;
+    expect(report.warning).toMatch(/no matching media schedule was found/i);
+    expect(report.items).toContainEqual(expect.objectContaining({
+      creditHeading: "Camera Operators",
+      status: "skipped",
+    }));
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+  });
+
+  it("does not treat truncated Teams data as an authoritative empty assignment", async () => {
+    (getTeamsBootstrap as jest.Mock).mockResolvedValue({
+      ...teamsBootstrap,
+      truncated: true,
+      members: [],
+      schedules: [{
+        ...teamsBootstrap.schedules[0],
+        assignments: { "occ-1": { "camera::0": { primaryMemberId: "missing-member" } } },
+      }],
+    });
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Camera Operators",
+      text: "Corrected after service",
+      hidden: false,
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(putGeneratedCreditDoc).not.toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits")?.[0].payload.warning)
+      .toMatch(/schedule information is incomplete/i);
+    expect(mockDispatch.mock.calls.find((call) => call[0]?.type === "generatedCredits/startGeneratedCredits")?.[0].payload.items)
+      .toContainEqual(expect.objectContaining({ creditHeading: "Camera Operators", status: "skipped" }));
+  });
+
+  it("reports a null persistence result as failed and does not update local or broadcast state", async () => {
+    (putGeneratedCreditDoc as jest.Mock).mockResolvedValueOnce(null);
+    mockState.undoable.present.credits.list = [{
+      id: "c1",
+      heading: "Welcome & Reminders",
+      text: "Corrected by operator",
+      hidden: false,
+      generatedBaselineText: "Welcome Host",
+      generatedSource: "Participant overlays",
+      generatedTextOverridden: true,
+    }];
+
+    const { result } = renderHook(() => useGenerateCreditsFromOverlays(), { wrapper });
+    await act(async () => { await result.current.generateFromOverlays(); });
+
+    expect(putGeneratedCreditDoc).toHaveBeenCalled();
+    expect(mockDispatch.mock.calls.some((call) => call[0]?.type === "credits/updateCreditFromGeneration")).toBe(false);
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/failGeneratedCreditItem",
+      payload: expect.objectContaining({ creditId: "c1", error: "Could not save this credit. Generate again to retry." }),
+    }));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "generatedCredits/failGeneratedCredits",
+      payload: expect.objectContaining({ error: "Some credits could not be saved." }),
+    }));
+    expect(broadcastCreditsUpdate).not.toHaveBeenCalled();
   });
 
   it("does not split an intentional comma or ampersand in an overlay display name", async () => {

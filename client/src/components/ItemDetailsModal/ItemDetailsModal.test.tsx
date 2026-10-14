@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { searchYouTubeVideos } from "../../api/auth";
 import { ItemDetailsEditorFields } from "./ItemDetailsModal";
@@ -148,7 +148,75 @@ describe("ItemDetailsEditorFields song links", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("calls the opt-in success callback after the save resolves and blocks repeat submissions", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onSave = jest.fn(
+      () => new Promise<void>((resolve) => { resolveSave = resolve; }),
+    );
+    const onSaveSuccess = jest.fn();
+    render(
+      <ItemDetailsEditorFields
+        isOpen
+        onClose={jest.fn()}
+        itemType="free"
+        itemName="Example item"
+        songMetadata={undefined}
+        onSave={onSave}
+        onSaveSuccess={onSaveSuccess}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Item name/i), {
+      target: { value: "Updated item" },
+    });
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSaveSuccess).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    expect(screen.getByLabelText(/Item name/i)).toBeDisabled();
+
+    await act(async () => {
+      resolveSave?.();
+    });
+
+    await waitFor(() => expect(onSaveSuccess).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText(/Item name/i)).toBeEnabled();
+  });
+
+  it("keeps the entered details and skips the success callback when save rejects", async () => {
+    const onSave = jest.fn().mockRejectedValue(new Error("Database unavailable."));
+    const onSaveSuccess = jest.fn();
+    render(
+      <ItemDetailsEditorFields
+        isOpen
+        onClose={jest.fn()}
+        itemType="free"
+        itemName="Example item"
+        songMetadata={undefined}
+        onSave={onSave}
+        onSaveSuccess={onSaveSuccess}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Item name/i), {
+      target: { value: "Pending edit" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Database unavailable.",
+    );
+    expect(screen.getByLabelText(/Item name/i)).toHaveValue("Pending edit");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(onSaveSuccess).not.toHaveBeenCalled();
+  });
+
   it("requires a URL but not a link label", async () => {
+    const onSave = jest.fn();
+    const onSaveSuccess = jest.fn();
     render(
       <ItemDetailsEditorFields
         isOpen
@@ -157,7 +225,8 @@ describe("ItemDetailsEditorFields song links", () => {
         itemName="Example song"
         songMetadata={undefined}
         songLinks={[{ id: "link-1", label: "Chart", url: "" }]}
-        onSave={jest.fn()}
+        onSave={onSave}
+        onSaveSuccess={onSaveSuccess}
       />,
     );
 
@@ -169,5 +238,7 @@ describe("ItemDetailsEditorFields song links", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Enter a valid http(s) address or remove the empty link.",
     );
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onSaveSuccess).not.toHaveBeenCalled();
   });
 });

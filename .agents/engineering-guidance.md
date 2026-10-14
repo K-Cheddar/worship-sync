@@ -24,6 +24,8 @@ Before adding prose guidance, prefer stronger enforcement in this order:
 
 Choose enforcement for the nature of the lesson; do not accumulate one-off review comments as permanent rules. Keep global guidance concise and put deeper, domain-specific invariants in the relevant skill.
 
+Production/test composition mismatches (providers, auth, permissions, data sources, runtime, or deferred UI mounts) are context-dependent and rarely safe to catch with a broad static rule. When the mismatch creates meaningful risk, prefer a focused test through the real entry point or its faithful composition plus an explicit implementation and review check; keep browser and full-suite work proportional.
+
 ## Guidance ownership
 
 Every repository-local skill or guidance file referenced by tracked agent instructions must also be versioned in the repository.

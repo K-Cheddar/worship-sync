@@ -1,6 +1,7 @@
 import {
   createSections,
   createNewSong,
+  createNewItemInDb,
   createNewFreeForm,
   runCanvaCustomItemCreationOnce,
   createNewBible,
@@ -32,6 +33,47 @@ jest.mock("./overflow", () => ({
 }));
 
 describe("itemUtil", () => {
+  it.each(["song", "free"])("returns an existing legacy ID even when creation requested a different type, existing=%s", async (type) => {
+    const existing = { _id: "Legacy name", _rev: "1-existing", name: "Legacy name",
+      type, selectedArrangement: 0, arrangements: [], slides: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true } };
+    const docs = new Map([[existing._id, existing]]);
+    const db = { get: jest.fn(async (id: string) => docs.get(id)), put: jest.fn() };
+    const requested = createItemFromProps({ _id: existing._id, name: "New request", type: "bible" });
+    const result = await createNewItemInDb({ item: requested, db: db as never });
+    expect(result.type).toBe(type);
+    expect(result.name).toBe(existing.name);
+    expect(docs.get(existing._id)).toEqual(existing);
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("uses exact Unicode and whitespace document identities without aliasing", async () => {
+    const ids = ["183 - Hymn", "183 – Hymn", "Praise", "Praise "];
+    const docs = new Map(ids.map((id) => [id, createItemFromProps({
+      _id: id, name: id, type: "song",
+    })]));
+    const before = JSON.parse(JSON.stringify([...docs]));
+    const db = { get: jest.fn(async (id: string) => docs.get(id)), put: jest.fn() };
+    const results = await Promise.all(ids.map((id) =>
+      createNewItemInDb({ item: createItemFromProps({ _id: id }), db: db as never }),
+    ));
+    expect(results.map(doc => doc._id)).toEqual(ids);
+    expect([...docs]).toEqual(before);
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("propagates a rejected create write rather than reporting a durable new item", async () => {
+    const docs = new Map();
+    const db = {
+      get: jest.fn().mockRejectedValue({ status: 404 }),
+      put: jest.fn().mockRejectedValue(new Error("failed write")),
+    };
+    await expect(createNewItemInDb({
+      item: createItemFromProps({ _id: "new-song" }), db: db as never,
+    })).rejects.toThrow("failed write");
+    expect(docs.size).toBe(0);
+  });
+
   it("shares concurrent Canva custom-item retries for the same operation key", async () => {
     const inFlight = new Map<string, Promise<string>>();
     let finish!: (path: string) => void;

@@ -19,6 +19,16 @@ jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) => selector(mockSelectorState),
 }));
 
+jest.mock("../../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
   jest.fn().mockImplementation((query: string) => ({
     matches,

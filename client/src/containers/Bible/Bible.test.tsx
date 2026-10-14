@@ -192,7 +192,12 @@ describe("Bible", () => {
       expect(mockedCreateNewBible).toHaveBeenCalled();
     });
 
-    expect(store.getState().createItem).toEqual(initialCreateItemState);
+    expect({ ...store.getState().createItem, draftId: 0 }).toEqual(
+      initialCreateItemState,
+    );
+    expect(store.getState().createItem.draftId).not.toBe(
+      initialCreateItemState.draftId,
+    );
   });
 
   it("hydrates Bible from routed search and version params", async () => {

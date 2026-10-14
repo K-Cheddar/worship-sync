@@ -41,6 +41,7 @@ export type WhosServingPanelProps = {
   /** When false, skip the panel title (e.g. a Sheet/tab already provides one). */
   showHeading?: boolean;
   canEdit?: boolean;
+  canEditTeam?: (teamId: string) => boolean;
 };
 
 const SERVING_CARD_MIN_WIDTH_PX = 352;
@@ -167,6 +168,7 @@ const WhosServingPanel = ({
   assignmentsStatus = "ready",
   showHeading = true,
   canEdit = false,
+  canEditTeam,
 }: WhosServingPanelProps) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelWidth, setPanelWidth] = useState(0);
@@ -229,6 +231,7 @@ const WhosServingPanel = ({
             >
               {teamColumn.map((team) => {
                 const scheduleId = team.scheduleId;
+                const teamCanEdit = canEditTeam?.(team.teamId) ?? canEdit;
                 const teamHeader = (
                   <>
                     <div className="min-w-0 flex-1">
@@ -296,10 +299,10 @@ const WhosServingPanel = ({
                         iconSize="sm"
                         padding="px-2 py-1"
                         className="shrink-0 text-xs"
-                        aria-label={`Edit ${team.teamName} schedule`}
+                        aria-label={`${teamCanEdit ? "Edit" : "View"} ${team.teamName} schedule`}
                         onClick={() => onOpenSchedule({ scheduleId })}
                       >
-                        Edit
+                        {teamCanEdit ? "Edit" : "View"}
                       </Button>
                     </div>
                     <ul className="space-y-1.5">
@@ -367,7 +370,7 @@ const WhosServingPanel = ({
                         );
                       })}
                     </ul>
-                    {team.unfilled.length > 0 ? (
+                    {team.unfilled.length > 0 && teamCanEdit ? (
                       <>
                         <button
                           type="button"
@@ -387,6 +390,10 @@ const WhosServingPanel = ({
                           <Icon svg={ChevronRight} size="xs" />
                         </button>
                       </>
+                    ) : team.unfilled.length > 0 ? (
+                      <p className="px-1.5 py-1 text-xs text-gray-400">
+                        {team.unfilled.length} unfilled
+                      </p>
                     ) : null}
                   </section>
                 );

@@ -1,5 +1,7 @@
 import { useMemo } from "react";
+import { useChat } from "../chat/ChatContext";
 import Spinner from "../components/Spinner/Spinner";
+import { useSelector } from "../hooks";
 import type { MyScheduleOccurrence } from "../api/auth";
 import { usePublicServiceFlow } from "../services/usePublicServiceFlow";
 import { buildMyScheduleServiceFlowSnapshot } from "./buildMyScheduleServiceFlowSnapshot";
@@ -22,7 +24,11 @@ const MyScheduleServicePlanPanel = ({
   churchName = "",
   churchLogoUrl = "",
 }: MyScheduleServicePlanPanelProps) => {
+  const churchTimeZone = useChat()?.context?.timeZone || "UTC";
   // Prefer the detailed/team public token — never the simple/general link.
+  const scrollbarWidth = useSelector(
+    (state) => state.undoable.present.preferences.scrollbarWidth,
+  );
   const shareId = useMemo(() => {
     const teamUrl = occurrence.plan?.publicUrls?.team || "";
     return occurrence.plan?.published ? shareIdFromPublicServiceUrl(teamUrl) : "";
@@ -38,8 +44,9 @@ const MyScheduleServicePlanPanel = ({
       plan: occurrence.plan,
       churchName,
       churchLogoUrl,
+      timeZone: churchTimeZone,
     });
-  }, [churchLogoUrl, churchName, occurrence]);
+  }, [churchLogoUrl, churchName, churchTimeZone, occurrence]);
 
   if (!occurrence.plan) {
     return (
@@ -60,6 +67,7 @@ const MyScheduleServicePlanPanel = ({
     if (snapshot) {
       return (
         <ServicePublicView
+          scrollbarWidth={scrollbarWidth}
           snapshot={snapshot}
           connection={connection}
           error={error}
@@ -79,7 +87,13 @@ const MyScheduleServicePlanPanel = ({
     );
   }
 
-  return <ServicePublicView snapshot={staticSnapshot} embedded />;
+  return (
+    <ServicePublicView
+      scrollbarWidth={scrollbarWidth}
+      snapshot={staticSnapshot}
+      embedded
+    />
+  );
 };
 
 export default MyScheduleServicePlanPanel;

@@ -5,6 +5,7 @@ import {
   createListenerMiddleware,
   isAnyOf,
   Reducer,
+  Middleware,
 } from "@reduxjs/toolkit";
 import undoable, { ActionCreators } from "redux-undo";
 import {
@@ -30,7 +31,12 @@ import {
   updateOutputsFromRemote,
   type RemoteOutputState,
 } from "./presentationSlice";
-import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
+import {
+  getItemPersistenceChanges,
+  getItemPersistenceConflicts,
+  itemDocMatchesEditorState,
+  itemSlice,
+} from "./itemSlice";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -42,7 +48,10 @@ import { itemListsSlice } from "./itemListsSlice";
 import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
-import { globalDb as db, globalBroadcastRef } from "../context/controllerInfo";
+import {
+  globalDb as db,
+  globalBroadcastRef,
+} from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
 import { ref, set, get, runTransaction, update } from "firebase/database";
 import {
@@ -64,6 +73,7 @@ import {
   QUICK_LINKS_POUCH_ID,
   DBServices,
   FormattedTextDisplayInfo,
+  ItemState,
   getCreditsDocId,
   getControllerMediaRouteFoldersDocId,
   OverlayInfo,
@@ -123,6 +133,14 @@ import {
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+import {
+  flushPendingItemMutations,
+  getActiveContentDatabaseOwner,
+  getContentDatabaseForOwner,
+  getItemMutationOwner,
+  registerContentDatabaseFlushHandler,
+  sameItemMutationOwner,
+} from "./deferredItemMutations";
 import { patchControllerMediaRouteFolder } from "../utils/controllerMediaRouteFolders";
 
 /**
@@ -161,7 +179,7 @@ const cleanObject = (obj: Object) =>
 
 const writePendingTimersToStorageAndFirebase = async (
   state: RootState,
-  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteSharedData: boolean },
+  scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteTimers: boolean },
 ): Promise<boolean> => {
   const { timers, shouldUpdateTimers } = state.timers;
   if (!shouldUpdateTimers) return false;
@@ -178,7 +196,7 @@ const writePendingTimersToStorageAndFirebase = async (
     return false;
   }
 
-  if (!scope.canWriteSharedData) {
+  if (!scope.canWriteTimers) {
     return true;
   }
 
@@ -659,6 +677,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
 
 /** Clear a removed output's synced presentation state. */
 export const clearRemoteOutputState = async (outputId: string) => {
+  if (!globalFireDbInfo.writeCapabilities.presentation) return;
   if (!globalFireDbInfo.db || !globalFireDbInfo.churchId || !outputId) return;
   await set(
     ref(
@@ -686,7 +705,7 @@ export const writePresentationSnapshotToFirebase = async (
     state.presentation,
   );
   const churchId = globalFireDbInfo.churchId;
-  if (!globalFireDbInfo.canWriteSharedData) return true;
+  if (!globalFireDbInfo.writeCapabilities.presentation) return true;
   if (
     !globalFireDbInfo.db ||
     globalFireDbInfo.isConnected === false ||
@@ -780,6 +799,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.markItemPersisted.toString(),
+  itemSlice.actions.rebaseItemPersistence.toString(),
   itemSlice.actions.bufferRemoteItemUpdate.toString(),
   itemSlice.actions.discardPendingRemoteItem.toString(),
   itemSlice.actions.applyPendingRemoteItem.toString(),
@@ -924,12 +944,119 @@ const listenerMiddleware = createListenerMiddleware();
 const songLibraryIndexRepairMiddleware =
   createSongLibraryIndexRepairMiddleware();
 
+type ItemAutosaveDebounce = {
+  timer: ReturnType<typeof setTimeout>;
+  promise: Promise<void>;
+  resolve: () => void;
+  flush: () => void;
+};
+
+type PendingItemAutosave = {
+  desired: ItemState;
+  baseline: DBItem;
+  database: NonNullable<typeof db>;
+  owner: ReturnType<typeof getItemMutationOwner>;
+  mutationVersion: number;
+};
+
+const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
+const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
+const pendingItemAutosaves = new Map<string, PendingItemAutosave>();
+let itemAutosaveMutationVersion = 0;
+
+const itemAutosaveKey = (item: ItemState) =>
+  JSON.stringify([
+    item.contentOwner?.scopeId ?? "legacy",
+    item.contentOwner?.databaseKey ?? "",
+    item.contentOwner?.churchId ?? "",
+    item._id,
+    item.type,
+  ]);
+
+const scheduleItemAutosaveDebounce = (key: string) => {
+  const previous = itemAutosaveDebounces.get(key);
+  if (previous) {
+    clearTimeout(previous.timer);
+    previous.resolve();
+  }
+
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  const timer = setTimeout(resolve, 1500);
+  const debounce: ItemAutosaveDebounce = {
+    timer,
+    promise,
+    resolve,
+    flush: () => {
+      clearTimeout(timer);
+      resolve();
+    },
+  };
+  itemAutosaveDebounces.set(key, debounce);
+  return debounce;
+};
+
+const cancelItemAutosaveDebounce = (key: string) => {
+  const pending = itemAutosaveDebounces.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  itemAutosaveDebounces.delete(key);
+  pending.resolve();
+};
+
+const enqueueItemAutosaveWrite = <T,>(key: string, write: () => Promise<T>) => {
+  const previous = itemAutosaveWriteQueues.get(key) ?? Promise.resolve();
+  const queued = previous.catch(() => undefined).then(write);
+  const settled = queued.then(() => undefined, () => undefined);
+  itemAutosaveWriteQueues.set(key, settled);
+  void settled.then(() => {
+    if (itemAutosaveWriteQueues.get(key) === settled) {
+      itemAutosaveWriteQueues.delete(key);
+    }
+  });
+  return queued;
+};
+
+const autosaveBelongsToContentDatabase = (key: string, scopeId: string) => {
+  try {
+    return JSON.parse(key)[0] === scopeId;
+  } catch {
+    return false;
+  }
+};
+
+const flushItemAutosavesForContentDatabase = async (scopeId: string) => {
+  for (let attempts = 0; attempts < 100; attempts += 1) {
+    for (const [key, debounce] of itemAutosaveDebounces) {
+      if (autosaveBelongsToContentDatabase(key, scopeId)) debounce.flush();
+    }
+
+    // Let listener effects leave their debounce waits and enqueue Pouch writes.
+    await Promise.resolve();
+    const writes = [...itemAutosaveWriteQueues.entries()]
+      .filter(([key]) => autosaveBelongsToContentDatabase(key, scopeId))
+      .map(([, write]) => write);
+    await Promise.all(writes);
+    await Promise.resolve();
+
+    const hasDebounces = [...itemAutosaveDebounces.keys()].some((key) =>
+      autosaveBelongsToContentDatabase(key, scopeId),
+    );
+    const hasWrites = [...itemAutosaveWriteQueues.keys()].some((key) =>
+      autosaveBelongsToContentDatabase(key, scopeId),
+    );
+    if (!hasDebounces && !hasWrites) return;
+  }
+};
+
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     // Audio is persisted independently after the R2 operation succeeds. Let the
-    // reconciliation action enter this listener so it can cancel an older editor
-    // autosave, but do not schedule another save for it.
+    // reconciliation action retire a pending debounce for this item, but do not
+    // schedule another save for it.
     if (itemSlice.actions.applyPersistedSongAudio.match(action)) {
       return (
         (currentState as RootState).undoable.present.item._id ===
@@ -961,87 +1088,203 @@ listenerMiddleware.startListening({
   },
 
   effect: async (_action, listenerApi) => {
-    const dbAtStart = db;
-    if (itemSlice.actions.applyPersistedSongAudio.match(_action)) {
-      listenerApi.cancelActiveListeners();
-      return;
-    }
-    if (!dbAtStart) return;
-
     let state = listenerApi.getState() as RootState;
+    let ownedSnapshot: ItemState | undefined;
     if (itemSlice.actions.setActiveItem.match(_action)) {
       state = listenerApi.getOriginalState() as RootState;
-    } else {
-      listenerApi.cancelActiveListeners();
-      await listenerApi.delay(1500);
+    }
+    if (itemSlice.actions.applyOwnedContentUpdate.match(_action)) {
+      ownedSnapshot = _action.payload.snapshot;
     }
 
-    // update Item
-    const item = state.undoable.present.item;
-    let db_item: DBItem = await dbAtStart.get(item._id);
-    listenerApi.throwIfCancelled();
+    const isPersistedAudioUpdate =
+      itemSlice.actions.applyPersistedSongAudio.match(_action);
+    const item = isPersistedAudioUpdate
+      ? (listenerApi.getState() as RootState).undoable.present.item
+      : ownedSnapshot ?? state.undoable.present.item;
+    const contentOwner = item.contentOwner;
+    const owner = getItemMutationOwner(item);
+    const dbAtStart = contentOwner
+      ? getContentDatabaseForOwner(contentOwner) ??
+        (contentOwner.scopeId === "unscoped" ? db : undefined)
+      : db;
+    const saveKey = itemAutosaveKey(item);
+    const priorPending = pendingItemAutosaves.get(saveKey);
 
-    const updatedAt = new Date().toISOString();
-    const nextItem: DBItem = {
-      ...db_item,
-      name: item.name,
-      background: item.background,
-      slides: item.slides,
-      arrangements: item.arrangements,
-      selectedArrangement: item.selectedArrangement,
-      bibleInfo: item.bibleInfo,
-      timerInfo: item.timerInfo,
-      songMetadata: item.songMetadata,
-      songLinks: item.songLinks,
-      // R2 attachment flows persist this field out-of-band. Ordinary editor
-      // autosaves must retain the latest durable value instead of their older
-      // Redux snapshot. Keep setSongAudio working for any explicit caller.
-      songAudio: itemSlice.actions.setSongAudio.match(_action)
-        ? item.songAudio
-        : db_item.songAudio,
-      shouldSendTo: item.shouldSendTo,
-      formattedSections: item.formattedSections,
-      updatedAt,
-    };
-    db_item = applyPouchAudit(db_item, nextItem, {
-      // Doc came from db.get — always an update (legacy rows may lack createdAt).
-      isNew: false,
-    });
-    listenerApi.throwIfCancelled();
-    const result = await dbAtStart.put(db_item);
-    listenerApi.throwIfCancelled();
-    db_item = {
-      ...db_item,
-      _rev: result.rev,
-    };
-    const activeState = (listenerApi.getState() as RootState).undoable.present.item;
-    if (db !== dbAtStart || activeState._id !== db_item._id) return;
-    listenerApi.dispatch(itemSlice.actions.setHasPendingUpdate(false));
-    listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+    if (isPersistedAudioUpdate) {
+      cancelItemAutosaveDebounce(saveKey);
+      if (!priorPending) return;
+    }
 
-    listenerApi.dispatch(upsertItemInAllDocs(db_item));
-    if (db_item.type === "free") {
-      const indexedItem = (listenerApi.getState() as RootState).allItems.list.find(
-        (candidate) => candidate._id === db_item._id,
-      );
+    const baseline = itemSlice.actions.keepLocalItemChanges.match(_action)
+      ? item.baseItem
+      : isPersistedAudioUpdate
+        ? item.baseItem ?? priorPending?.baseline
+      : priorPending?.baseline ?? item.baseItem;
+    const database = dbAtStart ?? priorPending?.database;
+    if (!database || !baseline) return;
+
+    const mutationVersion = ++itemAutosaveMutationVersion;
+    const nextPending: PendingItemAutosave = {
+      desired: item,
+      baseline,
+      database,
+      owner,
+      mutationVersion,
+    };
+    if (
+      isPersistedAudioUpdate &&
+      getItemPersistenceChanges(item, baseline).length === 0
+    ) {
+      pendingItemAutosaves.delete(saveKey);
       listenerApi.dispatch(
-        allItemsSlice.actions.upsertItemInAllItemsList(
-          {
+        itemSlice.actions.markItemPersisted(_action.payload.persistedDoc),
+      );
+      return;
+    }
+    pendingItemAutosaves.set(saveKey, nextPending);
+
+    if (itemSlice.actions.setActiveItem.match(_action)) {
+      cancelItemAutosaveDebounce(saveKey);
+    } else {
+      const debounce = scheduleItemAutosaveDebounce(saveKey);
+      await debounce.promise;
+      if (itemAutosaveDebounces.get(saveKey) !== debounce) return;
+      itemAutosaveDebounces.delete(saveKey);
+    }
+
+    await enqueueItemAutosaveWrite(saveKey, async () => {
+      const currentPending = pendingItemAutosaves.get(saveKey);
+      const desired = currentPending?.mutationVersion === mutationVersion
+        ? currentPending.desired
+        : item;
+      const writeBaseline = currentPending?.baseline ?? baseline;
+      const writeDatabase = currentPending?.database ?? database;
+      let db_item: DBItem = await writeDatabase.get(desired._id);
+      const changedFields = getItemPersistenceChanges(desired, writeBaseline);
+      const conflicts = getItemPersistenceConflicts(
+        desired,
+        writeBaseline,
+        db_item,
+      );
+      if (conflicts.length > 0) {
+        const latestState = listenerApi.getState() as RootState;
+        const activeItem = latestState.undoable.present.item;
+        if (
+          sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          )
+        ) {
+          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+        }
+        return;
+      }
+
+      if (changedFields.length === 0) {
+        const latestState = listenerApi.getState() as RootState;
+        const activeItem = latestState.undoable.present.item;
+        if (
+          sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          )
+        ) {
+          listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+        }
+        if (currentPending?.mutationVersion === mutationVersion) {
+          pendingItemAutosaves.delete(saveKey);
+        }
+        return;
+      }
+
+      const updatedAt = new Date().toISOString();
+      const nextItem: DBItem = {
+        ...db_item,
+        ...(Object.fromEntries(
+          changedFields.map((field) => [field, desired[field]]),
+        ) as Partial<DBItem>),
+        updatedAt,
+      };
+      db_item = applyPouchAudit(db_item, nextItem, {
+        // Doc came from db.get â€” always an update (legacy rows may lack createdAt).
+        isNew: false,
+      });
+      let result: { rev: string };
+      try {
+        result = await writeDatabase.put(db_item);
+      } catch (error) {
+        if ((error as { status?: number })?.status === 409) {
+          const latest = (await writeDatabase
+            .get(desired._id)
+            .catch(() => null)) as DBItem | null;
+          const latestState = listenerApi.getState() as RootState;
+          const activeItem = latestState.undoable.present.item;
+          if (
+            latest &&
+            sameItemMutationOwner(
+              getItemMutationOwner(activeItem),
+              getItemMutationOwner(desired),
+            )
+          ) {
+            listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
+          }
+        }
+        throw error;
+      }
+      db_item = { ...db_item, _rev: result.rev };
+
+      const pendingAfterWrite = pendingItemAutosaves.get(saveKey);
+      if (pendingAfterWrite?.mutationVersion === mutationVersion) {
+        pendingItemAutosaves.delete(saveKey);
+      } else if (
+        pendingAfterWrite &&
+        pendingAfterWrite.mutationVersion > mutationVersion
+      ) {
+        pendingItemAutosaves.set(saveKey, {
+          ...pendingAfterWrite,
+          baseline: db_item,
+        });
+      }
+
+      const latestState = listenerApi.getState() as RootState;
+      const activeItem = latestState.undoable.present.item;
+      const isSameActiveOwner = sameItemMutationOwner(
+          getItemMutationOwner(activeItem),
+          getItemMutationOwner(desired),
+        );
+      if (isSameActiveOwner) {
+        listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
+      }
+
+      const activeDatabaseOwner = getActiveContentDatabaseOwner();
+      const stillInOriginalDatabase = contentOwner
+        ? activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
+          activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
+          activeDatabaseOwner.churchId === contentOwner.churchId
+        : db === writeDatabase;
+      if (!stillInOriginalDatabase) return;
+
+      listenerApi.dispatch(upsertItemInAllDocs(db_item));
+      if (db_item.type === "free") {
+        const indexedItem = latestState.allItems.list.find(
+          (candidate) => candidate._id === db_item._id,
+        );
+        listenerApi.dispatch(
+          allItemsSlice.actions.upsertItemInAllItemsList({
             ...freeFormDocToServiceItem(db_item),
             listId: indexedItem?.listId ?? db_item._id,
-          },
-        ),
-      );
-    }
+          }),
+        );
+      }
 
-    // Local machine updates
-    if (db !== dbAtStart) return;
-    safePostMessage({
-      type: "update",
-      data: {
-        docs: db_item,
-        hostId: globalHostId,
-      },
+      safePostMessage({
+        type: "update",
+        data: {
+          docs: db_item,
+          hostId: globalHostId,
+        },
+      });
     });
   },
 });
@@ -1623,7 +1866,7 @@ listenerMiddleware.startListening({
     const churchScope = {
       db: globalFireDbInfo.db,
       churchId: globalFireDbInfo.churchId,
-      canWriteSharedData: globalFireDbInfo.canWriteSharedData,
+      canWriteTimers: globalFireDbInfo.writeCapabilities?.timers === true,
     };
     listenerApi.cancelActiveListeners();
     await listenerApi.delay(10);
@@ -2665,8 +2908,10 @@ listenerMiddleware.startListening({
       .undoable.present.serviceTimes.list;
     const localServices = (listenerApi.getState() as RootState).undoable.present
       .serviceTimes.list;
-    const { db: firebaseDb, churchId, canWriteSharedData } = globalFireDbInfo;
-    if (!canWriteSharedData) return;
+    const { db: firebaseDb, churchId, writeCapabilities } = globalFireDbInfo;
+    // The legacy RTDB services collection stores both service definitions and
+    // Controller-owned timer/runtime state, so either authority may write it.
+    if (!writeCapabilities.serviceRuntime && !writeCapabilities.serviceManagement) return;
     if (!firebaseDb || !churchId) {
       listenerApi.dispatch(syncServicesFromRemote(previousServices));
       notifyPresentationSyncError(
@@ -3418,13 +3663,38 @@ listenerMiddleware.startListening({
 
     reconcileItemSelectionAfterUndoRedo(listenerApi, preservedItemSelection);
 
+    const itemAfterUndoRedo =
+      (listenerApi.getState() as RootState).undoable.present.item;
+    const itemPersistenceChanged = !_.isEqual(
+      sanitizeTransientItemState(itemAfterUndoRedo),
+      sanitizeTransientItemState(previousState.undoable.present.item),
+    );
+    if (itemPersistenceChanged && itemAfterUndoRedo._id) {
+      const owner = getItemMutationOwner(itemAfterUndoRedo);
+      const contentOwner = itemAfterUndoRedo.contentOwner;
+      const itemDatabase = contentOwner
+        ? getContentDatabaseForOwner(contentOwner) ??
+          (contentOwner.scopeId === "unscoped" ? dbAtStart : undefined)
+        : dbAtStart;
+      if (itemDatabase) {
+        const latestPersistedItem = (await itemDatabase
+          .get(itemAfterUndoRedo._id)
+          .catch(() => null)) as DBItem | null;
+        const activeItem =
+          (listenerApi.getState() as RootState).undoable.present.item;
+        if (
+          latestPersistedItem &&
+          sameItemMutationOwner(getItemMutationOwner(activeItem), owner)
+        ) {
+          listenerApi.dispatch(
+            itemSlice.actions.rebaseItemPersistence(latestPersistedItem),
+          );
+        }
+      }
+    }
+
     // Only force update for slices that actually changed during undo/redo
-    if (
-      !_.isEqual(
-        sanitizeTransientItemState(currentState.undoable.present.item),
-        sanitizeTransientItemState(previousState.undoable.present.item),
-      )
-    ) {
+    if (itemPersistenceChanged) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());
     }
 
@@ -3628,16 +3898,99 @@ const rootReducer: Reducer = (state: RootState, action: Action) => {
   return combinedReducers(state, action);
 };
 
+const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: any) => {
+  const currentItem = (api.getState() as RootState).undoable.present.item;
+  const currentOwner = getItemMutationOwner(currentItem);
+
+  const activeDatabaseOwner = getActiveContentDatabaseOwner();
+  const itemBelongsToActiveDatabase = activeDatabaseOwner
+    ? currentItem.contentOwner?.scopeId === activeDatabaseOwner.scopeId &&
+      currentItem.contentOwner.databaseKey === activeDatabaseOwner.databaseKey &&
+      currentItem.contentOwner.churchId === activeDatabaseOwner.churchId
+    : !currentItem.contentOwner ||
+      currentItem.contentOwner.scopeId === "unscoped";
+
+  if (
+    itemSlice.actions.bufferRemoteItemUpdate.match(action) &&
+    !itemBelongsToActiveDatabase
+  ) {
+    return action;
+  }
+
+  if (itemSlice.actions.applyPendingRemoteItem.match(action)) {
+    if (
+      !itemBelongsToActiveDatabase ||
+      currentItem.pendingRemoteItem?._id !== currentItem._id
+    ) {
+      api.dispatch(itemSlice.actions.discardPendingRemoteItem());
+      return action;
+    }
+    pendingItemAutosaves.delete(itemAutosaveKey(currentItem));
+    return next(action);
+  }
+
+  if (
+    itemSlice.actions.setSelectedSlide.match(action) ||
+    itemSlice.actions._setSelectedArrangement.match(action) ||
+    action.type === "@@redux-undo/UNDO" ||
+    action.type === "@@redux-undo/REDO" ||
+    action.type === "RESET" ||
+    action.type === "RESET_CONTROLLER_SESSION"
+  ) {
+    flushPendingItemMutations(currentOwner);
+    return next(action);
+  }
+
+  if (!itemSlice.actions.setActiveItem.match(action)) return next(action);
+
+  const contentOwner =
+    activeDatabaseOwner ??
+    { scopeId: "unscoped", databaseKey: "", churchId: "" };
+  const nextOwner = getItemMutationOwner({
+    ...action.payload,
+    contentOwner,
+    _id: action.payload._id ?? currentItem._id,
+    type: action.payload.type ?? currentItem.type,
+  } as typeof currentItem);
+
+  if (!sameItemMutationOwner(currentOwner, nextOwner)) {
+    flushPendingItemMutations(currentOwner);
+  }
+
+  const result = next({
+    ...action,
+    payload: { ...action.payload, contentOwner },
+  });
+  const activatedItem = (api.getState() as RootState).undoable.present.item;
+  const pending = pendingItemAutosaves.get(itemAutosaveKey(activatedItem));
+  if (
+    pending &&
+    sameItemMutationOwner(pending.owner, getItemMutationOwner(activatedItem))
+  ) {
+    api.dispatch(
+      itemSlice.actions.restorePendingItemEdits({
+        owner: pending.owner!,
+        desired: pending.desired,
+        baseline: pending.baseline,
+      }),
+    );
+  }
+  return result;
+};
+
 const store = configureStore({
   reducer: rootReducer,
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: false,
     }).prepend(
+      itemOwnerTransitionMiddleware,
       songLibraryIndexRepairMiddleware.middleware,
       listenerMiddleware.middleware,
     ),
 });
+
+registerContentDatabaseFlushHandler(flushItemAutosavesForContentDatabase);
 
 const refreshServicePlanningPreviewSongMatches = (listenerApi: {
   getState: () => unknown;

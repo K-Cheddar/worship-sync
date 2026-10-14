@@ -26,6 +26,7 @@ import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
 import ViewSongSectionsDrawer from "../SongSections/ViewSongSectionsDrawer";
+import ServicePlanCustomDocumentPreviewDialog from "../ServicePlanCustomDocumentPreviewDialog";
 import {
   getMatchForString,
   punctuationRegex,
@@ -180,9 +181,10 @@ const FilteredItems = ({
           ? "free"
           : "timer";
   const showExternalSearch = type === "song" || (type === "all" && effectiveFilter === "song");
-  const useSongGrid =
+  const useDetailsGrid =
     type === "song" ||
-    (type === "all" && (effectiveFilter === "all" || effectiveFilter === "song"));
+    type === "free" ||
+    (type === "all" && effectiveFilter !== "timer");
   const listForFilter = useMemo(() => {
     const supportedTypes = new Set(["song", "free", "timer"]);
     return list.filter(
@@ -229,8 +231,10 @@ const FilteredItems = ({
     return byId;
   }, [allDocs, effectiveFilter, type]);
 
-  const [filteredList, setFilteredList] =
-    useState<filteredItemsListType[]>(listForFilter);
+  const [{ list: filteredList, query: filteredSearchValue }, setSearchResults] =
+    useState({ list: listForFilter as filteredItemsListType[], query: "" });
+  const setFilteredList = (list: filteredItemsListType[]) =>
+    setSearchResults((previous) => ({ ...previous, list }));
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
     null
@@ -355,6 +359,15 @@ const FilteredItems = ({
     );
     return doc ?? null;
   }, [viewSectionsSongId, allDocs, effectiveFilter, type]);
+  const [customItemForDetails, setCustomItemForDetails] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const customDocumentById = customItemForDetails
+    ? docsById.get(customItemForDetails.id)
+    : undefined;
+  const viewCustomDocument =
+    customDocumentById?.type === "free" ? customDocumentById : null;
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access, churchId } = useContext(GlobalInfoContext) || {};
@@ -493,7 +506,7 @@ const FilteredItems = ({
   // Search effect
   useEffect(() => {
     const results = searchItems(debouncedSearchValue);
-    setFilteredList(results);
+    setSearchResults({ list: results, query: debouncedSearchValue });
     setIsSearchLoading(false);
     listScrollRef.current?.scrollTo?.({ top: 0 });
   }, [debouncedSearchValue, searchItems]);
@@ -746,12 +759,20 @@ const FilteredItems = ({
       showAddButton={allowAdd}
       showDelete={allowDelete}
       addButtonLabel={addButtonLabel}
-      useSongGrid={useSongGrid}
-      onViewSongSections={
-        item.type === "song" && (type !== "all" || effectiveFilter === "all" || effectiveFilter === "song")
-          ? () => setViewSectionsSongId(item._id)
+      useDetailsGrid={useDetailsGrid}
+      onViewDetails={
+        (item.type === "song" || item.type === "free") &&
+        (type !== "all" || effectiveFilter === "all" || effectiveFilter === item.type)
+          ? () => {
+            if (item.type === "song") {
+              setViewSectionsSongId(item._id);
+            } else {
+              setCustomItemForDetails({ id: item._id, name: item.name });
+            }
+          }
           : undefined
       }
+      viewDetailsAriaLabel={`View ${item.type === "song" ? "song" : "custom item"} details for ${item.name}`}
       libraryIndex={libraryIndex}
     />
   );
@@ -795,7 +816,7 @@ const FilteredItems = ({
   const changeLibraryFilter = (filter: LibraryFilter) => {
     if (filter === effectiveFilter) return;
     onLibraryFilterChange?.(filter);
-    setFilteredList(searchItems(searchValue, filter));
+    setSearchResults({ list: searchItems(searchValue, filter), query: searchValue });
     setDebouncedSearchValue(searchValue);
     setIsSearchLoading(false);
     listScrollRef.current?.scrollTo?.({ top: 0 });
@@ -824,6 +845,15 @@ const FilteredItems = ({
         isOpen={Boolean(viewSectionsSongId && viewSongDoc)}
         searchHighlight={searchValue}
         onClose={() => setViewSectionsSongId(null)}
+      />
+      <ServicePlanCustomDocumentPreviewDialog
+        document={viewCustomDocument}
+        unavailableName={
+          customItemForDetails && !viewCustomDocument
+            ? customItemForDetails.name
+            : undefined
+        }
+        onClose={() => setCustomItemForDetails(null)}
       />
       <ViewExternalLyricsDrawer
         candidate={viewExternalLyricsCandidate}
@@ -911,6 +941,7 @@ const FilteredItems = ({
                 color="#84cc16"
                 component="link"
                 to={createLink}
+                aria-label={`Create a new ${createLabel}`}
               >
                 Create a new {createLabel}
               </Button>
@@ -941,8 +972,11 @@ const FilteredItems = ({
         )}
         <div
           ref={listScrollRef}
+          data-testid="filtered-items-results"
           className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 sm:px-2"
           role="list"
+          aria-busy={isSearchLoading || filteredSearchValue !== searchValue}
+          data-search-query={filteredSearchValue}
         >
           <div
             className="relative"

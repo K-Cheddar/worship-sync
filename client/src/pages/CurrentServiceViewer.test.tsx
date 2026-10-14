@@ -39,6 +39,16 @@ jest.mock("../chat/ChatContext", () => ({
   useChat: jest.fn(),
 }));
 
+jest.mock("../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const plan: ServicePlan = {
   planId: "plan-1",
   churchId: "church-1",
@@ -130,6 +140,75 @@ const renderViewer = (
   );
 };
 
+const buildDetailedSnapshot = (
+  viewerPlan: ServicePlan,
+  memberName = "Avery Stone",
+  equipmentName = "Red IEM",
+): PublicServiceFlowSnapshot => {
+  const base = buildServicePlanFlowSnapshot({
+    plan: viewerPlan,
+    startsAt: "2026-09-13T13:00:00.000Z",
+    churchName: "Test Church",
+  });
+  const roles = [
+    { positionId: "lead", label: "Lead vocal", teamId: "worship", teamName: "Worship Team" },
+    { positionId: "drums", label: "Drums", teamId: "worship", teamName: "Worship Team" },
+  ];
+  const service = {
+    ...base.service,
+    sections: base.service.sections.map((section) => ({
+      ...section,
+      items: section.items.map((item) => ({
+        ...item,
+        teamNotes: [
+          {
+            label: "Worship Team · Lead vocal",
+            scope: "role" as const,
+            positionId: "lead",
+            teamId: "worship",
+            teamName: "Worship Team",
+            notes: { blocks: [{ type: "paragraph" as const, spans: [{ text: "Lead vocal cue." }] }] },
+          },
+          {
+            label: "Worship Team · Drums",
+            scope: "role" as const,
+            positionId: "drums",
+            teamId: "worship",
+            teamName: "Worship Team",
+            notes: { blocks: [{ type: "paragraph" as const, spans: [{ text: "Drums cue." }] }] },
+          },
+        ],
+        microphoneAssignments: [{
+          microphone: { id: "mic-blue", name: "Blue", type: "Headset", color: "#2563eb" },
+          audiences: [{ positionId: "lead", roleName: "Lead vocal", teamId: "worship", teamName: "Worship Team" }],
+          holderName: memberName,
+        }],
+        equipmentAssignments: [{
+          equipment: { id: "iem-red", name: equipmentName, category: "iem" as const, subtype: "wireless-beltpack" },
+          holderName: memberName,
+        }],
+      })),
+    })),
+  };
+  return {
+    ...base,
+    roles,
+    servingTeams: [{
+      teamId: "worship",
+      teamName: "Worship Team",
+      members: [{
+        positionId: "lead",
+        positionName: "Lead vocal",
+        memberName,
+        profileImageUrl: "https://example.com/avery.jpg",
+        microphones: [{ id: "mic-blue", name: "Blue", type: "Headset", color: "#2563eb" }],
+        equipment: [{ id: "iem-red", name: equipmentName, category: "iem", subtype: "wireless-beltpack" }],
+      }],
+    }],
+    service,
+  } as PublicServiceFlowSnapshot;
+};
+
 describe("CurrentServiceViewer", () => {
   beforeEach(() => {
     mockedUseChat.mockReturnValue(null);
@@ -162,6 +241,133 @@ describe("CurrentServiceViewer", () => {
     expect(screen.getByText("Team detail.")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /Team notes/ })).toBeInTheDocument();
     expect(screen.queryByText("Avery Volunteer")).not.toBeInTheDocument();
+  });
+
+  it("shows workstation microphones, equipment, scheduled members, and role filters", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    localStorage.clear();
+    jest.mocked(getServicePlanViewer).mockResolvedValue({
+      success: true,
+      plan,
+      snapshot: buildDetailedSnapshot(plan),
+    });
+    const user = userEvent.setup();
+
+    renderViewer([morningService], false, { sessionKind: "workstation" });
+
+    const equipmentPanel = await screen.findByRole("complementary", {
+      name: "Equipment assignments",
+    });
+    expect(within(equipmentPanel).getByText("Avery Stone")).toBeInTheDocument();
+    expect(within(equipmentPanel).getByText("Lead vocal")).toBeInTheDocument();
+    expect(within(equipmentPanel).getByText("Blue")).toBeInTheDocument();
+    expect(within(equipmentPanel).getByText("Red IEM")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Blue · Headset · Avery Stone"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Red IEM · Wireless beltpack · Avery Stone"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filter role notes" }));
+    expect(screen.getByRole("button", { name: /Lead vocal/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Drums/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Lead vocal/ }));
+
+    expect(screen.getByText("Lead vocal cue.")).toBeInTheDocument();
+    expect(screen.queryByText("Drums cue.")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+  });
+
+  it("shows a retry state instead of a reduced plan when a workstation snapshot is missing", async () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({ success: true, plan, snapshot: null })
+      .mockResolvedValueOnce({
+        success: true,
+        plan,
+        snapshot: buildDetailedSnapshot(plan),
+      });
+    const user = userEvent.setup();
+
+    renderViewer([morningService], false, { sessionKind: "workstation" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Detailed service information is unavailable.",
+    );
+    expect(screen.queryByRole("heading", { name: "Sunday Service" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Opening Song")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(
+      await screen.findByRole("complementary", { name: "Equipment assignments" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+  });
+
+  it("keeps the full workstation snapshot visible while reconnect refresh is pending", async () => {
+    let nowMs = Date.parse("2026-09-13T12:00:00.000Z");
+    jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => nowMs);
+    const setVisibility = (visibility: DocumentVisibilityState) => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => visibility,
+      });
+    };
+    let resolveReconnect: ((value: {
+      success: true;
+      plan: ServicePlan;
+      snapshot: PublicServiceFlowSnapshot;
+    }) => void) | undefined;
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({
+        success: true,
+        plan,
+        snapshot: buildDetailedSnapshot(plan),
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveReconnect = resolve;
+      }));
+
+    renderViewer([morningService], false, { sessionKind: "workstation" });
+    const equipmentPanel = await screen.findByRole("complementary", {
+      name: "Equipment assignments",
+    });
+    expect(within(equipmentPanel).getByText("Avery Stone")).toBeInTheDocument();
+
+    act(() => {
+      setVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+      nowMs += 10_001;
+      setVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(2));
+
+    expect(within(equipmentPanel).getByText("Red IEM")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+
+    const refreshedPlan = { ...plan, name: "Updated service" };
+    await act(async () => {
+      resolveReconnect?.({
+        success: true,
+        plan: refreshedPlan,
+        snapshot: buildDetailedSnapshot(refreshedPlan),
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("heading", { name: "Updated service" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Equipment assignments" })).toBeInTheDocument();
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
   });
 
   it("projects every normalized content type once into the viewer snapshot", () => {
@@ -295,7 +501,22 @@ describe("CurrentServiceViewer", () => {
     jest.mocked(getServicePlanViewer).mockResolvedValue({
       success: true,
       plan: unpublishedPlan,
-      snapshot: null,
+      snapshot: {
+        ...buildServicePlanFlowSnapshot({
+          plan: unpublishedPlan,
+          startsAt: "2026-09-13T13:00:00.000Z",
+          churchName: "Test Church",
+          branding: {
+            churchLogoUrl: "https://res.cloudinary.com/example/image/upload/v1/church.png",
+            churchPrimaryColor: "#112233",
+            churchSecondaryColor: "#AABBCC",
+          },
+        }),
+        roles: [
+          { positionId: "lead-vocal", label: "Lead Vocal", teamId: "worship", teamName: "Worship Team" },
+          { positionId: "drums", label: "Drums", teamId: "worship", teamName: "Worship Team" },
+        ],
+      },
     });
 
     renderViewer([morningService], true, {
@@ -483,19 +704,41 @@ describe("CurrentServiceViewer", () => {
     jest
       .spyOn(Date, "now")
       .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
-    jest.mocked(getServicePlanViewer).mockImplementation(async (_churchId, planKey) => ({
-      success: true,
-      plan: { ...plan, planKey, name: planKey },
-      snapshot: null,
-    }));
+    jest.mocked(getServicePlanViewer).mockImplementation(async (_churchId, planKey) => {
+      const selectedPlan = { ...plan, planKey, name: planKey };
+      const isTomorrow = planKey.startsWith("svc-2@");
+      return {
+        success: true,
+        plan: selectedPlan,
+        snapshot: buildDetailedSnapshot(
+          selectedPlan,
+          isTomorrow ? "Clover Palmer" : "Avery Stone",
+          isTomorrow ? "Blue IEM" : "Red IEM",
+        ),
+      };
+    });
     const user = userEvent.setup();
 
-    renderViewer([morningService, tomorrowService]);
+    renderViewer([morningService, tomorrowService], false, {
+      sessionKind: "workstation",
+    });
     expect(await screen.findByRole("heading", { name: "svc-1@2026-09-13" })).toBeInTheDocument();
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("complementary", { name: "Equipment assignments" }))
+        .getByText("Red IEM"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: /Choose a service/ }));
     await user.click(await screen.findByRole("option", { name: /svc-2/ }));
     expect(await screen.findByRole("heading", { name: "svc-2@2026-09-14" })).toBeInTheDocument();
+    expect(screen.getByText("Clover Palmer")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("complementary", { name: "Equipment assignments" }))
+        .getByText("Blue IEM"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Avery Stone")).not.toBeInTheDocument();
+    expect(screen.queryByText("Red IEM")).not.toBeInTheDocument();
     expect(getServicePlanViewer).toHaveBeenLastCalledWith(
       "church-1",
       "svc-2@2026-09-14",
@@ -506,6 +749,7 @@ describe("CurrentServiceViewer", () => {
 
     await user.click(screen.getByRole("button", { name: /return to current service/i }));
     expect(await screen.findByRole("heading", { name: "svc-1@2026-09-13" })).toBeInTheDocument();
+    expect(screen.getByText("Avery Stone")).toBeInTheDocument();
     expect(getServicePlanViewer).toHaveBeenLastCalledWith(
       "church-1",
       "svc-1@2026-09-13",
@@ -580,7 +824,7 @@ describe("CurrentServiceViewer", () => {
     );
   });
 
-  it("updates and removes the active plan from live events", async () => {
+  it("refreshes and removes the active plan from live events", async () => {
     const updatedPlan = { ...plan, name: "Updated live service" };
     jest
       .spyOn(Date, "now")
@@ -595,7 +839,7 @@ describe("CurrentServiceViewer", () => {
     expect(onMessage).toBeDefined();
 
     act(() => {
-      onMessage?.({ type: "service-plan-updated", servicePlan: updatedPlan });
+      onMessage?.({ type: "service-plan-updated", planKey: updatedPlan.planKey });
     });
     expect(await screen.findByRole("heading", { name: "Updated live service" })).toBeInTheDocument();
     await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(2));
@@ -654,13 +898,13 @@ describe("CurrentServiceViewer", () => {
         resolveRefresh = resolve;
       }));
 
-    renderViewer([morningService]);
+    renderViewer([morningService], true);
     expect(await screen.findByText("Avery Stone")).toBeInTheDocument();
     expect(screen.getByText("Red IEM")).toBeInTheDocument();
 
     const onMessage = jest.mocked(useTeamsLiveSync).mock.calls[0]?.[1];
     act(() => {
-      onMessage?.({ type: "service-plan-updated", servicePlan: updatedPlan });
+      onMessage?.({ type: "service-plan-updated", planKey: updatedPlan.planKey });
     });
 
     expect(screen.getByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();

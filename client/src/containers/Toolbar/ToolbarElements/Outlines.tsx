@@ -326,6 +326,8 @@ const Services = ({
           onOpenChange={setOutlinePopoverOpen}
           TriggeringButton={
             <Button
+              data-testid="controller-outline-picker"
+              data-outline-id={selectedList?._id}
               svg={List}
               iconSize={triggerIconSize}
               variant={triggerVariant}
@@ -348,6 +350,7 @@ const Services = ({
                   {heading}
                 </h3>
                 <ul
+                  data-testid="controller-outline-list"
                   ref={setNodeRef}
                   className="scrollbar-variable max-h-[min(18rem,50vh)] min-w-0 flex-1 overflow-x-visible overflow-y-auto"
                 >

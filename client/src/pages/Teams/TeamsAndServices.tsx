@@ -1,6 +1,7 @@
 import {
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -22,16 +23,21 @@ import { cn } from "@/utils/cnHelper";
 import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sidebar";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
+import ChurchServiceTimeZoneGate from "./components/ChurchServiceTimeZoneGate";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
-import { TeamsNavigationGuardProvider } from "./TeamsNavigationGuardContext";
+import {
+  TeamsNavigationGuardProvider,
+  usePendingTeamsNavigation,
+} from "./TeamsNavigationGuardContext";
 import { getTeamsSectionSkeleton } from "./teamsPageSkeletons";
 import { teamsSectionScrollClassName } from "./teamsStyles";
 import { lazyRoute } from "../../utils/lazyRoute";
+import { getPageTitle } from "../../utils/pageTitles";
 import {
   getActiveTeamsNavSection,
-  servicesNavSections,
-  teamsNavSections,
+  getFirstAvailableTeamsNavPath,
+  isTeamsNavPathAvailable,
 } from "./teamsNavSections";
 import {
   getStoredTeamsAndServicesRoute,
@@ -57,58 +63,131 @@ const TeamsSectionLoadingFallback = () => {
   return getTeamsSectionSkeleton(activeSection.routePath);
 };
 
-const TeamsSectionErrorFallback = () => (
-  <div
-    className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-700/60 bg-red-950/30 p-6 text-center"
-    role="alert"
-  >
-    <Icon svg={ListChecks} size="lg" className="text-red-300" />
-    <div className="space-y-1">
-      <h3 className="text-base font-semibold text-red-100">
-        This section could not load.
-      </h3>
-      <p className="text-sm text-red-100/80">
-        Try again, or open another section from the sidebar.
-      </p>
-    </div>
-    <Button type="button" onClick={() => window.location.reload()}>
-      Reload page
-    </Button>
-  </div>
-);
+const isTeamsSectionPath = (pathname: string, routePath: string) => {
+  const sectionPath = `/teams-and-services/${routePath}`;
+  return pathname === sectionPath || pathname.startsWith(`${sectionPath}/`);
+};
 
-const TeamsSectionRoute = ({ children }: { children: ReactNode }) => (
-  <ErrorBoundary fallback={<TeamsSectionErrorFallback />}>
-    <Suspense fallback={<TeamsSectionLoadingFallback />}>{children}</Suspense>
+const TeamsSectionReady = ({ routePath }: { routePath: string }) => {
+  const location = useLocation();
+  const { pathname, clear } = usePendingTeamsNavigation();
+
+  useLayoutEffect(() => {
+    if (
+      pathname === location.pathname &&
+      isTeamsSectionPath(location.pathname, routePath)
+    ) {
+      clear();
+    }
+  }, [clear, location.pathname, pathname, routePath]);
+
+  return null;
+};
+
+const TeamsSectionErrorFallback = ({ routePath }: { routePath: string }) => {
+  const location = useLocation();
+  const { pathname, clear } = usePendingTeamsNavigation();
+
+  useLayoutEffect(() => {
+    if (
+      pathname === location.pathname &&
+      isTeamsSectionPath(location.pathname, routePath)
+    ) {
+      clear();
+    }
+  }, [clear, location.pathname, pathname, routePath]);
+
+  return (
+    <div
+      className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-red-700/60 bg-red-950/30 p-6 text-center"
+      role="alert"
+    >
+      <Icon svg={ListChecks} size="lg" className="text-red-300" />
+      <div className="space-y-1">
+        <h3 className="text-base font-semibold text-red-100">
+          This section could not load.
+        </h3>
+        <p className="text-sm text-red-100/80">
+          Try again, or open another section from the sidebar.
+        </p>
+      </div>
+      <Button type="button" onClick={() => window.location.reload()}>
+        Reload page
+      </Button>
+    </div>
+  );
+};
+
+const TeamsSectionRoute = ({
+  children,
+  routePath,
+}: {
+  children: ReactNode;
+  routePath: string;
+}) => (
+  <ErrorBoundary fallback={<TeamsSectionErrorFallback routePath={routePath} />}>
+    <Suspense fallback={<TeamsSectionLoadingFallback />}>
+      <>
+        {children}
+        <TeamsSectionReady routePath={routePath} />
+      </>
+    </Suspense>
   </ErrorBoundary>
 );
 
 const TeamsAndServicesIndexRedirect = () => {
   const navigate = useNavigate();
+  const { availableNavSections } = useTeamsPage();
 
   useEffect(() => {
-    navigate(getStoredTeamsAndServicesRoute() ?? teamsNavSections[0].path, {
-      replace: true,
-    });
-  }, [navigate]);
+    const storedRoute = getStoredTeamsAndServicesRoute();
+    navigate(
+      storedRoute && isTeamsNavPathAvailable(storedRoute, availableNavSections)
+        ? storedRoute
+        : getFirstAvailableTeamsNavPath(availableNavSections),
+      {
+        replace: true,
+      },
+    );
+  }, [availableNavSections, navigate]);
 
   return null;
 };
 
 const TeamsAndServicesLayout = () => {
-  const { loading, toolbarLogos, churchName } = useTeamsPage();
+  const { loading, toolbarLogos, churchName, availableNavSections } = useTeamsPage();
   const location = useLocation();
+  const pendingNavigation = usePendingTeamsNavigation();
   useTeamsAbandonedReturnCleanup();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const storedRoute = getStoredTeamsAndServicesRoute();
+  const pendingPath =
+    pendingNavigation.pathname &&
+    isTeamsNavPathAvailable(pendingNavigation.pathname, availableNavSections)
+    ? pendingNavigation.pathname
+    : null;
+  const activePath =
+    pendingPath || (location.pathname === "/teams-and-services"
+      ? storedRoute && isTeamsNavPathAvailable(storedRoute, availableNavSections)
+        ? storedRoute
+        : getFirstAvailableTeamsNavPath(availableNavSections)
+      : location.pathname);
   const activeSection = useMemo(
-    () =>
-      getActiveTeamsNavSection(
-        location.pathname === "/teams-and-services"
-          ? getStoredTeamsAndServicesRoute() ?? teamsNavSections[0].path
-          : location.pathname,
-      ),
-    [location.pathname],
+    () => getActiveTeamsNavSection(activePath),
+    [activePath],
   );
+
+  useLayoutEffect(() => {
+    if (pendingPath) {
+      document.title = getPageTitle(pendingPath);
+    }
+  }, [pendingPath]);
+
+  useEffect(() => {
+    if (pendingNavigation.pathname && !pendingPath) {
+      pendingNavigation.clear();
+    }
+  }, [pendingNavigation, pendingPath]);
 
   useEffect(() => {
     saveTeamsAndServicesRoute(location.pathname);
@@ -159,7 +238,20 @@ const TeamsAndServicesLayout = () => {
             {loading ? (
               getTeamsSectionSkeleton(activeSection.routePath)
             ) : (
-              <Outlet />
+              <>
+                <div
+                  className={cn(
+                    "flex min-h-0 flex-1 flex-col",
+                    pendingPath && "hidden",
+                  )}
+                  aria-hidden={pendingPath ? true : undefined}
+                >
+                  <Outlet />
+                </div>
+                {pendingPath
+                  ? getTeamsSectionSkeleton(activeSection.routePath)
+                  : null}
+              </>
             )}
           </div>
         </div>
@@ -171,99 +263,102 @@ const TeamsAndServicesLayout = () => {
 const TeamsAndServicesRoutes = () => (
   <Routes>
     <Route element={<TeamsAndServicesLayout />}>
+      <Route element={<TeamsSectionAccessGuard />}>
       <Route index element={<TeamsAndServicesIndexRedirect />} />
       <Route
         path="messages"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="messages">
             <TeamsMessagesPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[0].routePath}
+        path="schedules"
         element={
-          <TeamsSectionRoute>
-            <TeamsSchedulesPage />
+          <TeamsSectionRoute routePath="schedules">
+            <ChurchServiceTimeZoneGate area="Schedules">
+              <TeamsSchedulesPage />
+            </ChurchServiceTimeZoneGate>
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[1].routePath}
+        path="members"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="members">
             <TeamsMembersPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[2].routePath}
+        path="positions"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="positions">
             <TeamsPositionsPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[3].routePath}
+        path="groups"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="groups">
             <TeamsGroupsPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[4].routePath}
+        path="roles"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="roles">
             <TeamsRolesPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[5].routePath}
+        path="qualifications"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="qualifications">
             <TeamsQualificationsPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={teamsNavSections[6].routePath}
+        path="forms"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="forms">
             <TeamsFormsPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={servicesNavSections[0].routePath}
+        path="services"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="services">
             <TeamsPlansPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={servicesNavSections[1].routePath}
+        path="templates"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="templates">
             <TeamsTemplatesPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={servicesNavSections[2].routePath}
+        path="microphones"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="microphones">
             <TeamsMicrophonesPage />
           </TeamsSectionRoute>
         }
       />
       <Route
-        path={servicesNavSections[3].routePath}
+        path="service-setup"
         element={
-          <TeamsSectionRoute>
+          <TeamsSectionRoute routePath="service-setup">
             <TeamsServiceSettingsPage />
           </TeamsSectionRoute>
         }
@@ -271,21 +366,61 @@ const TeamsAndServicesRoutes = () => (
       {/* Compatibility redirects retained for one release. */}
       <Route
         path="plans/*"
-        element={<Navigate to={servicesNavSections[0].path} replace />}
+        element={<Navigate to="/teams-and-services/services" replace />}
       />
       <Route
         path="service-settings/*"
-        element={<Navigate to={servicesNavSections[3].path} replace />}
+        element={<Navigate to="/teams-and-services/service-setup" replace />}
       />
       <Route path="*" element={<Navigate to="schedules" replace />} />
+      </Route>
     </Route>
   </Routes>
 );
 
+const TeamsSectionAccessGuard = () => {
+  const { loading, availableNavSections } = useTeamsPage();
+  const location = useLocation();
+
+  if (
+    loading ||
+    location.pathname === "/teams-and-services" ||
+    isTeamsNavPathAvailable(location.pathname, availableNavSections)
+  ) {
+    return <Outlet />;
+  }
+
+  return (
+    <Navigate to={getFirstAvailableTeamsNavPath(availableNavSections)} replace />
+  );
+};
+
+const TeamsNoAccess = () => (
+  <main className="flex min-h-dvh items-center justify-center bg-homepage-canvas px-4 text-white">
+    <section className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/80 p-6 text-center">
+      <h1 className="text-2xl font-semibold">No team access</h1>
+      <p className="mt-2 text-sm leading-relaxed text-gray-200">
+        You aren’t currently linked to a team in WorshipSync. If you think you should be, ask a team leader or administrator.
+      </p>
+      <div className="mt-5 flex justify-center">
+        <Button component="link" to="/home" variant="secondary">
+          Home
+        </Button>
+      </div>
+    </section>
+  </main>
+);
+
+const TeamsAndServicesContent = () => {
+  const { accessDenied, canViewServices } = useTeamsPage();
+  if (accessDenied && !canViewServices) return <TeamsNoAccess />;
+  return <TeamsAndServicesRoutes />;
+};
+
 const TeamsAndServicesPage = () => (
   <TeamsPageProvider>
     <TeamsNavigationGuardProvider>
-      <TeamsAndServicesRoutes />
+      <TeamsAndServicesContent />
     </TeamsNavigationGuardProvider>
   </TeamsPageProvider>
 );

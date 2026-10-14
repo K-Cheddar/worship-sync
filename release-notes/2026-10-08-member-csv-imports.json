@@ -3,5 +3,5 @@
   "date": "2026-10-08",
   "type": "improved",
   "title": "Clearer member CSV imports",
-  "description": "Review team and position decisions, preview member changes, and retry failed rows without duplicating approved CSV resources."
+  "description": "Create or match teams and positions from the same CSV, review member changes, and retry failed rows without duplicating approved import resources."
 }

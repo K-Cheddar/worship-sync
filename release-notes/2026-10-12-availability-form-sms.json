@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-12-availability-form-sms",
+  "date": "2026-10-12",
+  "type": "improved",
+  "title": "Availability form messages",
+  "description": "Review volunteers and their personalized text messages in one confirmation before sending. First-time volunteers are selected automatically, and failed messages require a deliberate retry."
+}

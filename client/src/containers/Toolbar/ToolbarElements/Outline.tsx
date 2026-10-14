@@ -101,12 +101,14 @@ const Service = ({
         message="Are you sure you want to delete the outline"
       />
       <li
+        data-outline-id={list._id}
         className={cn(
           "group relative flex min-w-0 items-center gap-1 rounded-md border-2 border-transparent p-1",
           isSelected && "ring-1 ring-inset ring-cyan-500/30",
         )}
         {...attributes}
         {...listeners}
+        aria-disabled={isEditing ? undefined : attributes["aria-disabled"]}
         style={style}
         ref={setNodeRef}
       >
@@ -167,6 +169,7 @@ const Service = ({
               svg={isEditing ? Check : SquarePen}
               variant="tertiary"
               color={isEditing ? INLINE_EDIT_CONFIRM_ICON_COLOR : undefined}
+              aria-label={isEditing ? "Save outline name" : `Rename outline ${list.name}`}
               onClick={() => {
                 if (isEditing) {
                   handleConfirmEdit();

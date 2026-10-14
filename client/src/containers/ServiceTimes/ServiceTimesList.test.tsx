@@ -11,6 +11,16 @@ jest.mock("../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
 }));
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const makeService = (id: string, name: string): ServiceTime =>
   ({
     id,

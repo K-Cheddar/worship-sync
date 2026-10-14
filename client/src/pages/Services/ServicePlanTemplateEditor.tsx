@@ -220,6 +220,7 @@ const ServicePlanTemplateEditor = ({
   // stale id); these drive the header and the delete action.
   const [savedTemplateId, setSavedTemplateId] = useState(template.templateId);
   const [savedName, setSavedName] = useState(template.name);
+  const acknowledgedTemplateRef = useRef<ServicePlanTemplate | null>(null);
 
   const markDraftChanged = useCallback(() => {
     setDraftChangeVersion((version) => version + 1);
@@ -358,10 +359,21 @@ const ServicePlanTemplateEditor = ({
     getConflictPlan: getConflictTemplate,
     isOwnWrite: isMatchingServicePlanWrite,
     onSaved: (savedTemplate) => {
+      acknowledgedTemplateRef.current = savedTemplate;
       templateIdRef.current = savedTemplate.templateId;
       setSavedTemplateId(savedTemplate.templateId);
       setSavedName(savedTemplate.name);
       onSaved(savedTemplate);
+    },
+    onSaveAcknowledged: (savedVersion) => {
+      if (draftChangeVersion !== savedVersion) return;
+      const savedTemplate = acknowledgedTemplateRef.current;
+      if (!savedTemplate) return;
+      // Reflect server normalization in the clean draft. A newer edit has a
+      // different change version and remains untouched for the next save.
+      setName(savedTemplate.name);
+      setServiceId(savedTemplate.serviceId || "");
+      setSections(savedTemplate.sections);
     },
     onConflict: setConflictTemplate,
   });

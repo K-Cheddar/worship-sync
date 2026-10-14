@@ -3,6 +3,8 @@ import { ItemType, SongMetadata, TimerType } from "../types";
 import type { NormalizedLrclibTrack } from "../utils/lrclib";
 
 export type CreateItemState = {
+  /** Changes whenever a complete draft is replaced or reset. */
+  draftId: number;
   name: string;
   type: ItemType;
   /**
@@ -24,7 +26,11 @@ export type CreateItemState = {
   lyricsImportError: string;
 };
 
+let nextDraftId = 0;
+const createDraftId = () => ++nextDraftId;
+
 export const initialCreateItemState: CreateItemState = {
+  draftId: 0,
   name: "",
   type: "song",
   hasUserSelectedType: false,
@@ -45,13 +51,26 @@ export const createItemSlice = createSlice({
   name: "createItem",
   initialState: initialCreateItemState,
   reducers: {
-    setCreateItem: (state, action: PayloadAction<CreateItemState>) => {
+    setCreateItem: (
+      state,
+      action: PayloadAction<Omit<CreateItemState, "draftId">>,
+    ) => {
+      Object.assign(state, action.payload, { draftId: createDraftId() });
+    },
+    patchCreateItemDraft: (
+      state,
+      action: PayloadAction<Partial<Omit<CreateItemState, "draftId">>>,
+    ) => {
       Object.assign(state, action.payload);
     },
-    resetCreateItem: () => initialCreateItemState,
+    resetCreateItem: () => ({
+      ...initialCreateItemState,
+      draftId: createDraftId(),
+    }),
   },
 });
 
-export const { setCreateItem, resetCreateItem } = createItemSlice.actions;
+export const { setCreateItem, patchCreateItemDraft, resetCreateItem } =
+  createItemSlice.actions;
 
 export default createItemSlice.reducer;

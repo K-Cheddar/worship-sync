@@ -1,0 +1,7 @@
+{
+  "id": "independent-service-edit-access-2026-10-06",
+  "date": "2026-10-06",
+  "type": "fixed",
+  "title": "Service edits follow Services access",
+  "description": "Members with Services edit access can save service settings even when Controller access is set to None. Controller access continues to control presentation and timer updates."
+}

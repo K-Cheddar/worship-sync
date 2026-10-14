@@ -8,6 +8,7 @@ import {
   FormattedSection,
   ItemSlideType,
   ItemState,
+  ItemContentOwner,
   MediaType,
   ServiceItem,
   SongAudio,
@@ -38,6 +39,15 @@ import {
 } from "../utils/localImageAssets";
 import { replaceMediaReferencesInItem } from "../utils/mediaReferenceReplacement";
 import type { AppDispatch, RootState } from "./store";
+import {
+  getItemMutationOwner,
+  sameItemMutationOwner,
+  type ItemMutationOwner,
+} from "./deferredItemMutations";
+import {
+  applyOwnedItemContentMutation,
+  type OwnedItemContentMutation,
+} from "../utils/ownedItemContentMutation";
 
 const defaultShouldSendTo: ShouldSendTo = {
   projector: true,
@@ -148,6 +158,7 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
     ...snap,
     shouldSkipTitle: snap.shouldSkipTitle ?? false,
     background: snap.background ?? "",
+    formattedSections: snap.formattedSections ?? [],
     bibleInfo: snap.bibleInfo ?? defaultBibleInfoForCompare,
     arrangements: snap.arrangements ?? [],
     slides: snap.slides ?? [],
@@ -180,6 +191,54 @@ export function itemDocMatchesEditorState(
   );
 }
 
+export const ITEM_PERSISTED_FIELDS = [
+  "name",
+  "shouldSkipTitle",
+  "background",
+  "slides",
+  "arrangements",
+  "selectedArrangement",
+  "bibleInfo",
+  "timerInfo",
+  "shouldSendTo",
+  "formattedSections",
+  "songMetadata",
+  "songLinks",
+  "songAudio",
+] as const satisfies readonly (keyof DBItem)[];
+
+export type PersistedItemField = (typeof ITEM_PERSISTED_FIELDS)[number];
+
+export const getItemPersistenceChanges = (
+  item: Partial<ItemState> | DBItem,
+  baseline: DBItem,
+): PersistedItemField[] => {
+  const itemSnapshot = createItemSnapshot(item);
+  if (!itemSnapshot) return [];
+  const current = normalizeSnapshotForEditorCompare(itemSnapshot);
+  const base = normalizeSnapshotForEditorCompare(baseline);
+  return ITEM_PERSISTED_FIELDS.filter(
+    (field) => !_.isEqual(current[field], base[field]),
+  );
+};
+
+export const getItemPersistenceConflicts = (
+  item: Partial<ItemState> | DBItem,
+  baseline: DBItem,
+  latest: DBItem,
+): PersistedItemField[] => {
+  const itemSnapshot = createItemSnapshot(item);
+  if (!itemSnapshot) return [];
+  const current = normalizeSnapshotForEditorCompare(itemSnapshot);
+  const base = normalizeSnapshotForEditorCompare(baseline);
+  const remote = normalizeSnapshotForEditorCompare(latest);
+  return getItemPersistenceChanges(itemSnapshot, baseline).filter(
+    (field) =>
+      !_.isEqual(remote[field], base[field]) &&
+      !_.isEqual(remote[field], current[field]),
+  );
+};
+
 const getSlideCount = (
   item: Partial<ItemState> | DBItem,
   arrangementIndex: number,
@@ -198,7 +257,10 @@ const getSlideCount = (
 const applyItemDataToState = (
   state: ItemState,
   payload: Partial<ItemState> | DBItem,
-  options?: { preserveSelection?: boolean },
+  options?: {
+    preserveSelection?: boolean;
+    contentOwner?: ItemContentOwner | null;
+  },
 ) => {
   const preserveSelection = options?.preserveSelection ?? false;
   const nextListId = "listId" in payload ? payload.listId : undefined;
@@ -217,6 +279,11 @@ const applyItemDataToState = (
   state.name = payload.name || state.name;
   state.type = payload.type || state.type;
   state._id = payload._id || state._id;
+  state.contentOwner = options && "contentOwner" in options
+    ? options.contentOwner ?? undefined
+    : "contentOwner" in payload
+      ? payload.contentOwner
+      : undefined;
   state.listId = nextListId || state.listId;
   if ("background" in payload && payload.background !== undefined) {
     state.background = payload.background;
@@ -231,8 +298,7 @@ const applyItemDataToState = (
   state.shouldSkipTitle = payload.shouldSkipTitle || false;
   state.arrangements = payload.arrangements || [];
   state.slides = payload.slides || [];
-  state.formattedSections =
-    payload.formattedSections || state.formattedSections;
+  state.formattedSections = payload.formattedSections || [];
   state.bibleInfo = payload.bibleInfo || {
     book: "",
     chapter: "",
@@ -377,6 +443,35 @@ export const itemSlice = createSlice({
       state.formattedSections = [...action.payload];
       state.hasPendingUpdate = true;
     },
+    applyOwnedContentUpdate: (
+      state,
+      action: PayloadAction<{
+        owner: ItemMutationOwner;
+        snapshot: ItemState;
+        update: Partial<
+          Pick<ItemState, "slides" | "arrangements" | "formattedSections">
+        >;
+      }>,
+    ) => {
+      if (
+        !sameItemMutationOwner(
+          getItemMutationOwner(state),
+          action.payload.owner,
+        )
+      ) {
+        return;
+      }
+      if (action.payload.update.slides) {
+        state.slides = [...action.payload.update.slides];
+      }
+      if (action.payload.update.arrangements) {
+        state.arrangements = [...action.payload.update.arrangements];
+      }
+      if (action.payload.update.formattedSections) {
+        state.formattedSections = [...action.payload.update.formattedSections];
+      }
+      state.hasPendingUpdate = true;
+    },
     setSongMetadata: (
       state,
       action: PayloadAction<SongMetadata | null | undefined>,
@@ -399,10 +494,7 @@ export const itemSlice = createSlice({
       if (state._id !== action.payload.persistedDoc._id) return;
       state.songAudio = action.payload.songAudio;
       if (state.baseItem) {
-        state.baseItem.songAudio = action.payload.songAudio;
-        state.baseItem._rev = action.payload.persistedDoc._rev;
-        state.baseItem.updatedAt = action.payload.persistedDoc.updatedAt;
-        state.baseItem.updatedBy = action.payload.persistedDoc.updatedBy;
+        state.baseItem = createItemSnapshot(action.payload.persistedDoc);
       }
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {
@@ -445,9 +537,35 @@ export const itemSlice = createSlice({
     },
     markItemPersisted: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
+      const alreadyEditedFields = new Set(
+        state.baseItem
+          ? getItemPersistenceChanges(state, state.baseItem)
+          : [],
+      );
+      for (const field of ITEM_PERSISTED_FIELDS) {
+        if (alreadyEditedFields.has(field)) continue;
+        (state as unknown as Record<PersistedItemField, unknown>)[field] =
+          action.payload[field];
+      }
       state.baseItem = createItemSnapshot(action.payload);
-      state.pendingRemoteItem = null;
-      state.hasRemoteUpdate = false;
+      state.hasPendingUpdate = getItemPersistenceChanges(
+        state,
+        action.payload,
+      ).length > 0;
+      if (!state.hasPendingUpdate) {
+        state.pendingRemoteItem = null;
+        state.hasRemoteUpdate = false;
+      } else if (state.pendingRemoteItem) {
+        state.pendingRemoteItem = action.payload;
+      }
+    },
+    rebaseItemPersistence: (state, action: PayloadAction<DBItem>) => {
+      if (state._id !== action.payload._id) return;
+      state.baseItem = createItemSnapshot(action.payload);
+      state.hasPendingUpdate = getItemPersistenceChanges(
+        state,
+        action.payload,
+      ).length > 0;
     },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
@@ -460,13 +578,58 @@ export const itemSlice = createSlice({
     },
     applyPendingRemoteItem: (state) => {
       if (!state.pendingRemoteItem) return;
+      if (state.pendingRemoteItem._id !== state._id) {
+        state.pendingRemoteItem = null;
+        state.hasRemoteUpdate = false;
+        return;
+      }
+      // The remote document is content only. Keep the owner already verified
+      // for this active document; never adopt runtime ownership from the payload.
+      const contentOwner = state.contentOwner ?? null;
       applyItemDataToState(state, state.pendingRemoteItem, {
         preserveSelection: true,
+        contentOwner,
       });
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
       state.hasRemoteUpdate = false;
+    },
+    keepLocalItemChanges: (state) => {
+      if (!state.pendingRemoteItem) return;
+      state.baseItem = createItemSnapshot(state.pendingRemoteItem);
+      state.pendingRemoteItem = null;
+      state.hasRemoteUpdate = false;
+      state.hasPendingUpdate = !itemDocMatchesEditorState(
+        state.baseItem!,
+        state,
+      );
+    },
+    restorePendingItemEdits: (
+      state,
+      action: PayloadAction<{
+        owner: ItemMutationOwner;
+        desired: ItemState;
+        baseline: DBItem;
+      }>,
+    ) => {
+      if (
+        !sameItemMutationOwner(
+          getItemMutationOwner(state),
+          action.payload.owner,
+        )
+      ) {
+        return;
+      }
+      const { desired, baseline } = action.payload;
+      const changes = getItemPersistenceChanges(desired, baseline);
+      if (changes.length === 0) return;
+      Object.assign(
+        state,
+        Object.fromEntries(changes.map((field) => [field, desired[field]])),
+      );
+      state.baseItem = baseline;
+      state.hasPendingUpdate = true;
     },
     toggleBackgroundTargetSlideId: (state, action: PayloadAction<string>) => {
       if (!state.backgroundTargetSlideIds) state.backgroundTargetSlideIds = [];
@@ -608,8 +771,17 @@ export const setSelectedArrangement = createAsyncThunk(
 
 export const updateBoxes = createAsyncThunk(
   "item/updateBoxes",
-  async (args: { boxes: Box[] }, { dispatch, getState }) => {
+  async (
+    args: { boxes: Box[]; expectedOwner?: ItemMutationOwner },
+    { dispatch, getState },
+  ) => {
     const item = getState().undoable.present.item;
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(getItemMutationOwner(item), args.expectedOwner)
+    ) {
+      return;
+    }
     let arrangements = [...item.arrangements];
     if (item.arrangements[item.selectedArrangement]?.slides?.length > 0) {
       arrangements = arrangements.map((arrangement, index) => {
@@ -642,10 +814,17 @@ export const updateArrangements = createAsyncThunk(
     args: {
       arrangements: Arrangment[];
       selectedArrangement?: number;
+      expectedOwner?: ItemMutationOwner;
     },
     { dispatch, getState },
   ) => {
     const item = getState().undoable.present.item;
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(getItemMutationOwner(item), args.expectedOwner)
+    ) {
+      return;
+    }
     const { selectedArrangement: currentArrangement } = item;
     const { selectedArrangement, arrangements } = args;
     const newSlides =
@@ -1013,10 +1192,20 @@ export const removeSlidesByIds = createAsyncThunk(
 export const updateSlides = createAsyncThunk(
   "item/updateSlides",
   async (
-    args: { slides: ItemSlideType[]; formattedSections?: FormattedSection[] },
+    args: {
+      slides: ItemSlideType[];
+      formattedSections?: FormattedSection[];
+      expectedOwner?: ItemMutationOwner;
+    },
     { dispatch, getState },
   ) => {
     const item = getState().undoable.present.item;
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(getItemMutationOwner(item), args.expectedOwner)
+    ) {
+      return;
+    }
     const oldSlides = item.slides;
     const newSlides = args.slides;
 
@@ -1041,8 +1230,41 @@ export const updateSlides = createAsyncThunk(
 
 export const updateBibleInfo = createAsyncThunk(
   "item/updateBibleInfo",
-  async (args: { bibleInfo: BibleInfo }, { dispatch }) => {
+  async (
+    args: { bibleInfo: BibleInfo; expectedOwner?: ItemMutationOwner },
+    { dispatch, getState },
+  ) => {
+    if (
+      args.expectedOwner &&
+      !sameItemMutationOwner(
+        getItemMutationOwner(getState().undoable.present.item),
+        args.expectedOwner,
+      )
+    ) {
+      return;
+    }
     dispatch(_updateBibleInfo(args.bibleInfo));
+  },
+);
+
+export const applyOwnedContentMutation = createAsyncThunk(
+  "item/applyOwnedContentMutation",
+  async (
+    args: { owner: ItemMutationOwner; mutation: OwnedItemContentMutation },
+    { dispatch, getState },
+  ) => {
+    const item = getState().undoable.present.item;
+    if (!sameItemMutationOwner(getItemMutationOwner(item), args.owner)) {
+      return false;
+    }
+    const update = applyOwnedItemContentMutation(item, args.mutation);
+    if (!update) return false;
+    dispatch(itemSlice.actions.applyOwnedContentUpdate({
+      owner: args.owner,
+      snapshot: { ...item, ...update, hasPendingUpdate: true },
+      update,
+    }));
+    return true;
   },
 );
 
@@ -1066,6 +1288,7 @@ export const {
   _updateTimerInfo,
   syncLiveTimerInfo,
   _updateFormattedSections,
+  applyOwnedContentUpdate,
   setBackground,
   setHasPendingUpdate,
   setSelectedBox,
@@ -1078,6 +1301,9 @@ export const {
   bufferRemoteItemUpdate,
   discardPendingRemoteItem,
   applyPendingRemoteItem,
+  keepLocalItemChanges,
+  restorePendingItemEdits,
+  rebaseItemPersistence,
   markItemPersisted,
   toggleBackgroundTargetSlideId,
   setBackgroundTargetSlideIds,

@@ -19,8 +19,6 @@ export type ServicePlanningFieldPatch = {
 
 export type ServicePlanningCandidate = {
   personIndex: number;
-  /** Stable assignee identity for native saved plans; absent for legacy imports. */
-  sourceIdentity?: string;
   rawNameToken: string;
   patch: ServicePlanningFieldPatch;
 };
@@ -375,7 +373,6 @@ export const mapServicePlanningRows = (
 
       return {
         personIndex: idx,
-        ...(row.assigneeRefs?.[idx]?.id ? { sourceIdentity: `assignee:${row.assigneeRefs[idx].id}` } : {}),
         rawNameToken: token,
         patch,
       };

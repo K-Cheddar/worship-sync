@@ -48,7 +48,6 @@ import type { ServicePlanningTeamAssignment } from "../../types/servicePlanningI
 import type { PublicServiceFlowSnapshot } from "../../services/serviceFlowTypes";
 import {
   chooseControllerServicePlanKey,
-  servicePlanToSummary,
   sortControllerServicePlans,
 } from "./controllerServicePlanSelection";
 import { useActiveControllerId } from "../../context/activeController";
@@ -56,7 +55,7 @@ import { useActiveControllerId } from "../../context/activeController";
 export const useCurrentServicePlanSource = () => {
   const dispatch = useDispatch();
   const activeControllerId = useActiveControllerId();
-  const { canViewServices, canViewTeams, churchId, loginState } =
+  const { canViewServices, canViewTeams, canUseTeamsLiveSync, churchId, loginState } =
     useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const { loadPlanPreview } = useServicePlanningImport();
@@ -227,7 +226,7 @@ export const useCurrentServicePlanSource = () => {
       (candidate) => getServicePlanKey(candidate) === selectedPlanKey,
     );
 
-  const refreshPlans = useCallback(async () => {
+  const refreshPlans = useCallback(async (preserveSelectedPlan = false) => {
     if (!isEnabled || !churchId) return;
     const requestId = ++planListRequestIdRef.current;
     planListActiveRequestIdRef.current = requestId;
@@ -242,7 +241,20 @@ export const useCurrentServicePlanSource = () => {
     try {
       const result = await listServicePlans(churchIdAtStart);
       if (!isCurrentListRequest()) return;
-      setSavedPlans(sortControllerServicePlans(result.servicePlans));
+      setSavedPlans((current) => {
+        const refreshed = result.servicePlans;
+        const selectedSummary = current.find(
+          (plan) => plan.planKey === selectedPlanKeyRef.current,
+        );
+        const includesSelected = refreshed.some(
+          (plan) => plan.planKey === selectedPlanKeyRef.current,
+        );
+        return sortControllerServicePlans(
+          preserveSelectedPlan && selectedSummary && !includesSelected
+            ? [...refreshed, selectedSummary]
+            : refreshed,
+        );
+      });
       setPlansLoaded(true);
     } catch {
       if (!isCurrentListRequest()) return;
@@ -802,71 +814,23 @@ export const useCurrentServicePlanSource = () => {
       }
 
       if (!isServicePlanUpdatedEvent(event)) return;
-      const isSelectedPlan =
-        event.servicePlan.planKey === selectedPlanKeyRef.current;
-      // Keep a stale plan-list response from undoing this direct SSE update.
-      planListRequestIdRef.current += 1;
-      planListActiveRequestIdRef.current = null;
-      setIsLoadingPlans(false);
-      // Only a selected-plan event supersedes the selected plan's detail and
-      // assignment request. Unrelated plan events update the summary list
-      // without stranding the selected preview in a loading state.
-      const generation = isSelectedPlan
-        ? ++generationRef.current
-        : generationRef.current;
-      setSavedPlans((current) => {
-        const summary = servicePlanToSummary(event.servicePlan);
-        const withoutUpdated = current.filter(
-          (plan) => plan.planKey !== summary.planKey,
-        );
-        return sortControllerServicePlans([...withoutUpdated, summary]);
+      if (event.planKey !== selectedPlanKeyRef.current) {
+        // Unselected changes only affect the summary list. Refresh it without
+        // advancing the selected-plan generation or touching its preview.
+        void refreshPlans(true);
+        return;
+      }
+      void reconcileSelectedPlan({
+        refreshPlanList: true,
+        preserveOnFailure: true,
       });
-      if (!isSelectedPlan) return;
-      if (!churchId) return;
-      planRef.current = event.servicePlan;
-      void getServicePlanViewer(churchId, event.servicePlan.planKey)
-        .then((result) => {
-          if (
-            generation === generationRef.current &&
-            selectedPlanKeyRef.current === event.servicePlan.planKey
-          ) {
-            setSelectedPlanSnapshot(result.snapshot);
-          }
-        })
-        .catch(() => undefined);
-      void getServicePlanAssignments(churchId, event.servicePlan.planKey)
-        .then((result) =>
-          applyPlan(
-            event.servicePlan,
-            result.assignments,
-            () =>
-              generation === generationRef.current &&
-              selectedPlanKeyRef.current === event.servicePlan.planKey,
-          ),
-        )
-        .catch(() =>
-          applyPlan(
-            event.servicePlan,
-            [],
-            () =>
-              generation === generationRef.current &&
-              selectedPlanKeyRef.current === event.servicePlan.planKey,
-          ),
-        )
-        .finally(() => {
-          if (
-            generation === generationRef.current &&
-            selectedPlanKeyRef.current === event.servicePlan.planKey
-          ) {
-            setIsLoading(false);
-          }
-        });
     },
     [
       applyPlan,
       churchId,
       clearUnavailablePlan,
       isEnabled,
+      refreshPlans,
       reconcileSelectedPlan,
     ],
   );
@@ -879,6 +843,7 @@ export const useCurrentServicePlanSource = () => {
   useTeamsLiveSync(
     liveChurchId,
     handleLiveEvent,
+    Boolean(canUseTeamsLiveSync),
   );
 
   const refresh = useCallback(

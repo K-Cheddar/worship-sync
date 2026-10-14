@@ -20,11 +20,13 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { useToast } from "../../../context/toastContext";
+import { useChurchServiceTimeZone } from "../../../context/churchServiceTimeZone";
 import {
   getServicePlanMicrophones,
   getServiceEquipment,
   applyServicePlanTemplateBulk,
   listServicePlans,
+  getServicePlanAssignments,
   updateTeamScheduleAssignmentMicrophones,
   updateTeamScheduleAssignmentIems,
 } from "../../../api/auth";
@@ -35,6 +37,7 @@ import {
   findNextUpcomingOccurrenceId,
   generateScheduleOccurrences,
   getOccurrenceDate,
+  getOccurrenceTimeZoneAbbreviation,
   getSharedOccurrenceTiming,
   isOccurrenceToday,
   type SharedOccurrenceTiming,
@@ -42,6 +45,7 @@ import {
 import { getServicePlanKey } from "../../../utils/servicePlanKeys";
 import ServicePlanEditor from "../../Services/ServicePlanEditor";
 import { useTeamsPage } from "../TeamsPageContext";
+import { ChurchServiceTimeZoneNotice } from "../components/ChurchServiceTimeZoneGate";
 import {
   OCCURRENCE_ORGANIZE_OPTIONS,
   readPlansOrganizeMode,
@@ -61,6 +65,7 @@ import {
   type TeamsAssignmentSummaryRow,
 } from "./teamsAssignmentsSummary";
 import type { ServiceEquipment } from "../../../types/servicePlan";
+import type { ServicePlanSummary } from "../../../types/servicePlan";
 import WhosServingPanel from "./WhosServingPanel";
 import { useTeamsRestoreOnMount } from "../hooks/useTeamsReturnNavigation";
 import {
@@ -89,6 +94,7 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import type { ServicePlanMicrophone } from "../../../types/servicePlan";
+import type { ServicePlanningTeamAssignment } from "../../../types/servicePlanningImport";
 import { onlyHydratedSchedules } from "../../../api/authTypes";
 import { calculateBulkTemplatePreview } from "./bulkTemplatePreview";
 
@@ -131,23 +137,32 @@ type PlansTileParts = {
   label: string;
 };
 
-const monthKeyFromStartsAt = (startsAt: string) => {
-  const date = new Date(startsAt);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+const occurrenceCalendarDateTime = (
+  occurrence: TeamScheduleOccurrence,
+  timeZone: string,
+) => {
+  const date = getOccurrenceDate(occurrence, timeZone);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? new Date(`${date}T12:00:00.000Z`)
+    : new Date(occurrence.startsAt);
 };
 
-const monthLabelFromStartsAt = (startsAt: string) =>
-  new Date(startsAt).toLocaleString(undefined, {
+const monthLabelFromStartsAt = (date: Date) =>
+  date.toLocaleString(undefined, {
+    timeZone: "UTC",
     month: "long",
     year: "numeric",
   });
 
 const groupOccurrencesByMonth = (
   occurrences: TeamScheduleOccurrence[],
+  timeZone: string,
 ): MonthGroup[] => {
   const groups: MonthGroup[] = [];
   for (const occurrence of occurrences) {
-    const key = monthKeyFromStartsAt(occurrence.startsAt);
+    const date = getOccurrenceDate(occurrence, timeZone);
+    const key = date.slice(0, 7);
+    const monthDate = occurrenceCalendarDateTime(occurrence, timeZone);
     const last = groups[groups.length - 1];
     if (last?.key === key) {
       last.occurrences.push(occurrence);
@@ -155,7 +170,7 @@ const groupOccurrencesByMonth = (
     }
     groups.push({
       key,
-      label: monthLabelFromStartsAt(occurrence.startsAt),
+      label: monthLabelFromStartsAt(monthDate),
       occurrences: [occurrence],
     });
   }
@@ -169,14 +184,17 @@ const groupOccurrencesByMonth = (
 const getPlansTileParts = (
   occurrence: TeamScheduleOccurrence,
   shared: SharedOccurrenceTiming,
+  timeZone: string,
 ): PlansTileParts => {
-  const date = new Date(occurrence.startsAt);
-  const weekday = date.toLocaleString(undefined, { weekday: "short" });
-  const month = date.toLocaleString(undefined, { month: "short" });
-  const day = date.toLocaleString(undefined, { day: "numeric" });
+  const date = occurrenceCalendarDateTime(occurrence, timeZone);
+  const weekday = date.toLocaleString(undefined, { timeZone: "UTC", weekday: "short" });
+  const month = date.toLocaleString(undefined, { timeZone: "UTC", month: "short" });
+  const day = date.toLocaleString(undefined, { timeZone: "UTC", day: "numeric" });
+  const scheduledStart = new Date(occurrence.startsAt);
   const time = shared.sharedTime
     ? null
-    : date.toLocaleString(undefined, {
+    : scheduledStart.toLocaleString(undefined, {
+      timeZone,
       hour: "numeric",
       minute: "2-digit",
     });
@@ -184,11 +202,18 @@ const getPlansTileParts = (
   return { weekday, month, day, time, label };
 };
 
-const serviceTimingLabel = (shared: SharedOccurrenceTiming) => {
+const serviceTimingLabel = (
+  shared: SharedOccurrenceTiming,
+  startsAt: string,
+  timeZone: string,
+) => {
+  const zonedTime = shared.sharedTime
+    ? `${shared.sharedTime} ${getOccurrenceTimeZoneAbbreviation(startsAt, timeZone)}`
+    : null;
   if (shared.sharedWeekday && shared.sharedTime) {
-    return `${shared.sharedWeekday} at ${shared.sharedTime}`;
+    return `${shared.sharedWeekday} at ${zonedTime}`;
   }
-  return shared.sharedWeekday || shared.sharedTime || null;
+  return shared.sharedWeekday || zonedTime || null;
 };
 
 /** Always show time on by-date tiles — service headers are not there to carry it. */
@@ -200,6 +225,7 @@ const BY_DATE_TILE_SHARED: SharedOccurrenceTiming = {
 type PlansOccurrenceTileProps = {
   occurrence: TeamScheduleOccurrence;
   shared: SharedOccurrenceTiming;
+  timeZone: string;
   serviceName?: string;
   hasPlan: boolean;
   isPast: boolean;
@@ -211,6 +237,7 @@ type PlansOccurrenceTileProps = {
 const PlansOccurrenceTile = ({
   occurrence,
   shared,
+  timeZone,
   serviceName,
   hasPlan,
   isPast,
@@ -218,8 +245,8 @@ const PlansOccurrenceTile = ({
   planStatusLoading,
   onOpen,
 }: PlansOccurrenceTileProps) => {
-  const tile = getPlansTileParts(occurrence, shared);
-  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
+  const tile = getPlansTileParts(occurrence, shared, timeZone);
+  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
   let planActionLabel = `Add plan for ${tile.label}`;
   if (planStatusLoading) {
     planActionLabel = `Plan for ${tile.label}`;
@@ -311,23 +338,78 @@ const PlansOccurrenceTile = ({
   );
 };
 
+const ServicePlanServingAssignments = ({
+  status,
+  assignments,
+}: {
+  status: "loading" | "ready" | "unavailable";
+  assignments: ServicePlanningTeamAssignment[];
+}) => {
+  if (status === "loading") {
+    return <p role="status" className="text-sm text-gray-400">Loading team assignments…</p>;
+  }
+  if (status === "unavailable") {
+    return <p role="status" className="text-sm text-amber-200">Team assignments are unavailable right now.</p>;
+  }
+  if (assignments.length === 0) {
+    return <p className="text-sm text-gray-400">No team members are assigned on this service date.</p>;
+  }
+
+  const grouped = new Map<string, ServicePlanningTeamAssignment[]>();
+  assignments.forEach((assignment) => {
+    const key = assignment.teamId || assignment.teamName;
+    const teamAssignments = grouped.get(key) || [];
+    teamAssignments.push(assignment);
+    grouped.set(key, teamAssignments);
+  });
+
+  return (
+    <div className="space-y-3">
+      {[...grouped.values()].map((teamAssignments, index) => (
+        <section key={`${teamAssignments[0].teamId || teamAssignments[0].teamName}-${index}`}>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-orange-300/90">
+            {teamAssignments[0].teamName}
+          </h4>
+          <ul className="mt-1 space-y-1">
+            {teamAssignments.map((assignment, rowIndex) => (
+              <li
+                key={`${assignment.role}-${assignment.name}-${rowIndex}`}
+                className="flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="truncate text-gray-300">{assignment.role}</span>
+                <span className="truncate text-gray-100">{assignment.name}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+};
+
 /**
  * Plans list: pick a date for a service and jump straight into building or
  * editing its order-of-service — no service/date-range/occurrence dropdown
  * gauntlet first. Matches the "list of plans, click one" simplicity of
  * Planning Center's Plans tab, which many users will already know.
  */
-const TeamsPlansPage = () => {
-  const { churchId, canEditServices, canEditTeams: canEditTeamsFromContext } =
+const TeamsPlansCalendarPage = () => {
+  const {
+    churchId,
+    canViewServices,
+    canEditServices,
+    canEditTeam: canEditTeamAccess,
+  } =
     useContext(GlobalInfoContext) || {};
   const {
     pageData,
-    canEditTeams,
     servicePlansRevision,
     upsertData,
     hydrateSchedules,
     hydratingScheduleIds,
+    hasTeamsWorkspaceAccess,
     trackTeamsSave,
+    serviceTimeZone,
     templates: templateResource,
   } = useTeamsPage();
   const {
@@ -365,8 +447,8 @@ const TeamsPlansPage = () => {
     const servicesForRange = selectedActiveServices.length > 0
       ? selectedActiveServices
       : activeServices;
-    return getUpcomingServiceRange(servicesForRange, referenceTime);
-  }, [activeServices, churchId, filtersHydratedForChurchId, selectedServiceIds]);
+    return getUpcomingServiceRange(servicesForRange, referenceTime, serviceTimeZone);
+  }, [activeServices, churchId, filtersHydratedForChurchId, selectedServiceIds, serviceTimeZone]);
   const {
     preset: rangePreset,
     range: selectedRange,
@@ -404,11 +486,52 @@ const TeamsPlansPage = () => {
     service: TeamService;
     occurrence: TeamScheduleOccurrence;
   } | null>(null);
+  const selectedPlanKey = selection
+    ? getServicePlanKey(selection.occurrence)
+    : "";
+  const [planServingAssignments, setPlanServingAssignments] = useState<{
+    planKey: string;
+    status: "loading" | "ready" | "unavailable";
+    assignments: ServicePlanningTeamAssignment[];
+  } | null>(null);
   const [pendingPlanRestore, setPendingPlanRestore] =
     useState<TeamsPlansRestore | null>(null);
   const [openServingTabOnSelection, setOpenServingTabOnSelection] = useState(false);
   const [servingPanelOpen, setServingPanelOpen] = useState(true);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+
+  useEffect(() => {
+    if (!churchId || !selectedPlanKey || hasTeamsWorkspaceAccess !== false) {
+      setPlanServingAssignments(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setPlanServingAssignments({
+      planKey: selectedPlanKey,
+      status: "loading",
+      assignments: [],
+    });
+    getServicePlanAssignments(churchId, selectedPlanKey)
+      .then((result) => {
+        if (!cancelled) {
+          setPlanServingAssignments({
+            planKey: selectedPlanKey,
+            status: "ready",
+            assignments: result.assignments,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlanServingAssignments({
+            planKey: selectedPlanKey,
+            status: "unavailable",
+            assignments: [],
+          });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [churchId, hasTeamsWorkspaceAccess, selectedPlanKey]);
 
   useEffect(() => {
     if (!churchId || filtersHydratedForChurchId === churchId) return;
@@ -537,6 +660,7 @@ const TeamsPlansPage = () => {
       serviceIds: pageData.services.map((service) => service.serviceId),
       startDate: shiftPlainDate(date, -1),
       endDate: shiftPlainDate(date, 1),
+      timeZone: serviceTimeZone,
     }).find((occurrence) => occurrence.occurrenceId === occurrenceId);
     if (!match) return;
     const service = pageData.services.find(
@@ -552,7 +676,7 @@ const TeamsPlansPage = () => {
     if (date > windowEnd) {
       setRangeSelection("custom", { start: windowStart, end: date });
     }
-  }, [pendingPlanRestore, pageData.services, setRangeSelection, windowStart, windowEnd]);
+  }, [pendingPlanRestore, pageData.services, serviceTimeZone, setRangeSelection, windowStart, windowEnd]);
 
   useEffect(() => {
     if (!churchId) {
@@ -625,6 +749,7 @@ const TeamsPlansPage = () => {
       serviceIds: pageData.services.map((service) => service.serviceId),
       startDate: windowStart,
       endDate: windowEnd,
+      timeZone: serviceTimeZone,
     });
 
     const order: string[] = [];
@@ -659,7 +784,7 @@ const TeamsPlansPage = () => {
       });
     }
     return order.map((key) => byKey.get(key) as ServiceGroup);
-  }, [activeServices, pageData.services, windowStart, windowEnd]);
+  }, [activeServices, pageData.services, serviceTimeZone, windowStart, windowEnd]);
 
   const visibleGroups = useMemo(
     () =>
@@ -706,8 +831,9 @@ const TeamsPlansPage = () => {
     () =>
       groupOccurrencesByMonth(
         chronologicalEntries.map((entry) => entry.occurrence),
+        serviceTimeZone,
       ),
-    [chronologicalEntries],
+    [chronologicalEntries, serviceTimeZone],
   );
 
   const chronologicalPlannedCount = useMemo(
@@ -822,14 +948,17 @@ const TeamsPlansPage = () => {
             serviceId,
             serviceIds,
             ...(occurrence.groupId ? { groupId: occurrence.groupId } : {}),
+            ...(occurrence.logicalOccurrenceId
+              ? { logicalOccurrenceId: occurrence.logicalOccurrenceId }
+              : {}),
             occurrenceId: occurrence.occurrenceId,
             startsAt: occurrence.startsAt,
-            date: getOccurrenceDate(occurrence),
+            date: getOccurrenceDate(occurrence, serviceTimeZone),
           };
         });
       const response = await trackTeamsSave(applyServicePlanTemplateBulk(churchId, {
         ...(bulkUseDefaults ? { useServiceDefaults: true } : { templateId: bulkTemplateId }),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        timeZone: serviceTimeZone,
         targets,
         existingPlanMode: "skip",
       }));
@@ -900,7 +1029,7 @@ const TeamsPlansPage = () => {
       const returnTo = buildPlansReturnTo({
         serviceId: selection.service.serviceId,
         occurrenceId: selection.occurrence.occurrenceId,
-        date: getOccurrenceDate(selection.occurrence),
+        date: getOccurrenceDate(selection.occurrence, serviceTimeZone),
       });
       persistTeamsReturnTo(returnTo, TEAMS_SECTION_PATHS.schedules);
       navigate(TEAMS_SECTION_PATHS.schedules, {
@@ -914,12 +1043,12 @@ const TeamsPlansPage = () => {
         }),
       });
     },
-    [navigate, selection],
+    [navigate, selection, serviceTimeZone],
   );
 
   const openGeneratedSchedulePeriod = useCallback(() => {
     if (!selection) return;
-    const date = getOccurrenceDate(selection.occurrence);
+    const date = getOccurrenceDate(selection.occurrence, serviceTimeZone);
     const parsedDate = new Date(`${date}T12:00:00`);
     const startDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth(), 1));
     const endDate = formatPlainDate(new Date(parsedDate.getFullYear(), parsedDate.getMonth() + 1, 0));
@@ -953,7 +1082,7 @@ const TeamsPlansPage = () => {
         },
       }),
     });
-  }, [navigate, pageData.positions, pageData.teams, selection, showToast]);
+  }, [navigate, pageData.positions, pageData.teams, selection, serviceTimeZone, showToast]);
 
   /**
    * Previous/next within the current date window. By service stays on that
@@ -1060,15 +1189,17 @@ const TeamsPlansPage = () => {
       assignments,
       pageData.teams,
     );
-    const canEditPlan = Boolean(
-      canEditServices ?? canEditTeamsFromContext ?? canEditTeams,
-    );
+    const canEditPlan = Boolean(canEditServices);
+    const serviceOnlyServingState = planServingAssignments?.planKey === selectedPlanKey
+      ? planServingAssignments
+      : { planKey: selectedPlanKey, status: "loading" as const, assignments: [] };
 
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
+        <ChurchServiceTimeZoneNotice area="Service Plans" />
         <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ServicePlanEditor
+            {canViewServices ? <ServicePlanEditor
               service={selection.service}
               occurrence={selection.occurrence}
               members={pageData.members}
@@ -1106,29 +1237,76 @@ const TeamsPlansPage = () => {
               planNavigation={planNavigation}
               initialTab={openServingTabOnSelection ? "serving" : "plan"}
               mobileServingContent={
-                <div className="flex flex-col gap-3">
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      svg={CalendarDays}
-                      onClick={openGeneratedSchedulePeriod}
-                    >
-                      View schedule
-                    </Button>
+                hasTeamsWorkspaceAccess !== false ? (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="tertiary"
+                        svg={CalendarDays}
+                        onClick={openGeneratedSchedulePeriod}
+                      >
+                        View schedule
+                      </Button>
+                    </div>
+                    <WhosServingPanel
+                      assignmentTeams={assignmentTeams}
+                      onOpenSchedule={openSchedule}
+                      microphones={microphones}
+                      iemEquipment={iemEquipment}
+                      assignmentsStatus={assignmentsStatus}
+                      showHeading={false}
+                      canEdit={canEditPlan}
+                      canEditTeam={canEditTeamAccess}
+                    />
                   </div>
-                  <WhosServingPanel
-                    assignmentTeams={assignmentTeams}
-                    onOpenSchedule={openSchedule}
-                    microphones={microphones}
-                    iemEquipment={iemEquipment}
-                    assignmentsStatus={assignmentsStatus}
-                    showHeading={false}
-                    canEdit={canEditPlan}
+                ) : (
+                  <ServicePlanServingAssignments
+                    status={serviceOnlyServingState.status}
+                    assignments={serviceOnlyServingState.assignments}
                   />
-                </div>
+                )
               }
-            />
+            /> : (
+              <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+                <div>
+                  <h1 className="text-lg font-semibold text-white">
+                    {selection.service.name}
+                  </h1>
+                  <p className="text-sm text-gray-300">
+                    {new Date(selection.occurrence.startsAt).toLocaleString(undefined, {
+                      timeZone: serviceTimeZone,
+                      weekday: "long",
+                      month: "long",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                      timeZoneName: "short",
+                    })}
+                  </p>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={CalendarDays}
+                    onClick={openGeneratedSchedulePeriod}
+                  >
+                    View schedule
+                  </Button>
+                </div>
+                <WhosServingPanel
+                  assignmentTeams={assignmentTeams}
+                  onOpenSchedule={openSchedule}
+                  microphones={microphones}
+                  iemEquipment={iemEquipment}
+                  assignmentsStatus={assignmentsStatus}
+                  canEdit={canEditPlan}
+                  canEditTeam={canEditTeamAccess}
+                />
+              </section>
+            )}
           </div>
           {isDesktop ? (
             <aside
@@ -1157,13 +1335,21 @@ const TeamsPlansPage = () => {
               </Button>
               {servingPanelOpen ? (
                 <div className="scrollbar-variable flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-3">
-                  <WhosServingPanel
-                    assignmentTeams={assignmentTeams}
-                    onOpenSchedule={openSchedule}
-                    microphones={microphones}
-                    iemEquipment={iemEquipment}
-                    assignmentsStatus={assignmentsStatus}
-                  />
+                  {hasTeamsWorkspaceAccess !== false ? (
+                    <WhosServingPanel
+                      assignmentTeams={assignmentTeams}
+                      onOpenSchedule={openSchedule}
+                      microphones={microphones}
+                      iemEquipment={iemEquipment}
+                      assignmentsStatus={assignmentsStatus}
+                      canEditTeam={canEditTeamAccess}
+                    />
+                  ) : (
+                    <ServicePlanServingAssignments
+                      status={serviceOnlyServingState.status}
+                      assignments={serviceOnlyServingState.assignments}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="flex h-full w-10 flex-col items-center py-3">
@@ -1184,6 +1370,7 @@ const TeamsPlansPage = () => {
 
   return (
     <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <ChurchServiceTimeZoneNotice area="Service Plans" />
       <div className="shrink-0 space-y-4">
         <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-md:p-2">
           <div className="grid items-start gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
@@ -1371,13 +1558,14 @@ const TeamsPlansPage = () => {
                         !planStatusLoading &&
                         planKeysWithPlans.has(getServicePlanKey(occurrence));
                       const isPast =
-                        getOccurrenceDate(occurrence) <
+                        getOccurrenceDate(occurrence, serviceTimeZone) <
                         formatPlainDate(now);
                       return (
                         <PlansOccurrenceTile
                           key={occurrence.occurrenceId}
                           occurrence={occurrence}
                           shared={BY_DATE_TILE_SHARED}
+                          timeZone={serviceTimeZone}
                           serviceName={
                             selectedServiceIds.length !== 1
                               ? entry.serviceName
@@ -1414,12 +1602,16 @@ const TeamsPlansPage = () => {
             )}
           >
             {visibleGroups.map(({ key, name, service, serviceIds, occurrences }) => {
-              const shared = getSharedOccurrenceTiming(occurrences);
+              const shared = getSharedOccurrenceTiming(occurrences, serviceTimeZone);
               const plannedCount = occurrences.filter((occurrence) =>
                 planKeysWithPlans.has(getServicePlanKey(occurrence)),
               ).length;
-              const months = groupOccurrencesByMonth(occurrences);
-              const timingLabel = serviceTimingLabel(shared);
+              const months = groupOccurrencesByMonth(occurrences, serviceTimeZone);
+              const timingLabel = serviceTimingLabel(
+                shared,
+                occurrences[0]?.startsAt || "",
+                serviceTimeZone,
+              );
               const plannedRatio =
                 occurrences.length === 0 ? 0 : plannedCount / occurrences.length;
 
@@ -1549,13 +1741,14 @@ const TeamsPlansPage = () => {
                                 getServicePlanKey(occurrence),
                               );
                             const isPast =
-                              getOccurrenceDate(occurrence) <
+                              getOccurrenceDate(occurrence, serviceTimeZone) <
                               formatPlainDate(now);
                             return (
                               <PlansOccurrenceTile
                                 key={occurrence.occurrenceId}
                                 occurrence={occurrence}
                                 shared={shared}
+                                timeZone={serviceTimeZone}
                                 hasPlan={hasPlan}
                                 isPast={isPast}
                                 isNextUpcoming={
@@ -1671,6 +1864,193 @@ const TeamsPlansPage = () => {
         </div>
       </Modal>
     </div>
+  );
+};
+
+const storedOccurrencePlanKey = (occurrence: TeamScheduleOccurrence) => {
+  if (occurrence.logicalOccurrenceId) return occurrence.logicalOccurrenceId;
+  if (!occurrence.serviceDate) return "";
+  return occurrence.groupId
+    ? `group:${occurrence.groupId}@${occurrence.serviceDate}`
+    : `${occurrence.serviceId}@${occurrence.serviceDate}`;
+};
+
+const SavedServicePlansDuringTimeZoneLoad = ({
+  selectedPlanKey,
+  onSelectPlan,
+  onBack,
+}: {
+  selectedPlanKey: string | null;
+  onSelectPlan: (planKey: string) => void;
+  onBack: () => void;
+}) => {
+  const { churchId, canEditServices } = useContext(GlobalInfoContext) || {};
+  const { pageData, templates: templateResource } = useTeamsPage();
+  const [requestVersion, setRequestVersion] = useState(0);
+  const [plansState, setPlansState] = useState<{
+    churchId: string;
+    plans: ServicePlanSummary[];
+    loading: boolean;
+    error: string;
+  } | null>(null);
+  const currentPlansState = plansState?.churchId === churchId ? plansState : null;
+  const plans = currentPlansState?.plans || [];
+  const loading = !currentPlansState || currentPlansState.loading;
+  const error = currentPlansState?.error || "";
+
+  useEffect(() => {
+    if (!churchId) {
+      setPlansState(null);
+      return undefined;
+    }
+    let active = true;
+    setPlansState({ churchId, plans: [], loading: true, error: "" });
+    listServicePlans(churchId)
+      .then((result) => {
+        if (active) setPlansState({ churchId, plans: result.servicePlans, loading: false, error: "" });
+      })
+      .catch((loadError: unknown) => {
+        if (active) setPlansState({
+          churchId,
+          plans: [],
+          loading: false,
+          error: loadError instanceof Error ? loadError.message : "Could not load saved service plans.",
+        });
+      });
+    return () => { active = false; };
+  }, [churchId, requestVersion]);
+
+  const selectedPlan = selectedPlanKey
+    ? plans.find((plan) => plan.planKey === selectedPlanKey) || null
+    : null;
+  const selectedOccurrence = useMemo(() => {
+    if (!selectedPlan) return null;
+    const storedOccurrence = pageData.schedules
+      .flatMap((schedule) => schedule.occurrences || [])
+      .find((occurrence) => storedOccurrencePlanKey(occurrence) === selectedPlan.planKey);
+    const serviceId = selectedPlan.serviceId || storedOccurrence?.serviceId || selectedPlan.serviceIds?.[0] || "";
+    const service = pageData.services.find((candidate) => candidate.serviceId === serviceId);
+    if (!service) return null;
+    const dateFromKey = selectedPlan.planKey.match(/@(\d{4}-\d{2}-\d{2})$/)?.[1] || "";
+    const date = selectedPlan.date || storedOccurrence?.serviceDate || dateFromKey;
+    if (!storedOccurrence && !date) return null;
+    return {
+      service,
+      occurrence: {
+        ...(storedOccurrence || {}),
+        occurrenceId: storedOccurrence?.occurrenceId || selectedPlan.planKey,
+        logicalOccurrenceId: selectedPlan.planKey,
+        serviceId,
+        serviceIds: selectedPlan.serviceIds || storedOccurrence?.serviceIds || [serviceId],
+        ...(selectedPlan.groupId || storedOccurrence?.groupId
+          ? { groupId: selectedPlan.groupId || storedOccurrence?.groupId }
+          : {}),
+        name: selectedPlan.name || storedOccurrence?.name || service.name,
+        startsAt: selectedPlan.startsAt || storedOccurrence?.startsAt || "",
+        ...(date ? { serviceDate: date } : {}),
+      } satisfies TeamScheduleOccurrence,
+    };
+  }, [pageData.schedules, pageData.services, selectedPlan]);
+
+  if (selectedPlan && selectedOccurrence) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <ChurchServiceTimeZoneNotice area="Service Plans" />
+        <ServicePlanEditor
+          service={selectedOccurrence.service}
+          occurrence={selectedOccurrence.occurrence}
+          members={pageData.members}
+          positions={pageData.positions}
+          teams={pageData.teams}
+          canEdit={Boolean(canEditServices)}
+          templateResource={templateResource}
+          showSummary={false}
+          backLabel="Back to saved plans"
+          onBack={onBack}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <main className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+      <ChurchServiceTimeZoneNotice area="Service Plans" />
+      <section aria-label="Saved service plans" className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Saved plans</h2>
+          <p className="mt-1 text-sm text-gray-300">
+            You can review saved plans while date-based service navigation is unavailable.
+          </p>
+        </div>
+        {loading ? <p role="status" className="text-sm text-gray-300">Loading saved plans…</p> : null}
+        {error ? (
+          <div role="alert" className="space-y-2 text-sm text-amber-100">
+            <p>{error}</p>
+            <Button variant="secondary" onClick={() => setRequestVersion((value) => value + 1)}>
+              Try again
+            </Button>
+          </div>
+        ) : null}
+        {!loading && !error && plans.length === 0 ? (
+          <p className="text-sm text-gray-300">No saved plans yet.</p>
+        ) : null}
+        {plans.length > 0 ? (
+          <ul className="space-y-2" aria-label="Existing plans">
+            {plans.map((plan) => {
+              const occurrence = pageData.schedules
+                .flatMap((schedule) => schedule.occurrences || [])
+                .find((candidate) => storedOccurrencePlanKey(candidate) === plan.planKey);
+              const serviceId = plan.serviceId || occurrence?.serviceId || plan.serviceIds?.[0] || "";
+              const service = pageData.services.find((candidate) => candidate.serviceId === serviceId);
+              const date = plan.date || occurrence?.serviceDate || plan.planKey.match(/@(\d{4}-\d{2}-\d{2})$/)?.[1] || "";
+              const canOpen = Boolean(service && date);
+              return (
+                <li key={plan.planKey}>
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    className="w-full justify-between border border-gray-700 bg-gray-950/70 text-left"
+                    disabled={!canOpen}
+                    onClick={() => onSelectPlan(plan.planKey)}
+                  >
+                    <span className="min-w-0 truncate">{plan.name || service?.name || "Saved service plan"}</span>
+                    <span className="ml-3 shrink-0 text-xs text-gray-400">{date || "Date unavailable"}</span>
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {!loading && plans.some((plan) => !plan.date) ? (
+          <p className="text-sm text-gray-400">
+            A saved plan without a stored service date can’t be opened until the church time zone loads.
+          </p>
+        ) : null}
+      </section>
+    </main>
+  );
+};
+
+const TeamsPlansPage = () => {
+  const { churchId } = useContext(GlobalInfoContext) || {};
+  const { timeZone, isConfigured } = useChurchServiceTimeZone();
+  const serviceTimeZone = isConfigured ? timeZone : null;
+  const [selectedSavedPlan, setSelectedSavedPlan] = useState<{
+    churchId: string;
+    planKey: string;
+  } | null>(null);
+  const selectedPlanKey = churchId && selectedSavedPlan?.churchId === churchId
+    ? selectedSavedPlan.planKey
+    : null;
+
+  if (serviceTimeZone && !selectedPlanKey) return <TeamsPlansCalendarPage />;
+
+  return (
+    <SavedServicePlansDuringTimeZoneLoad
+      selectedPlanKey={selectedPlanKey}
+      onSelectPlan={(planKey) => setSelectedSavedPlan({ churchId: churchId || "", planKey })}
+      onBack={() => setSelectedSavedPlan(null)}
+    />
   );
 };
 

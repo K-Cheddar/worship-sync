@@ -127,7 +127,7 @@ const AccountPeoplePage = () => {
             const accessLabel =
               invite.role === "admin"
                 ? "Admin"
-                : formatMemberAccessLabel(invite.appAccess);
+                : formatMemberAccessLabel(invite.controllerAccess ?? invite.appAccess);
             const isExpired =
               invite.status === "expired" ||
               (invite.status === "pending" &&
@@ -303,7 +303,7 @@ const AccountPeoplePage = () => {
                       )}
                     >
                       {isAdminMember ? "Admin" : "Member"} ·{" "}
-                      {formatMemberAccessLabel(member.appAccess)}
+                      {formatMemberAccessLabel(member.controllerAccess ?? member.appAccess)}
                     </p>
                     {memberUser?.primaryEmail || memberUser?.email ? (
                       <p className="min-w-0 truncate text-xs text-gray-400">
@@ -319,7 +319,7 @@ const AccountPeoplePage = () => {
                       )}
                     >
                       {isAdminMember ? "Admin" : "Member"} |{" "}
-                      {formatMemberAccessLabel(member.appAccess)}
+                      {formatMemberAccessLabel(member.controllerAccess ?? member.appAccess)}
                     </p>
                   </div>
                   <div className="flex w-full justify-end">

@@ -258,6 +258,25 @@ describe("creditsSlice", () => {
       expect(list[1].id).toBe("c3");
     });
 
+    it("preserves existing order when a generated credit is appended after the last credit", () => {
+      const store = createStore();
+      const existing = [
+        createCreditsInfo({ id: "c1", heading: "Opening" }),
+        createCreditsInfo({ id: "c2", heading: "Camera" }),
+      ];
+      store.dispatch(creditsSlice.actions.initiateCreditsList(existing));
+      store.dispatch(creditsSlice.actions.selectCredit("c2"));
+      store.dispatch(creditsSlice.actions.addCredit(
+        createCreditsInfo({ id: "generated-camera", heading: "Stream Audio" }),
+      ));
+
+      expect(store.getState().credits.list.map((credit) => credit.id)).toEqual([
+        "c1",
+        "c2",
+        "generated-camera",
+      ]);
+    });
+
     it("deleteCredit removes a credit by id", () => {
       const store = createStore();
       store.dispatch(
@@ -310,6 +329,30 @@ describe("creditsSlice", () => {
       expect(store.getState().credits.list[0]).toEqual(expect.objectContaining({
         text: "Plan update",
         generatedBaselineText: "Plan update",
+        generatedTextOverridden: false,
+      }));
+    });
+
+    it("merges a heading-only edit into the latest generated credit without restoring old text", () => {
+      const store = createStore();
+      store.dispatch(creditsSlice.actions.initiateCreditsList([{
+        ...createCreditsInfo({ id: "c1", heading: "Welcome", text: "Old name" }),
+        generatedBaselineText: "Old name",
+        generatedSource: "Participant overlays",
+        generatedTextOverridden: false,
+      }]));
+      store.dispatch(creditsSlice.actions.updateCreditFromGeneration({
+        ...createCreditsInfo({ id: "c1", heading: "Welcome", text: "New name" }),
+        generatedSource: "Participant overlays",
+      }));
+
+      store.dispatch(creditsSlice.actions.updateCredit({ id: "c1", heading: "Updated heading" }));
+
+      expect(store.getState().credits.list[0]).toEqual(expect.objectContaining({
+        heading: "Updated heading",
+        text: "New name",
+        generatedBaselineText: "New name",
+        generatedSource: "Participant overlays",
         generatedTextOverridden: false,
       }));
     });

@@ -124,6 +124,31 @@ test("renders the read-only schedule from the public snapshot", async () => {
   expect(mockGet).toHaveBeenCalledWith("tok_123");
 });
 
+test("keeps a late Saturday public service on the church date and clock", async () => {
+  mockGet.mockResolvedValue({
+    ...snapshot,
+    serviceTimeZone: "America/New_York",
+    schedule: {
+      ...snapshot.schedule,
+      occurrences: [{
+        ...snapshot.schedule.occurrences[0],
+        occurrenceId: "svc@2026-06-14T03:30:00.000Z",
+        startsAt: "2026-06-14T03:30:00.000Z",
+        serviceDate: "2026-06-13",
+      }],
+      assignments: {
+        "svc@2026-06-14T03:30:00.000Z": { "pos_1::0": { primaryMemberId: "m1" } },
+      },
+    },
+  } as never);
+  renderPage();
+
+  await screen.findByText("June Schedule");
+  expect(document.body).toHaveTextContent("Sat");
+  expect(document.body).toHaveTextContent("11:30 PM EDT");
+  expect(document.body).not.toHaveTextContent("3:30 AM");
+});
+
 test("renders compact equipment in all layouts, including an unstaffed slot", async () => {
   const user = userEvent.setup();
   const equipmentSnapshot = {

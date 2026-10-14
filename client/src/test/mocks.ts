@@ -113,6 +113,8 @@ export function createMockGlobalContext(
     access: "full" as const,
     permissions: { teams: "edit" as const },
     canViewTeams: true,
+    hasBroadTeamsReadAccess: true,
+    canUseTeamsLiveSync: true,
     canEditTeams: true,
     canEditServices: true,
     canViewServices: true,
@@ -160,6 +162,12 @@ export function createMockGlobalContext(
     setNotificationPreference: jest.fn(() => Promise.resolve(true)),
     endWorkstationOperatorSession: jest.fn(),
     ...overrides,
+    controllerAccess:
+      (overrides.controllerAccess as "none" | "view" | "music" | "full" | undefined) ??
+      (overrides.access === "member"
+        ? "none"
+        : (overrides.access as "none" | "view" | "music" | "full" | undefined)) ??
+      "full",
   };
 }
 
@@ -194,6 +202,8 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     access: "full" as const,
     permissions: { teams: "edit" as const },
     canViewTeams: true,
+    hasBroadTeamsReadAccess: true,
+    canUseTeamsLiveSync: true,
     canEditTeams: true,
     canEditServices: true,
     canViewServices: true,
@@ -243,6 +253,12 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     setUser: jest.fn(),
     setDatabase: jest.fn(),
     ...overrides,
+    controllerAccess:
+      (overrides.controllerAccess as "none" | "view" | "music" | "full" | undefined) ??
+      (overrides.access === "member"
+        ? "none"
+        : (overrides.access as "none" | "view" | "music" | "full" | undefined)) ??
+      "full",
   };
 }
 

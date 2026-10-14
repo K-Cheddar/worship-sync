@@ -1,6 +1,6 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Provider } from "react-redux";
+import { Provider, useSelector } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import allDocsReducer from "../../store/allDocsSlice";
@@ -40,6 +40,14 @@ jest.mock("../../containers/ItemEditor/LyricsEditor", () => ({
 
 const mockDeleteSongAudio = jest.mocked(deleteSongAudioWithRetry);
 const mockUploadSongAudio = jest.mocked(uploadSongAudio);
+
+const StoreBackedDrawer = ({ song }: { song: DBItem }) => {
+  const currentSong = useSelector(
+    (state: { allDocs: { allSongDocs: DBItem[] } }) =>
+      state.allDocs.allSongDocs.find((item) => item._id === song._id) ?? song,
+  );
+  return <ViewSongSectionsDrawer song={currentSong} isOpen onClose={jest.fn()} />;
+};
 
 const song = {
   _id: "song-1",
@@ -109,7 +117,7 @@ const renderDrawer = ({
         <GlobalInfoContext.Provider
           value={createMockGlobalContext({ access }) as never}
         >
-          <ViewSongSectionsDrawer song={drawerSong} isOpen onClose={jest.fn()} />
+          <StoreBackedDrawer song={drawerSong} />
         </GlobalInfoContext.Provider>
       </ControllerInfoContext.Provider>
     </Provider>,
@@ -211,6 +219,15 @@ describe("ViewSongSectionsDrawer", () => {
         name: "Living Hope (Acoustic)",
       }),
     );
+    expect(
+      await screen.findByRole("heading", {
+        name: "Song details — Living Hope (Acoustic)",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Phil Wickham and team")).toBeInTheDocument();
+    expect(screen.getByText("G")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit details" })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Song name/i)).not.toBeInTheDocument();
   });
 
   it("keeps the details drawer read-only for view access", () => {

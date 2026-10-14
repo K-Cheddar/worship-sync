@@ -15,8 +15,9 @@ import {
 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Select from "../components/Select/Select";
-import { useChat } from "../chat/ChatContext";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { useChurchServiceTimeZone } from "../context/churchServiceTimeZone";
+import { useChat } from "../chat/ChatContext";
 import { useSelector } from "../hooks";
 import {
   getServicePlanViewer,
@@ -43,6 +44,8 @@ import {
   subscribeServerTimeOffset,
 } from "../utils/serverTime";
 import { getServicePlanKey } from "../utils/servicePlanKeys";
+import { calendarDateInTimeZone, serviceDateTimeInTimeZone } from "../utils/teamScheduleOccurrences";
+import { formatPlainDate, parsePlainDate } from "../utils/plainDate";
 import ServicePublicView from "./ServicePublicView";
 import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
 import type { Option } from "../types";
@@ -74,14 +77,16 @@ const buildCurrentServiceViewerBranding = (
   };
 };
 
-const formatOccurrenceOptionDate = (startsAt: string): string => {
+const formatOccurrenceOptionDate = (startsAt: string, timeZone: string): string => {
   const timestamp = Date.parse(startsAt);
   if (!Number.isFinite(timestamp)) return "Time unavailable";
   return new Intl.DateTimeFormat(undefined, {
+    timeZone,
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   }).format(timestamp);
 };
 
@@ -105,12 +110,9 @@ export const getCurrentServiceViewerStatusLabel = (
 export const buildCurrentServiceViewerOptions = (
   occurrences: TeamScheduleOccurrence[],
   nowMs: number,
+  timeZone = "UTC",
 ): Option[] => {
-  const today = new Date(nowMs);
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(
-    2,
-    "0",
-  )}-${String(today.getDate()).padStart(2, "0")}`;
+  const todayKey = calendarDateInTimeZone(new Date(nowMs), timeZone);
   const groups = new Map<string, Option[]>();
 
   const nextFutureOccurrence = occurrences.find(
@@ -127,10 +129,7 @@ export const buildCurrentServiceViewerOptions = (
 
   boundedOccurrences.forEach((occurrence) => {
     const startsAt = Date.parse(occurrence.startsAt);
-    const startsDate = new Date(startsAt);
-    const startsKey = `${startsDate.getFullYear()}-${String(
-      startsDate.getMonth() + 1,
-    ).padStart(2, "0")}-${String(startsDate.getDate()).padStart(2, "0")}`;
+    const startsKey = calendarDateInTimeZone(new Date(startsAt), timeZone);
     let group = "Upcoming";
     if (startsAt <= nowMs) {
       group = "Recent";
@@ -141,6 +140,7 @@ export const buildCurrentServiceViewerOptions = (
     options.push({
       label: `${occurrence.name} · ${formatOccurrenceOptionDate(
         occurrence.startsAt,
+        timeZone,
       )}`,
       value: occurrence.occurrenceId,
       group,
@@ -154,6 +154,8 @@ export const buildCurrentServiceViewerOptions = (
 };
 
 export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
+  const churchTimeZone = useChurchServiceTimeZone();
+  const timeZone = churchTimeZone.timeZone || "UTC";
   const serverTimeOffset = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -165,32 +167,38 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
   >(null);
   const nowMs = serverDate().getTime();
   const occurrences = useMemo(
-    () =>
-      listCurrentServiceOccurrences(services, nowMs, {
+    () => churchTimeZone.status === "ready"
+      ? listCurrentServiceOccurrences(services, nowMs, {
         lookaheadDays: VIEWER_OCCURRENCE_LOOKAHEAD_DAYS,
-      }),
-    [nowMs, services],
+        timeZone,
+      })
+      : [],
+    [churchTimeZone.status, nowMs, services, timeZone],
   );
   const automaticResolution = useMemo(
-    () => resolveCurrentServiceOccurrence(occurrences, nowMs),
-    [occurrences, nowMs],
+    () => resolveCurrentServiceOccurrence(occurrences, nowMs, timeZone),
+    [occurrences, nowMs, timeZone],
   );
 
   useEffect(() => {
-    const boundary = new Date(nowMs);
-    boundary.setHours(24, 0, 0, 0);
+    const nextDate = parsePlainDate(calendarDateInTimeZone(new Date(nowMs), timeZone));
+    nextDate?.setDate(nextDate.getDate() + 1);
+    const boundary = nextDate
+      ? serviceDateTimeInTimeZone(formatPlainDate(nextDate), "00:00", timeZone)?.getTime() ?? Number.POSITIVE_INFINITY
+      : Number.POSITIVE_INFINITY;
     const recheckAt = getCurrentServiceResolutionRecheckAtMs(
       occurrences,
       nowMs,
+      timeZone,
     );
-    const nextAt = Math.min(recheckAt ?? Number.POSITIVE_INFINITY, boundary.getTime());
+    const nextAt = Math.min(recheckAt ?? Number.POSITIVE_INFINITY, boundary);
     if (!Number.isFinite(nextAt)) return;
     const timeoutId = window.setTimeout(
       () => setClockTick((tick) => tick + 1),
       Math.max(1_000, nextAt - serverDate().getTime()),
     );
     return () => window.clearTimeout(timeoutId);
-  }, [nowMs, occurrences, serverTimeOffset, clockTick]);
+  }, [nowMs, occurrences, serverTimeOffset, clockTick, timeZone]);
 
   useEffect(() => {
     if (
@@ -217,6 +225,7 @@ export const useCurrentServiceViewerSelection = (services: ServiceTime[]) => {
 
   return {
     automaticResolution,
+    timeZone,
     occurrences,
     occurrence: occurrence ?? null,
     selectedOccurrenceId,
@@ -236,31 +245,51 @@ type ViewerData = {
 
 type ViewerPlanState =
   | { kind: "idle" }
-  | { kind: "loading"; planKey: string }
+  | { kind: "loading"; scopeKey: string; planKey: string }
   | {
       kind: "loaded";
+      scopeKey: string;
       planKey: string;
       plan: ServicePlan | null;
       publicSnapshot: PublicServiceFlowSnapshot | null;
     }
   | {
       kind: "error";
+      scopeKey: string;
       planKey: string;
       plan: ServicePlan | null;
       publicSnapshot: PublicServiceFlowSnapshot | null;
       message: string;
     };
 
+type ViewerPlanCacheEntry = {
+  plan: ServicePlan | null;
+  publicSnapshot: PublicServiceFlowSnapshot | null;
+};
+
 const useCurrentServiceViewerData = (
   churchId: string,
   canViewServices: boolean,
   canViewTeams: boolean,
+  canUseTeamsLiveSync: boolean,
+  requiresDetailedSnapshot: boolean,
   occurrence: TeamScheduleOccurrence | null,
+  timeZone: string,
 ): ViewerData => {
+  const scopeKey = JSON.stringify([
+    churchId,
+    canViewServices,
+    canViewTeams,
+    requiresDetailedSnapshot,
+  ]);
   const [planState, setPlanState] = useState<ViewerPlanState>({ kind: "idle" });
   const [refreshVersion, setRefreshVersion] = useState(0);
-  const planCacheRef = useRef(new Map<string, ServicePlan | null>());
+  const planStateRef = useRef(planState);
+  planStateRef.current = planState;
+  const planCacheRef = useRef(new Map<string, ViewerPlanCacheEntry>());
   const activePlanKeyRef = useRef<string | null>(null);
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
   const detailRequestIdRef = useRef(0);
   const refreshInFlightRef = useRef<{
     churchId: string;
@@ -269,20 +298,20 @@ const useCurrentServiceViewerData = (
   } | null>(null);
   const lastRefreshAtRef = useRef(0);
   const hasConnectedRef = useRef(false);
-  const lastChurchIdRef = useRef(churchId);
+  const lastScopeKeyRef = useRef(scopeKey);
 
   const activePlanKey = occurrence ? getServicePlanKey(occurrence) : null;
   activePlanKeyRef.current = activePlanKey;
   useEffect(() => {
-    if (lastChurchIdRef.current === churchId) return;
-    lastChurchIdRef.current = churchId;
+    if (lastScopeKeyRef.current === scopeKey) return;
+    lastScopeKeyRef.current = scopeKey;
     detailRequestIdRef.current += 1;
     planCacheRef.current.clear();
     setPlanState({ kind: "idle" });
     hasConnectedRef.current = false;
     lastRefreshAtRef.current = 0;
     refreshInFlightRef.current = null;
-  }, [churchId]);
+  }, [scopeKey]);
 
   const refresh = useCallback(async (options?: {
     force?: boolean;
@@ -302,36 +331,81 @@ const useCurrentServiceViewerData = (
     lastRefreshAtRef.current = Date.now();
     setRefreshVersion((version) => version + 1);
     if (!options?.preserveLoadedPlan) {
-      const cachedPlan = planCacheRef.current.get(activePlanKey);
-      if (cachedPlan !== undefined && !canViewTeams) {
-        setPlanState({
-          kind: "loaded",
-          planKey: activePlanKey,
-          plan: cachedPlan,
-          publicSnapshot: null,
-        });
-      } else {
-        setPlanState({ kind: "loading", planKey: activePlanKey });
+      const currentState = planStateRef.current;
+      const currentStateMatchesPlan =
+        currentState.kind !== "idle" &&
+        currentState.scopeKey === scopeKey &&
+        currentState.planKey === activePlanKey &&
+        (currentState.kind === "loaded" || currentState.kind === "error");
+      if (!currentStateMatchesPlan) {
+        const cachedPlan = planCacheRef.current.get(activePlanKey);
+        if (cachedPlan) {
+          setPlanState({
+            kind: "loaded",
+            scopeKey,
+            planKey: activePlanKey,
+            plan: cachedPlan.plan,
+            publicSnapshot: cachedPlan.publicSnapshot,
+          });
+        } else {
+          setPlanState({ kind: "loading", scopeKey, planKey: activePlanKey });
+        }
       }
     }
     const request = getServicePlanViewer(churchId, activePlanKey)
       .then((response) => {
-        if (requestId !== detailRequestIdRef.current) return;
-        planCacheRef.current.set(activePlanKey, response.plan);
+        if (
+          requestId !== detailRequestIdRef.current ||
+          scopeKeyRef.current !== scopeKey ||
+          activePlanKeyRef.current !== activePlanKey
+        ) return;
+        const currentState = planStateRef.current;
+        const previousSnapshot =
+          response.plan &&
+          currentState.kind !== "idle" &&
+          currentState.scopeKey === scopeKey &&
+          currentState.planKey === activePlanKey &&
+          (currentState.kind === "loaded" || currentState.kind === "error")
+            ? currentState.publicSnapshot
+            : null;
+        if (requiresDetailedSnapshot && response.plan && !response.snapshot) {
+          setPlanState({
+            kind: "error",
+            scopeKey,
+            planKey: activePlanKey,
+            plan: response.plan,
+            publicSnapshot: previousSnapshot,
+            message: "Detailed service information is unavailable.",
+          });
+          return;
+        }
+        const publicSnapshot = response.snapshot ?? previousSnapshot;
+        planCacheRef.current.set(activePlanKey, {
+          plan: response.plan,
+          publicSnapshot,
+        });
         setPlanState({
           kind: "loaded",
+          scopeKey,
           planKey: activePlanKey,
           plan: response.plan,
-          publicSnapshot: response.snapshot,
+          publicSnapshot,
         });
       })
       .catch((error: unknown) => {
-        if (requestId !== detailRequestIdRef.current) return;
+        if (
+          requestId !== detailRequestIdRef.current ||
+          scopeKeyRef.current !== scopeKey ||
+          activePlanKeyRef.current !== activePlanKey
+        ) return;
         setPlanState((current) => {
           const hasCurrentPlan =
-            current.kind !== "idle" && current.planKey === activePlanKey;
+            current.kind !== "idle" &&
+            current.scopeKey === scopeKey &&
+            current.planKey === activePlanKey;
           return {
             kind: "error",
+            scopeKey,
             planKey: activePlanKey,
             plan:
               hasCurrentPlan &&
@@ -339,7 +413,8 @@ const useCurrentServiceViewerData = (
                 ? current.plan
                 : null,
             publicSnapshot:
-              hasCurrentPlan && current.kind === "loaded"
+              hasCurrentPlan &&
+              (current.kind === "loaded" || current.kind === "error")
                 ? current.publicSnapshot
                 : null,
             message: getErrorMessage(error, "Could not load this service plan."),
@@ -357,7 +432,7 @@ const useCurrentServiceViewerData = (
       promise: request,
     };
     return request;
-  }, [activePlanKey, canViewServices, canViewTeams, churchId]);
+  }, [activePlanKey, canViewServices, churchId, requiresDetailedSnapshot, scopeKey]);
 
   useEffect(() => {
     void refresh();
@@ -399,24 +474,8 @@ const useCurrentServiceViewerData = (
         return;
       }
       if (isServicePlanUpdatedEvent(event)) {
-        const nextPlan = event.servicePlan;
-        planCacheRef.current.set(nextPlan.planKey, nextPlan);
-        if (nextPlan.planKey === activePlanKeyRef.current) {
+        if (event.planKey === activePlanKeyRef.current) {
           detailRequestIdRef.current += 1;
-          setPlanState((current) => {
-            const hasCurrentSnapshot =
-              current.kind !== "idle" &&
-              current.planKey === nextPlan.planKey &&
-              (current.kind === "loaded" || current.kind === "error");
-            return {
-              kind: "loaded",
-              planKey: nextPlan.planKey,
-              plan: nextPlan,
-              publicSnapshot: hasCurrentSnapshot
-                ? current.publicSnapshot
-                : null,
-            };
-          });
           void refresh({ force: true, preserveLoadedPlan: true });
         }
         return;
@@ -431,6 +490,7 @@ const useCurrentServiceViewerData = (
           refreshInFlightRef.current = null;
           setPlanState({
             kind: "loaded",
+            scopeKey,
             planKey: event.planKey,
             plan: null,
             publicSnapshot: null,
@@ -438,16 +498,22 @@ const useCurrentServiceViewerData = (
         }
       }
     },
-    [refresh],
+    [refresh, scopeKey],
   );
 
-  useTeamsLiveSync(canViewTeams ? churchId : null, handleStreamEvent);
+  useTeamsLiveSync(
+    canViewTeams ? churchId : null,
+    handleStreamEvent,
+    canUseTeamsLiveSync,
+  );
 
   const currentPlanState: ViewerPlanState = !activePlanKey
     ? { kind: "idle" }
-    : planState.kind !== "idle" && planState.planKey === activePlanKey
+    : planState.kind !== "idle" &&
+        planState.scopeKey === scopeKey &&
+        planState.planKey === activePlanKey
       ? planState
-      : { kind: "loading", planKey: activePlanKey };
+      : { kind: "loading", scopeKey, planKey: activePlanKey };
 
   return {
     plan:
@@ -515,7 +581,7 @@ const CurrentServiceViewerToolbar = ({
   <div
     role="toolbar"
     aria-label="Current service toolbar"
-    className="relative left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
+    className="sticky top-0 z-20 left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
   >
     <div className="order-1 shrink-0">
       <Button
@@ -566,7 +632,7 @@ const CurrentServiceViewerFrame = ({
   topBar: ReactNode;
   children: ReactNode;
 }) => (
-  <main className="min-h-dvh overflow-x-hidden overflow-y-auto bg-neutral-950 text-neutral-100">
+  <main className="h-dvh overflow-x-hidden overflow-y-auto bg-neutral-950 text-neutral-100">
     <div className="mx-auto max-w-3xl px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6">
       <div className="mb-4">{topBar}</div>
       {children}
@@ -602,6 +668,8 @@ const CurrentServiceViewer = () => {
   const {
     canViewServices = false,
     canViewTeams = false,
+    canUseTeamsLiveSync = false,
+    sessionKind,
     churchId = "",
     churchName = "",
     churchBranding,
@@ -609,16 +677,24 @@ const CurrentServiceViewer = () => {
   const serviceTimes = useSelector(
     (state) => state.undoable.present.serviceTimes.list,
   );
+  const scrollbarWidth = useSelector(
+    (state) => state.undoable.present.preferences.scrollbarWidth,
+  );
   const selection = useCurrentServiceViewerSelection(serviceTimes);
+  const requiresDetailedSnapshot =
+    canViewTeams || sessionKind === "workstation";
   const data = useCurrentServiceViewerData(
     churchId,
     canViewServices,
     canViewTeams,
+    canUseTeamsLiveSync,
+    requiresDetailedSnapshot,
     selection.occurrence,
+    selection.timeZone,
   );
   const options = useMemo(
-    () => buildCurrentServiceViewerOptions(selection.occurrences, selection.nowMs),
-    [selection.nowMs, selection.occurrences],
+    () => buildCurrentServiceViewerOptions(selection.occurrences, selection.nowMs, selection.timeZone),
+    [selection.nowMs, selection.occurrences, selection.timeZone],
   );
   const isOffline =
     typeof navigator !== "undefined" && navigator.onLine === false;
@@ -664,9 +740,31 @@ const CurrentServiceViewer = () => {
     );
   }
 
+  if (
+    hasPlanContent &&
+    requiresDetailedSnapshot &&
+    !data.publicSnapshot
+  ) {
+    return (
+      <CurrentServiceViewerFrame topBar={topBar}>
+        <section role="alert" className="rounded-xl border border-red-400/40 bg-neutral-900/95 p-5 text-neutral-200 shadow-lg">
+          <p>{data.planError || "Detailed service information is unavailable."}</p>
+          <Button
+            variant="secondary"
+            onClick={() => void data.refresh()}
+            className="mt-4 cursor-pointer"
+          >
+            Try again
+          </Button>
+        </section>
+      </CurrentServiceViewerFrame>
+    );
+  }
+
   if (hasPlanContent) {
     return (
       <ServicePublicView
+        scrollbarWidth={scrollbarWidth}
         snapshot={
           data.publicSnapshot ??
           buildServicePlanFlowSnapshot({

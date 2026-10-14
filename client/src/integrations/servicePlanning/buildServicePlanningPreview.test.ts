@@ -1,6 +1,9 @@
-import { buildServicePlanningPreview } from "./buildServicePlanningPreview";
+import {
+  buildServicePlanningPreview,
+  overlayPlanHasExecutableChange,
+} from "./buildServicePlanningPreview";
 import type { EventData } from "../../containers/Overlays/eventParser";
-import type { DBItem, ServiceItem } from "../../types";
+import type { DBItem, OverlayInfo, ServiceItem } from "../../types";
 import type { ServicePlanningConfig } from "../../types/integrations";
 import { mergeSongLibraryItems } from "../../utils/songLibrary";
 import { getOutlineCandidateLineItemKey, getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
@@ -245,53 +248,93 @@ describe("buildServicePlanningPreview scripture matching", () => {
   });
 });
 
-describe("buildServicePlanningPreview stable saved-plan overlay identity", () => {
-  it("keeps overlay source identities with assignees when their order changes", () => {
+describe("reusable saved-plan overlays", () => {
+  it("matches the same event across different weekly plan and element IDs", () => {
     const overlayConfig: ServicePlanningConfig = {
-      ...servicePlanning,
-      elementRules: [{
-        ...servicePlanning.elementRules[0],
-        overlaySyncEnabled: true,
-        outlineSync: { enabled: false, itemType: "none" },
-        multiOverlay: { mode: "split" },
-      }],
+      enabled: true,
+      people: [
+        {
+          id: "michael",
+          names: ["Michael"],
+          displayName: "Michael",
+          title: "Elder",
+        },
+      ],
+      sectionRules: [],
+      elementRules: [
+        {
+          id: "sabbath-school",
+          matchElementType: "Sabbath School",
+          matchMode: "exact",
+          displayName: "Sabbath School Host",
+          nameSources: ["ledBy"],
+          multiOverlay: { mode: "single" },
+        },
+      ],
     };
-    const build = (assignees: Array<{ id: string; name: string }>) =>
+    const previousWeekOverlay: OverlayInfo = {
+      id: "weekly-host",
+      type: "participant",
+      name: "James",
+      title: "Elder",
+      event: " Sabbath   School Host ",
+      formatting: { participantOverlayPosition: "right" },
+      servicePlanSource: {
+        planKey: "service@2026-09-25",
+        elementId: "element-previous",
+        candidateId: "element-previous:0",
+      },
+    };
+    const build = (planKey: string, elementId: string, overlays: OverlayInfo[]) =>
       buildServicePlanningPreview({
         importData: {
           planLabel: "Service",
           sections: [{ sectionName: "Worship", rows: [{
-            ...baseRow,
-            sourcePlanKey: "plan-1@2026-09-25",
-            sourcePlanElementId: "element-1",
-            assigneeNames: assignees.map(({ name }) => name),
-            assigneeRefs: assignees,
+            elementType: "Sabbath School",
+            title: "Sabbath School",
+            ledBy: "Michael",
+            sourcePlanElementId: elementId,
+            sourceOccurrenceId: elementId,
           }] }],
+          sourcePlanKey: planKey,
           teamAssignments: [],
         },
         servicePlanning: overlayConfig,
-        overlays: [],
+        overlays,
         songLibrary: [],
         activeOutlineList: [],
-      }).overlayPlan;
+      });
 
-    const first = build([
-      { id: "assignee-a", name: "Avery" },
-      { id: "assignee-b", name: "Morgan" },
-    ]);
-    const reordered = build([
-      { id: "assignee-b", name: "Morgan" },
-      { id: "assignee-a", name: "Avery" },
-    ]);
+    const nextWeek = build(
+      "service@2026-10-02",
+      "element-next",
+      [previousWeekOverlay],
+    );
 
-    expect(first.map((item) => item.sourceCandidateId)).toEqual([
-      "element-1:assignee:assignee-a",
-      "element-1:assignee:assignee-b",
-    ]);
-    expect(reordered.map((item) => item.sourceCandidateId)).toEqual([
-      "element-1:assignee:assignee-b",
-      "element-1:assignee:assignee-a",
-    ]);
+    expect(nextWeek.overlayPlan).toHaveLength(1);
+    expect(nextWeek.overlayPlan[0]).toEqual(
+      expect.objectContaining({
+        action: "update",
+        targetOverlayId: "weekly-host",
+        patch: {
+          name: "Michael",
+          title: "Elder",
+          event: "Sabbath School Host",
+        },
+      }),
+    );
+
+    const afterSync = {
+      ...previousWeekOverlay,
+      name: "Michael",
+      title: "Elder",
+      event: "Sabbath School Host",
+    };
+    const repeated = build("service@2026-10-02", "element-next", [afterSync]);
+    expect(repeated.overlayPlan[0]).toEqual(
+      expect.objectContaining({ action: "update", targetOverlayId: "weekly-host" }),
+    );
+    expect(overlayPlanHasExecutableChange(repeated.overlayPlan, [afterSync])).toBe(false);
   });
 });
 

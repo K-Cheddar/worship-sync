@@ -97,16 +97,18 @@ type OccurrenceTileParts = {
   label: string;
 };
 
-const formatWhen = (startsAt: string): string => {
+const formatWhen = (startsAt: string, timeZone: string): string => {
   if (!startsAt) return "Date not set";
   const parsed = new Date(startsAt);
   if (Number.isNaN(parsed.getTime())) return "Date not set";
   return parsed.toLocaleString(undefined, {
+    timeZone,
     weekday: "long",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 };
 
@@ -120,6 +122,7 @@ const hasDatedStartsAt = (occurrence: MyScheduleOccurrence): boolean =>
 
 const getOccurrenceTileParts = (
   occurrence: MyScheduleOccurrence,
+  timeZone: string,
 ): OccurrenceTileParts => {
   const date = new Date(occurrence.startsAt);
   if (Number.isNaN(date.getTime())) {
@@ -131,10 +134,11 @@ const getOccurrenceTileParts = (
       label: "Date not set",
     };
   }
-  const weekday = date.toLocaleString(undefined, { weekday: "short" });
-  const month = date.toLocaleString(undefined, { month: "short" });
-  const day = date.toLocaleString(undefined, { day: "numeric" });
+  const weekday = date.toLocaleString(undefined, { timeZone, weekday: "short" });
+  const month = date.toLocaleString(undefined, { timeZone, month: "short" });
+  const day = date.toLocaleString(undefined, { timeZone, day: "numeric" });
   const time = date.toLocaleString(undefined, {
+    timeZone,
     hour: "numeric",
     minute: "2-digit",
   });
@@ -332,6 +336,7 @@ const ShareViewActions = ({
 
 type OccurrenceTileProps = {
   occurrence: MyScheduleOccurrence;
+  timeZone: string;
   isNextUpcoming: boolean;
   isPast: boolean;
   /** True when this date falls inside one of the member's own blockouts. */
@@ -341,17 +346,18 @@ type OccurrenceTileProps = {
 
 const OccurrenceTile = ({
   occurrence,
+  timeZone,
   isNextUpcoming,
   isPast,
   isBlockedOut,
   onOpen,
 }: OccurrenceTileProps) => {
-  const tile = getOccurrenceTileParts(occurrence);
+  const tile = getOccurrenceTileParts(occurrence, timeZone);
   const serviceName = occurrenceServiceLabel(occurrence);
   const role = myRoleLabel(occurrence);
   const hasPlan = Boolean(occurrence.plan);
   const openLabel = `Open ${serviceName} on ${tile.label}`;
-  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence);
+  const isToday = !isNextUpcoming && isOccurrenceToday(occurrence, timeZone);
 
   let markerAriaSuffix = "";
   if (isNextUpcoming) {
@@ -447,6 +453,7 @@ const OccurrenceTile = ({
 
 type OccurrenceDetailProps = {
   occurrence: MyScheduleOccurrence;
+  timeZone: string;
   scheduleOccurrences: MyScheduleOccurrence[];
   jumpOptions: { value: string; label: string }[];
   onJump: (occurrenceId: string) => void;
@@ -468,6 +475,7 @@ type OccurrenceDetailProps = {
 
 const OccurrenceDetail = ({
   occurrence,
+  timeZone,
   scheduleOccurrences,
   jumpOptions,
   onJump,
@@ -491,8 +499,8 @@ const OccurrenceDetail = ({
   const generalUrl = plan?.publicUrls?.general || teamUrl;
   const canShare = Boolean(plan?.published && teamUrl);
   const scheduleModel = useMemo(
-    () => buildMyScheduleExportModelForOccurrences(scheduleOccurrences),
-    [scheduleOccurrences],
+    () => buildMyScheduleExportModelForOccurrences(scheduleOccurrences, timeZone),
+    [scheduleOccurrences, timeZone],
   );
 
   return (
@@ -585,7 +593,7 @@ const OccurrenceDetail = ({
                 {serviceName}
               </h2>
               <p className="mt-0.5 text-xs text-gray-400">
-                {formatWhen(occurrence.startsAt)}
+                {formatWhen(occurrence.startsAt, timeZone)}
               </p>
               {/* The role line is redundant once each slot renders its own row
                 with the same label plus its answer. */}
@@ -701,6 +709,7 @@ const MySchedule = () => {
   const isChurchAdmin = context?.role === "admin";
   const churchName = context?.churchName || "";
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
+  const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
   const [blockoutDates, setBlockoutDates] = useState<TeamBlockoutDateRange[]>(
     [],
@@ -738,6 +747,7 @@ const MySchedule = () => {
         .then((result) => {
           if (!mountedRef.current || request !== requestRef.current) return;
           setOccurrences(result.occurrences || []);
+          setServiceTimeZone(result.serviceTimeZone || "UTC");
           setHasMemberRecord(Boolean(result.member));
           setBlockoutDates(result.member?.blockoutDates || []);
           setMemberUpdatedAt(result.member?.updatedAt || "");
@@ -916,7 +926,7 @@ const MySchedule = () => {
       // the date as shown — because any of those is how someone would look for
       // a service they half-remember.
       const haystack = [
-        formatWhen(occurrence.startsAt),
+        formatWhen(occurrence.startsAt, serviceTimeZone),
         occurrenceServiceLabel(occurrence),
         ...occurrence.serving.flatMap((person) => [
           person.name,
@@ -932,7 +942,7 @@ const MySchedule = () => {
         .toLowerCase();
       return haystack.includes(trimmed);
     });
-  }, [datedOccurrences, query, serviceFilter, teamFilter]);
+  }, [datedOccurrences, query, serviceFilter, serviceTimeZone, teamFilter]);
 
   /**
    * Past services are kept but pushed behind a toggle. A schedule that opens on
@@ -974,9 +984,9 @@ const MySchedule = () => {
     () =>
       navigable.map((occurrence) => ({
         value: occurrence.occurrenceId,
-        label: `${occurrenceServiceLabel(occurrence)} · ${formatWhen(occurrence.startsAt)}`,
+        label: `${occurrenceServiceLabel(occurrence)} · ${formatWhen(occurrence.startsAt, serviceTimeZone)}`,
       })),
-    [navigable],
+    [navigable, serviceTimeZone],
   );
 
   const nextUpcomingId = upcoming[0]?.occurrenceId ?? null;
@@ -1028,6 +1038,7 @@ const MySchedule = () => {
         {status === "ready" && hasMemberRecord && selected ? (
           <OccurrenceDetail
             occurrence={selected}
+            timeZone={serviceTimeZone}
             scheduleOccurrences={navigable}
             jumpOptions={jumpOptions}
             onJump={setSelectedId}
@@ -1065,6 +1076,7 @@ const MySchedule = () => {
           <>
             <MyScheduleBlockouts
               churchId={churchId}
+              serviceTimeZone={serviceTimeZone}
               blockoutDates={blockoutDates}
               expectedUpdatedAt={memberUpdatedAt}
               occurrences={occurrences}
@@ -1127,6 +1139,7 @@ const MySchedule = () => {
                     <OccurrenceTile
                       key={occurrence.occurrenceId}
                       occurrence={occurrence}
+                      timeZone={serviceTimeZone}
                       isNextUpcoming={occurrence.occurrenceId === nextUpcomingId}
                       isPast={false}
                       isBlockedOut={blockoutLabelByOccurrence.has(
@@ -1157,6 +1170,7 @@ const MySchedule = () => {
                       <OccurrenceTile
                         key={occurrence.occurrenceId}
                         occurrence={occurrence}
+                        timeZone={serviceTimeZone}
                         isNextUpcoming={false}
                         isPast
                         isBlockedOut={blockoutLabelByOccurrence.has(

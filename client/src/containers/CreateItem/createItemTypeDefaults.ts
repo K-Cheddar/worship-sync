@@ -64,6 +64,7 @@ export const getDefaultCreateItemType = (
 
 /** Meta fields that do not count as operator-entered create content. */
 const CREATE_ITEM_META_KEYS = new Set<keyof CreateItemState>([
+  "draftId",
   "type",
   "hasUserSelectedType",
 ]);

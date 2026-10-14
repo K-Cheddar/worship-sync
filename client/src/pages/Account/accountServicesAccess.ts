@@ -4,8 +4,9 @@ export const serviceEditingAccessOptions: {
   value: ServicesPermission;
   label: string;
 }[] = [
-  { value: "none", label: "No service editing" },
-  { value: "edit", label: "Edit services and plans" },
+  { value: "none", label: "None" },
+  { value: "view", label: "View" },
+  { value: "edit", label: "Edit" },
 ];
 
 export const toServicesAccessOption = (
