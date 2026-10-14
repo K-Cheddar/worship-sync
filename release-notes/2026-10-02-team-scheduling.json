@@ -3,5 +3,5 @@
   "date": "2026-10-02",
   "type": "improved",
   "title": "Team scheduling",
-  "description": "Team schedules add new service occurrences automatically, keep existing assignments and equipment, and remain available during service refresh failures."
+  "description": "Team schedules add new service occurrences automatically, keep existing assignments and equipment, and save edits in the background so you can keep working."
 }

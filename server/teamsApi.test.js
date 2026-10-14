@@ -3912,6 +3912,58 @@ test("atomic assignment batches reject a row as a whole and require the current 
   );
 });
 
+test("schedule assignment mutations still require edit access to the owning team", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const admin = await createAdminContext("schedule_assignment_permission_owner");
+  const reader = await createHumanContext("schedule_assignment_permission_reader", {
+    churchId: admin.churchId,
+    role: "member",
+    permissions: { teams: "view", teamScopes: {} },
+  });
+  const { teamId, positionIds, memberIds } = await seedTeam(admin, {
+    teamName: "Worship",
+    positions: [{ name: "Vocal" }],
+    members: [{ firstName: "Morgan", lastName: "Lee", positions: ["Vocal"] }],
+  });
+  const occurrenceId = "sunday@2026-10-04T10:00:00.000Z";
+  const created = await callHandler(authHandlers.createTeamSchedule, {
+    context: admin,
+    body: {
+      name: "October",
+      teamId,
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: ["sunday"],
+      occurrences: [{
+        occurrenceId,
+        serviceId: "sunday",
+        name: "Sunday",
+        startsAt: occurrenceId.slice("sunday@".length),
+        positionRequirements: [{ positionId: positionIds.Vocal, count: 1 }],
+      }],
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const scheduleId = created.payload.schedule.scheduleId;
+
+  const rejected = await callHandler(authHandlers.updateTeamScheduleAssignment, {
+    context: reader,
+    params: { scheduleId },
+    body: {
+      serviceId: occurrenceId,
+      positionSlotKey: `${positionIds.Vocal}::0`,
+      memberId: memberIds.Morgan,
+      serviceDate: "2026-10-04",
+    },
+  });
+
+  assert.equal(rejected.statusCode, 403);
+  assert.equal(rejected.payload.success, false);
+  const bootstrap = await callHandler(authHandlers.getTeamsBootstrap, { context: admin });
+  const unchanged = bootstrap.payload.schedules.find((schedule) => schedule.scheduleId === scheduleId);
+  assert.equal(unchanged.assignments?.[occurrenceId]?.[`${positionIds.Vocal}::0`], undefined);
+});
+
 test("schedule assignments fall back to one slot when occurrence requirements are missing", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("assignment_requirement_fallback");

@@ -357,6 +357,68 @@ const getOccurrenceConflictDetails = (error: unknown): OccurrenceConflictDetails
   };
 };
 
+type ScheduleCellMapField = "assignments" | "microphoneAssignments" | "iemAssignments";
+
+export type PendingScheduleCellEdit = {
+  churchId: string;
+  scheduleId: string;
+  field: ScheduleCellMapField;
+  occurrenceId: string;
+  cellKey: string;
+  value: unknown;
+  sequence: number;
+};
+
+const scheduleCellEditKey = (
+  churchId: string,
+  scheduleId: string,
+  field: ScheduleCellMapField,
+  occurrenceId: string,
+  cellKey: string,
+) => JSON.stringify([churchId, scheduleId, field, occurrenceId, cellKey]);
+
+const schedulePositionSlotSaveKey = (
+  churchId: string,
+  scheduleId: string,
+  occurrenceId: string,
+  cellKey: string,
+) => JSON.stringify([churchId, scheduleId, occurrenceId, cellKey]);
+
+const setScheduleCellMapValue = (
+  schedule: TeamSchedule,
+  field: ScheduleCellMapField,
+  occurrenceId: string,
+  cellKey: string,
+  value: unknown,
+): TeamSchedule => {
+  const scheduleRecord = schedule as unknown as Record<string, unknown>;
+  const map = {
+    ...((scheduleRecord[field] || {}) as Record<string, Record<string, unknown>>),
+  };
+  const row = { ...(map[occurrenceId] || {}) };
+  const shouldStore = field === "assignments"
+    ? Boolean(value)
+    : Array.isArray(value) && value.length > 0;
+  if (shouldStore) row[cellKey] = value;
+  else delete row[cellKey];
+  if (Object.keys(row).length > 0) map[occurrenceId] = row;
+  else delete map[occurrenceId];
+  return { ...schedule, [field]: map };
+};
+
+export const applyPendingScheduleCellEdits = (
+  schedule: TeamSchedule,
+  pending: Iterable<PendingScheduleCellEdit>,
+) => [...pending].reduce(
+  (current, edit) => edit.churchId === schedule.churchId && edit.scheduleId === schedule.scheduleId
+    ? setScheduleCellMapValue(current, edit.field, edit.occurrenceId, edit.cellKey, edit.value)
+    : current,
+  schedule,
+);
+
+const virtualSchedulePreviewKey = (churchId: string, scheduleId: string) =>
+  JSON.stringify([churchId, scheduleId]);
+
 type PendingAvailabilityConfirmation = {
   memberId: string;
   kind: "blockout" | "recurringAvailability";
@@ -408,7 +470,7 @@ const ScheduleTab = ({
   onImported: () => void | Promise<void>;
 }) => {
   const context = useContext(GlobalInfoContext);
-  const { showToast } = useToast();
+  const { showToast, removeToast } = useToast();
   const churchId = context?.churchId || "";
   const isChurchAdmin = context?.role === "admin";
   const churchName = context?.churchName || "";
@@ -636,60 +698,241 @@ const ScheduleTab = ({
     const nextId = (explicitlySelectedPeriodSchedule || preferredPeriodSchedule)?.scheduleId || "";
     if (selectedScheduleId !== nextId) setSelectedScheduleId(nextId, Boolean(nextId));
   }, [explicitlySelectedPeriodSchedule, preferredPeriodSchedule, selectedScheduleId, setSelectedScheduleId, viewingSavedSchedule]);
-  const selectedSchedule = isHydratedSchedule(selectedScheduleRecord)
-    ? selectedScheduleRecord
+  const [virtualSchedulePreviews, setVirtualSchedulePreviews] = useState<Map<string, TeamSchedule>>(
+    () => new Map(),
+  );
+  const virtualSchedulePreviewsRef = useRef(virtualSchedulePreviews);
+  useLayoutEffect(() => { virtualSchedulePreviewsRef.current = virtualSchedulePreviews; }, [virtualSchedulePreviews]);
+  const pendingScheduleCellEditsRef = useRef(new Map<string, PendingScheduleCellEdit>());
+  const selectedSchedulePreview = selectedScheduleRecord
+    ? virtualSchedulePreviews.get(virtualSchedulePreviewKey(churchId, selectedScheduleRecord.scheduleId))
+    : undefined;
+  const selectedScheduleSource = selectedSchedulePreview || selectedScheduleRecord;
+  const selectedSchedule = isHydratedSchedule(selectedScheduleSource)
+    ? applyPendingScheduleCellEdits(
+      selectedScheduleSource as TeamSchedule,
+      pendingScheduleCellEditsRef.current.values(),
+    )
     : null;
   const latestScheduleRef = useRef(selectedSchedule);
-  useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
+  const schedulesByOwnerRef = useRef(new Map<string, TeamSchedule>());
+  useEffect(() => {
+    latestScheduleRef.current = selectedSchedule;
+    if (selectedSchedule) {
+      schedulesByOwnerRef.current.set(
+        virtualSchedulePreviewKey(selectedSchedule.churchId, selectedSchedule.scheduleId),
+        selectedSchedule,
+      );
+    }
+  }, [selectedSchedule]);
+  const scheduleTabMountedRef = useRef(true);
+  useEffect(() => {
+    scheduleTabMountedRef.current = true;
+    return () => { scheduleTabMountedRef.current = false; };
+  }, []);
+  const updateVirtualSchedulePreview = useCallback((schedule: TeamSchedule | null, scheduleId?: string) => {
+    const key = virtualSchedulePreviewKey(schedule?.churchId || churchId, schedule?.scheduleId || scheduleId || "");
+    const next = new Map(virtualSchedulePreviewsRef.current);
+    if (schedule) next.set(key, schedule);
+    else next.delete(key);
+    virtualSchedulePreviewsRef.current = next;
+    if (scheduleTabMountedRef.current) setVirtualSchedulePreviews(next);
+  }, [churchId]);
+  const publishScheduleSnapshot = useCallback((
+    incoming: TeamSchedule,
+    fields?: Array<keyof TeamSchedule>,
+    replaceId?: string,
+  ) => {
+    const ownerKey = virtualSchedulePreviewKey(incoming.churchId, incoming.scheduleId);
+    const active = latestScheduleRef.current;
+    const current = active?.scheduleId === incoming.scheduleId && active.churchId === incoming.churchId
+      ? active
+      : schedulesByOwnerRef.current.get(ownerKey) || null;
+    const sameOwner = current?.scheduleId === incoming.scheduleId && current.churchId === incoming.churchId;
+    const merged = sameOwner ? { ...current } : { ...incoming };
+    if (sameOwner) {
+      if (fields) {
+        fields.forEach((field) => {
+          (merged as unknown as Record<string, unknown>)[field] =
+            (incoming as unknown as Record<string, unknown>)[field];
+        });
+      } else {
+        Object.assign(merged, incoming);
+      }
+    }
+    const withPendingEdits = applyPendingScheduleCellEdits(
+      merged,
+      pendingScheduleCellEditsRef.current.values(),
+    );
+    if (incoming.scheduleId.startsWith("virtual:")) {
+      updateVirtualSchedulePreview(withPendingEdits);
+    } else {
+      schedulesByOwnerRef.current.set(ownerKey, withPendingEdits);
+      if (activeChurchIdRef.current === incoming.churchId) {
+        onScheduleSaved(withPendingEdits, replaceId);
+      }
+    }
+    if (
+      activeChurchIdRef.current === incoming.churchId &&
+      activeScheduleIdRef.current === incoming.scheduleId
+    ) latestScheduleRef.current = withPendingEdits;
+    return withPendingEdits;
+  }, [onScheduleSaved, updateVirtualSchedulePreview]);
+  const publishScheduleCellResponses = useCallback((
+    incoming: TeamSchedule,
+    field: ScheduleCellMapField,
+    cells: Array<{ occurrenceId: string; cellKey: string }>,
+  ) => {
+    const ownerKey = virtualSchedulePreviewKey(incoming.churchId, incoming.scheduleId);
+    const active = latestScheduleRef.current;
+    const current = active?.scheduleId === incoming.scheduleId && active.churchId === incoming.churchId
+      ? active
+      : schedulesByOwnerRef.current.get(ownerKey) || incoming;
+    const incomingMap = (incoming as unknown as Record<string, unknown>)[field] as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    const merged = cells.reduce(
+      (schedule, cell) => setScheduleCellMapValue(
+        schedule,
+        field,
+        cell.occurrenceId,
+        cell.cellKey,
+        incomingMap?.[cell.occurrenceId]?.[cell.cellKey],
+      ),
+      current,
+    );
+    return publishScheduleSnapshot(merged, [field]);
+  }, [publishScheduleSnapshot]);
   const activeChurchIdRef = useRef(churchId);
   useLayoutEffect(() => { activeChurchIdRef.current = churchId; }, [churchId]);
   const activeScheduleIdRef = useRef(selectedScheduleRecord?.scheduleId || "");
   useLayoutEffect(() => {
     activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
   }, [selectedScheduleRecord?.scheduleId]);
-  const [ensuringScheduleId, setEnsuringScheduleId] = useState("");
-  const [periodReconciliationPending, setPeriodReconciliationPending] = useState(false);
-  const [periodReconciliationError, setPeriodReconciliationError] = useState<{
-    key: string;
-    message: string;
-  } | null>(null);
   const completedPeriodReconciliationsRef = useRef(new Set<string>());
-  const pendingScheduleEnsureRef = useRef<{
-    requestKey: string;
-    promise: Promise<TeamSchedule | null>;
-  } | null>(null);
+  const pendingScheduleEnsuresRef = useRef(new Map<string, Promise<TeamSchedule | null>>());
   const periodOccurrenceSignature = generatedPeriodOccurrences.map((occurrence) =>
     JSON.stringify([
       occurrence.logicalOccurrenceId || occurrence.occurrenceId,
+      occurrence.occurrenceId,
       occurrence.groupId || "",
       [...(occurrence.serviceIds || [occurrence.serviceId])].sort(),
+      occurrence.serviceDate || "",
+      occurrence.startsAt,
+      [...(occurrence.positionRequirements || [])]
+        .map(({ positionId, count, minLevelId }) => [positionId, count, minLevelId || ""])
+        .sort(([left], [right]) => String(left).localeCompare(String(right))),
     ]),
   ).sort().join("|");
-  const periodReconciliationKey = [
+  const serviceDefinitionSignature = activeServices.map((service) => JSON.stringify([
+    service.serviceId,
+    service.reccurence,
+    service.time || "",
+    service.dateTimeISO || "",
+    service.dayOfWeek ?? "",
+    [...(service.daysOfWeek || [])].map(({ day, time }) => [day, time]).sort(),
+    service.startDateISO || "",
+    service.endDateISO || "",
+    service.ordinal ?? "",
+    service.weekday ?? "",
+    service.serviceGroupId || "",
+    [...(service.positionRequirements || [])]
+      .map(({ positionId, count, minLevelId }) => [positionId, count, minLevelId || ""])
+      .sort(([left], [right]) => String(left).localeCompare(String(right))),
+  ])).sort().join("|");
+  const scheduleOccurrenceSignature = (occurrences: TeamScheduleOccurrence[] = []) => occurrences
+    .map((occurrence) => JSON.stringify([
+      occurrence.logicalOccurrenceId || occurrence.occurrenceId,
+      occurrence.occurrenceId,
+      occurrence.groupId || "",
+      [...(occurrence.serviceIds || [occurrence.serviceId])].sort(),
+      occurrence.serviceDate || "",
+      occurrence.startsAt,
+      [...(occurrence.positionRequirements || [])]
+        .map(({ positionId, count, minLevelId }) => [positionId, count, minLevelId || ""])
+        .sort(([left], [right]) => String(left).localeCompare(String(right))),
+    ]))
+    .sort()
+    .join("|");
+  const makePeriodReconciliationKey = useCallback((
+    scheduleId: string,
+    occurrences: TeamScheduleOccurrence[] = selectedScheduleRecord?.occurrences || [],
+  ) => {
+    const ownershipSignature = schedules
+      .filter((schedule) =>
+        !schedule.archivedAt &&
+        schedule.churchId === churchId &&
+        schedule.teamId === workspaceTeamId &&
+        schedule.startDate && schedule.endDate &&
+        schedule.startDate <= periodRange.end && schedule.endDate >= periodRange.start &&
+        schedule.scheduleId !== scheduleId,
+      )
+      .map((schedule) => JSON.stringify([
+        schedule.scheduleId,
+        schedule.churchId,
+        schedule.teamId,
+        schedule.startDate,
+        schedule.endDate,
+        schedule.archivedAt || "",
+        (schedule.occurrences || []).map((occurrence) =>
+          [occurrence.logicalOccurrenceId || occurrence.occurrenceId, occurrence.occurrenceId],
+        ).sort(),
+        isHydratedSchedule(schedule),
+      ]))
+      .sort()
+      .join("|");
+    return JSON.stringify([
     churchId,
     workspaceTeamId,
     periodRange.start,
     periodRange.end,
-    selectedScheduleRecord?.scheduleId || "virtual",
+    scheduleId,
     periodOccurrenceSignature,
-  ].join(":");
-  const ensureActiveSchedule = useCallback(async (): Promise<TeamSchedule | null> => {
-    const active = latestScheduleRef.current;
+    serviceDefinitionSignature,
+    scheduleOccurrenceSignature(occurrences),
+    ownershipSignature,
+    serviceTimeZone,
+    ]);
+  }, [
+    churchId,
+    periodRange.end,
+    periodRange.start,
+    periodOccurrenceSignature,
+    schedules,
+    selectedScheduleRecord?.occurrences,
+    serviceDefinitionSignature,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
+  const periodReconciliationKey = makePeriodReconciliationKey(
+    selectedScheduleRecord?.scheduleId || "virtual",
+  );
+  const periodInputsCertain = useCallback((active: TeamSchedule) =>
+    isHydratedSchedule(active) && schedules.every((schedule) =>
+      schedule.archivedAt ||
+      schedule.churchId !== churchId ||
+      schedule.teamId !== workspaceTeamId ||
+      !schedule.startDate || !schedule.endDate ||
+      schedule.scheduleId === active.scheduleId ||
+      schedule.startDate > periodRange.end || schedule.endDate < periodRange.start ||
+      isHydratedSchedule(schedule),
+    ), [churchId, periodRange.end, periodRange.start, schedules, workspaceTeamId]);
+  const ensureActiveSchedule = useCallback(async (
+    requestedSchedule?: TeamSchedule | null,
+  ): Promise<TeamSchedule | null> => {
+    const active = requestedSchedule || latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
     if (!active.scheduleId.startsWith("virtual:") && viewingSavedSchedule) return active;
-    const requestKey = `${active.scheduleId}:${periodReconciliationKey}`;
+    const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || []);
+    if (
+      !active.scheduleId.startsWith("virtual:") &&
+      completedPeriodReconciliationsRef.current.has(requestKey) &&
+      periodInputsCertain(active)
+    ) return active;
     if (!churchId) throw new Error("Church information is unavailable.");
-    const pending = pendingScheduleEnsureRef.current;
-    if (pending?.requestKey === requestKey) return pending.promise;
-    const request: {
-      requestKey: string;
-      promise: Promise<TeamSchedule | null>;
-    } = {
-      requestKey,
-      promise: Promise.resolve().then(async () => {
-        setEnsuringScheduleId(active.scheduleId.startsWith("virtual:") ? active.scheduleId : "");
-        setPeriodReconciliationPending(true);
-        setPeriodReconciliationError(null);
+    const pending = pendingScheduleEnsuresRef.current.get(requestKey);
+    if (pending) return pending;
+    const request = Promise.resolve().then(async () => {
         try {
           const result = await trackTeamsSave(ensureTeamScheduleForPeriod(churchId, {
             name: formatSuggestedScheduleName(persistedPeriodRange.start, persistedPeriodRange.end),
@@ -706,50 +949,87 @@ const ScheduleTab = ({
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: serviceTimeZone,
           }));
-          if (activeChurchIdRef.current !== churchId) return null;
-          onScheduleSaved(result.schedule);
-          if (activeScheduleIdRef.current !== active.scheduleId) return null;
-          if (latestScheduleRef.current?.scheduleId === active.scheduleId) {
-            setSelectedScheduleId(result.schedule.scheduleId);
+          const wasPersisted = !active.scheduleId.startsWith("virtual:");
+          const addedOccurrences = wasPersisted
+            ? (result.schedule.occurrences || []).filter((occurrence) =>
+              !(active.occurrences || []).some((saved) => saved.occurrenceId === occurrence.occurrenceId),
+            ).length
+            : 0;
+          let schedule = result.schedule;
+          if (active.scheduleId.startsWith("virtual:")) {
+            const previewKey = virtualSchedulePreviewKey(churchId, active.scheduleId);
+            const preview = virtualSchedulePreviewsRef.current.get(previewKey) || active;
+            const remappedPending = new Map(pendingScheduleCellEditsRef.current);
+            for (const [key, edit] of remappedPending) {
+              if (edit.churchId !== churchId || edit.scheduleId !== active.scheduleId) continue;
+              remappedPending.delete(key);
+              const remappedEdit = { ...edit, scheduleId: schedule.scheduleId };
+              remappedPending.set(scheduleCellEditKey(
+                remappedEdit.churchId,
+                remappedEdit.scheduleId,
+                remappedEdit.field,
+                remappedEdit.occurrenceId,
+                remappedEdit.cellKey,
+              ), remappedEdit);
+            }
+            pendingScheduleCellEditsRef.current = remappedPending;
+            schedule = applyPendingScheduleCellEdits(schedule, remappedPending.values());
+            updateVirtualSchedulePreview(null, active.scheduleId);
+            if (preview.guests?.length && !schedule.guests?.length) {
+              schedule = { ...schedule, guests: preview.guests };
+            }
+          }
+          if (activeChurchIdRef.current === churchId) {
+            publishScheduleSnapshot(
+              schedule,
+              undefined,
+              active.scheduleId.startsWith("virtual:") ? active.scheduleId : undefined,
+            );
+          }
+          if (activeChurchIdRef.current === churchId && activeScheduleIdRef.current === active.scheduleId) {
+            latestScheduleRef.current = schedule;
+            setSelectedScheduleId(schedule.scheduleId);
             if (active.scheduleId.startsWith("virtual:")) setViewingSavedSchedule(false);
           }
-          completedPeriodReconciliationsRef.current.add(periodReconciliationKey);
-          completedPeriodReconciliationsRef.current.add([
-            churchId,
-            workspaceTeamId,
-            periodRange.start,
-            periodRange.end,
-            result.schedule.scheduleId,
-            periodOccurrenceSignature,
-          ].join(":"));
-          return result.schedule;
+          completedPeriodReconciliationsRef.current.add(
+            makePeriodReconciliationKey(
+              schedule.scheduleId,
+              schedule.occurrences || [],
+            ),
+          );
+          if (addedOccurrences > 0 && activeChurchIdRef.current === churchId) {
+            showToast(
+              `${addedOccurrences} ${addedOccurrences === 1 ? "service" : "services"} added to ${schedule.name}.`,
+              "success",
+            );
+          }
+          return schedule;
         } finally {
-          if (pendingScheduleEnsureRef.current === request) {
-            pendingScheduleEnsureRef.current = null;
-            setEnsuringScheduleId("");
-            setPeriodReconciliationPending(false);
+          if (pendingScheduleEnsuresRef.current.get(requestKey) === request) {
+            pendingScheduleEnsuresRef.current.delete(requestKey);
           }
         }
-      }),
-    };
-    pendingScheduleEnsureRef.current = request;
-    return request.promise;
+      });
+    pendingScheduleEnsuresRef.current.set(requestKey, request);
+    return request;
   }, [
     churchId,
     generatedPeriodOccurrences,
-    periodRange.end,
-    periodRange.start,
-    periodOccurrenceSignature,
+    makePeriodReconciliationKey,
     teamPeriod.occurrences,
-    onScheduleSaved,
+    publishScheduleSnapshot,
     persistedPeriodRange.end,
     persistedPeriodRange.start,
+    periodRange.end,
+    periodRange.start,
     periodServiceIds,
-    periodReconciliationKey,
+    periodInputsCertain,
     selectedScheduleId,
     setSelectedScheduleId,
     serviceTimeZone,
+    showToast,
     trackTeamsSave,
+    updateVirtualSchedulePreview,
     viewingSavedSchedule,
     workspaceTeamId,
   ]);
@@ -765,16 +1045,24 @@ const ScheduleTab = ({
       completedPeriodReconciliationsRef.current.has(periodReconciliationKey)
     ) return;
     let active = true;
-    void ensureActiveSchedule().catch((error) => {
-      if (active) {
-        setPeriodReconciliationError(
-          {
-            key: periodReconciliationKey,
-            message: error instanceof Error ? error.message : "Could not update this schedule period.",
-          },
-        );
-      }
-    });
+    const offerRetry = () => {
+      if (!active) return;
+      let toastId = "";
+      toastId = showToast({
+        message: "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
+        variant: "error",
+        persist: true,
+        children: (
+          <div className="mt-2 flex justify-center">
+            <Button variant="primary" className="text-sm" onClick={() => {
+              removeToast(toastId);
+              void ensureActiveSchedule(selectedSchedule).catch(offerRetry);
+            }}>Retry</Button>
+          </div>
+        ),
+      });
+    };
+    void ensureActiveSchedule(selectedSchedule).catch(offerRetry);
     return () => { active = false; };
   }, [
     ensureActiveSchedule,
@@ -784,6 +1072,8 @@ const ScheduleTab = ({
     periodScheduleMatch.ambiguous,
     periodScheduleMatch.ownershipConflict,
     selectedSchedule,
+    removeToast,
+    showToast,
     viewingSavedSchedule,
   ]);
   const scheduleDisplayMembers = useMemo(
@@ -965,10 +1255,6 @@ const ScheduleTab = ({
   >("idle");
   const [iems, setIems] = useState<ServiceEquipment[]>([]);
   const [iemCatalogStatus, setIemCatalogStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [savingIemSlot, setSavingIemSlot] = useState<string | null>(null);
-  const [savingMicrophoneSlot, setSavingMicrophoneSlot] = useState<string | null>(
-    null,
-  );
   const undoShortcut = useMemo(() => {
     const isMac =
       typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -1535,24 +1821,150 @@ const ScheduleTab = ({
       guestRemovalResolveRef.current = null;
     };
   }, [churchId, selectedScheduleRecord?.scheduleId]);
-  // Assignment saves are read-modify-write transactions on the same schedule
-  // document. The UI updates optimistically, so a member can be removed from one
-  // cell and immediately re-added (e.g. as a reverse shadow) before the first
-  // save lands. Sent concurrently, the server validates the second request
-  // against the pre-removal schedule and rejects it ("This person can only serve
-  // one position per service"). Chaining the network calls keeps them in order so
-  // each one validates against the previous result.
-  const assignmentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
-  const scheduleMutationSeqRef = useRef(0);
+  // Assignment saves are read-modify-write transactions. Keep dependent edits
+  // ordered for a schedule while allowing a different schedule to save freely.
+  const assignmentSaveQueuesRef = useRef(new Map<string, Promise<unknown>>());
+  const pendingPositionSlotSavesRef = useRef(new Map<string, { promise: Promise<void>; resolve: () => void }>());
+  const scheduleCellSaveWorkersRef = useRef(new Map<string, Promise<void>>());
+  const scheduleCellSaveFailuresRef = useRef(new Map<string, number>());
+  const scheduleCellSaveToastIdsRef = useRef(new Map<string, string>());
+  const runLatestScheduleCellSaveRef = useRef<((
+    key: string,
+    field: ScheduleCellMapField,
+    failureMessage: string,
+    send: (edit: PendingScheduleCellEdit) => Promise<TeamSchedule>,
+  ) => Promise<void>) | null>(null);
+  const stageScheduleCellEdit = useCallback((
+    schedule: TeamSchedule,
+    field: ScheduleCellMapField,
+    occurrenceId: string,
+    cellKey: string,
+    value: unknown,
+  ) => {
+    const key = scheduleCellEditKey(schedule.churchId, schedule.scheduleId, field, occurrenceId, cellKey);
+    const pending = new Map(pendingScheduleCellEditsRef.current);
+    const edit: PendingScheduleCellEdit = {
+      churchId: schedule.churchId,
+      scheduleId: schedule.scheduleId,
+      field,
+      occurrenceId,
+      cellKey,
+      value,
+      sequence: (pending.get(key)?.sequence || 0) + 1,
+    };
+    pending.set(key, edit);
+    pendingScheduleCellEditsRef.current = pending;
+    scheduleCellSaveFailuresRef.current.delete(key);
+    const toastId = scheduleCellSaveToastIdsRef.current.get(key);
+    if (toastId) {
+      removeToast(toastId);
+      scheduleCellSaveToastIdsRef.current.delete(key);
+    }
+    const optimistic = setScheduleCellMapValue(schedule, field, occurrenceId, cellKey, value);
+    publishScheduleSnapshot(optimistic, [field]);
+    return { key, edit, optimistic };
+  }, [publishScheduleSnapshot, removeToast]);
+  const clearScheduleCellEdit = useCallback((edit: PendingScheduleCellEdit) => {
+    const key = scheduleCellEditKey(
+      edit.churchId,
+      edit.scheduleId,
+      edit.field,
+      edit.occurrenceId,
+      edit.cellKey,
+    );
+    const pending = new Map(pendingScheduleCellEditsRef.current);
+    if (pending.get(key)?.sequence !== edit.sequence) return false;
+    pending.delete(key);
+    pendingScheduleCellEditsRef.current = pending;
+    return true;
+  }, []);
+  const saveLatestScheduleCellEdit = useCallback((
+    key: string,
+    field: ScheduleCellMapField,
+    failureMessage: string,
+    send: (edit: PendingScheduleCellEdit) => Promise<TeamSchedule>,
+  ): Promise<void> => {
+    const inFlight = scheduleCellSaveWorkersRef.current.get(key);
+    if (inFlight) return inFlight;
+    const worker = (async () => {
+      while (true) {
+        const edit = pendingScheduleCellEditsRef.current.get(key);
+        if (!edit) return;
+        try {
+          const schedule = await trackTeamsSave(send(edit));
+          const latest = pendingScheduleCellEditsRef.current.get(key);
+          publishScheduleCellResponses(schedule, field, [edit]);
+          if (latest?.sequence === edit.sequence) {
+            clearScheduleCellEdit(edit);
+            scheduleCellSaveFailuresRef.current.delete(key);
+            const toastId = scheduleCellSaveToastIdsRef.current.get(key);
+            if (toastId) {
+              removeToast(toastId);
+              scheduleCellSaveToastIdsRef.current.delete(key);
+            }
+            publishScheduleCellResponses(schedule, field, [edit]);
+            return;
+          }
+        } catch {
+          const latest = pendingScheduleCellEditsRef.current.get(key);
+          if (!latest || latest.sequence !== edit.sequence) continue;
+          scheduleCellSaveFailuresRef.current.set(key, edit.sequence);
+          const previousToastId = scheduleCellSaveToastIdsRef.current.get(key);
+          if (previousToastId) removeToast(previousToastId);
+          const toastId = showToast({
+            message: `${failureMessage} Your choice is still here. Retry the save when ready.`,
+            variant: "error",
+            persist: true,
+            children: (
+              <div className="mt-2 flex justify-center">
+                <Button
+                  variant="primary"
+                  className="text-sm"
+                  onClick={() => {
+                    if (scheduleCellSaveFailuresRef.current.get(key) !== edit.sequence) return;
+                    scheduleCellSaveFailuresRef.current.delete(key);
+                    removeToast(toastId);
+                    scheduleCellSaveToastIdsRef.current.delete(key);
+                    void runLatestScheduleCellSaveRef.current?.(key, field, failureMessage, send);
+                  }}
+                >
+                  Retry save
+                </Button>
+              </div>
+            ),
+          });
+          scheduleCellSaveToastIdsRef.current.set(key, toastId);
+          return;
+        }
+      }
+    })();
+    scheduleCellSaveWorkersRef.current.set(key, worker);
+    void worker.finally(() => {
+      if (scheduleCellSaveWorkersRef.current.get(key) === worker) {
+        scheduleCellSaveWorkersRef.current.delete(key);
+      }
+      const latest = pendingScheduleCellEditsRef.current.get(key);
+      if (latest && scheduleCellSaveFailuresRef.current.get(key) !== latest.sequence) {
+        void runLatestScheduleCellSaveRef.current?.(key, field, failureMessage, send);
+      }
+    });
+    return worker;
+  }, [clearScheduleCellEdit, publishScheduleCellResponses, removeToast, showToast, trackTeamsSave]);
+  runLatestScheduleCellSaveRef.current = saveLatestScheduleCellEdit;
   const enqueueAssignmentSave = useCallback(
-    <T,>(task: () => Promise<T>) => {
-      const run = assignmentSaveQueueRef.current.then(task, task);
-      assignmentSaveQueueRef.current = run.then(
+    <T,>(scheduleId: string, task: () => Promise<T>) => {
+      const previous = assignmentSaveQueuesRef.current.get(scheduleId) || Promise.resolve();
+      const run = previous.then(task, task);
+      const queue = run.then(
         () => undefined,
         () => undefined,
       );
-      // Keep inbound sync gated until this save (and the rest of the queue)
-      // has drained, so a bootstrap/SSE can't apply a snapshot missing it.
+      assignmentSaveQueuesRef.current.set(scheduleId, queue);
+      void queue.then(() => {
+        if (assignmentSaveQueuesRef.current.get(scheduleId) === queue) {
+          assignmentSaveQueuesRef.current.delete(scheduleId);
+        }
+      });
       return trackTeamsSave(run);
     },
     [trackTeamsSave],
@@ -1709,14 +2121,14 @@ const ScheduleTab = ({
   // Push a completed assignment edit onto the undo stack. Cells whose value did
   // not actually change are dropped so an undo never issues an empty write.
   const recordAssignmentChange = useCallback(
-    (label: string, changes: ScheduleCellChange[]) => {
-      if (!selectedSchedule) return;
+    (label: string, changes: ScheduleCellChange[], scheduleId = selectedSchedule?.scheduleId) => {
+      if (!scheduleId) return;
       const meaningful = changes.filter(
         (change) => !cellsMatch(change.before, change.after),
       );
       if (meaningful.length === 0) return;
       recordUndoEntry({
-        scheduleId: selectedSchedule.scheduleId,
+        scheduleId,
         label,
         changes: meaningful,
       });
@@ -1794,14 +2206,42 @@ const ScheduleTab = ({
         return;
       }
 
-      const mutationSeq = ++scheduleMutationSeqRef.current;
-      const optimisticSchedule = { ...selectedSchedule, assignments: nextAssignments };
-      latestScheduleRef.current = optimisticSchedule;
-      onScheduleSaved(optimisticSchedule);
+      const stagedEdits = changes.map((change) => stageScheduleCellEdit(
+        previousSchedule,
+        "assignments",
+        change.serviceId,
+        change.positionSlotKey,
+        change.assignment,
+      ).edit);
       clearActiveSlot();
+      let mutationSchedule = previousSchedule;
+      let historyRecorded = false;
+      const restore = () => {
+        let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+          mutationSchedule.churchId,
+          mutationSchedule.scheduleId,
+        )) || mutationSchedule;
+        let changed = false;
+        stagedEdits.forEach((edit, index) => {
+          if (!clearScheduleCellEdit(edit)) return;
+          const change = changes[index];
+          if (!change) return;
+          current = setScheduleCellMapValue(
+            current,
+            "assignments",
+            change.serviceId,
+            change.positionSlotKey,
+            change.expectedCell,
+          );
+          changed = true;
+        });
+        if (changed) publishScheduleSnapshot(current, ["assignments"]);
+        if (direction === "undo") pushUndo(entry);
+        else pushRedo(entry);
+      };
       const persist = async (fingerprint?: string): Promise<void> => {
         try {
-          const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentsBatch(
+          const response = await enqueueAssignmentSave(previousSchedule.scheduleId, () => updateTeamScheduleAssignmentsBatch(
             churchId,
             previousSchedule.scheduleId,
             {
@@ -1810,40 +2250,45 @@ const ScheduleTab = ({
               ...assignmentConflictPayload(fingerprint),
             },
           ));
-          if (scheduleMutationSeqRef.current === mutationSeq) {
-            latestScheduleRef.current = response.schedule;
-            onScheduleSaved(response.schedule);
-          }
+          mutationSchedule = response.schedule;
+          publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
+          stagedEdits.forEach(clearScheduleCellEdit);
+          publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
           if (response.skipped.length) {
             showToast("Some changes were edited by someone else and were left as they are.", "neutral");
           }
-          if (direction === "undo") pushRedo(entry);
-          else pushUndo(entry);
+          if (!historyRecorded) {
+            historyRecorded = true;
+            if (direction === "undo") pushRedo(entry);
+            else pushUndo(entry);
+          }
         } catch (error) {
           const conflictDetails = getOccurrenceConflictDetails(error);
-          if (scheduleMutationSeqRef.current === mutationSeq) {
-            latestScheduleRef.current = previousSchedule;
-            onScheduleSaved(previousSchedule);
-          }
           if (conflictDetails) {
             requestCrossTeamConflictConfirmation({
               memberId: conflictDetails.conflicts[0]?.memberId || "",
               warning: "already scheduled in an overlapping service",
               ...conflictDetails,
               onConfirm: () => {
-                if (scheduleMutationSeqRef.current === mutationSeq) onScheduleSaved(optimisticSchedule);
                 void persist(conflictDetails.fingerprint);
               },
-              onCancel: () => {
-                if (direction === "undo") pushUndo(entry);
-                else pushRedo(entry);
-              },
+              onCancel: restore,
             });
             return;
           }
-          if (direction === "undo") pushUndo(entry);
-          else pushRedo(entry);
-          showApiErrorToast(showToast, error, "Could not undo that change.");
+          const toastId = showToast({
+            message: `Couldn't ${direction} that change. Your schedule is still here. Retry the save when ready.`,
+            variant: "error",
+            persist: true,
+            children: (
+              <div className="mt-2 flex justify-center">
+                <Button variant="primary" className="text-sm" onClick={() => {
+                  removeToast(toastId);
+                  void persist(fingerprint);
+                }}>Retry save</Button>
+              </div>
+            ),
+          });
         }
       };
       void persist();
@@ -1852,12 +2297,16 @@ const ScheduleTab = ({
       canEdit,
       churchId,
       clearActiveSlot,
+      clearScheduleCellEdit,
       enqueueAssignmentSave,
-      onScheduleSaved,
+      publishScheduleCellResponses,
+      publishScheduleSnapshot,
       pushRedo,
       pushUndo,
       requestCrossTeamConflictConfirmation,
+      removeToast,
       selectedSchedule,
+      stageScheduleCellEdit,
       showToast,
     ],
   );
@@ -2313,7 +2762,7 @@ const ScheduleTab = ({
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
-    let previousSchedule = selectedSchedule;
+    const previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     if (memberId) {
       const issue = getAssignmentIssue(memberId, serviceId, basePositionId, {
@@ -2371,14 +2820,6 @@ const ScheduleTab = ({
         showToast(blockingIssue, "neutral");
         return;
       }
-    }
-    try {
-      const ensuredSchedule = await ensureActiveSchedule();
-      if (!ensuredSchedule) return;
-      previousSchedule = ensuredSchedule;
-    } catch (error) {
-      showApiErrorToast(showToast, error, "Could not start this schedule.");
-      return;
     }
     const nextAssignments = { ...(previousSchedule.assignments || {}) };
     let targetRow = { ...(nextAssignments[serviceId] || {}) };
@@ -2442,28 +2883,80 @@ const ScheduleTab = ({
       after: nextAssignments[serviceId]?.[cellKey] ?? "",
     });
     const positionName = positionNameById.get(basePositionId) || "position";
-    recordAssignmentChange(
-      sourceServiceId
-        ? `move ${describeMemberName(memberId)}`
-        : memberId
-          ? `assign ${describeMemberName(memberId)} to ${positionName}`
-          : `remove ${describeMemberName(targetCell.primaryMemberId)} from ${positionName}`,
-      undoChanges,
+
+    const stagedEdits: PendingScheduleCellEdit[] = [];
+    if (sourceServiceId && sourcePositionSlotKey) {
+      const stagedSource = stageScheduleCellEdit(
+        previousSchedule,
+        "assignments",
+        sourceServiceId,
+        sourcePositionSlotKey,
+        nextAssignments[sourceServiceId]?.[sourcePositionSlotKey] ?? "",
+      );
+      stagedEdits.push(stagedSource.edit);
+    }
+    const stagedTarget = stageScheduleCellEdit(
+      previousSchedule,
+      "assignments",
+      serviceId,
+      cellKey,
+      nextAssignments[serviceId]?.[cellKey] ?? "",
     );
-
-    const optimisticSchedule = { ...previousSchedule, assignments: nextAssignments };
-    latestScheduleRef.current = optimisticSchedule;
-    onScheduleSaved(optimisticSchedule);
+    stagedEdits.push(stagedTarget.edit);
+    const optimisticSchedule = applyPendingScheduleCellEdits(
+      { ...previousSchedule, assignments: nextAssignments },
+      pendingScheduleCellEditsRef.current.values(),
+    );
     clearActiveSlot();
+    let mutationSchedule = optimisticSchedule;
+    let assignmentUndoRecorded = false;
 
-    const saveAssignment = async (fingerprint?: string) => {
-      const attemptSeq = ++scheduleMutationSeqRef.current;
-      latestScheduleRef.current = optimisticSchedule;
-      onScheduleSaved(optimisticSchedule);
+    const restoreAssignmentEdits = () => {
+      const active = latestScheduleRef.current;
+      let current = active?.scheduleId === mutationSchedule.scheduleId && active.churchId === mutationSchedule.churchId
+        ? active
+        : schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(mutationSchedule.churchId, mutationSchedule.scheduleId)) || mutationSchedule;
+      let changed = false;
+      const beforeValues = [
+        ...(sourceServiceId && sourcePositionSlotKey ? [{
+          occurrenceId: sourceServiceId,
+          cellKey: sourcePositionSlotKey,
+          value: previousSchedule.assignments?.[sourceServiceId]?.[sourcePositionSlotKey] ?? "",
+        }] : []),
+        {
+          occurrenceId: serviceId,
+          cellKey,
+          value: previousSchedule.assignments?.[serviceId]?.[cellKey] ?? "",
+        },
+      ];
+      stagedEdits.forEach((edit) => {
+        if (!clearScheduleCellEdit(edit)) return;
+        const before = beforeValues.find((item) => item.occurrenceId === edit.occurrenceId && item.cellKey === edit.cellKey);
+        if (!before) return;
+        current = setScheduleCellMapValue(current, "assignments", edit.occurrenceId, edit.cellKey, before.value);
+        changed = true;
+      });
+      if (changed) publishScheduleSnapshot(current, ["assignments"]);
+    };
+    const saveAssignment = async (fingerprint?: string): Promise<void> => {
       try {
-        await updateTeamScheduleAssignment(
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        if (!ensuredSchedule) return;
+        mutationSchedule = ensuredSchedule;
+        stagedEdits.forEach((edit, index) => {
+          const remappedEdit = [...pendingScheduleCellEditsRef.current.values()].find((pendingEdit) =>
+            pendingEdit.churchId === edit.churchId &&
+            pendingEdit.scheduleId === ensuredSchedule.scheduleId &&
+            pendingEdit.field === edit.field &&
+            pendingEdit.occurrenceId === edit.occurrenceId &&
+            pendingEdit.cellKey === edit.cellKey &&
+            pendingEdit.sequence === edit.sequence,
+          );
+          if (remappedEdit) stagedEdits[index] = remappedEdit;
+        });
+        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, () => updateTeamScheduleAssignment(
           churchId,
-          previousSchedule.scheduleId,
+          ensuredSchedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -2477,33 +2970,65 @@ const ScheduleTab = ({
               : {}),
             ...assignmentConflictPayload(fingerprint),
           },
-        );
+        ));
+        if (!assignmentUndoRecorded) {
+          assignmentUndoRecorded = true;
+          recordAssignmentChange(
+            sourceServiceId
+              ? `move ${describeMemberName(memberId)}`
+              : memberId
+                ? `assign ${describeMemberName(memberId)} to ${positionName}`
+                : `remove ${describeMemberName(targetCell.primaryMemberId)} from ${positionName}`,
+            undoChanges,
+            ensuredSchedule.scheduleId,
+          );
+        }
+        publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
+        stagedEdits.forEach(clearScheduleCellEdit);
+        publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
       } catch (error) {
         const conflictDetails = memberId ? getOccurrenceConflictDetails(error) : null;
         if (conflictDetails) {
-          if (scheduleMutationSeqRef.current === attemptSeq) {
-            latestScheduleRef.current = previousSchedule;
-            onScheduleSaved(previousSchedule);
-          }
           requestCrossTeamConflictConfirmation({
             memberId: memberId || "",
             warning: "already scheduled in an overlapping service",
             ...conflictDetails,
             isMove: Boolean(sourceServiceId && sourcePositionSlotKey),
             onConfirm: () => {
-              void enqueueAssignmentSave(() => saveAssignment(conflictDetails.fingerprint));
+              void saveAssignment(conflictDetails.fingerprint);
             },
+            onCancel: restoreAssignmentEdits,
           });
           return;
         }
-        if (scheduleMutationSeqRef.current === attemptSeq) {
-          latestScheduleRef.current = previousSchedule;
-          onScheduleSaved(previousSchedule);
+        const allEditsStillCurrent = stagedEdits.every((edit) => {
+          const key = scheduleCellEditKey(edit.churchId, edit.scheduleId, edit.field, edit.occurrenceId, edit.cellKey);
+          return pendingScheduleCellEditsRef.current.get(key)?.sequence === edit.sequence;
+        });
+        if (!allEditsStillCurrent) {
+          showApiErrorToast(showToast, error, "A newer assignment is still being saved.");
+          return;
         }
-        showApiErrorToast(showToast, error, "Could not update this assignment.");
+        const toastId = showToast({
+          message: "Couldn't save this assignment. Your choice is still here. Retry the save when ready.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                const stillCurrent = stagedEdits.every((edit) => {
+                  const key = scheduleCellEditKey(edit.churchId, edit.scheduleId, edit.field, edit.occurrenceId, edit.cellKey);
+                  return pendingScheduleCellEditsRef.current.get(key)?.sequence === edit.sequence;
+                });
+                removeToast(toastId);
+                if (stillCurrent) void saveAssignment(fingerprint);
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
     };
-    void enqueueAssignmentSave(() => saveAssignment(confirmedOccurrenceConflictFingerprint));
+    void saveAssignment(confirmedOccurrenceConflictFingerprint);
   };
 
   const commitGuestAssignment = async (
@@ -2534,7 +3059,7 @@ const ScheduleTab = ({
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule) return;
-      const response = await enqueueAssignmentSave(() =>
+      const response = await enqueueAssignmentSave(schedule.scheduleId, () =>
         updateTeamScheduleAssignment(churchId, schedule.scheduleId, {
           serviceId: activeSlot.occurrenceId,
           positionSlotKey: activeSlot.columnKey,
@@ -2588,7 +3113,7 @@ const ScheduleTab = ({
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule) return;
-      const response = await enqueueAssignmentSave(() =>
+      const response = await enqueueAssignmentSave(schedule.scheduleId, () =>
         updateTeamScheduleGuest(churchId, schedule.scheduleId, guest),
       );
       onScheduleSaved(response.schedule);
@@ -2621,7 +3146,7 @@ const ScheduleTab = ({
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule || !schedule.guests?.some((item) => item.guestId === guest.guestId)) return false;
-      const response = await enqueueAssignmentSave(() =>
+      const response = await enqueueAssignmentSave(schedule.scheduleId, () =>
         removeTeamScheduleGuest(churchId, schedule.scheduleId, guest.guestId),
       );
       onScheduleSaved(response.schedule);
@@ -2823,7 +3348,7 @@ const ScheduleTab = ({
   }) => {
     if (!canEdit) return;
     if (!selectedSchedule) return;
-    let previousSchedule = selectedSchedule;
+    const previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
     if (action === "add") {
       const issue = getAssignmentIssue(
@@ -2884,14 +3409,6 @@ const ScheduleTab = ({
       }
     }
 
-    try {
-      const ensuredSchedule = await ensureActiveSchedule();
-      if (!ensuredSchedule) return;
-      previousSchedule = ensuredSchedule;
-    } catch (error) {
-      showApiErrorToast(showToast, error, "Could not start this schedule.");
-      return;
-    }
     const nextAssignments = { ...(previousSchedule.assignments || {}) };
     const targetRow = { ...(nextAssignments[serviceId] || {}) };
     const targetCell = normalizeAssignmentCell(targetRow[cellKey]);
@@ -2920,30 +3437,37 @@ const ScheduleTab = ({
     }
 
     const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
-    recordAssignmentChange(
-      `${action === "add" ? "add" : "remove"} ${describeMemberName(memberId)} as ${shadowKindLabel(shadowKind).toLowerCase()}`,
-      [
-        {
-          occurrenceId: serviceId,
-          cellKey,
-          serviceDate,
-          before: previousSchedule.assignments?.[serviceId]?.[cellKey] ?? "",
-          after: nextAssignments[serviceId]?.[cellKey] ?? "",
-        },
-      ],
+    const before = previousSchedule.assignments?.[serviceId]?.[cellKey] ?? "";
+    const after = nextAssignments[serviceId]?.[cellKey] ?? "";
+    const staged = stageScheduleCellEdit(
+      previousSchedule,
+      "assignments",
+      serviceId,
+      cellKey,
+      after,
     );
-
-    const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
+    const optimisticSchedule = staged.optimistic;
+    let mutationSchedule = optimisticSchedule;
+    let shadowUndoRecorded = false;
     if (action === "add") {
       clearActiveSlot();
     }
-
-    await enqueueAssignmentSave(async () => {
+    const saveShadow = async (fingerprint?: string): Promise<void> => {
       try {
-        await updateTeamScheduleAssignment(
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        if (!ensuredSchedule) return;
+        mutationSchedule = ensuredSchedule;
+        const persistedEdit = [...pendingScheduleCellEditsRef.current.values()].find((edit) =>
+          edit.churchId === staged.edit.churchId &&
+          edit.scheduleId === ensuredSchedule.scheduleId &&
+          edit.field === staged.edit.field &&
+          edit.occurrenceId === staged.edit.occurrenceId &&
+          edit.cellKey === staged.edit.cellKey &&
+          edit.sequence === staged.edit.sequence,
+        ) || staged.edit;
+        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, () => updateTeamScheduleAssignment(
           churchId,
-          previousSchedule.scheduleId,
+          ensuredSchedule.scheduleId,
           {
             serviceId,
             positionSlotKey: cellKey,
@@ -2955,52 +3479,82 @@ const ScheduleTab = ({
             ...(allowRecurringAvailability
               ? { allowRecurringAvailability: true }
               : {}),
-            ...assignmentConflictPayload(confirmedOccurrenceConflictFingerprint),
+            ...assignmentConflictPayload(fingerprint),
           },
-        );
+        ));
+        if (!shadowUndoRecorded) {
+          shadowUndoRecorded = true;
+          recordAssignmentChange(
+            `${action === "add" ? "add" : "remove"} ${describeMemberName(memberId)} as ${shadowKindLabel(shadowKind).toLowerCase()}`,
+            [{ occurrenceId: serviceId, cellKey, serviceDate, before, after }],
+            ensuredSchedule.scheduleId,
+          );
+        }
+        publishScheduleCellResponses(response.schedule, "assignments", [persistedEdit]);
+        clearScheduleCellEdit(persistedEdit);
+        publishScheduleCellResponses(response.schedule, "assignments", [persistedEdit]);
       } catch (error) {
         const conflictDetails = action === "add" ? getOccurrenceConflictDetails(error) : null;
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = previousSchedule;
-          onScheduleSaved(previousSchedule);
-        }
         if (conflictDetails) {
           requestCrossTeamConflictConfirmation({
             memberId,
             warning: "already scheduled in an overlapping service",
             ...conflictDetails,
             onConfirm: () =>
-              void commitShadowAssignment({
-                serviceId,
-                cellKey,
-                basePositionId,
-                memberId,
-                shadowKind,
-                action,
-                allowBlockout,
-                allowRecurringAvailability,
-                confirmedOccurrenceConflictFingerprint: conflictDetails.fingerprint,
-              }),
+              void saveShadow(conflictDetails.fingerprint),
+            onCancel: () => {
+              const key = scheduleCellEditKey(
+                staged.edit.churchId,
+                mutationSchedule.scheduleId,
+                staged.edit.field,
+                staged.edit.occurrenceId,
+                staged.edit.cellKey,
+              );
+              const currentEdit = pendingScheduleCellEditsRef.current.get(key);
+              if (currentEdit?.sequence !== staged.edit.sequence) return;
+              clearScheduleCellEdit(currentEdit);
+              const current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+                mutationSchedule.churchId,
+                mutationSchedule.scheduleId,
+              )) || mutationSchedule;
+              publishScheduleSnapshot(
+                setScheduleCellMapValue(current, "assignments", serviceId, cellKey, before),
+                ["assignments"],
+              );
+            },
           });
           return;
         }
-        showApiErrorToast(showToast, error, "Could not update this assignment.");
+        const toastId = showToast({
+          message: "Couldn't save this shadow assignment. Your choice is still here. Retry the save when ready.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void saveShadow(fingerprint);
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
-    });
+    };
+    void saveShadow(confirmedOccurrenceConflictFingerprint);
   };
 
   // Fill a whole occurrence row at once from a pasted Excel row. Re-validates
   // every entry against the current schedule (eligibility, blockout, already
   // assigned) and dedupes within the batch, applies them as one optimistic
   // update, then persists each cell through the same serialized queue as manual
-  // assignment. On failure the row rolls back and a refresh reconciles.
+  // assignment. A failed batch keeps its staged choices available for retry.
   const commitRowAssignments = async (
     occurrenceId: string,
     entries: RowPasteApplyEntry[],
     confirmedOccurrenceConflictFingerprint?: string,
   ) => {
     if (!canEdit || !selectedSchedule || entries.length === 0) return;
-    let previousSchedule = selectedSchedule;
+    const previousSchedule = selectedSchedule;
     const occurrence = scheduleOccurrences.find(
       (item) => item.occurrenceId === occurrenceId,
     );
@@ -3028,22 +3582,6 @@ const ScheduleTab = ({
       return;
     }
 
-    try {
-      const ensuredSchedule = await ensureActiveSchedule();
-      if (!ensuredSchedule) return;
-      previousSchedule = ensuredSchedule;
-      nextAssignments = { ...(previousSchedule.assignments || {}) };
-      targetRow = { ...(nextAssignments[occurrenceId] || {}) };
-      applied.forEach((entry) => {
-        const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
-        const nextCell = serializeAssignmentCell({ primaryMemberId: entry.memberId, shadows: cell.shadows });
-        if (nextCell) targetRow[entry.columnKey] = nextCell;
-      });
-    } catch (error) {
-      showApiErrorToast(showToast, error, "Could not start this schedule.");
-      return;
-    }
-
     if (Object.keys(targetRow).length > 0) {
       nextAssignments[occurrenceId] = targetRow;
     } else {
@@ -3057,52 +3595,95 @@ const ScheduleTab = ({
       expectedCell: previousSchedule.assignments?.[occurrenceId]?.[entry.columnKey] || "" as const,
       assignment: nextAssignments[occurrenceId]?.[entry.columnKey] || "" as const,
     }));
-    const mutationSeq = ++scheduleMutationSeqRef.current;
-    const optimisticSchedule = { ...previousSchedule, assignments: nextAssignments };
-    latestScheduleRef.current = optimisticSchedule;
-    onScheduleSaved(optimisticSchedule);
-    recordAssignmentChange(`paste ${applied.length} assignments`, changes.map((change) => ({
-      occurrenceId: change.serviceId,
-      cellKey: change.positionSlotKey,
-      serviceDate: change.serviceDate,
-      before: change.expectedCell,
-      after: change.assignment,
-    })));
+    const stagedEdits = changes.map((change) => stageScheduleCellEdit(
+      previousSchedule,
+      "assignments",
+      change.serviceId,
+      change.positionSlotKey,
+      change.assignment,
+    ).edit);
+    const optimisticSchedule = applyPendingScheduleCellEdits(
+      { ...previousSchedule, assignments: nextAssignments },
+      pendingScheduleCellEditsRef.current.values(),
+    );
+    let mutationSchedule = optimisticSchedule;
+    let historyRecorded = false;
+    const restore = () => {
+      let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+        mutationSchedule.churchId,
+        mutationSchedule.scheduleId,
+      )) || mutationSchedule;
+      let changed = false;
+      stagedEdits.forEach((edit, index) => {
+        if (!clearScheduleCellEdit(edit)) return;
+        const change = changes[index];
+        if (!change) return;
+        current = setScheduleCellMapValue(current, "assignments", change.serviceId, change.positionSlotKey, change.expectedCell);
+        changed = true;
+      });
+      if (changed) publishScheduleSnapshot(current, ["assignments"]);
+    };
 
     const save = async (fingerprint?: string): Promise<void> => {
       try {
-        const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentsBatch(
+        const schedule = await ensureActiveSchedule(mutationSchedule);
+        if (!schedule) return;
+        mutationSchedule = schedule;
+        const persistedEdits = stagedEdits.map((edit) => [...pendingScheduleCellEditsRef.current.values()].find((pendingEdit) =>
+          pendingEdit.churchId === edit.churchId &&
+          pendingEdit.scheduleId === schedule.scheduleId &&
+          pendingEdit.field === edit.field &&
+          pendingEdit.occurrenceId === edit.occurrenceId &&
+          pendingEdit.cellKey === edit.cellKey &&
+          pendingEdit.sequence === edit.sequence,
+        ) || edit);
+        const response = await enqueueAssignmentSave(schedule.scheduleId, () => updateTeamScheduleAssignmentsBatch(
           churchId,
-          previousSchedule.scheduleId,
+          schedule.scheduleId,
           { changes, ...assignmentConflictPayload(fingerprint) },
         ));
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = response.schedule;
-          onScheduleSaved(response.schedule);
+        if (!historyRecorded) {
+          historyRecorded = true;
+          recordAssignmentChange(`paste ${applied.length} assignments`, changes.map((change) => ({
+            occurrenceId: change.serviceId,
+            cellKey: change.positionSlotKey,
+            serviceDate: change.serviceDate,
+            before: change.expectedCell,
+            after: change.assignment,
+          })), schedule.scheduleId);
         }
+        publishScheduleCellResponses(response.schedule, "assignments", persistedEdits);
+        persistedEdits.forEach(clearScheduleCellEdit);
+        publishScheduleCellResponses(response.schedule, "assignments", persistedEdits);
         showToast(
           `Assigned ${applied.length} ${applied.length === 1 ? "person" : "people"} from your pasted row.`,
           "success",
         );
       } catch (error) {
         const conflictDetails = getOccurrenceConflictDetails(error);
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = previousSchedule;
-          onScheduleSaved(previousSchedule);
-        }
         if (conflictDetails) {
           requestCrossTeamConflictConfirmation({
             memberId: conflictDetails.conflicts[0]?.memberId || applied[0].memberId,
             warning: "already scheduled in an overlapping service",
             ...conflictDetails,
-            onConfirm: () => {
-              if (scheduleMutationSeqRef.current === mutationSeq) onScheduleSaved(optimisticSchedule);
-              void save(conflictDetails.fingerprint);
-            },
+            onConfirm: () => void save(conflictDetails.fingerprint),
+            onCancel: restore,
           });
           return;
         }
-        showApiErrorToast(showToast, error, "Could not paste this row.");
+        const toastId = showToast({
+          message: "Couldn't paste these assignments. Your choices are still here. Retry the save when ready.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void save(fingerprint);
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
     };
     await save(confirmedOccurrenceConflictFingerprint);
@@ -3179,12 +3760,6 @@ const ScheduleTab = ({
         assignment: nextCell || "",
       });
     });
-    recordAssignmentChange(
-      `auto-fill ${entries.length} ${entries.length === 1 ? "slot" : "slots"}`,
-      undoChanges,
-    );
-
-    const mutationSeq = ++scheduleMutationSeqRef.current;
     const totalOpenSlots = entries.length + unfilledCount;
     const gapLabel = unfilledCount
       ? ` ${unfilledCount} slot${unfilledCount === 1 ? "" : "s"} ${unfilledCount === 1 ? "needs" : "need"
@@ -3195,56 +3770,141 @@ const ScheduleTab = ({
     // state. Start saving before the local reveal so both run together, then
     // keep autoFilling true until this request settles.
     let saveFailed = false;
+    let historyRecorded = false;
+    const pendingAutoFillEdits = new Map<string, PendingScheduleCellEdit>();
+    const preserveAutoFillChoices = () => {
+      let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+        previousSchedule.churchId,
+        previousSchedule.scheduleId,
+      )) || previousSchedule;
+      batchChanges.forEach((change) => {
+        const key = scheduleCellEditKey(
+          current.churchId,
+          current.scheduleId,
+          "assignments",
+          change.serviceId,
+          change.positionSlotKey,
+        );
+        if (pendingScheduleCellEditsRef.current.has(key)) return;
+        const cell = current.assignments?.[change.serviceId]?.[change.positionSlotKey] ?? "";
+        if (!cellsMatch(cell, change.expectedCell) && !cellsMatch(cell, change.assignment)) return;
+        const staged = stageScheduleCellEdit(
+          current,
+          "assignments",
+          change.serviceId,
+          change.positionSlotKey,
+          change.assignment,
+        );
+        pendingAutoFillEdits.set(key, staged.edit);
+        current = staged.optimistic;
+      });
+    };
+    const restoreAutoFillChoices = () => {
+      let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+        previousSchedule.churchId,
+        previousSchedule.scheduleId,
+      )) || previousSchedule;
+      let changed = false;
+      for (const [key, edit] of pendingAutoFillEdits) {
+        if (pendingScheduleCellEditsRef.current.get(key)?.sequence !== edit.sequence) continue;
+        const change = batchChanges.find((item) =>
+          item.serviceId === edit.occurrenceId && item.positionSlotKey === edit.cellKey,
+        );
+        if (!change || !clearScheduleCellEdit(edit)) continue;
+        current = setScheduleCellMapValue(
+          current,
+          "assignments",
+          change.serviceId,
+          change.positionSlotKey,
+          change.expectedCell,
+        );
+        changed = true;
+      }
+      if (changed) publishScheduleSnapshot(current, ["assignments"]);
+    };
     const saveWithConflictConfirmation = async (fingerprint?: string): Promise<void> => {
       try {
-        const response = await enqueueAssignmentSave(() =>
+        const response = await enqueueAssignmentSave(previousSchedule.scheduleId, () =>
           updateTeamScheduleAssignmentsBatch(churchId, previousSchedule.scheduleId, {
             changes: batchChanges,
             ...assignmentConflictPayload(fingerprint),
           }),
         );
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(response.schedule);
+        publishScheduleCellResponses(response.schedule, "assignments", batchChanges.map((change) => ({
+          occurrenceId: change.serviceId,
+          cellKey: change.positionSlotKey,
+        })));
+        for (const [key, edit] of pendingAutoFillEdits) {
+          if (pendingScheduleCellEditsRef.current.get(key)?.sequence === edit.sequence) {
+            clearScheduleCellEdit(edit);
+          }
+        }
+        publishScheduleCellResponses(response.schedule, "assignments", batchChanges.map((change) => ({
+          occurrenceId: change.serviceId,
+          cellKey: change.positionSlotKey,
+        })));
+        const acceptedKeys = new Set(response.accepted.map(({ serviceId, positionSlotKey }) =>
+          `${serviceId}:${positionSlotKey}`,
+        ));
+        const acceptedChanges = undoChanges.filter((change) =>
+          acceptedKeys.has(`${change.occurrenceId}:${change.cellKey}`),
+        );
+        if (!historyRecorded && acceptedChanges.length) {
+          historyRecorded = true;
+          recordAssignmentChange(
+            `auto-fill ${acceptedChanges.length} ${acceptedChanges.length === 1 ? "slot" : "slots"}`,
+            acceptedChanges,
+            response.schedule.scheduleId,
+          );
+        }
+        if (response.skipped.length) {
+          showToast(
+            `${response.skipped.length} slot${response.skipped.length === 1 ? " was" : "s were"} changed elsewhere and left as-is. Review the schedule before filling again.`,
+            "neutral",
+          );
+          return;
         }
         showToast(
-          `Auto-filled ${entries.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
+          `Auto-filled ${acceptedChanges.length} of ${totalOpenSlots} open slot${totalOpenSlots === 1 ? "" : "s"}.${gapLabel}`,
           "success",
         );
       } catch (error) {
         const conflictDetails = getOccurrenceConflictDetails(error);
+        saveFailed = true;
+        setJustFilledCellKeys(() => new Set());
+        preserveAutoFillChoices();
         if (conflictDetails) {
-          saveFailed = true;
-          setJustFilledCellKeys(() => new Set());
-          if (scheduleMutationSeqRef.current === mutationSeq) {
-            onScheduleSaved(previousSchedule);
-          }
           requestCrossTeamConflictConfirmation({
             memberId: conflictDetails.conflicts[0]?.memberId || "",
             warning: "already scheduled in an overlapping service",
             ...conflictDetails,
             onConfirm: () => {
-              if (scheduleMutationSeqRef.current === mutationSeq) {
-                onScheduleSaved({ ...previousSchedule, assignments: finalAssignments });
-              }
               void saveWithConflictConfirmation(conflictDetails.fingerprint);
             },
+            onCancel: restoreAutoFillChoices,
           });
           return;
         }
-        saveFailed = true;
-        setJustFilledCellKeys(() => new Set());
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          onScheduleSaved(previousSchedule);
-        }
-        showApiErrorToast(showToast, error, "Could not auto-fill the schedule.");
+        const toastId = showToast({
+          message: "Couldn't save the auto-fill. Your picks are still here. Review them or retry the save.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void saveWithConflictConfirmation();
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
     };
     const save = saveWithConflictConfirmation();
     // The reveal may outlast a fast rejected request. Observe it immediately so
     // the browser does not report a transient unhandled rejection; stop adding
-    // highlight keys and clear any already shown so rolled-back cells do not
-    // keep the just-filled animation. The await below still owns rollback and
-    // the user-facing error.
+    // highlight keys and clear any already shown while retaining the choices
+    // for retry. The awaited save owns the user-facing error.
     void save.catch(() => {
       saveFailed = true;
       setJustFilledCellKeys(() => new Set());
@@ -3254,19 +3914,9 @@ const ScheduleTab = ({
     // pacing is capped so a big schedule doesn't take forever to watch, but a
     // small one still gets a visible beat per slot.
     const stepDelayMs = Math.round(Math.max(35, Math.min(150, 1800 / entries.length)));
-    let revealedAssignments = { ...(previousSchedule.assignments || {}) };
     for (const entry of entries) {
       if (saveFailed) break;
-      const targetRow = { ...(revealedAssignments[entry.occurrenceId] || {}) };
-      const cell = normalizeAssignmentCell(targetRow[entry.columnKey]);
-      const nextCell = serializeAssignmentCell({
-        primaryMemberId: entry.memberId,
-        shadows: cell.shadows,
-      });
-      if (nextCell) {
-        targetRow[entry.columnKey] = nextCell;
-      }
-      revealedAssignments = { ...revealedAssignments, [entry.occurrenceId]: targetRow };
+      const nextCell = finalAssignments[entry.occurrenceId]?.[entry.columnKey] ?? "";
 
       const cellKey = scheduleGridCellKey(entry.occurrenceId, entry.columnKey);
       setJustFilledCellKeys((prev) => new Set(prev).add(cellKey));
@@ -3279,7 +3929,18 @@ const ScheduleTab = ({
         });
       }, 900);
 
-      onScheduleSaved({ ...previousSchedule, assignments: revealedAssignments });
+      const current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+        previousSchedule.churchId,
+        previousSchedule.scheduleId,
+      )) || latestScheduleRef.current || previousSchedule;
+      const revealSnapshot = setScheduleCellMapValue(
+        current,
+        "assignments",
+        entry.occurrenceId,
+        entry.columnKey,
+        nextCell,
+      );
+      publishScheduleSnapshot(revealSnapshot, ["assignments"]);
       // eslint-disable-next-line no-await-in-loop -- pacing the reveal is the point
       await sleep(stepDelayMs);
     }
@@ -3421,7 +4082,7 @@ const ScheduleTab = ({
         memberIds: [...selectedTeam.memberIds, member.memberId],
         baseMemberIds: selectedTeam.memberIds,
       });
-      await enqueueAssignmentSave(async () => {
+      await enqueueAssignmentSave(schedule.scheduleId, async () => {
         const response = await updateTeamScheduleAssignment(
           churchId,
           schedule.scheduleId,
@@ -4322,7 +4983,7 @@ const ScheduleTab = ({
     }
     nextAssignments[plan.serviceId] = occurrenceAssignments;
 
-    recordAssignmentChange(`swap ${plan.currentMemberLabel} and ${plan.candidateLabel}`, [
+    const changes: ScheduleCellChange[] = [
       {
         occurrenceId: plan.serviceId,
         cellKey: plan.targetCellKey,
@@ -4337,29 +4998,89 @@ const ScheduleTab = ({
         before: previousSourceValue,
         after: nextAssignments[plan.serviceId]?.[plan.sourceCellKey] ?? "",
       },
-    ]);
-
-    const mutationSeq = ++scheduleMutationSeqRef.current;
-    onScheduleSaved({ ...previousSchedule, assignments: nextAssignments });
+    ];
+    const stagedEdits = [
+      stageScheduleCellEdit(
+        previousSchedule,
+        "assignments",
+        plan.serviceId,
+        plan.targetCellKey,
+        changes[0].after,
+      ).edit,
+      stageScheduleCellEdit(
+        previousSchedule,
+        "assignments",
+        plan.serviceId,
+        plan.sourceCellKey,
+        changes[1].after,
+      ).edit,
+    ];
+    let mutationSchedule = applyPendingScheduleCellEdits(
+      { ...previousSchedule, assignments: nextAssignments },
+      pendingScheduleCellEditsRef.current.values(),
+    );
     clearActiveSlot();
-
-    await enqueueAssignmentSave(async () => {
+    let historyRecorded = false;
+    const restore = () => {
+      let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
+        mutationSchedule.churchId,
+        mutationSchedule.scheduleId,
+      )) || mutationSchedule;
+      let changed = false;
+      stagedEdits.forEach((edit, index) => {
+        if (!clearScheduleCellEdit(edit)) return;
+        const change = changes[index];
+        if (!change) return;
+        current = setScheduleCellMapValue(
+          current,
+          "assignments",
+          change.occurrenceId,
+          change.cellKey,
+          change.before,
+        );
+        changed = true;
+      });
+      if (changed) publishScheduleSnapshot(current, ["assignments"]);
+    };
+    const saveSwap = async (fingerprint?: string): Promise<void> => {
       try {
-        await updateTeamScheduleAssignmentSwap(churchId, previousSchedule.scheduleId, {
-          serviceId: plan.serviceId,
-          targetPositionSlotKey: plan.targetCellKey,
-          sourcePositionSlotKey: plan.sourceCellKey,
-          currentMemberId: plan.currentMemberId,
-          candidateMemberId: plan.candidateMemberId,
-          serviceDate: plan.serviceDate,
-          ...assignmentConflictPayload(confirmedFingerprint),
-        });
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        if (!ensuredSchedule) return;
+        mutationSchedule = ensuredSchedule;
+        const persistedEdits = stagedEdits.map((edit) =>
+          [...pendingScheduleCellEditsRef.current.values()].find((pendingEdit) =>
+            pendingEdit.churchId === edit.churchId &&
+            pendingEdit.scheduleId === ensuredSchedule.scheduleId &&
+            pendingEdit.field === edit.field &&
+            pendingEdit.occurrenceId === edit.occurrenceId &&
+            pendingEdit.cellKey === edit.cellKey &&
+            pendingEdit.sequence === edit.sequence,
+          ) || edit,
+        );
+        const response = await enqueueAssignmentSave(ensuredSchedule.scheduleId, () =>
+          updateTeamScheduleAssignmentSwap(churchId, ensuredSchedule.scheduleId, {
+            serviceId: plan.serviceId,
+            targetPositionSlotKey: plan.targetCellKey,
+            sourcePositionSlotKey: plan.sourceCellKey,
+            currentMemberId: plan.currentMemberId,
+            candidateMemberId: plan.candidateMemberId,
+            serviceDate: plan.serviceDate,
+            ...assignmentConflictPayload(fingerprint),
+          }),
+        );
+        if (!historyRecorded) {
+          historyRecorded = true;
+          recordAssignmentChange(
+            `swap ${plan.currentMemberLabel} and ${plan.candidateLabel}`,
+            changes,
+            ensuredSchedule.scheduleId,
+          );
+        }
+        publishScheduleCellResponses(response.schedule, "assignments", persistedEdits);
+        persistedEdits.forEach(clearScheduleCellEdit);
+        publishScheduleCellResponses(response.schedule, "assignments", persistedEdits);
       } catch (error) {
         const conflictDetails = getOccurrenceConflictDetails(error);
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = previousSchedule;
-          onScheduleSaved(previousSchedule);
-        }
         if (conflictDetails) {
           requestCrossTeamConflictConfirmation({
             memberId: conflictDetails.conflicts[0]?.memberId || plan.candidateMemberId,
@@ -4367,16 +5088,27 @@ const ScheduleTab = ({
             isMove: true,
             ...conflictDetails,
             onConfirm: () =>
-              void commitActiveSlotSwapRecommendation(
-                recommendation,
-                conflictDetails.fingerprint,
-              ),
+              void saveSwap(conflictDetails.fingerprint),
+            onCancel: restore,
           });
           return;
         }
-        showApiErrorToast(showToast, error, "Could not apply this swap.");
+        const toastId = showToast({
+          message: "Couldn't save this swap. Your choices are still here. Retry the save when ready.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void saveSwap(fingerprint);
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
-    });
+    };
+    await saveSwap(confirmedFingerprint);
   };
 
   const pendingPickerSubmenu = (() => {
@@ -4586,131 +5318,123 @@ const ScheduleTab = ({
       microphoneIds: string[],
     ) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      let baseSchedule: TeamSchedule;
+      const { optimistic } = stageScheduleCellEdit(
+        selectedSchedule,
+        "microphoneAssignments",
+        occurrenceId,
+        columnKey,
+        microphoneIds,
+      );
+      const queueSave = (schedule: TeamSchedule) => {
+        const saveKey = scheduleCellEditKey(churchId, schedule.scheduleId, "microphoneAssignments", occurrenceId, columnKey);
+        const edit = pendingScheduleCellEditsRef.current.get(saveKey);
+        if (!edit) return;
+        void saveLatestScheduleCellEdit(saveKey, "microphoneAssignments", "Couldn't save the microphone choice.", async (pendingEdit) => {
+          const response = await updateTeamScheduleAssignmentMicrophones(
+            pendingEdit.churchId,
+            pendingEdit.scheduleId,
+            {
+              serviceId: pendingEdit.occurrenceId,
+              positionSlotKey: pendingEdit.cellKey,
+              microphoneIds: pendingEdit.value as string[],
+            },
+          );
+          return response.schedule;
+        });
+      };
       try {
-        const ensuredSchedule = await ensureActiveSchedule();
-        if (!ensuredSchedule) return;
-        baseSchedule = ensuredSchedule;
-      } catch (error) {
-        showApiErrorToast(showToast, error, "Could not start this schedule.");
-        return;
-      }
-      const previousSchedule = baseSchedule;
-      const assignments = { ...(baseSchedule.microphoneAssignments || {}) };
-      const occurrenceAssignments = { ...(assignments[occurrenceId] || {}) };
-      if (microphoneIds.length) occurrenceAssignments[columnKey] = microphoneIds;
-      else delete occurrenceAssignments[columnKey];
-      if (Object.keys(occurrenceAssignments).length) {
-        assignments[occurrenceId] = occurrenceAssignments;
-      } else {
-        delete assignments[occurrenceId];
-      }
-
-      const mutationSeq = ++scheduleMutationSeqRef.current;
-      setSavingMicrophoneSlot(`${baseSchedule.scheduleId}:${occurrenceId}:${columnKey}`);
-      const optimisticSchedule = { ...baseSchedule, microphoneAssignments: assignments };
-      latestScheduleRef.current = optimisticSchedule;
-      onScheduleSaved(optimisticSchedule);
-      try {
-        const response = await enqueueAssignmentSave(() =>
-          updateTeamScheduleAssignmentMicrophones(churchId, baseSchedule.scheduleId, {
-            serviceId: occurrenceId,
-            positionSlotKey: columnKey,
-            microphoneIds,
-          }),
+        const schedule = await ensureActiveSchedule(optimistic);
+        if (!schedule) return;
+        const positionSlotSave = pendingPositionSlotSavesRef.current.get(
+          schedulePositionSlotSaveKey(churchId, schedule.scheduleId, occurrenceId, columnKey),
         );
-        // A prior response contains a whole schedule snapshot. Do not let it
-        // replace a newer optimistic microphone choice made while it was in
-        // flight; the queued request will persist that newer choice next.
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = response.schedule;
-          onScheduleSaved(response.schedule);
-        }
-      } catch (error) {
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          const current = latestScheduleRef.current || previousSchedule;
-          const microphoneAssignments = { ...(current.microphoneAssignments || {}) };
-          const row = { ...(microphoneAssignments[occurrenceId] || {}) };
-          const previousIds = previousSchedule.microphoneAssignments?.[occurrenceId]?.[columnKey];
-          if (previousIds?.length) row[columnKey] = previousIds;
-          else delete row[columnKey];
-          if (Object.keys(row).length) microphoneAssignments[occurrenceId] = row;
-          else delete microphoneAssignments[occurrenceId];
-          const rolledBack = { ...current, microphoneAssignments };
-          latestScheduleRef.current = rolledBack;
-          onScheduleSaved(rolledBack);
-        }
-        showApiErrorToast(showToast, error, "Could not update microphone assignments.");
-      } finally {
-        setSavingMicrophoneSlot(null);
+        if (positionSlotSave) await positionSlotSave.promise;
+        queueSave(schedule);
+      } catch {
+        const message = "Couldn't prepare this schedule for the microphone change. Your choice is still here.";
+        const toastId = showToast({
+          message,
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void ensureActiveSchedule(optimistic).then((schedule) => {
+                  if (schedule) queueSave(schedule);
+                }).catch(() => showToast(message, "error"));
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
     },
     [
       canEdit,
       churchId,
-      enqueueAssignmentSave,
       ensureActiveSchedule,
-      onScheduleSaved,
+      removeToast,
+      saveLatestScheduleCellEdit,
       selectedSchedule,
       showToast,
+      stageScheduleCellEdit,
     ],
   );
 
   const saveIemAssignment = useCallback(
     async ({ occurrenceId, columnKey }: { occurrenceId: string; columnKey: string }, iemIds: string[]) => {
       if (!canEdit || !churchId || !selectedSchedule) return;
-      let baseSchedule: TeamSchedule;
+      const { optimistic } = stageScheduleCellEdit(
+        selectedSchedule,
+        "iemAssignments",
+        occurrenceId,
+        columnKey,
+        iemIds,
+      );
+      const queueSave = (schedule: TeamSchedule) => {
+        const saveKey = scheduleCellEditKey(churchId, schedule.scheduleId, "iemAssignments", occurrenceId, columnKey);
+        const edit = pendingScheduleCellEditsRef.current.get(saveKey);
+        if (!edit) return;
+        void saveLatestScheduleCellEdit(saveKey, "iemAssignments", "Couldn't save the IEM choice.", async (pendingEdit) => {
+          const response = await updateTeamScheduleAssignmentIems(
+            pendingEdit.churchId,
+            pendingEdit.scheduleId,
+            {
+              serviceId: pendingEdit.occurrenceId,
+              positionSlotKey: pendingEdit.cellKey,
+              iemIds: pendingEdit.value as string[],
+            },
+          );
+          return response.schedule;
+        });
+      };
       try {
-        const ensuredSchedule = await ensureActiveSchedule();
-        if (!ensuredSchedule) return;
-        baseSchedule = ensuredSchedule;
-      } catch (error) {
-        showApiErrorToast(showToast, error, "Could not start this schedule.");
-        return;
-      }
-      const previousSchedule = baseSchedule;
-      const assignments = { ...(baseSchedule.iemAssignments || {}) };
-      const row = { ...(assignments[occurrenceId] || {}) };
-      if (iemIds.length) row[columnKey] = iemIds;
-      else delete row[columnKey];
-      if (Object.keys(row).length) assignments[occurrenceId] = row;
-      else delete assignments[occurrenceId];
-      const mutationSeq = ++scheduleMutationSeqRef.current;
-      const slotId = `${baseSchedule.scheduleId}:${occurrenceId}:${columnKey}`;
-      setSavingIemSlot(slotId);
-      const optimisticSchedule = { ...baseSchedule, iemAssignments: assignments };
-      latestScheduleRef.current = optimisticSchedule;
-      onScheduleSaved(optimisticSchedule);
-      try {
-        const response = await enqueueAssignmentSave(() => updateTeamScheduleAssignmentIems(
-          churchId,
-          baseSchedule.scheduleId,
-          { serviceId: occurrenceId, positionSlotKey: columnKey, iemIds },
-        ));
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = response.schedule;
-          onScheduleSaved(response.schedule);
-        }
-      } catch (error) {
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          const current = latestScheduleRef.current || previousSchedule;
-          const iemAssignments = { ...(current.iemAssignments || {}) };
-          const row = { ...(iemAssignments[occurrenceId] || {}) };
-          const previousIds = previousSchedule.iemAssignments?.[occurrenceId]?.[columnKey];
-          if (previousIds?.length) row[columnKey] = previousIds;
-          else delete row[columnKey];
-          if (Object.keys(row).length) iemAssignments[occurrenceId] = row;
-          else delete iemAssignments[occurrenceId];
-          const rolledBack = { ...current, iemAssignments };
-          latestScheduleRef.current = rolledBack;
-          onScheduleSaved(rolledBack);
-        }
-        showApiErrorToast(showToast, error, "Could not update IEM assignments.");
-      } finally {
-        setSavingIemSlot((current) => current === slotId ? null : current);
+        const schedule = await ensureActiveSchedule(optimistic);
+        if (!schedule) return;
+        const positionSlotSave = pendingPositionSlotSavesRef.current.get(
+          schedulePositionSlotSaveKey(churchId, schedule.scheduleId, occurrenceId, columnKey),
+        );
+        if (positionSlotSave) await positionSlotSave.promise;
+        queueSave(schedule);
+      } catch {
+        const toastId = showToast({
+          message: "Couldn't prepare this schedule for the IEM change. Your choice is still here.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void ensureActiveSchedule(optimistic).then((schedule) => {
+                  if (schedule) queueSave(schedule);
+                }).catch(() => showToast("Couldn't prepare this schedule for the IEM change. Your choice is still here.", "error"));
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
     },
-    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
+    [canEdit, churchId, ensureActiveSchedule, removeToast, saveLatestScheduleCellEdit, selectedSchedule, showToast, stageScheduleCellEdit],
   );
 
   // Grid occurrence headers are sticky (positioned), so the badge anchors to the
@@ -4914,37 +5638,57 @@ const ScheduleTab = ({
           ]),
         ],
       };
-      const mutationSeq = ++scheduleMutationSeqRef.current;
-      latestScheduleRef.current = { ...previousSchedule, additionalPositionSlots };
-      onScheduleSaved({ ...previousSchedule, additionalPositionSlots });
-      try {
-        const response = await enqueueAssignmentSave(() =>
-          addTeamSchedulePositionSlot(
-            churchId,
-            previousSchedule.scheduleId,
-            { serviceId, positionSlotKey: cellKey },
-          ),
-        );
-        if (scheduleMutationSeqRef.current === mutationSeq) {
-          latestScheduleRef.current = response.schedule;
-          onScheduleSaved(response.schedule);
+      const saveKey = schedulePositionSlotSaveKey(
+        churchId,
+        previousSchedule.scheduleId,
+        serviceId,
+        cellKey,
+      );
+      if (pendingPositionSlotSavesRef.current.has(saveKey)) return;
+      let resolvePositionSlotSave!: () => void;
+      const pendingPositionSlotSave = {
+        promise: new Promise<void>((resolve) => { resolvePositionSlotSave = resolve; }),
+        resolve: () => resolvePositionSlotSave(),
+      };
+      void pendingPositionSlotSave.promise.catch(() => undefined);
+      pendingPositionSlotSavesRef.current.set(saveKey, pendingPositionSlotSave);
+      publishScheduleSnapshot(
+        { ...previousSchedule, additionalPositionSlots },
+        ["additionalPositionSlots"],
+      );
+      const savePositionSlot = async (): Promise<void> => {
+        try {
+          await enqueueAssignmentSave(previousSchedule.scheduleId, () =>
+            addTeamSchedulePositionSlot(
+              churchId,
+              previousSchedule.scheduleId,
+              { serviceId, positionSlotKey: cellKey },
+            ),
+          );
+          if (pendingPositionSlotSavesRef.current.get(saveKey) === pendingPositionSlotSave) {
+            pendingPositionSlotSavesRef.current.delete(saveKey);
+            pendingPositionSlotSave.resolve();
+          }
+          showToast("Position added for this date.", "success");
+        } catch {
+          const toastId = showToast({
+            message: "Couldn't save this position. It stays visible while you retry.",
+            variant: "error",
+            persist: true,
+            children: (
+              <div className="mt-2 flex justify-center">
+                <Button variant="primary" className="text-sm" onClick={() => {
+                  removeToast(toastId);
+                  void savePositionSlot();
+                }}>Retry save</Button>
+              </div>
+            ),
+          });
         }
-        showToast("Position added for this date.", "success");
-      } catch (error) {
-        // Remove only this optimistic slot. A later assignment or equipment
-        // edit may already be visible in the current schedule state.
-        const current = latestScheduleRef.current || previousSchedule;
-        const slots = { ...(current.additionalPositionSlots || {}) };
-        const row = (slots[serviceId] || []).filter((key) => key !== cellKey);
-        if (row.length) slots[serviceId] = row;
-        else delete slots[serviceId];
-        const rolledBack = { ...current, additionalPositionSlots: slots };
-        latestScheduleRef.current = rolledBack;
-        onScheduleSaved(rolledBack);
-        showApiErrorToast(showToast, error, "Could not add this position.");
-      }
+      };
+      await savePositionSlot();
     },
-    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, onScheduleSaved, selectedSchedule, showToast],
+    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, publishScheduleSnapshot, removeToast, selectedSchedule, showToast],
   );
 
   const addAdditionalPosition = useCallback(
@@ -5030,47 +5774,58 @@ const ScheduleTab = ({
     else delete iemAssignments[serviceId];
 
     setPendingAdditionalPositionRemoval(null);
-    const mutationSeq = ++scheduleMutationSeqRef.current;
-    latestScheduleRef.current = {
+    const optimisticSchedule = {
       ...previousSchedule,
       additionalPositionSlots,
       assignments,
       microphoneAssignments,
       iemAssignments,
     };
-    onScheduleSaved({
-      ...previousSchedule,
-      additionalPositionSlots,
-      assignments,
-      microphoneAssignments,
-      iemAssignments,
-    });
-    try {
-      const response = await enqueueAssignmentSave(() =>
-        removeTeamSchedulePositionSlot(
-          churchId,
-          previousSchedule.scheduleId,
-          { serviceId, positionSlotKey: cellKey },
-        ),
-      );
-      if (scheduleMutationSeqRef.current === mutationSeq) {
-        latestScheduleRef.current = response.schedule;
-        onScheduleSaved(response.schedule);
+    publishScheduleSnapshot(optimisticSchedule, [
+      "additionalPositionSlots",
+      "assignments",
+      "microphoneAssignments",
+      "iemAssignments",
+    ]);
+    const saveRemoval = async (): Promise<void> => {
+      try {
+        const response = await enqueueAssignmentSave(previousSchedule.scheduleId, () =>
+          removeTeamSchedulePositionSlot(
+            churchId,
+            previousSchedule.scheduleId,
+            { serviceId, positionSlotKey: cellKey },
+          ),
+        );
+        const affectedCell = [{ occurrenceId: serviceId, cellKey }];
+        publishScheduleCellResponses(response.schedule, "assignments", affectedCell);
+        publishScheduleCellResponses(response.schedule, "microphoneAssignments", affectedCell);
+        publishScheduleCellResponses(response.schedule, "iemAssignments", affectedCell);
+        showToast("Position removed from this service.", "success");
+      } catch (error) {
+        const toastId = showToast({
+          message: "Couldn't remove this position yet. Your change stays visible while you retry.",
+          variant: "error",
+          persist: true,
+          children: (
+            <div className="mt-2 flex justify-center">
+              <Button variant="primary" className="text-sm" onClick={() => {
+                removeToast(toastId);
+                void saveRemoval();
+              }}>Retry save</Button>
+            </div>
+          ),
+        });
       }
-      showToast("Position removed from this service.", "success");
-    } catch (error) {
-      if (scheduleMutationSeqRef.current === mutationSeq) {
-        latestScheduleRef.current = previousSchedule;
-        onScheduleSaved(previousSchedule);
-      }
-      showApiErrorToast(showToast, error, "Could not remove this position.");
-    }
+    };
+    await saveRemoval();
   }, [
     churchId,
     enqueueAssignmentSave,
     ensureActiveSchedule,
-    onScheduleSaved,
     pendingAdditionalPositionRemoval,
+    publishScheduleCellResponses,
+    publishScheduleSnapshot,
+    removeToast,
     selectedSchedule,
     showToast,
   ]);
@@ -5156,9 +5911,6 @@ const ScheduleTab = ({
           : undefined,
         microphonesLoading: microphoneCatalogStatus === "loading",
         microphonesUnavailable: microphoneCatalogStatus === "error",
-        savingMicrophone:
-          savingMicrophoneSlot ===
-          `${selectedSchedule?.scheduleId}:${occurrence.occurrenceId}:${column.columnKey}`,
         onMicrophoneChange: selectedTeam?.usesMicrophoneAssignments
           ? (microphoneIds: string[]) => {
             void saveMicrophoneAssignment(
@@ -5174,7 +5926,6 @@ const ScheduleTab = ({
         iemHoldersByIem: selectedTeam?.usesIemAssignments
           ? iemHoldersByOccurrence.get(occurrence.occurrenceId)
           : undefined,
-        savingIem: savingIemSlot === `${selectedSchedule?.scheduleId}:${occurrence.occurrenceId}:${column.columnKey}`,
         onIemChange: selectedTeam?.usesIemAssignments
           ? (iemIds: string[]) => { void saveIemAssignment({ occurrenceId: occurrence.occurrenceId, columnKey: column.columnKey }, iemIds); }
           : undefined,
@@ -5198,8 +5949,6 @@ const ScheduleTab = ({
       serviceTimeZone,
       saveMicrophoneAssignment,
       saveIemAssignment,
-      savingMicrophoneSlot,
-      savingIemSlot,
       selectedSchedule,
       selectedTeam?.usesMicrophoneAssignments,
       selectedTeam?.usesIemAssignments,
@@ -5451,11 +6200,9 @@ const ScheduleTab = ({
     </div>
   );
   const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
-    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:") && ensuringScheduleId === selectedSchedule.scheduleId
-      ? "Starting schedule…"
-      : selectedSchedule.scheduleId.startsWith("virtual:")
-        ? "Staffing not started"
-        : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
+    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:")
+      ? "Staffing not started"
+      : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
     }`
     : undefined;
 
@@ -5552,14 +6299,6 @@ const ScheduleTab = ({
             {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
               <p role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
                 More than one saved schedule contains the same service occurrence. The populated schedule remains selected and its data is preserved. Review the listed schedules and resolve the duplicate before adding services.
-              </p>
-            ) : null}
-            {periodReconciliationPending && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
-              <p role="status" className="mt-3 text-sm text-gray-300">Updating this schedule with newly available services…</p>
-            ) : null}
-            {periodReconciliationError?.key === periodReconciliationKey ? (
-              <p role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                {periodReconciliationError.message}
               </p>
             ) : null}
           </section>

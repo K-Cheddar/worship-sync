@@ -49,6 +49,7 @@ import type {
   TeamsBootstrap,
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
+import { applyPendingScheduleCellEdits, type PendingScheduleCellEdit } from "./schedule/ScheduleTab";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
 import { buildTeamsRestoreNavigationState } from "./teamsReturnNavigation";
 import { calendarMonthRange, shiftRange } from "./rangeSelection";
@@ -558,6 +559,33 @@ const openVocalSlot = async (
 };
 
 describe("Teams", () => {
+  it("overlays pending local schedule cells on incoming snapshots and keeps unrelated remote cells", () => {
+    const incoming: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      microphoneAssignments: {
+        [sundayOccurrenceId]: {
+          "position-keys::0": ["mic-old"],
+          "position-vocal::0": ["mic-from-other-device"],
+        },
+      },
+    };
+    const pending: PendingScheduleCellEdit = {
+      churchId: "church-1",
+      scheduleId: "schedule-july",
+      field: "microphoneAssignments",
+      occurrenceId: sundayOccurrenceId,
+      cellKey: "position-keys::0",
+      value: ["mic-latest-local"],
+      sequence: 2,
+    };
+
+    const merged = applyPendingScheduleCellEdits(incoming, [pending]);
+    expect(merged.microphoneAssignments?.[sundayOccurrenceId]).toEqual({
+      "position-keys::0": ["mic-latest-local"],
+      "position-vocal::0": ["mic-from-other-device"],
+    });
+  });
+
   // Coverage + suite load makes lazy routes and schedule grids slower than the
   // default 5s Jest budget; keep headroom without masking real hangs.
   jest.setTimeout(30_000);
@@ -1204,7 +1232,7 @@ describe("Teams", () => {
     );
   });
 
-  it("drops a pending virtual-period assignment after the operator changes periods", async () => {
+  it("keeps a pending virtual-period assignment visible and saves it after switching periods", async () => {
     const user = userEvent.setup();
     const serviceId = "service-next-period";
     const positionId = "position-vocal";
@@ -1266,6 +1294,21 @@ describe("Teams", () => {
       }
       return { success: true, created: true, schedule };
     });
+    let persistedFirstSchedule: TeamSchedule | null = null;
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      const assignments = { ...(persistedFirstSchedule?.assignments || {}) };
+      const row = { ...(assignments[body.serviceId] || {}) };
+      if (body.memberId) row[body.positionSlotKey] = { primaryMemberId: body.memberId };
+      else delete row[body.positionSlotKey];
+      if (Object.keys(row).length) assignments[body.serviceId] = row;
+      else delete assignments[body.serviceId];
+      persistedFirstSchedule = {
+        ...(persistedFirstSchedule || makeEnsuredSchedule(mockEnsureTeamScheduleForPeriod.mock.calls[0][1])),
+        scheduleId,
+        assignments,
+      };
+      return { success: true, schedule: persistedFirstSchedule };
+    });
     mockAddTeamSchedulePositionSlot.mockImplementation(async (_churchId, scheduleId, body) => ({
       success: true,
       schedule: {
@@ -1293,6 +1336,11 @@ describe("Teams", () => {
     await screen.findByRole("combobox", { name: /Vocal/i });
     await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
     await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
+    expect(screen.getAllByRole("button", { name: /Morgan/ }).length).toBeGreaterThan(0);
+    const secondVirtualSlot = (await screen.findAllByRole("button", { name: /Vocal, Empty/i }))[0];
+    await user.click(secondVirtualSlot);
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Next period" }));
     const nextPeriodCell = await screen.findByRole("group", { name: "Team schedule identity" });
@@ -1305,7 +1353,13 @@ describe("Teams", () => {
         schedule: makeEnsuredSchedule(mockEnsureTeamScheduleForPeriod.mock.calls[0][1]),
       });
     });
-    expect(mockUpdateTeamScheduleAssignment).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[0][1]).toBe(
+      `generated-period-${firstFuturePeriod.start}`,
+    );
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[1][1]).toBe(
+      `generated-period-${firstFuturePeriod.start}`,
+    );
 
     const addPositionButtons = await screen.findAllByRole("button", { name: "Add position" });
     await user.click(addPositionButtons[0]);
@@ -1622,6 +1676,7 @@ describe("Teams", () => {
   it("auto-reuses the populated five-row schedule and persists its two new relevant occurrences", async () => {
     jest.useFakeTimers({ advanceTimers: true });
     jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     setServerTimeOffset(36 * 60 * 60 * 1000);
     const serviceId = "sabbath-service";
     const cameraId = "position-camera";
@@ -1673,16 +1728,27 @@ describe("Teams", () => {
       members: [{ memberId, churchId: "church-1", firstName: "Morgan", lastName: "Lee", positionIds: [cameraId], blockoutDates: [], notes: "" }],
       schedules: [savedSchedule],
     }));
+    let reconciledSchedule: TeamSchedule | null = null;
     mockEnsureTeamScheduleForPeriod.mockImplementation(async (_churchId, body) => {
       const additional = (body.occurrences || []).filter((item) =>
         item.serviceId === "media-special-a" || item.serviceId === "media-special-b",
       );
-      const schedule: TeamSchedule = {
+      reconciledSchedule = {
         ...savedSchedule,
         serviceIds: body.serviceIds,
         occurrences: [...savedOccurrences, ...additional].sort((left, right) => left.startsAt.localeCompare(right.startsAt)),
       };
-      return { success: true, created: false, updated: true, schedule };
+      return { success: true, created: false, updated: true, schedule: reconciledSchedule };
+    });
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      const assignments = { ...(reconciledSchedule?.assignments || {}) };
+      const row = { ...(assignments[body.serviceId] || {}) };
+      if (body.memberId) row[body.positionSlotKey] = { primaryMemberId: body.memberId };
+      else delete row[body.positionSlotKey];
+      if (Object.keys(row).length) assignments[body.serviceId] = row;
+      else delete assignments[body.serviceId];
+      reconciledSchedule = { ...reconciledSchedule!, scheduleId, assignments };
+      return { success: true, schedule: reconciledSchedule };
     });
 
     renderTeams();
@@ -1706,6 +1772,65 @@ describe("Teams", () => {
     expect(screen.getAllByRole("button", { name: /Camera, (?:Morgan|Empty)/i })).toHaveLength(7);
     expect(screen.getByRole("button", { name: /Media Special 1 Camera, Empty/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Media Special 2 Camera, Empty/i })).toBeInTheDocument();
+
+    const openCameraSlots = await screen.findAllByRole("button", { name: /Sabbath Service Camera, Empty/i });
+    await user.click(openCameraSlots[0]);
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    const anotherOpenCameraSlot = (await screen.findAllByRole("button", { name: /Sabbath Service Camera, Empty/i }))[0];
+    await user.click(anotherOpenCameraSlot);
+    await user.click(await screen.findByRole("button", { name: "Assign Morgan" }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not announce a no-op schedule reconciliation", async () => {
+    jest.useFakeTimers({ advanceTimers: true });
+    jest.setSystemTime(new Date("2026-10-02T12:00:00.000Z"));
+    setServerTimeOffset(36 * 60 * 60 * 1000);
+    const serviceId = "sabbath-service-noop";
+    const positionId = "position-camera-noop";
+    const savedOccurrences = octoberServiceOccurrences(serviceId, "Sabbath Service", positionId, [3, 10, 17, 24, 31]);
+    mockState = {
+      undoable: { present: { serviceTimes: { list: [
+        {
+          ...mockSharedServices[0], id: serviceId, serviceId, name: "Sabbath Service",
+          reccurence: "weekly", dayOfWeek: 6, time: "10:00",
+          positionRequirements: [{ positionId, count: 1 }],
+        },
+      ] } } },
+    };
+    const savedSchedule: TeamSchedule = {
+      scheduleId: "custom-saved-noop-october",
+      churchId: "church-1",
+      name: "October 2026",
+      teamId: "team-main",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      serviceIds: [serviceId],
+      occurrences: savedOccurrences,
+      assignments: {},
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...baseBootstrap,
+      teams: [{ ...baseBootstrap.teams[0], memberIds: [] }],
+      positions: [{ positionId, churchId: "church-1", teamId: "team-main", name: "Camera" }],
+      members: [],
+      schedules: [savedSchedule],
+    }));
+    mockEnsureTeamScheduleForPeriod.mockImplementation(async () => ({
+      success: true,
+      created: false,
+      updated: false,
+      schedule: savedSchedule,
+    }));
+
+    renderTeams();
+    await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i });
+    await waitFor(() => expect(mockEnsureTeamScheduleForPeriod).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: /Sabbath Service on Oct 10/i })).toBeInTheDocument();
+    expect(screen.queryByText(/services? added to October/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Updating this schedule with newly available services/i)).not.toBeInTheDocument();
   });
 
   it("keeps the newly selected period active when saved-period reconciliation finishes late", async () => {
@@ -2024,6 +2149,92 @@ describe("Teams", () => {
     });
   });
 
+  it.each(["microphone", "IEM"] as const)("keeps the latest rapid %s choice while the first save is pending", async (equipmentType) => {
+    const user = userEvent.setup();
+    const isMicrophone = equipmentType === "microphone";
+    const equipmentSchedule: TeamSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      microphoneAssignments: {},
+      iemAssignments: {},
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      teams: scheduleBootstrap.teams.map((team) => ({
+        ...team,
+        usesMicrophoneAssignments: isMicrophone,
+        usesIemAssignments: !isMicrophone,
+      })),
+      schedules: [equipmentSchedule],
+    }));
+    mockGetServicePlanMicrophones.mockResolvedValue({
+      success: true,
+      microphones: [
+        { id: "mic-one", name: "Wireless One", type: "Handheld", color: "#22d3ee" },
+        { id: "mic-two", name: "Wireless Two", type: "Handheld", color: "#f59e0b" },
+      ],
+      audiences: [],
+    });
+    mockGetServiceEquipment.mockResolvedValue({
+      success: true,
+      equipment: [
+        { id: "iem-one", category: "iem", name: "IEM One", subtype: "wireless-beltpack" },
+        { id: "iem-two", category: "iem", name: "IEM Two", subtype: "wireless-beltpack" },
+      ],
+    });
+    const firstResponse: TeamSchedule = {
+      ...equipmentSchedule,
+      ...(isMicrophone
+        ? { microphoneAssignments: { [sundayOccurrenceId]: { "position-keys::0": ["mic-one"] } } }
+        : { iemAssignments: { [sundayOccurrenceId]: { "position-keys::0": ["iem-one"] } } }),
+    };
+    const latestResponse: TeamSchedule = {
+      ...equipmentSchedule,
+      ...(isMicrophone
+        ? { microphoneAssignments: { [sundayOccurrenceId]: { "position-keys::0": ["mic-two"] } } }
+        : { iemAssignments: { [sundayOccurrenceId]: { "position-keys::0": ["iem-two"] } } }),
+    };
+    let resolveFirstMicrophone!: (response: UpdateTeamScheduleAssignmentMicrophonesResponse) => void;
+    let resolveSecondMicrophone!: (response: UpdateTeamScheduleAssignmentMicrophonesResponse) => void;
+    let resolveFirstIem!: (response: UpdateTeamScheduleAssignmentIemsResponse) => void;
+    let resolveSecondIem!: (response: UpdateTeamScheduleAssignmentIemsResponse) => void;
+    if (isMicrophone) {
+      mockUpdateTeamScheduleAssignmentMicrophones
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstMicrophone = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondMicrophone = resolve; }));
+    } else {
+      mockUpdateTeamScheduleAssignmentIems
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstIem = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondIem = resolve; }));
+    }
+
+    renderTeams();
+    await waitForScheduleGrid();
+    const label = isMicrophone ? /Microphone for Avery \(Keys\)$/i : /Microphone for Avery \(Keys\) IEM$/i;
+    const selector = await screen.findByRole("combobox", { name: label });
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: isMicrophone ? "Wireless One" : /IEM One/ }));
+    await waitFor(() => expect(isMicrophone ? mockUpdateTeamScheduleAssignmentMicrophones : mockUpdateTeamScheduleAssignmentIems).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: isMicrophone ? "Wireless Two" : /IEM Two/ }));
+    expect(screen.getByRole("combobox", { name: label })).toHaveTextContent(isMicrophone ? "Wireless Two" : "IEM Two");
+    expect(isMicrophone ? mockUpdateTeamScheduleAssignmentMicrophones : mockUpdateTeamScheduleAssignmentIems).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      const response = { success: true, schedule: firstResponse };
+      if (isMicrophone) resolveFirstMicrophone(response);
+      else resolveFirstIem(response);
+    });
+    await waitFor(() => expect(isMicrophone ? mockUpdateTeamScheduleAssignmentMicrophones : mockUpdateTeamScheduleAssignmentIems).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("combobox", { name: label })).toHaveTextContent(isMicrophone ? "Wireless Two" : "IEM Two");
+    await act(async () => {
+      const response = { success: true, schedule: latestResponse };
+      if (isMicrophone) resolveSecondMicrophone(response);
+      else resolveSecondIem(response);
+    });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: label })).toHaveTextContent(isMicrophone ? "Wireless Two" : "IEM Two"));
+  });
+
   it("queues microphone assignment after a newly added schedule slot is saved", async () => {
     const user = userEvent.setup();
     const microphoneSchedule: TeamSchedule = {
@@ -2112,7 +2323,7 @@ describe("Teams", () => {
     ));
   });
 
-  it("keeps a newer microphone choice when an earlier save responds", async () => {
+  it("keeps independent microphone edits when responses arrive out of order", async () => {
     const user = userEvent.setup();
     const microphoneSchedule: TeamSchedule = {
       ...scheduleBootstrap.schedules[0],
@@ -2194,11 +2405,11 @@ describe("Teams", () => {
     await user.click(vocalMicrophone);
     await user.click(await screen.findByRole("option", { name: /^Lead vocal$/i }));
 
-    await act(async () => {
-      resolveFirstSave({ success: true, schedule: afterKeysCleared });
-    });
     await waitFor(() => {
       expect(mockUpdateTeamScheduleAssignmentMicrophones).toHaveBeenCalledTimes(2);
+    });
+    await act(async () => {
+      resolveSecondSave({ success: true, schedule: afterVocalChanged });
     });
     expect(
       screen.getByRole("combobox", {
@@ -2207,8 +2418,10 @@ describe("Teams", () => {
     ).toHaveTextContent("Lead vocal");
 
     await act(async () => {
-      resolveSecondSave({ success: true, schedule: afterVocalChanged });
+      resolveFirstSave({ success: true, schedule: afterKeysCleared });
     });
+    expect(screen.getByRole("combobox", { name: /Microphone for Empty \(Vocal\)/i })).toHaveTextContent("Lead vocal");
+    expect(screen.getByRole("combobox", { name: /Microphone for Avery \(Keys\)/i })).toHaveTextContent("No microphone");
   });
 
   it("keeps a cleared microphone cleared after a bootstrap summary refresh", async () => {
@@ -2677,7 +2890,7 @@ describe("Teams", () => {
     expect(await screen.findByText(/Auto-filled 2 of 2 open slots/i)).toBeInTheDocument();
   });
 
-  it("clears just-filled highlights when auto-fill save fails", async () => {
+  it("keeps auto-fill choices for retry and clears highlights when saving fails", async () => {
     const user = userEvent.setup();
     const autoFillSchedule: TeamSchedule = {
       ...scheduleBootstrap.schedules[0],
@@ -2721,14 +2934,15 @@ describe("Teams", () => {
     await user.click(await screen.findByRole("button", { name: /^Continue$/i }));
 
     expect(
-      await screen.findByText(/Save failed/i, {}, { timeout: 4000 }),
+      await screen.findByText(/Your picks are still here/i, {}, { timeout: 4000 }),
     ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Retry save/i })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Sunday Vocal, Empty/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Sunday Vocal, Empty/i }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Sunday Keys, Empty/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Sunday Keys, Empty/i }),
+    ).not.toBeInTheDocument();
     // outline-cyan-300/40 is only applied while justFilled is true.
     const justFilledCells = screen
       .getAllByRole("cell")
@@ -3333,12 +3547,145 @@ describe("Teams", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the latest member choice visible while assignment saves are pending", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }],
+      members: scheduleBootstrap.members.map((member) => ({
+        ...member,
+        blockoutDates: [],
+      })),
+    }));
+    let resolveFirst!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+    let resolveSecond!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+    mockUpdateTeamScheduleAssignment
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+
+    renderTeams();
+    await openVocalSlot(user);
+    await user.click(await screen.findByRole("button", { name: /Assign Avery/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Avery/i })).toBeInTheDocument();
+
+    await openVocalSlot(user, /Sunday Vocal, Avery/i);
+    const morganOption = await screen.findByRole("option", { name: /Morgan/i });
+    await user.click(morganOption);
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst({
+        success: true,
+        schedule: {
+          ...scheduleBootstrap.schedules[0],
+          assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+        },
+      });
+    });
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+    await act(async () => {
+      resolveSecond({
+        success: true,
+        schedule: {
+          ...scheduleBootstrap.schedules[0],
+          assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-morgan" } } },
+        },
+      });
+    });
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+  });
+
+  it("keeps two independent slot edits visible through delayed assignment responses", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }],
+      members: scheduleBootstrap.members.map((member) => ({ ...member, blockoutDates: [] })),
+    }));
+    let resolveFirst!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+    let resolveSecond!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+    mockUpdateTeamScheduleAssignment
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+
+    renderTeams();
+    await openVocalSlot(user);
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /Sunday Keys, Empty/i }));
+    await user.click(await screen.findByRole("button", { name: /Assign Avery/i }));
+    expect(await screen.findByRole("button", { name: /Sunday Keys, Avery/i })).toBeInTheDocument();
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst({
+        success: true,
+        schedule: {
+          ...scheduleBootstrap.schedules[0],
+          assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-morgan" } } },
+        },
+      });
+    });
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sunday Keys, Avery/i })).toBeInTheDocument();
+    await act(async () => {
+      resolveSecond({
+        success: true,
+        schedule: {
+          ...scheduleBootstrap.schedules[0],
+          assignments: { [sundayOccurrenceId]: {
+            "position-vocal::0": { primaryMemberId: "member-morgan" },
+            "position-keys::0": { primaryMemberId: "member-avery" },
+          } },
+        },
+      });
+    });
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Sunday Keys, Avery/i })).toBeInTheDocument();
+  });
+
+  it("keeps a failed assignment visible and retries only that edit", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      schedules: [{ ...scheduleBootstrap.schedules[0], assignments: {} }],
+      members: scheduleBootstrap.members.map((member) => ({ ...member, blockoutDates: [] })),
+    }));
+    const savedSchedule = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-morgan" } } },
+    };
+    mockUpdateTeamScheduleAssignment
+      .mockRejectedValueOnce(new Error("Network unavailable"))
+      .mockResolvedValueOnce({ success: true, schedule: savedSchedule });
+
+    renderTeams();
+    await openVocalSlot(user);
+    await user.click(await screen.findByRole("button", { name: /Assign Morgan/i }));
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+    expect(await screen.findByText(/Your choice is still here/i)).toBeInTheDocument();
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /Retry save/i }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: /Sunday Vocal, Morgan/i })).toBeInTheDocument();
+  });
+
   it("keeps an undo entry after conflict cancellation and retries the whole move atomically", async () => {
     const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse(scheduleBootstrap));
     mockUpdateTeamScheduleAssignment.mockResolvedValue({
       success: true,
-      schedule: scheduleBootstrap.schedules[0],
+      schedule: {
+        ...scheduleBootstrap.schedules[0],
+        assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+      },
     } satisfies UpdateTeamScheduleAssignmentResponse);
     mockUpdateTeamScheduleAssignmentsBatch.mockRejectedValueOnce(
       Object.assign(new Error("Schedule conflict"), {
@@ -3383,7 +3730,10 @@ describe("Teams", () => {
     mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse(scheduleBootstrap));
     mockUpdateTeamScheduleAssignment.mockResolvedValue({
       success: true,
-      schedule: scheduleBootstrap.schedules[0],
+      schedule: {
+        ...scheduleBootstrap.schedules[0],
+        assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+      },
     } satisfies UpdateTeamScheduleAssignmentResponse);
     mockUpdateTeamScheduleAssignmentsBatch.mockRejectedValueOnce(
       Object.assign(new Error("Schedule conflict"), {
@@ -3427,7 +3777,10 @@ describe("Teams", () => {
     mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse(scheduleBootstrap));
     mockUpdateTeamScheduleAssignment.mockResolvedValue({
       success: true,
-      schedule: scheduleBootstrap.schedules[0],
+      schedule: {
+        ...scheduleBootstrap.schedules[0],
+        assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+      },
     } satisfies UpdateTeamScheduleAssignmentResponse);
     mockUpdateTeamScheduleAssignmentsBatch.mockImplementationOnce(async (_churchId, _scheduleId, body) => ({
       success: true,
