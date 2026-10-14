@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Menu as MenuIcon } from "lucide-react";
+import { CircleAlert, Menu as MenuIcon } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import {
   Sheet,
@@ -9,14 +9,18 @@ import {
 } from "../../../components/ui/sheet";
 import type { MenuItemType } from "../../../types";
 import TeamsSidebarNav from "./TeamsSidebarNav";
+import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { homeNavSection } from "../teamsNavSections";
 
 type TeamsMobileNavigationProps = {
   menuItems: MenuItemType[];
+  updateReady?: boolean;
 };
 
 /** Combines app-level actions and Teams and Services sections into one drawer. */
-const TeamsMobileNavigation = ({ menuItems }: TeamsMobileNavigationProps) => {
+const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNavigationProps) => {
   const [open, setOpen] = useState(false);
+  const { requestNavigation } = useTeamsNavigationGuard();
   const closeMenu = () => setOpen(false);
 
   return (
@@ -32,6 +36,7 @@ const TeamsMobileNavigation = ({ menuItems }: TeamsMobileNavigationProps) => {
         onClick={() => setOpen(true)}
       >
         Menu
+        {updateReady ? <CircleAlert className="size-4 text-amber-400" aria-label="Update available" /> : null}
       </Button>
       <SheetContent
         side="left"
@@ -45,6 +50,7 @@ const TeamsMobileNavigation = ({ menuItems }: TeamsMobileNavigationProps) => {
           <div className="flex flex-col gap-1">
             {menuItems.map((item, index) => {
               const content = item.element || item.text;
+              const destination = item.to === "/" ? homeNavSection.path : item.to;
 
               if (item.preventClose) {
                 return (
@@ -66,8 +72,14 @@ const TeamsMobileNavigation = ({ menuItems }: TeamsMobileNavigationProps) => {
                   variant="tertiary"
                   className="w-full justify-start rounded-lg px-2 py-1.5 text-sm text-gray-200 hover:bg-gray-800 hover:text-white max-md:min-h-10 max-md:[&>div]:min-h-0"
                   component={item.to ? "link" : "button"}
-                  to={item.to}
-                  onClick={() => {
+                  to={destination}
+                  onClick={(event) => {
+                    if (destination) {
+                      if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
+                      event.preventDefault();
+                      requestNavigation(destination, { onNavigated: closeMenu });
+                      return;
+                    }
                     item.onClick?.();
                     closeMenu();
                   }}

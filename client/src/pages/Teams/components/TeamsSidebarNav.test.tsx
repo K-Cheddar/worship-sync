@@ -66,13 +66,15 @@ describe("TeamsSidebarNav", () => {
     expect(screen.queryByText(/^Schedules$/i)).not.toBeInTheDocument();
   });
 
-  it("shows both navigation groups in the collapsed icon rail", () => {
+  it("shows all three application groups in the collapsed icon rail", () => {
     renderSidebar("/teams-and-services/schedules", true);
 
     expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Teams$/i })).toBeInTheDocument();
     expect(screen.queryByText(/^Services$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Teams$/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Home" })).not.toBeInTheDocument();
   });
 
   it("calls onNavigate for section links", async () => {

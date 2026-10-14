@@ -5,6 +5,7 @@ import {
   ClipboardList,
   ContactRound,
   GraduationCap,
+  Home,
   LayoutTemplate,
   Mic2,
   MessageSquareText,
@@ -200,3 +201,31 @@ export const getActiveTeamsNavSection = (pathname: string) =>
  * domain). */
 export const getActiveDomain = (pathname: string): TeamsNavDomain =>
   getActiveTeamsNavSection(pathname)?.domain || "teams";
+
+export const homeNavSection: TeamsNavSection = {
+  path: "/home",
+  routePath: "home",
+  label: "Home",
+  description: "Open Home.",
+  icon: Home,
+  domain: "teams",
+};
+
+/** Presentation groups do not change the existing permission domains. */
+export const teamsNavGroups = [
+  { label: "Services", icon: CalendarRange, routes: ["services", "templates", "microphones", "service-setup"] },
+  { label: "Scheduling", icon: CalendarDays, routes: ["schedules", "forms", "messages"] },
+  { label: "Teams", icon: Users, routes: ["groups", "members", "positions", "roles", "qualifications"] },
+];
+
+export const matchesTeamsNavPath = (pathname: string, path: string) =>
+  pathname === path || pathname.startsWith(`${path}/`);
+
+export const getAvailableTeamsNavGroups = (availableSections: TeamsNavSection[]) =>
+  teamsNavGroups.map((group) => ({
+    ...group,
+    sections: group.routes.flatMap((route) => {
+      const section = availableSections.find((item) => item.routePath === route);
+      return section ? [section] : [];
+    }),
+  })).filter((group) => group.sections.length > 0);

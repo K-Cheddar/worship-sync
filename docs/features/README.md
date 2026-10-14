@@ -15,6 +15,8 @@ Keep these kinds of statements visibly separate:
 
 Do not mark agent-authored prose as confirmed merely because it is in this repository. Likewise, tests describe and enforce code expectations; they do not by themselves establish product approval. If a change to confirmed behavior is approved, update the contract and the regression tests that protect it in the same work.
 
+The [Teams and Services navigation contract](responsive-navigation.md) records the confirmed responsive shell organization and scope.
+
 ## Feature inventory
 
 Only workflows specifically labeled as confirmed contracts are documented as owner-confirmed. All other registry workflows are **inventory only**: their broad labels are observed from current product surfaces and need product-owner validation before being treated as behavioral contracts. Implementation references help locate features; they are not requirements.

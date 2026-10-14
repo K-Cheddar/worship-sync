@@ -107,12 +107,12 @@ jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => (
 jest.mock("../../components/HomeToolbarMenu/HomeToolbarMenu", () => {
   const react = jest.requireActual("react") as typeof import("react");
   return ({
-    mobileMenuRenderer,
+    menuRenderer,
   }: {
-    mobileMenuRenderer?: (menuItems: import("../../types").MenuItemType[]) => import("react").ReactNode;
+    menuRenderer?: (menuItems: import("../../types").MenuItemType[]) => import("react").ReactNode;
   }) =>
-    window.matchMedia("(max-width: 640px)").matches && mobileMenuRenderer
-      ? mobileMenuRenderer([])
+    window.matchMedia("(max-width: 640px)").matches && menuRenderer
+      ? menuRenderer([])
       : react.createElement("button", { type: "button" }, "Menu");
 });
 
@@ -474,6 +474,9 @@ const waitForTeamsBootstrap = async () => {
   await screen.findByRole("heading", { name: /^Schedules$/i }, { timeout: 8000 });
 };
 
+const sectionNavigation = (hidden = false) =>
+  within(screen.getByRole("navigation", { name: "Teams and Services sections", hidden }));
+
 const openTeamsNavigationIfNeeded = async (
   user: ReturnType<typeof userEvent.setup>,
 ) => {
@@ -643,15 +646,15 @@ describe("Teams", () => {
 
     await waitForTeamsBootstrap();
     await openTeamsNavigationIfNeeded(user);
-    expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: /^Services$/i })).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Equipment$/i }),
+      sectionNavigation().getByRole("link", { name: /^Equipment$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /^Services$/i }),
+      sectionNavigation().getByRole("link", { name: /^Services$/i }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: /^Equipment$/i }));
+    await user.click(sectionNavigation().getByRole("link", { name: /^Equipment$/i }));
     expect(
       await screen.findByRole(
         "button",
@@ -662,8 +665,8 @@ describe("Teams", () => {
     expect(mockGetServicePlanMicrophones).toHaveBeenCalledWith("church-1");
 
     await openTeamsNavigationIfNeeded(user);
-    expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: /^Schedules$/i }));
+    expect(sectionNavigation().getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+    await user.click(sectionNavigation().getByRole("link", { name: /^Schedules$/i }));
     await waitForTeamsBootstrap();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
   });
@@ -683,14 +686,14 @@ describe("Teams", () => {
     expect(screen.queryByText(/Could not load the church time zone/i)).not.toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Services$/i }));
+    await user.click(sectionNavigation().getByRole("link", { name: /^Services$/i }));
     expect(await screen.findByRole("heading", { name: "Saved plans" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/date-based Service Plans actions are unavailable/i);
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(mockChurchServiceTimeZone.refresh).toHaveBeenCalledTimes(1);
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Members$/i }));
+    await user.click(sectionNavigation().getByRole("link", { name: /^Members$/i }));
     expect(
       await screen.findAllByRole("button", { name: /Create member/i }),
     ).not.toHaveLength(0);
@@ -702,14 +705,20 @@ describe("Teams", () => {
     expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
 
     lazyRouteTestControl.delayNextImport = true;
-    await user.click(screen.getByRole("link", { name: "Qualifications" }));
+    await user.click(sectionNavigation().getByRole("link", { name: "Qualifications" }));
 
     expect(window.location.hash).toBe("#/teams-and-services/qualifications");
     expect(document.title).toBe("Qualifications | WorshipSync");
-    expect(screen.getByRole("link", { name: "Qualifications" })).toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: "Qualifications" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(sectionNavigation().getByRole("link", { name: "Qualifications" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    const pendingQualificationsLink = sectionNavigation().getByRole("link", { name: "Qualifications" });
+    expect(within(pendingQualificationsLink).getByTestId("teams-navigation-loading-indicator")).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: /Qualifications/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole("status", { name: "Loading qualifications" })).toBeInTheDocument();
     expect(lazyRouteTestControl.delayedImports).toHaveLength(1);
@@ -719,10 +728,14 @@ describe("Teams", () => {
 
     expect(await screen.findByRole("button", { name: /Create area/i })).toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "Loading qualifications" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Qualifications" })).toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: "Qualifications" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(sectionNavigation().getByRole("link", { name: "Qualifications" })).not.toHaveAttribute(
+      "aria-busy",
+    );
+    expect(within(sectionNavigation().getByRole("link", { name: "Qualifications" })).queryByTestId("teams-navigation-loading-indicator")).not.toBeInTheDocument();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
   });
 
@@ -732,13 +745,15 @@ describe("Teams", () => {
     expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
 
     lazyRouteTestControl.delayNextImport = true;
-    await user.click(screen.getByRole("link", { name: "Templates" }));
+    await user.click(sectionNavigation().getByRole("link", { name: "Templates" }));
+    expect(window.location.hash).toBe("#/teams-and-services/templates");
     expect(lazyRouteTestControl.delayedImports).toHaveLength(1);
     expect(screen.getByRole("status", { name: "Loading templates" })).toBeInTheDocument();
 
     lazyRouteTestControl.delayNextImport = true;
-    await user.click(screen.getByRole("link", { name: "Team roles" }));
-    expect(screen.getByRole("link", { name: "Team roles" })).toHaveAttribute(
+    await user.click(sectionNavigation().getByRole("link", { name: "Team roles" }));
+    expect(window.location.hash).toBe("#/teams-and-services/roles");
+    expect(sectionNavigation().getByRole("link", { name: "Team roles" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -746,13 +761,14 @@ describe("Teams", () => {
     expect(lazyRouteTestControl.delayedImports).toHaveLength(2);
 
     await act(async () => lazyRouteTestControl.delayedImports[0]());
+    expect(window.location.hash).toBe("#/teams-and-services/roles");
     expect(screen.getByRole("status", { name: "Loading team roles" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Create role/i })).not.toBeInTheDocument();
 
     await act(async () => lazyRouteTestControl.delayedImports[1]());
     expect((await screen.findAllByRole("button", { name: /Create role/i })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("status", { name: "Loading team roles" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Team roles" })).toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: "Team roles" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -765,7 +781,7 @@ describe("Teams", () => {
     expect((await screen.findAllByRole("button", { name: /Create member/i })).length).toBeGreaterThan(0);
 
     lazyRouteTestControl.delayNextImport = true;
-    await user.click(screen.getByRole("link", { name: "Teams" }));
+    await user.click(sectionNavigation().getByRole("link", { name: "Teams" }));
     expect(screen.getByRole("status", { name: "Loading teams" })).toBeInTheDocument();
 
     await act(async () => {
@@ -776,10 +792,11 @@ describe("Teams", () => {
     });
 
     expect(window.location.hash).toBe("#/teams-and-services/members");
-    expect(screen.getByRole("link", { name: "Members" })).toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: "Members" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(within(screen.getByRole("navigation", { name: "Teams pages" })).getByRole("tab", { name: "Members" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("status", { name: "Loading teams" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Create member/i }).length).toBeGreaterThan(0);
 
@@ -787,6 +804,16 @@ describe("Teams", () => {
     expect(screen.getAllByRole("button", { name: /Create member/i }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /Create team/i })).not.toBeInTheDocument();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.forward();
+      });
+    });
+    expect(window.location.hash).toBe("#/teams-and-services/groups");
+    expect(within(screen.getByRole("navigation", { name: "Primary navigation" })).getByRole("link", { name: "Teams" })).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByRole("navigation", { name: "Teams pages" })).getByRole("tab", { name: "Teams" })).toHaveAttribute("aria-selected", "true");
+    expect((await screen.findAllByRole("button", { name: /Create team/i })).length).toBeGreaterThan(0);
   });
 
   it("shows the pending destination in mobile navigation and closes its drawer", async () => {
@@ -802,6 +829,8 @@ describe("Teams", () => {
 
     expect(window.location.hash).toBe("#/teams-and-services/messages");
     expect(screen.queryByRole("dialog", { name: "Menu" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Primary navigation" })).getByRole("link", { name: "Scheduling" })).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByRole("navigation", { name: "Scheduling pages" })).getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByRole("heading", { name: /Messages/ }).length).toBeGreaterThan(0);
     expect(screen.getByRole("status", { name: "Loading messages" })).toBeInTheDocument();
 
@@ -816,6 +845,7 @@ describe("Teams", () => {
 
     render(
       <MemoryRouter>
+        <TeamsLocationProbe />
         <GlobalInfoContext.Provider
           value={createMockGlobalContext() as ContextType<typeof GlobalInfoContext>}
         >
@@ -844,6 +874,11 @@ describe("Teams", () => {
 
     await user.click(within(drawer).getByRole("button", { name: /^Changelog$/i }));
     expect(onChangelog).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: /^Menu$/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Open menu/i }));
+    await user.click(within(screen.getByRole("dialog", { name: /^Menu$/i })).getByRole("link", { name: /^Home$/i }));
+    expect(screen.getByTestId("teams-location")).toHaveTextContent('"pathname":"/home"');
     expect(screen.queryByRole("dialog", { name: /^Menu$/i })).not.toBeInTheDocument();
   });
 
@@ -912,11 +947,11 @@ describe("Teams", () => {
       );
       await openTeamsNavigationIfNeeded(user);
 
-      await user.click(screen.getByRole("link", { name: /^Services$/i }));
+      await user.click(sectionNavigation().getByRole("link", { name: /^Services$/i }));
       expect(
         await screen.findByRole("dialog", { name: /Unsaved changes/i }),
       ).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /^Equipment$/i, hidden: true })).toHaveAttribute(
+      expect(sectionNavigation(true).getByRole("link", { name: /^Equipment$/i, hidden: true })).toHaveAttribute(
         "aria-current",
         "page",
       );
@@ -929,11 +964,11 @@ describe("Teams", () => {
         ).not.toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole("link", { name: /^Services$/i }));
+      await user.click(sectionNavigation().getByRole("link", { name: /^Services$/i }));
       await user.click(
         await screen.findByRole("button", { name: /Discard changes/i }),
       );
-      expect(screen.getByRole("link", { name: /^Services$/i })).toHaveAttribute(
+      expect(sectionNavigation().getByRole("link", { name: /^Services$/i })).toHaveAttribute(
         "aria-current",
         "page",
       );
@@ -2309,7 +2344,7 @@ describe("Teams", () => {
       }),
     );
 
-    await user.click(screen.getByRole("link", { name: /^Members$/i }));
+    await user.click(sectionNavigation().getByRole("link", { name: /^Members$/i }));
     expect(
       await screen.findByRole("dialog", { name: /Unsaved changes/i }),
     ).toBeInTheDocument();
@@ -2682,21 +2717,21 @@ describe("Teams", () => {
 
     await openTeamsNavigationIfNeeded(user);
 
-    expect(screen.getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: /^Schedules$/i })).toHaveAttribute(
       "href",
       "/teams-and-services/schedules",
     );
-    expect(screen.getByRole("link", { name: /^Forms$/i })).toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: /^Forms$/i })).toHaveAttribute(
       "href",
       "/teams-and-services/forms",
     );
-    expect(screen.getByRole("link", { name: /^Forms$/i })).not.toHaveAttribute(
+    expect(sectionNavigation().getByRole("link", { name: /^Forms$/i })).not.toHaveAttribute(
       "href",
       "/teams/intake",
     );
 
     await openTeamsNavigationIfNeeded(user);
-    const membersLink = screen.getByRole("link", { name: /^Members$/i });
+    const membersLink = sectionNavigation().getByRole("link", { name: /^Members$/i });
     await user.click(membersLink);
     await waitFor(() => {
       expect(membersLink).toHaveAttribute("aria-current", "page");
@@ -2706,7 +2741,7 @@ describe("Teams", () => {
     ).toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
-    const positionsLink = screen.getByRole("link", { name: /^Positions$/i });
+    const positionsLink = sectionNavigation().getByRole("link", { name: /^Positions$/i });
     await user.click(positionsLink);
     await waitFor(() => {
       expect(positionsLink).toHaveAttribute("aria-current", "page");
@@ -2716,7 +2751,7 @@ describe("Teams", () => {
     ).toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
-    const teamsLink = screen.getByRole("link", { name: /^Teams$/i });
+    const teamsLink = sectionNavigation().getByRole("link", { name: /^Teams$/i });
     await user.click(teamsLink);
     await waitFor(() => {
       expect(teamsLink).toHaveAttribute("aria-current", "page");
@@ -2726,7 +2761,7 @@ describe("Teams", () => {
     ).toBeInTheDocument();
 
     await openTeamsNavigationIfNeeded(user);
-    const schedulesLink = screen.getByRole("link", { name: /^Schedules$/i });
+    const schedulesLink = sectionNavigation().getByRole("link", { name: /^Schedules$/i });
     await user.click(schedulesLink);
     await waitFor(() => {
       expect(schedulesLink).toHaveAttribute("aria-current", "page");
@@ -2747,7 +2782,7 @@ describe("Teams", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /This section could not load/i,
     );
-    expect(screen.getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: /^Schedules$/i })).toBeInTheDocument();
 
     consoleErrorSpy.mockRestore();
   });
@@ -2948,7 +2983,7 @@ describe("Teams", () => {
     await user.type(screen.getByLabelText(/^Name/i), " updated");
 
     await openTeamsNavigationIfNeeded(user);
-    await user.click(screen.getByRole("link", { name: /^Members$/i }));
+    await user.click(sectionNavigation().getByRole("link", { name: /^Members$/i }));
     expect(
       await screen.findByRole("dialog", { name: /Unsaved changes/i }),
     ).toBeInTheDocument();
@@ -2958,7 +2993,7 @@ describe("Teams", () => {
       expect(screen.queryByRole("dialog", { name: /Unsaved changes/i })).not.toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("link", { name: /^Members$/i }));
+    await user.click(sectionNavigation().getByRole("link", { name: /^Members$/i }));
     await user.click(await screen.findByRole("button", { name: "Discard changes" }));
     const createMemberButtons = await screen.findAllByRole("button", { name: "Create member" });
     expect(createMemberButtons.some((button) => !button.hasAttribute("disabled"))).toBe(true);
@@ -3822,15 +3857,15 @@ describe("Teams", () => {
     });
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("link", { name: "Members" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Positions" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Team roles" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Qualifications" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Services" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Templates" })).not.toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: "Members" })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: "Positions" })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: "Teams" })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: "Team roles" })).toBeInTheDocument();
+    expect(sectionNavigation().getByRole("link", { name: "Qualifications" })).toBeInTheDocument();
+    expect(sectionNavigation().queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
+    expect(sectionNavigation().queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
+    expect(sectionNavigation().queryByRole("link", { name: "Services" })).not.toBeInTheDocument();
+    expect(sectionNavigation().queryByRole("link", { name: "Templates" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Create schedule/i })).not.toBeInTheDocument();
 
     await screen.findByRole("button", { name: /More schedule options/i });
@@ -3892,7 +3927,7 @@ describe("Teams", () => {
         "/teams-and-services/schedules",
       ),
     );
-    expect(screen.queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
+    expect(sectionNavigation().queryByRole("link", { name: "Forms" })).not.toBeInTheDocument();
   });
 
   it.each(["member", "full"] as const)(
