@@ -1,4 +1,5 @@
 import "./App.css";
+import { isTransparentDisplayRoute } from "./utils/displayRoutes";
 import { HashRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -10,6 +11,7 @@ import store from "./store/store";
 import Login from "./pages/Login";
 import ControllerContextWrapper from "./ControllerContextWrapper";
 import GlobalInfoProvider from "./context/globalInfo";
+import { ChurchServiceTimeZoneProvider } from "./context/churchServiceTimeZone";
 import { ToastProvider } from "./context/toastContext";
 import TimerManager from "./components/TimerManager/TimerManager";
 import RoutePersistence from "./components/RoutePersistence/RoutePersistence";
@@ -168,18 +170,6 @@ const isBootstrapSplashRoute = (pathname: string) => {
   return false;
 };
 
-const isTransparentDisplayRoute = (pathname: string) => {
-  if (pathname === "/projector") return true;
-  if (pathname === "/projector-full") return true;
-  if (pathname === "/monitor") return true;
-  if (pathname === "/stream") return true;
-  if (pathname === "/stream-info") return true;
-  if (pathname === "/credits") return true;
-  if (pathname === "/boards/display") return true;
-  if (pathname.startsWith("/boards/present/")) return true;
-  return false;
-};
-
 const HOMEPAGE_CANVAS_COLOR = "#2b3544";
 
 /** Compat redirect: the admin shell used to live at "/teams" (renamed to
@@ -244,7 +234,7 @@ const RouteChunkSplash = () => (
   </div>
 );
 
-const AppRoutes = () => {
+export const AppRoutes = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
 
@@ -265,6 +255,7 @@ const AppRoutes = () => {
 
   const showBootstrapSplash =
     context?.bootstrapStatus === "loading" &&
+    !isTransparentDisplayRoute(location.pathname) &&
     isBootstrapSplashRoute(location.pathname);
 
   if (showBootstrapSplash) {
@@ -407,7 +398,7 @@ const AppRoutes = () => {
                 path="/teams-and-services/*"
                 element={
                   <AuthGate allowedKinds={["human"]}>
-                    <TeamsAccessGuard>
+                    <TeamsAccessGuard allowMembershipDerivedAccess>
                       <TeamsAndServices />
                     </TeamsAccessGuard>
                   </AuthGate>
@@ -561,27 +552,29 @@ const App: React.FC = () => {
     <Provider store={store}>
       <Router>
         <GlobalInfoProvider>
-          {isElectronCaptureHost ? (
-            <Suspense fallback={null}>
-              <LocalVideoCaptureHost />
-            </Suspense>
-          ) : (
-            <FloatingWindowZIndexProvider>
-              <RehearsalPlaybackProvider>
-                <ToastProvider>
-                  <ChatProvider>
-                    <RoutePersistence />
-                    <DisplayOutputsSync />
-                    <ControllerProfilesSync />
-                    <TimerManager />
-                    <AppRoutes />
-                    <ChatWindowHost />
-                    <RehearsalPlayerHost />
-                  </ChatProvider>
-                </ToastProvider>
-              </RehearsalPlaybackProvider>
-            </FloatingWindowZIndexProvider>
-          )}
+          <ChurchServiceTimeZoneProvider>
+            {isElectronCaptureHost ? (
+              <Suspense fallback={null}>
+                <LocalVideoCaptureHost />
+              </Suspense>
+            ) : (
+              <FloatingWindowZIndexProvider>
+                <RehearsalPlaybackProvider>
+                  <ToastProvider>
+                    <ChatProvider>
+                      <RoutePersistence />
+                      <DisplayOutputsSync />
+                      <ControllerProfilesSync />
+                      <TimerManager />
+                      <AppRoutes />
+                      <ChatWindowHost />
+                      <RehearsalPlayerHost />
+                    </ChatProvider>
+                  </ToastProvider>
+                </RehearsalPlaybackProvider>
+              </FloatingWindowZIndexProvider>
+            )}
+          </ChurchServiceTimeZoneProvider>
         </GlobalInfoProvider>
       </Router>
     </Provider>

@@ -155,7 +155,7 @@ describe("PortableDataImportDialog import flow", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(onImported).toHaveBeenCalledTimes(1);
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(mockShowToast).toHaveBeenCalledWith("Members imported successfully. 1 added · 1 position created.", "success");
+    expect(mockShowToast).toHaveBeenCalledWith("Members imported successfully. 1 added · 1 position created for this import.", "success");
   });
 
   it("lets an admin resolve an ambiguous relationship before import", async () => {
@@ -197,17 +197,17 @@ describe("PortableDataImportDialog import flow", () => {
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
     expect(screen.getByText("1 position needs attention")).toBeInTheDocument();
     expect(screen.getByText("Video Director")).toBeInTheDocument();
-    expect(screen.getByText("1 member · New Test Team")).toBeInTheDocument();
-    const positionActionSelect = screen.getByLabelText("How to handle Video Director in New Test Team");
+    expect(screen.getByText("1 member · Belongs to New Test Team (existing)")).toBeInTheDocument();
+    const positionActionSelect = screen.getByLabelText("How to handle Video Director in New Test Team (existing)");
     positionActionSelect.focus();
     await user.keyboard("{Enter}{ArrowDown}{ArrowDown}{Enter}");
     expect(screen.getByLabelText("New position name for Video Director")).toHaveValue("Video Director");
     expect(screen.getAllByText("Create new position")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
     expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
-    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", positions: "Positions" }, undefined, expect.objectContaining({ positionActions: [{ teamId: "team-1", sourceValue: "Video Director", action: "create", name: "Video Director" }] }));
+    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", positions: "Positions" }, undefined, expect.objectContaining({ positionActions: [{ teamId: "team-1", teamName: "New Test Team", sourceValue: "Video Director", action: "create", name: "Video Director" }] }));
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
-    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", expect.any(Array), undefined, expect.objectContaining({ positionActions: [{ teamId: "team-1", sourceValue: "Video Director", action: "create", name: "Video Director" }], previewToken: "approved" })));
+    await waitFor(() => expect(commitPortableImport).toHaveBeenCalledWith("church-1", "members", expect.any(Array), undefined, expect.objectContaining({ positionActions: [{ teamId: "team-1", teamName: "New Test Team", sourceValue: "Video Director", action: "create", name: "Video Director" }], previewToken: "approved" })));
   });
 
   it("keeps several missing and long position names readable in the matching step", async () => {
@@ -229,15 +229,15 @@ describe("PortableDataImportDialog import flow", () => {
     expect(await screen.findByText("2 positions need attention")).toBeInTheDocument();
     expect(screen.getByText(longPosition)).toBeInTheDocument();
     expect(screen.getByText("Lighting")).toBeInTheDocument();
-    expect(screen.getByLabelText(`How to handle ${longPosition} in New Test Team`)).toBeInTheDocument();
-    expect(screen.getByLabelText("How to handle Lighting in New Test Team")).toBeInTheDocument();
+    expect(screen.getByLabelText(`How to handle ${longPosition} in New Test Team (existing)`)).toBeInTheDocument();
+    expect(screen.getByLabelText("How to handle Lighting in New Test Team (existing)")).toBeInTheDocument();
   });
 
   it("resolves a missing source team once before reviewing member rows", async () => {
     const user = userEvent.setup();
     jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Teams", "Positions"], rowCount: 1, columnCount: 4, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, sampleRows: [], columnStats: { Teams: { nonBlank: 1, blank: 0 } } });
     const row = { row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "CSV Test Media", positions: "Camera Operator" }, action: "review" as const, matchedId: null, candidates: [], issues: [{ field: "teams", referenceIndex: 0, referenceValue: "CSV Test Media", code: "missing_reference", message: "Choose or create a local team.", candidates: [] }] };
-    const resolvedRow = { ...row, action: "create" as const, issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Camera Operator", code: "missing_reference", message: "Create this position in the planned team.", teamId: "portable-pending-team-media", teamName: "CSV Test Media", positionOptions: [] }] };
+    const resolvedRow = { ...row, action: "create" as const, issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Camera Operator", code: "missing_reference", message: "Create this position in the planned team.", teamId: "portable-pending-team-media", teamName: "CSV Test Media", teamIsNew: true, positionOptions: [] }] };
     const fullyResolvedRow = { ...resolvedRow, issues: [] };
     jest.mocked(previewPortableImport)
       .mockResolvedValueOnce({ success: true, rows: [row], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } })
@@ -245,7 +245,7 @@ describe("PortableDataImportDialog import flow", () => {
       .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "approved-token", previewCsvHash: "a".repeat(64) })
       .mockResolvedValueOnce({ success: true, rows: [fullyResolvedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "refreshed-token", previewCsvHash: "a".repeat(64) });
     jest.mocked(commitPortableImport)
-      .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "failed", code: "stale_preview", message: "Review the file again." }], summary: { created: 0, updated: 0, failed: 1 } })
+      .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "failed", code: "stale_preview", message: "Review the file again." }], summary: { created: 0, updated: 0, failed: 1, teamsCreated: 1, positionsCreated: 1 } })
       .mockResolvedValueOnce({ success: true, results: [{ row: 2, status: "created", id: "member-1" }], summary: { created: 1, updated: 0, failed: 0, teamsCreated: 1, positionsCreated: 1 } });
     const file = new File(["First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator"], "people.csv", { type: "text/csv" });
     Object.defineProperty(file, "text", { value: async () => "First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator" });
@@ -264,47 +264,122 @@ describe("PortableDataImportDialog import flow", () => {
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
     expect(screen.getByText("Camera Operator")).toBeInTheDocument();
-    const positionAction = screen.getByLabelText("How to handle Camera Operator in CSV Test Media");
+    expect(screen.getByText(/Belongs to CSV Test Media \(new\)/)).toBeInTheDocument();
+    const positionAction = screen.getByLabelText("How to handle Camera Operator in CSV Test Media (new)");
     await user.click(positionAction);
     await user.click(screen.getByRole("option", { name: "Create new position" }));
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
     expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
-    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
+    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
 
     await user.click(screen.getByRole("button", { name: "Import 1 member" }));
     expect(await screen.findByRole("button", { name: "Review changes again" })).toBeInTheDocument();
+    expect(await screen.findByText("Teams created for this import: 1")).toBeInTheDocument();
+    expect(screen.getByText("Positions created for this import: 1")).toBeInTheDocument();
+    expect(screen.getByText("These totals include teams and positions created by earlier retries of this import.")).toBeInTheDocument();
+    expect(screen.getByText("Import partially completed. 1 team and 1 position created for this import. Review the failed rows below.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Review changes again" }));
     await waitFor(() => expect(previewPortableImport).toHaveBeenCalledTimes(4));
-    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
+    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({ teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }], positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }] }));
     await user.click(await screen.findByRole("button", { name: "Import 1 member" }));
     await waitFor(() => expect(commitPortableImport).toHaveBeenCalledTimes(2));
     expect(jest.mocked(commitPortableImport).mock.calls[0][4]).toEqual(expect.objectContaining({
       previewToken: "approved-token",
       teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }],
-      positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
+      positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
     }));
     expect(jest.mocked(commitPortableImport).mock.calls[1][4]).toEqual(expect.objectContaining({
       previewToken: "refreshed-token",
       teamActions: [{ sourceValue: "CSV Test Media", action: "create", name: "CSV Test Media" }],
-      positionActions: [{ teamId: "portable-pending-team-media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
+      positionActions: [{ teamId: "portable-pending-team-media", teamName: "CSV Test Media", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
     }));
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining("1 team created for this import · 1 position created for this import"), "success");
   });
 
   it("highlights the unresolved owning-team field when continuing position review", async () => {
     const user = userEvent.setup();
     const csv = "First Name,Last Name,Teams,Positions\nJane,Doe,Media | Worship,Camera Operator";
     jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Teams", "Positions"], rowCount: 1, columnCount: 4, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, sampleRows: [], columnStats: { Teams: { nonBlank: 1, blank: 0 } } });
-    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "Media | Worship", positions: "Camera Operator" }, action: "create", matchedId: null, candidates: [], issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Camera Operator", code: "ambiguous_reference", message: "Choose the owning team.", teamOptions: [{ teamId: "team-media", name: "Media" }, { teamId: "team-worship", name: "Worship" }], positionOptions: [] }] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } });
+    jest.mocked(previewPortableImport).mockResolvedValue({ success: true, rows: [{ row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "CSV Test Media | CSV Test Worship", positions: "Camera Operator" }, action: "create", matchedId: null, candidates: [], issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Camera Operator", code: "ambiguous_reference", message: "Choose the owning team.", teamOptions: [{ teamId: "portable-pending-team-media", name: "CSV Test Media", isNew: true }, { teamId: "portable-pending-team-worship", name: "CSV Test Worship", isNew: true }, { teamId: "team-worship", name: "Worship", isNew: false }], positionOptions: [] }] }], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } });
     const file = new File([csv], "people.csv", { type: "text/csv" });
     Object.defineProperty(file, "text", { value: async () => csv });
     render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-media", churchId: "church-1", name: "Media", memberIds: [] }, { teamId: "team-worship", churchId: "church-1", name: "Worship", memberIds: [] }]} />);
     fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
     await user.click(await screen.findByRole("button", { name: "Review changes" }));
     expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
+    const ownerField = screen.getByRole("combobox", { name: "Belongs to for Camera Operator" });
+    await user.click(ownerField);
+    expect(screen.getByRole("option", { name: "CSV Test Media (new)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "CSV Test Worship (new)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Worship (existing)" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
-    const ownerField = screen.getByRole("combobox", { name: "Team that owns Camera Operator" });
     expect(ownerField).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByRole("alert")).toHaveTextContent("Choose the team that owns this position.");
+  });
+
+  it("lets admins revisit team decisions and recalculates position choices", async () => {
+    const user = userEvent.setup();
+    const csv = "First Name,Last Name,Teams,Positions\nJane,Doe,CSV Test Media,Camera Operator";
+    const row = { row: 2, record: { firstName: "Jane", lastName: "Doe", teams: "CSV Test Media", positions: "Camera Operator" }, action: "review" as const, matchedId: null, candidates: [], issues: [{ field: "teams", referenceIndex: 0, referenceValue: "CSV Test Media", code: "missing_reference", message: "Choose or create a local team.", candidates: [] }] };
+    const plannedPosition = (teamId: string, teamName: string, teamIsNew: boolean) => ({
+      ...row,
+      action: "create" as const,
+      issues: [{ field: "positions", referenceIndex: 0, referenceValue: "Camera Operator", code: "missing_reference", message: "Choose how to handle this position.", teamId, teamName, teamIsNew, positionOptions: [] }],
+    });
+    const reviewedRow = { ...plannedPosition("team-1", "Worship", false), issues: [] };
+    jest.mocked(inspectPortableImport).mockResolvedValue({ success: true, headers: ["First Name", "Last Name", "Teams", "Positions"], rowCount: 1, columnCount: 4, issues: [], mapping: { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, sampleRows: [], columnStats: { Teams: { nonBlank: 1, blank: 0 } } });
+    jest.mocked(previewPortableImport)
+      .mockResolvedValueOnce({ success: true, rows: [row], issues: [], summary: { total: 1, create: 0, update: 0, review: 1, invalid: 0 } })
+      .mockResolvedValueOnce({ success: true, rows: [plannedPosition("portable-pending-team-media", "CSV Test Media", true)], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 } })
+      .mockResolvedValueOnce({ success: true, rows: [plannedPosition("portable-pending-team-media", "New Media Team", true)], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 } })
+      .mockResolvedValueOnce({ success: true, rows: [plannedPosition("team-1", "Worship", false)], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 } })
+      .mockResolvedValueOnce({ success: true, rows: [reviewedRow], issues: [], summary: { total: 1, create: 1, update: 0, review: 0, invalid: 0 }, previewToken: "reviewed", previewCsvHash: "a".repeat(64) });
+    const file = new File([csv], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => csv });
+    render(<PortableDataImportDialog open onOpenChange={() => undefined} churchId="church-1" type="members" teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [] }]} />);
+    fireEvent.change(screen.getByLabelText("Choose a CSV file"), { target: { files: [file] } });
+    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    expect(await screen.findByRole("heading", { name: "Match teams" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("How to handle team CSV Test Media"));
+    await user.click(screen.getByRole("option", { name: "Create CSV Test Media" }));
+    await user.click(screen.getByRole("button", { name: "Continue to positions" }));
+    const plannedPositionAction = await screen.findByLabelText("How to handle Camera Operator in CSV Test Media (new)");
+    await user.click(plannedPositionAction);
+    await user.click(screen.getByRole("option", { name: "Create new position" }));
+    await user.click(screen.getByRole("button", { name: "Back to teams" }));
+    expect(await screen.findByRole("heading", { name: "Match teams" })).toBeInTheDocument();
+    const teamName = screen.getByLabelText("New team name for CSV Test Media");
+    await user.clear(teamName);
+    await user.type(teamName, "New Media Team");
+    await user.click(screen.getByRole("button", { name: "Continue to positions" }));
+    const renamedPositionAction = await screen.findByLabelText("How to handle Camera Operator in New Media Team (new)");
+    expect(renamedPositionAction).toHaveTextContent("Create new position");
+
+    await user.click(screen.getByRole("button", { name: "Back to teams" }));
+    await user.click(screen.getByLabelText("How to handle team CSV Test Media"));
+    await user.click(screen.getByRole("option", { name: "Match an existing team" }));
+    await user.click(screen.getByLabelText("Existing team for CSV Test Media"));
+    await user.click(screen.getByRole("option", { name: "Worship" }));
+    await user.click(screen.getByRole("button", { name: "Continue to positions" }));
+    const remappedPositionAction = await screen.findByLabelText("How to handle Camera Operator in Worship (existing)");
+    expect(remappedPositionAction).toHaveTextContent("Choose an option");
+    await user.click(remappedPositionAction);
+    await user.click(screen.getByRole("option", { name: "Create new position" }));
+    await user.click(screen.getByRole("button", { name: "Continue to review" }));
+    expect(await screen.findByRole("heading", { name: "Review changes" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Match positions" })).not.toBeInTheDocument();
+    expect(screen.getByText("Teams: Worship (mapped from CSV Test Media)")).toBeInTheDocument();
+    expect(screen.getByText("Positions: Camera Operator (new) · Worship")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to positions" }));
+    expect(await screen.findByRole("heading", { name: "Match positions" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review changes" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("How to handle Camera Operator in Worship (existing)")).toHaveTextContent("Create new position");
+    expect(previewPortableImport).toHaveBeenLastCalledWith("church-1", "members", expect.any(String), { firstName: "First Name", lastName: "Last Name", teams: "Teams", positions: "Positions" }, undefined, expect.objectContaining({
+      teamActions: [{ sourceValue: "CSV Test Media", action: "match", teamId: "team-1" }],
+      positionActions: [{ teamId: "team-1", teamName: "Worship", sourceValue: "Camera Operator", action: "create", name: "Camera Operator" }],
+    }));
   });
 
   it("keeps failed rows and their messages after a partial import", async () => {

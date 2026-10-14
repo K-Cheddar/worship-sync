@@ -1,7 +1,13 @@
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import { useDispatch, useSelector } from "../../../hooks";
-import { updateSlides } from "../../../store/itemSlice";
+import { applyOwnedContentMutation } from "../../../store/itemSlice";
+import {
+  flushPendingItemMutations,
+  getItemMutationOwner,
+  scheduleOwnedItemMutation,
+  type PendingItemMutationHandle,
+} from "../../../store/deferredItemMutations";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import RadioButton, {
   RadioGroup,
@@ -19,7 +25,6 @@ import { Bold } from "lucide-react";
 import { Italic } from "lucide-react";
 import { ChevronDown } from "lucide-react";
 import PopoverPanel from "../../../components/PopOver/PopoverPanel";
-import { updateFormattedTextDisplayInfo } from "../../../utils/formatter";
 import cn from "classnames";
 import Icon from "../../../components/Icon/Icon";
 import { FONT_SIZE_BUTTON_STEP } from "../../../constants";
@@ -92,24 +97,42 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
   const globalInfo = useContext(GlobalInfoContext);
   const brandColors = globalInfo?.churchBranding.colors || [];
 
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const owner = getItemMutationOwner(item);
+  const ownerRef = useRef(owner);
+  ownerRef.current = owner;
+  const isMountedRef = useRef(true);
+  const timeoutRefs = useRef<Partial<Record<"textColor" | "backgroundColor", PendingItemMutationHandle>>>({});
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      flushPendingItemMutations(ownerRef.current);
+    };
+  }, []);
 
   const [shouldApplyToAll, setShouldApplyToAll] = useState(true);
 
   const runUpdate = (
     field: fieldType,
-    updatedValue: string | number | boolean
+    updatedValue: string | number | boolean,
+    shouldApplyAll = shouldApplyToAll,
   ) => {
-    const updatedItem = updateFormattedTextDisplayInfo({
-      formattedTextDisplayInfo: {
-        ...formattedTextDisplayInfo,
-        text: formattedTextDisplayInfo?.text || "",
-        [field]: updatedValue,
+    const selectedSlide = slides[item.selectedSlide];
+    if (!owner || !selectedSlide?.id) return;
+    const sectionNum = selectedSlide.name.match(/Section (\d+)/)?.[1];
+    dispatch(applyOwnedContentMutation({
+      owner,
+      mutation: {
+        kind: "formattedText",
+        slideId: selectedSlide.id,
+        targetBoxId: selectedSlide.boxes?.[item.selectedBox]?.id,
+        sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
+        field,
+        value: updatedValue,
+        applyToAll: shouldApplyAll,
       },
-      item: item,
-      shouldApplyToAll: shouldApplyToAll,
-    });
-    dispatch(updateSlides({ slides: updatedItem.slides }));
+    }));
   };
 
   const handleChange = (field: fieldType, value: string) => {
@@ -132,18 +155,30 @@ const FormattedTextEditor = ({ className }: { className?: string }) => {
     }
 
     if (field === "textColor" || field === "backgroundColor") {
-      // Clear any existing timeout
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      // Set new timeout
-      timeoutRef.current = setTimeout(() => {
-        setFormattedTextState({
-          ...formattedTextState,
-          [field]: updatedValue,
-        });
-        runUpdate(field, updatedValue);
-      }, 250);
+      const selectedSlide = slides[item.selectedSlide];
+      if (!owner || !selectedSlide?.id) return;
+      const sectionNum = selectedSlide.name.match(/Section (\d+)/)?.[1];
+      timeoutRefs.current[field]?.cancel();
+      timeoutRefs.current[field] = scheduleOwnedItemMutation(owner, 250, () => {
+        if (isMountedRef.current) {
+          setFormattedTextState((current) => ({
+            ...current,
+            [field]: updatedValue,
+          }));
+        }
+        dispatch(applyOwnedContentMutation({
+          owner,
+          mutation: {
+            kind: "formattedText",
+            slideId: selectedSlide.id,
+            targetBoxId: selectedSlide.boxes?.[item.selectedBox]?.id,
+            sectionNum: sectionNum ? parseInt(sectionNum, 10) : undefined,
+            field,
+            value: updatedValue,
+            applyToAll: shouldApplyToAll,
+          },
+        }));
+      });
     } else if (field === "fontSize") {
       setFormattedTextState({
         ...formattedTextState,

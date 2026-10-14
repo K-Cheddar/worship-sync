@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ServicePublicView from "./ServicePublicView";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
@@ -62,12 +62,65 @@ const detailedSnapshot: PublicServiceFlowSnapshot = {
 };
 
 describe("ServicePublicView equipment assignments", () => {
+  let originalScrollIntoView: PropertyDescriptor | undefined;
+  let scrollIntoViewWasPatched = false;
+
   beforeEach(() => {
     localStorage.clear();
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    if (scrollIntoViewWasPatched) {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      }
+      originalScrollIntoView = undefined;
+      scrollIntoViewWasPatched = false;
+    }
+  });
+
+  it("scrolls the live item below a supplied sticky page header", async () => {
+    originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    scrollIntoViewWasPatched = true;
+    const scrollIntoView = jest.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute("data-current-service-toolbar")) {
+        return { height: 132 } as DOMRect;
+      }
+      return { height: 0 } as DOMRect;
+    });
+
+    render(
+      <ServicePublicView
+        snapshot={{
+          ...detailedSnapshot,
+          service: {
+            ...detailedSnapshot.service,
+            live: { mode: "manual", currentItemId: "opening-song" },
+          },
+        }}
+        pageHeader={
+          <div role="toolbar" aria-label="Current service toolbar" data-current-service-toolbar />
+        }
+      />,
+    );
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(screen.getAllByRole("listitem")[0]).toHaveStyle({ scrollMarginTop: "148px" });
+    const equipmentPanel = screen.getByRole("complementary", { name: "Equipment assignments" });
+    expect(equipmentPanel).toHaveClass(
+      "lg:max-h-[calc(100dvh-6rem)]",
+    );
+    // The separate sticky wrapper reserves room for the current-service toolbar.
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(equipmentPanel.parentElement).toHaveClass("lg:top-20");
   });
 
   it("toggles between dark and light service plan themes and remembers the choice", async () => {
@@ -83,6 +136,17 @@ describe("ServicePublicView equipment assignments", () => {
     expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveClass("bg-slate-50");
     expect(localStorage.getItem("worshipsyncServicePublicTheme")).toBe("light");
+  });
+
+  it("keeps the anonymous public plan's equipment panel below its existing page top", () => {
+    render(<ServicePublicView snapshot={detailedSnapshot} />);
+
+    const equipmentPanel = screen.getByRole("complementary", { name: "Equipment assignments" });
+    expect(screen.queryByRole("toolbar", { name: "Current service toolbar" })).not.toBeInTheDocument();
+    expect(equipmentPanel).toHaveClass("lg:max-h-[calc(100dvh-2rem)]");
+    // Anonymous public pages have no added sticky toolbar.
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(equipmentPanel.parentElement).toHaveClass("lg:top-4");
   });
 
   it("restores the selected role-note filter from local storage", () => {
@@ -121,6 +185,9 @@ describe("ServicePublicView equipment assignments", () => {
     const panel = screen.getByRole("complementary", {
       name: "Equipment assignments",
     });
+    // Embedded views have no page toolbar and retain their existing sticky offset.
+    // eslint-disable-next-line testing-library/no-node-access
+    expect(panel.parentElement).toHaveClass("lg:top-4");
     expect(panel).toHaveClass(
       "lg:max-h-[calc(100dvh-2rem)]",
       "lg:overflow-y-auto",

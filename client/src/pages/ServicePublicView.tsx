@@ -18,6 +18,7 @@ import type {
   PublicServiceFlowSnapshot,
 } from "../services/serviceFlowTypes";
 import type { PublicServiceConnection } from "../services/usePublicServiceFlow";
+import type { ScrollbarWidth } from "../types";
 import { cn } from "../utils/cnHelper";
 import { formatServicePlanDuration } from "./Services/servicePlanDuration";
 import { SERVICE_PLAN_SONG_ICON_CLASS } from "./Services/servicePlanChipStyles";
@@ -83,7 +84,11 @@ const getServicePublicItem = (container: HTMLElement, itemId: string) => {
   return item instanceof HTMLElement && container.contains(item) ? item : null;
 };
 
-const scrollServicePublicItemNearTop = (item: HTMLElement) => {
+const scrollServicePublicItemNearTop = (item: HTMLElement, container: HTMLElement) => {
+  const toolbar = container.querySelector<HTMLElement>("[data-current-service-toolbar]");
+  if (toolbar) {
+    item.style.scrollMarginTop = `${Math.ceil(toolbar.getBoundingClientRect().height + 16)}px`;
+  }
   item.scrollIntoView({
     behavior: "smooth",
     block: "start",
@@ -228,14 +233,17 @@ const PublicServingTeamsPanel = ({
   teams,
   secondaryColor,
   theme,
+  hasStickyPageHeader,
 }: {
   teams: PublicServiceFlowServingTeam[];
   secondaryColor?: string | null;
   theme: ServicePublicTheme;
+  hasStickyPageHeader: boolean;
 }) => (
   <aside
     className={cn(
-      "rounded-xl border p-3 shadow-lg lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:overscroll-contain",
+      "rounded-xl border p-3 shadow-lg lg:overflow-y-auto lg:overscroll-contain",
+      hasStickyPageHeader ? "lg:max-h-[calc(100dvh-6rem)]" : "lg:max-h-[calc(100dvh-2rem)]",
       theme === "light" ? "border-slate-200 bg-white" : "border-neutral-700/80 bg-neutral-900/95",
     )}
     aria-label="Equipment assignments"
@@ -312,7 +320,8 @@ const PublicServingTeamsPanel = ({
 
 export type ServicePublicViewProps = {
   snapshot: PublicServiceFlowSnapshot;
-  topContent?: ReactNode;
+  scrollbarWidth?: ScrollbarWidth;
+  pageHeader?: ReactNode;
   connection?: PublicServiceConnection;
   error?: string;
   /** Controller surfaces can supply their own profile-scoped filter draft. */
@@ -336,7 +345,8 @@ export type ServicePublicViewProps = {
  */
 const ServicePublicView = ({
   snapshot,
-  topContent,
+  scrollbarWidth = "thin",
+  pageHeader,
   connection = "connected",
   error = "",
   embedded = false,
@@ -568,6 +578,7 @@ const ServicePublicView = ({
     : undefined;
   const servingTeams = !isGeneralView ? snapshot.servingTeams || [] : [];
   const hasServingTeams = servingTeams.length > 0;
+  const hasStickyPageHeader = !embedded && Boolean(pageHeader);
 
   const body = (
     <>
@@ -575,7 +586,6 @@ const ServicePublicView = ({
         embedded ? "px-0 pb-4 pt-0" : "mx-auto px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6",
         hasServingTeams ? "max-w-6xl" : "max-w-3xl",
       )}>
-        {topContent ? <div className="mb-4">{topContent}</div> : null}
         <div className={cn(hasServingTeams && "lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start lg:gap-4")}>
           <div className="min-w-0">
             <header className={cn(
@@ -675,6 +685,7 @@ const ServicePublicView = ({
                           value={selectedRoles}
                           onValueChange={handleRoleNotesFilterChange}
                           options={roleOptions}
+                          scrollbarWidth={scrollbarWidth}
                           teamFilterStorageKey={rolePickerTeamFilterStorageKey}
                           lockedTeamName={selectedTeam || undefined}
                           ariaLabel="Filter role notes"
@@ -901,11 +912,15 @@ const ServicePublicView = ({
             </div>
           </div>
           {hasServingTeams ? (
-            <div className="mt-4 self-start lg:sticky lg:top-4 lg:mt-0">
+            <div className={cn(
+              "mt-4 self-start lg:sticky lg:mt-0",
+              hasStickyPageHeader ? "lg:top-20" : "lg:top-4",
+            )}>
               <PublicServingTeamsPanel
                 teams={servingTeams}
                 secondaryColor={churchSecondaryColor}
                 theme={theme}
+                hasStickyPageHeader={hasStickyPageHeader}
               />
             </div>
           ) : null}
@@ -953,6 +968,7 @@ const ServicePublicView = ({
       onPointerDown={notePointerScrollIntent}
       onKeyDown={handleKeyDown}
     >
+      {pageHeader}
       {body}
     </main>
   );

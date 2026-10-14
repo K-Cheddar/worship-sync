@@ -37,7 +37,7 @@ describe("createItemSlice", () => {
       }),
     );
 
-    expect(store.getState().createItem).toEqual({
+    expect(store.getState().createItem).toEqual(expect.objectContaining({
       name: "Grace",
       type: "timer",
       hasUserSelectedType: true,
@@ -52,12 +52,14 @@ describe("createItemSlice", () => {
       timerType: "countdown",
       lyricsImportCandidates: [],
       lyricsImportError: "",
-    });
+    }));
+    expect(store.getState().createItem.draftId).toBeGreaterThan(0);
   });
 
   it("resetCreateItem restores the default draft", () => {
     const store = createStore({
       createItem: {
+        ...initialCreateItemState,
         name: "Grace",
         type: "timer",
         hasUserSelectedType: true,
@@ -77,6 +79,10 @@ describe("createItemSlice", () => {
 
     store.dispatch(createItemSlice.actions.resetCreateItem());
 
-    expect(store.getState().createItem).toEqual(initialCreateItemState);
+    expect(store.getState().createItem).toEqual({
+      ...initialCreateItemState,
+      draftId: expect.any(Number),
+    });
+    expect(store.getState().createItem.draftId).not.toBe(0);
   });
 });

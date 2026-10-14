@@ -19,10 +19,23 @@ import { resolveMemberMinorStatus } from "../pages/Teams/memberPreferences";
 import { getServicePlanKey } from "./servicePlanKeys";
 
 export type TeamScheduleCreditEntry = {
+  positionId: string;
   heading: string;
   names: string;
   sourceLabel: string;
 };
+
+export type TeamScheduleCreditPosition = Pick<
+  TeamScheduleCreditEntry,
+  "positionId" | "heading"
+>;
+
+export type TeamScheduleCreditAvailability =
+  | "loaded"
+  | "missing"
+  | "unhydrated"
+  | "incomplete"
+  | "failed";
 
 export const MEDIA_TEAM_NAME = "media";
 export const DEFAULT_CREDITS_SERVICE_WINDOW_MINUTES = 180;
@@ -47,15 +60,14 @@ type BuildTeamScheduleCreditEntriesInput = {
 
 export type TeamScheduleCreditsResult = {
   entries: TeamScheduleCreditEntry[];
-  /**
-   * The media schedule this service's credits come from arrived as a summary,
-   * so its assignments are not on the client. Empty `entries` here means "not
-   * loaded", not "nobody scheduled" — say so rather than writing blanks.
-   */
-  scheduleUnavailable: boolean;
-  /** A matching schedule occurrence was hydrated, including a genuinely empty one. */
-  scheduleLoaded: boolean;
+  /** Known headings can still be reported when assignment details are unavailable. */
+  positions: TeamScheduleCreditPosition[];
+  availability: TeamScheduleCreditAvailability;
 };
+
+/** Stable credit ID for a scheduled position across generation retries and refreshes. */
+export const getGeneratedScheduleCreditId = (positionId: string) =>
+  `generated-schedule-${encodeURIComponent(positionId)}`;
 
 type ScheduleOccurrenceWithOwner = {
   schedule: TeamSchedule | TeamScheduleSummary;
@@ -124,10 +136,91 @@ export const teamScheduleCreditHeadingMatches = (
 export const findTeamScheduleCreditEntryForHeading = (
   entries: TeamScheduleCreditEntry[],
   creditHeading: string,
-) =>
-  entries.find((entry) =>
+) => {
+  const matches = entries.filter((entry) =>
     teamScheduleCreditHeadingMatches(creditHeading, entry.heading),
   );
+  return matches.length === 1 ? matches[0] : undefined;
+};
+
+export type TeamScheduleCreditMatchResolution = {
+  matchedEntriesByCreditIndex: Map<number, number>;
+  ambiguousCreditIndexes: Set<number>;
+  ambiguousEntryIndexes: Set<number>;
+};
+
+/**
+ * Resolves the schedule/credit relationship as a whole. Stable generated IDs
+ * claim their position first; remaining heading matches must form a one-to-one
+ * relationship. Ambiguous connected groups are left for the operator.
+ */
+export const resolveTeamScheduleCreditMatches = (
+  entries: TeamScheduleCreditEntry[],
+  credits: Array<{ id: string; heading: string }>,
+): TeamScheduleCreditMatchResolution => {
+  const matchedEntriesByCreditIndex = new Map<number, number>();
+  const matchedEntryIndexes = new Set<number>();
+  const ambiguousCreditIndexes = new Set<number>();
+  const ambiguousEntryIndexes = new Set<number>();
+  const entryIndexesByGeneratedId = new Map<string, number[]>();
+  const creditIndexesById = new Map<string, number[]>();
+
+  entries.forEach((entry, index) => {
+    const generatedId = getGeneratedScheduleCreditId(entry.positionId);
+    const indexes = entryIndexesByGeneratedId.get(generatedId) ?? [];
+    indexes.push(index);
+    entryIndexesByGeneratedId.set(generatedId, indexes);
+  });
+  credits.forEach((credit, index) => {
+    const indexes = creditIndexesById.get(credit.id) ?? [];
+    indexes.push(index);
+    creditIndexesById.set(credit.id, indexes);
+  });
+
+  for (const [generatedId, entryIndexes] of entryIndexesByGeneratedId) {
+    if (entryIndexes.length > 1) entryIndexes.forEach((index) => ambiguousEntryIndexes.add(index));
+    const creditIndexes = creditIndexesById.get(generatedId) ?? [];
+    if (!creditIndexes.length) continue;
+    if (entryIndexes.length === 1 && creditIndexes.length === 1) {
+      matchedEntriesByCreditIndex.set(creditIndexes[0], entryIndexes[0]);
+      matchedEntryIndexes.add(entryIndexes[0]);
+      continue;
+    }
+    entryIndexes.forEach((index) => ambiguousEntryIndexes.add(index));
+    creditIndexes.forEach((index) => ambiguousCreditIndexes.add(index));
+  }
+
+  const creditEdges = new Map<number, number[]>();
+  const entryEdges = new Map<number, number[]>();
+  credits.forEach((credit, creditIndex) => {
+    if (matchedEntriesByCreditIndex.has(creditIndex) || ambiguousCreditIndexes.has(creditIndex)) return;
+    entries.forEach((entry, entryIndex) => {
+      if (matchedEntryIndexes.has(entryIndex) || ambiguousEntryIndexes.has(entryIndex)) return;
+      if (!teamScheduleCreditHeadingMatches(credit.heading, entry.heading)) return;
+      creditEdges.set(creditIndex, [...(creditEdges.get(creditIndex) ?? []), entryIndex]);
+      entryEdges.set(entryIndex, [...(entryEdges.get(entryIndex) ?? []), creditIndex]);
+    });
+  });
+
+  for (const [creditIndex, entryIndexes] of creditEdges) {
+    for (const entryIndex of entryIndexes) {
+      const creditIndexes = entryEdges.get(entryIndex) ?? [];
+      if (entryIndexes.length === 1 && creditIndexes.length === 1) {
+        matchedEntriesByCreditIndex.set(creditIndex, entryIndex);
+        matchedEntryIndexes.add(entryIndex);
+      } else {
+        ambiguousCreditIndexes.add(creditIndex);
+        ambiguousEntryIndexes.add(entryIndex);
+      }
+    }
+  }
+
+  return {
+    matchedEntriesByCreditIndex,
+    ambiguousCreditIndexes,
+    ambiguousEntryIndexes,
+  };
+};
 
 const findMediaTeam = (teams: TeamRecord[], mediaTeamName: string) => {
   const mediaNeedle = normalizeTeamName(mediaTeamName);
@@ -203,11 +296,8 @@ const pushMemberName = ({
   if (!memberId || seenMemberIds.has(memberId)) return;
   seenMemberIds.add(memberId);
   const member = membersById.get(memberId);
-  names.push(
-    member && resolveMemberMinorStatus(member)
-      ? member.firstName.trim()
-      : memberName(member),
-  );
+  if (!member) return;
+  names.push(resolveMemberMinorStatus(member) ? member.firstName.trim() : memberName(member));
 };
 
 const collectCellMemberNames = ({
@@ -248,20 +338,9 @@ export const buildTeamScheduleCreditEntries = ({
   servicePlanKey,
 }: BuildTeamScheduleCreditEntriesInput): TeamScheduleCreditsResult => {
   const mediaTeam = findMediaTeam(teams, mediaTeamName);
-  if (!mediaTeam) return { entries: [], scheduleUnavailable: false, scheduleLoaded: false };
-
-  const teamSchedules = schedules.filter(
-    (schedule) => !schedule.archivedAt && schedule.teamId === mediaTeam.teamId,
-  );
-  const target = findTargetOccurrence(teamSchedules, now, serviceWindowMinutes, servicePlanKey);
-  if (!target) return { entries: [], scheduleUnavailable: false, scheduleLoaded: false };
-  // The schedule the credits would come from is outside the bootstrap's
-  // hydrated window. Reporting no names would be indistinguishable from an
-  // unstaffed service, so hand the caller the difference.
-  if (!isHydratedSchedule(target.schedule)) {
-    return { entries: [], scheduleUnavailable: true, scheduleLoaded: false };
+  if (!mediaTeam) {
+    return { entries: [], positions: [], availability: "missing" };
   }
-  const targetSchedule = target.schedule;
 
   const teamPositions = sortPositionsByOrder(
     positions.filter(
@@ -269,6 +348,26 @@ export const buildTeamScheduleCreditEntries = ({
         !position.archivedAt && position.teamId === mediaTeam.teamId,
     ),
   );
+  const creditPositions = teamPositions.map((position) => ({
+    positionId: position.positionId,
+    heading: position.name,
+  }));
+
+  const teamSchedules = schedules.filter(
+    (schedule) => !schedule.archivedAt && schedule.teamId === mediaTeam.teamId,
+  );
+  const target = findTargetOccurrence(teamSchedules, now, serviceWindowMinutes, servicePlanKey);
+  if (!target) {
+    return { entries: [], positions: creditPositions, availability: "missing" };
+  }
+  // The schedule the credits would come from is outside the bootstrap's
+  // hydrated window. Reporting no names would be indistinguishable from an
+  // unstaffed service, so hand the caller the difference.
+  if (!isHydratedSchedule(target.schedule)) {
+    return { entries: [], positions: creditPositions, availability: "unhydrated" };
+  }
+  const targetSchedule = target.schedule;
+
   const positionById = new Map(
     teamPositions.map((position) => [position.positionId, position]),
   );
@@ -277,6 +376,7 @@ export const buildTeamScheduleCreditEntries = ({
   );
   const namesByPositionId = new Map<string, string[]>();
   const seenMemberIdsByPositionId = new Map<string, Set<string>>();
+  let assignmentsIncomplete = false;
   const row = targetSchedule.assignments?.[target.occurrence.occurrenceId] || {};
 
   Object.entries(row)
@@ -297,6 +397,13 @@ export const buildTeamScheduleCreditEntries = ({
         a.cellKey.localeCompare(b.cellKey),
     )
     .forEach(({ cell, slot }) => {
+      const assignedMemberIds = [
+        getCellPrimaryMemberId(cell),
+        ...getCellShadowAssignments(cell).map((shadow) => shadow.memberId),
+      ];
+      if (assignedMemberIds.some((memberId) => memberId && !membersById.has(memberId))) {
+        assignmentsIncomplete = true;
+      }
       const names = namesByPositionId.get(slot.positionId) || [];
       const seenMemberIds =
         seenMemberIdsByPositionId.get(slot.positionId) || new Set<string>();
@@ -313,6 +420,7 @@ export const buildTeamScheduleCreditEntries = ({
   const entries = teamPositions.map((position) => {
     const names = namesByPositionId.get(position.positionId) || [];
     return {
+      positionId: position.positionId,
       heading: position.name,
       names: names.join("\n"),
       sourceLabel: buildScheduleSourceLabel({
@@ -321,5 +429,9 @@ export const buildTeamScheduleCreditEntries = ({
       }),
     };
   });
-  return { entries, scheduleUnavailable: false, scheduleLoaded: true };
+  return {
+    entries: assignmentsIncomplete ? [] : entries,
+    positions: creditPositions,
+    availability: assignmentsIncomplete ? "incomplete" : "loaded",
+  };
 };

@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ServiceTime } from "../types";
 import {
   getDisplayedUpcomingService,
@@ -9,6 +9,7 @@ import {
   serverDate,
   subscribeServerTimeOffset,
 } from "../utils/serverTime";
+import { useChurchServiceTimeZone } from "../context/churchServiceTimeZone";
 
 type UseDisplayedUpcomingServiceOptions = {
   keepRecentlyElapsedDuringGrace?: boolean;
@@ -21,35 +22,37 @@ export const useDisplayedUpcomingService = (
 ) => {
   const keepRecentlyElapsedDuringGrace =
     options.keepRecentlyElapsedDuringGrace ?? false;
+  const configuration = useChurchServiceTimeZone();
+  const serviceTimeZone = configuration.status === "ready"
+    ? configuration.timeZone
+    : null;
   const serverTimeOffset = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
     getServerTimeOffset,
   );
-  const [upcomingService, setUpcomingService] = useState(() =>
-    getDisplayedUpcomingService(services, serverDate(), graceMs, {
-      keepRecentlyElapsedDuringGrace,
-    }),
-  );
+  const [occurrenceVersion, refreshOccurrence] = useState(0);
 
   useEffect(() => {
     let timeoutId: number | null = null;
+    if (!serviceTimeZone) {
+      return;
+    }
 
     const syncUpcomingService = () => {
       const now = serverDate();
-      setUpcomingService(
-        getDisplayedUpcomingService(services, now, graceMs, {
-          keepRecentlyElapsedDuringGrace,
-        }),
-      );
       const delayMs = getUpcomingServiceRefreshDelay(
         services,
         now,
         graceMs,
         { keepRecentlyElapsedDuringGrace },
+        serviceTimeZone,
       );
       if (delayMs != null) {
-        timeoutId = window.setTimeout(syncUpcomingService, delayMs);
+        timeoutId = window.setTimeout(() => {
+          refreshOccurrence((version) => version + 1);
+          syncUpcomingService();
+        }, delayMs);
       }
     };
 
@@ -65,9 +68,23 @@ export const useDisplayedUpcomingService = (
     graceMs,
     keepRecentlyElapsedDuringGrace,
     serverTimeOffset,
+    serviceTimeZone,
   ]);
 
-  return upcomingService;
+  // Countdown text ticks separately; recurrence resolution runs only when its
+  // inputs, synchronized clock, or next occurrence boundary change.
+  return useMemo(
+    () => serviceTimeZone
+      ? getDisplayedUpcomingService(services, serverDate(), graceMs, {
+        keepRecentlyElapsedDuringGrace,
+      }, serviceTimeZone)
+      : null,
+    // serverDate reads the external clock; offset and boundary tokens must
+    // invalidate this memo even though they are not resolver arguments.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [services, serviceTimeZone, graceMs, keepRecentlyElapsedDuringGrace,
+      serverTimeOffset, occurrenceVersion],
+  );
 };
 
 export default useDisplayedUpcomingService;

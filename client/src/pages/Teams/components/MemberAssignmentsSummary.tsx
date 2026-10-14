@@ -184,7 +184,7 @@ export const MemberAssignmentsDetails = ({
       <span
         ref={assignmentTextRef}
         data-testid="member-assignment-text"
-        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+        className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
       >
         {visibleGroups.map((group, index) => (
           <span key={group.teamId}>
@@ -207,33 +207,33 @@ export const MemberAssignmentsDetails = ({
             ) : null}
           </span>
         ))}
-      </span>
-      {hiddenPositionCount > 0 ? (
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-haspopup="dialog"
-              aria-label={`Show ${hiddenPositionCount} more positions for ${memberName}`}
-              title={`Show ${hiddenPositionCount} more positions`}
-              className="inline-flex shrink-0 rounded px-1 text-xs leading-4 text-gray-400 transition-colors hover:bg-gray-700/60 hover:text-gray-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-cyan-400"
+        {hiddenPositionCount > 0 ? (
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-label={`Show ${hiddenPositionCount} more positions for ${memberName}`}
+                title={`Show ${hiddenPositionCount} more positions`}
+                className="inline rounded px-1 text-xs leading-4 text-gray-400 transition-colors hover:bg-gray-700/60 hover:text-gray-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-cyan-400"
+              >
+                +{hiddenPositionCount} more
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              aria-label={`Additional assignments for ${memberName}`}
+              onClick={(event) => event.stopPropagation()}
+              className="max-h-64 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto border-gray-700 bg-gray-900 p-3 text-gray-100"
             >
-              +{hiddenPositionCount} more
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            aria-label={`Additional assignments for ${memberName}`}
-            onClick={(event) => event.stopPropagation()}
-            className="max-h-64 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto border-gray-700 bg-gray-900 p-3 text-gray-100"
-          >
-            <div className="space-y-2">
-              <p className="text-xs font-semibold text-gray-300">More assignments</p>
-              <AssignmentLines groups={allHiddenGroups} />
-            </div>
-          </PopoverContent>
-        </Popover>
-      ) : null}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-gray-300">More assignments</p>
+                <AssignmentLines groups={allHiddenGroups} />
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </span>
     </div>
   );
 };

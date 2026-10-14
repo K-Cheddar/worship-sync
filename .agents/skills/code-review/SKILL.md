@@ -9,14 +9,29 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 
 ## Workflow
 
-1. Establish intended behavior from the task or PR description, acceptance criteria, AGENTS.md, and applicable domain guidance.
+1. Establish intended behavior from the task or PR description, acceptance criteria, applicable Feature Contracts in [`docs/features/`](../../../docs/features/README.md), AGENTS.md, and domain guidance. Distinguish confirmed product intent from current implementation behavior, draft contract text, and unresolved questions.
 2. Compare the implementation with its declared Before / After Behavior and unchanged adjacent behavior.
 3. Inspect the complete diff.
+   For a merge, also compare critical behavior in **each parent and the merge result** (not only merge-base-to-HEAD). Identify known fixes in either parent and demonstrate that the result retains their invariant. Record parent/result SHAs, relevant symbols, and failure-derived regression evidence in Verification gaps; an unexplained behavior loss blocks readiness. Repeat this comparison after conflict resolution or subsequent integration edits.
 4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
 5. Search for duplicated solutions and existing abstractions that should have been reused.
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
+9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
+   For shared providers, enumerate controller, paired display (monitor/projector/stream), human, and workstation consumers as applicable. Trace credential transport and server authorization as well as provider inclusion; an authorized hook mock does not establish that the production session can obtain its data.
+
+## Product approval check
+
+For every behavior-affecting change, ask:
+
+- Does it change what an existing action does, automate a manual step, restrict an operator, or change how data is replaced, preserved, skipped, deleted, matched, or sourced?
+- Is that behavior explicitly requested, supported by a confirmed applicable Feature Contract, or supported by an explicit previous product-owner decision?
+- Does it conflict with a confirmed contract or leave a consequential product choice unresolved?
+- Did implementation cleanup, a fallback, or a safeguard quietly redefine an operator workflow?
+- Do changed tests merely encode the implementation choice, or is there independent product authorization for the expectation?
+
+Current implementation, passing tests, and agent-authored notes are not product approval. A passing test does not validate the product decision behind it. Report an unapproved consequential behavior change as a **blocking finding**. Do not approve it until the intended behavior is established; where useful, continue reviewing unrelated parts of the change.
 
 For a substantial review involving async work, persistence, imports, previews, retries, synchronization, external resources, durable jobs, destructive cleanup, global actions, or shared state, complete the cross-boundary passes below. Mark irrelevant boundaries not applicable and briefly say why. Use the [cross-boundary reference](references/cross-boundary-review.md) for recurring failure shapes and adversarial scenarios; it supplements this workflow rather than replacing it.
 
@@ -100,7 +115,7 @@ Actively compare with a known-safe analogue for the same operation. WorshipSync 
 
 ### Sibling-pattern expansion
 
-When one confirmed bug represents a reusable failure class, search for sibling instances before concluding. For example: a stale global `db` in one async listener warrants checking other async/debounced/queued Pouch writers; a dead `registerTransferAction` callback warrants checking other global transfer actions backed by route-local ownership; a lost enum warrants tracing creation/read/filter/presentation; schema-unsafe cleanup warrants inspecting other automatic destructive cleanup; old durable-job incompatibility warrants checking other resumable formats; and a MIME probe/use mismatch warrants checking proxied media classes, redirects, and range responses. Do not report one instance and assume analogous code is safe without checking it.
+When one confirmed bug represents a reusable failure class, search for sibling instances before concluding. For example: a stale global `db` in one async listener warrants checking other async/debounced/queued Pouch writers; a dead `registerTransferAction` callback warrants checking other global transfer actions backed by route-local ownership; a lost enum warrants tracing creation/read/filter/presentation; schema-unsafe cleanup warrants inspecting other automatic destructive cleanup; old durable-job incompatibility warrants checking other resumable formats; a MIME probe/use mismatch warrants checking proxied media classes, redirects, and range responses; and a missing provider on one route warrants checking sibling entry points that mount the shared component. Do not report one instance and assume analogous code is safe without checking it.
 
 ### Transition-test expectations
 
@@ -152,6 +167,10 @@ Group findings as `Critical`, `High`, `Medium`, and `Low`. For each finding incl
 - why it matters
 - suggested direction
 
+### Product authorization status
+
+For each behavior-affecting change, state `Authorized`, `Missing / unclear`, or `Not applicable`. For an authorized change, name the applicable confirmed Feature Contract, current request, or explicit prior product-owner decision. Use `Not applicable` only when the change does not affect product behavior. Missing authorization for a consequential behavior change must also be a blocking finding and makes final readiness `Not ready`.
+
 ### Open questions / assumptions
 
 State unresolved intent or assumptions used in the review.
@@ -159,6 +178,8 @@ State unresolved intent or assumptions used in the review.
 ### Verification gaps
 
 State required verification not completed separately from optional additional-confidence checks. A required gap prevents a `Ready` conclusion and a `COMPLETE` implementation claim.
+
+For each relevant review, record production-context verification as `Pass`, `Finding`, `Unverified`, or `Not applicable` with a reason. A missing, failing, or unperformed required context check prevents `Ready`; component tests that add production-missing context do not satisfy it.
 
 For substantial stateful reviews, include a compact evidence table here for only the highest-risk scenarios. Each row must name an invariant, concrete interleaving or recovery sequence, code path/symbols inspected, and the specific test that controls the critical transition—or state that coverage is missing or was not run. Mark each `Pass`, `Finding`, or `Unverified`; do not use empty checkboxes or treat test titles as evidence. Distinguish a confirmed defect from a theoretical risk or a coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up.
 
@@ -187,3 +208,4 @@ For substantial reviews, append this completion checklist and justify each `Not 
 - **Owner-retirement handoff reviewed:** Yes / No / Not applicable
 - **External side-effect adoption/compensation reviewed:** Yes / No / Not applicable
 - **Authorization/data-projection reviewed:** Yes / No / Not applicable
+- **Production entry point, runtime context, and test composition compared:** Yes / No / Not applicable

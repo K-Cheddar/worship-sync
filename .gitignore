@@ -7,6 +7,11 @@
 
 # testing
 /coverage
+/playwright/.auth/
+/playwright/.fixtures/
+/playwright/.browsers/
+/playwright-report/
+/test-results/
 
 # production
 /build
@@ -48,6 +53,8 @@
 .env.test.local
 .env.production.local
 .env
+.env.*
+!.env.example
 
 npm-debug.log*
 yarn-debug.log*

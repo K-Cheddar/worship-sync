@@ -112,6 +112,11 @@ const renderManager = ({
   onTeamSaved = jest.fn(),
   userId = "",
   role = "admin",
+  canEdit = true,
+  canEditAllTeams = true,
+  canManageMemberLifecycle = true,
+  canEditMember,
+  initialEntry,
   onSmsConsentRecorded = jest.fn(),
 }: {
   data?: TeamsData;
@@ -120,10 +125,15 @@ const renderManager = ({
   userId?: string;
   /** Invite and the account picker call admin-only endpoints. */
   role?: string;
+  canEdit?: boolean;
+  canEditAllTeams?: boolean;
+  canManageMemberLifecycle?: boolean;
+  canEditMember?: (member: TeamRosterMember) => boolean;
+  initialEntry?: string | { pathname: string; state?: unknown };
   onSmsConsentRecorded?: jest.Mock;
 } = {}) => {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntry ? [initialEntry] : undefined}>
       <GlobalInfoContext.Provider
         value={
           { churchId: "church-1", userId, role } as ContextType<
@@ -137,7 +147,10 @@ const renderManager = ({
               members={data.members}
               positions={data.positions}
               data={data}
-              canEdit
+              canEdit={canEdit}
+              canEditAllTeams={canEditAllTeams}
+              canManageMemberLifecycle={canManageMemberLifecycle}
+              canEditMember={canEditMember}
               onSaved={onSaved}
               onTeamSaved={onTeamSaved}
               onArchived={jest.fn()}
@@ -234,6 +247,47 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("keeps church-level member lifecycle actions hidden from a scoped Team editor", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: joinedData(),
+      canEditAllTeams: false,
+      canManageMemberLifecycle: false,
+      canEditMember: () => true,
+    });
+    await openMember(user, /Rae Kim/);
+    expect(screen.getByLabelText(/^First name/i)).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Member actions" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Archive member")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delete member")).not.toBeInTheDocument();
+  });
+
+  it("preselects the source Team and requires roster ownership for scoped creation", async () => {
+    const user = userEvent.setup();
+    mockCreateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
+    });
+    renderManager({
+      data: buildData(),
+      canEditAllTeams: false,
+      initialEntry: {
+        pathname: TEAMS_SECTION_PATHS.members,
+        state: { teamsCreateMember: { teamId: worshipTeam.teamId } },
+      },
+    });
+    expect(await screen.findByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(worshipTeamCheckbox()).toBeChecked();
+    expect(within(teamsField()).queryByRole("checkbox", { name: /Media/ })).not.toBeInTheDocument();
+    await fillName(user);
+    await user.click(within(teamsField()).getByRole("button", { name: "Clear all" }));
+    expect(saveButton()).toBeDisabled();
+    await user.click(worshipTeamCheckbox());
+    expect(saveButton()).toBeEnabled();
+    await user.click(saveButton());
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledWith("church-1", expect.objectContaining({ teamIds: [worshipTeam.teamId] })));
+  });
+
   it("shows create, pending, and saved states after a successful member save", async () => {
     const user = userEvent.setup();
     let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
@@ -274,6 +328,106 @@ describe("MemberManager member preferences", () => {
     await waitFor(() => expect(saveButton()).toHaveAccessibleName("Create member"));
     expect(await screen.findByText("Network unavailable")).toBeInTheDocument();
     expect(screen.getByLabelText(/^First name/i)).toHaveValue("Sky");
+  });
+
+  it("does not apply Member A's delayed save to Member B after navigation", async () => {
+    const user = userEvent.setup();
+    const secondMember: TeamRosterMember = {
+      ...worshipMember,
+      memberId: "member-2",
+      firstName: "Jo",
+      lastName: "Smith",
+    };
+    let resolveUpdate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockUpdateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveUpdate = resolve; }),
+    );
+    renderManager({
+      data: joinedData({ members: [worshipMember, secondMember] }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rae saved");
+    await user.click(saveButton());
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+
+    await openMember(user, /Jo Smith/);
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("Jo");
+
+    await act(async () => resolveUpdate({
+      success: true,
+      member: { ...worshipMember, firstName: "Rae saved" },
+    }));
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("Jo");
+  });
+
+  it("preserves newer edits made to the same member while a save is pending", async () => {
+    const user = userEvent.setup();
+    let resolveUpdate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockUpdateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveUpdate = resolve; }),
+    );
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rae submitted");
+    await user.click(saveButton());
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+
+    await user.clear(screen.getByLabelText(/^Last name/));
+    await user.type(screen.getByLabelText(/^Last name/), "Newer");
+    await act(async () => resolveUpdate({
+      success: true,
+      member: { ...worshipMember, firstName: "Rae submitted", lastName: "Kim" },
+    }));
+
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("Rae submitted");
+    expect(screen.getByLabelText(/^Last name/)).toHaveValue("Newer");
+  });
+
+  it("keeps a member's edits recoverable when an update fails", async () => {
+    const user = userEvent.setup();
+    let rejectUpdate: (error: Error) => void = () => undefined;
+    mockUpdateTeamRosterMember.mockImplementation(
+      () => new Promise((_, reject) => { rejectUpdate = reject; }),
+    );
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^Last name/));
+    await user.type(screen.getByLabelText(/^Last name/), "Submitted");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    await act(async () => rejectUpdate(new Error("Save failed")));
+
+    expect(screen.getByLabelText(/^Last name/)).toHaveValue("Submitted");
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
+    expect(screen.getByText("Save failed")).toBeInTheDocument();
+  });
+
+  it("does not adopt a completed create into a newly opened create form", async () => {
+    const user = userEvent.setup();
+    let resolveCreate: (value: { success: true; member: TeamRosterMember }) => void = () => undefined;
+    mockCreateTeamRosterMember.mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+    renderManager();
+    await openCreateForm(user);
+    await fillName(user);
+    await user.click(saveButton());
+    await waitFor(() => expect(mockCreateTeamRosterMember).toHaveBeenCalledTimes(1));
+
+    await openCreateForm(user);
+    expect(screen.getByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("");
+
+    await act(async () => resolveCreate({
+      success: true,
+      member: { ...worshipMember, memberId: "member-created", firstName: "Sky", lastName: "Lane" },
+    }));
+    expect(screen.getByRole("heading", { name: "Create member" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^First name/)).toHaveValue("");
   });
 
   it("formats a U.S. phone number while it is entered", async () => {
@@ -777,8 +931,96 @@ describe("MemberManager team membership", () => {
     await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalled());
     const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
     expect(body.teamIds).toEqual([]);
+    expect(body.baseTeamIds).toEqual(["team-worship"]);
     // The emptied roster comes back so the Teams tab updates immediately.
     await waitFor(() => expect(onTeamSaved).toHaveBeenCalledWith(worshipTeam));
+  });
+
+  it("omits unchanged membership on a profile-only save and rebases from the server", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, firstName: "Rachel" },
+      membershipTeamIds: ["team-media", "team-worship"],
+    });
+    renderManager({
+      data: joinedData({
+        teams: [{ ...worshipTeam, memberIds: ["member-1"] }, mediaTeam],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rachel");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
+    const [, , body] = mockUpdateTeamRosterMember.mock.calls[0];
+    expect(body).not.toHaveProperty("teamIds");
+    expect(body).not.toHaveProperty("baseTeamIds");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toBeChecked();
+  });
+
+  it("keeps a removed team unchecked and clean after the server confirms its roster", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, positionIds: [] },
+      teams: [{ ...worshipTeam, memberIds: [] }],
+    });
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.click(worshipTeamCheckbox());
+    await user.click(saveButton());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(worshipTeamCheckbox()).not.toBeChecked();
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a newly added team selected after the server confirms its roster", async () => {
+    const user = userEvent.setup();
+    const memberWithoutPositions = { ...worshipMember, positionIds: [] };
+    const joinedMedia = { ...mediaTeam, memberIds: [memberWithoutPositions.memberId] };
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: memberWithoutPositions,
+      teams: [joinedMedia],
+    });
+    renderManager({
+      data: joinedData({
+        members: [memberWithoutPositions],
+        positions: [vocalPosition, producerPosition],
+        teams: [{ ...worshipTeam, memberIds: [memberWithoutPositions.memberId] }, mediaTeam],
+      }),
+    });
+    await openMember(user, /Rae Kim/);
+    await user.click(within(teamsField()).getByRole("checkbox", { name: /Media/ }));
+    await user.click(saveButton());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(within(teamsField()).getByRole("checkbox", { name: /Media/ })).toBeChecked();
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
+  });
+
+  it("uses the existing roster baseline when a successful save omits unchanged teams", async () => {
+    const user = userEvent.setup();
+    mockUpdateTeamRosterMember.mockResolvedValue({
+      success: true,
+      member: { ...worshipMember, firstName: "Rachel" },
+    });
+    renderManager({ data: joinedData() });
+    await openMember(user, /Rae Kim/);
+    await user.clear(screen.getByLabelText(/^First name/));
+    await user.type(screen.getByLabelText(/^First name/), "Rachel");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saved" })).toBeDisabled());
+    expect(worshipTeamCheckbox()).toBeChecked();
+    await user.click(form().getByRole("button", { name: /^(Close|Cancel)$/ }));
+    expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
   });
 
   it("applies the rosters the server changed when saving", async () => {
@@ -874,6 +1116,23 @@ describe("MemberManager account linking", () => {
     expect(
       screen.getByRole("button", { name: /This is me/i }),
     ).toBeInTheDocument();
+  });
+
+  it("does not expose profile image or account-link controls to a scoped manager", async () => {
+    const user = userEvent.setup();
+    renderManager({
+      data: linkableMembers(),
+      userId: "user-1",
+      role: "member",
+      canEditAllTeams: false,
+    });
+
+    await openMember(user, /Someone Else/);
+
+    expect(screen.queryByRole("button", { name: /This is me/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Unlink/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Choose image|Replace image/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove/i })).not.toBeInTheDocument();
   });
 
   it("hides 'This is me' once the account has claimed another member", async () => {
@@ -1118,6 +1377,30 @@ describe("MemberManager roster contact information", () => {
     expect(screen.getAllByRole("button", { name: /Edit/ })).toHaveLength(2);
   });
 
+  it("keeps a read-only projected roster visible without write controls", () => {
+    renderManager({ data: rosterWithAndWithoutContactInfo(), canEdit: false });
+
+    expect(screen.getByText("Has Email")).toBeInTheDocument();
+    expect(screen.getByText("Phone Only")).toBeInTheDocument();
+    expect(screen.getByText("No Contact")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create member" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Has Email/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Import|Export/i })).not.toBeInTheDocument();
+  });
+
+  it("shows shared members while granting edit actions only to server-authorized ids", () => {
+    const data = rosterWithAndWithoutContactInfo();
+    renderManager({
+      data,
+      canEditMember: (member) => member.memberId === "member-reachable",
+    });
+
+    expect(screen.getByText("Has Email")).toBeInTheDocument();
+    expect(screen.getByText("Phone Only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Edit Has Email/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit Phone Only/i })).not.toBeInTheDocument();
+  });
+
   it("offers contextual SMS opt-in link actions for a saved member", async () => {
     const user = userEvent.setup();
     const originalClipboard = navigator.clipboard;
@@ -1134,7 +1417,7 @@ describe("MemberManager roster contact information", () => {
       await user.click(screen.getByRole("button", { name: /Member actions/i }));
 
       await user.click(
-        screen.getByRole("menuitem", { name: /Open SMS opt-in page/i }),
+        screen.getByRole("menuitem", { name: /Open text message consent page/i }),
       );
       expect(open).toHaveBeenCalledWith(
         `${window.location.origin}/sms-opt-in/church-1`,
@@ -1144,7 +1427,7 @@ describe("MemberManager roster contact information", () => {
 
       await user.click(screen.getByRole("button", { name: /Member actions/i }));
       await user.click(
-        screen.getByRole("menuitem", { name: /Copy SMS opt-in link/i }),
+        screen.getByRole("menuitem", { name: /Copy text message consent link/i }),
       );
       expect(writeText).toHaveBeenCalledWith(
         `${window.location.origin}/sms-opt-in/church-1`,
@@ -1235,11 +1518,11 @@ describe("MemberManager SMS consent recording", () => {
       onSmsConsentRecorded,
     });
     await openMember(user, /Rae Kim/);
-    expect(screen.getByRole("status")).toHaveTextContent("SMS status: Consent needed");
+    expect(screen.getByRole("status")).toHaveTextContent("Text message status: Consent needed");
     await user.click(screen.getByRole("button", { name: "Member actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Record SMS consent" }));
+    await user.click(screen.getByRole("menuitem", { name: "Record text message consent" }));
 
-    const dialog = screen.getByRole("dialog", { name: "Record SMS consent" });
+    const dialog = screen.getByRole("dialog", { name: "Record text message consent" });
     expect(within(dialog).getByText("(954) 555-1234")).toBeInTheDocument();
     expect(within(dialog).getByText(/agreed to receive WorshipSync texts about volunteer availability, scheduling, assignments, and related reminders/i)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("radio", { name: "Signed volunteer/ministry form" }));
@@ -1256,7 +1539,7 @@ describe("MemberManager SMS consent recording", () => {
       confirmed: true,
     }));
     expect(onSmsConsentRecorded).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Record SMS consent" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Record text message consent" })).not.toBeInTheDocument());
   });
 
   it("hides the consent action for non-admins and members without a valid phone", async () => {
@@ -1265,14 +1548,14 @@ describe("MemberManager SMS consent recording", () => {
     renderManager({ data: joinedData({ members: [member] }), role: "member" });
     await openMember(user, /Rae Kim/);
     await user.click(screen.getByRole("button", { name: "Member actions" }));
-    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
 
     cleanup();
     const invalidMember = { ...worshipMember, phoneNumber: "555" };
     renderManager({ data: joinedData({ members: [invalidMember] }) });
     await openMember(user, /Rae Kim/);
     await user.click(screen.getAllByRole("button", { name: "Member actions" }).at(-1)!);
-    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1290,9 +1573,9 @@ describe("MemberManager SMS consent recording", () => {
       }),
     });
     await openMember(user, /Rae Kim/);
-    expect(screen.getByRole("status")).toHaveTextContent(`SMS status: ${label}`);
+    expect(screen.getByRole("status")).toHaveTextContent(`Text message status: ${label}`);
     await user.click(screen.getByRole("button", { name: "Member actions" }));
-    expect(screen.queryByRole("menuitem", { name: "Record SMS consent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Record text message consent" })).not.toBeInTheDocument();
   });
 });
 

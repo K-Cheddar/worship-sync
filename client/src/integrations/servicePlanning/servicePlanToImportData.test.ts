@@ -79,7 +79,7 @@ describe("servicePlanToImportData", () => {
     });
   });
 
-  it("round-trips current assignees while retaining source led-by data", () => {
+  it("round-trips assignee names while retaining source led-by data", () => {
     const { sections } = servicePlanToImportData(
       planWith([
         element({
@@ -97,12 +97,9 @@ describe("servicePlanToImportData", () => {
       ledBy: "Dana Robinson, Morgan Lee, Taylor Smith",
       sourceLedByRaw: "Dana R.",
       assigneeNames: ["Dana Robinson", "Morgan Lee", "Taylor Smith"],
-      assigneeRefs: [
-        { id: "a1", memberId: "member-1", name: "Dana Robinson" },
-        { id: "a2", name: "Morgan Lee" },
-        { id: "a3", name: "Taylor Smith" },
-      ],
     });
+    expect(sections[0].rows[0]).not.toHaveProperty("assigneeRefs");
+    expect(sections[0].rows[0]).not.toHaveProperty("sourcePlanKey");
   });
 
   it("round-trips an Element label and attached song independently", () => {

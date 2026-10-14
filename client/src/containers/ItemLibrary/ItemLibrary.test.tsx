@@ -14,6 +14,16 @@ import {
 } from "../../test/mocks";
 import type { ServiceItem } from "../../types";
 
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
+}));
+
 const items: ServiceItem[] = [
   { _id: "song-1", name: "Library Song", type: "song", listId: "song-1" },
   { _id: "custom-1", name: "Library Custom", type: "free", listId: "custom-1" },

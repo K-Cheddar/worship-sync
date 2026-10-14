@@ -30,6 +30,7 @@ const baseChat = {
   isOpen: true,
   openChat: jest.fn(),
   closeChat: jest.fn(),
+  refreshContext: jest.fn(),
   context,
   selectedDayKey: "2026-03-08",
   selectDay: jest.fn(),

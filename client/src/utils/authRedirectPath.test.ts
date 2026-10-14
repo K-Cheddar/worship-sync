@@ -128,6 +128,25 @@ describe("authRedirectPath", () => {
     ).toBe("/home");
   });
 
+  it("does not return /login as a completed sign-in destination", () => {
+    expect(
+      getHumanPostAuthPath(
+        loc({
+          from: {
+            pathname: "/login",
+            search: "?code=123456&pendingAuthId=pending-used",
+            hash: "",
+            key: "x",
+          },
+        }),
+      ),
+    ).toBe("/home");
+
+    setPublicShellAuthReturnPath("/login?code=123456");
+    expect(getHumanPostAuthPath(loc(undefined))).toBe("/home");
+    expect(peekPublicShellAuthReturnPath()).toBeNull();
+  });
+
   it("getHumanPostAuthPath recovers and clears a public-shell return path", () => {
     setPublicShellAuthReturnPath("/invite");
     expect(peekPublicShellAuthReturnPath()).toBe("/invite");

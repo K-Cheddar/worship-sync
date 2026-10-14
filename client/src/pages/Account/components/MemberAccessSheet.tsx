@@ -65,22 +65,22 @@ const MemberAccessSheet = () => {
   const isInviteTarget = target?.kind === "invite";
   const member = isMemberTarget && target ? target.member : null;
   const invite = isInviteTarget && target ? target.invite : null;
+  const isExistingAdmin = isMemberTarget && member?.role === "admin";
   const inviteDraft = invite ? getInvitePendingAccessValue(invite) : inviteAccessDraft;
-  const selectedTeamScopeIds = member
+  const draftTeamScopeIds = member
     ? getMemberTeamScopeValue(member)
     : inviteDraft.teamScopeIds;
+  const selectedTeamScopeIds = isExistingAdmin ? [] : draftTeamScopeIds;
   const currentTeamScopeIds = member
     ? getEditableTeamScopeIds(member.permissions)
     : inviteDraft.teamScopeIds;
+  const effectiveCurrentTeamScopeIds = isExistingAdmin ? [] : currentTeamScopeIds;
   const inviteBaseline = invite ? inviteAccessDraftFromInvite(invite) : null;
 
-  const memberTeamScopesChanged = useMemo(
-    () =>
-      isMemberTarget &&
-      [...selectedTeamScopeIds].sort().join("|") !==
-      [...currentTeamScopeIds].sort().join("|"),
-    [isMemberTarget, selectedTeamScopeIds, currentTeamScopeIds],
-  );
+  const memberTeamScopesChanged =
+    isMemberTarget &&
+    [...selectedTeamScopeIds].sort().join("|") !==
+      [...effectiveCurrentTeamScopeIds].sort().join("|");
   const inviteAccessChanged = useMemo(
     () =>
       isInviteTarget &&
@@ -113,21 +113,27 @@ const MemberAccessSheet = () => {
   const memberLabel = memberUser?.displayName || memberEmail || "Unknown user";
   const targetUserId = memberUser?.uid || member?.userId || "";
 
-  const selectedMemberAccess = member ? getMemberAccessValue(member) : "full";
-  const selectedInviteAccess = inviteDraft.access;
+  const selectedMemberAccess =
+    member && !isExistingAdmin ? getMemberAccessValue(member) : "full";
+  const selectedInviteAccess = inviteDraft.controllerAccess;
   const selectedAccess = isMemberTarget ? selectedMemberAccess : selectedInviteAccess;
-  const currentMemberAccess = member
-    ? toMemberAccessOption(member.appAccess)
-    : "full";
+  const isAdminInviteAccess = !isMemberTarget && inviteDraft.role === "admin";
+  const isAdminAccess = isExistingAdmin || isAdminInviteAccess;
+  const currentMemberAccess =
+    member && !isExistingAdmin
+      ? toMemberAccessOption(member.controllerAccess ?? member.appAccess)
+      : "full";
   const currentTeamsAccess = member
     ? toTeamsAccessOption(member.permissions, member.role)
     : inviteDraft.teamsAccess;
-  const selectedTeamsAccess = member
+  const draftTeamsAccess = member
     ? getMemberTeamsAccessValue(member)
     : inviteDraft.teamsAccess;
-  const selectedServicesAccess = member
+  const draftServicesAccess = member
     ? getMemberServicesAccessValue(member)
     : inviteDraft.servicesAccess;
+  const selectedTeamsAccess = isAdminAccess ? "edit" : draftTeamsAccess;
+  const selectedServicesAccess = isAdminAccess ? "edit" : draftServicesAccess;
   const currentServicesAccess = member
     ? toServicesAccessOption(member.permissions, member.role)
     : inviteDraft.servicesAccess;
@@ -157,12 +163,8 @@ const MemberAccessSheet = () => {
   const showPerTeamSection =
     selectedTeamsAccess !== "edit" &&
     teams.length > 0 &&
-    (isMemberTarget || selectedInviteAccess !== "admin");
-  const isAdminInviteAccess = !isMemberTarget && selectedInviteAccess === "admin";
-  const servicesEditingIncluded =
-    isAdminInviteAccess ||
-    selectedTeamsAccess === "edit" ||
-    member?.role === "admin";
+    !isAdminAccess;
+  const servicesEditingIncluded = isAdminAccess || selectedTeamsAccess === "edit";
 
   const headerTitle = isMemberTarget
     ? memberLabel
@@ -171,10 +173,10 @@ const MemberAccessSheet = () => {
       : "New invite";
   const headerEmail = isMemberTarget ? memberEmail : "";
   const headerDescription = isMemberTarget
-    ? "Set WorshipSync app access and Teams permissions for this member."
+    ? "Set Controller, Teams, and Services access for this member."
     : isInviteTarget
       ? "Update access before this invite is accepted."
-      : "Choose app access and Teams permissions for the new invite.";
+      : "Choose Controller, Teams, and Services access for the new invite.";
 
   const clearMemberDrafts = (membershipId: string) => {
     setMemberAccessDrafts((prev) => {
@@ -275,7 +277,11 @@ const MemberAccessSheet = () => {
     }
   };
 
-  const handleAppAccessChange = (value: string) => {
+  const handleControllerAccessChange = (value: string) => {
+    if (isExistingAdmin) {
+      return;
+    }
+
     if (isMemberTarget && member) {
       setMemberAccessDrafts((prev) => ({
         ...prev,
@@ -284,13 +290,25 @@ const MemberAccessSheet = () => {
       return;
     }
 
-    const nextAccess = value as InviteAccessOption;
-    updateInviteDraft({
-      access: nextAccess,
-      ...(nextAccess === "admin"
-        ? { teamsAccess: "edit" as TeamsPermission, teamScopeIds: [] }
-        : {}),
-    });
+    updateInviteDraft({ controllerAccess: value as InviteAccessOption });
+  };
+
+  const handleRoleChange = (value: "admin" | "member") => {
+    updateInviteDraft(value === "admin"
+      ? {
+          role: "admin",
+          controllerAccess: "full",
+          teamsAccess: "edit",
+          servicesAccess: "edit",
+          teamScopeIds: [],
+        }
+      : {
+          role: "member",
+          controllerAccess: "full",
+          teamsAccess: "none",
+          servicesAccess: "none",
+          teamScopeIds: [],
+        });
   };
 
   const handleTeamsAccessChange = (value: TeamsPermission) => {
@@ -352,7 +370,7 @@ const MemberAccessSheet = () => {
     });
   };
 
-  const appAccessFieldId = getAppAccessFieldId(target);
+  const controllerAccessFieldId = getAppAccessFieldId(target);
   const teamsAccessFieldId = getTeamsAccessFieldId(target);
 
   return (
@@ -376,22 +394,42 @@ const MemberAccessSheet = () => {
         </div>
 
         <div className="scrollbar-variable min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
+          {!isMemberTarget ? (
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Role</h3>
+                <p className="mt-1 text-xs text-gray-400">
+                  Controls church administration privileges.
+                </p>
+              </div>
+              <Select
+                id={getRoleFieldId(target)}
+                label="Role"
+                value={inviteDraft.role}
+                options={[{ value: "member", label: "Member" }, { value: "admin", label: "Admin" }]}
+                selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
+                onChange={(value) => handleRoleChange(value as "admin" | "member")}
+              />
+            </section>
+          ) : null}
+
           <section className="space-y-3">
             <div>
-              <h3 className="text-sm font-semibold text-white">App access</h3>
+              <h3 className="text-sm font-semibold text-white">Controller &amp; presentation</h3>
               <p className="mt-1 text-xs text-gray-400">
-                Controls access to the controller and other WorshipSync surfaces.
+                Controls presentation and operator surfaces.
               </p>
             </div>
             <Select
-              id={appAccessFieldId}
-              label="Access level"
+              id={controllerAccessFieldId}
+              label="Controller access"
               value={selectedAccess}
               options={
                 isMemberTarget ? memberAccessOptions : inviteAccessSelectOptions
               }
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              onChange={handleAppAccessChange}
+              disabled={isAdminAccess}
+              onChange={handleControllerAccessChange}
             />
           </section>
 
@@ -408,16 +446,17 @@ const MemberAccessSheet = () => {
             <Select
               id={teamsAccessFieldId}
               label="Global Teams access"
-              value={isAdminInviteAccess ? "edit" : selectedTeamsAccess}
+              value={
+                isAdminAccess ? "edit" : selectedTeamsAccess
+              }
               options={teamsPageAccessOptions}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={isAdminInviteAccess}
+              disabled={isAdminAccess}
               onChange={(value) =>
                 handleTeamsAccessChange(value as TeamsPermission)
               }
             />
-
-            {selectedTeamsAccess === "edit" || isAdminInviteAccess ? (
+            {selectedTeamsAccess === "edit" || isAdminAccess ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
                 Edit all teams includes every team plus service plans and service settings. Per-team rules are not used.
               </p>
@@ -426,7 +465,7 @@ const MemberAccessSheet = () => {
             {showPerTeamSection ? (
               <fieldset className="space-y-3 rounded-lg border border-gray-700 px-4 py-3">
                 <legend className="px-1 text-sm font-medium text-gray-200">
-                  Per-team edit access
+                  Manage selected teams
                 </legend>
                 <p className="text-xs text-gray-400">
                   {scopedTeamsHelperText(
@@ -466,18 +505,18 @@ const MemberAccessSheet = () => {
             </div>
             <Select
               id={getServicesAccessFieldId(target)}
-              label="Service editing"
+              label="Service access"
               value={servicesEditingIncluded ? "edit" : selectedServicesAccess}
               options={serviceEditingAccessOptions}
               selectClassName={ACCOUNT_CONTROL_SELECT_CLASSNAME}
-              disabled={servicesEditingIncluded}
+              disabled={isAdminAccess || servicesEditingIncluded}
               onChange={(value) =>
                 handleServicesAccessChange(value as ServicesPermission)
               }
             />
             {servicesEditingIncluded ? (
               <p className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 text-xs text-cyan-100/90">
-                {member?.role === "admin" || isAdminInviteAccess
+                {isAdminAccess
                   ? "Admin access includes service editing."
                   : "Edit all teams includes service editing."}
               </p>
@@ -514,6 +553,11 @@ const getAppAccessFieldId = (target: AccessSheetTarget) => {
     return `invite-access-sheet-${target.invite.inviteId}`;
   }
   return "invite-draft-access-sheet";
+};
+
+const getRoleFieldId = (target: AccessSheetTarget) => {
+  if (target.kind === "invite") return `invite-role-access-sheet-${target.invite.inviteId}`;
+  return "invite-draft-role-access-sheet";
 };
 
 const getTeamsAccessFieldId = (target: AccessSheetTarget) => {

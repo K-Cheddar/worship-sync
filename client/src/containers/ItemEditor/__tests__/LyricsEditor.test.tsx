@@ -3,8 +3,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ToastData } from "../../../components/Toast/ToastContainer";
 import LyricsEditor from "../LyricsEditor";
 import { ToastContext } from "../../../context/toastContext";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
+import ServicePlanSongDetailsPanel from "../../../pages/Services/ServicePlanSongDetailsPanel";
+import type { DBItem } from "../../../types";
 
 type ShowToastArg = string | Omit<ToastData, "id">;
+
+jest.mock("../../../context/globalInfo", () => ({
+  GlobalInfoContext: jest.requireActual("react").createContext(null),
+}));
+jest.mock("../../../store/store", () => ({ broadcastItemUpdate: jest.fn() }));
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -23,8 +31,8 @@ const mockUpdateArrangements = jest.fn((payload: any) => ({
   type: "item/updateArrangements",
   payload,
 }));
-const mockDiscardPendingRemoteItem = jest.fn(() => ({
-  type: "item/discardPendingRemoteItem",
+const mockKeepLocalItemChanges = jest.fn(() => ({
+  type: "item/keepLocalItemChanges",
 }));
 const mockApplyPendingRemoteItem = jest.fn(() => ({
   type: "item/applyPendingRemoteItem",
@@ -46,7 +54,7 @@ jest.mock("../../../hooks", () => ({
 jest.mock("../../../store/itemSlice", () => ({
   setIsLyricsEditorOpen: (value: boolean) => mockSetIsLyricsEditorOpen(value),
   updateArrangements: (payload: any) => mockUpdateArrangements(payload),
-  discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
+  keepLocalItemChanges: () => mockKeepLocalItemChanges(),
   applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
   setSongMetadata: (value: unknown) => mockSetSongMetadata(value),
 }));
@@ -99,6 +107,11 @@ jest.mock("../LyricSectionTools", () => ({
 jest.mock("../SongSections", () => ({
   __esModule: true,
   default: () => <div data-testid="song-sections" />,
+}));
+
+jest.mock("../../../components/SongSections/SongArrangementSectionsPanel", () => ({
+  __esModule: true,
+  default: () => <div>Library lyrics preview</div>,
 }));
 
 jest.mock("../Arrangement", () => ({
@@ -253,6 +266,86 @@ describe("LyricsEditor", () => {
     mockRemoveToast = jest.fn();
     mockFormatSong.mockImplementation((item: any) => item);
     mockGeneratedIdCounter = 0;
+  });
+
+  const integritySong = (id: string): DBItem => ({
+    _id: id, _rev: "1-original", name: id, type: "song", selectedArrangement: 0,
+    slides: [], shouldSendTo: { projector: true, monitor: true, stream: true },
+    arrangements: [{
+      id: id + "-arr", name: "Master", slides: [],
+      formattedLyrics: [{ id: id + "-section", name: "Verse", type: "Verse",
+        words: id + " unique lyrics", slideSpan: 1 }],
+      songOrder: [{ id: id + "-order", name: "Verse" }],
+    }],
+  });
+
+  it("resets an unsaved library draft on song prop change before the real writer saves B", async () => {
+    const a = integritySong("library-A"), b = integritySong("library-B");
+    const docs = new Map([[a._id, a], [b._id, b]]);
+    const db = {
+      get: jest.fn(async (id: string) => JSON.parse(JSON.stringify(docs.get(id)))),
+      put: jest.fn(async (doc: DBItem) => {
+        docs.set(doc._id, { ...doc, _rev: "2-written" });
+        return { rev: "2-written" };
+      }),
+    };
+    const panel = (song: DBItem) => (
+      <ControllerInfoContext.Provider value={{ db } as never}>
+        <ServicePlanSongDetailsPanel song={song} canEdit />
+      </ControllerInfoContext.Provider>
+    );
+    const { rerender } = render(panel(a));
+    fireEvent.click(screen.getByRole("button", { name: "Edit lyrics" }));
+    await waitForLyricsEditorPanelReady();
+    fireEvent.click(screen.getByRole("button", { name: "Copy Master" }));
+    rerender(panel(b));
+    await waitFor(() => expect(lastLyricBoxesProps.formattedLyrics[0].id).toBe("library-B-section"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(db.put).toHaveBeenCalledTimes(1));
+    expect(docs.get(a._id)).toEqual(a);
+    expect(docs.get(b._id)?.arrangements).toEqual(b.arrangements);
+    expect(docs.get(b._id)?.arrangements).toHaveLength(1);
+  });
+
+  it("a stale library lyrics draft overwrites a newer arrangement using its newest revision", async () => {
+    const a = integritySong("library-A");
+    const docs = new Map([[a._id, a]]);
+    const db = {
+      get: jest.fn(async (id: string) => JSON.parse(JSON.stringify(docs.get(id)))),
+      put: jest.fn(async (doc: DBItem) => {
+        docs.set(doc._id, { ...doc, _rev: "3-written" });
+        return { rev: "3-written" };
+      }),
+    };
+    render(
+      <ControllerInfoContext.Provider value={{ db } as never}>
+        <ServicePlanSongDetailsPanel song={a} canEdit />
+      </ControllerInfoContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit lyrics" }));
+    await waitForLyricsEditorPanelReady();
+    fireEvent.click(screen.getByRole("button", { name: "Copy Master" }));
+    const remote = { ...a, _rev: "2-remote", arrangements: integritySong("remote").arrangements };
+    docs.set(a._id, remote);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(db.put).toHaveBeenCalledTimes(1));
+    expect(docs.get(a._id)?.arrangements[0].id).toBe("library-A-arr");
+    expect(docs.get(a._id)?._rev).toBe("3-written");
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _rev: "2-remote" }));
+  });
+
+  it("keeps the controller editor open across song selection and saves only the new draft", async () => {
+    mockState.undoable.present.item = { ...mockState.undoable.present.item, ...integritySong("song-A") };
+    const { rerender } = render(<LyricsEditor />);
+    await waitForLyricsEditorPanelReady();
+    fireEvent.click(screen.getByRole("button", { name: "Copy Master" }));
+    mockState.undoable.present.item = { ...mockState.undoable.present.item, ...integritySong("song-B") };
+    rerender(<LyricsEditor />);
+    await waitFor(() => expect(lastLyricBoxesProps.formattedLyrics[0].id).toBe("song-B-section"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(mockUpdateArrangements).toHaveBeenCalledWith(expect.objectContaining({
+      arrangements: integritySong("song-B").arrangements,
+    }));
   });
 
   it("returns null when edit mode is disabled", () => {
@@ -694,9 +787,9 @@ describe("LyricsEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Keep Editing Mine" }));
 
-    expect(mockDiscardPendingRemoteItem).toHaveBeenCalled();
+    expect(mockKeepLocalItemChanges).toHaveBeenCalled();
     expect(mockDispatch).toHaveBeenCalledWith({
-      type: "item/discardPendingRemoteItem",
+      type: "item/keepLocalItemChanges",
     });
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });

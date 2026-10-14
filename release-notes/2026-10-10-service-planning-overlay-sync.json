@@ -1,0 +1,7 @@
+{
+  "id": "service-planning-overlay-sync-20261010",
+  "date": "2026-10-10",
+  "type": "fixed",
+  "title": "Weekly overlay sync",
+  "description": "Service Planning now refreshes reusable overlays with current participant details while keeping their order and formatting."
+}

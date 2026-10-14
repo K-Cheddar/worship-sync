@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { serverDate, subscribeServerTimeOffset } from "../../utils/serverTime";
 
 type DisplayClockProps = {
   fontSize: number;
@@ -7,13 +8,16 @@ type DisplayClockProps = {
 const DisplayClock = ({
   fontSize,
 }: DisplayClockProps) => {
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(() => serverDate());
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(interval);
+    const updateTime = () => setCurrentTime(serverDate());
+    const unsubscribe = subscribeServerTimeOffset(updateTime);
+    const interval = setInterval(updateTime, 1000);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, []);
 
   const timeString = currentTime.toLocaleTimeString([], {

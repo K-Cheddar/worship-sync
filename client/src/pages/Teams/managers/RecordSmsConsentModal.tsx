@@ -39,15 +39,15 @@ const RecordSmsConsentModal = ({ churchId, member, onClose, onSaved }: Props) =>
         consentedAt,
         confirmed: true,
       });
-      showToast("SMS consent recorded.");
+      showToast("Text message consent recorded.");
       try {
         await onSaved();
       } catch {
-        showToast("Consent was recorded, but SMS status could not be refreshed. Reload Teams to update it.", "error");
+        showToast("Consent was recorded, but text message status couldn't be refreshed. Reload Teams to update it.", "error");
       }
       onClose();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "Could not record SMS consent. Try again.", "error");
+      showToast(error instanceof Error ? error.message : "Could not record text message consent. Try again.", "error");
     } finally {
       setSaving(false);
     }
@@ -57,7 +57,7 @@ const RecordSmsConsentModal = ({ churchId, member, onClose, onSaved }: Props) =>
     <Modal
       isOpen
       onClose={onClose}
-      title="Record SMS consent"
+      title="Record text message consent"
       description="Record consent already obtained from this roster member."
       size="sm"
       busy={saving}

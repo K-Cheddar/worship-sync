@@ -25,9 +25,11 @@ import {
   queryDocs,
   readChurchPublicBoardHeaderLogoUrl,
   resolveRequestBootstrap,
-  requireTeamsViewSession,
+  requireBroadTeamsViewSession,
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
+  startScheduleInitialSmsBatchDispatcher,
+  stopScheduleInitialSmsBatchDispatcher,
   setDoc,
 } from "./authService.js";
 import { createAppSessionGuards } from "./server/appSessionGuards.js";
@@ -1405,6 +1407,18 @@ app.get(
   authHandlers.getTeamsBootstrap,
 );
 app.get(
+  "/api/churches/:churchId/team-intake/availability",
+  authHandlers.getTeamAvailabilityManagementData,
+);
+app.get(
+  "/api/churches/:churchId/service-time-zone",
+  authHandlers.getChurchServiceTimeZone,
+);
+app.post(
+  "/api/churches/:churchId/service-time-zone",
+  authHandlers.updateChurchServiceTimeZone,
+);
+app.get(
   "/api/churches/:churchId/notification-intents",
   authHandlers.listIntents,
 );
@@ -1419,6 +1433,14 @@ app.post(
 app.post(
   "/api/churches/:churchId/notification-batches/prepare",
   authHandlers.prepareAvailabilityBatch,
+);
+app.get(
+  "/api/churches/:churchId/team-schedules/:scheduleId/initial-sms-recipients",
+  authHandlers.getScheduleInitialSmsRecipients,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/initial-sms-batch",
+  authHandlers.prepareScheduleInitialSmsBatch,
 );
 app.get(
   "/api/churches/:churchId/notification-batches/:batchId",
@@ -1501,6 +1523,26 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-roster-members/:memberId/delete",
   authHandlers.deleteTeamRosterMember,
+);
+app.get(
+  "/api/churches/:churchId/teams/:teamId/roster-candidates",
+  authHandlers.searchTeamRosterCandidates,
+);
+app.get(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId/team-profile",
+  authHandlers.getTeamRosterMemberProfile,
+);
+app.patch(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId/team-profile",
+  authHandlers.updateTeamRosterMemberProfile,
+);
+app.post(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId",
+  authHandlers.addTeamRosterMember,
+);
+app.delete(
+  "/api/churches/:churchId/teams/:teamId/roster/:memberId",
+  authHandlers.removeTeamRosterMember,
 );
 app.get(
   "/api/churches/:churchId/my-team-assignments",
@@ -2859,11 +2901,9 @@ app.get(
       return;
     }
 
-    // Gate the stream behind the same Teams view permission getTeamsBootstrap
-    // requires — otherwise any app-session holder for the church (including
-    // users with no Teams access) could subscribe and receive schedule payloads.
+    // Full church-wide documents require broad access; scoped readers use REST.
     try {
-      await requireTeamsViewSession(req, churchId);
+      await requireBroadTeamsViewSession(req, churchId);
     } catch {
       res.status(403).json({ error: "Teams access required" });
       return;
@@ -4091,19 +4131,60 @@ app.get("/{*path}", async (req, res) => {
 
 void restreamService.initializeConnections();
 
+let activeHttpServer = null;
+let shutdownStarted = false;
+
+const startServerBackgroundWork = () => {
+  startIntakeSubmissionDigestRecovery();
+  startScheduleInitialSmsBatchDispatcher();
+};
+
+const shutdownWebProcess = async (signal) => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  console.log(`Received ${signal}; stopping schedule SMS dispatch and closing the web server.`);
+  const forcedExit = setTimeout(() => {
+    console.error("Web process shutdown reached its 25-second deadline; persisted dispatcher leases will recover on another process.");
+    process.exit(0);
+  }, 25_000);
+  forcedExit.unref?.();
+  const serverClosed = activeHttpServer
+    ? new Promise((resolve) => activeHttpServer.close(resolve))
+    : Promise.resolve();
+  let dispatcherStopped = false;
+  try {
+    dispatcherStopped = await stopScheduleInitialSmsBatchDispatcher({ timeoutMs: 20_000 });
+  } catch (error) {
+    console.error("Could not stop schedule SMS dispatch cleanly:", error?.code || error?.name || "shutdown_error");
+  }
+  activeHttpServer?.closeAllConnections?.();
+  let serverStopped = false;
+  let closeTimeout;
+  await Promise.race([
+    serverClosed.then(() => { serverStopped = true; }),
+    new Promise((resolve) => { closeTimeout = setTimeout(resolve, 5_000); }),
+  ]);
+  if (closeTimeout) clearTimeout(closeTimeout);
+  if (dispatcherStopped && serverStopped) clearTimeout(forcedExit);
+};
+
+process.once("SIGTERM", () => void shutdownWebProcess("SIGTERM"));
+process.once("SIGINT", () => void shutdownWebProcess("SIGINT"));
+
 if (isDevelopment) {
   const options = {
     key: fs.readFileSync("./local.worshipsync.net-key.pem"),
     cert: fs.readFileSync("./local.worshipsync.net.pem"),
   };
 
-  https.createServer(options, app).listen(5000, "local.worshipsync.net", () => {
+  activeHttpServer = https.createServer(options, app);
+  activeHttpServer.listen(5000, "local.worshipsync.net", () => {
     console.log("HTTPS server running at https://local.worshipsync.net:5000");
-    startIntakeSubmissionDigestRecovery();
+    startServerBackgroundWork();
   });
 } else {
-  app.listen(port, () => {
+  activeHttpServer = app.listen(port, () => {
     console.log(`Listening on port ${port}`);
-    startIntakeSubmissionDigestRecovery();
+    startServerBackgroundWork();
   });
 }

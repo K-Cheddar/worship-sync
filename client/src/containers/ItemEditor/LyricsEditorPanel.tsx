@@ -14,7 +14,7 @@ import {
 } from "react";
 import {
   applyPendingRemoteItem,
-  discardPendingRemoteItem,
+  keepLocalItemChanges,
   setIsLyricsEditorOpen,
   setSongMetadata,
   updateArrangements,
@@ -814,7 +814,7 @@ const LyricsEditorPanel = ({
   ]);
 
   const handleKeepLocalEdits = useCallback(() => {
-    dispatch(discardPendingRemoteItem());
+    dispatch(keepLocalItemChanges());
   }, [dispatch]);
 
   const handleReloadRemote = useCallback(() => {

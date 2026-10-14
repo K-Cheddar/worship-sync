@@ -1,0 +1,7 @@
+{
+  "id": "email-code-sign-in-20261011",
+  "date": "2026-10-11",
+  "type": "fixed",
+  "title": "Finish email sign-in links",
+  "description": "Email sign-in links now verify automatically, and an active session takes you into WorshipSync instead of leaving you on the sign-in screen."
+}

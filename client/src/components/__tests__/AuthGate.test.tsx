@@ -34,11 +34,20 @@ const renderWithGate = (
               </AuthGate>
             }
           />
+          <Route path="/home" element={<div data-testid="home-page">Home</div>} />
           <Route
             path="/projector"
             element={
               <AuthGate allowedKinds={allowedKinds}>
                 <div data-testid="projector-surface">Projector</div>
+              </AuthGate>
+            }
+          />
+          <Route
+            path="/teams-and-services/*"
+            element={
+              <AuthGate allowedKinds={allowedKinds}>
+                <div data-testid="teams-workspace">Teams</div>
               </AuthGate>
             }
           />
@@ -52,6 +61,20 @@ const renderWithGate = (
   );
 
 describe("AuthGate", () => {
+  it.each(["human", "workstation", "display"])(
+    "keeps %s display sessions empty during authentication and reconnect",
+    (sessionKind) => {
+      const { container } = renderWithGate(
+        { sessionKind, bootstrapStatus: "loading", loginState: "loading", authServerStatus: "unavailable", authServerRetryCount: 2 },
+        ["human", "workstation", "display"],
+        "/projector?outputId=main",
+      );
+      expect(container.textContent).toBe("");
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(container).toContainHTML('<div class="min-h-dvh w-full bg-transparent" aria-busy="true"></div>');
+    },
+  );
   it("shows a loading screen while bootstrap or sign-in is loading", () => {
     renderWithGate(
       { bootstrapStatus: "loading", loginState: "loading" },
@@ -63,10 +86,29 @@ describe("AuthGate", () => {
 
   it("renders children when session kind is allowed", () => {
     renderWithGate(
-      { sessionKind: "human", operatorName: "" },
+      { sessionKind: "human", controllerAccess: "full", operatorName: "" },
       ["human", "workstation"]
     );
     expect(screen.getByTestId("protected")).toBeInTheDocument();
+  });
+
+  it("lets Controller None humans attempt the Teams workspace", () => {
+    renderWithGate(
+      { sessionKind: "human", controllerAccess: "none", access: "none" },
+      ["human"],
+      "/teams-and-services/schedules",
+    );
+    expect(screen.getByTestId("teams-workspace")).toBeInTheDocument();
+  });
+
+  it("blocks Controller None humans from operator surfaces", () => {
+    renderWithGate(
+      { sessionKind: "human", controllerAccess: "none", access: "none" },
+      ["human"],
+      "/controller",
+    );
+    expect(screen.queryByTestId("protected")).not.toBeInTheDocument();
+    expect(screen.getByTestId("home-page")).toBeInTheDocument();
   });
 
   it("sends workstation sessions without an operator name to the operator prompt", async () => {

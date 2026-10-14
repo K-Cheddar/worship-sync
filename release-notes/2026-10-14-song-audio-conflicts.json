@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-14-song-audio-conflicts",
+  "date": "2026-10-14",
+  "type": "fixed",
+  "title": "Protect song edits across controllers",
+  "description": "Attaching or removing an MP3 now preserves unsaved song edits and keeps another controller's conflicting changes protected until you choose how to resolve them."
+}

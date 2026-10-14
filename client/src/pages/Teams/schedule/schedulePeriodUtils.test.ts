@@ -50,6 +50,23 @@ it("filters past occurrences from the visible Upcoming range", () => {
   })).toEqual([occurrence]);
 });
 
+it("filters a UTC month-boundary occurrence by its stored church date", () => {
+  const churchOctoberOccurrence: TeamScheduleOccurrence = {
+    ...occurrence,
+    occurrenceId: "service@2026-11-01T00:30:00.000Z",
+    startsAt: "2026-11-01T00:30:00.000Z",
+    serviceDate: "2026-10-31",
+  };
+  expect(filterOccurrencesToRange([churchOctoberOccurrence], {
+    start: "2026-10-01",
+    end: "2026-10-31",
+  }, "America/New_York")).toEqual([churchOctoberOccurrence]);
+  expect(filterOccurrencesToRange([churchOctoberOccurrence], {
+    start: "2026-11-01",
+    end: "2026-11-30",
+  }, "America/New_York")).toEqual([]);
+});
+
 describe("findReusablePeriodSchedule", () => {
   it("reuses an exact generated-period schedule", () => {
     const generated = schedule({
@@ -105,6 +122,25 @@ describe("findReusablePeriodSchedule", () => {
       schedule: null,
       ambiguous: false,
     });
+  });
+
+  it("skips occurrence matching for saved periods that cannot cover the visible range", () => {
+    const historical = schedule({
+      startDate: "2025-01-01",
+      endDate: "2025-12-31",
+    });
+    const readOccurrences = jest.fn(() => target.occurrences);
+    Object.defineProperty(historical, "occurrences", {
+      configurable: true,
+      enumerable: true,
+      get: readOccurrences,
+    });
+
+    expect(findReusablePeriodSchedule({ schedules: [historical], ...target })).toEqual({
+      schedule: null,
+      ambiguous: false,
+    });
+    expect(readOccurrences).not.toHaveBeenCalled();
   });
 
   it("keeps a partial legacy generated record out of the full-period default and picker list", () => {
@@ -370,9 +406,15 @@ describe("findReusablePeriodSchedule", () => {
     expect(custom.assignments?.[savedOccurrences[0].occurrenceId]).toEqual({ "position::0": { primaryMemberId: "member" } });
   });
 
-  it("reuses equivalent occurrences after service IDs change", () => {
+  it("does not match a different service by name and timestamp", () => {
     const saved = schedule({ occurrences: [{ ...occurrence, serviceId: "old", occurrenceId: "old@date" }] });
-    expect(findReusablePeriodSchedule({ schedules: [saved], ...target }).schedule).toBe(saved);
+    saved.assignments = { "old@date": { "position::0": { primaryMemberId: "member" } } };
+    expect(findReusablePeriodSchedule({ schedules: [saved], ...target })).toEqual({
+      schedule: null,
+      ambiguous: true,
+    });
+    expect(saved.occurrences?.[0].occurrenceId).toBe("old@date");
+    expect(saved.assignments?.["old@date"]).toEqual({ "position::0": { primaryMemberId: "member" } });
   });
 
   it("rejects a schedule missing a newly relevant service at the same time", () => {

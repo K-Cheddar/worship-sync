@@ -50,13 +50,6 @@ const elementToRow = (
 ): EventData => {
   const title = richTextToPlainText(element.title).trim();
   const assigneeNames = getServicePlanElementAssigneeNames(element);
-  const assigneeRefs = getServicePlanElementAssignees(element)
-    .filter((assignee) => Boolean(assignee.name?.trim()))
-    .map((assignee) => ({
-      id: assignee.id,
-      ...(assignee.memberId ? { memberId: assignee.memberId } : {}),
-      name: assignee.name!.trim(),
-    }));
   const notes = element.notes
     ? richTextToFormattedPlainText(element.notes).trim()
     : "";
@@ -137,7 +130,6 @@ const elementToRow = (
 
   const base: EventData = {
     ...(sourcePlanKey ? {
-      sourcePlanKey,
       sourcePlanElementId: element.id,
       sourceOccurrenceId: element.sourceOccurrenceId || element.id,
     } : {}),
@@ -145,7 +137,6 @@ const elementToRow = (
     title,
     ledBy: assigneeNames.join(", ") || sourceLedByRaw,
     ...(assigneeNames.length ? { assigneeNames } : {}),
-    ...(assigneeRefs.length ? { assigneeRefs } : {}),
     ...(contentTitle ? { contentTitle } : {}),
     ...(sourceLedByRaw ? { sourceLedByRaw } : {}),
     ...(element.sourceLedByAssignments?.length

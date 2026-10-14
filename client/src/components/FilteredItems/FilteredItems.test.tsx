@@ -1,6 +1,7 @@
 import React from "react";
 import { configureStore } from "@reduxjs/toolkit";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import {
   MemoryRouter,
@@ -12,7 +13,7 @@ import {
 import FilteredItems from "./FilteredItems";
 import {
   FILTERED_ITEM_GRID_COLUMNS,
-  FILTERED_SONG_GRID_COLUMNS,
+  FILTERED_DETAILS_GRID_COLUMNS,
 } from "./FilteredItem";
 import { createItemSlice, initialCreateItemState } from "../../store/createItemSlice";
 import { createMockControllerContext, createMockGlobalContext } from "../../test/mocks";
@@ -30,6 +31,10 @@ jest.mock("../../api/auth", () => ({
   deleteSongAudioWithRetry: jest.fn(),
   getSongAudioUrl: jest.fn(),
   uploadSongAudio: jest.fn(),
+}));
+jest.mock("../../hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
 }));
 
 const mockedSearchLrclibTracks = searchLrclibTracks as jest.MockedFunction<
@@ -148,6 +153,68 @@ describe("FilteredItems", () => {
     expect(screen.getByRole("button", { name: /Add to outline/i })).toBeInTheDocument();
   });
 
+  it.each([
+    { type: "free", libraryFilter: "all" as LibraryFilter },
+    { type: "all", libraryFilter: "all" as LibraryFilter },
+  ])("opens custom item details from the $type filter with keyboard input", async ({ type, libraryFilter }) => {
+    const user = userEvent.setup();
+    const item = {
+      _id: "custom-details-1",
+      name: "Welcome Slides",
+      type: "free",
+      listId: "custom-details-1",
+    } as any;
+    const document = {
+      ...item,
+      slides: [{
+        id: "welcome-slide",
+        name: "Opening slide",
+        type: "Title",
+        boxes: [
+          { id: "welcome-background", words: "", width: 100, height: 100 },
+          { id: "welcome-box", words: "Welcome content", width: 80, height: 20, x: 10, y: 10 },
+        ],
+      }],
+    } as any;
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider
+          value={createMockControllerContext() as any}
+        >
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type={type}
+                heading={type === "all" ? "All Items" : "Custom"}
+                label={type === "all" ? "item" : "custom item"}
+                isLoading={false}
+                allDocs={[document]}
+                searchValue=""
+                setSearchValue={jest.fn()}
+                libraryFilter={libraryFilter}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    const viewDetails = await screen.findByRole("button", {
+      name: "View custom item details for Welcome Slides",
+    });
+    expect(viewDetails).not.toHaveClass("hidden");
+    viewDetails.focus();
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByRole("dialog", { name: "Welcome Slides" })).toBeInTheDocument();
+    expect(screen.getByText("Opening slide")).toBeInTheDocument();
+    expect(screen.getByText("Welcome content")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close modal" }));
+    expect(screen.getByRole("button", { name: /Add to outline/i })).toBeInTheDocument();
+  });
+
   it("keeps the type column fixed while songs show artist metadata below the name on narrow layouts", async () => {
     const song = {
       _id: "song-with-artist",
@@ -185,8 +252,8 @@ describe("FilteredItems", () => {
 
     expect(FILTERED_ITEM_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
     expect(FILTERED_ITEM_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_15rem]");
-    expect(FILTERED_SONG_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
-    expect(FILTERED_SONG_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_21rem]");
+    expect(FILTERED_DETAILS_GRID_COLUMNS).toContain("20px_minmax(0,1fr)_9rem");
+    expect(FILTERED_DETAILS_GRID_COLUMNS).toContain("md:grid-cols-[20px_minmax(0,1fr)_21rem]");
     await waitFor(() => {
       expect(screen.getByText("Traditional")).toBeInTheDocument();
     });
@@ -264,7 +331,12 @@ describe("FilteredItems", () => {
     );
 
     const searchInput = screen.getByLabelText(/Search/);
+    const results = screen.getByTestId("filtered-items-results");
     fireEvent.change(searchInput, { target: { value: "shepherd" } });
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(results).toHaveAttribute("data-search-query", "");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "shepherd"));
+    expect(results).toHaveAttribute("aria-busy", "false");
     expect(await screen.findByTitle(song.name)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Custom" }));
@@ -279,6 +351,10 @@ describe("FilteredItems", () => {
     expect(screen.getByRole("button", { name: "Search external lyrics" })).toBeInTheDocument();
 
     fireEvent.change(searchInput, { target: { value: "harbor choir" } });
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(results).toHaveAttribute("data-search-query", "shepherd");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "harbor choir"));
+    expect(results).toHaveAttribute("aria-busy", "false");
     expect(await screen.findByTitle(song.name)).toBeInTheDocument();
   });
 

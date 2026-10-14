@@ -104,6 +104,8 @@ export type ItemDetailsModalProps = {
   onRemoveSongAudio?: () => Promise<void>;
   /** Omit when only the visible name changes. `null` clears stored metadata (songs only). */
   onSave: (payload: ItemDetailsSavePayload) => void | Promise<void>;
+  /** Called after the save handler accepts the submitted details. */
+  onSaveSuccess?: () => void;
 };
 
 export type ItemDetailsSavePayload = {
@@ -146,6 +148,7 @@ export function ItemDetailsModal({
   onGetSongAudioUrl,
   onRemoveSongAudio,
   onSave,
+  onSaveSuccess,
 }: ItemDetailsModalProps) {
   return (
     <Modal
@@ -167,6 +170,7 @@ export function ItemDetailsModal({
         onGetSongAudioUrl={onGetSongAudioUrl}
         onRemoveSongAudio={onRemoveSongAudio}
         onSave={onSave}
+        onSaveSuccess={onSaveSuccess}
       />
     </Modal>
   );
@@ -184,6 +188,7 @@ export function ItemDetailsEditorFields({
   onGetSongAudioUrl,
   onRemoveSongAudio,
   onSave,
+  onSaveSuccess,
   className,
 }: ItemDetailsEditorFieldsProps) {
   const [localName, setLocalName] = useState(itemName);
@@ -196,6 +201,7 @@ export function ItemDetailsEditorFields({
   const [linkError, setLinkError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const isDraftLocked = isSaving && Boolean(onSaveSuccess);
   const [isYouTubePickerOpen, setIsYouTubePickerOpen] = useState(false);
   const isSong = itemType === "song";
   const draftFingerprint = itemDetailsFingerprint({
@@ -378,8 +384,10 @@ export function ItemDetailsEditorFields({
   const saveDraft = async (payload: ItemDetailsSavePayload) => {
     setSaveError("");
     setIsSaving(true);
+    let didSave = false;
     try {
       await onSave(payload);
+      didSave = true;
       setSavedFingerprint(draftFingerprint);
     } catch (error) {
       setSaveError(
@@ -390,6 +398,7 @@ export function ItemDetailsEditorFields({
     } finally {
       setIsSaving(false);
     }
+    if (didSave) onSaveSuccess?.();
   };
 
   const handleSave = async () => {
@@ -458,6 +467,7 @@ export function ItemDetailsEditorFields({
       <Input
         label={isSong ? "Song name" : "Item name"}
         value={localName}
+        disabled={isDraftLocked}
         onChange={(v) => setLocalName(v as string)}
         onKeyDown={(event) => {
           if (itemType === "free" && event.key === "Enter") {
@@ -472,18 +482,21 @@ export function ItemDetailsEditorFields({
           <Input
             label="Artist"
             value={artistName}
+            disabled={isDraftLocked}
             onChange={(v) => setArtistName(v as string)}
             data-ignore-undo="true"
           />
           <Input
             label="Album"
             value={albumName}
+            disabled={isDraftLocked}
             onChange={(v) => setAlbumName(v as string)}
             data-ignore-undo="true"
           />
           <Input
             label="Key"
             value={songKey}
+            disabled={isDraftLocked}
             onChange={(v) => setSongKey(v as string)}
             data-ignore-undo="true"
           />
@@ -499,11 +512,17 @@ export function ItemDetailsEditorFields({
                   variant="secondary"
                   svg={Search}
                   className="text-sm"
+                  disabled={isDraftLocked}
                   onClick={() => setIsYouTubePickerOpen(true)}
                 >
                   Find YouTube Video
                 </Button>
-                <Button variant="tertiary" className="text-sm" onClick={addSongLink}>
+                <Button
+                  variant="tertiary"
+                  className="text-sm"
+                  disabled={isDraftLocked}
+                  onClick={addSongLink}
+                >
                   Add link
                 </Button>
               </div>
@@ -513,12 +532,14 @@ export function ItemDetailsEditorFields({
                 <Input
                   label="Link label (optional)"
                   value={link.label}
+                  disabled={isDraftLocked}
                   onChange={(value) => updateSongLink(link.id, { label: String(value) })}
                 />
                 <Input
                   label="Link address"
                   type="url"
                   value={link.url}
+                  disabled={isDraftLocked}
                   onChange={(value) => updateSongLinkAddress(link.id, String(value))}
                 />
                 {getYouTubeVideoReference(link.url) || link.segments.length ? (
@@ -536,6 +557,7 @@ export function ItemDetailsEditorFields({
                         <Button
                           variant="tertiary"
                           className="shrink-0 text-sm"
+                          disabled={isDraftLocked}
                           onClick={() => addSongLinkSegment(link.id)}
                         >
                           Add segment
@@ -553,6 +575,7 @@ export function ItemDetailsEditorFields({
                         <Input
                           label="Segment label (optional)"
                           value={segment.label}
+                          disabled={isDraftLocked}
                           onChange={(value) =>
                             updateSongLinkSegment(link.id, segment.id, {
                               label: String(value),
@@ -563,6 +586,7 @@ export function ItemDetailsEditorFields({
                           <Input
                             label="Start time"
                             value={segment.startTime}
+                            disabled={isDraftLocked}
                             placeholder="12:35"
                             onChange={(value) =>
                               updateSongLinkSegment(link.id, segment.id, {
@@ -573,6 +597,7 @@ export function ItemDetailsEditorFields({
                           <Input
                             label="End time (optional)"
                             value={segment.endTime}
+                            disabled={isDraftLocked}
                             placeholder="16:08"
                             onChange={(value) =>
                               updateSongLinkSegment(link.id, segment.id, {
@@ -584,6 +609,7 @@ export function ItemDetailsEditorFields({
                         <Button
                           variant="textLink"
                           className="mt-1 text-sm text-red-300"
+                          disabled={isDraftLocked}
                           onClick={() =>
                             updateSongLink(link.id, {
                               segments: link.segments.filter(
@@ -601,6 +627,7 @@ export function ItemDetailsEditorFields({
                 <Button
                   variant="textLink"
                   className="mt-1 text-sm text-red-300"
+                  disabled={isDraftLocked}
                   onClick={() =>
                     setLocalSongLinks((links) => links.filter((entry) => entry.id !== link.id))
                   }
@@ -662,7 +689,7 @@ export function ItemDetailsEditorFields({
       </div>
       {isSong ? (
         <YouTubeVideoPicker
-          isOpen={isYouTubePickerOpen}
+          isOpen={isYouTubePickerOpen && !isDraftLocked}
           onClose={() => setIsYouTubePickerOpen(false)}
           title={localName}
           artist={artistName}

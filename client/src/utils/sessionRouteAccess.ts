@@ -1,5 +1,5 @@
 import { getDisplayHomePath } from "./displaySurface";
-import { isViewOnlyAccess } from "./accessTiers";
+import { hasControllerAccess, isControllerViewOnly } from "./accessTiers";
 
 type LoginState =
   | "idle"
@@ -11,7 +11,8 @@ type LoginState =
   | undefined;
 
 type SessionKind = "human" | "workstation" | "display" | null | undefined;
-type Access = "full" | "music" | "view" | "member" | null | undefined;
+// `member` is accepted only as a legacy access alias; new callers send controllerAccess.
+type Access = "none" | "full" | "music" | "view" | "member" | null | undefined;
 type TeamsPermission = "none" | "view" | "edit" | null | undefined;
 type TeamScopedPermission = "view" | "edit";
 type ServicesPermission = "none" | "view" | "edit" | null | undefined;
@@ -20,6 +21,7 @@ type RouteSessionContext = {
   loginState?: LoginState;
   sessionKind?: SessionKind;
   access?: Access;
+  controllerAccess?: Exclude<Access, "member">;
   role?: string | null;
   permissions?: {
     teams?: TeamsPermission;
@@ -31,9 +33,8 @@ type RouteSessionContext = {
   displayOutputId?: string | null;
 };
 
-// Auxiliary controllers are dynamic routes ("/aux-controller/<id>"), so they
-// are matched by prefix rather than listed. They sit at the same access level as
-// the overlay controller: an operator surface, closed to schedule-only members.
+// Controller/operator routes have their own access axis. Dynamic auxiliary
+// controllers are matched by prefix.
 const GUEST_ALLOWED_PREFIXES = ["/controller", "/aux-controller"];
 const GUEST_ALLOWED_EXACT = new Set([
   "/home",
@@ -41,25 +42,27 @@ const GUEST_ALLOWED_EXACT = new Set([
   "/credits-editor",
 ]);
 
-/**
- * Everything a schedule-only member may open.
- *
- * An **allowlist**, not a subtraction from the human list: this tier exists so a
- * volunteer never reaches an operator surface, and expressing that as "human
- * routes minus some" would silently admit every route added later. Anything not
- * named here is refused, so a new operator page is closed to members by default.
- */
-const MEMBER_ALLOWED_EXACT = new Set(["/home", "/my-schedule"]);
+/** Teams workspace is safe to attempt for any human; bootstrap is authoritative. */
+export const isTeamsWorkspacePath = (pathname: string): boolean =>
+  pathname === "/teams" ||
+  pathname.startsWith("/teams/") ||
+  pathname === "/teams-and-services" ||
+  pathname.startsWith("/teams-and-services/");
 
-/** Whether a schedule-only member may open this path. Deny by default. */
-export const isMemberAllowedPath = (pathname: string): boolean =>
-  MEMBER_ALLOWED_EXACT.has(pathname);
+const CONTROLLER_ALLOWED_PREFIXES = ["/controller", "/aux-controller"];
+const CONTROLLER_ALLOWED_EXACT = new Set([
+  "/overlay-controller",
+  "/credits-editor",
+  "/boards/controller",
+]);
+export const isControllerSurfacePath = (pathname: string): boolean =>
+  matchesAllowedRoute(pathname, CONTROLLER_ALLOWED_EXACT, CONTROLLER_ALLOWED_PREFIXES);
 
 const HUMAN_ALLOWED_PREFIXES = ["/controller", "/account", "/aux-controller"];
 const HUMAN_ALLOWED_EXACT = new Set([
   "/home",
   "/resources",
-  // Reachable by everyone, not only schedule-only members: an admin who is also
+  // Reachable by every authenticated human: an admin who is also
   // on a roster uses it, and omitting it made Electron route restore fall back
   // to /home.
   "/my-schedule",
@@ -146,7 +149,7 @@ const VIEW_BLOCKED_EXACT = new Set([
   "/credits",
 ]);
 
-/** Paths that only members with full app access may open (human / workstation). */
+/** Paths that require Full Controller access (human / workstation). */
 export const FULL_ACCESS_ONLY_EXACT = new Set(["/boards/controller"]);
 
 const matchesAllowedRoute = (
@@ -161,12 +164,17 @@ const hasTeamsViewAccess = (context: RouteSessionContext) =>
   context.role === "admin" ||
   context.permissions?.teams === "view" ||
   context.permissions?.teams === "edit" ||
-  context.permissions?.services === "edit" ||
   Object.keys(context.permissions?.teamScopes || {}).length > 0;
+
+const hasServicesWorkspaceAccess = (context: RouteSessionContext) =>
+  context.role === "admin" ||
+  context.permissions?.services === "view" ||
+  context.permissions?.services === "edit";
 
 const hasServicePlansViewAccess = (context: RouteSessionContext) =>
   hasTeamsViewAccess(context) ||
-  context.permissions?.services === "view";
+  context.permissions?.services === "view" ||
+  context.permissions?.services === "edit";
 
 export const isRouteAllowedForSession = (
   pathname: string,
@@ -185,11 +193,12 @@ export const isRouteAllowedForSession = (
   }
 
   if (context.sessionKind === "human") {
-    // Checked before the human allowlist and returning outright: hiding the
-    // links on Home is presentation only, and typing the URL would otherwise
-    // still open a read-only controller.
-    if (context.access === "member") {
-      return MEMBER_ALLOWED_EXACT.has(pathname);
+    const controllerAccess = context.controllerAccess ?? context.access;
+    if (isControllerSurfacePath(pathname) && !hasControllerAccess(controllerAccess)) {
+      return false;
+    }
+    if (pathname === "/resources" && !hasControllerAccess(controllerAccess)) {
+      return false;
     }
     if (
       !matchesAllowedRoute(
@@ -197,8 +206,10 @@ export const isRouteAllowedForSession = (
         HUMAN_ALLOWED_EXACT,
         HUMAN_ALLOWED_PREFIXES,
       ) &&
+      !isTeamsWorkspacePath(pathname) &&
       !(
-        (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) ||
+        (pathname === CURRENT_SERVICE_PATH &&
+          (hasTeamsViewAccess(context) || hasServicesWorkspaceAccess(context))) ||
         (pathname === CURRENT_SERVICE_VIEW_PATH &&
           hasServicePlansViewAccess(context)) ||
         (hasTeamsViewAccess(context) &&
@@ -207,10 +218,10 @@ export const isRouteAllowedForSession = (
     ) {
       return false;
     }
-    if (isViewOnlyAccess(context.access) && VIEW_BLOCKED_EXACT.has(pathname)) {
+    if (isControllerViewOnly(controllerAccess) && VIEW_BLOCKED_EXACT.has(pathname)) {
       return false;
     }
-    if (context.access !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
+    if (controllerAccess !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
       return false;
     }
     return true;
@@ -226,7 +237,7 @@ export const isRouteAllowedForSession = (
     if (pathname === CURRENT_SERVICE_PATH && hasTeamsViewAccess(context)) {
       // Booth workstations only — default pairing has services:view / teams:none.
       return !(
-        isViewOnlyAccess(context.access) && VIEW_BLOCKED_EXACT.has(pathname)
+        isControllerViewOnly(context.controllerAccess ?? context.access) && VIEW_BLOCKED_EXACT.has(pathname)
       );
     }
     if (
@@ -238,10 +249,10 @@ export const isRouteAllowedForSession = (
     ) {
       return false;
     }
-    if (isViewOnlyAccess(context.access) && VIEW_BLOCKED_EXACT.has(pathname)) {
+    if (isControllerViewOnly(context.controllerAccess ?? context.access) && VIEW_BLOCKED_EXACT.has(pathname)) {
       return false;
     }
-    if (context.access !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
+    if ((context.controllerAccess ?? context.access) !== "full" && FULL_ACCESS_ONLY_EXACT.has(pathname)) {
       return false;
     }
     return true;

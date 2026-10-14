@@ -1,13 +1,21 @@
-import type { TeamIntakeForm, TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
+import type {
+  TeamIntakeForm,
+  TeamPosition,
+  TeamSchedule,
+  TeamScheduleOccurrence,
+  TeamScheduleSummary,
+  TeamService,
+} from "../../api/authTypes";
 import type { TeamIntakeFormPayload } from "../../api/auth";
 import { serverDate } from "../../utils/serverTime";
-import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
+import { calendarDateInTimeZone, generateScheduleOccurrences, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
 import { parsePlainDate } from "../../utils/plainDate";
 import { ALL_INTAKE_FORM_FIELDS, resolveIntakeFormFields } from "./intakeFormFields";
 import { getUpcomingServiceRange } from "./servicePeriodRange";
 import { shiftRange } from "./rangeSelection";
+import { buildTeamSchedulePeriod, findInitialTeamSchedulePeriod } from "./schedule/teamSchedulePeriod";
 
-type SuggestedAvailabilityOccurrence = Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "name" | "startsAt">;
+type SuggestedAvailabilityOccurrence = Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "name" | "startsAt" | "serviceDate">;
 
 type SuggestionBase = {
   name: string;
@@ -36,7 +44,7 @@ const safeTemplate = (forms: TeamIntakeForm[]) =>
     .filter((form) => !form.archivedAt && resolveIntakeFormFields(form).includes("availability"))
     .sort((a, b) => b.endDate.localeCompare(a.endDate))[0];
 
-const getFormOccurrences = (form: TeamIntakeForm, services: TeamService[]) =>
+const getFormOccurrences = (form: TeamIntakeForm, services: TeamService[], timeZone?: string) =>
   form.availabilityOccurrences?.length
     ? form.availabilityOccurrences
     : generateScheduleOccurrences({
@@ -44,6 +52,7 @@ const getFormOccurrences = (form: TeamIntakeForm, services: TeamService[]) =>
         serviceIds: (form.availabilityServices || []).map(({ serviceId }) => serviceId),
         startDate: form.startDate,
         endDate: form.endDate,
+        timeZone,
       });
 
 const scopeCovers = (existingTeamIds: string[], proposedTeamIds: string[]) => {
@@ -56,9 +65,10 @@ const scopeCovers = (existingTeamIds: string[], proposedTeamIds: string[]) => {
 };
 
 const getOccurrenceCoverageKeys = (
-  occurrence: Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "serviceIds" | "startsAt">,
+  occurrence: Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "serviceIds" | "startsAt" | "serviceDate">,
   servicesByGroupId: Map<string, string[]>,
   allowedServiceIds?: Set<string>,
+  timeZone?: string,
 ) => {
   const groupId = occurrence.occurrenceId.startsWith("group:")
     ? occurrence.occurrenceId.slice("group:".length).split("@")[0]
@@ -72,12 +82,12 @@ const getOccurrenceCoverageKeys = (
   } else {
     serviceIds = groupedServiceIds || [occurrence.serviceId];
   }
-  const date = occurrence.startsAt.slice(0, 10);
+  const date = getOccurrenceDate(occurrence, timeZone || "UTC");
   const coveredServiceIds = serviceIds.length ? serviceIds : [occurrence.serviceId];
   return coveredServiceIds.map((serviceId) => `${serviceId}@${date}`);
 };
 
-const getCoverageKeys = (forms: TeamIntakeForm[], services: TeamService[]) => {
+const getCoverageKeys = (forms: TeamIntakeForm[], services: TeamService[], timeZone?: string) => {
   const servicesByGroupId = new Map<string, string[]>();
   services.forEach((service) => {
     if (!service.serviceGroupId) return;
@@ -89,8 +99,8 @@ const getCoverageKeys = (forms: TeamIntakeForm[], services: TeamService[]) => {
   const keys = new Set<string>();
   forms.forEach((form) => {
     const allowedServiceIds = new Set((form.availabilityServices || []).map(({ serviceId }) => serviceId));
-    getFormOccurrences(form, services).forEach((occurrence) => {
-      getOccurrenceCoverageKeys(occurrence, servicesByGroupId, allowedServiceIds).forEach((key) => keys.add(key));
+    getFormOccurrences(form, services, timeZone).forEach((occurrence) => {
+      getOccurrenceCoverageKeys(occurrence, servicesByGroupId, allowedServiceIds, timeZone).forEach((key) => keys.add(key));
     });
   });
   return { keys, servicesByGroupId };
@@ -110,7 +120,7 @@ const getDraftForForm = (
   const knownOccurrenceIds = new Set(existingOccurrences.map(({ occurrenceId }) => occurrenceId));
   const appendedOccurrences = missingOccurrences
     .filter(({ occurrenceId }) => !knownOccurrenceIds.has(occurrenceId))
-    .map(({ occurrenceId, serviceId, name, startsAt }) => ({ occurrenceId, serviceId, name, startsAt }));
+    .map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate }));
   const availabilityServices = [...(form.availabilityServices || [])];
   const knownServiceIds = new Set(availabilityServices.map(({ serviceId }) => serviceId));
   getServiceIds(missingOccurrences).forEach((serviceId) => {
@@ -136,49 +146,88 @@ const getDraftForForm = (
     positionsMessage: form.positionsMessage || "",
     availabilityMessage: form.availabilityMessage || "",
     notesMessage: form.notesMessage || "",
+    purpose: form.purpose || "general_intake",
   };
 };
 
 export const getUpcomingAvailabilitySuggestion = ({
   services,
   forms,
+  positions = [],
+  schedules = [],
+  teamIds,
+  teamScheduleScope,
   now = serverDate(),
+  timeZone,
 }: {
   services: TeamService[];
   forms: TeamIntakeForm[];
+  positions?: TeamPosition[];
+  schedules?: Array<TeamSchedule | TeamScheduleSummary>;
+  /** Explicit Teams to include; an empty list yields no suggestion. */
+  teamIds?: string[];
+  /** Restrict generated occurrences to staffing needs for those Teams. Defaults on for an explicit scope. */
+  teamScheduleScope?: boolean;
   now?: Date;
+  timeZone?: string;
 }): UpcomingAvailabilitySuggestion | null => {
-  // Match the server's response-deadline comparison, which treats date-only
-  // deadlines as UTC calendar dates. Period ranges below retain local calendar semantics.
-  const today = now.toISOString().slice(0, 10);
+  const today = calendarDateInTimeZone(now, timeZone || "UTC");
   const activeServices = services.filter((service) => !service.archivedAt);
   if (!activeServices.length) return null;
 
   const template = safeTemplate(forms);
-  const proposedTeamIds = template?.teamIds || [];
+  const hasAvailabilityTemplate = template?.purpose === "team_availability";
+  const proposedTeamIds = teamIds !== undefined ? teamIds : template?.teamIds || [];
+  const teamScoped = teamScheduleScope ?? (teamIds !== undefined || hasAvailabilityTemplate);
+  if ((teamIds !== undefined || teamScoped) && proposedTeamIds.length === 0) return null;
   const coveringForms = forms.filter((form) =>
     isEffectivelyOpen(form, today) &&
     resolveIntakeFormFields(form).includes("availability") &&
     scopeCovers(form.teamIds || [], proposedTeamIds),
   );
-  const { keys: coveredOccurrenceKeys, servicesByGroupId } = getCoverageKeys(coveringForms, services);
+  const { keys: coveredOccurrenceKeys, servicesByGroupId } = getCoverageKeys(coveringForms, services, timeZone);
   const servicesById = new Map(activeServices.map((service) => [service.serviceId, service]));
-  // Upcoming starts with the same full period used by the Teams range selector.
-  // Look ahead only far enough to find the next useful month; no records are created.
-  let range = getUpcomingServiceRange(activeServices, now);
+  // Use the first period with an occurrence the selected Teams actually need.
+  // General intake keeps the existing church-wide service range.
+  const teamInitialPeriods = teamScoped
+    ? proposedTeamIds.map((teamId) => findInitialTeamSchedulePeriod({
+        services: activeServices,
+        positions,
+        teamId,
+        schedules,
+        now,
+        timeZone,
+      })).filter((period) => period.nextOccurrence)
+      .sort((left, right) => Date.parse(left.nextOccurrence!.startsAt) - Date.parse(right.nextOccurrence!.startsAt))
+    : [];
+  if (teamScoped && teamInitialPeriods.length === 0) return null;
+  let range = teamScoped
+    ? { start: teamInitialPeriods[0].start, end: teamInitialPeriods[0].end }
+    : getUpcomingServiceRange(activeServices, now, timeZone);
   for (let offset = 0; offset < 12; offset += 1) {
-    const periodOccurrences = generateScheduleOccurrences({
-      services: activeServices,
-      serviceIds: activeServices.map(({ serviceId }) => serviceId),
-      startDate: range.start,
-      endDate: range.end,
-    });
+    const periodOccurrences = teamScoped
+      ? buildTeamSchedulePeriod({
+          services: activeServices,
+          positions,
+          teamIds: proposedTeamIds,
+          schedules,
+          startDate: range.start,
+          endDate: range.end,
+          timeZone,
+        }).occurrences
+      : generateScheduleOccurrences({
+          services: activeServices,
+          serviceIds: activeServices.map(({ serviceId }) => serviceId),
+          startDate: range.start,
+          endDate: range.end,
+          timeZone,
+        });
     const actionableOccurrences = periodOccurrences.filter(
       (occurrence) => Date.parse(occurrence.startsAt) > now.getTime(),
     );
     const candidateRange = range;
     const uncovered = actionableOccurrences.filter((occurrence) =>
-      !getOccurrenceCoverageKeys(occurrence, servicesByGroupId)
+      !getOccurrenceCoverageKeys(occurrence, servicesByGroupId, undefined, timeZone)
         .every((key) => coveredOccurrenceKeys.has(key)),
     );
     if (!uncovered.length) {
@@ -214,11 +263,12 @@ export const getUpcomingAvailabilitySuggestion = ({
         serviceId,
         name: servicesById.get(serviceId)?.name || serviceId,
       })),
-      availabilityOccurrences: uncovered.map(({ occurrenceId, serviceId, name, startsAt }) => ({ occurrenceId, serviceId, name, startsAt })),
-      teamIds: template?.teamIds ? [...template.teamIds] : [],
+        availabilityOccurrences: uncovered.map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
+      teamIds: [...proposedTeamIds],
+      purpose: teamScoped ? "team_availability" : template?.purpose || "general_intake",
       active: true,
-      enabledFields: template ? resolveIntakeFormFields(template) : [...ALL_INTAKE_FORM_FIELDS],
-      requireEmail: Boolean(template?.requireEmail),
+      enabledFields: teamScoped ? ["availability"] : template ? resolveIntakeFormFields(template) : [...ALL_INTAKE_FORM_FIELDS],
+      requireEmail: teamScoped ? false : Boolean(template?.requireEmail),
       welcomeMessage: template?.welcomeMessage || "",
       positionsMessage: template?.positionsMessage || "",
       availabilityMessage: template?.availabilityMessage || "",

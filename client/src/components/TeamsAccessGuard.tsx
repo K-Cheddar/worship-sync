@@ -4,10 +4,20 @@ import Button from "./Button/Button";
 import Icon from "./Icon/Icon";
 import { GlobalInfoContext } from "../context/globalInfo";
 
-const TeamsAccessGuard = ({ children }: { children: ReactNode }) => {
+const TeamsAccessGuard = ({
+  children,
+  allowMembershipDerivedAccess = false,
+}: {
+  children: ReactNode;
+  allowMembershipDerivedAccess?: boolean;
+}) => {
   const context = useContext(GlobalInfoContext);
 
-  if (context?.canViewTeams) {
+  if (
+    context?.canViewTeams ||
+    (allowMembershipDerivedAccess &&
+      context?.sessionKind === "human")
+  ) {
     return <>{children}</>;
   }
 

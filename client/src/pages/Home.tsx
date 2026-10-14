@@ -33,7 +33,7 @@ import UserSection from "../containers/Toolbar/ToolbarElements/UserSection";
 import HomeToolbarMenu from "../components/HomeToolbarMenu/HomeToolbarMenu";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useAppInstallChrome } from "../hooks/useAppInstallChrome";
-import { isMemberOnlyAccess, isViewOnlyAccess } from "../utils/accessTiers";
+import { hasControllerAccess, isViewOnlyAccess } from "../utils/accessTiers";
 import { useSelector } from "../hooks";
 import { selectControllerProfiles } from "../store/controllerProfilesSlice";
 import { selectDisplayOutputs } from "../store/displayOutputsSlice";
@@ -84,13 +84,20 @@ const currentServiceViewerLink: CardLink = {
   icon: ListChecks,
 };
 
-/** The only surface a `member` gets: their own assignments, nothing else. */
+/** A member's personal schedule and team-specific read-only workspace. */
 const mySchedulelink: CardLink = {
   title: "My schedule",
   description:
     "See the services and positions you are scheduled for, and when they start.",
   to: "/my-schedule",
   icon: CalendarClock,
+};
+
+const myTeamsLink: CardLink = {
+  title: "My teams",
+  description: "View your team rosters, positions, and schedules.",
+  to: "/teams-and-services",
+  icon: Users,
 };
 
 const secondaryControllers: CardLink[] = [
@@ -346,16 +353,14 @@ const Welcome = () => {
   const isHumanSession = sessionKind === "human";
   const isAdmin = role === "admin";
   const visibleAdminLinks = adminLinks.filter(
-    (link) => isAdmin || (link.to === "/teams-and-services" && canViewTeams),
+    (link) =>
+      (isAdmin || (link.to === "/teams-and-services" && canViewTeams)),
   );
   const isMusicAccess = isLoggedIn && access === "music";
   /**
-   * A `member` is a volunteer, not an operator: they get their own schedule and
-   * no presentation surfaces at all. `view` still sees the controllers
-   * read-only, which is why this is a separate check rather than folding into
-   * `isViewOnlyAccess`.
+   * Controller access only controls operator navigation. Personal and Teams
+   * navigation below is derived from authentication and Teams capability.
    */
-  const isMemberAccess = isMemberOnlyAccess(access);
   const primaryControllers = useMemo((): CardLink[] => {
     const presentation =
       findControllerProfile(controllerProfiles, PRESENTATION_CONTROLLER_ID);
@@ -380,7 +385,7 @@ const Welcome = () => {
     }
     return links;
   }, [controllerProfiles]);
-  const visiblePrimaryControllers = isMemberAccess
+  const visiblePrimaryControllers = !hasControllerAccess(access)
     ? []
     : isMusicAccess
       ? primaryControllers.filter((link) => link.to === "/controller")
@@ -396,16 +401,16 @@ const Welcome = () => {
     [controllerProfiles],
   );
   const visibleAuxControllers =
-    isMemberAccess || isMusicAccess ? [] : auxControllerLinks;
-  const visibleControllerLinks = isMemberAccess
+    !hasControllerAccess(access) || isMusicAccess ? [] : auxControllerLinks;
+  const visibleControllerLinks = !hasControllerAccess(access)
     ? []
     : [...visiblePrimaryControllers, ...visibleAuxControllers];
   /** Live service plan workspace — not a controller surface; sits with My schedule. */
-  const showServiceWorkspace = !isMemberAccess && Boolean(canViewTeams);
-  const showCurrentServiceViewer =
-    !isMemberAccess && Boolean(canViewServices);
+  const showServiceWorkspace = Boolean(canViewTeams);
+  const showCurrentServiceViewer = Boolean(canViewServices);
   const showMySchedule = isLoggedIn && isHumanSession;
-  const visibleSecondaryControllers = isMemberAccess
+  const showMyTeams = isLoggedIn && isHumanSession && !canViewTeams;
+  const visibleSecondaryControllers = !hasControllerAccess(access)
     ? []
     : isMusicAccess
       ? []
@@ -555,10 +560,11 @@ const Welcome = () => {
             neither belongs under Controllers (operator surfaces) nor Church
             administration. My schedule is human-session only; workstations
             still get Service Workspace when they can view teams. */}
-        {(showMySchedule || showServiceWorkspace || showCurrentServiceViewer) && (
+        {(showMySchedule || showMyTeams || showServiceWorkspace || showCurrentServiceViewer) && (
           <section className="mx-auto w-full max-w-5xl rounded-xl border border-gray-700 bg-gray-900/40 p-4 sm:p-5">
             <div className="grid gap-4 md:grid-cols-2">
               {showMySchedule ? <HomeLinkCard {...mySchedulelink} /> : null}
+              {showMyTeams ? <HomeLinkCard {...myTeamsLink} /> : null}
               {showServiceWorkspace ? (
                 <HomeLinkCard {...currentPlanLink} />
               ) : null}

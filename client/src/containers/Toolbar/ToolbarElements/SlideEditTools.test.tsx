@@ -22,6 +22,10 @@ const mockUpdateBibleInfo = jest.fn((payload: unknown) => ({
   type: "item/updateBibleInfo",
   payload,
 }));
+const mockApplyOwnedContentMutation = jest.fn((payload: unknown) => ({
+  type: "item/applyOwnedContentMutation",
+  payload,
+}));
 
 let mockState: {
   undoable: { present: { item: ItemState } };
@@ -48,6 +52,8 @@ jest.mock("../../../store/itemSlice", () => ({
   updateArrangements: (payload: unknown) => mockUpdateArrangements(payload),
   updateBibleInfo: (payload: unknown) => mockUpdateBibleInfo(payload),
   updateSlides: (payload: unknown) => mockUpdateSlides(payload),
+  applyOwnedContentMutation: (payload: unknown) =>
+    mockApplyOwnedContentMutation(payload),
 }));
 
 jest.mock("../../../utils/itemNewlineCleanup", () => ({
@@ -70,6 +76,11 @@ jest.mock("react-colorful", () => ({
 const makeItem = (overrides: Partial<ItemState> = {}): ItemState =>
   ({
     _id: "free-item-1",
+    contentOwner: {
+      scopeId: "test-church/test-db",
+      databaseKey: "test-db",
+      churchId: "test-church",
+    },
     name: "Free Item",
     type: "free",
     selectedArrangement: 0,
@@ -143,7 +154,7 @@ describe("SlideEditTools", () => {
     ).toBeInTheDocument();
   });
 
-  it("cleans free items through the shared helper when the button is clicked", () => {
+  it("dispatches an owner-bound newline cleanup when the button is clicked", () => {
     render(<SlideEditTools />);
 
     fireEvent.click(screen.getByRole("button", { name: "Remove Blank Lines" }));
@@ -152,12 +163,17 @@ describe("SlideEditTools", () => {
       jest.runAllTimers();
     });
 
-    expect(mockCleanItemNewlines).toHaveBeenCalledWith(mockState.undoable.present.item);
-    expect(mockUpdateSlides).toHaveBeenCalledWith({
-      slides: [{ id: "cleaned-slide", type: "Section", name: "Section 1", boxes: [] }],
-      formattedSections: [
-        { id: "section-1", sectionNum: 1, words: "Cleaned", slideSpan: 1 },
-      ],
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith({
+      owner: {
+        scopeId: "test-church/test-db",
+        databaseKey: "test-db",
+        churchId: "test-church",
+        itemId: "free-item-1",
+        itemType: "free",
+      },
+      mutation: {
+        kind: "cleanNewlines",
+      },
     });
   });
 });

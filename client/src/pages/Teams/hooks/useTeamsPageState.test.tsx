@@ -3,7 +3,8 @@ import { act, renderHook } from "@testing-library/react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { ToastContext } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
-import { getTeamScheduleDetail, getTeamsBootstrap } from "../../../api/auth";
+import { getTeamScheduleDetail, getTeamsBootstrap, reorderTeamPositions } from "../../../api/auth";
+import type { AuthenticatedSseHandlers } from "../../../utils/authenticatedSse";
 import { useTeamsPageState } from "./useTeamsPageState";
 
 let mockState: unknown;
@@ -18,24 +19,24 @@ jest.mock("../../../api/auth", () => ({
   reorderTeamPositions: jest.fn(),
 }));
 
-class MockEventSource {
-  static instances: MockEventSource[] = [];
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  closed = false;
+const mockConnections: Array<{
+  path: string;
+  handlers: AuthenticatedSseHandlers;
+  close: jest.Mock;
+}> = [];
 
-  constructor(
-    public url: string,
-    public options?: { withCredentials?: boolean },
-  ) {
-    MockEventSource.instances.push(this);
-  }
+const mockConnectAuthenticatedSse = jest.fn(
+  (path: string, handlers: AuthenticatedSseHandlers) => {
+    const close = jest.fn();
+    mockConnections.push({ path, handlers, close });
+    return close;
+  },
+);
 
-  close() {
-    this.closed = true;
-  }
-}
+jest.mock("../../../utils/authenticatedSse", () => ({
+  connectAuthenticatedSse: (...args: unknown[]) =>
+    mockConnectAuthenticatedSse(...(args as [string, AuthenticatedSseHandlers])),
+}));
 
 const emptyBootstrap = {
   success: true,
@@ -47,7 +48,6 @@ const emptyBootstrap = {
 
 const mockGetTeamsBootstrap = jest.mocked(getTeamsBootstrap);
 const mockGetTeamScheduleDetail = jest.mocked(getTeamScheduleDetail);
-const originalEventSource = (global as { EventSource?: unknown }).EventSource;
 
 const emitFocus = () => act(() => window.dispatchEvent(new Event("focus")));
 const emitVisibilityChange = () =>
@@ -58,18 +58,55 @@ const flushMicrotasks = async () =>
     await Promise.resolve();
   });
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const makePositionBootstrap = () => ({
+  ...emptyBootstrap,
+  teams: [
+    { teamId: "worship", churchId: "church-1", name: "Worship" },
+    { teamId: "av", churchId: "church-1", name: "AV" },
+  ],
+  positions: [
+    { churchId: "church-1", positionId: "worship-a", teamId: "worship", name: "Keys", order: 0 },
+    { churchId: "church-1", positionId: "worship-b", teamId: "worship", name: "Vocals", order: 1 },
+    { churchId: "church-1", positionId: "av-a", teamId: "av", name: "Camera", order: 0 },
+    { churchId: "church-1", positionId: "av-b", teamId: "av", name: "Audio", order: 1 },
+  ],
+});
+
+const positionsResponse = (teamId: string, positionIds: string[]) => ({
+  success: true,
+  positions: positionIds.map((positionId, order) => ({
+    churchId: "church-1",
+    positionId,
+    teamId,
+    name: positionId,
+    order,
+  })),
+});
+
 describe("useTeamsPageState bootstrap recovery", () => {
   let churchId: string;
+  let canUseTeamsLiveSync: boolean;
 
   const renderPageState = (
     onTemplateEvent?: Parameters<typeof useTeamsPageState>[0],
     onReconnect?: Parameters<typeof useTeamsPageState>[1],
+    contextOverrides: Record<string, unknown> = {},
   ) =>
     renderHook(() => useTeamsPageState(onTemplateEvent, onReconnect), {
       wrapper: ({ children }: PropsWithChildren) => (
         <GlobalInfoContext.Provider
           value={
-            createMockGlobalContext({ churchId }) as React.ContextType<
+            createMockGlobalContext({ churchId, canUseTeamsLiveSync, ...contextOverrides }) as React.ContextType<
               typeof GlobalInfoContext
             >
           }
@@ -91,12 +128,12 @@ describe("useTeamsPageState bootstrap recovery", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-09-24T12:00:00.000Z"));
     churchId = "church-1";
+    canUseTeamsLiveSync = true;
     mockState = {
       undoable: { present: { serviceTimes: { list: [] } } },
     };
-    MockEventSource.instances = [];
-    (global as { EventSource?: unknown }).EventSource =
-      MockEventSource as unknown as typeof EventSource;
+    mockConnections.length = 0;
+    mockConnectAuthenticatedSse.mockClear();
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "visible",
@@ -109,7 +146,6 @@ describe("useTeamsPageState bootstrap recovery", () => {
 
   afterEach(() => {
     jest.useRealTimers();
-    (global as { EventSource?: unknown }).EventSource = originalEventSource;
   });
 
   it("loads once initially and ignores fresh focus and visibility events", async () => {
@@ -117,7 +153,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
 
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     emitFocus();
     emitVisibilityChange();
     emitFocus();
@@ -127,33 +163,421 @@ describe("useTeamsPageState bootstrap recovery", () => {
     unmount();
   });
 
+  it("reconciles a removed sole-Team member and clears editability through the authoritative bootstrap", async () => {
+    const kevin = {
+      memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer",
+      email: "kevin-private@example.test", phoneNumber: "+15555550123", notes: "private",
+      positionIds: ["worship-position"], blockoutDates: [],
+    };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: ["kevin"],
+        members: [kevin],
+        teams: [{ teamId: "worship", name: "Worship", memberIds: ["kevin"] }],
+      } as never)
+      .mockResolvedValueOnce({ ...emptyBootstrap, editableMemberIds: [], teams: [] } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.pageData.members[0].email).toBe("kevin-private@example.test");
+    expect(result.current.editableMemberIds.has("kevin")).toBe(true);
+
+    act(() => {
+      result.current.removeData("members", "memberId", "kevin");
+      result.current.invalidateMemberEditability("kevin");
+    });
+    expect(result.current.pageData.members).toEqual([]);
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.members).toEqual([]);
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+    unmount();
+  });
+
+  it("keeps a shared member visible as read-only after removing the editable Team", async () => {
+    const kevin = {
+      memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer",
+      email: "kevin-private@example.test", notes: "Worship only private metadata",
+      positionIds: ["worship-position", "av-position"], blockoutDates: [],
+    };
+    const safeKevin = { memberId: "kevin", churchId: "church-1", firstName: "Kevin", lastName: "Singer", positionIds: [], blockoutDates: [] };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: ["kevin"], members: [kevin],
+        teams: [
+          { teamId: "worship", name: "Worship", memberIds: ["kevin"] },
+          { teamId: "av", name: "AV", memberIds: ["kevin"] },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: [], members: [{ ...safeKevin, positionIds: ["av-position"] }],
+        teams: [{ teamId: "av", name: "AV", memberIds: ["kevin"] }],
+      } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    act(() => {
+      result.current.upsertData("teams", "teamId", { teamId: "worship", name: "Worship", memberIds: [] } as never);
+      result.current.upsertData("members", "memberId", safeKevin as never);
+      result.current.invalidateMemberEditability("kevin");
+    });
+    expect(result.current.pageData.members[0].email).toBeUndefined();
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.pageData.teams.map(({ teamId }) => teamId)).toEqual(["av"]);
+    expect(result.current.pageData.members[0]).toEqual(expect.objectContaining({
+      memberId: "kevin", positionIds: ["av-position"],
+    }));
+    expect(result.current.pageData.members[0].email).toBeUndefined();
+    expect(result.current.editableMemberIds.has("kevin")).toBe(false);
+    unmount();
+  });
+
+  it("upgrades a newly added member only when the server bootstrap marks them editable", async () => {
+    const safeDavid = { memberId: "david", churchId: "church-1", firstName: "David", lastName: "Lee", positionIds: [], blockoutDates: [] };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce({ ...emptyBootstrap, editableMemberIds: [], teams: [{ teamId: "worship", name: "Worship", memberIds: [] }] } as never)
+      .mockResolvedValueOnce({
+        ...emptyBootstrap,
+        editableMemberIds: ["david"],
+        members: [{ ...safeDavid, email: "david@example.test", notes: "server projected" }],
+        teams: [{ teamId: "worship", name: "Worship", memberIds: ["david"] }],
+      } as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    act(() => {
+      result.current.upsertData("teams", "teamId", { teamId: "worship", name: "Worship", memberIds: ["david"] } as never);
+      result.current.upsertData("members", "memberId", safeDavid as never);
+      result.current.invalidateMemberEditability("david");
+    });
+    expect(result.current.pageData.members[0].email).toBeUndefined();
+    expect(result.current.editableMemberIds.has("david")).toBe(false);
+
+    await act(async () => result.current.reconcileTeamsProjection());
+    expect(result.current.pageData.members[0].email).toBe("david@example.test");
+    expect(result.current.pageData.members[0].notes).toBe("server projected");
+    expect(result.current.editableMemberIds.has("david")).toBe(true);
+    unmount();
+  });
+
+  it("uses bounded REST refresh without a live stream for scoped/member access", async () => {
+    canUseTeamsLiveSync = false;
+    const { unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(mockConnections).toHaveLength(0);
+    emitFocus();
+    emitVisibilityChange();
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(mockConnections).toHaveLength(0);
+    unmount();
+  });
+
+  it("allows position reorder only for a team the scoped manager can edit", async () => {
+    mockGetTeamsBootstrap.mockResolvedValueOnce({
+      ...emptyBootstrap,
+      teams: [{ teamId: "worship", name: "Worship" }, { teamId: "av", name: "AV" }],
+      positions: [
+        { churchId: "church-1", positionId: "worship-position", teamId: "worship", name: "Keys" },
+        { churchId: "church-1", positionId: "av-position", teamId: "av", name: "Camera" },
+      ],
+    } as never);
+    jest.mocked(reorderTeamPositions).mockResolvedValue({ success: true, positions: [] } as never);
+    const { result, unmount } = renderPageState(undefined, undefined, {
+      role: "member",
+      canEditTeams: false,
+      permissions: { teams: "none", teamScopes: { worship: "edit" } },
+      canEditTeam: (teamId: string) => teamId === "worship",
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await result.current.reorderPositions("av", ["av-position"]);
+    });
+    expect(reorderTeamPositions).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.reorderPositions("worship", ["worship-position"]);
+    });
+    expect(reorderTeamPositions).toHaveBeenCalledWith("church-1", {
+      teamId: "worship",
+      positionIds: ["worship-position"],
+    });
+    unmount();
+  });
+
+  it("serializes rapid reorders for one team and persists the latest selected order", async () => {
+    const bootstrap = makePositionBootstrap();
+    mockGetTeamsBootstrap.mockResolvedValue(bootstrap as never);
+    const firstSave = deferred<ReturnType<typeof positionsResponse>>();
+    const secondSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset();
+    reorderMock
+      .mockReturnValueOnce(firstSave.promise as never)
+      .mockReturnValueOnce(secondSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let firstRequest!: Promise<void>;
+    let secondRequest!: Promise<void>;
+    act(() => {
+      firstRequest = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(1);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
+
+    act(() => {
+      secondRequest = result.current.reorderPositions("worship", ["worship-a", "worship-b"]);
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    expect(reorderMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstSave.resolve(positionsResponse("worship", ["worship-b", "worship-a"]));
+      await firstRequest;
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(2);
+    expect(reorderMock).toHaveBeenNthCalledWith(2, "church-1", {
+      teamId: "worship",
+      positionIds: ["worship-a", "worship-b"],
+    });
+
+    await act(async () => {
+      secondSave.resolve(positionsResponse("worship", ["worship-a", "worship-b"]));
+      await secondRequest;
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    unmount();
+  });
+
+  it("keeps a newer reorder when an earlier save fails", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(makePositionBootstrap() as never);
+    const failedSave = deferred<ReturnType<typeof positionsResponse>>();
+    const latestSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset();
+    reorderMock
+      .mockReturnValueOnce(failedSave.promise as never)
+      .mockReturnValueOnce(latestSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let earlierRequest!: Promise<void>;
+    let latestRequest!: Promise<void>;
+    act(() => {
+      earlierRequest = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+      latestRequest = result.current.reorderPositions("worship", ["worship-a", "worship-b"]);
+    });
+    await flushMicrotasks();
+    await act(async () => {
+      failedSave.reject(new Error("network error"));
+      await earlierRequest;
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+
+    await act(async () => {
+      latestSave.resolve(positionsResponse("worship", ["worship-a", "worship-b"]));
+      await latestRequest;
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    unmount();
+  });
+
+  it("reorders different teams independently when responses resolve in the opposite order", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(makePositionBootstrap() as never);
+    const worshipSave = deferred<ReturnType<typeof positionsResponse>>();
+    const avSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset();
+    reorderMock
+      .mockReturnValueOnce(worshipSave.promise as never)
+      .mockReturnValueOnce(avSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let worshipRequest!: Promise<void>;
+    let avRequest!: Promise<void>;
+    act(() => {
+      worshipRequest = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+      avRequest = result.current.reorderPositions("av", ["av-b", "av-a"]);
+    });
+    await flushMicrotasks();
+    expect(reorderMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      avSave.resolve(positionsResponse("av", ["av-b", "av-a"]));
+      await avRequest;
+    });
+    await act(async () => {
+      worshipSave.resolve(positionsResponse("worship", ["worship-b", "worship-a"]));
+      await worshipRequest;
+    });
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "av")
+      .map((position) => position.positionId)).toEqual(["av-b", "av-a"]);
+    unmount();
+  });
+
+  it("restores the authoritative team order when the latest reorder fails", async () => {
+    const bootstrap = makePositionBootstrap();
+    mockGetTeamsBootstrap.mockResolvedValue(bootstrap as never);
+    const failedSave = deferred<ReturnType<typeof positionsResponse>>();
+    const reorderMock = jest.mocked(reorderTeamPositions);
+    reorderMock.mockReset().mockReturnValueOnce(failedSave.promise as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.reorderPositions("worship", ["worship-b", "worship-a"]);
+    });
+    await flushMicrotasks();
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
+
+    await act(async () => {
+      failedSave.reject(new Error("network error"));
+      await request;
+    });
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+    unmount();
+  });
+
+  it("clears a previously authorized projection after a bootstrap 403 and stops retrying", async () => {
+    canUseTeamsLiveSync = false;
+    mockGetTeamsBootstrap.mockResolvedValueOnce({
+      ...emptyBootstrap,
+      editableMemberIds: [],
+      members: [{ memberId: "worship-member", firstName: "Sam" }],
+      teams: [{ teamId: "worship", name: "Worship" }],
+      schedules: [{ scheduleId: "worship-schedule", teamId: "worship" }],
+    } as never);
+    const { result, unmount } = renderPageState(undefined, undefined, {
+      access: "member",
+      role: "member",
+      permissions: { teams: "none", services: "none" },
+      canViewTeams: false,
+      canViewServices: false,
+      hasBroadTeamsReadAccess: false,
+      canEditTeams: false,
+    });
+    await flushMicrotasks();
+
+    expect(result.current.pageData.teams).toEqual([
+      expect.objectContaining({ teamId: "worship" }),
+    ]);
+    expect(result.current.hasTeamsWorkspaceAccess).toBe(true);
+    expect(result.current.editableMemberIds).toEqual(new Set());
+
+    mockGetTeamsBootstrap.mockRejectedValueOnce(
+      Object.assign(new Error("Forbidden"), { status: 403 }),
+    );
+    act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
+    await flushMicrotasks();
+
+    expect(result.current.accessDenied).toBe(true);
+    expect(result.current.pageData.teams).toEqual([]);
+    expect(result.current.pageData.members).toEqual([]);
+    expect(result.current.pageData.schedules).toEqual([]);
+    expect(result.current.editableMemberIds).toEqual(new Set());
+    act(() => jest.advanceTimersByTime(10 * 60 * 1000));
+    await flushMicrotasks();
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
   it("forwards template events from the existing Teams stream", async () => {
     const onTemplateEvent = jest.fn();
     const { unmount } = renderPageState(onTemplateEvent);
     await flushMicrotasks();
 
-    const source = MockEventSource.instances[0];
-    act(() => source.onmessage?.({
-      data: JSON.stringify({
-        type: "service-plan-template-updated",
-        template: { templateId: "template-1" },
-      }),
-    }));
-    act(() => source.onmessage?.({
-      data: JSON.stringify({
-        type: "service-plan-template-removed",
-        templateId: "template-1",
-      }),
-    }));
+    const handlers = mockConnections[0].handlers;
+    act(() =>
+      handlers.onMessage(
+        JSON.stringify({
+          type: "service-plan-template-updated",
+          templateId: "template-1",
+        }),
+      ),
+    );
+    act(() =>
+      handlers.onMessage(
+        JSON.stringify({
+          type: "service-plan-template-removed",
+          templateId: "template-1",
+        }),
+      ),
+    );
 
     expect(onTemplateEvent).toHaveBeenNthCalledWith(1, {
       type: "service-plan-template-updated",
-      template: { templateId: "template-1" },
+      templateId: "template-1",
     });
     expect(onTemplateEvent).toHaveBeenNthCalledWith(2, {
       type: "service-plan-template-removed",
       templateId: "template-1",
     });
+    unmount();
+  });
+
+  it("refreshes position order after a reorder from another editor", async () => {
+    const initial = makePositionBootstrap();
+    const reordered = {
+      ...initial,
+      positions: initial.positions.map((position) => ({
+        ...position,
+        order: position.positionId === "worship-a" ? 1 :
+          position.positionId === "worship-b" ? 0 : position.order,
+      })),
+    };
+    mockGetTeamsBootstrap
+      .mockResolvedValueOnce(initial as never)
+      .mockResolvedValueOnce(reordered as never);
+    const { result, unmount } = renderPageState();
+    await flushMicrotasks();
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-a", "worship-b"]);
+
+    act(() => mockConnections[0].handlers.onMessage(
+      JSON.stringify({ type: "team-positions-reordered" }),
+    ));
+    await flushMicrotasks();
+
+    expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
+    expect(result.current.pageData.positions
+      .filter((position) => position.teamId === "worship")
+      .map((position) => position.positionId)).toEqual(["worship-b", "worship-a"]);
     unmount();
   });
 
@@ -163,14 +587,14 @@ describe("useTeamsPageState bootstrap recovery", () => {
     await flushMicrotasks();
     expect(onReconnect).not.toHaveBeenCalled();
 
-    const source = MockEventSource.instances[0];
-    act(() => source.onopen?.());
-    act(() => source.onerror?.());
-    act(() => source.onopen?.());
+    const handlers = mockConnections[0].handlers;
+    act(() => handlers.onOpen());
+    act(() => handlers.onError({ kind: "interrupted" }));
+    act(() => handlers.onOpen());
     await flushMicrotasks();
 
     expect(onReconnect).toHaveBeenCalledTimes(1);
-    expect(MockEventSource.instances).toHaveLength(1);
+    expect(mockConnections).toHaveLength(1);
     jest.setSystemTime(new Date(Date.now() + 6 * 60 * 1000));
     emitFocus();
     await flushMicrotasks();
@@ -204,7 +628,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("performs one bootstrap after the five-minute freshness window", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
 
     emitFocus();
@@ -218,7 +642,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("revalidates uncovered Teams data on a bounded interval while connected", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
 
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
     await flushMicrotasks();
@@ -230,7 +654,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("skips interval reads while hidden and recovers when the page returns", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "hidden",
@@ -254,11 +678,11 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("counts an unchanged recovery response as a fresh validation", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    const source = MockEventSource.instances[0];
-    act(() => source.onopen?.());
+    const handlers = mockConnections[0].handlers;
+    act(() => handlers.onOpen());
     act(() => jest.advanceTimersByTime(4 * 60 * 1000));
-    act(() => source.onerror?.());
-    act(() => source.onopen?.());
+    act(() => handlers.onError({ kind: "interrupted" }));
+    act(() => handlers.onOpen());
     await flushMicrotasks();
 
     act(() => jest.advanceTimersByTime(2 * 60 * 1000));
@@ -272,26 +696,31 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("recovers once after a real disconnect and reconnect, not initial open", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    const source = MockEventSource.instances[0];
+    const handlers = mockConnections[0].handlers;
 
-    act(() => source.onopen?.());
+    act(() => handlers.onOpen());
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
 
-    act(() => source.onerror?.());
+    act(() => handlers.onError({ kind: "interrupted" }));
     act(() => {
-      source.onopen?.();
-      source.onopen?.();
+      handlers.onOpen();
+      handlers.onOpen();
     });
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(2);
     unmount();
   });
 
-  it("uses stale age rather than every focus when EventSource is unavailable", async () => {
-    (global as { EventSource?: unknown }).EventSource = undefined;
+  it("uses stale age rather than every focus when authentication rejects the stream", async () => {
     const { unmount } = renderPageState();
     await flushMicrotasks();
+    act(() =>
+      mockConnections[0].handlers.onError({
+        kind: "authentication",
+        status: 401,
+      }),
+    );
 
     emitFocus();
     emitVisibilityChange();
@@ -310,7 +739,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
     const logError = jest.spyOn(console, "error").mockImplementation(() => {});
     const { unmount } = renderPageState();
     await flushMicrotasks();
-    act(() => MockEventSource.instances[0].onopen?.());
+    act(() => mockConnections[0].handlers.onOpen());
     mockGetTeamsBootstrap.mockRejectedValueOnce(new Error("offline"));
     act(() => jest.advanceTimersByTime(5 * 60 * 1000 + 1));
     await flushMicrotasks();
@@ -328,8 +757,8 @@ describe("useTeamsPageState bootstrap recovery", () => {
   it("defers reconnect recovery while a teams save is in flight", async () => {
     const { result, unmount } = renderPageState();
     await flushMicrotasks();
-    const source = MockEventSource.instances[0];
-    act(() => source.onopen?.());
+    const handlers = mockConnections[0].handlers;
+    act(() => handlers.onOpen());
     const localTeam = {
       teamId: "local-team",
       churchId: "church-1",
@@ -346,8 +775,8 @@ describe("useTeamsPageState bootstrap recovery", () => {
     act(() => {
       void result.current.trackTeamsSave(save);
     });
-    act(() => source.onerror?.());
-    act(() => source.onopen?.());
+    act(() => handlers.onError({ kind: "interrupted" }));
+    act(() => handlers.onOpen());
     await flushMicrotasks();
     expect(mockGetTeamsBootstrap).toHaveBeenCalledTimes(1);
 
@@ -386,7 +815,7 @@ describe("useTeamsPageState bootstrap recovery", () => {
       } as never);
     });
 
-    act(() => MockEventSource.instances[1].onopen?.());
+    act(() => mockConnections[1].handlers.onOpen());
     emitFocus();
     await flushMicrotasks();
 

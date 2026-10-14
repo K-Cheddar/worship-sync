@@ -76,4 +76,19 @@ describe("buildMyScheduleExportModel", () => {
       "shadow",
     ]);
   });
+
+  it("exports the church-local service date and time with its timezone", () => {
+    const model = buildMyScheduleExportModel(
+      occurrence({
+        date: "2026-10-03",
+        occurrenceId: "svc@2026-10-04T03:30:00.000Z",
+        startsAt: "2026-10-04T03:30:00.000Z",
+      }),
+      "America/New_York",
+    );
+
+    expect(model.dateRangeLabel).toContain("Sat, Oct 3");
+    expect(model.dateRangeLabel).toContain("11:30 PM EDT");
+    expect(model.groups[0].rows[0].rowLabel).toBe(model.dateRangeLabel);
+  });
 });

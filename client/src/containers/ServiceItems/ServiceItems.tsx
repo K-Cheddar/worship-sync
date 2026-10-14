@@ -823,6 +823,7 @@ const ServiceItems = () => {
               ref={setNodeRef}
               className="scrollbar-variable overflow-y-auto overflow-x-hidden flex-1 pb-2 min-h-0"
               id="service-items-list"
+              data-outline-id={selectedList?._id}
               onKeyDown={handleItemListKeyDown}
             >
               <SortableContext

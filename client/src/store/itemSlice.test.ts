@@ -1,5 +1,10 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { itemDocMatchesEditorState, itemSlice } from "./itemSlice";
+import {
+  itemDocMatchesEditorState,
+  itemSlice,
+  updateArrangements,
+  updateSlides,
+} from "./itemSlice";
 import type { ItemState } from "../types";
 
 type ItemSliceState = { item: ItemState };
@@ -14,6 +19,107 @@ const createStore = (preloadedState?: Partial<ItemSliceState>) =>
   });
 
 describe("itemSlice", () => {
+  it("rejects audio results for another song or church with the same song ID", () => {
+    const store = createStore();
+    const owner = { scopeId: "a", databaseKey: "a", churchId: "a", itemId: "song-A", itemType: "song" as const };
+    const doc = { _id: "song-A", type: "song" as const, name: "Song", arrangements: [], slides: [], selectedArrangement: 0, shouldSendTo: { projector: true, monitor: true, stream: true } };
+    const staleResult = itemSlice.actions.applyPersistedSongAudio({ persistedDoc: doc, owner });
+    store.dispatch(itemSlice.actions.setActiveItem({ ...doc, _id: "song-B", contentOwner: owner }));
+    const songB = store.getState().item;
+    store.dispatch(staleResult);
+    expect(store.getState().item).toBe(songB);
+    store.dispatch(itemSlice.actions.setActiveItem({ ...doc, contentOwner: { scopeId: "b", databaseKey: "b", churchId: "b" } }));
+    const churchB = store.getState().item;
+    store.dispatch(staleResult);
+    expect(store.getState().item).toBe(churchB);
+  });
+
+  it("rejects stale owner-tagged slide and arrangement updates but accepts the active owner", async () => {
+    const ownerA = {
+      scopeId: "church-a/database-a",
+      databaseKey: "database-a",
+      churchId: "church-a",
+    };
+    const ownerB = {
+      scopeId: "church-b/database-b",
+      databaseKey: "database-b",
+      churchId: "church-b",
+    };
+    const slide = (id: string, words: string) => ({
+      id,
+      type: "Verse" as const,
+      name: id,
+      boxes: [{ words, width: 100, height: 50 }],
+    });
+    const itemA: ItemState = {
+      ...itemSlice.getInitialState(),
+      _id: "song-A",
+      name: "Song A",
+      type: "song" as const,
+      contentOwner: ownerA,
+      slides: [slide("A-slide", "A words")],
+      arrangements: [{
+        id: "A-arrangement",
+        name: "A arrangement",
+        slides: [slide("A-slide", "A words")],
+        formattedLyrics: [],
+        songOrder: [],
+      }],
+    };
+    const itemB: ItemState = {
+      ...itemA,
+      _id: "song-B",
+      name: "Song B",
+      contentOwner: ownerB,
+      slides: [slide("B-slide", "B words")],
+      arrangements: [{
+        id: "B-arrangement",
+        name: "B arrangement",
+        slides: [slide("B-slide", "B words")],
+        formattedLyrics: [],
+        songOrder: [],
+      }],
+    };
+    type TestRootState = { undoable: { present: { item: ItemState } } };
+    const reducer = (
+      state: TestRootState = { undoable: { present: { item: itemA } } },
+      action: { type: string },
+    ): TestRootState => ({
+      undoable: {
+        present: {
+          item: itemSlice.reducer(state.undoable.present.item, action as never),
+        },
+      },
+    });
+    const store = configureStore({ reducer });
+    store.dispatch(itemSlice.actions.setActiveItem(itemA));
+    store.dispatch(itemSlice.actions.setActiveItem(itemB));
+
+    const staleOwnerA = { ...ownerA, itemId: "song-A", itemType: "song" as const };
+    const activeOwnerB = { ...ownerB, itemId: "song-B", itemType: "song" as const };
+    await store.dispatch(updateSlides({
+      slides: [slide("A-slide", "stale A words")],
+      expectedOwner: staleOwnerA,
+    }) as never);
+    await store.dispatch(updateArrangements({
+      arrangements: [{
+        ...itemA.arrangements[0],
+        slides: [slide("A-slide", "stale A words")],
+      }],
+      expectedOwner: staleOwnerA,
+    }) as never);
+    expect(store.getState().undoable.present.item.slides).toEqual(itemB.slides);
+    expect(store.getState().undoable.present.item.arrangements).toEqual(itemB.arrangements);
+
+    await store.dispatch(updateSlides({
+      slides: [slide("B-slide", "B updated words")],
+      expectedOwner: activeOwnerB,
+    }) as never);
+    expect(store.getState().undoable.present.item.slides[0].boxes[0].words).toBe(
+      "B updated words",
+    );
+  });
+
   it("preserves optional presentation text in snapshots without false remote conflicts", () => {
     const textDocument = {
       blocks: [
@@ -115,6 +221,25 @@ describe("itemSlice", () => {
       );
 
       expect(store.getState().item.background).toBe("new-background.jpg");
+    });
+
+    it("clears custom sections that are absent from the newly selected item", () => {
+      const store = createStore();
+      store.dispatch(itemSlice.actions.setActiveItem({
+        name: "Custom A",
+        _id: "custom-A",
+        type: "free",
+        formattedSections: [
+          { sectionNum: 1, words: "A only section", slideSpan: 1 },
+        ],
+      }));
+      store.dispatch(itemSlice.actions.setActiveItem({
+        name: "Song B",
+        _id: "song-B",
+        type: "song",
+      }));
+
+      expect(store.getState().item.formattedSections).toEqual([]);
     });
 
     it("setActiveItem copies incoming song metadata", () => {
@@ -490,6 +615,78 @@ describe("itemSlice", () => {
           background: "saved-background.jpg",
         }),
       );
+    });
+
+    it("preserves verified ownership and ignores ownership in an accepted remote document", () => {
+      const ownerA = {
+        scopeId: "church-a/database-a",
+        databaseKey: "database-a",
+        churchId: "church-a",
+      };
+      const untrustedOwner = {
+        scopeId: "church-b/database-b",
+        databaseKey: "database-b",
+        churchId: "church-b",
+      };
+      const remoteItem = {
+        _id: "song-a",
+        name: "Remote Song A",
+        type: "song",
+        selectedArrangement: 0,
+        arrangements: [],
+        slides: [],
+        contentOwner: untrustedOwner,
+      } as any;
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "song-a",
+          name: "Local Song A",
+          type: "song",
+          contentOwner: ownerA,
+          pendingRemoteItem: remoteItem,
+          hasRemoteUpdate: true,
+        },
+      });
+
+      store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+
+      expect(store.getState().item.name).toBe("Remote Song A");
+      expect(store.getState().item.contentOwner).toEqual(ownerA);
+      expect(store.getState().item.hasRemoteUpdate).toBe(false);
+    });
+
+    it("rejects a buffered remote document for a different active item", () => {
+      const ownerA = {
+        scopeId: "church-a/database-a",
+        databaseKey: "database-a",
+        churchId: "church-a",
+      };
+      const store = createStore({
+        item: {
+          ...itemSlice.getInitialState(),
+          _id: "song-a",
+          name: "Song A",
+          type: "song",
+          contentOwner: ownerA,
+          pendingRemoteItem: {
+            _id: "song-b",
+            name: "Song B",
+            type: "song",
+            arrangements: [],
+            slides: [],
+          } as any,
+          hasRemoteUpdate: true,
+        },
+      });
+
+      store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+
+      expect(store.getState().item._id).toBe("song-a");
+      expect(store.getState().item.name).toBe("Song A");
+      expect(store.getState().item.contentOwner).toEqual(ownerA);
+      expect(store.getState().item.pendingRemoteItem).toBeNull();
+      expect(store.getState().item.hasRemoteUpdate).toBe(false);
     });
   });
 });

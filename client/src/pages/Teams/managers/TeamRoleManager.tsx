@@ -1,4 +1,4 @@
-import { useCallback, useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useRef, useState } from "react";
 import Button from "../../../components/Button/Button";
 import Input from "../../../components/Input/Input";
 import TextArea from "../../../components/TextArea/TextArea";
@@ -42,7 +42,7 @@ const CREATE_SAVING_KEY = "__create__";
 type TeamRoleManagerProps = {
   roles: TeamRole[];
   teams: TeamRecord[];
-  canEdit: boolean;
+  canEditTeam: (teamId: string) => boolean;
   onSaved: (role: TeamRole, replaceId?: string) => void;
   onArchived: () => void;
   onRemoved: (roleId: string) => void;
@@ -51,7 +51,7 @@ type TeamRoleManagerProps = {
 const TeamRoleManager = ({
   roles,
   teams,
-  canEdit,
+  canEditTeam,
   onSaved,
   onArchived,
   onRemoved,
@@ -60,6 +60,10 @@ const TeamRoleManager = ({
   const { showToast } = useToast();
   const churchId = context?.churchId || "";
   const activeTeams = useMemo(() => teams.filter(isActive), [teams]);
+  const editableTeams = useMemo(
+    () => activeTeams.filter((team) => canEditTeam(team.teamId)),
+    [activeTeams, canEditTeam],
+  );
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [editing, setEditing] = useState<TeamRole | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -71,6 +75,10 @@ const TeamRoleManager = ({
     description: "",
     icon: "",
   });
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const editorSessionRef = useRef(0);
+  const saveDraftSnapshotsRef = useRef(new Map<string, TeamRolePayload>());
   // Roles with a save currently in flight, keyed by roleId (or CREATE_SAVING_KEY
   // for a new role). Tracking per-editor keeps the Save spinner on the role
   // actually saving and lets editing continue back-to-back in the background.
@@ -91,6 +99,12 @@ const TeamRoleManager = ({
   );
 
   const teamId = selectedTeamId || activeTeams[0]?.teamId || "";
+  const creationTeamId = canEditTeam(teamId)
+    ? teamId
+    : editableTeams[0]?.teamId || "";
+  const canEditCurrent = editing
+    ? canEditTeam(editing.teamId)
+    : Boolean(creationTeamId && canEditTeam(creationTeamId));
   const teamRoles = roles.filter((role) =>
     (listFilters.teamIds.length === 0 || listFilters.teamIds.includes(role.teamId)) &&
     (listFilters.includeArchived || isActive(role)),
@@ -101,9 +115,10 @@ const TeamRoleManager = ({
   );
 
   const reset = () => {
+    editorSessionRef.current += 1;
     setEditing(null);
     setShowCreate(false);
-    setDraft({ teamId: teamId, name: "", description: "", icon: "" });
+    setDraft({ teamId: creationTeamId, name: "", description: "", icon: "" });
   };
 
   const cancelEditing = () => {
@@ -115,6 +130,8 @@ const TeamRoleManager = ({
   };
 
   const openRoleEditor = (role: TeamRole) => {
+    if (!canEditTeam(role.teamId)) return;
+    editorSessionRef.current += 1;
     setShowFilters(false);
     setEditing(role);
     setSelectedTeamId(role.teamId);
@@ -128,12 +145,13 @@ const TeamRoleManager = ({
   };
 
   const selectRole = (role: TeamRole) => {
+    if (!canEditTeam(role.teamId)) return;
     if (editing?.roleId === role.roleId) return;
     requestDiscardAction(() => openRoleEditor(role));
   };
 
   const confirmDelete = async () => {
-    if (!canEdit || !deleting) return;
+    if (!deleting || !canEditTeam(deleting.teamId)) return;
     const role = deleting;
     if (role.roleId.startsWith("local-")) {
       onRemoved(role.roleId);
@@ -154,17 +172,20 @@ const TeamRoleManager = ({
   };
 
   const submit = async () => {
-    if (!canEdit) return;
-    const roleTeamId = editing?.teamId || teamId;
+    const roleTeamId = editing?.teamId || creationTeamId;
     if (!roleTeamId) {
       showToast("Create a team first, then add its roles.", "neutral");
       return;
     }
+    if (!canEditTeam(roleTeamId)) return;
     const wasEditing = editing;
     const savingKey = wasEditing?.roleId ?? CREATE_SAVING_KEY;
     // Ignore a repeat submit for the same editor while its save is pending —
     // this prevents a fast double-click on "Create" from making duplicates.
     if (savingIds.has(savingKey)) return;
+    const editorSession = editorSessionRef.current;
+    const submittedDraft = draft;
+    saveDraftSnapshotsRef.current.set(savingKey, submittedDraft);
     setSavingIds((prev) => new Set(prev).add(savingKey));
     const localRoleId = wasEditing?.roleId || `local-role-${generateRandomId()}`;
     const payload: TeamRolePayload = {
@@ -190,28 +211,31 @@ const TeamRoleManager = ({
       const response = wasEditing
         ? await updateTeamRole(churchId, wasEditing.roleId, payload)
         : await createTeamRole(churchId, payload);
-      if (!wasEditing) {
-        onSaved(response.role, localRoleId);
-      }
-      // Saving commits data; Back or Cancel is responsible for leaving this editor.
-      if (wasEditing) {
-        // The operator may have switched to a different role while this save was
-        // in flight. Only refresh the selected record if they're still on the
-        // one we just saved, so the panel never rebinds to a stale role.
-        setEditing((current) =>
-          current?.roleId === wasEditing.roleId ? savedRecord : current,
-        );
-      } else {
-        // Newly created: adopt the saved record so a subsequent Save updates it
-        // instead of creating a duplicate — but only if the create form is still
-        // the active editor and the operator hasn't selected another role.
-        const created = response.role;
-        setEditing((current) => (current === null ? created : current));
+      onSaved(response.role, wasEditing ? undefined : localRoleId);
+      if (editorSessionRef.current === editorSession) {
+        if (wasEditing) {
+          setEditing((current) =>
+            current?.roleId === wasEditing.roleId ? response.role : current,
+          );
+        } else {
+          setEditing((current) => (current === null ? response.role : current));
+        }
+        if (JSON.stringify(draftRef.current) === JSON.stringify(submittedDraft)) {
+          const savedDraft: TeamRolePayload = {
+            teamId: response.role.teamId,
+            name: response.role.name,
+            description: response.role.description || "",
+            icon: response.role.icon || "",
+          };
+          draftRef.current = savedDraft;
+          setDraft(savedDraft);
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this role.");
       onArchived();
     } finally {
+      saveDraftSnapshotsRef.current.delete(savingKey);
       setSavingIds((prev) => {
         const next = new Set(prev);
         next.delete(savingKey);
@@ -227,7 +251,7 @@ const TeamRoleManager = ({
   // The list view has no draft to protect. Without this guard, the initial
   // empty draft (teamId "") differs from the first active team and makes every
   // navigation into this section look dirty before the operator edits anything.
-  const hasPendingChanges = !showCreate
+  const draftDiffersFromSaved = !showCreate
     ? false
     : editing
       ? JSON.stringify(draft) !==
@@ -238,7 +262,13 @@ const TeamRoleManager = ({
         icon: editing.icon || "",
       })
       : JSON.stringify(draft) !==
-      JSON.stringify({ teamId, name: "", description: "", icon: "" });
+      JSON.stringify({ teamId: creationTeamId, name: "", description: "", icon: "" });
+  const pendingSaveDraft = saveDraftSnapshotsRef.current.get(currentEditorKey);
+  const hasPendingChanges = draftDiffersFromSaved && !(
+    isSavingCurrent &&
+    pendingSaveDraft &&
+    JSON.stringify(draft) === JSON.stringify(pendingSaveDraft)
+  );
   useTeamsUnsavedChanges(hasPendingChanges);
 
   return (
@@ -246,13 +276,15 @@ const TeamRoleManager = ({
       <CreatePanel
         open={showCreate}
         onOpenCreate={() => {
+          if (!creationTeamId) return;
           requestDiscardAction(() => {
             setShowFilters(false);
+            setSelectedTeamId(creationTeamId);
             reset();
             setShowCreate(true);
           });
         }}
-        canEdit={canEdit}
+        canEdit={Boolean(editableTeams.length)}
         keepCreateActionVisible
         title={editing ? "Edit role" : "Create role"}
         sectionTitle="Team roles"
@@ -297,11 +329,12 @@ const TeamRoleManager = ({
                   <EntityRow
                     key={role.roleId}
                     title={role.name}
+                    subtitleLabel={teams.find((team) => team.teamId === role.teamId)?.name}
                     subtitle={role.description || undefined}
                     icon={role.icon || "ShieldCheck"}
                     archived={Boolean(role.archivedAt)}
                     compact
-                    canEdit={canEdit}
+                    canEdit={canEditTeam(role.teamId)}
                     onTitleClick={() => selectRole(role)}
                   />
                 ))}
@@ -315,7 +348,7 @@ const TeamRoleManager = ({
               {editing ? (
                 <EntityFormDangerActions
                   archived={Boolean(editing.archivedAt)}
-                  canEdit={canEdit}
+                  canEdit={canEditCurrent}
                   archiveLabel="Archive role"
                   deleteLabel="Delete role"
                   menuLabel="Role actions"
@@ -323,6 +356,7 @@ const TeamRoleManager = ({
                     editing.archivedAt
                       ? undefined
                       : async () => {
+                        if (!canEditTeam(editing.teamId)) return;
                         const archivedRole = {
                           ...editing,
                           archivedAt: new Date().toISOString(),
@@ -352,14 +386,14 @@ const TeamRoleManager = ({
             onSave={() => void submit()}
             onCancel={cancelEditing}
             hasPendingChanges={hasPendingChanges}
-            disabled={!canEdit || !draft.name.trim() || isSavingCurrent}
+            disabled={!canEditCurrent || !draft.name.trim() || isSavingCurrent}
           />
         }
       >
         <p className="text-xs text-gray-400">
           Adding to{" "}
           <span className="font-semibold text-gray-200">
-            {activeTeams.find((team) => team.teamId === (editing?.teamId || teamId))?.name ||
+            {activeTeams.find((team) => team.teamId === (editing?.teamId || creationTeamId))?.name ||
               "a team"}
           </span>
           .

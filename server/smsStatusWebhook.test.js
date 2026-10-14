@@ -18,9 +18,11 @@ const createResponse = () => ({
 const createHandler = ({ valid = true, attempt } = {}) => {
   let saved = null;
   const handler = createSmsStatusWebhookHandler({
+    getDoc: async () => attempt ? { ...attempt } : null,
     queryDocs: async () => (attempt ? [{ ...attempt }] : []),
     setDoc: async (_collection, _id, update) => {
       saved = update;
+      Object.assign(attempt, update);
     },
     nowIso: () => "2026-09-23T12:00:00.000Z",
     validateSignature: () => valid,
@@ -44,6 +46,7 @@ test("status webhook is idempotent and does not regress delivered", async () => 
       attemptId: "attempt_1",
       providerMessageId: "SM123",
       status: "delivered",
+      outcome: "confirmed", acceptedAt: "2026-09-23T12:00:00.000Z",
     },
   });
   const req = {

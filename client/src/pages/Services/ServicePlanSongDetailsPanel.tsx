@@ -156,6 +156,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
             onGetSongAudioUrl={getSongAudioUrlForEdit}
             onRemoveSongAudio={removeSongAudioForEdit}
             onSave={handleSave}
+            onSaveSuccess={() => setEditing(false)}
             className="gap-2"
           />
         </section>

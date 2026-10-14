@@ -15,11 +15,14 @@ import {
   scheduleWorkspacePanelClassName,
   scheduleWorkspaceTabsClassName,
   teamsCreatePanelRowClassName,
+  teamsCreatePanelListClassName,
+  teamsCompactEntityRowLayoutClassName,
   teamsManagerPageRootClassName,
   teamsPanelMaxHeightClassName,
 } from "./teamsStyles";
 
 const skeletonBar = "animate-pulse rounded bg-white/10";
+type SkeletonRowVariant = "card" | "compact" | "member" | "icon" | "qualification";
 
 const SkeletonStatus = ({
   label,
@@ -39,24 +42,44 @@ const SkeletonStatus = ({
   </div>
 );
 
-const SkeletonPanelHeader = ({ withButton = true }: { withButton?: boolean }) => (
+const SkeletonPanelHeader = ({ withButton = true, compact = false, withMenu = false }: { withButton?: boolean; compact?: boolean; withMenu?: boolean }) => (
   <div className="flex items-center justify-between gap-3">
-    <div className={cn(skeletonBar, "h-6 w-32")} />
-    {withButton ? <div className={cn(skeletonBar, "h-9 w-36 shrink-0")} /> : null}
+    <div className={cn(skeletonBar, compact ? "h-7 w-32" : "h-6 w-32")} />
+    <div className="flex shrink-0 items-center gap-2">
+      {withButton ? <div className={cn(skeletonBar, compact ? "h-8 w-36" : "h-9 w-36")} /> : null}
+      {withMenu ? <div className={cn(skeletonBar, "size-8")} /> : null}
+    </div>
   </div>
 );
 
-const SkeletonDescription = () => (
-  <div className={cn(skeletonBar, "mt-1 h-4 w-full max-w-md")} />
+const SkeletonDescription = ({ compact = false }: { compact?: boolean }) => (
+  <div className={cn(skeletonBar, "mt-1 w-full max-w-md", compact ? "h-5" : "h-4")} />
 );
 
 const SkeletonEntityRow = ({
   withNote = false,
   withExtraAction = false,
+  variant = "card",
 }: {
   withNote?: boolean;
   withExtraAction?: boolean;
-}) => (
+  variant?: SkeletonRowVariant;
+}) => variant !== "card" ? (
+  <div className={cn("flex min-w-0 max-w-full rounded-lg border border-gray-800 bg-gray-950/40", teamsCompactEntityRowLayoutClassName)}>
+    {variant === "member" ? (
+      <div className={cn(skeletonBar, "size-8 shrink-0 rounded-full")} />
+    ) : null}
+    {variant === "icon" || variant === "qualification" ? (
+      <div className={cn(skeletonBar, "size-7 shrink-0 rounded-md")} />
+    ) : null}
+    <div className="min-w-0 flex-1">
+      <div className={cn(skeletonBar, "h-5 w-40 max-w-full")} />
+      <div className={cn(skeletonBar, "mt-0.5 h-4 w-56 max-w-full")} />
+      {variant === "qualification" ? <div className={cn(skeletonBar, "h-4 w-64 max-w-full")} /> : null}
+    </div>
+    <div className={cn(skeletonBar, "size-4 shrink-0")} />
+  </div>
+) : (
   <div className="flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 sm:flex-row sm:items-start sm:justify-between">
     <div className="min-w-0 flex-1 space-y-2">
       <div className={cn(skeletonBar, "h-4 w-40")} />
@@ -75,10 +98,12 @@ const SkeletonEntityRows = ({
   count = 4,
   withNote = false,
   withExtraAction = false,
+  variant = "card",
 }: {
   count?: number;
   withNote?: boolean;
   withExtraAction?: boolean;
+  variant?: SkeletonRowVariant;
 }) => (
   <div className="space-y-2">
     {Array.from({ length: count }, (_, index) => (
@@ -86,39 +111,41 @@ const SkeletonEntityRows = ({
         key={index}
         withNote={withNote}
         withExtraAction={withExtraAction}
+        variant={variant}
       />
     ))}
   </div>
 );
 
 const SkeletonManagerPanel = ({
-  withTeamSelect = false,
   withSearch = true,
   rowCount = 4,
   withNote = false,
   withExtraAction = false,
+  rowVariant = "card",
 }: {
-  withTeamSelect?: boolean;
   withSearch?: boolean;
   rowCount?: number;
   withNote?: boolean;
   withExtraAction?: boolean;
+  rowVariant?: SkeletonRowVariant;
 }) => (
   <section
     className={cn(
       panelShellClassName,
       "flex flex-col",
       teamsPanelMaxHeightClassName,
+      rowVariant !== "card" && cn("w-full min-w-0", teamsCreatePanelListClassName),
     )}
   >
     <div className={cn("shrink-0", panelHeaderPaddingClassName)}>
-      <SkeletonPanelHeader />
-      <SkeletonDescription />
+      <SkeletonPanelHeader compact={rowVariant !== "card"} withMenu={rowVariant === "member" || rowVariant === "compact"} />
+      <SkeletonDescription compact={rowVariant !== "card"} />
     </div>
-    {withTeamSelect ? (
-      <div className="mt-4 shrink-0 space-y-2 px-4">
-        <div className={cn(skeletonBar, "h-3 w-12")} />
-        <div className={cn(skeletonBar, "h-10 w-full max-w-xs")} />
+    {rowVariant !== "card" ? (
+      <div className="mt-4 flex shrink-0 gap-2 px-4">
+        <div className={cn(skeletonBar, "h-9 min-w-0 flex-1")} />
+        <div className={cn(skeletonBar, "h-9 w-20 shrink-0")} />
       </div>
     ) : null}
     <div
@@ -127,11 +154,12 @@ const SkeletonManagerPanel = ({
         panelScrollPaddingClassName,
       )}
     >
-      {withSearch ? <div className={cn(skeletonBar, "h-10 w-full max-w-sm")} /> : null}
+      {withSearch && rowVariant === "card" ? <div className={cn(skeletonBar, "h-10 w-full max-w-sm")} /> : null}
       <SkeletonEntityRows
         count={rowCount}
         withNote={withNote}
         withExtraAction={withExtraAction}
+        variant={rowVariant}
       />
     </div>
   </section>
@@ -360,31 +388,31 @@ export const TeamsSchedulesPageSkeleton = () => (
 
 export const TeamsMembersPageSkeleton = () => (
   <SkeletonStatus label="Loading members">
-    <SkeletonManagerPanel withSearch />
+    <SkeletonManagerPanel rowVariant="member" />
   </SkeletonStatus>
 );
 
 export const TeamsPositionsPageSkeleton = () => (
   <SkeletonStatus label="Loading positions">
-    <SkeletonManagerPanel withTeamSelect withSearch />
+    <SkeletonManagerPanel rowVariant="compact" />
   </SkeletonStatus>
 );
 
 export const TeamsGroupsPageSkeleton = () => (
   <SkeletonStatus label="Loading teams">
-    <SkeletonManagerPanel withSearch={false} />
+    <SkeletonManagerPanel rowVariant="compact" />
   </SkeletonStatus>
 );
 
 export const TeamsRolesPageSkeleton = () => (
   <SkeletonStatus label="Loading team roles">
-    <SkeletonManagerPanel withTeamSelect withSearch />
+    <SkeletonManagerPanel rowVariant="icon" />
   </SkeletonStatus>
 );
 
 export const TeamsQualificationsPageSkeleton = () => (
   <SkeletonStatus label="Loading qualifications">
-    <SkeletonManagerPanel withTeamSelect withSearch />
+    <SkeletonManagerPanel rowVariant="qualification" />
   </SkeletonStatus>
 );
 
@@ -564,6 +592,49 @@ export const TeamsFormsPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+export const TeamsMessagesPageSkeleton = () => (
+  <SkeletonStatus label="Loading messages">
+    <div className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6">
+      <header className="space-y-2">
+        <div className={cn(skeletonBar, "h-6 w-44")} />
+        <div className={cn(skeletonBar, "h-4 w-full max-w-2xl")} />
+      </header>
+      <section className="space-y-5 rounded-xl border border-gray-700 bg-gray-900/40 p-4 shadow-sm sm:p-6">
+        <div className="space-y-2">
+          <div className={cn(skeletonBar, "h-5 w-32")} />
+          <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className={cn(skeletonBar, "h-10 w-full")} />
+          <div className={cn(skeletonBar, "h-10 w-full")} />
+        </div>
+        <div className="space-y-3 border-t border-gray-700 pt-4">
+          <div className="space-y-2">
+            <div className={cn(skeletonBar, "h-5 w-24")} />
+            <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className={cn(skeletonBar, "h-10 w-full")} />
+            <div className={cn(skeletonBar, "h-10 w-full")} />
+          </div>
+          <div className="space-y-2 rounded-lg border border-gray-700 bg-gray-950/50 p-3">
+            <div className={cn(skeletonBar, "h-9 w-full")} />
+            <SkeletonEntityRows count={4} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-700 pt-4">
+          <div className={cn(skeletonBar, "h-4 w-56 max-w-full")} />
+          <div className={cn(skeletonBar, "h-9 w-36")} />
+        </div>
+      </section>
+      <section className="space-y-3">
+        <div className={cn(skeletonBar, "h-5 w-36")} />
+        <SkeletonEntityRows count={2} withNote />
+      </section>
+    </div>
+  </SkeletonStatus>
+);
+
 export const getTeamsSectionSkeleton = (routePath: string) => {
   switch (routePath) {
     case "schedules":
@@ -589,6 +660,8 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
       return <TeamsMicrophonesPageSkeleton />;
     case "forms":
       return <TeamsFormsPageSkeleton />;
+    case "messages":
+      return <TeamsMessagesPageSkeleton />;
     default:
       return <TeamsMembersPageSkeleton />;
   }

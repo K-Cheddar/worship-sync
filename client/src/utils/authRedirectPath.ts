@@ -143,7 +143,15 @@ export function takePublicShellAuthReturnPath(): string | null {
 /** After human sign-in, matches AppEntry: deep link when present, otherwise `/home`. */
 export function getHumanPostAuthPath(location: Location): string {
   const fromState = getAuthRedirectToFromState(location.state);
-  if (fromState && fromState !== "/") return fromState;
+  if (
+    fromState &&
+    fromState !== "/" &&
+    fromState.split("?", 1)[0] !== "/login"
+  ) {
+    return fromState;
+  }
   const fromShell = takePublicShellAuthReturnPath();
-  return fromShell && fromShell !== "/" ? fromShell : "/home";
+  return fromShell && fromShell !== "/" && fromShell.split("?", 1)[0] !== "/login"
+    ? fromShell
+    : "/home";
 }

@@ -5,6 +5,7 @@ import NowDisplay from "../NowDisplay";
 import TimerDisplay, { formatTime } from "../TimerDisplay";
 import VerseDisplay from "../VerseDisplay";
 import type { TimerInfo } from "../../../types";
+import * as serverTime from "../../../utils/serverTime";
 
 let hooksState: any;
 let reactReduxState: any;
@@ -16,6 +17,16 @@ jest.mock("react-redux", () => ({
 jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: any) => unknown) => selector(hooksState),
   useSharedNow: () => new Date("2026-01-04T10:00:00.000Z").getTime(),
+}));
+
+jest.mock("../../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "UTC",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
 }));
 
 const createTimer = (overrides: Partial<TimerInfo> = {}): TimerInfo => ({
@@ -30,6 +41,9 @@ const createTimer = (overrides: Partial<TimerInfo> = {}): TimerInfo => ({
   ...overrides,
 });
 
+const formatClockTime = (date: Date): string =>
+  date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
 describe("DisplayWindow timer and text helpers", () => {
   beforeEach(() => {
     reactReduxState = {
@@ -43,6 +57,12 @@ describe("DisplayWindow timer and text helpers", () => {
     };
     jest.useRealTimers();
     jest.restoreAllMocks();
+    serverTime.setServerTimeOffset(0);
+  });
+
+  afterEach(() => {
+    serverTime.setServerTimeOffset(0);
+    jest.useRealTimers();
   });
 
   describe("TimerDisplay", () => {
@@ -397,21 +417,99 @@ describe("DisplayWindow timer and text helpers", () => {
   });
 
   describe("DisplayClock", () => {
-    it("renders current time and updates every second", () => {
+    it("uses the device time when the server offset is zero and keeps its formatting", () => {
       jest.useFakeTimers();
-      const toLocaleSpy = jest
-        .spyOn(Date.prototype, "toLocaleTimeString")
-        .mockReturnValueOnce("9:00 AM")
-        .mockReturnValue("9:01 AM");
+      jest.setSystemTime(new Date("2026-05-17T12:34:56.000Z"));
+      serverTime.setServerTimeOffset(0);
 
       render(<DisplayClock fontSize={16} />);
 
-      expect(screen.getByText("9:00 AM")).toBeInTheDocument();
+      const clock = screen.getByText(formatClockTime(new Date()));
+      expect(clock).toHaveClass("text-white", "whitespace-nowrap");
+      expect(clock).toHaveStyle({ fontSize: "16px" });
+    });
+
+    it("adjusts the displayed time for a positive server offset", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
+      serverTime.setServerTimeOffset(120_000);
+
+      render(<DisplayClock fontSize={16} />);
+
+      const clock = screen.getByText(formatClockTime(serverTime.serverDate()));
+      expect(clock).toBeInTheDocument();
+      expect(clock).not.toHaveTextContent(formatClockTime(new Date()));
+    });
+
+    it("adjusts the displayed time for a negative server offset", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
+      serverTime.setServerTimeOffset(-120_000);
+
+      render(<DisplayClock fontSize={16} />);
+
+      const clock = screen.getByText(formatClockTime(serverTime.serverDate()));
+      expect(clock).toBeInTheDocument();
+      expect(clock).not.toHaveTextContent(formatClockTime(new Date()));
+    });
+
+    it("updates an already mounted clock as soon as the server offset changes", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-05-17T12:00:00.000Z"));
+      serverTime.setServerTimeOffset(0);
+
+      render(<DisplayClock fontSize={16} />);
+
+      const deviceTime = formatClockTime(new Date());
+      expect(screen.getByText(deviceTime)).toBeInTheDocument();
+
+      act(() => {
+        serverTime.setServerTimeOffset(120_000);
+      });
+
+      expect(
+        screen.getByText(formatClockTime(serverTime.serverDate())),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(deviceTime)).not.toBeInTheDocument();
+    });
+
+    it("continues ticking once per second", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date("2026-05-17T12:00:59.000Z"));
+      serverTime.setServerTimeOffset(0);
+
+      render(<DisplayClock fontSize={16} />);
+
+      const previousTime = formatClockTime(new Date());
+      expect(screen.getByText(previousTime)).toBeInTheDocument();
       act(() => {
         jest.advanceTimersByTime(1000);
       });
-      expect(screen.getByText("9:01 AM")).toBeInTheDocument();
-      expect(toLocaleSpy).toHaveBeenCalled();
+      expect(screen.getByText(formatClockTime(new Date()))).toBeInTheDocument();
+      expect(screen.queryByText(previousTime)).not.toBeInTheDocument();
+    });
+
+    it("clears its interval and unsubscribes from offset changes on unmount", () => {
+      jest.useFakeTimers();
+      const unsubscribe = jest.fn();
+      jest
+        .spyOn(serverTime, "subscribeServerTimeOffset")
+        .mockReturnValue(unsubscribe);
+      const setIntervalSpy = jest.spyOn(global, "setInterval");
+      const clearIntervalSpy = jest.spyOn(global, "clearInterval");
+
+      const { unmount } = render(<DisplayClock fontSize={16} />);
+
+      const intervalIndex = setIntervalSpy.mock.calls.findIndex(
+        ([, delay]) => delay === 1000,
+      );
+      expect(intervalIndex).toBeGreaterThanOrEqual(0);
+      const intervalId = setIntervalSpy.mock.results[intervalIndex].value;
+
+      unmount();
+
+      expect(clearIntervalSpy).toHaveBeenCalledWith(intervalId);
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
   });
 

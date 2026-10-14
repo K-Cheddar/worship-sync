@@ -52,8 +52,10 @@ import {
   formatOccurrenceTiming,
   generateScheduleOccurrences,
   getOccurrenceDate,
+  getOccurrenceTimeZoneAbbreviation,
   getSharedOccurrenceTiming,
-  occurrenceIdsMatch,
+  occurrenceScheduleDetailsMatch,
+  preserveStoredOccurrenceIds,
 } from "@/utils/teamScheduleOccurrences";
 import {
   getCreateScheduleDefaultRange,
@@ -103,6 +105,7 @@ import {
   getNotificationIntents,
   getNotificationIntentPreview,
   resolveReplacementNotificationIntent,
+  prepareReplacementNotificationIntent,
   sendNotificationIntent,
 } from "../../../api/auth";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
@@ -234,6 +237,7 @@ import {
 import { buildAutoFillPlan, type AutoFillEntry } from "./scheduleAutoFill";
 import ScheduleMembersPanel from "./ScheduleMembersPanel";
 import ScheduleMessagesPanel from "./ScheduleMessagesPanel";
+import ScheduleInitialSmsSendFlow from "./ScheduleInitialSmsSendFlow";
 import {
   ScheduleAssignmentProvider,
   type ScheduleAssignmentHandlers,
@@ -359,6 +363,7 @@ type PendingAvailabilityConfirmation = {
 
 const ScheduleTab = ({
   data,
+  serviceTimeZone,
   canEdit: canEditSelectedSchedule,
   editableTeamIds,
   canEditMember,
@@ -377,6 +382,7 @@ const ScheduleTab = ({
   onImported,
 }: {
   data: TeamsData;
+  serviceTimeZone: string;
   canEdit: boolean;
   /** Teams this user can edit, used to default the team filter. */
   editableTeamIds?: Set<string>;
@@ -420,7 +426,9 @@ const ScheduleTab = ({
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState<string | null>(
     () => {
       const stored = churchId ? readScheduleTeamFilter(churchId) : null;
-      return stored ? (stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored) : null;
+      if (stored) return stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored;
+      const editable = [...(editableTeamIds || [])];
+      return editable.length === 1 ? editable[0] : "";
     },
   );
   useEffect(() => {
@@ -471,11 +479,12 @@ const ScheduleTab = ({
         teamId: workspaceTeamId,
         schedules: data.schedules,
         now: referenceTime,
+        timeZone: serviceTimeZone,
       }),
       periodReferenceTime: referenceTime,
     };
   },
-    [activeServices, data.positions, data.schedules, workspaceTeamId],
+    [activeServices, data.positions, data.schedules, serviceTimeZone, workspaceTeamId],
   );
   const initialPeriodRange = useMemo(() => ({
     start: initialTeamPeriodResult.start,
@@ -530,25 +539,37 @@ const ScheduleTab = ({
       teamId: workspaceTeamId,
       startDate: persistedPeriodRange.start,
       endDate: persistedPeriodRange.end,
+      timeZone: serviceTimeZone,
     }),
-    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, workspaceTeamId],
+    [activeServices, data.positions, persistedPeriodRange.end, persistedPeriodRange.start, serviceTimeZone, workspaceTeamId],
   );
   const periodServiceIds = teamPeriod.serviceIds;
   const generatedPeriodOccurrences = useMemo(
-    () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange),
-    [periodRange, teamPeriod.occurrences],
+    () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange, serviceTimeZone),
+    [periodRange, serviceTimeZone, teamPeriod.occurrences],
   );
-  const periodScheduleMatch = findReusablePeriodSchedule({
+  const preferredPeriodScheduleId = periodScheduleSelection?.scope === periodSelectionScope
+    ? periodScheduleSelection.scheduleId
+    : selectedScheduleId;
+  const periodScheduleMatch = useMemo(() => findReusablePeriodSchedule({
     schedules,
     churchId,
     teamId: workspaceTeamId,
     occurrences: generatedPeriodOccurrences,
     visibleStartDate: periodRange.start,
     visibleEndDate: periodRange.end,
-    preferredScheduleId: periodScheduleSelection?.scope === periodSelectionScope
-      ? periodScheduleSelection.scheduleId
-      : selectedScheduleId,
-  });
+    timeZone: serviceTimeZone,
+    preferredScheduleId: preferredPeriodScheduleId,
+  }), [
+    churchId,
+    generatedPeriodOccurrences,
+    periodRange.end,
+    periodRange.start,
+    preferredPeriodScheduleId,
+    schedules,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
     ? []
@@ -653,7 +674,7 @@ const ScheduleTab = ({
             visibleEndDate: periodRange.end,
             preferredScheduleId: selectedScheduleId,
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+            timeZone: serviceTimeZone,
           }));
           onScheduleSaved(result.schedule);
           if (activeScheduleIdRef.current !== virtualScheduleId) return null;
@@ -684,6 +705,7 @@ const ScheduleTab = ({
     periodServiceIds,
     selectedScheduleId,
     setSelectedScheduleId,
+    serviceTimeZone,
     trackTeamsSave,
     workspaceTeamId,
   ]);
@@ -723,8 +745,9 @@ const ScheduleTab = ({
         services: data.services,
         positions: data.positions,
         schedules: data.schedules,
+        timeZone: serviceTimeZone,
       }),
-    [churchId, data.positions, data.schedules, data.services, defaultTeamId],
+    [churchId, data.positions, data.schedules, data.services, defaultTeamId, serviceTimeZone],
   );
   const defaultServiceIds = useMemo(
     () =>
@@ -733,8 +756,9 @@ const ScheduleTab = ({
         schedules: data.schedules,
         services: data.services,
         range: defaultRange,
+        timeZone: serviceTimeZone,
       }),
-    [data.schedules, data.services, defaultRange, defaultTeamId],
+    [data.schedules, data.services, defaultRange, defaultTeamId, serviceTimeZone],
   );
 
   const selectPeriodPreset = (preset: SchedulePeriodPreset) => {
@@ -770,8 +794,8 @@ const ScheduleTab = ({
   // occurrences and no date range. Computed once so it never drifts as the memo
   // below recomputes on data refreshes.
   const fallbackStartsAt = useMemo(() => serverDate().toISOString(), []);
-  // What occurrences this schedule's services + date range would produce right
-  // now. Compared against the stored shape to detect grouping/timing drift.
+  // What occurrences this schedule's services + date range produce now. The
+  // stable identity is compared separately from current scheduled details.
   const regeneratedOccurrences = useMemo(() => {
     if (
       !selectedSchedule?.startDate ||
@@ -783,8 +807,9 @@ const ScheduleTab = ({
       serviceIds: selectedSchedule.serviceIds || [],
       startDate: selectedSchedule.startDate,
       endDate: selectedSchedule.endDate,
+      timeZone: serviceTimeZone,
     });
-  }, [data.services, selectedSchedule]);
+  }, [data.services, selectedSchedule, serviceTimeZone]);
   const baseScheduleOccurrences = useMemo(() => {
     if (selectedSchedule?.occurrences?.length) return selectedSchedule.occurrences;
     if (regeneratedOccurrences) return regeneratedOccurrences;
@@ -810,13 +835,14 @@ const ScheduleTab = ({
     if (selectedSchedule.scheduleId.startsWith("local-")) return false;
     const stored = selectedSchedule.occurrences || [];
     if (stored.length === 0 || !regeneratedOccurrences) return false;
-    return !occurrenceIdsMatch(stored, regeneratedOccurrences);
-  }, [canEdit, regeneratedOccurrences, selectedSchedule]);
+    return !occurrenceScheduleDetailsMatch(stored, regeneratedOccurrences, serviceTimeZone);
+  }, [canEdit, regeneratedOccurrences, selectedSchedule, serviceTimeZone]);
   const refreshBlocked = Boolean(selectedSchedule && regeneratedOccurrences &&
     !canRefreshScheduleOccurrences({
       schedule: selectedSchedule,
       services: data.services,
       regeneratedOccurrences,
+      timeZone: serviceTimeZone,
     }));
   const [applyingGrouping, setApplyingGrouping] = useState(false);
   // Spreadsheet-style undo/redo for the assignment grid. The stack is
@@ -856,29 +882,35 @@ const ScheduleTab = ({
       redo: isMac ? "⌘⇧Z" : "Ctrl+Shift+Z",
     };
   }, []);
-  // Re-generate occurrences and re-key assignments onto them, then persist —
-  // the one-click path behind the "schedule out of date" nudge.
+  // Refresh snapshots only when every saved occurrence has one exact logical
+  // counterpart. Legacy map keys are retained by preserveStoredOccurrenceIds.
   const refreshScheduleOccurrences = useCallback(async () => {
     if (!canEdit || !selectedSchedule || !regeneratedOccurrences || refreshBlocked || applyingGrouping) return;
     const sourceOccurrences = selectedSchedule.occurrences || [];
+    const refreshedOccurrences = preserveStoredOccurrenceIds(
+      sourceOccurrences,
+      regeneratedOccurrences,
+      serviceTimeZone,
+    );
+    if (!refreshedOccurrences) return;
     const assignments = rekeyAssignmentsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       assignments: selectedSchedule.assignments || {},
     });
     const microphoneAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       rows: selectedSchedule.microphoneAssignments,
     });
     const iemAssignments = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       rows: selectedSchedule.iemAssignments,
     });
     const additionalPositionSlots = rekeyScheduleOccurrenceRowsByServiceDate({
       sourceOccurrences,
-      targetOccurrences: regeneratedOccurrences,
+      targetOccurrences: refreshedOccurrences,
       rows: selectedSchedule.additionalPositionSlots,
     });
     setApplyingGrouping(true);
@@ -887,7 +919,7 @@ const ScheduleTab = ({
     resetUndoHistory();
     onScheduleSaved({
       ...selectedSchedule,
-      occurrences: regeneratedOccurrences,
+      occurrences: refreshedOccurrences,
       assignments,
       microphoneAssignments,
       iemAssignments,
@@ -904,7 +936,7 @@ const ScheduleTab = ({
           startDate: selectedSchedule.startDate || "",
           endDate: selectedSchedule.endDate || "",
           serviceIds: selectedSchedule.serviceIds || [],
-          occurrences: regeneratedOccurrences,
+          occurrences: refreshedOccurrences,
           assignments,
           microphoneAssignments,
           iemAssignments,
@@ -925,6 +957,7 @@ const ScheduleTab = ({
     churchId,
     onScheduleSaved,
     regeneratedOccurrences,
+    serviceTimeZone,
     refreshBlocked,
     resetUndoHistory,
     selectedSchedule,
@@ -950,7 +983,7 @@ const ScheduleTab = ({
   }, [baseScheduleOccurrences, selectedSchedule?.source, serviceById, teamPositionIds, viewingSavedSchedule]);
   const scheduleOccurrences = useMemo(() => {
     if (viewingSavedSchedule) return baseScheduleOccurrences;
-    return filterOccurrencesToRange(baseScheduleOccurrences, displayedPeriodRange).filter((occurrence) =>
+    return filterOccurrencesToRange(baseScheduleOccurrences, displayedPeriodRange, serviceTimeZone).filter((occurrence) =>
       (allRequirementsByOccurrence.get(occurrence.occurrenceId)?.length || 0) > 0 ||
       (selectedSchedule?.additionalPositionSlots?.[occurrence.occurrenceId] || [])
         .some((slotKey) => {
@@ -958,7 +991,7 @@ const ScheduleTab = ({
           return Boolean(slot && teamPositionIds.includes(slot.positionId));
         }),
     );
-  }, [allRequirementsByOccurrence, baseScheduleOccurrences, displayedPeriodRange, selectedSchedule, teamPositionIds, viewingSavedSchedule]);
+  }, [allRequirementsByOccurrence, baseScheduleOccurrences, displayedPeriodRange, selectedSchedule, serviceTimeZone, teamPositionIds, viewingSavedSchedule]);
   const requirementsByOccurrence = useMemo(
     () => new Map(scheduleOccurrences.map((occurrence) => [
       occurrence.occurrenceId,
@@ -1039,8 +1072,10 @@ const ScheduleTab = ({
       selectedTeam.teamId,
       activeTeamMembers.map((member) => member.memberId),
       data.schedules,
+      undefined,
+      serviceTimeZone,
     );
-  }, [activeTeamMembers, data.schedules, selectedTeam]);
+  }, [activeTeamMembers, data.schedules, selectedTeam, serviceTimeZone]);
   useEffect(() => {
     if (!showForm) return;
     const scrollContainer = document.querySelector(".teams-section-scroll");
@@ -1076,6 +1111,7 @@ const ScheduleTab = ({
   const [replacementIntentToClose, setReplacementIntentToClose] = useState<NotificationIntent | null>(null);
   const [closingReplacement, setClosingReplacement] = useState(false);
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
+  const [scheduleInitialSmsOpen, setScheduleInitialSmsOpen] = useState(false);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
@@ -1119,7 +1155,8 @@ const ScheduleTab = ({
   };
 
   const scheduleNotificationCounts = useMemo(() => {
-    const responded = scheduleNotificationIntents.filter((intent) => {
+    const responseTrackedIntents = scheduleNotificationIntents.filter((intent) => intent.intentType !== "schedule_initial_notification");
+    const responded = responseTrackedIntents.filter((intent) => {
       if (intent.intentType === "replacement_request") return Boolean(intent.replacementResolvedAt);
       const response = selectedSchedule?.responses?.[intent.occurrenceId]?.[intent.cellKey || ""];
       return response?.memberId === intent.memberId && ["accepted", "declined"].includes(response.response);
@@ -1131,7 +1168,7 @@ const ScheduleTab = ({
       failed: scheduleNotificationIntents.filter((intent) => ["failed", "undelivered"].includes(intent.attemptStatus || "")).length,
       uncertain: scheduleNotificationIntents.filter((intent) => intent.status === "unknown" || intent.attemptOutcome === "unknown").length,
       responded,
-      waiting: scheduleNotificationIntents.length - responded,
+      waiting: responseTrackedIntents.length - responded,
       optedOut: scheduleNotificationIntents.filter((intent) => intent.previewError?.toLowerCase().includes("opted out")).length,
     };
   }, [scheduleNotificationIntents, selectedSchedule?.responses]);
@@ -1152,8 +1189,9 @@ const ScheduleTab = ({
     let awaitingConfirmation = false;
     try {
       const preview = await getNotificationIntentPreview(churchId, intent.intentId);
+      if (latestScheduleRef.current?.scheduleId !== intent.sourceId || latestScheduleRef.current?.churchId !== churchId) return;
       if (!preview.preview.eligible) {
-        showToast("This volunteer is no longer eligible for SMS. Review the current assignment and consent.", "error");
+        showToast("This volunteer can't receive a text message right now. Check the current assignment and consent.", "error");
         return;
       }
       const memberName = data.members.find((member) => member.memberId === intent.memberId);
@@ -1191,7 +1229,14 @@ const ScheduleTab = ({
     try {
       const result = await sendNotificationIntent(churchId, preview.intent.intentId, preview.approvalVersion);
       await refreshScheduleNotificationHistory(preview.intent.sourceId);
-      showToast(result.success ? "SMS accepted by the provider." : result.errorMessage || "The provider outcome is uncertain. Review the delivery status before retrying.", result.success ? "success" : "error");
+      showToast(
+        result.success
+          ? "Your text message was sent. Delivery updates may take a moment."
+          : result.outcome === "unknown"
+            ? "We couldn't confirm whether this text was sent. Review delivery history before trying again."
+            : result.errorMessage || "This text message wasn't sent. Review delivery history before preparing a retry.",
+        result.success ? "success" : "error",
+      );
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule message.");
       try {
@@ -1468,13 +1513,14 @@ const ScheduleTab = ({
           occurrenceId,
           memberId,
           cellKey: activeSlot?.columnKey,
+          timeZone: serviceTimeZone,
           // Conflict checks only need the schedules overlapping this one, and
           // selecting a schedule hydrates exactly that set.
           schedules: onlyHydratedSchedules(data.schedules),
           teams: data.teams,
         }),
       ),
-    [activeSlot?.columnKey, data.schedules, data.teams, selectedSchedule],
+    [activeSlot?.columnKey, data.schedules, data.teams, selectedSchedule, serviceTimeZone],
   );
 
   const hasUnhydratedOverlappingTeamSchedule = useMemo(
@@ -1925,9 +1971,10 @@ const ScheduleTab = ({
         ? formatOccurrenceMessage({
           startsAt: detailOccurrence.startsAt,
           groups: detailSummaryGroups,
+          timeZone: serviceTimeZone,
         })
         : "",
-    [detailOccurrence, detailSummaryGroups],
+    [detailOccurrence, detailSummaryGroups, serviceTimeZone],
   );
 
   const copyDetailOccurrenceAssignments = useCallback(async () => {
@@ -2036,8 +2083,8 @@ const ScheduleTab = ({
       if (assignmentKind !== "shadow" && !(member.positionIds || []).includes(positionId)) {
         return "Not eligible for this position";
       }
-      if (serviceDateBlockedOut(member, getOccurrenceDate(occurrence))) return "Blocked out";
-      if (!isMemberAvailableOnDate(member, getOccurrenceDate(occurrence))) {
+      if (serviceDateBlockedOut(member, getOccurrenceDate(occurrence, serviceTimeZone))) return "Blocked out";
+      if (!isMemberAvailableOnDate(member, getOccurrenceDate(occurrence, serviceTimeZone))) {
         return "Unavailable this week of the month";
       }
       // Intake service availability is intentionally not a hard block; it is
@@ -2045,7 +2092,7 @@ const ScheduleTab = ({
       // an explicit confirmation before a manual assignment can continue.
       return "";
     },
-    [data.members, scheduleOccurrences, selectedTeam],
+    [data.members, scheduleOccurrences, selectedTeam, serviceTimeZone],
   );
 
   // Soft, non-blocking warning: the member marked this service unavailable on an
@@ -2068,11 +2115,11 @@ const ScheduleTab = ({
       const occurrence = scheduleOccurrences.find(
         (item) => item.occurrenceId === occurrenceId,
       );
-      return member && occurrence && serviceDateBlockedOut(member, getOccurrenceDate(occurrence))
+      return member && occurrence && serviceDateBlockedOut(member, getOccurrenceDate(occurrence, serviceTimeZone))
         ? "Blocked out"
         : "";
     },
-    [data.members, scheduleOccurrences],
+    [data.members, scheduleOccurrences, serviceTimeZone],
   );
 
   const [isSendingSchedule, setIsSendingSchedule] = useState(false);
@@ -2265,7 +2312,7 @@ const ScheduleTab = ({
       delete nextAssignments[serviceId];
     }
 
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
     const undoChanges: ScheduleCellChange[] = [];
     if (sourceServiceId && sourcePositionSlotKey) {
       const sourceOccurrence = scheduleOccurrences.find(
@@ -2274,7 +2321,7 @@ const ScheduleTab = ({
       undoChanges.push({
         occurrenceId: sourceServiceId,
         cellKey: sourcePositionSlotKey,
-        serviceDate: sourceOccurrence ? getOccurrenceDate(sourceOccurrence) : "",
+        serviceDate: sourceOccurrence ? getOccurrenceDate(sourceOccurrence, serviceTimeZone) : "",
         before:
           previousSchedule.assignments?.[sourceServiceId]?.[sourcePositionSlotKey] ?? "",
         after: nextAssignments[sourceServiceId]?.[sourcePositionSlotKey] ?? "",
@@ -2386,7 +2433,7 @@ const ScheduleTab = ({
           positionSlotKey: activeSlot.columnKey,
           memberId: null,
           guest,
-          serviceDate: getOccurrenceDate(occurrence),
+          serviceDate: getOccurrenceDate(occurrence, serviceTimeZone),
           sourceServiceId: moveSource?.serviceId,
           sourcePositionSlotKey: moveSource?.positionSlotKey,
         }),
@@ -2401,7 +2448,7 @@ const ScheduleTab = ({
         changes.push({
           occurrenceId: moveSource.serviceId,
           cellKey: moveSource.positionSlotKey,
-          serviceDate: getOccurrenceDate(occurrence),
+          serviceDate: getOccurrenceDate(occurrence, serviceTimeZone),
           before: sourceBefore,
           after: response.schedule.assignments?.[moveSource.serviceId]?.[
             moveSource.positionSlotKey
@@ -2412,7 +2459,7 @@ const ScheduleTab = ({
         {
           occurrenceId: activeSlot.occurrenceId,
           cellKey: activeSlot.columnKey,
-          serviceDate: getOccurrenceDate(occurrence),
+          serviceDate: getOccurrenceDate(occurrence, serviceTimeZone),
           before,
           after,
         },
@@ -2765,7 +2812,7 @@ const ScheduleTab = ({
       delete nextAssignments[serviceId];
     }
 
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
     recordAssignmentChange(
       `${action === "add" ? "add" : "remove"} ${describeMemberName(memberId)} as ${shadowKindLabel(shadowKind).toLowerCase()}`,
       [
@@ -2850,7 +2897,7 @@ const ScheduleTab = ({
     const occurrence = scheduleOccurrences.find(
       (item) => item.occurrenceId === occurrenceId,
     );
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
 
     let nextAssignments = { ...(selectedSchedule.assignments || {}) };
     let targetRow = { ...(nextAssignments[occurrenceId] || {}) };
@@ -2979,7 +3026,7 @@ const ScheduleTab = ({
     const serviceDateByOccurrenceId = new Map(
       scheduleOccurrences.map((occurrence) => [
         occurrence.occurrenceId,
-        getOccurrenceDate(occurrence),
+        getOccurrenceDate(occurrence, serviceTimeZone),
       ]),
     );
 
@@ -3180,6 +3227,7 @@ const ScheduleTab = ({
                 memberId,
                 schedules: detail.relatedSchedules,
                 teams: data.teams,
+                timeZone: serviceTimeZone,
               }),
             );
         } catch (error) {
@@ -3249,7 +3297,7 @@ const ScheduleTab = ({
     const trimmedFirst = firstName.trim();
     if (!trimmedFirst) return;
     const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === serviceId);
-    const serviceDate = occurrence ? getOccurrenceDate(occurrence) : "";
+    const serviceDate = occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "";
     try {
       const schedule = await ensureActiveSchedule();
       if (!schedule) return;
@@ -3264,6 +3312,7 @@ const ScheduleTab = ({
         description: selectedTeam.description,
         icon: selectedTeam.icon,
         memberIds: [...selectedTeam.memberIds, member.memberId],
+        baseMemberIds: selectedTeam.memberIds,
       });
       await enqueueAssignmentSave(async () => {
         const response = await updateTeamScheduleAssignment(
@@ -3319,7 +3368,7 @@ const ScheduleTab = ({
           serviceId: occurrence.serviceId,
           serviceName: occurrence.name,
           occurrences: [occurrence],
-          sharedTiming: getSharedOccurrenceTiming([occurrence]),
+          sharedTiming: getSharedOccurrenceTiming([occurrence], serviceTimeZone),
         }));
     }
 
@@ -3344,9 +3393,9 @@ const ScheduleTab = ({
 
     return groups.map((group) => ({
       ...group,
-      sharedTiming: getSharedOccurrenceTiming(group.occurrences),
+      sharedTiming: getSharedOccurrenceTiming(group.occurrences, serviceTimeZone),
     }));
-  }, [effectiveOrganizeMode, scheduleOccurrences]);
+  }, [effectiveOrganizeMode, scheduleOccurrences, serviceTimeZone]);
 
   const occurrenceRowOffsets = useMemo(() => {
     let offset = 0;
@@ -3367,11 +3416,12 @@ const ScheduleTab = ({
         formatOccurrenceRowLabel(
           occurrence,
           group?.sharedTiming || { sharedWeekday: null, sharedTime: null },
+          serviceTimeZone,
         ),
       );
     });
     return toScheduleColumnMinCh(pickLongestLabel(...labels));
-  }, [occurrencesByService, scheduleOccurrences]);
+  }, [occurrencesByService, scheduleOccurrences, serviceTimeZone]);
 
   const scheduleColumnMinCh = useMemo(() => {
     const minChByColumn = new Map<string, number>();
@@ -3439,7 +3489,7 @@ const ScheduleTab = ({
       return { startDate: "", endDate: "" };
     }
     const occurrenceDates = scheduleOccurrences
-      .map(getOccurrenceDate)
+      .map((occurrence) => getOccurrenceDate(occurrence, serviceTimeZone))
       .sort();
     return {
       startDate: occurrenceDates[0] || "",
@@ -3447,6 +3497,7 @@ const ScheduleTab = ({
     };
   }, [
     scheduleOccurrences,
+    serviceTimeZone,
     selectedSchedule?.endDate,
     selectedSchedule?.startDate,
   ]);
@@ -3465,12 +3516,17 @@ const ScheduleTab = ({
       })),
       groups: occurrencesByService.map((group) => ({
         serviceName: group.serviceName,
-        timingLabel: [group.sharedTiming.sharedWeekday, group.sharedTiming.sharedTime]
+        timingLabel: [
+          group.sharedTiming.sharedWeekday,
+          [group.sharedTiming.sharedTime, group.sharedTiming.sharedTime && group.occurrences[0]
+            ? getOccurrenceTimeZoneAbbreviation(group.occurrences[0].startsAt, serviceTimeZone)
+            : null].filter(Boolean).join(" "),
+        ]
           .filter(Boolean)
           .join(" · "),
         occurrences: group.occurrences.map((occurrence) => ({
           occurrenceId: occurrence.occurrenceId,
-          rowLabel: formatOccurrenceRowLabel(occurrence, group.sharedTiming),
+          rowLabel: formatOccurrenceRowLabel(occurrence, group.sharedTiming, serviceTimeZone),
         })),
       })),
       requiredCountFor: (occurrenceId, positionId) =>
@@ -3488,6 +3544,7 @@ const ScheduleTab = ({
     requirementsByOccurrence,
     scheduleColumns,
     scheduleDateRangeLabel,
+    serviceTimeZone,
     selectedSchedule,
   ]);
 
@@ -3557,9 +3614,10 @@ const ScheduleTab = ({
             sharedWeekday: null,
             sharedTime: null,
           },
+          serviceTimeZone,
         )}`,
       })),
-    [scheduleOccurrences, occurrenceTimingById],
+    [scheduleOccurrences, occurrenceTimingById, serviceTimeZone],
   );
 
   const getIssueForOccurrence = useCallback(
@@ -3596,7 +3654,7 @@ const ScheduleTab = ({
     return {
       positionLabel: column.label,
       occurrenceLabel: sharedTiming
-        ? formatOccurrenceRowLabel(occurrence, sharedTiming)
+        ? formatOccurrenceRowLabel(occurrence, sharedTiming, serviceTimeZone)
         : occurrence.name,
       currentAssigneeLabel: primaryMember
         ? scheduleMemberName(primaryMember, duplicateScheduleFirstNames)
@@ -3618,6 +3676,7 @@ const ScheduleTab = ({
     scheduleDisplayMembers,
     selectedSchedule?.assignments,
     selectedSchedule?.responses,
+    serviceTimeZone,
   ]);
   const memberAssignmentMode = Boolean(canEdit && activeSlot);
 
@@ -3639,8 +3698,8 @@ const ScheduleTab = ({
       (occurrence) => occurrence.occurrenceId === activeSlot.occurrenceId,
     );
     if (activeOccurrenceIndex < 0) return stats;
-    const activeOccurrenceDate = new Date(
-      scheduleOccurrences[activeOccurrenceIndex].startsAt,
+    const activeOccurrenceDate = parsePlainDate(
+      getOccurrenceDate(scheduleOccurrences[activeOccurrenceIndex], serviceTimeZone),
     );
 
     const activeMemberIds = new Set(activeTeamMembers.map((member) => member.memberId));
@@ -3655,7 +3714,9 @@ const ScheduleTab = ({
       const occurrenceIndex = occurrenceIndexById.get(occurrenceId);
       if (occurrenceIndex === undefined || !row) return;
       const occurrence = occurrenceById.get(occurrenceId);
-      const occurrenceDate = occurrence ? new Date(occurrence.startsAt) : undefined;
+      const occurrenceDate = occurrence
+        ? parsePlainDate(getOccurrenceDate(occurrence, serviceTimeZone)) || undefined
+        : undefined;
       const distance = Math.abs(occurrenceIndex - activeOccurrenceIndex);
       const assignedMemberIds = new Set<string>();
       Object.values(row).forEach((cell) => {
@@ -3688,9 +3749,7 @@ const ScheduleTab = ({
         ...current,
         servingFrequencyTargetReached: servingFrequencyTargetReached({
           servingFrequency: member.servingFrequency,
-          occurrenceDate: Number.isNaN(activeOccurrenceDate.getTime())
-            ? undefined
-            : activeOccurrenceDate,
+          occurrenceDate: activeOccurrenceDate || undefined,
           assignedDates: assignedDatesByMember.get(member.memberId) || [],
         }),
       });
@@ -3740,6 +3799,7 @@ const ScheduleTab = ({
     scheduleAssignmentCounts,
     scheduleColumns,
     scheduleOccurrences,
+    serviceTimeZone,
     selectedSchedule?.assignments,
   ]);
 
@@ -3797,7 +3857,7 @@ const ScheduleTab = ({
       plans.push({
         swapId: `${activeSlot.occurrenceId}:${activeSlot.columnKey}:${column.columnKey}:${candidateMemberId}`,
         serviceId: activeSlot.occurrenceId,
-        serviceDate: occurrence ? getOccurrenceDate(occurrence) : "",
+        serviceDate: occurrence ? getOccurrenceDate(occurrence, serviceTimeZone) : "",
         targetCellKey: activeSlot.columnKey,
         targetPositionId: activeSlotMeta.positionId,
         sourceCellKey: column.columnKey,
@@ -3835,6 +3895,7 @@ const ScheduleTab = ({
     getAssignmentIssue,
     scheduleColumns,
     scheduleOccurrences,
+    serviceTimeZone,
     selectedSchedule,
     slotPickerMode,
   ]);
@@ -4560,7 +4621,7 @@ const ScheduleTab = ({
         </span>
       );
     }
-    if (isOccurrenceToday(occurrence)) {
+    if (isOccurrenceToday(occurrence, serviceTimeZone)) {
       return (
         <span className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2">
           <ScheduleTodayBadge />
@@ -4576,7 +4637,7 @@ const ScheduleTab = ({
   }) =>
     scheduleOccurrenceHeaderHighlightClassName({
       isNextUpcoming: occurrence.occurrenceId === nextUpcomingOccurrenceId,
-      isToday: isOccurrenceToday(occurrence),
+      isToday: isOccurrenceToday(occurrence, serviceTimeZone),
     });
 
   // Board accordion state lives here so the header's expand-all/collapse-all
@@ -4617,7 +4678,7 @@ const ScheduleTab = ({
     const chByOccurrence = new Map<string, number>();
     flatOccurrences.forEach(({ occurrence, group }) => {
       const labels = [
-        formatOccurrenceRowLabel(occurrence, group.sharedTiming),
+        formatOccurrenceRowLabel(occurrence, group.sharedTiming, serviceTimeZone),
       ];
       scheduleColumns.forEach((column) => {
         const assignmentCell =
@@ -4645,6 +4706,7 @@ const ScheduleTab = ({
     flatOccurrences,
     scheduleColumns,
     selectedSchedule?.assignments,
+    serviceTimeZone,
   ]);
 
   const cellAxisHighlightMap = useMemo(() => {
@@ -4954,7 +5016,7 @@ const ScheduleTab = ({
         // Lets a cell flag an assignee who has since blocked this date out.
         // The picker only warns while filling a slot, so without this a
         // blockout added after the fact is invisible in the grid.
-        occurrenceDate: getOccurrenceDate(occurrence),
+        occurrenceDate: getOccurrenceDate(occurrence, serviceTimeZone),
         columnKey: column.columnKey,
         positionId: column.positionId,
         columnLabel: column.label,
@@ -5026,6 +5088,7 @@ const ScheduleTab = ({
       iemCatalogStatus,
       iemHoldersByOccurrence,
       requirementsByOccurrence,
+      serviceTimeZone,
       saveMicrophoneAssignment,
       saveIemAssignment,
       savingMicrophoneSlot,
@@ -5105,6 +5168,7 @@ const ScheduleTab = ({
       schedules={onlyHydratedSchedules(data.schedules)}
       seedSchedules={data.schedules}
       churchId={churchId}
+      serviceTimeZone={serviceTimeZone}
       canEdit={canEdit}
       onDraftChange={onScheduleDraftChanged}
       onDraftFlush={onScheduleDraftFlush}
@@ -5214,35 +5278,53 @@ const ScheduleTab = ({
               iconSize="sm"
               disabled={isSendingSchedule || sendRecipientCount === 0}
             >
-              {selectedSchedule.sentAt ? "Send updates" : "Send schedule"}
+              Send schedule
             </Button>
           </PopoverTrigger>
           <PopoverContent
             align="end"
             className="w-[min(20rem,calc(100vw-2rem))] border-gray-700 bg-gray-900 p-3 text-gray-100"
           >
-            <p className="text-sm text-gray-300">
-              Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                variant="cta"
-                svg={Send}
-                iconSize="sm"
-                disabled={isSendingSchedule}
-                onClick={handleSendSchedule}
-              >
-                {isSendingSchedule ? "Sending…" : "Yes, send"}
-              </Button>
-              <Button
-                variant="tertiary"
-                iconSize="sm"
-                disabled={isSendingSchedule}
-                onClick={() => setIsConfirmingSend(false)}
-              >
-                Cancel
-              </Button>
-            </div>
+            {selectedSchedule.published === false ? (
+              <>
+                <p className="text-sm text-amber-200">Publish this schedule before sending email or text messages.</p>
+                <Button variant="tertiary" disabled={isSendingSchedule} onClick={() => setIsConfirmingSend(false)}>Close</Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-300">
+                  Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="cta"
+                    svg={Send}
+                    iconSize="sm"
+                    disabled={isSendingSchedule}
+                    onClick={handleSendSchedule}
+                  >
+                    {isSendingSchedule ? "Sending…" : "Yes, send email"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={isSendingSchedule || selectedSchedule.scheduleId.startsWith("virtual:")}
+                    onClick={() => {
+                      setIsConfirmingSend(false);
+                      setScheduleInitialSmsOpen(true);
+                    }}
+                  >
+                    Review volunteers for text messages
+                  </Button>
+                  <Button
+                    variant="tertiary"
+                    disabled={isSendingSchedule}
+                    onClick={() => setIsConfirmingSend(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </>
+            )}
           </PopoverContent>
         </Popover>
       ) : null}
@@ -5355,6 +5437,11 @@ const ScheduleTab = ({
                 labelLayout="inline"
               />
             </div>
+            {periodScheduleMatch.ambiguous && !viewingSavedSchedule ? (
+              <p role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                A saved schedule in this period has occurrence rows that cannot be matched safely to the current services. Its assignments remain preserved. Select that saved schedule to review it before creating another.
+              </p>
+            ) : null}
           </section>
 
           {canShowScheduleWorkspace ? (
@@ -5679,8 +5766,8 @@ const ScheduleTab = ({
                 <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-amber-100">
                     {refreshBlocked
-                      ? "This schedule can’t be refreshed safely. Review its services in Service Setup before updating it. Existing rows and assignments have been kept."
-                      : "This schedule no longer matches its services (grouping or timing changed). Refresh it to update the rows — assignments are kept where the service and date still line up."}
+                      ? "These saved occurrence rows cannot be matched one-to-one to current services. Assignments and equipment remain preserved. Review the saved schedule before creating a replacement."
+                      : "The scheduled time or occurrence details changed. Refresh the snapshot; its saved occurrence IDs and related schedule records will be kept."}
                   </p>
                   <Button
                     variant="secondary"
@@ -5703,6 +5790,7 @@ const ScheduleTab = ({
                             groups={occurrencesByService}
                             columns={scheduleColumns}
                             teamName={selectedTeam?.name || ""}
+                            timeZone={serviceTimeZone}
                             canEdit={canEdit}
                             nextUpcomingOccurrenceId={nextUpcomingOccurrenceId}
                             fillByOccurrence={fillByOccurrence}
@@ -5778,7 +5866,9 @@ const ScheduleTab = ({
                                           <span className="font-normal text-gray-300">
                                             {[
                                               group.sharedTiming.sharedWeekday,
-                                              group.sharedTiming.sharedTime,
+                                              [group.sharedTiming.sharedTime, group.sharedTiming.sharedTime && group.occurrences[0]
+                                                ? getOccurrenceTimeZoneAbbreviation(group.occurrences[0].startsAt, serviceTimeZone)
+                                                : null].filter(Boolean).join(" "),
                                             ]
                                               .filter(Boolean)
                                               .join(" ")}
@@ -5809,8 +5899,8 @@ const ScheduleTab = ({
                                       {renderOccurrenceMarker(occurrence)}
                                       <div className="flex flex-col items-start gap-1">
                                         <ScheduleOccurrenceDateButton
-                                          label={formatOccurrenceRowLabel(occurrence, group.sharedTiming)}
-                                          ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
+                                          label={formatOccurrenceRowLabel(occurrence, group.sharedTiming, serviceTimeZone)}
+                                          ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming, serviceTimeZone)}`}
                                           onClick={() => openServiceSummary(occurrence.occurrenceId)}
                                         />
                                         {renderAdditionalPositionMenu(occurrence.occurrenceId)}
@@ -5925,7 +6015,7 @@ const ScheduleTab = ({
                                     );
                                     const rowTone = scheduleRowTone(rowIndex);
                                     const stickyTone = scheduleStickyRowTone(rowIndex);
-                                    const dateLabel = formatOccurrenceTiming(occurrence);
+                                    const dateLabel = formatOccurrenceTiming(occurrence, serviceTimeZone);
                                     return (
                                       <tr
                                         key={occurrence.occurrenceId}
@@ -6022,7 +6112,12 @@ const ScheduleTab = ({
                                               ) : null}
                                               {group.sharedTiming.sharedTime ? (
                                                 <span className="shrink-0 font-normal text-gray-300">
-                                                  {group.sharedTiming.sharedTime}
+                                                  {[
+                                                    group.sharedTiming.sharedTime,
+                                                    group.occurrences[0]
+                                                      ? getOccurrenceTimeZoneAbbreviation(group.occurrences[0].startsAt, serviceTimeZone)
+                                                      : null,
+                                                  ].filter(Boolean).join(" ")}
                                                 </span>
                                               ) : null}
                                               {service?.archivedAt ? (
@@ -6076,8 +6171,9 @@ const ScheduleTab = ({
                                                         label={formatOccurrenceRowLabel(
                                                           occurrence,
                                                           group.sharedTiming,
+                                                          serviceTimeZone,
                                                         )}
-                                                        ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming)}`}
+                                                        ariaLabel={`View and copy assignments for ${group.serviceName} on ${formatOccurrenceRowLabel(occurrence, group.sharedTiming, serviceTimeZone)}`}
                                                         onClick={() =>
                                                           openServiceSummary(
                                                             occurrence.occurrenceId,
@@ -6204,6 +6300,7 @@ const ScheduleTab = ({
               ) : null}
               {canEdit && selectedSchedule ? (
                 <ScheduleMessagesPanel
+                  key={`${churchId}:${selectedSchedule.scheduleId}`}
                   open={scheduleMessagesOpen}
                   onOpenChange={setScheduleMessagesOpen}
                   intents={scheduleNotificationIntents}
@@ -6220,7 +6317,48 @@ const ScheduleTab = ({
                   onSend={(intent) => void handleSendScheduleIntent(intent)}
                   onCloseInvitation={(intent) => void handleResolveReplacementIntent(intent)}
                   onLoadOlder={() => void loadOlderScheduleNotifications()}
+                  replacementVacancies={!scheduleMessagesOpen || selectedSchedule.scheduleId.startsWith("virtual:") ? [] : scheduleOccurrences.flatMap((occurrence) => scheduleColumns.flatMap((column) => {
+                    if (!isOccurrenceStaffingSlot(column, requirementsByOccurrence.get(occurrence.occurrenceId), selectedSchedule.additionalPositionSlots?.[occurrence.occurrenceId])) return [];
+                    const cell = selectedSchedule.assignments?.[occurrence.occurrenceId]?.[column.columnKey];
+                    const holderId = typeof cell === "string" ? cell : cell?.primaryMemberId || "";
+                    if (holderId && selectedSchedule.responses?.[occurrence.occurrenceId]?.[column.columnKey]?.response !== "declined") return [];
+                    return [{ occurrenceId: occurrence.occurrenceId, cellKey: column.columnKey,
+                      label: `${occurrence.name} · ${formatOccurrenceRowLabel(occurrence, { sharedWeekday: null, sharedTime: null }, serviceTimeZone)} · ${column.label}`,
+                      memberIds: activeTeamMembers.filter((member) => member.memberId !== holderId && member.positionIds.includes(column.positionId) && member.serviceAvailability?.[occurrence.occurrenceId] !== "unavailable").map((member) => member.memberId),
+                    }];
+                  }))}
+                  onPrepareReplacement={async (vacancy, memberId) => {
+                    const scheduleId = selectedSchedule.scheduleId;
+                    const result = await prepareReplacementNotificationIntent(churchId, { scheduleId, occurrenceId: vacancy.occurrenceId, cellKey: vacancy.cellKey, memberId });
+                    if (latestScheduleRef.current?.scheduleId !== scheduleId || latestScheduleRef.current?.churchId !== churchId) return;
+                    setScheduleNotificationIntents((current) => mergeScheduleNotificationIntents(current, [result.intent]));
+                    await handleSendScheduleIntent(result.intent);
+                  }}
                 />
+              ) : null}
+              {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
+                <Drawer
+                  key={`${churchId}:${selectedSchedule.scheduleId}:initial-sms`}
+                  isOpen={scheduleInitialSmsOpen}
+                  onClose={() => setScheduleInitialSmsOpen(false)}
+                  title="Send schedule text messages"
+                  position="right"
+                  size="xl"
+                  showBackdrop
+                  className="!max-w-[min(46rem,90vw)] max-sm:!max-w-full"
+                  contentPadding="p-0"
+                  contentClassName="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
+                >
+                  <ScheduleInitialSmsSendFlow
+                    key={`${churchId}:${selectedSchedule.scheduleId}`}
+                    churchId={churchId}
+                    schedule={selectedSchedule}
+                    scheduleName={selectedSchedule.name || "Schedule"}
+                    teamName={data.teams.find((team) => team.teamId === selectedSchedule.teamId)?.name || "Team"}
+                    timeZone={serviceTimeZone}
+                    onClose={() => setScheduleInitialSmsOpen(false)}
+                  />
+                </Drawer>
               ) : null}
               {scheduleSmsPreview ? <SmsConfirmationModal
                 isOpen
@@ -6319,7 +6457,7 @@ const ScheduleTab = ({
         size="md"
         description={
           detailOccurrence
-            ? `Assignments for ${detailOccurrence.name} on ${formatOccurrenceTiming(detailOccurrence)}.`
+            ? `Assignments for ${detailOccurrence.name} on ${formatOccurrenceTiming(detailOccurrence, serviceTimeZone)}.`
             : "Service assignments."
         }
         headerAction={
@@ -6337,7 +6475,7 @@ const ScheduleTab = ({
         {detailOccurrence ? (
           <div className="space-y-4">
             <p className="text-sm text-gray-400">
-              {formatOccurrenceTiming(detailOccurrence)}
+              {formatOccurrenceTiming(detailOccurrence, serviceTimeZone)}
             </p>
             {detailSummaryGroups.length === 0 ? (
               <p className="rounded-md border border-gray-700 bg-gray-950/60 p-3 text-sm text-gray-300">

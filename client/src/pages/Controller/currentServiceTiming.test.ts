@@ -90,6 +90,7 @@ const stateAt = ({
     occurrenceServices: services,
     plan: timingPlan,
     nowMs,
+    timeZone: timezone,
   });
 
 describe("resolveOccurrenceServiceStarts", () => {
@@ -125,7 +126,7 @@ describe("resolveOccurrenceServiceStarts", () => {
     });
 
     expect(
-      resolveOccurrenceServiceStarts(selected, services).map(({ service: item, targetMs }) => [
+      resolveOccurrenceServiceStarts(selected, services, undefined, timezone).map(({ service: item, targetMs }) => [
         item.id,
         targetMs,
       ]),
@@ -137,6 +138,41 @@ describe("resolveOccurrenceServiceStarts", () => {
     ]);
   });
 
+  it("counts down to each combined service's New York wall time", () => {
+    const selected: TeamScheduleOccurrence = {
+      occurrenceId: "group:sunday@2026-10-04",
+      serviceId: "morning",
+      serviceIds: ["morning", "second"],
+      name: "Morning & Second",
+      startsAt: "2026-10-04T13:00:00.000Z",
+      serviceDate: "2026-10-04",
+    };
+    const morning = service({ id: "morning", time: "09:00" });
+    const second = service({
+      id: "second",
+      name: "Second service",
+      reccurence: "one_time",
+      dateTimeISO: "2026-10-04T15:00:00.000Z",
+    });
+    const nowMs = Date.parse("2026-10-04T14:30:00.000Z");
+    expect(resolveOccurrenceServiceStarts(selected, [morning, second], nowMs, "America/New_York"))
+      .toEqual([
+        { service: morning, targetMs: Date.parse("2026-10-04T13:00:00.000Z") },
+        { service: second, targetMs: Date.parse("2026-10-04T15:00:00.000Z") },
+      ]);
+    expect(resolveCurrentServiceTimingState({
+      occurrence: selected,
+      occurrenceServices: [morning, second],
+      plan: null,
+      nowMs,
+      timeZone: "America/New_York",
+    })).toEqual({
+      type: "upcoming-service",
+      service: second,
+      targetMs: Date.parse("2026-10-04T15:00:00.000Z"),
+    });
+  });
+
   it("keeps recurring starts on the selected date and never resolves next week", () => {
     const selected = occurrence(selectedDate, {
       serviceId: "service-1",
@@ -144,6 +180,8 @@ describe("resolveOccurrenceServiceStarts", () => {
     const starts = resolveOccurrenceServiceStarts(
       selected,
       [service({ time: "09:00" })],
+      undefined,
+      timezone,
     );
 
     expect(starts[0]?.targetMs).toBe(selectedDate);
@@ -162,6 +200,8 @@ describe("resolveOccurrenceServiceStarts", () => {
     const starts = resolveOccurrenceServiceStarts(
       selected,
       [service({ time: "09:00" })],
+      undefined,
+      timezone,
     );
 
     expect(starts[0]?.targetMs).toBe(localAt(2026, 7, 19, 9));
@@ -177,7 +217,7 @@ describe("resolveOccurrenceServiceStarts", () => {
     });
 
     expect(
-      resolveOccurrenceServiceStarts(selected, [adjusted], scheduledStart + 1_000),
+      resolveOccurrenceServiceStarts(selected, [adjusted], scheduledStart + 1_000, timezone),
     ).toEqual([{ service: adjusted, targetMs: overrideStart }]);
     expect(
       stateAt({

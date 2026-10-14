@@ -48,7 +48,6 @@ import type {
 import {
   getInviteAccessSummaryLabel,
   inviteAccessDraftFromInvite,
-  inviteAccessOptions,
   resolveInviteAccessPayload,
 } from "../Account/accountInviteAccess";
 import { useAccountPage } from "../Account/AccountPageContext";
@@ -502,10 +501,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
   const handleSend = useCallback(async () => {
     const email = inviteEmail.trim();
     const invitePayload = resolveInviteAccessPayload(inviteAccessDraft);
-    const selectedInviteOption =
-      inviteAccessOptions.find(
-        (option) => option.value === inviteAccessDraft.access,
-      ) || inviteAccessOptions[0];
+    const inviteSummary = getInviteAccessSummaryLabel(inviteAccessDraft);
     if (!email) {
       setInviteEmailError("Enter an email before sending the invite");
       return;
@@ -516,6 +512,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
       const response = await createAdminInvite(churchId, {
         email,
         role: invitePayload.role,
+        controllerAccess: invitePayload.controllerAccess,
         appAccess: invitePayload.appAccess,
         permissions: invitePayload.permissions,
       });
@@ -524,7 +521,7 @@ export const InvitePeopleForm = memo(function InvitePeopleForm({
       resetInviteAccessDraft();
       await onInvited();
       showToast(
-        `Invite created for ${response.invite.email} with ${selectedInviteOption.label.toLowerCase()}.`,
+        `Invite created for ${response.invite.email} with ${inviteSummary.toLowerCase()}.`,
         "success",
       );
     } catch (error) {

@@ -173,12 +173,14 @@ const renderCreateItem = ({
   store = createTestStore(),
   initialEntry = "/controller/create",
   controllerProfileId,
+  db,
 }: {
   store?: ReturnType<typeof createTestStore>;
   initialEntry?: string;
   controllerProfileId?: string;
+  db?: PouchDB.Database;
 } = {}) => {
-  const controllerContext = createMockControllerContext();
+  const controllerContext = createMockControllerContext(db ? { db } : {});
   const globalContext = createMockGlobalContext();
 
   const routes = (
@@ -219,6 +221,145 @@ const renderCreateItem = ({
 };
 
 describe("CreateItem", () => {
+  it("ignores an import result after the song draft is renamed", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof resolveLrclibImport>>) => void;
+    mockedResolveLrclibImport.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const a = createMockItem({ _id: "song-A", name: "Song A" });
+    const b = createMockItem({ _id: "song-B", name: "Song B" });
+    const docs = new Map([[a._id, a], [b._id, b]]);
+    const db = {
+      get: jest.fn(async (id: string) => {
+        const found = docs.get(id);
+        if (!found) throw Object.assign(new Error("not found"), { status: 404 });
+        return found;
+      }),
+      put: jest.fn(async (doc: ItemState) => { docs.set(doc._id, doc); return { rev: "1-created" }; }),
+    };
+    mockedCreateNewSong.mockImplementation(jest.requireActual("../../utils/itemUtil").createNewSong);
+    const store = createTestStore({
+      createItem: { ...initialCreateItemState, name: "Song A" }, allSongDocs: [a, b],
+    });
+    renderCreateItem({ store, db: db as never });
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    fireEvent.change(screen.getByLabelText("Song name:"), { target: { value: "Song B" } });
+    await act(async () => finish({
+      match: { source: "genius", geniusId: 17, trackName: "Song A", artistName: "Artist A",
+        albumName: "", plainLyrics: "Song A exclusive imported lyrics", syncedLyrics: null },
+      candidates: [],
+    }));
+    expect(store.getState().createItem.name).toBe("Song B");
+    expect(store.getState().createItem.text).toBe("");
+    expect(store.getState().allDocs.allSongDocs).toEqual([a, b]);
+    fireEvent.click(screen.getByRole("button", { name: "Create Song" }));
+    await waitFor(() => expect(db.put).toHaveBeenCalledTimes(1));
+    const created = [...docs.values()].filter(doc => !["song-A", "song-B"].includes(doc._id));
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe("Song B");
+    expect(JSON.stringify(created[0])).not.toContain("Song A exclusive imported lyrics");
+    expect(docs.get(a._id)).toEqual(a);
+    expect(docs.get(b._id)).toEqual(b);
+  });
+
+  it("keeps lyrics typed manually while an import is pending", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof resolveLrclibImport>>) => void;
+    mockedResolveLrclibImport.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const store = createTestStore({
+      createItem: { ...initialCreateItemState, name: "Song A" },
+    });
+    renderCreateItem({ store });
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    fireEvent.change(screen.getByLabelText("Lyrics:"), {
+      target: { value: "Operator's manual lyrics" },
+    });
+    await act(async () => finish({
+      match: {
+        source: "genius",
+        geniusId: 19,
+        trackName: "Song A",
+        artistName: "Artist A",
+        albumName: "",
+        plainLyrics: "Late imported lyrics",
+        syncedLyrics: null,
+      },
+      candidates: [],
+    }));
+
+    expect(store.getState().createItem.text).toBe("Operator's manual lyrics");
+  });
+
+  it("ignores an older request after a newer import starts", async () => {
+    const resolvers: Array<(value: Awaited<ReturnType<typeof resolveLrclibImport>>) => void> = [];
+    mockedResolveLrclibImport.mockImplementation(() => new Promise(resolve => { resolvers.push(resolve); }));
+    const store = createTestStore({
+      createItem: { ...initialCreateItemState, name: "Song A" },
+    });
+    renderCreateItem({ store });
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    fireEvent.change(screen.getByLabelText("Song name:"), { target: { value: "Song B" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    expect(resolvers).toHaveLength(2);
+
+    await act(async () => resolvers[0]({
+      match: {
+        source: "genius",
+        geniusId: 20,
+        trackName: "Song A",
+        artistName: "Artist A",
+        albumName: "",
+        plainLyrics: "Song A only",
+        syncedLyrics: null,
+      },
+      candidates: [],
+    }));
+    expect(store.getState().createItem.name).toBe("Song B");
+    expect(store.getState().createItem.text).toBe("");
+    expect(screen.getByRole("status", { name: "Loading lyrics results" })).toBeInTheDocument();
+
+    await act(async () => resolvers[1]({
+      match: {
+        source: "genius",
+        geniusId: 21,
+        trackName: "Song B",
+        artistName: "Artist B",
+        albumName: "",
+        plainLyrics: "Song B only",
+        syncedLyrics: null,
+      },
+      candidates: [],
+    }));
+    expect(store.getState().createItem.text).toBe("Song B only");
+  });
+
+  it("ignores an import that finishes after leaving and returning to Create Item", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof resolveLrclibImport>>) => void;
+    mockedResolveLrclibImport.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const store = createTestStore({
+      createItem: { ...initialCreateItemState, name: "Song A" },
+    });
+    const view = renderCreateItem({ store });
+    fireEvent.click(screen.getByRole("button", { name: "Import Lyrics" }));
+    view.unmount();
+    renderCreateItem({ store });
+
+    await act(async () => finish({
+      match: {
+        source: "genius",
+        geniusId: 22,
+        trackName: "Song A",
+        artistName: "Artist A",
+        albumName: "",
+        plainLyrics: "Late page lyrics",
+        syncedLyrics: null,
+      },
+      candidates: [],
+    }));
+
+    expect(store.getState().createItem.name).toBe("Song A");
+    expect(store.getState().createItem.text).toBe("");
+  });
+
   beforeEach(() => {
     mockedCreateNewSong.mockReset();
     mockedCreateNewFreeForm.mockReset();
@@ -387,6 +528,7 @@ describe("CreateItem", () => {
   it("lets filtered-list query params override the saved draft", async () => {
     const store = createTestStore({
       createItem: {
+        ...initialCreateItemState,
         name: "Old Draft",
         type: "timer",
         text: "Keep me",
@@ -415,12 +557,14 @@ describe("CreateItem", () => {
 
     expect(screen.getByLabelText("Song:")).toBeChecked();
     expect(screen.getByLabelText("Lyrics:")).toHaveValue("");
-    expect(store.getState().createItem).toEqual({
-      ...initialCreateItemState,
+    expect(store.getState().createItem).toMatchObject({
       name: "Grace",
       type: "song",
       hasUserSelectedType: true,
     });
+    expect(store.getState().createItem.draftId).toBeGreaterThan(
+      initialCreateItemState.draftId,
+    );
   });
 
   it("clears the draft after a successful song create", async () => {
@@ -448,7 +592,8 @@ describe("CreateItem", () => {
       expect(mockedCreateNewSong).toHaveBeenCalled();
     });
 
-    expect(store.getState().createItem).toEqual(initialCreateItemState);
+    expect({ ...store.getState().createItem, draftId: 0 }).toEqual(initialCreateItemState);
+    expect(store.getState().createItem.draftId).not.toBe(0);
     await waitFor(() => {
       expect(screen.getByTestId("item-page")).toBeInTheDocument();
     });

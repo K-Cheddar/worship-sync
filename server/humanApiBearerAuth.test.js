@@ -4,6 +4,11 @@
  * so we never write disposable test rows to a real project (see authService seed helper).
  */
 process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT = "1";
+// Keep this suite independent from a developer's local Firebase credentials.
+// authService imports dotenv/config, which otherwise restores these values.
+process.env.FIREBASE_PROJECT_ID = "";
+process.env.FIREBASE_CLIENT_EMAIL = "";
+process.env.FIREBASE_PRIVATE_KEY = "";
 
 import test from "node:test";
 import assert from "node:assert/strict";

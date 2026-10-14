@@ -1,4 +1,5 @@
 import Spinner from "@/components/Spinner/Spinner";
+import { useStore } from "react-redux";
 import {
   useContext,
   useEffect,
@@ -25,6 +26,7 @@ import TextArea from "../../components/TextArea/TextArea";
 import {
   CreateItemState,
   initialCreateItemState,
+  patchCreateItemDraft,
   resetCreateItem,
   setCreateItem,
 } from "../../store/createItemSlice";
@@ -140,6 +142,7 @@ const CreateItem = ({
 }: CreateItemProps = {}) => {
   const isEmbedded = variant === "embedded";
   const createItemDraft = useSelector((state: RootState) => state.createItem);
+  const reduxStore = useStore<RootState>();
   const { list, isInitialized: isAllItemsInitialized } = useSelector(
     (state: RootState) => state.allItems,
   );
@@ -185,8 +188,26 @@ const CreateItem = ({
     Set<string>
   >(() => new Set());
   const lyricsImportRequestRef = useRef(0);
+  const lyricsImportMountedRef = useRef(false);
+  const lyricsCandidatesOwnerRef = useRef<{
+    requestId: number;
+    draftId: number;
+    name: string;
+    songArtist: string;
+    songAlbum: string;
+    text: string;
+  } | null>(null);
   const createItemDraftRef = useRef(createItemDraft);
   createItemDraftRef.current = createItemDraft;
+
+  useEffect(() => {
+    lyricsImportMountedRef.current = true;
+    return () => {
+      lyricsImportMountedRef.current = false;
+      lyricsImportRequestRef.current += 1;
+      lyricsCandidatesOwnerRef.current = null;
+    };
+  }, []);
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const canCreateEmbeddedItem = Boolean(db && isAllItemsInitialized);
@@ -235,17 +256,58 @@ const CreateItem = ({
         ? embeddedType === "free" ? "Create custom document" : "Create song"
         : "Create Item";
 
-  const updateCreateItemDraft = (updates: Partial<CreateItemState>) => {
+  const isLyricsImportOwnerCurrent = (owner: {
+    requestId: number;
+    draftId: number;
+    name: string;
+    songArtist: string;
+    songAlbum: string;
+    text: string;
+  }) => {
+    const draft = reduxStore.getState().createItem ?? createItemDraftRef.current;
+    return lyricsImportMountedRef.current
+      && lyricsImportRequestRef.current === owner.requestId
+      && draft.draftId === owner.draftId
+      && draft.type === "song"
+      && draft.name === owner.name
+      && draft.songArtist === owner.songArtist
+      && draft.songAlbum === owner.songAlbum
+      && draft.text === owner.text;
+  };
+
+  const updateCreateItemDraft = (
+    updates: Partial<CreateItemState>,
+    options: { fromLyricsImport?: boolean } = {},
+  ) => {
+    const previousDraft = createItemDraftRef.current;
+    const importIdentityFields: Array<keyof CreateItemState> = [
+      "name",
+      "type",
+      "songArtist",
+      "songAlbum",
+      "text",
+    ];
+    const changedImportIdentity = importIdentityFields.some(
+      (field) =>
+        field in updates &&
+        !Object.is(previousDraft[field], updates[field]),
+    );
+    if (!options.fromLyricsImport && changedImportIdentity) {
+      lyricsImportRequestRef.current += 1;
+      lyricsCandidatesOwnerRef.current = null;
+      setIsImportingLyrics(false);
+      updates = {
+        ...updates,
+        lyricsImportCandidates: [],
+        lyricsImportError: "",
+      };
+    }
     const nextDraft = {
-      ...createItemDraftRef.current,
+      ...previousDraft,
       ...updates,
     };
     createItemDraftRef.current = nextDraft;
-    dispatch(
-      setCreateItem({
-        ...nextDraft,
-      })
-    );
+    dispatch(patchCreateItemDraft(updates));
   };
 
   const showLyricsImportPanel =
@@ -340,12 +402,24 @@ const CreateItem = ({
     selectedType,
   ]);
 
-  const applyLrclibImport = async (candidate: NormalizedLrclibTrack) => {
+  const applyLrclibImport = async (
+    candidate: NormalizedLrclibTrack,
+    importOwner: {
+      requestId: number;
+      draftId: number;
+      name: string;
+      songArtist: string;
+      songAlbum: string;
+      text: string;
+    },
+  ) => {
+    if (!isLyricsImportOwnerCurrent(importOwner)) return;
     let resolvedCandidate = candidate;
     if (!getImportableLyricsFromTrack(candidate)) {
       try {
         resolvedCandidate = await fetchGeniusLyricsLocally(candidate);
       } catch {
+        if (!isLyricsImportOwnerCurrent(importOwner)) return;
         updateCreateItemDraft({
           lyricsImportError:
             "Genius did not return lyrics. Try another result or paste the lyrics manually.",
@@ -354,13 +428,15 @@ const CreateItem = ({
       }
     }
 
+    if (!isLyricsImportOwnerCurrent(importOwner)) return;
+
     const lyricsText = getImportableLyricsFromTrack(resolvedCandidate);
 
     if (!lyricsText) {
       updateCreateItemDraft({
         lyricsImportError:
           "Lyrics were found, but there was no importable text.",
-      });
+      }, { fromLyricsImport: true });
       return;
     }
 
@@ -371,7 +447,10 @@ const CreateItem = ({
       songMetadata: createSongMetadataFromLrclib(resolvedCandidate),
       lyricsImportCandidates: [],
       lyricsImportError: "",
-    });
+    }, { fromLyricsImport: true });
+    lyricsImportRequestRef.current += 1;
+    lyricsCandidatesOwnerRef.current = null;
+    setIsImportingLyrics(false);
     setViewLyricsCandidate(null);
     setRemoveParentheticals(true);
     setMobileSongTab("create");
@@ -387,6 +466,16 @@ const CreateItem = ({
 
     const requestId = lyricsImportRequestRef.current + 1;
     lyricsImportRequestRef.current = requestId;
+    const draftAtStart = createItemDraftRef.current;
+    const importOwner = {
+      requestId,
+      draftId: draftAtStart.draftId,
+      name: draftAtStart.name,
+      songArtist: draftAtStart.songArtist,
+      songAlbum: draftAtStart.songAlbum,
+      text: draftAtStart.text,
+    };
+    lyricsCandidatesOwnerRef.current = null;
     setIsImportingLyrics(true);
     updateCreateItemDraft({ lyricsImportError: "" });
     setMobileSongTab("import");
@@ -398,10 +487,10 @@ const CreateItem = ({
         albumName: songAlbum.trim() || undefined,
       });
 
-      if (lyricsImportRequestRef.current !== requestId) return;
+      if (!isLyricsImportOwnerCurrent(importOwner)) return;
 
       if (result.match) {
-        await applyLrclibImport(result.match);
+        await applyLrclibImport(result.match, importOwner);
         return;
       }
 
@@ -413,6 +502,7 @@ const CreateItem = ({
         return;
       }
 
+      lyricsCandidatesOwnerRef.current = importOwner;
       updateCreateItemDraft({ lyricsImportCandidates: result.candidates });
       setIsImportingLyrics(false);
       setGeniusHydrationFailures((failures) => {
@@ -435,7 +525,7 @@ const CreateItem = ({
 
         void fetchGeniusLyricsLocally(candidate)
           .then((hydratedCandidate) => {
-            if (lyricsImportRequestRef.current !== requestId) return;
+            if (!isLyricsImportOwnerCurrent(importOwner)) return;
 
             setGeniusHydrationFailures((failures) => {
               const nextFailures = new Set(failures);
@@ -456,7 +546,7 @@ const CreateItem = ({
             updateCreateItemDraft({ lyricsImportCandidates: nextCandidates });
           })
           .catch(() => {
-            if (lyricsImportRequestRef.current !== requestId) return;
+            if (!isLyricsImportOwnerCurrent(importOwner)) return;
             setGeniusHydrationFailures((failures) => {
               const nextFailures = new Set(failures);
               nextFailures.add(getLyricsImportCandidateKey(candidate));
@@ -465,13 +555,13 @@ const CreateItem = ({
           });
       });
     } catch (error) {
-      if (lyricsImportRequestRef.current !== requestId) return;
+      if (!isLyricsImportOwnerCurrent(importOwner)) return;
       console.error("LRCLIB import failed:", error);
       updateCreateItemDraft({
         lyricsImportError: "Could not import lyrics right now. Try again.",
       });
     } finally {
-      if (lyricsImportRequestRef.current === requestId) {
+      if (isLyricsImportOwnerCurrent(importOwner)) {
         setIsImportingLyrics(false);
       }
     }
@@ -610,7 +700,7 @@ const CreateItem = ({
     }
 
     if (selectedType === "bible") {
-      dispatch(setCreateItem(createItemDraft));
+      dispatch(patchCreateItemDraft(createItemDraft));
       navigate(`${controllerBasePath}/bible?name=${encodeURI(itemName)}`);
       return;
     }
@@ -752,7 +842,12 @@ const CreateItem = ({
                       variant="cta"
                       className="min-w-0 flex-1 justify-center"
                       svg={Import}
-                      onClick={() => void applyLrclibImport(candidate)}
+                      onClick={() => {
+                        const importOwner = lyricsCandidatesOwnerRef.current;
+                        if (importOwner) {
+                          void applyLrclibImport(candidate, importOwner);
+                        }
+                      }}
                     >
                       Use Lyrics
                     </Button>
