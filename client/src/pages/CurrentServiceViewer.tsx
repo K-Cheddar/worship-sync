@@ -581,9 +581,10 @@ const CurrentServiceViewerToolbar = ({
   <div
     role="toolbar"
     aria-label="Current service toolbar"
-    className="sticky top-0 z-20 left-1/2 order-0 -mt-4 flex w-dvw max-w-none -translate-x-1/2 flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900/95 p-3 shadow-lg sm:-mt-6 sm:gap-3"
+    data-current-service-toolbar
+    className="sticky top-0 z-20 flex w-full flex-wrap items-center gap-2 border border-neutral-700 bg-neutral-900 p-3 shadow-lg sm:gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
   >
-    <div className="order-1 shrink-0">
+    <div className="order-1 shrink-0 lg:col-start-1">
       <Button
         component="link"
         to="/home"
@@ -594,7 +595,7 @@ const CurrentServiceViewerToolbar = ({
         Home
       </Button>
     </div>
-    <div className="order-3 flex w-full min-w-0 flex-wrap items-center justify-center gap-2 md:absolute md:left-1/2 md:order-2 md:w-auto md:-translate-x-1/2 md:flex-none md:flex-nowrap md:gap-3">
+    <div className="order-3 flex w-full min-w-0 flex-wrap items-center justify-center gap-2 lg:order-2 lg:col-start-2 lg:w-auto lg:flex-nowrap lg:justify-self-center lg:gap-3">
       {options.length > 0 ? (
         <Select
           label="Choose a service"
@@ -602,9 +603,9 @@ const CurrentServiceViewerToolbar = ({
           options={options}
           value={selectedValue}
           onChange={onSelect}
-          className="w-full min-w-0 max-w-full max-md:flex-col max-md:items-stretch md:w-auto"
-          labelClassName="max-md:w-full"
-          selectClassName="w-full min-w-0 md:w-auto md:min-w-64"
+          className="w-full min-w-0 max-w-full max-lg:flex-col max-lg:items-stretch lg:w-auto"
+          labelClassName="max-lg:w-full"
+          selectClassName="w-full min-w-0 lg:w-auto lg:min-w-64"
           contentClassName="max-h-80"
         />
       ) : null}
@@ -619,7 +620,7 @@ const CurrentServiceViewerToolbar = ({
         </Button>
       ) : null}
     </div>
-    <div className="order-2 ml-auto shrink-0 md:order-3">
+    <div className="order-2 ml-auto shrink-0 lg:order-3 lg:col-start-3 lg:ml-0 lg:justify-self-end">
       <CurrentServiceViewerTeamChatAction />
     </div>
   </div>
@@ -633,8 +634,8 @@ const CurrentServiceViewerFrame = ({
   children: ReactNode;
 }) => (
   <main className="h-dvh overflow-x-hidden overflow-y-auto bg-neutral-950 text-neutral-100">
+    {topBar}
     <div className="mx-auto max-w-3xl px-3 pb-24 pt-4 sm:px-5 sm:pb-28 sm:pt-6">
-      <div className="mb-4">{topBar}</div>
       {children}
     </div>
   </main>
@@ -777,7 +778,7 @@ const CurrentServiceViewer = () => {
         }
         error={data.planError || (isOffline ? "You are offline." : "")}
         onRefresh={() => void data.refresh()}
-        topContent={topBar}
+        pageHeader={topBar}
       />
     );
   }
