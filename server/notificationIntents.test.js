@@ -134,7 +134,7 @@ const createHarness = ({
   const getDoc = async (collection, id) => {
     if (firestoreDb) {
       const snapshot = await firestoreDb.collection(collection).doc(id).get();
-      if (snapshot.exists) return { id: snapshot.id, ...snapshot.data() };
+      return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : null;
     }
     return storeFor(collection).get(id) || null;
   };
@@ -175,7 +175,7 @@ const createHarness = ({
     }),
     isAvailabilityRecipientInFormScope: isAvailabilityRecipientInFormScope || (async () => true),
     getSmsConsentForChurchPhone: async (id, phone) => id === churchId && phone === phoneNumber
-      ? storeFor("smsConsents").get(smsConsentIdForChurchPhone(id, phone)) || null
+      ? getDoc("smsConsents", smsConsentIdForChurchPhone(id, phone))
       : null,
     prepareAvailabilityNotificationRecipients: async ({ memberIds, purpose }) => {
       const currentForm = storeFor("teamIntakeForms").get(form.formId);
@@ -287,17 +287,17 @@ const createHarness = ({
     }, res);
     const batch = res.payload?.batch;
     const intentId = batch?.intentIds?.[0];
-    return { res, batch, intent: intentId ? storeFor("notificationIntents").get(intentId) : null };
+    return { res, batch, intent: intentId ? await getDoc("notificationIntents", intentId) : null };
   };
   const send = async (intentId, targetChurchId = churchId) => {
     const res = makeResponse();
-    const intent = storeFor("notificationIntents").get(intentId);
+    const intent = await getDoc("notificationIntents", intentId);
     await handler.sendIntent({ params: { churchId: targetChurchId, intentId }, body: { confirmed: true, approvalVersion: intent?.approvalSnapshot?.approvalVersion || "" } }, res);
     return res;
   };
   const dispatch = async (batchId, confirmed = true) => {
     const res = makeResponse();
-    const batch = storeFor("notificationBatches").get(batchId);
+    const batch = await getDoc("notificationBatches", batchId);
     await handler.dispatchAvailabilityBatch({ params: { churchId, batchId }, body: { confirmed, approvalVersion: batch?.reviewVersion || "" } }, res);
     return res;
   };
@@ -1714,15 +1714,12 @@ test("Firestore emulator rechecks consent between schedule recipients after an i
   await clearFirestoreEmulator();
   const app = initializeApp({ projectId: firestoreEmulatorProjectId }, `schedule-consent-${randomUUID()}`);
   const db = getFirestore(app);
-  let signalProviderStarted;
-  const providerStarted = new Promise((resolve) => { signalProviderStarted = resolve; });
   let h;
   try {
     h = createHarness({
       firestoreDb: db,
       scheduleBulkDispatchReady: true,
       providerSend: async () => {
-        signalProviderStarted();
         await db.collection("smsConsents").doc(smsConsentIdForChurchPhone("church_a", "+14155550123")).update({
           status: "opted_out",
           optedOutAt: new Date().toISOString(),
@@ -1741,8 +1738,6 @@ test("Firestore emulator rechecks consent between schedule recipients after an i
     assert.equal(prepared.statusCode, 200, JSON.stringify(prepared.payload));
     const approved = await h.dispatch(prepared.payload.batch.batchId);
     assert.equal(approved.statusCode, 200);
-    await providerStarted;
-
     let batch;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       batch = await db.collection("notificationBatches").doc(prepared.payload.batch.batchId).get();
@@ -1803,7 +1798,9 @@ test("Firestore emulator preserves callback evidence through duplicate, delayed,
     });
     const { intent } = await h.preview();
     const send = await h.send(intent.intentId);
-    assert.ok(send.statusCode >= 500, "the simulated provider response was lost after the callback confirmed acceptance");
+    assert.equal(send.statusCode, 200, "the callback confirms acceptance despite the lost provider response");
+    assert.equal(send.payload.success, true);
+    assert.equal(send.payload.attempt.status, "delivered");
     assert.equal(h.providerCalls, 1);
 
     const duplicate = await invokeCallback("delivered");

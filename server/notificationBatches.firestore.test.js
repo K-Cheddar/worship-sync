@@ -168,6 +168,7 @@ test("Firestore coordinator lease is atomic, releasable, and excluded from batch
     await coordinatorRef.update({ status: "approved", dispatchPriorityAt: 1 });
     const candidates = await ownerStore.listCandidates();
     assert.deepEqual(candidates.map((batch) => batch.batchId), ["approved-batch"]);
+    await coordinatorRef.update({ status: "dispatching" });
 
     assert.equal(await ownerStore.reserveProviderWindow(owner, 1100, 500, 2, 2), 0);
     assert.ok(await ownerStore.releaseCoordinator(owner, 1200));
@@ -398,6 +399,10 @@ test("Firestore emulator restarts a 100-recipient batch, skips accepted and unce
     let accepted = 0;
     let inFlight = 0;
     let peak = 0;
+    let signalFirstPair;
+    const firstPairStarted = new Promise((resolve) => { signalFirstPair = resolve; });
+    let releaseFirstPair;
+    const firstPairGate = new Promise((resolve) => { releaseFirstPair = resolve; });
     const restart = dispatcherFor(makeStore(db), {
       ownerToken: "restart-process",
       maxRecipientsPerRun: 10,
@@ -406,13 +411,26 @@ test("Firestore emulator restarts a 100-recipient batch, skips accepted and unce
       processRecipient: async ({ recipient }) => {
         inFlight += 1;
         peak = Math.max(peak, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 2));
+        if (inFlight === 2) signalFirstPair();
+        if (accepted === 0) await firstPairGate;
         accepted += 1;
         states.set(recipient.intentId, { status: "sent", outcome: "confirmed" });
         inFlight -= 1;
       },
     });
+    let firstPairTimeout;
     try {
+      const firstRun = restart.runOnce();
+      await Promise.race([
+        firstPairStarted,
+        firstRun.then(() => { throw new Error("The first run ended before two provider requests overlapped."); }),
+        new Promise((_, reject) => {
+          firstPairTimeout = setTimeout(() => reject(new Error("Two provider requests did not overlap.")), 10000);
+        }),
+      ]);
+      clearTimeout(firstPairTimeout);
+      releaseFirstPair();
+      await firstRun;
       while (accepted < 39) await restart.runOnce();
       const stored = await db.collection("notificationBatches").doc(batchId).get();
       assert.equal(accepted, 39);
@@ -421,6 +439,8 @@ test("Firestore emulator restarts a 100-recipient batch, skips accepted and unce
       assert.equal(states.get("intent-61").status, "unknown");
       assert.equal(stored.data().status, "partial");
     } finally {
+      clearTimeout(firstPairTimeout);
+      releaseFirstPair();
       await restart.stop({ timeoutMs: 1000 });
     }
 

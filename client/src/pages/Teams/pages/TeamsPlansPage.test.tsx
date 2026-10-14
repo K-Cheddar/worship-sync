@@ -1218,10 +1218,10 @@ describe("TeamsPlansPage", () => {
 
   it("resolves Upcoming from the server date across midnight", () => {
     jest.useFakeTimers();
-    jest.setSystemTime(new Date(2026, 9, 31, 23, 30));
+    jest.setSystemTime(new Date("2026-10-31T23:30:00-04:00"));
     setServerTimeOffset(2 * 60 * 60 * 1000);
     const lateOctoberService = oneTimeService("late-october", "Late October", "2026-10-31");
-    lateOctoberService.dateTimeISO = new Date(2026, 9, 31, 23, 45).toISOString();
+    lateOctoberService.dateTimeISO = new Date("2026-10-31T23:45:00-04:00").toISOString();
     useServices([lateOctoberService]);
 
     renderPage();

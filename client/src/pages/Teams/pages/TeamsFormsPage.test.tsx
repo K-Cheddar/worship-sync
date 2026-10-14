@@ -63,7 +63,7 @@ afterEach(() => {
 
 describe("TeamsFormsPage period selection", () => {
   it("uses the server instant when it crosses into the next month", () => {
-    jest.useFakeTimers().setSystemTime(new Date(2026, 9, 31, 23, 30));
+    jest.useFakeTimers().setSystemTime(new Date("2026-10-31T23:30:00-04:00"));
     setServerTimeOffset(2 * 60 * 60 * 1000);
     const service: TeamService = {
       id: "late-october",
@@ -72,7 +72,7 @@ describe("TeamsFormsPage period selection", () => {
       name: "Late October service",
       timerType: "countdown",
       reccurence: "one_time",
-      dateTimeISO: new Date(2026, 9, 31, 23, 45).toISOString(),
+      dateTimeISO: new Date("2026-10-31T23:45:00-04:00").toISOString(),
     };
     mockUseTeamsPage.mockReturnValue({
       pageData: {

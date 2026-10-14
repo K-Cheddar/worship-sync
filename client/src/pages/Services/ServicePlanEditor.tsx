@@ -613,16 +613,17 @@ const ServicePlanEditor = ({
         onPlanTimingChange(null);
         return;
       }
-      if (!planTimezone) return;
+      const timingTimezone = sourcePlan?.timezone || churchTimeZone;
+      if (!timingTimezone) return;
       onPlanTimingChange({
         planKey: sourcePlan?.planKey || planKey,
         startsAt: sourcePlan?.startsAt || occurrence.startsAt,
-        timezone: sourcePlan?.timezone || planTimezone,
+        timezone: timingTimezone,
         sections: nextSections,
         publicLive: sourcePlan?.publicLive,
       });
     },
-    [occurrence.startsAt, onPlanTimingChange, planKey, planTimezone],
+    [churchTimeZone, occurrence.startsAt, onPlanTimingChange, planKey],
   );
   // Do not expose the empty-plan actions until the first fetch has answered.
   // Otherwise a fast click can create a local draft that the initial response

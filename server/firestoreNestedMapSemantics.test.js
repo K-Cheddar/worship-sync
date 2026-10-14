@@ -47,7 +47,9 @@ test("Firestore emulator preserves nested-map delete and replacement semantics",
     });
     snapshot = await ref.get();
     assert.equal(snapshot.get("teamMemberships.teamA"), undefined);
-    assert.deepEqual(snapshot.get("teamMemberships.teamB"), { teamId: "teamB" });
+    assert.deepEqual(snapshot.get("teamMemberships.teamB"), {
+      teamId: "teamB", roleId: "roleB", roleLabel: "B",
+    });
     assert.equal(snapshot.get("email"), "keep@example.test");
 
     await ref.update(
