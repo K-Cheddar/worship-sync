@@ -1,10 +1,11 @@
-import { Link, useLocation } from "react-router-dom";
+import TeamsNavigationLink from "./TeamsNavigationLink";
+import { useLocation } from "react-router-dom";
+import { LoaderCircle } from "lucide-react";
 import Icon from "../../../components/Icon/Icon";
 import { cn } from "@/utils/cnHelper";
-import type { TeamsNavSection } from "../teamsNavSections";
+import { getAvailableTeamsNavGroups, matchesTeamsNavPath, type TeamsNavSection } from "../teamsNavSections";
 import {
   usePendingTeamsNavigation,
-  useTeamsNavigationGuard,
 } from "../TeamsNavigationGuardContext";
 import { useTeamsPage } from "../TeamsPageContext";
 
@@ -16,6 +17,7 @@ type TeamsSidebarNavProps = {
   collapsed?: boolean;
   /** Let a parent drawer provide the scroll container. */
   scrollable?: boolean;
+  includeHome?: boolean;
 };
 
 const SectionLinkList = ({
@@ -27,43 +29,33 @@ const SectionLinkList = ({
   onNavigate?: () => void;
   collapsed?: boolean;
 }) => {
-  const { requestNavigation } = useTeamsNavigationGuard();
   const { pathname: pendingPathname } = usePendingTeamsNavigation();
   const location = useLocation();
   const activePath = pendingPathname || location.pathname;
 
   return (
-    <div className={cn("flex flex-col", collapsed ? "items-center gap-2" : "gap-1")}>
+    <div className={cn("flex flex-col", collapsed ? "items-center gap-1" : "gap-0.5")}>
       {sections.map((section) => {
         const isActive =
-          activePath === section.path ||
-          activePath.startsWith(`${section.path}/`);
+          matchesTeamsNavPath(activePath, section.path);
+        const isLoading = Boolean(
+          pendingPathname && matchesTeamsNavPath(pendingPathname, section.path),
+        );
         return (
-          <Link
+          <TeamsNavigationLink
             key={section.path}
-            to={section.path}
+            path={section.path}
             aria-label={section.label}
             aria-current={isActive ? "page" : undefined}
+            aria-busy={isLoading || undefined}
             title={collapsed ? section.label : undefined}
-            onClick={(event) => {
-              if (
-                event.button !== 0
-                || event.metaKey
-                || event.altKey
-                || event.ctrlKey
-                || event.shiftKey
-              ) {
-                return;
-              }
-              event.preventDefault();
-              requestNavigation(section.path, { onNavigated: onNavigate });
-            }}
+            onNavigate={onNavigate}
             className={cn(
               // Border (not ring) so overflow scrollports do not clip the active outline.
-              "group rounded-lg border text-left text-sm transition-colors",
+              "group rounded-lg border text-left text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200",
               collapsed
                 ? "flex size-10 items-center justify-center p-0"
-                : "flex items-center gap-2 px-2 py-2.5",
+                : "flex items-center gap-2 px-2 py-1.5",
               isActive
                 ? "border-cyan-400/40 bg-cyan-500/15 text-white"
                 : "border-transparent text-gray-200 hover:bg-gray-800 hover:text-white",
@@ -71,9 +63,16 @@ const SectionLinkList = ({
           >
             <Icon svg={section.icon} size="md" className="shrink-0 text-cyan-300" />
             {!collapsed ? (
-              <span className="min-w-0 truncate font-semibold">{section.label}</span>
+              <span className="min-w-0 flex-1 truncate font-semibold">{section.label}</span>
             ) : null}
-          </Link>
+            {isLoading ? (
+              <LoaderCircle
+                className="size-3.5 shrink-0 animate-spin text-cyan-200"
+                aria-hidden
+                data-testid="teams-navigation-loading-indicator"
+              />
+            ) : null}
+          </TeamsNavigationLink>
         );
       })}
     </div>
@@ -114,14 +113,10 @@ const TeamsSidebarNav = ({
   className,
   collapsed = false,
   scrollable = true,
+  includeHome = true,
 }: TeamsSidebarNavProps) => {
   const { availableNavSections } = useTeamsPage();
-  const serviceSections = availableNavSections.filter(
-    (section) => section.domain === "services",
-  );
-  const teamSections = availableNavSections.filter(
-    (section) => section.domain === "teams",
-  );
+  const groups = getAvailableTeamsNavGroups(availableNavSections).filter((group) => includeHome || group.label !== "Home");
 
   return (
     <nav
@@ -138,30 +133,15 @@ const TeamsSidebarNav = ({
           collapsed ? "p-0" : "p-px",
         )}
       >
-        {serviceSections.length > 0 ? (
-          <SectionGroup
-            label="Services"
-            sections={serviceSections}
-            onNavigate={onNavigate}
-            collapsed={collapsed}
-          />
-        ) : null}
-        {teamSections.length > 0 ? (
-          <div
-            className={cn(
-              "border-gray-700",
-              serviceSections.length > 0 &&
-                (collapsed ? "mt-3 border-t pt-3" : "mt-4 border-t pt-2"),
+        {groups.map((group, index) => (
+          <div key={group.label} className={cn(index > 0 && "mt-2 border-t border-gray-700 pt-2")}>
+            {group.label === "Home" ? (
+              <SectionLinkList sections={group.sections} onNavigate={onNavigate} collapsed={collapsed} />
+            ) : (
+              <SectionGroup label={group.label} sections={group.sections} onNavigate={onNavigate} collapsed={collapsed} />
             )}
-          >
-            <SectionGroup
-              label="Teams"
-              sections={teamSections}
-              onNavigate={onNavigate}
-              collapsed={collapsed}
-            />
           </div>
-        ) : null}
+        ))}
       </div>
     </nav>
   );

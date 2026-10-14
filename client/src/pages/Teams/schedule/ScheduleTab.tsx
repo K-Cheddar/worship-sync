@@ -426,7 +426,9 @@ const ScheduleTab = ({
   const [scheduleTeamFilter, setScheduleTeamFilter] = useState<string | null>(
     () => {
       const stored = churchId ? readScheduleTeamFilter(churchId) : null;
-      return stored ? (stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored) : null;
+      if (stored) return stored === ALL_TEAMS_SCHEDULE_FILTER ? "" : stored;
+      const editable = [...(editableTeamIds || [])];
+      return editable.length === 1 ? editable[0] : "";
     },
   );
   useEffect(() => {
@@ -546,7 +548,10 @@ const ScheduleTab = ({
     () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange, serviceTimeZone),
     [periodRange, serviceTimeZone, teamPeriod.occurrences],
   );
-  const periodScheduleMatch = findReusablePeriodSchedule({
+  const preferredPeriodScheduleId = periodScheduleSelection?.scope === periodSelectionScope
+    ? periodScheduleSelection.scheduleId
+    : selectedScheduleId;
+  const periodScheduleMatch = useMemo(() => findReusablePeriodSchedule({
     schedules,
     churchId,
     teamId: workspaceTeamId,
@@ -554,10 +559,17 @@ const ScheduleTab = ({
     visibleStartDate: periodRange.start,
     visibleEndDate: periodRange.end,
     timeZone: serviceTimeZone,
-    preferredScheduleId: periodScheduleSelection?.scope === periodSelectionScope
-      ? periodScheduleSelection.scheduleId
-      : selectedScheduleId,
-  });
+    preferredScheduleId: preferredPeriodScheduleId,
+  }), [
+    churchId,
+    generatedPeriodOccurrences,
+    periodRange.end,
+    periodRange.start,
+    preferredPeriodScheduleId,
+    schedules,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
     ? []

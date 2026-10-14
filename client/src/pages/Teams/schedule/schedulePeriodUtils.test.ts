@@ -124,6 +124,25 @@ describe("findReusablePeriodSchedule", () => {
     });
   });
 
+  it("skips occurrence matching for saved periods that cannot cover the visible range", () => {
+    const historical = schedule({
+      startDate: "2025-01-01",
+      endDate: "2025-12-31",
+    });
+    const readOccurrences = jest.fn(() => target.occurrences);
+    Object.defineProperty(historical, "occurrences", {
+      configurable: true,
+      enumerable: true,
+      get: readOccurrences,
+    });
+
+    expect(findReusablePeriodSchedule({ schedules: [historical], ...target })).toEqual({
+      schedule: null,
+      ambiguous: false,
+    });
+    expect(readOccurrences).not.toHaveBeenCalled();
+  });
+
   it("keeps a partial legacy generated record out of the full-period default and picker list", () => {
     const legacyRollingRecord = schedule({
       scheduleId: "generated_old-rolling-key",

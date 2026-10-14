@@ -275,7 +275,7 @@ const ScheduleMembersPanel = ({
           highlighted={highlightedMemberIdSet.has(member.memberId)}
           expanded={expandedMemberIdSet.has(member.memberId)}
           showHighlightAction
-          details={renderMemberDetails(member)}
+          renderDetails={() => renderMemberDetails(member)}
           onToggleHighlight={() => onToggleHighlight(member.memberId)}
           onToggleExpand={() => toggleExpandedMember(member.memberId)}
         />
@@ -324,7 +324,7 @@ const ScheduleMembersPanel = ({
             lastServedDate={memberServingHistory.get(row.member.memberId)?.lastServedDate}
             disabled={!row.eligible}
             expanded={expandedMemberIdSet.has(row.member.memberId)}
-            details={renderMemberDetails(row.member)}
+            renderDetails={() => renderMemberDetails(row.member)}
             onToggleExpand={() => toggleExpandedMember(row.member.memberId)}
             onSelect={() => {
               if (!row.eligible) return;

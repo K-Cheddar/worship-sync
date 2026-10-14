@@ -626,6 +626,108 @@ describe("findInitialTeamSchedulePeriod", () => {
     expect(result.period.occurrences).toEqual([savedOccurrence]);
   });
 
+  it("keeps duplicate saved identity matches from choosing an arbitrary legacy ID", () => {
+    const savedOccurrence: TeamScheduleOccurrence = {
+      occurrenceId: "weekly@2026-10-04T10:00:00.000Z",
+      logicalOccurrenceId: "weekly@2026-10-04",
+      serviceId: "weekly",
+      serviceDate: "2026-10-04",
+      name: "Weekly service",
+      startsAt: "2026-10-04T10:00:00.000Z",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    };
+    const duplicateSavedOccurrence = {
+      ...savedOccurrence,
+      occurrenceId: "weekly@legacy-2026-10-04",
+    };
+    const result = findInitialTeamSchedulePeriod({
+      services: [service({
+        serviceId: "weekly",
+        reccurence: "weekly",
+        dayOfWeek: 0,
+        time: "10:00",
+        startDateISO: "2026-09-01",
+        positionRequirements: [{ positionId: "camera", count: 1 }],
+      })],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "duplicate-weekly-history",
+        churchId: "church-1",
+        teamId: "media",
+        name: "Weekly history",
+        startDate: "2026-01-01",
+        endDate: "2026-12-31",
+        serviceIds: ["weekly"],
+        occurrences: [savedOccurrence, duplicateSavedOccurrence],
+        assignments: {},
+      }],
+      now,
+      timeZone: "UTC",
+    });
+
+    expect(result.nextOccurrence).toMatchObject({
+      occurrenceId: "weekly@2026-10-04",
+      serviceDate: "2026-10-04",
+    });
+  });
+
+  it("does not reuse a saved grouped occurrence ID when service membership differs", () => {
+    const result = findInitialTeamSchedulePeriod({
+      services: [
+        service({
+          serviceId: "media-part",
+          serviceGroupId: "combined",
+          reccurence: "weekly",
+          dayOfWeek: 0,
+          time: "10:00",
+          startDateISO: "2026-09-01",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }),
+        service({
+          serviceId: "worship-part",
+          serviceGroupId: "combined",
+          reccurence: "weekly",
+          dayOfWeek: 0,
+          time: "10:00",
+          startDateISO: "2026-09-01",
+          positionRequirements: [{ positionId: "vocal", count: 1 }],
+        }),
+      ],
+      positions,
+      teamId: "media",
+      schedules: [{
+        scheduleId: "old-combined-membership",
+        churchId: "church-1",
+        teamId: "media",
+        name: "Old combined service",
+        startDate: "2026-10-01",
+        endDate: "2026-10-31",
+        serviceIds: ["media-part"],
+        occurrences: [{
+          occurrenceId: "stored-combined@2026-10-04T11:00:00.000Z",
+          logicalOccurrenceId: "group:combined@2026-10-04",
+          groupId: "combined",
+          serviceId: "media-part",
+          serviceIds: ["media-part"],
+          serviceDate: "2026-10-04",
+          name: "Media part",
+          startsAt: "2026-10-04T11:00:00.000Z",
+          positionRequirements: [{ positionId: "camera", count: 1 }],
+        }],
+        assignments: {},
+      }],
+      now,
+      timeZone: "UTC",
+    });
+
+    expect(result.nextOccurrence).toMatchObject({
+      occurrenceId: "group:combined@2026-10-04",
+      serviceIds: ["media-part", "worship-part"],
+      startsAt: "2026-10-04T10:00:00.000Z",
+    });
+  });
+
   it("opens October when the next relevant service is October 3", () => {
     const result = findInitialTeamSchedulePeriod({
       services: [service({

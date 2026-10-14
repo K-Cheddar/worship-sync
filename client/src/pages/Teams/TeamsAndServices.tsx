@@ -23,6 +23,7 @@ import { cn } from "@/utils/cnHelper";
 import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sidebar";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
+import TeamsMobileShortcuts from "./components/TeamsMobileShortcuts";
 import ChurchServiceTimeZoneGate from "./components/ChurchServiceTimeZoneGate";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
@@ -201,10 +202,13 @@ const TeamsAndServicesLayout = () => {
       icon={Users}
       toolbarLogos={toolbarLogos}
       churchName={churchName}
-      mobileNavigation={
-        (menuItems) => <TeamsMobileNavigation menuItems={menuItems} />
+      collapseMobileHeader
+      className="[--teams-bottom-navigation-height:calc(4rem+env(safe-area-inset-bottom))] max-lg:pb-[var(--teams-bottom-navigation-height)] lg:[--teams-bottom-navigation-height:0px]"
+      workspaceNavigation={
+        (menuItems, updateReady) => <TeamsMobileNavigation menuItems={menuItems} updateReady={updateReady} />
       }
     >
+      <TeamsMobileShortcuts secondary />
       <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
         <Sidebar
           className={cn(
@@ -256,6 +260,7 @@ const TeamsAndServicesLayout = () => {
           </div>
         </div>
       </section>
+      <TeamsMobileShortcuts />
     </AppWorkspaceShell>
   );
 };
