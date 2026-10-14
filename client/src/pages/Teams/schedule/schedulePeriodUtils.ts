@@ -82,7 +82,7 @@ export const findReusablePeriodSchedule = ({
   occurrences,
   visibleStartDate,
   visibleEndDate,
-  preferredScheduleId,
+  operatorSelectedScheduleId,
   timeZone = "UTC",
 }: {
   schedules: TeamScheduleSummary[];
@@ -93,7 +93,8 @@ export const findReusablePeriodSchedule = ({
   occurrences: TeamScheduleOccurrence[];
   visibleStartDate?: string;
   visibleEndDate?: string;
-  preferredScheduleId?: string;
+  /** A schedule deliberately chosen in the current period picker. */
+  operatorSelectedScheduleId?: string;
   timeZone?: string;
 }): {
   schedule: TeamScheduleSummary | null;
@@ -157,8 +158,8 @@ export const findReusablePeriodSchedule = ({
   const covering = eligible.filter((schedule) =>
     schedule.startDate! <= periodStartDate && schedule.endDate! >= periodEndDate);
   const tier = exact.length ? exact : covering;
-  const preferred = tier
-    .find((schedule) => schedule.scheduleId === preferredScheduleId);
+  const explicitlySelected = tier
+    .find((schedule) => schedule.scheduleId === operatorSelectedScheduleId);
   const ordered = [...tier].sort((left, right) =>
     Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
     Number(isCanonicalGeneratedSchedule(right)) - Number(isCanonicalGeneratedSchedule(left)) ||
@@ -167,7 +168,7 @@ export const findReusablePeriodSchedule = ({
     left.scheduleId.localeCompare(right.scheduleId),
   );
   return {
-    schedule: preferred || ordered[0] || null,
+    schedule: explicitlySelected || ordered[0] || null,
     ambiguous,
     ...(ownershipConflict ? { ownershipConflict: true } : {}),
   };

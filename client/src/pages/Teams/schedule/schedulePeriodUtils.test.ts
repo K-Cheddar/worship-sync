@@ -165,7 +165,7 @@ describe("findReusablePeriodSchedule", () => {
       occurrences: octoberOccurrences,
       visibleStartDate: "2026-10-01",
       visibleEndDate: "2026-10-31",
-      preferredScheduleId: legacyRollingRecord.scheduleId,
+      operatorSelectedScheduleId: legacyRollingRecord.scheduleId,
     })).toEqual({ schedule: null, ambiguous: false });
     expect(filterOccurrencesToRange(octoberOccurrences, {
       start: "2026-10-01",
@@ -313,7 +313,7 @@ describe("findReusablePeriodSchedule", () => {
     expect(findReusablePeriodSchedule({
       schedules: [generated, widerLegacy],
       ...target,
-      preferredScheduleId: widerLegacy.scheduleId,
+      operatorSelectedScheduleId: widerLegacy.scheduleId,
     })).toMatchObject({ schedule: generated, ambiguous: false, ownershipConflict: true });
   });
 
@@ -413,7 +413,7 @@ describe("findReusablePeriodSchedule", () => {
     const saved = schedule();
     const added = { ...occurrence, serviceId: "second", occurrenceId: "second@date", name: "Second service" };
     expect(findReusablePeriodSchedule({
-      schedules: [saved], ...target, occurrences: [occurrence, added], preferredScheduleId: saved.scheduleId,
+      schedules: [saved], ...target, occurrences: [occurrence, added], operatorSelectedScheduleId: saved.scheduleId,
     }).schedule).toBe(saved);
   });
 
@@ -447,7 +447,7 @@ describe("findReusablePeriodSchedule", () => {
       schedules: [saved],
       ...target,
       occurrences: currentOccurrences,
-      preferredScheduleId: saved.scheduleId,
+      operatorSelectedScheduleId: saved.scheduleId,
     });
     const reconciled = mergeCurrentScheduleOccurrences(savedOccurrences, currentOccurrences);
 
@@ -497,6 +497,12 @@ describe("findReusablePeriodSchedule", () => {
       ...target,
       occurrences: currentOccurrences,
     }).schedule).toBe(saved);
+    expect(findReusablePeriodSchedule({
+      schedules: [saved, emptyGenerated],
+      ...target,
+      occurrences: currentOccurrences,
+      operatorSelectedScheduleId: emptyGenerated.scheduleId,
+    }).schedule).toBe(emptyGenerated);
     // With only the populated record, the alternative is the render-only
     // virtual view (which is not present in the persisted summaries array).
     expect(findReusablePeriodSchedule({

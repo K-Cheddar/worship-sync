@@ -1363,7 +1363,9 @@ export type EnsureTeamScheduleForPeriodPayload = TeamSchedulePayload & {
   /** Current calendar period used to resolve the default period schedule. */
   visibleStartDate?: string;
   visibleEndDate?: string;
-  /** Optional current selection, when it is still a valid default-period candidate. */
+  /** A schedule deliberately chosen in the current period picker. */
+  operatorSelectedScheduleId?: string;
+  /** @deprecated Older clients may still send an internally retained schedule ID. */
   preferredScheduleId?: string;
   /** Occurrences currently visible in the selected range. */
   visibleOccurrenceIds?: string[];

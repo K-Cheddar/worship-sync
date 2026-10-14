@@ -18451,9 +18451,9 @@ export const createTeamsAuthHandlers = ({
               schedule.startDate === payload.startDate && schedule.endDate === payload.endDate,
             );
             const candidates = exact.length ? exact : periodCandidates;
-            const preferredScheduleId = normalizeShortText(req.body?.preferredScheduleId, { max: 160 });
+            const operatorSelectedScheduleId = normalizeShortText(req.body?.operatorSelectedScheduleId, { max: 160 });
             const canonicalCandidates = candidates.filter(isCanonicalPeriodSchedule);
-            const selected = candidates.find((schedule) => schedule.scheduleId === preferredScheduleId) ||
+            const selected = candidates.find((schedule) => schedule.scheduleId === operatorSelectedScheduleId) ||
               [...candidates].sort((left, right) =>
                 Number(hasScheduleOperationalData(right)) - Number(hasScheduleOperationalData(left)) ||
                 Number(canonicalCandidates.includes(right)) - Number(canonicalCandidates.includes(left)) ||

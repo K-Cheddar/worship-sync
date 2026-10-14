@@ -15806,7 +15806,7 @@ test("generated period additively reconciles missing occurrences without overwri
   }, { merge: true });
   const before = await getDoc("teamSchedules", scheduleId);
   const requests = [1, 2].map(() => callHandler(authHandlers.ensureTeamScheduleForPeriod, {
-    context, body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], preferredScheduleId: scheduleId },
+    context, body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], operatorSelectedScheduleId: scheduleId },
   }));
   const results = await Promise.all(requests);
   assert.deepEqual(results.map((result) => result.statusCode), [200, 200]);
@@ -15821,7 +15821,7 @@ test("generated period additively reconciles missing occurrences without overwri
   assert.equal((await queryDocs("teamSchedules", [{ field: "churchId", value: context.churchId }])).filter((schedule) => schedule.teamId === teamId).length, 1);
   assert.deepEqual((await callHandler(authHandlers.ensureTeamScheduleForPeriod, {
     context,
-    body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], preferredScheduleId: scheduleId },
+    body: { ...body, serviceIds: ["first", "second"], occurrences: [first, second], operatorSelectedScheduleId: scheduleId },
   })).payload.schedule, after);
 });
 
@@ -16021,6 +16021,7 @@ test("October period reuses the populated legacy schedule and safely adds newly 
     optionalPositionSlots: { [savedOccurrences[0].occurrenceId]: [`${positionIds.Camera}::12`] },
   };
   const scheduleId = "legacy-october-media";
+  const emptyAlternativeId = "generated_empty-october-alternative";
   await setDoc("teamSchedules", scheduleId, {
     scheduleId,
     churchId: context.churchId,
@@ -16038,7 +16039,22 @@ test("October period reuses the populated legacy schedule and safely adds newly 
     createdByUid: "legacy-editor",
     // Missing publication metadata remains Published under the legacy contract.
   });
+  const emptyAlternative = {
+    scheduleId: emptyAlternativeId,
+    churchId: context.churchId,
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    source: "generated-period",
+    generatedPeriodKey: "empty-october-alternative",
+    serviceIds: [],
+    occurrences: [],
+    assignments: {},
+  };
+  await setDoc("teamSchedules", emptyAlternativeId, emptyAlternative);
   const before = await getDoc("teamSchedules", scheduleId);
+  const emptyAlternativeBefore = await getDoc("teamSchedules", emptyAlternativeId);
   assert.equal(Object.values(before.assignments).flatMap((row) => Object.values(row)).length, 55);
   const body = {
     name: "October 2026",
@@ -16049,7 +16065,9 @@ test("October period reuses the populated legacy schedule and safely adds newly 
     serviceIds: period.serviceIds,
     occurrences: period.occurrences,
     visibleOccurrenceIds: period.occurrences.map((item) => item.occurrenceId),
-    preferredScheduleId: scheduleId,
+    // Simulate a stale ID retained by an older client. Only the explicit
+    // operatorSelectedScheduleId field may override the populated default.
+    preferredScheduleId: emptyAlternativeId,
   };
   const result = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
   assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
@@ -16077,7 +16095,16 @@ test("October period reuses the populated legacy schedule and safely adds newly 
     assert.equal(after.assignments[item.occurrenceId], undefined);
   });
   assert.equal(Object.values(after.assignments).flatMap((row) => Object.values(row)).length, 55);
-  assert.equal((await queryDocs("teamSchedules", [{ field: "churchId", value: context.churchId }]).then((items) => items.filter((item) => item.teamId === teamId).length)), 1);
+  const teamSchedules = (await queryDocs("teamSchedules", [
+    { field: "churchId", value: context.churchId },
+  ])).filter((item) => item.teamId === teamId);
+  assert.equal(teamSchedules.length, 2);
+  assert.deepEqual(await getDoc("teamSchedules", emptyAlternativeId), emptyAlternativeBefore);
+  const claims = (await queryDocs(COLLECTIONS.teamScheduleOccurrenceOwners, [
+    { field: "churchId", value: context.churchId },
+  ])).filter((claim) => claim.teamId === teamId);
+  assert.equal(claims.length, 7);
+  assert.ok(claims.every((claim) => claim.scheduleId === scheduleId));
   assert.equal((await queryDocs(COLLECTIONS.notificationIntents, [{ field: "churchId", value: context.churchId }])).length, 0);
 
   const repeated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });

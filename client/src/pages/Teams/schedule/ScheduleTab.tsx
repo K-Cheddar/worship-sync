@@ -358,6 +358,15 @@ const getOccurrenceConflictDetails = (error: unknown): OccurrenceConflictDetails
 };
 
 type ScheduleCellMapField = "assignments" | "microphoneAssignments" | "iemAssignments";
+type PositionSlotSaveOutcome = "saved" | "failed" | "cancelled";
+type PendingPositionSlotSave = {
+  promise: Promise<PositionSlotSaveOutcome>;
+  outcome: PositionSlotSaveOutcome | "saving";
+  resolve: (outcome: PositionSlotSaveOutcome) => void;
+  retry: () => Promise<PositionSlotSaveOutcome>;
+};
+const wasPositionSlotSaveCancelled = (save: PendingPositionSlotSave) =>
+  save.outcome === "cancelled";
 
 export type PendingScheduleCellEdit = {
   churchId: string;
@@ -613,9 +622,9 @@ const ScheduleTab = ({
     () => filterOccurrencesToRange(teamPeriod.occurrences, periodRange, serviceTimeZone),
     [periodRange, serviceTimeZone, teamPeriod.occurrences],
   );
-  const preferredPeriodScheduleId = periodScheduleSelection?.scope === periodSelectionScope
+  const operatorSelectedPeriodScheduleId = periodScheduleSelection?.scope === periodSelectionScope
     ? periodScheduleSelection.scheduleId
-    : selectedScheduleId;
+    : undefined;
   const periodScheduleMatch = useMemo(() => findReusablePeriodSchedule({
     schedules,
     churchId,
@@ -624,13 +633,13 @@ const ScheduleTab = ({
     visibleStartDate: periodRange.start,
     visibleEndDate: periodRange.end,
     timeZone: serviceTimeZone,
-    preferredScheduleId: preferredPeriodScheduleId,
+    operatorSelectedScheduleId: operatorSelectedPeriodScheduleId,
   }), [
     churchId,
     generatedPeriodOccurrences,
     periodRange.end,
     periodRange.start,
-    preferredPeriodScheduleId,
+    operatorSelectedPeriodScheduleId,
     schedules,
     serviceTimeZone,
     workspaceTeamId,
@@ -809,7 +818,7 @@ const ScheduleTab = ({
   useLayoutEffect(() => {
     activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
   }, [selectedScheduleRecord?.scheduleId]);
-  const completedPeriodReconciliationsRef = useRef(new Set<string>());
+  const confirmedPeriodReconciliationRef = useRef<string | null>(null);
   const pendingScheduleEnsuresRef = useRef(new Map<string, Promise<TeamSchedule | null>>());
   const periodOccurrenceSignature = generatedPeriodOccurrences.map((occurrence) =>
     JSON.stringify([
@@ -857,7 +866,32 @@ const ScheduleTab = ({
   const makePeriodReconciliationKey = useCallback((
     scheduleId: string,
     occurrences: TeamScheduleOccurrence[] = selectedScheduleRecord?.occurrences || [],
+    scheduleMetadata?: Pick<TeamSchedule, "scheduleId" | "churchId" | "teamId" | "startDate" | "endDate" | "archivedAt" | "source" | "generatedPeriodKey" | "occurrences">,
   ) => {
+    const activeSchedule = scheduleMetadata || schedules.find((schedule) => schedule.scheduleId === scheduleId);
+    const ownershipEntry = (schedule: {
+      scheduleId: string;
+      churchId: string;
+      teamId: string;
+      startDate?: string;
+      endDate?: string;
+      archivedAt?: string | null;
+      source?: string;
+      generatedPeriodKey?: string;
+      occurrences?: TeamScheduleOccurrence[];
+    }) => JSON.stringify([
+      schedule.scheduleId,
+      schedule.churchId,
+      schedule.teamId,
+      schedule.startDate || "",
+      schedule.endDate || "",
+      schedule.archivedAt || "",
+      schedule.source || "",
+      schedule.generatedPeriodKey || "",
+      (schedule.occurrences || []).map((occurrence) =>
+        [occurrence.logicalOccurrenceId || occurrence.occurrenceId, occurrence.occurrenceId],
+      ).sort(),
+    ]);
     const ownershipSignature = schedules
       .filter((schedule) =>
         !schedule.archivedAt &&
@@ -867,18 +901,7 @@ const ScheduleTab = ({
         schedule.startDate <= periodRange.end && schedule.endDate >= periodRange.start &&
         schedule.scheduleId !== scheduleId,
       )
-      .map((schedule) => JSON.stringify([
-        schedule.scheduleId,
-        schedule.churchId,
-        schedule.teamId,
-        schedule.startDate,
-        schedule.endDate,
-        schedule.archivedAt || "",
-        (schedule.occurrences || []).map((occurrence) =>
-          [occurrence.logicalOccurrenceId || occurrence.occurrenceId, occurrence.occurrenceId],
-        ).sort(),
-        isHydratedSchedule(schedule),
-      ]))
+      .map(ownershipEntry)
       .sort()
       .join("|");
     return JSON.stringify([
@@ -887,6 +910,7 @@ const ScheduleTab = ({
     periodRange.start,
     periodRange.end,
     scheduleId,
+    activeSchedule ? ownershipEntry(activeSchedule) : "",
     periodOccurrenceSignature,
     serviceDefinitionSignature,
     scheduleOccurrenceSignature(occurrences),
@@ -906,28 +930,19 @@ const ScheduleTab = ({
   ]);
   const periodReconciliationKey = makePeriodReconciliationKey(
     selectedScheduleRecord?.scheduleId || "virtual",
+    selectedScheduleRecord?.occurrences || [],
+    selectedScheduleRecord || virtualPeriodSchedule || undefined,
   );
-  const periodInputsCertain = useCallback((active: TeamSchedule) =>
-    isHydratedSchedule(active) && schedules.every((schedule) =>
-      schedule.archivedAt ||
-      schedule.churchId !== churchId ||
-      schedule.teamId !== workspaceTeamId ||
-      !schedule.startDate || !schedule.endDate ||
-      schedule.scheduleId === active.scheduleId ||
-      schedule.startDate > periodRange.end || schedule.endDate < periodRange.start ||
-      isHydratedSchedule(schedule),
-    ), [churchId, periodRange.end, periodRange.start, schedules, workspaceTeamId]);
   const ensureActiveSchedule = useCallback(async (
     requestedSchedule?: TeamSchedule | null,
   ): Promise<TeamSchedule | null> => {
     const active = requestedSchedule || latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
     if (!active.scheduleId.startsWith("virtual:") && viewingSavedSchedule) return active;
-    const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || []);
+    const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || [], active);
     if (
       !active.scheduleId.startsWith("virtual:") &&
-      completedPeriodReconciliationsRef.current.has(requestKey) &&
-      periodInputsCertain(active)
+      confirmedPeriodReconciliationRef.current === requestKey
     ) return active;
     if (!churchId) throw new Error("Church information is unavailable.");
     const pending = pendingScheduleEnsuresRef.current.get(requestKey);
@@ -943,9 +958,9 @@ const ScheduleTab = ({
             occurrences: teamPeriod.occurrences,
             visibleStartDate: periodRange.start,
             visibleEndDate: periodRange.end,
-            preferredScheduleId: active.scheduleId.startsWith("virtual:")
-              ? selectedScheduleId
-              : active.scheduleId,
+            ...(operatorSelectedPeriodScheduleId
+              ? { operatorSelectedScheduleId: operatorSelectedPeriodScheduleId }
+              : {}),
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: serviceTimeZone,
           }));
@@ -991,12 +1006,16 @@ const ScheduleTab = ({
             setSelectedScheduleId(schedule.scheduleId);
             if (active.scheduleId.startsWith("virtual:")) setViewingSavedSchedule(false);
           }
-          completedPeriodReconciliationsRef.current.add(
-            makePeriodReconciliationKey(
+          if (
+            activeChurchIdRef.current === churchId &&
+            activeScheduleIdRef.current === active.scheduleId
+          ) {
+            confirmedPeriodReconciliationRef.current = makePeriodReconciliationKey(
               schedule.scheduleId,
               schedule.occurrences || [],
-            ),
-          );
+              schedule,
+            );
+          }
           if (addedOccurrences > 0 && activeChurchIdRef.current === churchId) {
             showToast(
               `${addedOccurrences} ${addedOccurrences === 1 ? "service" : "services"} added to ${schedule.name}.`,
@@ -1023,8 +1042,7 @@ const ScheduleTab = ({
     periodRange.end,
     periodRange.start,
     periodServiceIds,
-    periodInputsCertain,
-    selectedScheduleId,
+    operatorSelectedPeriodScheduleId,
     setSelectedScheduleId,
     serviceTimeZone,
     showToast,
@@ -1042,7 +1060,7 @@ const ScheduleTab = ({
       periodScheduleMatch.ambiguous ||
       periodScheduleMatch.ownershipConflict ||
       generatedPeriodOccurrences.length === 0 ||
-      completedPeriodReconciliationsRef.current.has(periodReconciliationKey)
+      confirmedPeriodReconciliationRef.current === periodReconciliationKey
     ) return;
     let active = true;
     const offerRetry = () => {
@@ -1824,7 +1842,8 @@ const ScheduleTab = ({
   // Assignment saves are read-modify-write transactions. Keep dependent edits
   // ordered for a schedule while allowing a different schedule to save freely.
   const assignmentSaveQueuesRef = useRef(new Map<string, Promise<unknown>>());
-  const pendingPositionSlotSavesRef = useRef(new Map<string, { promise: Promise<void>; resolve: () => void }>());
+  const pendingPositionSlotSavesRef = useRef(new Map<string, PendingPositionSlotSave>());
+  const positionSlotSaveToastIdsRef = useRef(new Map<string, string>());
   const scheduleCellSaveWorkersRef = useRef(new Map<string, Promise<void>>());
   const scheduleCellSaveFailuresRef = useRef(new Map<string, number>());
   const scheduleCellSaveToastIdsRef = useRef(new Map<string, string>());
@@ -1893,18 +1912,17 @@ const ScheduleTab = ({
         try {
           const schedule = await trackTeamsSave(send(edit));
           const latest = pendingScheduleCellEditsRef.current.get(key);
+          if (!latest) return;
+          if (latest.sequence !== edit.sequence) continue;
           publishScheduleCellResponses(schedule, field, [edit]);
-          if (latest?.sequence === edit.sequence) {
-            clearScheduleCellEdit(edit);
-            scheduleCellSaveFailuresRef.current.delete(key);
-            const toastId = scheduleCellSaveToastIdsRef.current.get(key);
-            if (toastId) {
-              removeToast(toastId);
-              scheduleCellSaveToastIdsRef.current.delete(key);
-            }
-            publishScheduleCellResponses(schedule, field, [edit]);
-            return;
+          clearScheduleCellEdit(edit);
+          scheduleCellSaveFailuresRef.current.delete(key);
+          const toastId = scheduleCellSaveToastIdsRef.current.get(key);
+          if (toastId) {
+            removeToast(toastId);
+            scheduleCellSaveToastIdsRef.current.delete(key);
           }
+          return;
         } catch {
           const latest = pendingScheduleCellEditsRef.current.get(key);
           if (!latest || latest.sequence !== edit.sequence) continue;
@@ -1951,6 +1969,137 @@ const ScheduleTab = ({
     return worker;
   }, [clearScheduleCellEdit, publishScheduleCellResponses, removeToast, showToast, trackTeamsSave]);
   runLatestScheduleCellSaveRef.current = saveLatestScheduleCellEdit;
+  const queueEquipmentCellSave = useCallback((edit: PendingScheduleCellEdit) => {
+    if (edit.field !== "microphoneAssignments" && edit.field !== "iemAssignments") return;
+    const key = scheduleCellEditKey(
+      edit.churchId,
+      edit.scheduleId,
+      edit.field,
+      edit.occurrenceId,
+      edit.cellKey,
+    );
+    const isMicrophone = edit.field === "microphoneAssignments";
+    const failureMessage = isMicrophone
+      ? "Couldn't save the microphone choice."
+      : "Couldn't save the IEM choice.";
+    const send = async (pendingEdit: PendingScheduleCellEdit) => {
+      if (pendingEdit.field === "microphoneAssignments") {
+        const response = await updateTeamScheduleAssignmentMicrophones(
+          pendingEdit.churchId,
+          pendingEdit.scheduleId,
+          {
+            serviceId: pendingEdit.occurrenceId,
+            positionSlotKey: pendingEdit.cellKey,
+            microphoneIds: pendingEdit.value as string[],
+          },
+        );
+        return response.schedule;
+      }
+      const response = await updateTeamScheduleAssignmentIems(
+        pendingEdit.churchId,
+        pendingEdit.scheduleId,
+        {
+          serviceId: pendingEdit.occurrenceId,
+          positionSlotKey: pendingEdit.cellKey,
+          iemIds: pendingEdit.value as string[],
+        },
+      );
+      return response.schedule;
+    };
+    return saveLatestScheduleCellEdit(key, edit.field, failureMessage, send);
+  }, [saveLatestScheduleCellEdit]);
+  const resumePendingEquipmentSaves = useCallback((
+    schedule: TeamSchedule,
+    occurrenceId: string,
+    cellKey: string,
+  ) => {
+    [...pendingScheduleCellEditsRef.current.values()]
+      .filter((edit) =>
+        edit.churchId === schedule.churchId &&
+        edit.scheduleId === schedule.scheduleId &&
+        edit.occurrenceId === occurrenceId &&
+        edit.cellKey === cellKey &&
+        (edit.field === "microphoneAssignments" || edit.field === "iemAssignments"),
+      )
+      .forEach((edit) => { void queueEquipmentCellSave(edit); });
+  }, [queueEquipmentCellSave]);
+  const cancelPendingPositionSlotWork = useCallback((
+    churchId: string,
+    scheduleId: string,
+    occurrenceId: string,
+    cellKey: string,
+  ) => {
+    const slotKey = schedulePositionSlotSaveKey(churchId, scheduleId, occurrenceId, cellKey);
+    const slotSave = pendingPositionSlotSavesRef.current.get(slotKey);
+    if (slotSave) {
+      if (slotSave.outcome !== "saved" && slotSave.outcome !== "cancelled") {
+        slotSave.outcome = "cancelled";
+        slotSave.resolve("cancelled");
+      }
+      pendingPositionSlotSavesRef.current.delete(slotKey);
+    }
+    const positionToastId = positionSlotSaveToastIdsRef.current.get(slotKey);
+    if (positionToastId) removeToast(positionToastId);
+    positionSlotSaveToastIdsRef.current.delete(slotKey);
+    const nextEdits = new Map(pendingScheduleCellEditsRef.current);
+    ( ["assignments", "microphoneAssignments", "iemAssignments"] as const).forEach((field) => {
+      const key = scheduleCellEditKey(churchId, scheduleId, field, occurrenceId, cellKey);
+      nextEdits.delete(key);
+      scheduleCellSaveFailuresRef.current.delete(key);
+      const toastId = scheduleCellSaveToastIdsRef.current.get(key);
+      if (toastId) removeToast(toastId);
+      scheduleCellSaveToastIdsRef.current.delete(key);
+    });
+    pendingScheduleCellEditsRef.current = nextEdits;
+  }, [removeToast]);
+  const showPositionSlotDependencyRetry = useCallback((edit: PendingScheduleCellEdit) => {
+    const cellKey = scheduleCellEditKey(
+      edit.churchId,
+      edit.scheduleId,
+      edit.field,
+      edit.occurrenceId,
+      edit.cellKey,
+    );
+    const previousToastId = scheduleCellSaveToastIdsRef.current.get(cellKey);
+    if (previousToastId) removeToast(previousToastId);
+    const message = edit.field === "microphoneAssignments"
+      ? "Couldn't save the microphone choice because its position hasn't been saved. Your choice is still here."
+      : "Couldn't save the IEM choice because its position hasn't been saved. Your choice is still here.";
+    const toastId = showToast({
+      message,
+      variant: "error",
+      persist: true,
+      children: (
+        <div className="mt-2 flex justify-center">
+          <Button variant="primary" className="text-sm" onClick={() => {
+            if (pendingScheduleCellEditsRef.current.get(cellKey)?.sequence !== edit.sequence) return;
+            removeToast(toastId);
+            scheduleCellSaveToastIdsRef.current.delete(cellKey);
+            void (async () => {
+              const slotKey = schedulePositionSlotSaveKey(
+                edit.churchId,
+                edit.scheduleId,
+                edit.occurrenceId,
+                edit.cellKey,
+              );
+              const dependency = pendingPositionSlotSavesRef.current.get(slotKey);
+              const outcome = !dependency
+                ? "saved"
+                : dependency.outcome === "failed"
+                  ? await dependency.retry()
+                  : dependency.outcome === "cancelled"
+                    ? "cancelled"
+                    : await dependency.promise;
+              if (outcome !== "saved") return;
+              const latest = pendingScheduleCellEditsRef.current.get(cellKey);
+              if (latest) void queueEquipmentCellSave(latest);
+            })();
+          }}>Retry save</Button>
+        </div>
+      ),
+    });
+    scheduleCellSaveToastIdsRef.current.set(cellKey, toastId);
+  }, [queueEquipmentCellSave, removeToast, showToast]);
   const enqueueAssignmentSave = useCallback(
     <T,>(scheduleId: string, task: () => Promise<T>) => {
       const previous = assignmentSaveQueuesRef.current.get(scheduleId) || Promise.resolve();
@@ -5329,18 +5478,7 @@ const ScheduleTab = ({
         const saveKey = scheduleCellEditKey(churchId, schedule.scheduleId, "microphoneAssignments", occurrenceId, columnKey);
         const edit = pendingScheduleCellEditsRef.current.get(saveKey);
         if (!edit) return;
-        void saveLatestScheduleCellEdit(saveKey, "microphoneAssignments", "Couldn't save the microphone choice.", async (pendingEdit) => {
-          const response = await updateTeamScheduleAssignmentMicrophones(
-            pendingEdit.churchId,
-            pendingEdit.scheduleId,
-            {
-              serviceId: pendingEdit.occurrenceId,
-              positionSlotKey: pendingEdit.cellKey,
-              microphoneIds: pendingEdit.value as string[],
-            },
-          );
-          return response.schedule;
-        });
+        void queueEquipmentCellSave(edit);
       };
       try {
         const schedule = await ensureActiveSchedule(optimistic);
@@ -5348,7 +5486,20 @@ const ScheduleTab = ({
         const positionSlotSave = pendingPositionSlotSavesRef.current.get(
           schedulePositionSlotSaveKey(churchId, schedule.scheduleId, occurrenceId, columnKey),
         );
-        if (positionSlotSave) await positionSlotSave.promise;
+        if (positionSlotSave) {
+          const outcome = positionSlotSave.outcome === "failed"
+            ? "failed"
+            : positionSlotSave.outcome === "cancelled"
+              ? "cancelled"
+              : await positionSlotSave.promise;
+          if (outcome === "failed") {
+            const key = scheduleCellEditKey(churchId, schedule.scheduleId, "microphoneAssignments", occurrenceId, columnKey);
+            const edit = pendingScheduleCellEditsRef.current.get(key);
+            if (edit) showPositionSlotDependencyRetry(edit);
+            return;
+          }
+          if (outcome === "cancelled") return;
+        }
         queueSave(schedule);
       } catch {
         const message = "Couldn't prepare this schedule for the microphone change. Your choice is still here.";
@@ -5374,7 +5525,8 @@ const ScheduleTab = ({
       churchId,
       ensureActiveSchedule,
       removeToast,
-      saveLatestScheduleCellEdit,
+      queueEquipmentCellSave,
+      showPositionSlotDependencyRetry,
       selectedSchedule,
       showToast,
       stageScheduleCellEdit,
@@ -5395,18 +5547,7 @@ const ScheduleTab = ({
         const saveKey = scheduleCellEditKey(churchId, schedule.scheduleId, "iemAssignments", occurrenceId, columnKey);
         const edit = pendingScheduleCellEditsRef.current.get(saveKey);
         if (!edit) return;
-        void saveLatestScheduleCellEdit(saveKey, "iemAssignments", "Couldn't save the IEM choice.", async (pendingEdit) => {
-          const response = await updateTeamScheduleAssignmentIems(
-            pendingEdit.churchId,
-            pendingEdit.scheduleId,
-            {
-              serviceId: pendingEdit.occurrenceId,
-              positionSlotKey: pendingEdit.cellKey,
-              iemIds: pendingEdit.value as string[],
-            },
-          );
-          return response.schedule;
-        });
+        void queueEquipmentCellSave(edit);
       };
       try {
         const schedule = await ensureActiveSchedule(optimistic);
@@ -5414,7 +5555,20 @@ const ScheduleTab = ({
         const positionSlotSave = pendingPositionSlotSavesRef.current.get(
           schedulePositionSlotSaveKey(churchId, schedule.scheduleId, occurrenceId, columnKey),
         );
-        if (positionSlotSave) await positionSlotSave.promise;
+        if (positionSlotSave) {
+          const outcome = positionSlotSave.outcome === "failed"
+            ? "failed"
+            : positionSlotSave.outcome === "cancelled"
+              ? "cancelled"
+              : await positionSlotSave.promise;
+          if (outcome === "failed") {
+            const key = scheduleCellEditKey(churchId, schedule.scheduleId, "iemAssignments", occurrenceId, columnKey);
+            const edit = pendingScheduleCellEditsRef.current.get(key);
+            if (edit) showPositionSlotDependencyRetry(edit);
+            return;
+          }
+          if (outcome === "cancelled") return;
+        }
         queueSave(schedule);
       } catch {
         const toastId = showToast({
@@ -5434,7 +5588,7 @@ const ScheduleTab = ({
         });
       }
     },
-    [canEdit, churchId, ensureActiveSchedule, removeToast, saveLatestScheduleCellEdit, selectedSchedule, showToast, stageScheduleCellEdit],
+    [canEdit, churchId, ensureActiveSchedule, queueEquipmentCellSave, removeToast, selectedSchedule, showPositionSlotDependencyRetry, showToast, stageScheduleCellEdit],
   );
 
   // Grid occurrence headers are sticky (positioned), so the badge anchors to the
@@ -5644,19 +5798,31 @@ const ScheduleTab = ({
         serviceId,
         cellKey,
       );
-      if (pendingPositionSlotSavesRef.current.has(saveKey)) return;
-      let resolvePositionSlotSave!: () => void;
-      const pendingPositionSlotSave = {
-        promise: new Promise<void>((resolve) => { resolvePositionSlotSave = resolve; }),
-        resolve: () => resolvePositionSlotSave(),
-      };
-      void pendingPositionSlotSave.promise.catch(() => undefined);
-      pendingPositionSlotSavesRef.current.set(saveKey, pendingPositionSlotSave);
+      const existingSave = pendingPositionSlotSavesRef.current.get(saveKey);
+      if (existingSave) {
+        if (existingSave.outcome === "failed") void existingSave.retry();
+        return;
+      }
       publishScheduleSnapshot(
         { ...previousSchedule, additionalPositionSlots },
         ["additionalPositionSlots"],
       );
-      const savePositionSlot = async (): Promise<void> => {
+      let retryPositionSlotSave!: () => Promise<PositionSlotSaveOutcome>;
+      const makeAttempt = (): PendingPositionSlotSave => {
+        let resolve!: (outcome: PositionSlotSaveOutcome) => void;
+        const attempt: PendingPositionSlotSave = {
+          promise: new Promise((settle) => { resolve = settle; }),
+          outcome: "saving",
+          resolve: (outcome) => resolve(outcome),
+          retry: () => retryPositionSlotSave(),
+        };
+        return attempt;
+      };
+      const initialAttempt = makeAttempt();
+      pendingPositionSlotSavesRef.current.set(saveKey, initialAttempt);
+      let retryToastId: string | null = null;
+      const saveAttempt = async (attempt: PendingPositionSlotSave): Promise<PositionSlotSaveOutcome> => {
+        attempt.outcome = "saving";
         try {
           await enqueueAssignmentSave(previousSchedule.scheduleId, () =>
             addTeamSchedulePositionSlot(
@@ -5665,30 +5831,64 @@ const ScheduleTab = ({
               { serviceId, positionSlotKey: cellKey },
             ),
           );
-          if (pendingPositionSlotSavesRef.current.get(saveKey) === pendingPositionSlotSave) {
+          if (wasPositionSlotSaveCancelled(attempt)) return "cancelled";
+          if (pendingPositionSlotSavesRef.current.get(saveKey) === attempt) {
             pendingPositionSlotSavesRef.current.delete(saveKey);
-            pendingPositionSlotSave.resolve();
           }
+          attempt.outcome = "saved";
+          attempt.resolve("saved");
+          if (retryToastId) removeToast(retryToastId);
+          positionSlotSaveToastIdsRef.current.delete(saveKey);
           showToast("Position added for this date.", "success");
+          resumePendingEquipmentSaves(previousSchedule, serviceId, cellKey);
+          return "saved";
         } catch {
-          const toastId = showToast({
+          if (wasPositionSlotSaveCancelled(attempt)) return "cancelled";
+          attempt.outcome = "failed";
+          attempt.resolve("failed");
+          if (retryToastId) removeToast(retryToastId);
+          retryToastId = showToast({
             message: "Couldn't save this position. It stays visible while you retry.",
             variant: "error",
             persist: true,
             children: (
               <div className="mt-2 flex justify-center">
                 <Button variant="primary" className="text-sm" onClick={() => {
-                  removeToast(toastId);
-                  void savePositionSlot();
+                  if (retryToastId) removeToast(retryToastId);
+                  retryToastId = null;
+                  positionSlotSaveToastIdsRef.current.delete(saveKey);
+                  void retryPositionSlotSave();
                 }}>Retry save</Button>
               </div>
             ),
           });
+          positionSlotSaveToastIdsRef.current.set(saveKey, retryToastId);
+          return "failed";
         }
       };
-      await savePositionSlot();
+      retryPositionSlotSave = async () => {
+        const current = pendingPositionSlotSavesRef.current.get(saveKey);
+        if (current?.outcome === "saving") return current.promise;
+        if (current?.outcome === "failed") {
+          const toastId = positionSlotSaveToastIdsRef.current.get(saveKey);
+          if (toastId) removeToast(toastId);
+          positionSlotSaveToastIdsRef.current.delete(saveKey);
+          retryToastId = null;
+          const nextAttempt = makeAttempt();
+          pendingPositionSlotSavesRef.current.set(saveKey, nextAttempt);
+          return saveAttempt(nextAttempt);
+        }
+        if (current?.outcome === "cancelled" || initialAttempt.outcome === "cancelled") {
+          return "cancelled";
+        }
+        if (current?.outcome === "saved" || initialAttempt.outcome === "saved" || !current) {
+          return "saved";
+        }
+        return current.promise;
+      };
+      await saveAttempt(initialAttempt);
     },
-    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, publishScheduleSnapshot, removeToast, selectedSchedule, showToast],
+    [canEdit, churchId, enqueueAssignmentSave, ensureActiveSchedule, publishScheduleSnapshot, removeToast, resumePendingEquipmentSaves, selectedSchedule, showToast],
   );
 
   const addAdditionalPosition = useCallback(
@@ -5749,6 +5949,7 @@ const ScheduleTab = ({
       showApiErrorToast(showToast, error, "Could not start this schedule.");
       return;
     }
+    cancelPendingPositionSlotWork(churchId, previousSchedule.scheduleId, serviceId, cellKey);
     const additionalPositionSlots = { ...(previousSchedule.additionalPositionSlots || {}) };
     const nextSlots = (additionalPositionSlots[serviceId] || []).filter(
       (slotKey) => slotKey !== cellKey,
@@ -5819,6 +6020,7 @@ const ScheduleTab = ({
     };
     await saveRemoval();
   }, [
+    cancelPendingPositionSlotWork,
     churchId,
     enqueueAssignmentSave,
     ensureActiveSchedule,
