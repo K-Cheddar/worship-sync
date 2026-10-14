@@ -1,6 +1,8 @@
 import {
   Fragment,
   startTransition,
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useContext,
   useEffect,
@@ -1176,7 +1178,8 @@ const ScheduleTab = ({
       scrollContainer.scrollTop = 0;
     }
   }, [showForm]);
-  const [membersPanelOpen, setMembersPanelOpen] = useState(true);
+  const [membersPanelOpenOverride, setMembersPanelOpenOverride] = useState<boolean | null>(null);
+  const [membersDrawerAnimationsEnabled, setMembersDrawerAnimationsEnabled] = useState(false);
   const [expandedMemberIds, setExpandedMemberIds] = useState<string[]>([]);
   const [membersSort, setMembersSort] = useState<ScheduleMembersSortState>(
     defaultScheduleMembersSort,
@@ -1422,6 +1425,25 @@ const ScheduleTab = ({
   const shouldOverlayMembers =
     isNarrowViewport ||
     (scheduleWorkspaceWidth > 0 && scheduleWorkspaceWidth < 1120);
+  const membersPanelOpen = membersPanelOpenOverride ?? !shouldOverlayMembers;
+  const setMembersPanelOpen = useCallback<Dispatch<SetStateAction<boolean>>>(
+    (nextOpen) => {
+      setMembersPanelOpenOverride((currentOverride) => {
+        const currentOpen = currentOverride ?? !shouldOverlayMembers;
+        return typeof nextOpen === "function"
+          ? nextOpen(currentOpen)
+          : nextOpen;
+      });
+    },
+    [shouldOverlayMembers],
+  );
+  const handleMembersPanelOpenChange = useCallback(
+    (open: boolean) => {
+      setMembersDrawerAnimationsEnabled(true);
+      setMembersPanelOpen(open);
+    },
+    [setMembersPanelOpen],
+  );
 
   useEffect(() => {
     if (scheduleMessagesOpen) {
@@ -1439,14 +1461,6 @@ const ScheduleTab = ({
       wasMembersDrawerOpenRef.current = false;
     }
   }, [membersPanelOpen, shouldOverlayMembers]);
-
-  useLayoutEffect(() => {
-    if (scheduleWorkspaceWidth > 0) {
-      setMembersPanelOpen(scheduleWorkspaceWidth >= 1120);
-    } else if (isNarrowViewport) {
-      setMembersPanelOpen(false);
-    }
-  }, [isNarrowViewport, scheduleWorkspaceWidth]);
 
   // With no stored preference, follow the viewport so a mid-session resize across
   // the breakpoint swaps to the layout that reads best at that width.
@@ -5201,7 +5215,7 @@ const ScheduleTab = ({
       onExpandedMemberIdsChange={setExpandedMemberIds}
       membersSort={membersSort}
       onMembersSortChange={setMembersSort}
-      onOpenChange={setMembersPanelOpen}
+      onOpenChange={handleMembersPanelOpenChange}
       mode={memberAssignmentMode ? "assign" : "browse"}
       activeTeamMembers={activeTeamMembers}
       schedulePositions={schedulePositions}
@@ -5233,7 +5247,7 @@ const ScheduleTab = ({
       onClearSlot={clearActiveSlot}
       onSelectMember={canEdit
         ? (memberId) => {
-          if (drawer) setMembersPanelOpen(false);
+          if (drawer) handleMembersPanelOpenChange(false);
           handleActiveSlotMemberSelect(memberId);
         }
         : () => undefined}
@@ -5318,7 +5332,7 @@ const ScheduleTab = ({
             </span>
           ),
           onClick: () => {
-            if (shouldOverlayMembers) setMembersPanelOpen(false);
+            if (shouldOverlayMembers) handleMembersPanelOpenChange(false);
             setScheduleMessagesOpen(true);
           },
           "aria-expanded": scheduleMessagesOpen,
@@ -5587,6 +5601,7 @@ const ScheduleTab = ({
                             : "text-gray-300",
                         )}
                         onClick={() => {
+                          setMembersDrawerAnimationsEnabled(true);
                           if (!membersPanelOpen) setScheduleMessagesOpen(false);
                           setMembersPanelOpen((open) => !open);
                         }}
@@ -6393,11 +6408,12 @@ const ScheduleTab = ({
               {shouldOverlayMembers ? (
                 <Drawer
                   isOpen={membersPanelOpen}
-                  onClose={() => setMembersPanelOpen(false)}
+                  onClose={() => handleMembersPanelOpenChange(false)}
                   title="Members"
                   position="right"
                   size="xl"
                   showBackdrop
+                  animationEnabled={membersDrawerAnimationsEnabled}
                   className="!max-w-[min(32rem,90vw)] max-sm:!max-w-full"
                   contentPadding="p-3"
                 >

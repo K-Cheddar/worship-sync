@@ -50,6 +50,7 @@ import type {
 } from "../../api/authTypes";
 import ScheduleEditForm from "./schedule/ScheduleEditForm";
 import { writeTeamScheduleAdminLayout } from "./teamScheduleAdminLayout";
+import { buildTeamsRestoreNavigationState } from "./teamsReturnNavigation";
 import { calendarMonthRange, shiftRange } from "./rangeSelection";
 import { setServerTimeOffset } from "../../utils/serverTime";
 import { serviceDateTimeInTimeZone } from "../../utils/teamScheduleOccurrences";
@@ -90,6 +91,7 @@ jest.mock("../../utils/lazyRoute", () => {
 let mockState: unknown;
 const mockDispatch = jest.fn();
 let originalMatchMedia: typeof window.matchMedia;
+let restoreResizeObserver: (() => void) | null = null;
 
 jest.mock("@tabler/icons-react", () => ({
   IconVideo: (props: SVGProps<SVGSVGElement>) => <svg {...props} />,
@@ -271,6 +273,41 @@ const makeMatchMedia = (matches: boolean): typeof window.matchMedia =>
     removeListener: jest.fn(),
     dispatchEvent: jest.fn(),
   })) as unknown as typeof window.matchMedia;
+
+const installScheduleResizeObserver = () => {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  let notifyResize: ResizeObserverCallback | null = null;
+  class ControlledResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      notifyResize = callback;
+    }
+
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: ControlledResizeObserver,
+  });
+  restoreResizeObserver = () => {
+    if (previousDescriptor) {
+      Object.defineProperty(globalThis, "ResizeObserver", previousDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "ResizeObserver");
+    }
+    restoreResizeObserver = null;
+  };
+
+  return (width: number) => {
+    if (!notifyResize) throw new Error("The schedule workspace has not been observed.");
+    const target = document.createElement("div");
+    notifyResize(
+      [{ target, contentRect: { width } as DOMRectReadOnly } as unknown as ResizeObserverEntry],
+      {} as ResizeObserver,
+    );
+  };
+};
 
 const baseBootstrap: TestTeamsBootstrap = {
   success: true,
@@ -591,6 +628,7 @@ describe("Teams", () => {
     // Fake-timer tests must not leak into later async waits under suite load.
     jest.useRealTimers();
     setServerTimeOffset(0);
+    restoreResizeObserver?.();
     window.matchMedia = originalMatchMedia;
     window.localStorage.clear();
     window.history.replaceState({}, "", originalLocationHref);
@@ -4016,6 +4054,90 @@ describe("Teams", () => {
     },
   );
 
+  it("starts the Members drawer closed when mobile navigation opens Schedules", async () => {
+    const user = userEvent.setup();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+    window.matchMedia = makeMatchMedia(true);
+
+    renderTeams("/teams-and-services/members");
+    await screen.findAllByRole("button", { name: /Create member/i });
+    await user.click(screen.getByRole("button", { name: /Open menu/i }));
+    const mobileMenu = screen.getByRole("dialog", { name: "Menu" });
+    await user.click(within(mobileMenu).getByRole("link", { name: "Schedules" }));
+    await waitForTeamsBootstrap();
+    await waitForScheduleGrid();
+
+    expect(screen.getByRole("button", { name: "Members" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByRole("dialog", { name: "Members" })).not.toBeInTheDocument();
+  });
+
+  it("does not animate a Members drawer restored open during initial mounting", async () => {
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+    window.matchMedia = makeMatchMedia(true);
+    renderTeams({
+      pathname: "/teams-and-services/schedules",
+      state: buildTeamsRestoreNavigationState({
+        kind: "schedule",
+        scheduleId: "schedule-july",
+        membersPanelOpen: true,
+      }),
+    });
+
+    const membersDrawer = await screen.findByRole("dialog", { name: "Members" });
+    expect(membersDrawer).not.toHaveClass("data-[state=open]:animate-in");
+    expect(membersDrawer).not.toHaveClass("data-[state=open]:slide-in-from-right");
+  });
+
+  it("preserves the Members choice across workspace resizing and animates deliberate opens", async () => {
+    const user = userEvent.setup();
+    const resizeWorkspace = installScheduleResizeObserver();
+    mockGetTeamsBootstrap.mockResolvedValue(
+      asTeamsBootstrapResponse(scheduleBootstrap),
+    );
+
+    renderTeams();
+    await waitForScheduleGrid();
+    act(() => resizeWorkspace(1300));
+    const inlinePanel = screen.getByRole("complementary", { name: "Members" });
+    const hideMembers = within(inlinePanel).getByRole("button", { name: "Hide members" });
+    expect(hideMembers).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(hideMembers);
+    expect(within(inlinePanel).getByRole("button", { name: "Show members" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    act(() => resizeWorkspace(900));
+    expect(screen.getByRole("button", { name: "Members" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    act(() => resizeWorkspace(1300));
+    expect(within(screen.getByRole("complementary", { name: "Members" })).getByRole(
+      "button",
+      { name: "Show members" },
+    )).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(within(screen.getByRole("complementary", { name: "Members" })).getByRole(
+      "button",
+      { name: "Show members" },
+    ));
+    act(() => resizeWorkspace(900));
+    const membersDrawer = await screen.findByRole("dialog", { name: "Members" });
+    expect(membersDrawer).toHaveClass("data-[state=open]:animate-in");
+    expect(screen.getByRole("button", { name: "Members", hidden: true })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
   it("keeps Messages in schedule overflow and opens Members beside the workspace on narrow layouts", async () => {
     const user = userEvent.setup();
     mockGetTeamsBootstrap.mockResolvedValue(
@@ -4044,6 +4166,9 @@ describe("Teams", () => {
     await user.click(screen.getByRole("button", { name: /More schedule options/i }));
     await user.click(screen.getByRole("menuitem", { name: /Messages/i }));
     expect(await screen.findByText("No assignment messages for this schedule.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Schedule messages" })).toHaveClass(
+      "data-[state=open]:animate-in",
+    );
     expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
@@ -4056,6 +4181,7 @@ describe("Teams", () => {
     await user.click(membersToggle);
     expect(membersToggle).toHaveAttribute("aria-expanded", "true");
     const membersDrawer = await screen.findByRole("dialog", { name: "Members" });
+    expect(membersDrawer).toHaveClass("data-[state=open]:animate-in");
     expect(within(membersDrawer).getByPlaceholderText("Search members…")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Schedule messages" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Sunday Vocal/i, hidden: true })).toBeInTheDocument();
