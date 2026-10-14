@@ -104,6 +104,8 @@ These decisions were explicitly approved in the Phase 2 request; the [decision l
 
 These references locate current code, not additional product requirements.
 
+- Phase 3A safe schedule reuse, additive occurrence inclusion, ownership claims, and remaining Phase 3 / Phase 4 boundaries: [implementation record](../team-scheduling-foundation-phase-3a.md)
+
 - Editor entry: client/src/pages/Teams/schedule/ScheduleTab.tsx
 - Occurrence generation: client/src/utils/teamScheduleOccurrences.ts
 - Period construction and schedule selection: client/src/pages/Teams/schedule/teamSchedulePeriod.ts and client/src/pages/Teams/schedule/schedulePeriodUtils.ts

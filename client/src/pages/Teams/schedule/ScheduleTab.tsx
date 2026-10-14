@@ -68,6 +68,7 @@ import {
 import {
   findReusablePeriodSchedule,
   findOverlappingPeriodSchedules,
+  mergeCurrentScheduleOccurrences,
   resolveDisplayedPeriodRange,
   filterOccurrencesToRange,
   formatSchedulePeriodName,
@@ -638,30 +639,55 @@ const ScheduleTab = ({
     : null;
   const latestScheduleRef = useRef(selectedSchedule);
   useEffect(() => { latestScheduleRef.current = selectedSchedule; }, [selectedSchedule]);
+  const activeChurchIdRef = useRef(churchId);
+  useLayoutEffect(() => { activeChurchIdRef.current = churchId; }, [churchId]);
   const activeScheduleIdRef = useRef(selectedScheduleRecord?.scheduleId || "");
   useLayoutEffect(() => {
     activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
   }, [selectedScheduleRecord?.scheduleId]);
   const [ensuringScheduleId, setEnsuringScheduleId] = useState("");
+  const [periodReconciliationPending, setPeriodReconciliationPending] = useState(false);
+  const [periodReconciliationError, setPeriodReconciliationError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
+  const completedPeriodReconciliationsRef = useRef(new Set<string>());
   const pendingScheduleEnsureRef = useRef<{
-    virtualScheduleId: string;
+    requestKey: string;
     promise: Promise<TeamSchedule | null>;
   } | null>(null);
+  const periodOccurrenceSignature = generatedPeriodOccurrences.map((occurrence) =>
+    JSON.stringify([
+      occurrence.logicalOccurrenceId || occurrence.occurrenceId,
+      occurrence.groupId || "",
+      [...(occurrence.serviceIds || [occurrence.serviceId])].sort(),
+    ]),
+  ).sort().join("|");
+  const periodReconciliationKey = [
+    churchId,
+    workspaceTeamId,
+    periodRange.start,
+    periodRange.end,
+    selectedScheduleRecord?.scheduleId || "virtual",
+    periodOccurrenceSignature,
+  ].join(":");
   const ensureActiveSchedule = useCallback(async (): Promise<TeamSchedule | null> => {
     const active = latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
-    if (!active.scheduleId.startsWith("virtual:")) return active;
-    const virtualScheduleId = active.scheduleId;
+    if (!active.scheduleId.startsWith("virtual:") && viewingSavedSchedule) return active;
+    const requestKey = `${active.scheduleId}:${periodReconciliationKey}`;
     if (!churchId) throw new Error("Church information is unavailable.");
     const pending = pendingScheduleEnsureRef.current;
-    if (pending?.virtualScheduleId === virtualScheduleId) return pending.promise;
+    if (pending?.requestKey === requestKey) return pending.promise;
     const request: {
-      virtualScheduleId: string;
+      requestKey: string;
       promise: Promise<TeamSchedule | null>;
     } = {
-      virtualScheduleId,
+      requestKey,
       promise: Promise.resolve().then(async () => {
-        setEnsuringScheduleId(virtualScheduleId);
+        setEnsuringScheduleId(active.scheduleId.startsWith("virtual:") ? active.scheduleId : "");
+        setPeriodReconciliationPending(true);
+        setPeriodReconciliationError(null);
         try {
           const result = await trackTeamsSave(ensureTeamScheduleForPeriod(churchId, {
             name: formatSuggestedScheduleName(persistedPeriodRange.start, persistedPeriodRange.end),
@@ -672,21 +698,34 @@ const ScheduleTab = ({
             occurrences: teamPeriod.occurrences,
             visibleStartDate: periodRange.start,
             visibleEndDate: periodRange.end,
-            preferredScheduleId: selectedScheduleId,
+            preferredScheduleId: active.scheduleId.startsWith("virtual:")
+              ? selectedScheduleId
+              : active.scheduleId,
             visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: serviceTimeZone,
           }));
+          if (activeChurchIdRef.current !== churchId) return null;
           onScheduleSaved(result.schedule);
-          if (activeScheduleIdRef.current !== virtualScheduleId) return null;
-          if (latestScheduleRef.current?.scheduleId === virtualScheduleId) {
+          if (activeScheduleIdRef.current !== active.scheduleId) return null;
+          if (latestScheduleRef.current?.scheduleId === active.scheduleId) {
             setSelectedScheduleId(result.schedule.scheduleId);
-            setViewingSavedSchedule(false);
+            if (active.scheduleId.startsWith("virtual:")) setViewingSavedSchedule(false);
           }
+          completedPeriodReconciliationsRef.current.add(periodReconciliationKey);
+          completedPeriodReconciliationsRef.current.add([
+            churchId,
+            workspaceTeamId,
+            periodRange.start,
+            periodRange.end,
+            result.schedule.scheduleId,
+            periodOccurrenceSignature,
+          ].join(":"));
           return result.schedule;
         } finally {
           if (pendingScheduleEnsureRef.current === request) {
             pendingScheduleEnsureRef.current = null;
             setEnsuringScheduleId("");
+            setPeriodReconciliationPending(false);
           }
         }
       }),
@@ -698,16 +737,52 @@ const ScheduleTab = ({
     generatedPeriodOccurrences,
     periodRange.end,
     periodRange.start,
+    periodOccurrenceSignature,
     teamPeriod.occurrences,
     onScheduleSaved,
     persistedPeriodRange.end,
     persistedPeriodRange.start,
     periodServiceIds,
+    periodReconciliationKey,
     selectedScheduleId,
     setSelectedScheduleId,
     serviceTimeZone,
     trackTeamsSave,
+    viewingSavedSchedule,
     workspaceTeamId,
+  ]);
+  useEffect(() => {
+    if (
+      viewingSavedSchedule ||
+      !selectedSchedule ||
+      selectedSchedule.scheduleId.startsWith("virtual:") ||
+      periodScheduleMatch.schedule?.scheduleId !== selectedSchedule.scheduleId ||
+      periodScheduleMatch.ambiguous ||
+      periodScheduleMatch.ownershipConflict ||
+      generatedPeriodOccurrences.length === 0 ||
+      completedPeriodReconciliationsRef.current.has(periodReconciliationKey)
+    ) return;
+    let active = true;
+    void ensureActiveSchedule().catch((error) => {
+      if (active) {
+        setPeriodReconciliationError(
+          {
+            key: periodReconciliationKey,
+            message: error instanceof Error ? error.message : "Could not update this schedule period.",
+          },
+        );
+      }
+    });
+    return () => { active = false; };
+  }, [
+    ensureActiveSchedule,
+    generatedPeriodOccurrences.length,
+    periodReconciliationKey,
+    periodScheduleMatch.schedule?.scheduleId,
+    periodScheduleMatch.ambiguous,
+    periodScheduleMatch.ownershipConflict,
+    selectedSchedule,
+    viewingSavedSchedule,
   ]);
   const scheduleDisplayMembers = useMemo(
     () => [
@@ -811,7 +886,25 @@ const ScheduleTab = ({
     });
   }, [data.services, selectedSchedule, serviceTimeZone]);
   const baseScheduleOccurrences = useMemo(() => {
-    if (selectedSchedule?.occurrences?.length) return selectedSchedule.occurrences;
+    if (selectedSchedule?.occurrences?.length) {
+      if (viewingSavedSchedule) return selectedSchedule.occurrences;
+      const currentScheduleOccurrences = selectedSchedule.startDate && selectedSchedule.endDate
+        ? filterOccurrencesToRange(generatedPeriodOccurrences, {
+            start: selectedSchedule.startDate,
+            end: selectedSchedule.endDate,
+          }, serviceTimeZone)
+        : [];
+      return mergeCurrentScheduleOccurrences(
+        selectedSchedule.occurrences,
+        currentScheduleOccurrences,
+        serviceTimeZone,
+        schedules.filter((schedule) =>
+          schedule.scheduleId !== selectedSchedule.scheduleId &&
+          schedule.churchId === selectedSchedule.churchId &&
+          schedule.teamId === selectedSchedule.teamId,
+        ),
+      ).occurrences;
+    }
     if (regeneratedOccurrences) return regeneratedOccurrences;
     return (selectedSchedule?.serviceIds || [])
       .map((serviceId) => {
@@ -825,7 +918,7 @@ const ScheduleTab = ({
         };
       })
       .filter(Boolean) as TeamScheduleOccurrence[];
-  }, [fallbackStartsAt, regeneratedOccurrences, selectedSchedule, serviceById]);
+  }, [fallbackStartsAt, generatedPeriodOccurrences, regeneratedOccurrences, schedules, selectedSchedule, serviceById, serviceTimeZone, viewingSavedSchedule]);
   // A saved schedule keeps its stored occurrence shape (so the grid stays stable);
   // if the services changed since — combined/un-combined, or a time/recurrence
   // edit — the stored occurrence ids drift from what we'd generate now, and the
@@ -5440,6 +5533,19 @@ const ScheduleTab = ({
             {periodScheduleMatch.ambiguous && !viewingSavedSchedule ? (
               <p role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
                 A saved schedule in this period has occurrence rows that cannot be matched safely to the current services. Its assignments remain preserved. Select that saved schedule to review it before creating another.
+              </p>
+            ) : null}
+            {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
+              <p role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                More than one saved schedule contains the same service occurrence. The populated schedule remains selected and its data is preserved. Review the listed schedules and resolve the duplicate before adding services.
+              </p>
+            ) : null}
+            {periodReconciliationPending && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
+              <p role="status" className="mt-3 text-sm text-gray-300">Updating this schedule with newly available services…</p>
+            ) : null}
+            {periodReconciliationError?.key === periodReconciliationKey ? (
+              <p role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                {periodReconciliationError.message}
               </p>
             ) : null}
           </section>

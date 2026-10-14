@@ -3,6 +3,7 @@ import {
   filterOccurrencesToRange,
   findOverlappingPeriodSchedules,
   findReusablePeriodSchedule,
+  mergeCurrentScheduleOccurrences,
   rangeFromPreset,
   resolveDisplayedPeriodRange,
 } from "./schedulePeriodUtils";
@@ -220,7 +221,7 @@ describe("findReusablePeriodSchedule", () => {
       ...target,
       startDate: "2026-10-01",
       visibleStartDate: "2026-10-01",
-    })).toEqual({ schedule: populated, ambiguous: false });
+    })).toMatchObject({ schedule: populated, ambiguous: false, ownershipConflict: true });
   });
 
   it("chooses a stable populated candidate when several legitimate schedules overlap", () => {
@@ -246,7 +247,7 @@ describe("findReusablePeriodSchedule", () => {
       ...target,
       startDate: "2026-10-01",
       visibleStartDate: "2026-10-01",
-    })).toEqual({ schedule: populatedA, ambiguous: false });
+    })).toMatchObject({ schedule: populatedA, ambiguous: false, ownershipConflict: true });
   });
 
   it("does not cross-wire schedules from another team", () => {
@@ -281,10 +282,8 @@ describe("findReusablePeriodSchedule", () => {
       scheduleId: "legacy",
       assignmentCounts: { byMemberId: { legacyMember: 1 }, byPositionId: { camera: 1 } },
     });
-    expect(findReusablePeriodSchedule({ schedules: [legacy, generated], ...target })).toEqual({
-      schedule: generated,
-      ambiguous: false,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [legacy, generated], ...target }))
+      .toMatchObject({ schedule: generated, ambiguous: false, ownershipConflict: true });
   });
 
   it("reuses an old-key generated period ahead of an equivalent legacy schedule", () => {
@@ -294,10 +293,8 @@ describe("findReusablePeriodSchedule", () => {
       generatedPeriodKey: "old-key",
     });
     const legacy = schedule({ scheduleId: "legacy" });
-    expect(findReusablePeriodSchedule({ schedules: [legacy, oldGenerated], ...target })).toEqual({
-      schedule: oldGenerated,
-      ambiguous: false,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [legacy, oldGenerated], ...target }))
+      .toMatchObject({ schedule: oldGenerated, ambiguous: false, ownershipConflict: true });
   });
 
   it("prefers the exact monthly period over a populated broader legacy period", () => {
@@ -317,10 +314,7 @@ describe("findReusablePeriodSchedule", () => {
       schedules: [generated, widerLegacy],
       ...target,
       preferredScheduleId: widerLegacy.scheduleId,
-    })).toEqual({
-      schedule: generated,
-      ambiguous: false,
-    });
+    })).toMatchObject({ schedule: generated, ambiguous: false, ownershipConflict: true });
   });
 
   it("prefers the canonical generated schedule over an empty custom match", () => {
@@ -330,10 +324,8 @@ describe("findReusablePeriodSchedule", () => {
       generatedPeriodKey: "current-key",
     });
     const custom = schedule({ scheduleId: "custom", source: "custom" });
-    expect(findReusablePeriodSchedule({ schedules: [custom, generated], ...target })).toEqual({
-      schedule: generated,
-      ambiguous: false,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [custom, generated], ...target }))
+      .toMatchObject({ schedule: generated, ambiguous: false, ownershipConflict: true });
   });
 
   it("ignores generated records whose key and schedule id disagree", () => {
@@ -417,12 +409,122 @@ describe("findReusablePeriodSchedule", () => {
     expect(saved.assignments?.["old@date"]).toEqual({ "position::0": { primaryMemberId: "member" } });
   });
 
-  it("rejects a schedule missing a newly relevant service at the same time", () => {
+  it("reuses a compatible populated schedule missing a newly relevant service", () => {
     const saved = schedule();
     const added = { ...occurrence, serviceId: "second", occurrenceId: "second@date", name: "Second service" };
     expect(findReusablePeriodSchedule({
       schedules: [saved], ...target, occurrences: [occurrence, added], preferredScheduleId: saved.scheduleId,
-    }).schedule).toBeNull();
+    }).schedule).toBe(saved);
+  });
+
+  it("selects the saved five-service period and merges only the two missing October occurrences", () => {
+    const savedOccurrences = [3, 10, 17, 24, 31].map((day) => ({
+      ...occurrence,
+      occurrenceId: `service@2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+      startsAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00.000Z`,
+    }));
+    const savedAssignments = Object.fromEntries(savedOccurrences.map((saved, dateIndex) => [
+      saved.occurrenceId,
+      Object.fromEntries(Array.from({ length: 11 }, (_, slot) => [
+        `camera::${slot}`,
+        { primaryMemberId: `member-${dateIndex}-${slot}` },
+      ])),
+    ]));
+    const saved = schedule({
+      scheduleId: "legacy-october-media",
+      occurrences: savedOccurrences,
+      serviceIds: ["service"],
+      assignments: savedAssignments,
+      hasScheduleData: true,
+    });
+    const addedOccurrences = [
+      { ...occurrence, occurrenceId: "power-up@2026-10-07", serviceId: "power-up", name: "Power Up", startsAt: "2026-10-07T18:00:00.000Z" },
+      { ...occurrence, occurrenceId: "lunch-learn@2026-10-10", serviceId: "lunch-learn", name: "Lunch and Learn", startsAt: "2026-10-10T12:00:00.000Z" },
+    ];
+    const currentOccurrences = [...savedOccurrences, ...addedOccurrences].sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+
+    const selected = findReusablePeriodSchedule({
+      schedules: [saved],
+      ...target,
+      occurrences: currentOccurrences,
+      preferredScheduleId: saved.scheduleId,
+    });
+    const reconciled = mergeCurrentScheduleOccurrences(savedOccurrences, currentOccurrences);
+
+    expect(selected.schedule).toBe(saved);
+    expect(selected.ambiguous).toBe(false);
+    expect(reconciled.ambiguous).toBe(false);
+    expect(reconciled.occurrences).toHaveLength(7);
+    expect(reconciled.occurrences.map(({ startsAt }) => startsAt)).toEqual(
+      currentOccurrences.map(({ startsAt }) => startsAt),
+    );
+    expect(reconciled.occurrences.filter(({ occurrenceId }) => savedOccurrences.some((item) => item.occurrenceId === occurrenceId)).map(({ occurrenceId }) => occurrenceId)).toEqual(
+      savedOccurrences.map(({ occurrenceId }) => occurrenceId),
+    );
+    expect(Object.values(savedAssignments).flatMap((row) => Object.values(row))).toHaveLength(55);
+    expect(saved.assignments).toEqual(savedAssignments);
+  });
+
+  it("keeps a populated period selected beside an empty persisted generated record or virtual view", () => {
+    const saved = schedule({
+      scheduleId: "legacy-october-media",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      occurrences: [occurrence],
+      assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member" } } },
+      hasScheduleData: true,
+    });
+    const emptyGenerated = schedule({
+      scheduleId: "generated_current-key",
+      source: "generated-period",
+      generatedPeriodKey: "current-key",
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      occurrences: [],
+      assignments: {},
+      hasScheduleData: false,
+    });
+    const currentOccurrences = [occurrence, {
+      ...occurrence,
+      occurrenceId: "new-service@2026-10-07T12:00:00.000Z",
+      serviceId: "new-service",
+      name: "Power Up",
+      startsAt: "2026-10-07T12:00:00.000Z",
+    }];
+
+    expect(findReusablePeriodSchedule({
+      schedules: [saved, emptyGenerated],
+      ...target,
+      occurrences: currentOccurrences,
+    }).schedule).toBe(saved);
+    // With only the populated record, the alternative is the render-only
+    // virtual view (which is not present in the persisted summaries array).
+    expect(findReusablePeriodSchedule({
+      schedules: [saved],
+      ...target,
+      occurrences: currentOccurrences,
+    }).schedule).toBe(saved);
+  });
+
+  it("does not merge an occurrence owned by a separate active schedule", () => {
+    const stored = [occurrence];
+    const newOccurrence = {
+      ...occurrence,
+      occurrenceId: "new@2026-10-07T12:00:00.000Z",
+      serviceId: "new",
+      startsAt: "2026-10-07T12:00:00.000Z",
+    };
+    const otherSchedule = schedule({
+      scheduleId: "other-period-owner",
+      occurrences: [newOccurrence],
+    });
+
+    expect(mergeCurrentScheduleOccurrences(
+      stored,
+      [occurrence, newOccurrence],
+      "UTC",
+      [otherSchedule],
+    )).toEqual({ occurrences: stored, ambiguous: false });
   });
 
   it("does not use one saved row to cover two identically named services", () => {
@@ -475,10 +577,8 @@ describe("findReusablePeriodSchedule", () => {
       source: "custom",
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member" } } },
     });
-    expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target })).toEqual({
-      schedule: custom,
-      ambiguous: false,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target }))
+      .toMatchObject({ schedule: custom, ambiguous: false, ownershipConflict: true });
   });
 
   it("prefers a canonical generated schedule among multiple populated exact candidates", () => {
@@ -493,10 +593,8 @@ describe("findReusablePeriodSchedule", () => {
       source: "custom",
       assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member-b" } } },
     });
-    expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target })).toEqual({
-      schedule: generated,
-      ambiguous: false,
-    });
+    expect(findReusablePeriodSchedule({ schedules: [generated, custom], ...target }))
+      .toMatchObject({ schedule: generated, ambiguous: false, ownershipConflict: true });
   });
 
   it("adopts populated source-less legacy schedules with a wider stored range", () => {
@@ -532,10 +630,8 @@ describe("findReusablePeriodSchedule", () => {
         assignmentCounts: { byMemberId: { memberB: 1 }, byPositionId: { camera: 1 } },
       }),
     ];
-    expect(findReusablePeriodSchedule({ schedules, ...target })).toEqual({
-      schedule: schedules[0],
-      ambiguous: false,
-    });
+    expect(findReusablePeriodSchedule({ schedules, ...target }))
+      .toMatchObject({ schedule: schedules[0], ambiguous: false, ownershipConflict: true });
   });
 });
 
@@ -570,6 +666,27 @@ describe("findOverlappingPeriodSchedules", () => {
 
   it("does not count archived overlapping schedules", () => {
     expect(getOverlaps([schedules[0], schedules[5]])).toEqual([schedules[0]]);
+  });
+
+  it("keeps a source-less populated legacy schedule visible beside a same-bounds generated schedule", () => {
+    const generated = schedule({
+      scheduleId: "generated_current-key",
+      source: "generated-period",
+      generatedPeriodKey: "current-key",
+      hasScheduleData: false,
+      occurrences: [],
+    });
+    const legacy = schedule({
+      scheduleId: "legacy-october",
+      source: undefined,
+      assignments: { [occurrence.occurrenceId]: { "position::0": { primaryMemberId: "member" } } },
+      assignmentCounts: { byMemberId: { member: 1 }, byPositionId: { position: 1 } },
+    });
+
+    expect(getOverlaps([generated, legacy]).map(({ scheduleId }) => scheduleId)).toEqual([
+      "generated_current-key",
+      "legacy-october",
+    ]);
   });
 });
 
