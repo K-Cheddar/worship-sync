@@ -23,6 +23,7 @@ import { cn } from "@/utils/cnHelper";
 import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../../components/Sidebar/Sidebar";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import TeamsSidebarNav from "./components/TeamsSidebarNav";
+import TeamsMobileShortcuts from "./components/TeamsMobileShortcuts";
 import ChurchServiceTimeZoneGate from "./components/ChurchServiceTimeZoneGate";
 import { useTeamsAbandonedReturnCleanup } from "./hooks/useTeamsAbandonedReturnCleanup";
 import { TeamsPageProvider, useTeamsPage } from "./TeamsPageContext";
@@ -201,11 +202,14 @@ const TeamsAndServicesLayout = () => {
       icon={Users}
       toolbarLogos={toolbarLogos}
       churchName={churchName}
-      mobileNavigation={
-        (menuItems) => <TeamsMobileNavigation menuItems={menuItems} />
+      compactMobileToolbar
+      className="[--teams-bottom-navigation-height:calc(57px_+_env(safe-area-inset-bottom))] max-lg:pb-[var(--teams-bottom-navigation-height)] lg:[--teams-bottom-navigation-height:0px]"
+      workspaceNavigation={
+        (menuItems, updateReady) => <TeamsMobileNavigation menuItems={menuItems} updateReady={updateReady} />
       }
     >
-      <section className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
+      <TeamsMobileShortcuts secondary activePath={activePath}>
+      <section data-teams-workspace className="mx-auto mt-0 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-none border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[auto_minmax(0,1fr)]">
         <Sidebar
           className={cn(
             "relative hidden flex-col transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r",
@@ -233,7 +237,10 @@ const TeamsAndServicesLayout = () => {
           <TeamsSidebarNav collapsed={sidebarCollapsed} />
         </Sidebar>
 
-        <div className={teamsSectionScrollClassName}>
+        <div
+          className={teamsSectionScrollClassName}
+          data-mobile-header-scroll-owner="workspace"
+        >
           <div className="flex min-h-0 flex-1 flex-col">
             {loading ? (
               getTeamsSectionSkeleton(activeSection.routePath)
@@ -256,6 +263,8 @@ const TeamsAndServicesLayout = () => {
           </div>
         </div>
       </section>
+      </TeamsMobileShortcuts>
+      <TeamsMobileShortcuts />
     </AppWorkspaceShell>
   );
 };

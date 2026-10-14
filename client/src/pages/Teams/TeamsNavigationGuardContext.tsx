@@ -197,7 +197,7 @@ export const TeamsNavigationGuardProvider = ({
   }, [hasUnsavedChanges]);
 
   const discardAndNavigate = () => {
-    if (!pendingNavigation && !pendingAction) return;
+    if (!pendingNavigation && !pendingAction && pendingHistoryDelta === null) return;
     const nextNavigation = pendingNavigation;
     const nextAction = pendingAction;
     const nextHistoryDelta = pendingHistoryDelta;

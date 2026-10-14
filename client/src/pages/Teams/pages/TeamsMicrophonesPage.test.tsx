@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -80,6 +80,12 @@ const NavigationProbe = () => {
   );
 };
 
+const selectIems = (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(screen.getByRole("tab", { name: "In-Ear Monitors (IEMs)" }));
+
+const selectMicrophones = (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(screen.getByRole("tab", { name: "Microphones" }));
+
 beforeEach(() => {
   cleanup();
   jest.clearAllMocks();
@@ -105,8 +111,11 @@ describe("TeamsMicrophonesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "Edit microphones" }));
     expect(screen.queryByRole("heading", { name: "Equipment" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Microphones" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "In-Ear Monitors (IEMs)" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Microphones" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "In-Ear Monitors (IEMs)" })).toBeInTheDocument();
+    await selectIems(user);
+    expect(screen.queryByRole("heading", { name: "In-Ear Monitors (IEMs)" })).not.toBeInTheDocument();
+    await selectMicrophones(user);
     await user.click(screen.getByRole("button", { name: "Add microphone" }));
     expect(screen.getAllByRole("textbox", { name: "Name:" })).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -177,23 +186,62 @@ describe("TeamsMicrophonesPage", () => {
       equipment: [{ id: "iem-1", category: "iem", name: "Blue", subtype: "wireless-beltpack", color: "#2255cc" }],
     });
     renderPage();
+    const microphonePanel = within(screen.getByRole("tabpanel", { name: "Microphones" }));
+    const iemPanel = within(screen.getByRole("tabpanel", { name: "In-Ear Monitors (IEMs)" }));
 
     await user.click(await screen.findByRole("button", { name: "Edit microphones" }));
-    expect(screen.getByRole("textbox", { name: "Name:" })).toBeInTheDocument();
+    expect(microphonePanel.getByRole("textbox", { name: "Name:" })).toBeInTheDocument();
+    await selectIems(user);
     expect(screen.getByText("Blue")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save IEMs" })).not.toBeInTheDocument();
 
+    await selectMicrophones(user);
     await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(microphonePanel.queryByRole("textbox", { name: "Name:" })).not.toBeInTheDocument();
+    expect(microphonePanel.getByRole("button", { name: "Edit microphones" })).toBeInTheDocument();
+    await selectIems(user);
     await user.click(screen.getByRole("button", { name: "Edit IEMs" }));
     expect(await screen.findByRole("button", { name: "Add IEM" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Name")).toHaveValue("Blue");
+    expect(iemPanel.getByPlaceholderText("Name")).toHaveValue("Blue");
     expect(screen.getByRole("button", { name: "Saved IEMs" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add IEM" }));
     expect(screen.getByRole("button", { name: "Save IEMs" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("textbox", { name: "Name:" })).not.toBeInTheDocument();
-    expect(screen.getByText("Blue")).toBeInTheDocument();
+    expect(iemPanel.queryByRole("textbox", { name: "Name:" })).not.toBeInTheDocument();
+    expect(microphonePanel.queryByRole("textbox", { name: "Name:" })).not.toBeInTheDocument();
+    expect(iemPanel.getByText("Blue")).toBeInTheDocument();
+  });
+
+  it("keeps simultaneous microphone and IEM drafts when switching categories", async () => {
+    const user = userEvent.setup();
+    mockGetServiceEquipment.mockResolvedValue({
+      success: true,
+      equipment: [{ id: "iem-1", category: "iem", name: "Blue", subtype: "wireless-beltpack", color: "#2255cc" }],
+    });
+    renderPage();
+    const microphonePanel = within(screen.getByRole("tabpanel", { name: "Microphones" }));
+    const iemPanel = within(screen.getByRole("tabpanel", { name: "In-Ear Monitors (IEMs)" }));
+
+    await user.click(await screen.findByRole("button", { name: "Edit microphones" }));
+    const microphoneName = microphonePanel.getByRole("textbox", { name: "Name:" });
+    await user.clear(microphoneName);
+    await user.type(microphoneName, "Lead mic draft");
+
+    await selectIems(user);
+    await user.click(await screen.findByRole("button", { name: "Edit IEMs" }));
+    const iemName = iemPanel.getByRole("textbox", { name: "Name:" });
+    await user.clear(iemName);
+    await user.type(iemName, "Blue pack draft");
+
+    await selectMicrophones(user);
+    expect(microphonePanel.getByRole("textbox", { name: "Name:" })).toHaveValue("Lead mic draft");
+    expect(microphonePanel.getByRole("button", { name: "Save microphones" })).toBeEnabled();
+    await selectIems(user);
+    expect(iemPanel.getByRole("textbox", { name: "Name:" })).toHaveValue("Blue pack draft");
+    expect(iemPanel.getByRole("button", { name: "Save IEMs" })).toBeEnabled();
+    expect(mockSaveServicePlanMicrophones).not.toHaveBeenCalled();
+    expect(mockSaveServiceEquipment).not.toHaveBeenCalled();
   });
 
   it("opens the navigation guard for unsaved microphone and IEM edits", async () => {
@@ -207,6 +255,7 @@ describe("TeamsMicrophonesPage", () => {
     await user.click(screen.getByRole("button", { name: "Stay" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
+    await selectIems(user);
     await user.click(screen.getByRole("button", { name: "Edit IEMs" }));
     await user.click(screen.getByRole("button", { name: "Add IEM" }));
     await user.click(screen.getByRole("button", { name: "Try to leave" }));
@@ -251,6 +300,7 @@ describe("TeamsMicrophonesPage", () => {
     });
     renderPage();
 
+    await selectIems(user);
     await user.click(await screen.findByRole("button", { name: "Edit IEMs" }));
     expect(screen.getByRole("textbox", { name: "Custom type:" })).toHaveValue("Auracast receiver");
     await user.clear(screen.getByRole("textbox", { name: "Name:" }));
@@ -280,6 +330,7 @@ describe("TeamsMicrophonesPage", () => {
     });
     renderPage();
 
+    await selectIems(user);
     await user.click(await screen.findByRole("button", { name: "Edit IEMs" }));
     await user.click(screen.getByRole("button", { name: "#2255cc" }));
     const colorInput = screen.getByDisplayValue("#2255cc");

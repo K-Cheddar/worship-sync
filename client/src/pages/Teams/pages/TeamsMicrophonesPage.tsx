@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Headphones, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
@@ -9,6 +9,13 @@ import {
   saveServiceEquipment,
 } from "../../../api/auth";
 import Button from "../../../components/Button/Button";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  lineTabsTriggerSmClassName,
+} from "../../../components/ui/tabs";
 import ColorField from "../../../components/ColorField/ColorField";
 import Input from "../../../components/Input/Input";
 import Select from "../../../components/Select/Select";
@@ -28,12 +35,10 @@ import { useTeamsPage } from "../TeamsPageContext";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { TeamsMicrophonesListSkeleton } from "../teamsPageSkeletons";
 import {
-  panelScrollPaddingClassName,
   panelShellClassName,
   teamsManagerPageRootClassName,
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
-  equipmentCatalogGridClassName,
 } from "../teamsStyles";
 import { cn } from "@/utils/cnHelper";
 import generateRandomId from "../../../utils/generateRandomId";
@@ -63,11 +68,14 @@ const TeamsMicrophonesPage = () => {
   const [iemDraft, setIemDraft] = useState<ServiceEquipment[]>([]);
   const [isEditingIems, setIsEditingIems] = useState(false);
   const [savingIems, setSavingIems] = useState(false);
+  const [equipmentCategory, setEquipmentCategory] = useState<"microphones" | "iems">("microphones");
+  const [pendingIemFocusId, setPendingIemFocusId] = useState<string | null>(null);
   const [loadingIems, setLoadingIems] = useState(Boolean(churchId));
   const [iemLoadError, setIemLoadError] = useState(false);
   const [loading, setLoading] = useState(Boolean(churchId));
   const [saving, setSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const iemScrollFrameRef = useRef(0);
   const handleDirtyChange = useCallback(
     (isDirty: boolean) => setDirtySource(microphoneGuardId, isDirty),
     [microphoneGuardId, setDirtySource],
@@ -164,6 +172,19 @@ const TeamsMicrophonesPage = () => {
     }
   };
 
+  useLayoutEffect(() => {
+    if (!pendingIemFocusId) return undefined;
+    const input = document.getElementById(`iem-name-${pendingIemFocusId}`);
+    input?.focus({ preventScroll: true });
+    iemScrollFrameRef.current = window.requestAnimationFrame(() => {
+      input?.closest<HTMLElement>("[data-equipment-editor-row]")?.scrollIntoView?.({ block: "nearest" });
+      setPendingIemFocusId(null);
+    });
+    return () => {
+      window.cancelAnimationFrame(iemScrollFrameRef.current);
+    };
+  }, [pendingIemFocusId]);
+
   const visibleIems = isEditingIems ? iemDraft : iemEquipment;
   const hasIncompleteIem = iemDraft.some((item) => !item.name.trim());
   const iemHasPendingChanges =
@@ -173,13 +194,17 @@ const TeamsMicrophonesPage = () => {
     setIemDraft((current) => current.map((item) =>
       item.id === id ? { ...item, ...changes } : item,
     ));
-  const addIem = () => setIemDraft((current) => [...current, {
-    id: generateRandomId(),
-    category: "iem",
-    name: `IEM ${current.length + 1}`,
-    subtype: "wireless-beltpack",
-    color: NEW_SERVICE_EQUIPMENT_COLOR,
-  }]);
+  const addIem = () => {
+    const item = {
+      id: generateRandomId(),
+      category: "iem" as const,
+      name: `IEM ${iemDraft.length + 1}`,
+      subtype: "wireless-beltpack",
+      color: NEW_SERVICE_EQUIPMENT_COLOR,
+    };
+    setIemDraft((current) => [...current, item]);
+    setPendingIemFocusId(item.id);
+  };
 
   const handleSave = async (
     next: ServicePlanMicrophone[],
@@ -217,88 +242,142 @@ const TeamsMicrophonesPage = () => {
 
   return (
     <div className={teamsManagerPageRootClassName}>
-      <section
-        className={cn(
-          panelShellClassName,
-          "min-h-0 flex-1 max-lg:flex-none lg:overflow-y-auto scrollbar-variable",
-        )}
+      <Tabs
+        value={equipmentCategory}
+        onValueChange={(value) => setEquipmentCategory(value as "microphones" | "iems")}
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-0"
       >
-        <div className={cn("space-y-4", panelScrollPaddingClassName, "pt-4")}>
-          {loading ? (
-            <TeamsMicrophonesListSkeleton />
-          ) : (
-            <section aria-labelledby="microphone-catalog-heading">
-              <ServicePlanMicrophoneManager
-                microphones={microphones}
-                microphoneAudiences={microphoneAudiences}
-                disabled={!canEdit}
-                isEditing={isEditing}
-                saving={saving}
-                onSave={handleSave}
-                onDirtyChange={handleDirtyChange}
-                onStartEditing={() => setIsEditing(true)}
-                onCancelEditing={() => setIsEditing(false)}
-                positionNoteOptions={positionNoteOptions}
-                renderHeader={(actions) => (
-                  <header className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <h3 id="microphone-catalog-heading" className="text-sm font-semibold text-white">Microphones</h3>
-                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                      {!actions.editing && !actions.disabled ? (
-                        <Button type="button" svg={Pencil} aria-label="Edit microphones" onClick={actions.onStartEditing}>Edit</Button>
-                      ) : null}
-                      {actions.editing ? (
-                        <>
-                          <Button type="button" variant="secondary" svg={Plus} disabled={!actions.canAdd} aria-label="Add microphone" onClick={actions.onAdd}>Add</Button>
-                          <Button type="button" variant="tertiary" svg={X} disabled={actions.saving} onClick={actions.onCancel}>{actions.hasPendingChanges ? "Cancel" : "Close"}</Button>
-                          <Button type="button" variant="cta" svg={actions.saving || actions.saved ? undefined : Save} aria-busy={actions.saving || undefined} disabled={!actions.canSave || actions.saved} aria-label={actions.saving ? "Saving microphones" : actions.saved ? "Saved microphones" : "Save microphones"} onClick={actions.onSave}>{actions.saving ? "Saving…" : actions.saved ? <><Check aria-hidden="true" data-testid="microphone-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
-                        </>
-                      ) : null}
+        <TabsList
+          variant="line"
+          data-equipment-category-tabs
+          className="h-[44px] min-h-[44px] shrink-0 rounded-none border-x-0 border-t-0 bg-gray-950 px-0"
+          aria-label="Equipment categories"
+        >
+          <TabsTrigger value="microphones" className={cn(lineTabsTriggerSmClassName, "min-h-[44px]")}>
+            Microphones
+          </TabsTrigger>
+          <TabsTrigger value="iems" className={cn(lineTabsTriggerSmClassName, "min-h-[44px]")}>
+            In-Ear Monitors (IEMs)
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent
+          value="microphones"
+          forceMount
+          className="flex min-h-0 min-w-0 flex-1 flex-col data-[state=inactive]:hidden"
+        >
+          <section
+            data-equipment-panel="microphones"
+            className={cn(
+              panelShellClassName,
+              "flex min-h-0 flex-1 flex-col overflow-hidden lg:overflow-y-auto scrollbar-variable lg:mt-0.5",
+            )}
+          >
+            <div className="flex min-h-0 flex-1 flex-col">
+              {loading ? (
+                <TeamsMicrophonesListSkeleton />
+              ) : (
+                <section className="flex min-h-0 flex-1 flex-col">
+                  <ServicePlanMicrophoneManager
+                    microphones={microphones}
+                    microphoneAudiences={microphoneAudiences}
+                    disabled={!canEdit}
+                    isEditing={isEditing}
+                    saving={saving}
+                    onSave={handleSave}
+                    onDirtyChange={handleDirtyChange}
+                    onStartEditing={() => setIsEditing(true)}
+                    onCancelEditing={() => setIsEditing(false)}
+                    positionNoteOptions={positionNoteOptions}
+                    equipmentPageLayout
+                    renderHeader={(actions) => (
+                      <header data-equipment-actions="microphones" aria-label="Microphone actions" className="flex min-h-[48px] shrink-0 flex-nowrap items-center justify-end gap-2 border-b border-gray-700 bg-gray-950 px-2 py-1 [&_button]:min-h-[44px] lg:sticky lg:top-0 lg:z-10">
+                        <div className="flex min-w-0 flex-nowrap items-center gap-2">
+                          {!actions.editing && !actions.disabled ? (
+                            <Button type="button" svg={Pencil} aria-label="Edit microphones" onClick={actions.onStartEditing}>Edit</Button>
+                          ) : null}
+                          {actions.editing ? (
+                            <>
+                              <Button type="button" variant="secondary" svg={Plus} disabled={!actions.canAdd} aria-label="Add microphone" onClick={actions.onAdd}>Add</Button>
+                              <Button type="button" variant="tertiary" svg={X} disabled={actions.saving} onClick={actions.onCancel}>{actions.hasPendingChanges ? "Cancel" : "Close"}</Button>
+                              <Button type="button" variant="cta" svg={actions.saving || actions.saved ? undefined : Save} aria-busy={actions.saving || undefined} disabled={!actions.canSave || actions.saved} aria-label={actions.saving ? "Saving microphones" : actions.saved ? "Saved microphones" : "Save microphones"} onClick={actions.onSave}>{actions.saving ? "Saving…" : actions.saved ? <><Check aria-hidden="true" data-testid="microphone-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
+                            </>
+                          ) : null}
+                        </div>
+                      </header>
+                    )}
+                  />
+                </section>
+              )}
+            </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent
+          value="iems"
+          forceMount
+          className="flex min-h-0 min-w-0 flex-1 flex-col data-[state=inactive]:hidden"
+        >
+          <section
+            data-equipment-panel="iems"
+            className={cn(
+              panelShellClassName,
+              "flex min-h-0 flex-1 flex-col overflow-hidden lg:overflow-y-auto scrollbar-variable lg:mt-0.5",
+            )}
+          >
+            <div className="flex min-h-0 flex-1 flex-col lg:contents">
+              <header
+                data-equipment-actions="iems"
+                aria-label="IEM actions"
+                className="flex min-h-[48px] shrink-0 flex-nowrap items-center justify-end gap-2 border-b border-gray-700 bg-gray-950 px-2 py-1 [&_button]:min-h-[44px] lg:sticky lg:top-0 lg:z-10"
+              >
+                <div className="flex min-w-0 flex-nowrap items-center gap-2">
+                  {!isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
+                    <Button type="button" svg={Pencil} aria-label="Edit IEMs" onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(true); }}>Edit</Button>
+                  ) : null}
+                  {isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
+                    <div className="flex min-w-0 flex-nowrap items-center gap-2">
+                      <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
+                      <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { if (iemHasPendingChanges) setIemDraft(iemEquipment); setIsEditingIems(false); }}>{iemHasPendingChanges ? "Cancel" : "Close"}</Button>
+                      <Button type="button" variant="cta" svg={savingIems || !iemHasPendingChanges ? undefined : Save} aria-busy={savingIems || undefined} disabled={savingIems || hasIncompleteIem || !iemHasPendingChanges} aria-label={savingIems ? "Saving IEMs" : !iemHasPendingChanges ? "Saved IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : !iemHasPendingChanges ? <><Check aria-hidden="true" data-testid="iem-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
                     </div>
-                  </header>
-                )}
-              />
-            </section>
-          )}
-          {!loading ? (
-            <section aria-labelledby="iem-catalog-heading" className="border-t border-gray-700/70 pt-4">
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h3 id="iem-catalog-heading" className="text-sm font-semibold text-white">In-Ear Monitors (IEMs)</h3>
-                  <p className="mt-1 text-xs text-gray-400">Manage the physical IEMs/beltpacks available for assignments.</p>
+                  ) : null}
                 </div>
-                {!isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
-                  <Button type="button" svg={Pencil} className="self-start sm:self-auto" aria-label="Edit IEMs" onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(true); }}>Edit</Button>
-                ) : null}
-                {isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
-                    <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { if (iemHasPendingChanges) setIemDraft(iemEquipment); setIsEditingIems(false); }}>{iemHasPendingChanges ? "Cancel" : "Close"}</Button>
-                    <Button type="button" variant="cta" svg={savingIems || !iemHasPendingChanges ? undefined : Save} aria-busy={savingIems || undefined} disabled={savingIems || hasIncompleteIem || !iemHasPendingChanges} aria-label={savingIems ? "Saving IEMs" : !iemHasPendingChanges ? "Saved IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : !iemHasPendingChanges ? <><Check aria-hidden="true" data-testid="iem-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
-                  </div>
-                ) : null}
-              </div>
-              <div className="mt-3">
+              </header>
+              <div
+                data-mobile-header-scroll-owner={equipmentCategory === "iems" ? "page" : undefined}
+                data-equipment-scrollport="iems"
+                className="scrollbar-variable min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-2 lg:flex-none lg:overflow-visible"
+              >
+                <p className="mb-2 text-xs text-gray-400">Manage the IEMs and beltpacks available for assignments.</p>
                 {loadingIems ? (
                   <p role="status" className="py-6 text-center text-sm text-gray-400">Loading IEMs…</p>
                 ) : iemLoadError ? (
                   <p role="alert" className="py-6 text-center text-sm text-amber-200">Could not load IEMs. Refresh the page to try again.</p>
                 ) : visibleIems.length ? (
-                  <div className={equipmentCatalogGridClassName}>
+                  <div className="mt-3 grid gap-2 lg:grid-cols-1">
                     {visibleIems.map((item, index) => {
                       const title = item.name.trim() || `IEM ${index + 1}`;
                       const isCustomSubtype = !isPresetServiceEquipmentSubtype(item.subtype);
                       return isEditingIems ? (
-                        <section key={item.id} aria-label={title} className="flex h-full flex-col gap-2 rounded-md border border-gray-800 bg-gray-900/60 p-2">
-                          <div className="flex items-center gap-2">
+                        <section
+                          key={item.id}
+                          data-equipment-editor-row
+                          aria-label={title}
+                          className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-800 bg-gray-900/60 p-2 lg:grid-cols-[auto_minmax(12rem,1fr)_minmax(0,18rem)_auto]"
+                        >
+                          <div className="col-span-1 flex min-w-0 items-center gap-2 lg:col-span-1">
                             <ServiceEquipmentIcon equipment={item} color={item.color} className="size-7 shrink-0" />
                             <div className="w-fit shrink-0 [&_button]:w-auto [&_button]:min-w-0 [&_button]:px-2">
                               <ColorField alpha={false} className="w-fit" label={`Color for ${title}`} hideLabel value={item.color || SERVICE_EQUIPMENT_DEFAULT_COLOR} onChange={(color) => updateIem(item.id, { color })} />
                             </div>
-                            <Button type="button" variant="tertiary" svg={Trash2} className={cn("ml-auto shrink-0", teamsRowIconButtonClassName)} padding={teamsRowIconButtonPadding} disabled={savingIems} aria-label={`Remove ${title}`} onClick={() => setIemDraft((current) => current.filter((entry) => entry.id !== item.id))} />
                           </div>
-                          <Input label="Name" hideLabel placeholder="Name" className="min-w-0 w-full" value={item.name} disabled={savingIems} onChange={(name) => updateIem(item.id, { name: String(name) })} />
-                          <Select label="Type" hideLabel className="w-full min-w-0" selectClassName="h-10" value={isCustomSubtype ? SERVICE_EQUIPMENT_CUSTOM_SUBTYPE : item.subtype || "wireless-beltpack"} options={serviceEquipmentSubtypeOptions.map(({ value, label }) => ({ value, label }))} disabled={savingIems} onChange={(subtype) => updateIem(item.id, { subtype: subtype === SERVICE_EQUIPMENT_CUSTOM_SUBTYPE ? (isPresetServiceEquipmentSubtype(item.subtype) ? "" : item.subtype) : subtype })} />
-                          {isCustomSubtype ? <Input label="Custom type" hideLabel placeholder="Custom type" className="min-w-0 w-full" value={item.subtype || ""} disabled={savingIems} onChange={(subtype) => updateIem(item.id, { subtype: String(subtype) })} /> : null}
+                          <Button type="button" variant="tertiary" svg={Trash2} className={cn("justify-self-end", teamsRowIconButtonClassName)} padding={teamsRowIconButtonPadding} disabled={savingIems} aria-label={`Remove ${title}`} onClick={() => setIemDraft((current) => current.filter((entry) => entry.id !== item.id))} />
+                          <Input id={`iem-name-${item.id}`} label="Name" hideLabel placeholder="Name" className="col-span-2 min-w-0 w-full lg:col-span-1" value={item.name} disabled={savingIems} onChange={(name) => updateIem(item.id, { name: String(name) })} />
+                          <div className="col-span-2 flex min-w-0 gap-2 lg:col-span-1">
+                            <Select label="Type" hideLabel className="w-full min-w-0 flex-1" selectClassName="h-10" value={isCustomSubtype ? SERVICE_EQUIPMENT_CUSTOM_SUBTYPE : item.subtype || "wireless-beltpack"} options={serviceEquipmentSubtypeOptions.map(({ value, label }) => ({ value, label }))} disabled={savingIems} onChange={(subtype) => updateIem(item.id, { subtype: subtype === SERVICE_EQUIPMENT_CUSTOM_SUBTYPE ? (isPresetServiceEquipmentSubtype(item.subtype) ? "" : item.subtype) : subtype })} />
+                            {isCustomSubtype ? <Input label="Custom type" hideLabel placeholder="Custom type" className="min-w-0 w-full flex-1" value={item.subtype || ""} disabled={savingIems} onChange={(subtype) => updateIem(item.id, { subtype: String(subtype) })} /> : null}
+                          </div>
                         </section>
                       ) : (
                         <div key={item.id} aria-label={title} className="flex items-center gap-2.5 rounded-md border border-gray-800 bg-gray-900/60 px-2.5 py-2">
@@ -312,18 +391,18 @@ const TeamsMicrophonesPage = () => {
                     })}
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-dashed border-gray-700 px-4 py-8 text-center">
+                  <div className="mt-3 rounded-lg border border-dashed border-gray-700 px-4 py-8 text-center">
                     <Headphones className="mx-auto size-6 text-gray-500" aria-hidden />
                     <p className="mt-2 text-sm font-medium text-gray-200">No IEMs yet</p>
                     <p className="mt-1 text-xs text-gray-400">Add the IEMs or beltpacks your teams use, then assign them to people and schedule positions.</p>
                   </div>
                 )}
+                {canEdit && isEditingIems && !loadingIems && !iemLoadError && hasIncompleteIem ? <p className="mt-2 text-xs text-amber-200" role="status">Add a name to each IEM before saving.</p> : null}
               </div>
-              {canEdit && isEditingIems && !loadingIems && !iemLoadError && hasIncompleteIem ? <p className="mt-2 text-xs text-amber-200" role="status">Add a name to each IEM before saving.</p> : null}
-            </section>
-          ) : null}
-        </div>
-      </section>
+            </div>
+          </section>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

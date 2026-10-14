@@ -1268,7 +1268,7 @@ const TeamsPlansCalendarPage = () => {
                 )
               }
             /> : (
-              <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+              <section data-mobile-header-scroll-owner="page" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
                 <div>
                   <h1 className="text-lg font-semibold text-white">
                     {selection.service.name}
@@ -1369,7 +1369,7 @@ const TeamsPlansCalendarPage = () => {
   }
 
   return (
-    <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <div data-mobile-header-scroll-owner="page" className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <ChurchServiceTimeZoneNotice area="Service Plans" />
       <div className="shrink-0 space-y-4">
         <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-md:p-2">
@@ -1973,7 +1973,7 @@ const SavedServicePlansDuringTimeZoneLoad = ({
   }
 
   return (
-    <main className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <main data-mobile-header-scroll-owner="page" className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <ChurchServiceTimeZoneNotice area="Service Plans" />
       <section aria-label="Saved service plans" className="space-y-3">
         <div>

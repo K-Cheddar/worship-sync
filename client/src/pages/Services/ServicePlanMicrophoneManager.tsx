@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Eye, Mic2, Pencil, Save, Trash2, X } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
@@ -175,6 +175,7 @@ type ServicePlanMicrophoneManagerProps = {
   onCancelEditing?: () => void;
   positionNoteOptions?: MicrophonePositionOption[];
   renderHeader?: (actions: MicrophoneEditorActions) => ReactNode;
+  equipmentPageLayout?: boolean;
 };
 
 const microphoneTitle = (microphone: ServicePlanMicrophone, index: number) =>
@@ -193,6 +194,7 @@ const ServicePlanMicrophoneManager = ({
   onCancelEditing,
   positionNoteOptions = [],
   renderHeader,
+  equipmentPageLayout = false,
 }: ServicePlanMicrophoneManagerProps) => {
   const [draft, setDraft] = useState<ServicePlanMicrophone[]>(microphones);
   const [audienceDraft, setAudienceDraft] = useState<ServicePlanMicrophoneAudience[]>(
@@ -200,6 +202,8 @@ const ServicePlanMicrophoneManager = ({
   );
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [isEditingVisibility, setIsEditingVisibility] = useState(false);
+  const [pendingFocusMicrophoneId, setPendingFocusMicrophoneId] = useState<string | null>(null);
+  const scrollFrameRef = useRef(0);
   const [visibilityTeamFilter, setVisibilityTeamFilter] = useState(readStoredTeamFilter);
   const normalizeByKey = <T,>(items: T[], getKey: (item: T) => string) =>
     [...items].sort((a, b) => getKey(a).localeCompare(getKey(b)));
@@ -320,8 +324,24 @@ const ServicePlanMicrophoneManager = ({
     await onSave(draft, microphoneAudiences, "microphones");
   };
 
-  const addMicrophone = () =>
-    setDraft((current) => [...current, createMicrophone()]);
+  const addMicrophone = () => {
+    const microphone = createMicrophone();
+    setDraft((current) => [...current, microphone]);
+    setPendingFocusMicrophoneId(microphone.id);
+  };
+
+  useLayoutEffect(() => {
+    if (!pendingFocusMicrophoneId) return undefined;
+    const input = document.getElementById(`microphone-name-${pendingFocusMicrophoneId}`);
+    input?.focus({ preventScroll: true });
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      input?.closest<HTMLElement>("[data-equipment-editor-row]")?.scrollIntoView?.({ block: "nearest" });
+      setPendingFocusMicrophoneId(null);
+    });
+    return () => {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+    };
+  }, [pendingFocusMicrophoneId]);
 
   const microphoneEditorActions: MicrophoneEditorActions = {
     disabled,
@@ -414,17 +434,18 @@ const ServicePlanMicrophoneManager = ({
     draft.length === 0 ? (
       emptyMicrophones
     ) : (
-      <div className={microphoneCatalogGridClassName}>
+      <div className={cn(microphoneCatalogGridClassName, "lg:grid-cols-1")}>
         {draft.map((microphone, index) => {
           const title = microphoneTitle(microphone, index);
           const isCustomType = !isPresetServicePlanMicrophoneType(microphone.type);
           return (
             <section
               key={microphone.id}
+              data-equipment-editor-row
               aria-label={title}
-              className="flex h-full flex-col gap-2 rounded-md border border-gray-800 bg-gray-900/60 p-2"
+              className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-800 bg-gray-900/60 p-2 lg:grid-cols-[auto_minmax(12rem,1fr)_minmax(0,18rem)_auto]"
             >
-              <div className="flex items-center gap-2">
+              <div className="col-span-1 flex min-w-0 items-center gap-2 lg:order-1">
                 <ServicePlanMicrophoneIcon
                   microphone={microphone}
                   color={microphone.color}
@@ -447,55 +468,58 @@ const ServicePlanMicrophoneManager = ({
                     />
                   </div>
                 )}
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  svg={Trash2}
-                  className={cn("ml-auto shrink-0", teamsRowIconButtonClassName)}
-                  padding={teamsRowIconButtonPadding}
-                  disabled={isLocked}
-                  aria-label={`Remove ${title}`}
-                  onClick={() => removeMicrophone(microphone.id)}
-                />
               </div>
+              <Button
+                type="button"
+                variant="tertiary"
+                svg={Trash2}
+                className={cn("justify-self-end lg:order-4", teamsRowIconButtonClassName)}
+                padding={teamsRowIconButtonPadding}
+                disabled={isLocked}
+                aria-label={`Remove ${title}`}
+                onClick={() => removeMicrophone(microphone.id)}
+              />
               <Input
+                id={`microphone-name-${microphone.id}`}
                 label="Name"
                 hideLabel
                 placeholder="Name"
-                className="min-w-0 w-full"
+                className="col-span-2 min-w-0 w-full lg:order-2 lg:col-span-1"
                 value={microphone.name}
                 disabled={isLocked}
                 onChange={(name) => updateMicrophone(microphone.id, { name: String(name) })}
               />
-              <Select
-                label="Type"
-                hideLabel
-                className="w-full min-w-0"
-                selectClassName="h-10"
-                value={
-                  isPresetServicePlanMicrophoneType(microphone.type)
-                    ? microphone.type
-                    : SERVICE_PLAN_MICROPHONE_CUSTOM_TYPE
-                }
-                options={servicePlanMicrophoneTypeOptions}
-                disabled={isLocked}
-                onChange={(type) => updateMicrophone(microphone.id, {
-                  type: type === SERVICE_PLAN_MICROPHONE_CUSTOM_TYPE ? "" : type,
-                })}
-              />
-              {isCustomType ? (
-                <Input
-                  label="Custom type"
+              <div className="col-span-2 flex min-w-0 gap-2 lg:order-3 lg:col-span-1">
+                <Select
+                  label="Type"
                   hideLabel
-                  placeholder="Custom type (e.g. Instrument mic)"
-                  className="min-w-0 w-full"
-                  value={microphone.type}
+                  className="w-full min-w-0 flex-1"
+                  selectClassName="h-10"
+                  value={
+                    isPresetServicePlanMicrophoneType(microphone.type)
+                      ? microphone.type
+                      : SERVICE_PLAN_MICROPHONE_CUSTOM_TYPE
+                  }
+                  options={servicePlanMicrophoneTypeOptions}
                   disabled={isLocked}
                   onChange={(type) => updateMicrophone(microphone.id, {
-                    type: String(type),
+                    type: type === SERVICE_PLAN_MICROPHONE_CUSTOM_TYPE ? "" : type,
                   })}
                 />
-              ) : null}
+                {isCustomType ? (
+                  <Input
+                    label="Custom type"
+                    hideLabel
+                    placeholder="Custom type (e.g. Instrument mic)"
+                    className="min-w-0 w-full flex-1"
+                    value={microphone.type}
+                    disabled={isLocked}
+                    onChange={(type) => updateMicrophone(microphone.id, {
+                      type: String(type),
+                    })}
+                  />
+                ) : null}
+              </div>
             </section>
           );
         })}
@@ -605,32 +629,38 @@ const ServicePlanMicrophoneManager = ({
   );
 
   return (
-    <div className="space-y-3">
+    <div className={equipmentPageLayout ? "flex min-h-0 flex-1 flex-col gap-0 lg:contents" : "space-y-3"}>
       {renderHeader ? renderHeader(microphoneEditorActions) : null}
-      {isEditing && hasIncompleteMicrophone ? (
-        <p className="text-xs text-amber-200" role="status">
-          Complete each microphone&apos;s name and type before saving.
-        </p>
-      ) : null}
-      {microphonesContent}
-
-      <Button
-        type="button"
-        variant="tertiary"
-        svg={Eye}
-        className="self-start"
-        aria-label={
-          hasUnsavedVisibilityChanges
-            ? "Mic note visibility (unsaved changes)"
-            : "Mic note visibility"
-        }
-        onClick={() => setVisibilityOpen(true)}
+      <div
+        data-mobile-header-scroll-owner={equipmentPageLayout ? "page" : undefined}
+        data-equipment-scrollport={equipmentPageLayout ? "microphones" : undefined}
+        className={equipmentPageLayout ? "scrollbar-variable min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-2 lg:overflow-visible" : undefined}
       >
-        Mic note visibility
-        {hasUnsavedVisibilityChanges ? (
-          <span className="ml-1 size-1.5 rounded-full bg-amber-400" aria-hidden />
+        {isEditing && hasIncompleteMicrophone ? (
+          <p className="mb-2 text-xs text-amber-200" role="status">
+            Complete each microphone&apos;s name and type before saving.
+          </p>
         ) : null}
-      </Button>
+        {microphonesContent}
+
+        <Button
+          type="button"
+          variant="tertiary"
+          svg={Eye}
+          className="mt-3 min-h-[44px]"
+          aria-label={
+            hasUnsavedVisibilityChanges
+              ? "Mic note visibility (unsaved changes)"
+              : "Mic note visibility"
+          }
+          onClick={() => setVisibilityOpen(true)}
+        >
+          Mic note visibility
+          {hasUnsavedVisibilityChanges ? (
+            <span className="ml-1 size-1.5 rounded-full bg-amber-400" aria-hidden />
+          ) : null}
+        </Button>
+      </div>
 
       <Sheet open={visibilityOpen} onOpenChange={setVisibilityOpen}>
         <SheetContent
