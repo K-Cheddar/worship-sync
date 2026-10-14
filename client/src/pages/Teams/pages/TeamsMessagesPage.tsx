@@ -523,7 +523,7 @@ const TeamsMessagesPage = () => {
   }
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6" aria-labelledby="teams-messages-heading">
+    <main data-mobile-header-scroll-owner="page" className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6" aria-labelledby="teams-messages-heading">
       <header className="space-y-1">
         <h1 id="teams-messages-heading" className="text-xl font-semibold text-white">Volunteer messages</h1>
         <p className="text-sm text-gray-300">Review the selected volunteers and messages before sending. Schedule changes only create drafts.</p>

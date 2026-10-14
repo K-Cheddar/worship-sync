@@ -111,6 +111,30 @@ describe("UserSection", () => {
     mockedUseChat.mockReturnValue(null);
   });
 
+  it("uses a compact responsive account summary with a 44px touch target", () => {
+    const globalInfo = createMockGlobalInfo({
+      user: "Alex Operator",
+      userEmail: "alex@example.com",
+      churchName: "Fixture Church",
+      sessionKind: "human",
+    });
+    const controllerInfo = createMockControllerContext();
+
+    render(
+      <GlobalInfoContext.Provider value={globalInfo as never}>
+        <ControllerInfoContext.Provider value={controllerInfo as never}>
+          <UserSection variant="responsiveCompact" />
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    );
+
+    const accountButton = screen.getByRole("button", { name: /Account: Alex Operator/i });
+    expect(accountButton).toHaveClass("min-h-[44px]!", "max-lg:min-h-[44px]!", "lg:min-h-0!");
+    expect(accountButton).toHaveTextContent("Synced");
+    expect(accountButton).toHaveTextContent("Alex");
+    expect(screen.getAllByText("Fixture Church").some((node) => node.classList.contains("max-lg:hidden"))).toBe(true);
+  });
+
   it("does not count displays in the active session total", () => {
     const globalInfo = createMockGlobalInfo({
       user: "Alex Operator",

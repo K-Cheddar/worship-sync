@@ -27,7 +27,7 @@ const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNa
     <Sheet open={open} onOpenChange={setOpen}>
       <Button
         variant="tertiary"
-        className="w-fit max-md:min-h-0 max-md:px-1 max-md:py-0.5"
+        className="w-fit max-lg:min-h-[44px]! max-lg:px-2 max-lg:py-1"
         aria-label="Open menu"
         aria-haspopup="dialog"
         svg={MenuIcon}

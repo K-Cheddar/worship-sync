@@ -12,7 +12,9 @@ const renderNavigation = (path = "/teams-and-services/members") => render(
   <MemoryRouter initialEntries={[path]}>
     <TeamsNavigationGuardProvider>
       <CurrentPath />
-      <TeamsMobileShortcuts secondary />
+      <TeamsMobileShortcuts secondary>
+        <section data-testid="routed-page" className="flex min-h-0 flex-1 flex-col" />
+      </TeamsMobileShortcuts>
       <TeamsMobileShortcuts />
     </TeamsNavigationGuardProvider>
   </MemoryRouter>,
@@ -36,7 +38,7 @@ it("selects the primary group and secondary page on a nested deep link", () => {
   expect(primary.getByRole("link", { name: "Teams" })).toHaveAttribute("href", "/teams-and-services/groups");
   expect(screen.getByRole("tab", { name: "Qualifications" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("tablist", { name: "Teams pages" })).toHaveAttribute("data-variant", "navigation");
-  expect(screen.getByRole("tabpanel")).toHaveClass("flex", "flex-col", "flex-1", "min-h-0");
+  expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
 });
 
 it("switches groups and secondary pages immediately", async () => {
@@ -73,7 +75,7 @@ it("selects Services for Equipment and keeps all primary items the same size", (
   expect(screen.getByRole("tab", { name: "Equipment" })).toHaveAttribute("aria-selected", "true");
 
   for (const link of links) {
-    expect(link).toHaveClass("h-14", "flex-1");
+    expect(link).toHaveClass("h-[56px]", "min-h-[44px]", "flex-1");
   }
   const selectedIconPill = within(primary.getByRole("link", { name: "Services" })).getByTestId("teams-primary-navigation-icon-pill");
   const inactiveIcon = within(primary.getByRole("link", { name: "Teams" })).getByTestId("teams-primary-navigation-icon-pill");
@@ -82,7 +84,7 @@ it("selects Services for Equipment and keeps all primary items the same size", (
   expect(inactiveIcon).not.toHaveClass("bg-cyan-500/15");
   expect(inactiveIcon).toHaveClass("text-gray-400");
   expect(primary.getByRole("link", { name: "Services" })).not.toHaveClass("border-cyan-400/40");
-  expect(primary.getByRole("link", { name: "Services" })).toHaveClass("font-semibold", "text-cyan-300");
+  expect(primary.getByRole("link", { name: "Services" })).toHaveClass("font-semibold", "text-white");
 });
 
 it("preserves scoped availability labels and hides unauthorized shortcuts", async () => {

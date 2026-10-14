@@ -1,6 +1,6 @@
 # Teams and Services navigation
 
-**Status:** Confirmed product intent. **Source:** Responsive Navigation Redesign request, 2026-10-13, refined by the Mobile Navigation Refinement request, 2026-10-14. The current request explicitly sets the mobile bottom bar to three destinations and keeps Home in the universal Menu.
+**Status:** Confirmed product intent. **Source:** Responsive Navigation Redesign request, 2026-10-13, refined by the Mobile Navigation Refinement request, 2026-10-14, and the Compact Mobile Toolbar and Navigation Layout request, 2026-10-14.
 
 ## Purpose and behavior
 
@@ -16,11 +16,17 @@ The mobile bottom bar contains Services, Scheduling, and Teams only. Home remain
 
 The full Menu drawer uses the same utilities and functional groups on all viewport sizes: Home, What's New, About, and interface zoom remain accessible. Menu → Home resolves to the existing Home page. The bottom bar ends when leaving this shell, including when opening Home.
 
-Mobile downward scrolling collapses the main header; upward scrolling, focus, and navigation reveal it. Secondary route tabs stay at the top and use the shared Tabs primitive. Their labels never compress, horizontal scrolling keeps the selected tab visible, and browser history controls the selected state. Focused editing and open overlays prevent scroll-driven collapse. Motion preferences and bottom safe areas are respected; the shell reserves only the fixed bar and safe-area height, and the fixed service-plan action bar uses the same clearance.
+For Teams and Services below the desktop sidebar breakpoint, a compact 48px application toolbar stays visible while scrolling. It contains the universal Menu and compact sync/account controls; the page title and icon are omitted because the secondary route tabs identify the page. Route tabs stay directly below the toolbar in normal layout flow. Only the page's content scrollport moves. The Service Plan keeps its own compact details affordance and plan actions available. At desktop widths, the existing full toolbar, title, icon, and church branding remain unchanged. Other shared-shell consumers keep their current layout; optional header collapse support remains available to pages that explicitly opt in. The shell reserves the fixed bottom bar and safe-area height, and the fixed service-plan action bar uses the same clearance.
+
+Secondary route tabs use the shared Tabs primitive; labels never compress, horizontal scrolling keeps the selected tab visible, and browser history controls the selected state. The mobile bottom bar and menu behavior are unchanged.
 
 ## Boundaries
 
 No pages are combined. Authorization and direct-route enforcement, data models, persisted navigation routes, lazy loading, workflows, and API behavior remain unchanged. Controller, projector, monitor, stream, public pages, authentication, and Home layouts are outside this redesign.
+
+## Product decisions
+
+- **2026-10-14 — Keep the Teams and Services toolbar visible while scrolling.** Approved behavior: use a compact, always-visible toolbar below the desktop sidebar breakpoint, remove the page title/icon from that row, keep route tabs directly below it, and let only the content scrollport move. Preserve the current desktop toolbar and other shared-shell layouts. The request identifies header collapse and sticky collisions as the source of layout instability and asks for more space in Service Plan while keeping its controls accessible. **Approval source:** Compact Mobile Toolbar and Navigation Layout request, 2026-10-14.
 
 ## Verification references
 

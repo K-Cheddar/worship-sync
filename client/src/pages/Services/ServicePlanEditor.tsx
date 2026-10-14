@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent } from "react";
 import {
   ArrowLeft,
   Check,
@@ -93,7 +93,10 @@ import { showApiErrorToast } from "../../utils/apiErrorToast";
 import { keepElementInView } from "../../utils/generalUtils";
 import { serverNow } from "../../utils/serverTime";
 import useFollowLiveScroll from "../../hooks/useFollowLiveScroll";
-import { ANIMATE_COLLAPSE_DURATION_MS } from "../../components/AnimateCollapse/AnimateCollapse";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
+import AnimateCollapse, {
+  ANIMATE_COLLAPSE_DURATION_MS,
+} from "../../components/AnimateCollapse/AnimateCollapse";
 import { useSyncOnReconnect } from "../../hooks/useSyncOnReconnect";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
 import {
@@ -702,9 +705,15 @@ const ServicePlanEditor = ({
   // Compact read layout by default; Edit switches to stacked/editable fields.
   const [isEditing, setIsEditing] = useState(initialEditing);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [compactServiceHeader, setCompactServiceHeader] = useState(false);
   // Service-level equipment lives beside the running order rather than inside it.
   const [planTab, setPlanTab] = useState<ServicePlanEditorTab>(initialTab);
   const servicePlanScrollRef = useRef<HTMLDivElement | null>(null);
+  const servicePlanScrollTopRef = useRef(0);
+  const servicePlanScrollIntentUntilRef = useRef(0);
+  const servicePlanUpwardScrollRef = useRef(0);
+  const isDesktopLayout = useMediaQuery("(min-width: 1024px)");
+  const isMobileHeaderCompact = compactServiceHeader && !isDesktopLayout;
   const planTabPlanKeyRef = useRef(planKey);
   const [planActionsOpen, setPlanActionsOpen] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
@@ -2195,7 +2204,7 @@ const ServicePlanEditor = ({
   const hasUsefulSummary = hasFillStats || hasMicStats || hasIemStats;
   const hasSummaryDetails = hasMicStats || hasIemStats;
   const workspaceSummary = hasUsefulSummary ? (
-    <div className="shrink-0 rounded-lg border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5 text-xs" aria-label="Service summary">
+    <div id="service-plan-summary" className="shrink-0 rounded-lg border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5 text-xs" aria-label="Service summary">
       <div className="flex min-h-6 flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium text-gray-100">{plan || hasSections ? "Plan ready" : "Plan needs work"}</span>
         {hasFillStats ? (
@@ -2471,7 +2480,7 @@ const ServicePlanEditor = ({
   const {
     isFollowingLive,
     pauseLiveFollow,
-    handleScroll: handlePlanScroll,
+    handleScroll: handleFollowLiveScroll,
     notePointerScrollIntent,
     handleKeyDown,
     resumeFollowing,
@@ -2491,6 +2500,71 @@ const ServicePlanEditor = ({
     isItemVisible: isServicePlanLiveItemVisible,
     scrollToItem: centerServicePlanLiveItem,
   });
+
+  useEffect(() => {
+    setCompactServiceHeader(false);
+    servicePlanScrollTopRef.current = servicePlanScrollRef.current?.scrollTop ?? 0;
+    servicePlanUpwardScrollRef.current = 0;
+  }, [planKey]);
+
+  const noteServicePlanScrollIntent = () => {
+    servicePlanScrollIntentUntilRef.current = Date.now() + 1_000;
+  };
+
+  const handlePlanScroll = (event: UIEvent<HTMLDivElement>) => {
+    handleFollowLiveScroll(event);
+    const scrollport = servicePlanScrollRef.current;
+    if (!scrollport || event.target !== scrollport) return;
+
+    const next = Math.max(0, scrollport.scrollTop);
+    const delta = next - servicePlanScrollTopRef.current;
+    servicePlanScrollTopRef.current = next;
+    if (activeTab !== "plan" || isDesktopLayout) return;
+
+    const hasFocusedEditor = document.activeElement?.matches(
+      'input, textarea, select, [contenteditable="true"]',
+    );
+    const hasOpenOverlay = document.querySelector(
+      '[role="dialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]',
+    );
+    if (Date.now() > servicePlanScrollIntentUntilRef.current || hasFocusedEditor || hasOpenOverlay) {
+      servicePlanUpwardScrollRef.current = 0;
+      return;
+    }
+
+    if (delta > 0) {
+      servicePlanUpwardScrollRef.current = 0;
+      if (next > 48) setCompactServiceHeader(true);
+    } else if (delta < 0) {
+      servicePlanUpwardScrollRef.current += Math.abs(delta);
+      if (next <= 0 || servicePlanUpwardScrollRef.current >= 48) {
+        servicePlanUpwardScrollRef.current = 0;
+        setCompactServiceHeader(false);
+      }
+    }
+  };
+
+  const handlePlanPointerDown = (event: { target: EventTarget | null }) => {
+    noteServicePlanScrollIntent();
+    notePointerScrollIntent(event);
+  };
+
+  const handlePlanWheel = (event: { target: EventTarget | null }) => {
+    noteServicePlanScrollIntent();
+    pauseLiveFollow(event);
+  };
+
+  const handlePlanTouchMove = (event: { target: EventTarget | null }) => {
+    noteServicePlanScrollIntent();
+    pauseLiveFollow(event);
+  };
+
+  const handlePlanKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) {
+      noteServicePlanScrollIntent();
+    }
+    handleKeyDown(event);
+  };
 
   const liveStartedAt = getServicePlanLiveStartedAt(plan);
   const liveStartedAtLabel = liveStartedAt && planTimezone
@@ -3044,10 +3118,10 @@ const ServicePlanEditor = ({
           <div
             className="relative flex min-h-0 min-w-0 flex-1"
             onScrollCapture={handlePlanScroll}
-            onWheel={pauseLiveFollow}
-            onTouchMove={pauseLiveFollow}
-            onPointerDown={notePointerScrollIntent}
-            onKeyDown={handleKeyDown}
+            onWheel={handlePlanWheel}
+            onTouchMove={handlePlanTouchMove}
+            onPointerDown={handlePlanPointerDown}
+            onKeyDown={handlePlanKeyDown}
           >
             <ServicePlanSectionList
               sections={sections}
@@ -3059,6 +3133,7 @@ const ServicePlanEditor = ({
               selection={selectedPlanTarget}
               onSelectionChange={setSelectedPlanTarget}
               scrollId={SERVICE_PLAN_LIST_SCROLL_ID}
+              mobileHeaderScrollOwner={activeTab === "plan"}
               scrollContainerRef={servicePlanScrollRef}
               reviewingElementId={ambiguityDialog?.elementIds[0] ?? null}
               isFollowingLive={isFollowingLive}
@@ -3229,8 +3304,13 @@ const ServicePlanEditor = ({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-700/80 bg-gray-950/70">
       {showChrome || plan || hasSections || canSwitchOccurrence ? (
-        <header className="shrink-0 space-y-2 border-b border-gray-800 px-3 py-2">
-          {showChrome ? (
+        <header
+          className={cn(
+            "shrink-0 space-y-2 border-b border-gray-800 px-3 py-2",
+            isMobileHeaderCompact && "max-md:space-y-0 max-md:py-1",
+          )}
+        >
+          {showChrome && !isMobileHeaderCompact ? (
             <div className="flex items-center justify-between gap-2">
               <Button
                 type="button"
@@ -3272,17 +3352,78 @@ const ServicePlanEditor = ({
               ) : null}
             </div>
           ) : null}
-          <div className="flex items-start justify-between gap-2">
+          <div className={cn("flex justify-between gap-2", isMobileHeaderCompact ? "items-center" : "items-start")}>
+            {showChrome && isMobileHeaderCompact ? (
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  svg={ArrowLeft}
+                  iconSize="sm"
+                  className="max-md:min-h-0 max-md:min-w-0 max-md:px-2"
+                  aria-label={backLabel}
+                  title={backLabel}
+                  onClick={onBack}
+                >
+                  <span className="sr-only">{backLabel}</span>
+                </Button>
+                {planNavigation ? (
+                  <div className="flex items-center gap-0.5" role="group" aria-label="Plan navigation">
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={ChevronLeft}
+                      iconSize="sm"
+                      className="max-md:min-h-0 max-md:min-w-0 max-md:px-1.5"
+                      aria-label="Previous plan"
+                      disabled={!planNavigation.onPrevious}
+                      onClick={planNavigation.onPrevious}
+                    />
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={ChevronRight}
+                      iconSize="sm"
+                      className="max-md:min-h-0 max-md:min-w-0 max-md:px-1.5"
+                      aria-label="Next plan"
+                      disabled={!planNavigation.onNext}
+                      onClick={planNavigation.onNext}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-base font-semibold text-gray-50 sm:text-lg">
-                {occurrence.name || service.name}
-              </h2>
-              <p className="mt-0.5 text-xs text-gray-400">{occurrenceTiming}</p>
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-50 sm:text-lg">
+                  {occurrence.name || service.name}
+                </h2>
+                {isMobileHeaderCompact ? (
+                  <Button
+                    type="button"
+                    variant="tertiary"
+                    svg={ChevronDown}
+                    iconSize="sm"
+                    className="shrink-0 max-md:min-h-0"
+                    aria-controls="service-plan-full-details service-plan-summary"
+                    aria-expanded={false}
+                    aria-label="Show service details"
+                    onClick={() => setCompactServiceHeader(false)}
+                  >
+                    Details
+                  </Button>
+                ) : null}
+              </div>
+              <AnimateCollapse open={!isMobileHeaderCompact}>
+                <div id="service-plan-full-details">
+                  <p className="mt-0.5 text-xs text-gray-400">{occurrenceTiming}</p>
                   {!planTimezone ? (
                     <p className="mt-1 text-xs text-amber-200" role="note">
                       Plan dates and new service-date actions are unavailable until a valid church time zone is set.
                     </p>
                   ) : null}
+                </div>
+              </AnimateCollapse>
             </div>
             {plan || hasSections || canSwitchOccurrence ? (
               <div className="flex shrink-0 items-center gap-1.5">
@@ -3383,7 +3524,7 @@ const ServicePlanEditor = ({
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
-        {showSummary ? workspaceSummary : null}
+        {showSummary && !isMobileHeaderCompact ? workspaceSummary : null}
         <Tabs
           value={activeTab}
           onValueChange={(next) => setPlanTab(next as ServicePlanEditorTab)}
@@ -3457,7 +3598,8 @@ const ServicePlanEditor = ({
           {showEquipmentTab ? (
             <TabsContent
               value="equipment"
-              className="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
+            data-mobile-header-scroll-owner={activeTab === "equipment" ? "page" : undefined}
+            className="scrollbar-variable min-h-0 flex-1 overflow-y-auto"
             >
               <TeamEquipmentPanel
                 rows={equipmentRows}
@@ -3480,6 +3622,7 @@ const ServicePlanEditor = ({
           {showServingTab ? (
             <TabsContent
               value="serving"
+            data-mobile-header-scroll-owner={activeTab === "serving" ? "page" : undefined}
               className="scrollbar-variable min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-700 bg-black/20 p-3"
             >
               {mobileServingContent}

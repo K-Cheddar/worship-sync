@@ -3,7 +3,6 @@ import { useLocation } from "react-router-dom";
 import Icon from "../../../components/Icon/Icon";
 import {
   Tabs,
-  TabsContent,
   TabsList,
   TabsTrigger,
 } from "../../../components/ui/tabs";
@@ -56,7 +55,7 @@ const TeamsMobileShortcuts = ({
       const selected = strip.querySelector<HTMLElement>('[data-state="active"]');
       if (!selected) return;
       const tab = selected.getBoundingClientRect();
-      const viewport = strip.getBoundingClientRect();
+      const viewport = shell.getBoundingClientRect();
       if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left;
       else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right;
     };
@@ -65,6 +64,8 @@ const TeamsMobileShortcuts = ({
     const observer = new ResizeObserver(revealSelected);
     observer.observe(shell);
     observer.observe(strip);
+    const selected = strip.querySelector<HTMLElement>('[data-state="active"]');
+    if (selected) observer.observe(selected);
     return () => observer.disconnect();
   }, [activePath, activeGroup?.label, activeSection?.path]);
 
@@ -72,50 +73,47 @@ const TeamsMobileShortcuts = ({
     if (!activeGroup || !activeSection) return <>{children}</>;
 
     return (
-      <Tabs
-        value={activeSection.path}
-        onValueChange={requestNavigation}
-        className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-0"
-      >
-        <nav
-          ref={tabsRef}
-          aria-label={`${activeGroup.label} pages`}
-          className="sticky top-0 z-20 shrink-0 bg-gray-950 lg:hidden"
-        >
-          <TabsList
-            variant="navigation"
-            aria-label={`${activeGroup.label} pages`}
-          >
-            {activeGroup.sections.map((section) => (
-              <TabsTrigger
-                key={section.path}
-                value={section.path}
-                aria-busy={
-                  pendingPathname &&
-                  matchesTeamsNavPath(pendingPathname, section.path)
-                    ? true
-                    : undefined
-                }
-              >
-                {section.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </nav>
-        <TabsContent
+      <>
+        <Tabs
           value={activeSection.path}
-          className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
+          onValueChange={requestNavigation}
+          className="contents"
         >
-          {children}
-        </TabsContent>
-      </Tabs>
+          <nav
+            ref={tabsRef}
+            aria-label={`${activeGroup.label} pages`}
+            className="shrink-0 bg-gray-950 lg:hidden"
+          >
+            <TabsList
+              variant="navigation"
+              aria-label={`${activeGroup.label} pages`}
+            >
+              {activeGroup.sections.map((section) => (
+                <TabsTrigger
+                  key={section.path}
+                  value={section.path}
+                  aria-busy={
+                    pendingPathname &&
+                    matchesTeamsNavPath(pendingPathname, section.path)
+                      ? true
+                      : undefined
+                  }
+                >
+                  {section.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </nav>
+        </Tabs>
+        {children}
+      </>
     );
   }
 
   return (
     <nav
       aria-label="Primary navigation"
-      className="fixed inset-x-0 bottom-0 z-30 flex h-[var(--teams-bottom-navigation-height)] items-center border-t border-gray-800/80 bg-gray-950 pl-[max(0.25rem,env(safe-area-inset-left))] pr-[max(0.25rem,env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] pt-1 lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[var(--teams-bottom-navigation-height)] items-center border-t border-gray-800/80 bg-gray-950 pl-[max(0.25rem,env(safe-area-inset-left))] pr-[max(0.25rem,env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] lg:hidden"
     >
       {groups.map((group) => {
         const selected = activeGroup?.label === group.label;
@@ -126,9 +124,9 @@ const TeamsMobileShortcuts = ({
             active={selected}
             aria-label={group.label}
             className={cn(
-              "flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-none border-0 px-1 py-1 text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-cyan-300",
+              "flex h-[56px] min-h-[44px] min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-none border-0 px-1 py-1 text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-cyan-300",
               selected
-                ? "font-semibold text-cyan-300"
+                ? "font-semibold text-white"
                 : "font-medium text-gray-400 hover:text-gray-200",
             )}
           >
@@ -136,7 +134,7 @@ const TeamsMobileShortcuts = ({
               aria-hidden="true"
               data-testid="teams-primary-navigation-icon-pill"
               className={cn(
-                "flex h-8 min-w-11 items-center justify-center rounded-full px-3 transition-colors",
+                "flex h-[30px] w-[60px] items-center justify-center rounded-full transition-colors",
                 selected ? "bg-cyan-500/15 text-cyan-300" : "text-gray-400",
               )}
             >
