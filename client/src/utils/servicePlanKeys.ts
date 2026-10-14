@@ -12,6 +12,7 @@ import { getOccurrenceDate } from "./teamScheduleOccurrences";
  * (safe since one recurrence rule yields at most one instance per calendar date).
  */
 export const getServicePlanKey = (occurrence: TeamScheduleOccurrence): string => {
+  if (occurrence.logicalOccurrenceId) return occurrence.logicalOccurrenceId;
   const date = getOccurrenceDate(occurrence);
   return occurrence.groupId
     ? `group:${occurrence.groupId}@${date}`

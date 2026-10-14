@@ -9,6 +9,7 @@ import { ToastProvider } from "../../../context/toastContext";
 import { createMockGlobalContext } from "../../../test/mocks";
 import {
   getServicePlan,
+  getServicePlanAssignments,
   getServicePlanAssignmentHistory,
   getServicePlanMicrophones,
   getServiceEquipment,
@@ -21,6 +22,7 @@ import {
 import type { TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { formatPlainDate } from "../../../utils/plainDate";
+import { plainTextToRichText } from "../../../types/richText";
 import { setServerTimeOffset } from "../../../utils/serverTime";
 import { formatResolvedDateRange } from "../rangeSelection";
 import { writePlansFilterPreferences } from "../plansFilterPersistence";
@@ -35,6 +37,7 @@ jest.mock("../../../api/auth", () => ({
   // The nested ServicePlanEditor still uses this API outside the bulk flow.
   listServicePlanTemplates: jest.fn(),
   getServicePlan: jest.fn(),
+  getServicePlanAssignments: jest.fn(),
   getServicePlanAssignmentHistory: jest.fn(),
   saveServicePlan: jest.fn(),
   saveServicePlanAssignmentHistory: jest.fn(),
@@ -148,12 +151,24 @@ jest.mock("../TeamsPageContext", () => ({
   useTeamsPage: () => ({ ...mockUseTeamsPage(), templates: mockTemplatesResource }),
 }));
 
+const mockChurchServiceTimeZone = {
+  status: "ready" as "loading" | "ready" | "error",
+  timeZone: "America/New_York" as string | null,
+  isConfigured: true,
+  legacyTimeZoneSuggestion: null,
+  refresh: jest.fn(),
+};
+jest.mock("../../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => mockChurchServiceTimeZone,
+}));
+
 const mockGetServicePlan = jest.mocked(getServicePlan);
 const mockGetServicePlanMicrophones = jest.mocked(getServicePlanMicrophones);
 const mockGetServiceEquipment = jest.mocked(getServiceEquipment);
 const mockUpdateTeamScheduleAssignmentMicrophones = jest.mocked(updateTeamScheduleAssignmentMicrophones);
 const mockUpdateTeamScheduleAssignmentIems = jest.mocked(updateTeamScheduleAssignmentIems);
 const mockGetServicePlanAssignmentHistory = jest.mocked(getServicePlanAssignmentHistory);
+const mockGetServicePlanAssignments = jest.mocked(getServicePlanAssignments);
 const mockListServicePlanTemplates = jest.mocked(listServicePlanTemplates);
 const mockListServicePlans = jest.mocked(listServicePlans);
 const mockSaveServicePlan = jest.mocked(saveServicePlan);
@@ -211,6 +226,9 @@ describe("TeamsPlansPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockChurchServiceTimeZone.status = "ready";
+    mockChurchServiceTimeZone.timeZone = "America/New_York";
+    mockChurchServiceTimeZone.isConfigured = true;
     localStorage.clear();
     mockTemplatesResource = {
       data: [],
@@ -230,7 +248,9 @@ describe("TeamsPlansPage", () => {
         schedules: [],
         members: [],
       },
+      serviceTimeZone: "America/New_York",
       canEditTeams: true,
+      hasTeamsWorkspaceAccess: true,
       hydrateSchedules: mockHydrateSchedules,
       hydratingScheduleIds: [],
       upsertData: mockUpsertData,
@@ -239,6 +259,7 @@ describe("TeamsPlansPage", () => {
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
     mockListServicePlanTemplates.mockResolvedValue({ success: true, templates: [] });
     mockGetServicePlan.mockResolvedValue({ success: true, servicePlan: null });
+    mockGetServicePlanAssignments.mockResolvedValue({ success: true, assignments: [] });
     mockGetServicePlanAssignmentHistory.mockResolvedValue({ success: true, values: [] });
     mockSaveServicePlan.mockResolvedValue({
       success: true,
@@ -280,6 +301,59 @@ describe("TeamsPlansPage", () => {
     expect(await screen.findByRole("heading", { name: "Apply plan templates" })).toBeInTheDocument();
     expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1);
     expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
+  });
+
+  it("keeps existing plans readable when no church time zone is available", async () => {
+    const user = userEvent.setup();
+    mockChurchServiceTimeZone.status = "error";
+    mockChurchServiceTimeZone.timeZone = null;
+    mockChurchServiceTimeZone.isConfigured = false;
+    mockUseTeamsPage.mockReturnValue({
+      ...mockUseTeamsPage(),
+      serviceTimeZone: "",
+    });
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [{
+        planKey: "sabbath@2026-10-10",
+        serviceId: "sabbath",
+        date: "2026-10-10",
+        startsAt: "2026-10-10T14:00:00.000Z",
+        name: "Saved Sabbath plan",
+      }],
+    });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::sabbath@2026-10-10",
+        churchId: "church-1",
+        planKey: "sabbath@2026-10-10",
+        serviceId: "sabbath",
+        date: "2026-10-10",
+        startsAt: "2026-10-10T14:00:00.000Z",
+        timezone: "America/New_York",
+        name: "Saved Sabbath plan",
+        sections: [{
+          id: "saved-section",
+          name: "Saved order",
+          elements: [{
+            id: "saved-item",
+            type: "free",
+            title: plainTextToRichText("Saved order content"),
+          }],
+        }],
+      } as never,
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Saved plans" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Saved Sabbath plan.*2026-10-10/ })).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/date-based Service Plans actions are unavailable/i);
+    await user.click(screen.getByRole("button", { name: /Saved Sabbath plan.*2026-10-10/ }));
+
+    expect(await screen.findByRole("heading", { name: "Saved Sabbath plan" })).toBeInTheDocument();
+    expect(mockGetServicePlan).toHaveBeenCalledWith("church-1", "sabbath@2026-10-10");
   });
 
   it("shows one compact editable custom range input and opens its calendar", async () => {
@@ -526,6 +600,44 @@ describe("TeamsPlansPage", () => {
     expect(screen.queryByRole("button", { name: /^Done$/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^Edit$/i }));
     expect(screen.getByRole("button", { name: /^Done$/i })).toBeInTheDocument();
+  });
+
+  it("shows Services-only users plan-scoped serving names without schedule access", async () => {
+    const user = userEvent.setup();
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [{
+        planKey: `easter@${oneTimePlainDate}`,
+        serviceId: "easter",
+        date: oneTimePlainDate,
+        name: "Easter Sunday",
+      }],
+    });
+    mockGetServicePlanAssignments.mockResolvedValue({
+      success: true,
+      assignments: [{
+        teamId: "worship",
+        teamName: "Worship",
+        role: "Keys",
+        name: "Avery Stone",
+      }],
+    });
+    mockUseTeamsPage.mockReturnValue({
+      ...mockUseTeamsPage(),
+      hasTeamsWorkspaceAccess: false,
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Open plan for .*Easter Sunday/i }));
+    await user.click(await screen.findByRole("tab", { name: "People / Who's serving" }));
+
+    expect(await screen.findByText("Avery Stone")).toBeInTheDocument();
+    expect(screen.getByText("Worship")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View schedule" })).not.toBeInTheDocument();
+    expect(mockGetServicePlanAssignments).toHaveBeenCalledWith(
+      "church-1",
+      `easter@${oneTimePlainDate}`,
+    );
   });
 
   it("opens the plan editor for a clicked date and can navigate back to the list", async () => {
@@ -1106,10 +1218,10 @@ describe("TeamsPlansPage", () => {
 
   it("resolves Upcoming from the server date across midnight", () => {
     jest.useFakeTimers();
-    jest.setSystemTime(new Date(2026, 9, 31, 23, 30));
+    jest.setSystemTime(new Date("2026-10-31T23:30:00-04:00"));
     setServerTimeOffset(2 * 60 * 60 * 1000);
     const lateOctoberService = oneTimeService("late-october", "Late October", "2026-10-31");
-    lateOctoberService.dateTimeISO = new Date(2026, 9, 31, 23, 45).toISOString();
+    lateOctoberService.dateTimeISO = new Date("2026-10-31T23:45:00-04:00").toISOString();
     useServices([lateOctoberService]);
 
     renderPage();

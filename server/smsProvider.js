@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { normalizeSmsDeliveryStatus } from "./smsDeliveryAttempts.js";
 
 export const TWILIO_STATUS_CALLBACK_PATH = "/api/webhooks/twilio/sms-status";
+export const SMS_PROVIDER_REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Production must use one configured public URL for both Twilio sends and
@@ -121,13 +122,12 @@ export const createTwilioSmsProvider = ({
   // Twilio's SDK accepts parent SID + parent token plus the target subaccount
   // SID as `{ accountSid }`. This keeps subaccount targeting at the provider
   // boundary; church/domain code never needs to know credential mechanics.
-  const client = clientFactory(
-    normalizedParentAccountSid,
-    normalizedAuthToken,
-    normalizedAccountSid !== normalizedParentAccountSid
+  const client = clientFactory(normalizedParentAccountSid, normalizedAuthToken, {
+    ...(normalizedAccountSid !== normalizedParentAccountSid
       ? { accountSid: normalizedAccountSid }
-      : undefined,
-  );
+      : {}),
+    timeout: SMS_PROVIDER_REQUEST_TIMEOUT_MS,
+  });
   return {
     provider: "twilio",
     async sendMessage({ to, body, statusCallbackUrl } = {}) {

@@ -135,6 +135,60 @@ export const servicesNavSections: TeamsNavSection[] = [
 
 const allTeamsNavSections = [...teamsNavSections, ...servicesNavSections];
 
+export type TeamsNavCapabilities = {
+  hasTeamsWorkspaceAccess: boolean;
+  hasBroadTeamsReadAccess: boolean;
+  canViewServices: boolean;
+  canManageTeamAvailability?: boolean;
+};
+
+/** One permission model for both navigation layouts and nested route guards. */
+export const getAvailableTeamsNavSections = ({
+  hasTeamsWorkspaceAccess,
+  hasBroadTeamsReadAccess,
+  canViewServices,
+  canManageTeamAvailability = false,
+}: TeamsNavCapabilities): TeamsNavSection[] => {
+  if (!hasTeamsWorkspaceAccess && !canViewServices) return [];
+
+  const availableTeamsSections = hasTeamsWorkspaceAccess
+    ? teamsNavSections
+        .filter((section) =>
+          hasBroadTeamsReadAccess ||
+          (section.routePath !== "messages" &&
+            (section.routePath !== "forms" || canManageTeamAvailability)),
+        )
+        .map((section) =>
+          section.routePath === "forms" &&
+          !hasBroadTeamsReadAccess &&
+          canManageTeamAvailability
+            ? {
+                ...section,
+                label: "Availability",
+                description: "Collect service-date availability from your team.",
+              }
+            : section,
+        )
+    : [];
+  return [
+    ...availableTeamsSections,
+    ...(canViewServices ? servicesNavSections : []),
+  ];
+};
+
+export const isTeamsNavPathAvailable = (
+  pathname: string,
+  availableSections: TeamsNavSection[],
+) =>
+  availableSections.some(
+    (section) =>
+      pathname === section.path || pathname.startsWith(`${section.path}/`),
+  );
+
+export const getFirstAvailableTeamsNavPath = (
+  availableSections: TeamsNavSection[],
+) => availableSections[0]?.path ?? teamsNavSections[0].path;
+
 export const getActiveTeamsNavSection = (pathname: string) =>
   allTeamsNavSections.find(
     (section) =>

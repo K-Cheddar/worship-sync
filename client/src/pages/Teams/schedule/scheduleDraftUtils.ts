@@ -9,7 +9,11 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import { clampPlainDateToMin } from "@/utils/plainDate";
-import { getDefaultScheduleRange } from "@/utils/teamScheduleOccurrences";
+import {
+  getDefaultScheduleRange,
+  getOccurrenceDate,
+  preserveStoredOccurrenceIds,
+} from "@/utils/teamScheduleOccurrences";
 
 export type ScheduleFormMode = "edit" | "create-custom" | "copy";
 
@@ -19,10 +23,12 @@ export const canRefreshScheduleOccurrences = ({
   schedule,
   services,
   regeneratedOccurrences,
+  timeZone = "UTC",
 }: {
   schedule: TeamSchedule;
   services: TeamService[];
   regeneratedOccurrences: TeamScheduleOccurrence[];
+  timeZone?: string;
 }) => {
   const availableServiceIds = new Set(services.map((service) => service.serviceId));
   const storedServiceIds = new Set([
@@ -31,7 +37,8 @@ export const canRefreshScheduleOccurrences = ({
       occurrence.serviceIds || [occurrence.serviceId]),
   ]);
   return [...storedServiceIds].every((id) => availableServiceIds.has(id)) &&
-    (!(schedule.occurrences?.length) || regeneratedOccurrences.length > 0);
+    regeneratedOccurrences.length > 0 &&
+    preserveStoredOccurrenceIds(schedule.occurrences || [], regeneratedOccurrences, timeZone) !== null;
 };
 
 export const getScheduleCopyDraftKey = (sourceScheduleId: string) =>
@@ -315,7 +322,7 @@ export const buildScheduleCopyDraft = ({
 });
 
 const occurrenceDate = (occurrence: TeamScheduleOccurrence) =>
-  occurrence.startsAt.slice(0, 10);
+  getOccurrenceDate(occurrence);
 
 const occurrenceServiceIds = (occurrence: TeamScheduleOccurrence) =>
   occurrence.serviceIds?.length
@@ -458,6 +465,7 @@ export type ScheduleEditFormProps = {
    */
   seedSchedules: (TeamSchedule | TeamScheduleSummary)[];
   churchId: string;
+  serviceTimeZone?: string;
   canEdit: boolean;
   onDraftChange: (draftKey: string, draft: TeamSchedulePayload) => void;
   onDraftFlush: (draftKey: string, draft: TeamSchedulePayload) => void;

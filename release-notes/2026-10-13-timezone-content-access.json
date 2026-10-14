@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-13-timezone-content-access",
+  "date": "2026-10-13",
+  "type": "improved",
+  "title": "Keep plans and forms available",
+  "description": "Saved Service Plans load reliably with their saved time zone. Plans and Availability Forms remain readable when the church time zone is unavailable, with date changes waiting for a valid setting."
+}

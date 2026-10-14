@@ -39,6 +39,7 @@ type EntityMultiSelectProps = {
   options: EntityMultiSelectOption[];
   value: string[];
   onChange: (value: string[]) => void;
+  disabled?: boolean;
   /** Show the search box once there are at least this many options. */
   searchThreshold?: number;
   showSearch?: boolean;
@@ -78,6 +79,7 @@ const EntityMultiSelect = ({
   options,
   value,
   onChange,
+  disabled = false,
   searchThreshold = 6,
   showSearch = true,
   emptyText = "Nothing to choose yet.",
@@ -179,6 +181,7 @@ const EntityMultiSelect = ({
     // accessible name. Name the group explicitly so screen readers and tests
     // can tell one list from another.
     <fieldset
+      disabled={disabled}
       className={cn("min-w-0", isBoard && boardIntakeFieldsetClassName)}
       aria-label={label}
     >

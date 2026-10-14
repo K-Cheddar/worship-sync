@@ -68,7 +68,7 @@ export const formatMemberTeamsAccessSummary = (
     if (teamsAccess === "view") {
       return "View all teams (read-only)";
     }
-    return "No Teams access";
+    return "No global Teams access";
   }
 
   const scopedEditLabel = `Can edit ${scopedTeamNames.join(", ")}`;

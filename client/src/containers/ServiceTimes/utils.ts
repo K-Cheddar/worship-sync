@@ -20,18 +20,21 @@ export const ordinals: { label: string; value: MonthWeekOrdinal }[] = [
   { label: "5th (last)", value: 5 },
 ];
 
-export const formatOneTime = (iso?: string) => {
+export const formatOneTime = (iso?: string, timeZone = "UTC") => {
   if (!iso) return "";
   const d = new Date(iso);
   const dateStr = d.toLocaleDateString(undefined, {
+    timeZone,
     year: "numeric",
     month: "long",
     day: "numeric",
   });
   const timeStr = d.toLocaleTimeString(undefined, {
+    timeZone,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZoneName: "short",
   });
   return `${dateStr} @ ${timeStr}`;
 };

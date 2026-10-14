@@ -39,6 +39,9 @@ import type {
   SmsDeliveryAttempt,
   NotificationIntent,
   NotificationBatch,
+  TeamAvailabilityResponse,
+  TeamSchedule,
+  TeamScheduleSummary,
 } from "../../../api/authTypes";
 import {
   generateScheduleOccurrences,
@@ -73,12 +76,14 @@ import {
   memberName,
 } from "../teamsUtils";
 import { getUpcomingAvailabilitySuggestion } from "../intakeAvailabilitySuggestion";
+import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
 import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
 import SmsConfirmationModal from "../components/SmsConfirmationModal";
 import { cn } from "@/utils/cnHelper";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { useTeamsPage } from "../TeamsPageContext";
 import {
   intakeSubmissionNeedsAction,
   selectIntakeExactMemberMatch,
@@ -89,6 +94,10 @@ import {
 } from "../teamsSelectors";
 
 type IntakeManagerProps = {
+  availabilityOnly?: boolean;
+  managedTeamIds?: string[];
+  availabilityResponses?: TeamAvailabilityResponse[];
+  onAvailabilityRefresh?: () => void;
   forms: TeamIntakeForm[];
   displayForms?: TeamIntakeForm[];
   listHeader?: ReactNode;
@@ -97,12 +106,13 @@ type IntakeManagerProps = {
   smsEligibilityByMemberId?: Record<
     string,
     {
-      status: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
+      status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
       eligible: boolean;
     }
   >;
   smsDeliveryAttempts?: SmsDeliveryAttempt[];
   services: TeamService[];
+  schedules?: Array<TeamSchedule | TeamScheduleSummary>;
   members: TeamRosterMember[];
   positions: TeamPosition[];
   teams: TeamRecord[];
@@ -128,14 +138,35 @@ const IntakeFormStatusBadge = ({ active }: { active: boolean }) => (
   </span>
 );
 
+const messageIntentStatusLabel = (status: NotificationIntent["status"]) => {
+  if (status === "sent") return "Sent";
+  if (status === "unknown") return "Could not confirm whether it was sent";
+  if (status === "failed") return "Failed";
+  if (status === "sending") return "Sending";
+  if (status === "suppressed") return "Not sent";
+  return "Ready to send";
+};
+
+const deliveryAttemptStatusLabel = (status: SmsDeliveryAttempt["status"]) => {
+  if (status === "delivered") return "Delivered";
+  if (status === "pending") return "Waiting for delivery confirmation";
+  if (status === "failed" || status === "undelivered") return "Delivery failed";
+  if (status === "accepted" || status === "sent") return "Sent · Waiting for delivery confirmation";
+  if (status === "sending") return "Sending";
+  if (status === "unknown") return "Could not confirm whether this was sent";
+  return "";
+};
+
 const IntakeFormDetails = ({
   startDate,
   endDate,
   submissionCount,
+  countLabel = "Submissions",
 }: {
   startDate: string;
   endDate: string;
   submissionCount: number;
+  countLabel?: string;
 }) => {
   const dateRange = formatPlainDateRangeLabel(startDate, endDate);
 
@@ -146,7 +177,7 @@ const IntakeFormDetails = ({
         {dateRange}
       </p>
       <p>
-        <span className="font-bold">Submissions: </span>
+        <span className="font-bold">{countLabel}: </span>
         {submissionCount}
       </p>
     </div>
@@ -200,6 +231,10 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
 });
 
 const IntakeManager = ({
+  availabilityOnly = false,
+  managedTeamIds = [],
+  availabilityResponses = [],
+  onAvailabilityRefresh,
   forms,
   displayForms,
   listHeader,
@@ -208,6 +243,7 @@ const IntakeManager = ({
   smsEligibilityByMemberId,
   smsDeliveryAttempts: initialSmsDeliveryAttempts = [],
   services,
+  schedules = [],
   members,
   positions,
   teams,
@@ -221,10 +257,24 @@ const IntakeManager = ({
 }: IntakeManagerProps) => {
   const visibleForms = displayForms ?? forms;
   const context = useContext(GlobalInfoContext);
+  const { serviceTimeZone } = useTeamsPage();
+  const canCalculateServiceDates = Boolean(serviceTimeZone);
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
-  const [draft, setDraft] = useState<TeamIntakeFormPayload>(emptyDraft);
+  const makeEmptyDraft = () => availabilityOnly
+    ? {
+        ...emptyDraft(),
+        purpose: "team_availability" as const,
+        teamIds: managedTeamIds.length === 1 ? [managedTeamIds[0]] : [],
+        enabledFields: ["availability"] as TeamIntakeFormPayload["enabledFields"],
+      }
+    : emptyDraft();
+  const [draft, setDraft] = useState<TeamIntakeFormPayload>(makeEmptyDraft);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const editorSessionRef = useRef(0);
+  const submitDraftSnapshotsRef = useRef(new Map<number, typeof draft>());
   const [editing, setEditing] = useState<TeamIntakeForm | null>(null);
   const [selectedForm, setSelectedForm] = useState<TeamIntakeForm | null>(null);
   const [smsDeliveryAttempts, setSmsDeliveryAttempts] = useState<
@@ -268,12 +318,22 @@ const IntakeManager = ({
   const recipientSmsSendLockRef = useRef(false);
   const editingFormHasIssuedRequests = Boolean(editing && (
     intakeRecipients.some((recipient) => recipient.formId === editing.formId) ||
+    editing.hasIssuedRecipientRequests ||
     submissions.some((submission) => submission.formId === editing.formId) ||
     (editing.submissionCount || 0) > 0
   ));
+  const editingTeamScopeLocked = Boolean(
+    editing?.purpose === "team_availability" && editingFormHasIssuedRequests,
+  );
 
   const panelOpen = selectedForm !== null || showCreate;
   const showingEditForm = showCreate || showEditForm;
+  const isAvailabilityFormEditor = availabilityOnly || Boolean(
+    showingEditForm && (
+      editing?.purpose === "team_availability" ||
+      (!editing && draft.purpose === "team_availability")
+    ),
+  );
   const resetRecipientSelection = () => {
     setRecipientMemberIds(new Set());
     setRecipientSearch("");
@@ -297,16 +357,23 @@ const IntakeManager = ({
         teamIds: editing.teamIds || [],
         active: editing.active,
         enabledFields: resolveIntakeFormFields(editing),
+        purpose: editing.purpose || "general_intake",
         requireEmail: Boolean(editing.requireEmail),
         welcomeMessage: editing.welcomeMessage || "",
         positionsMessage: editing.positionsMessage || "",
         availabilityMessage: editing.availabilityMessage || "",
         notesMessage: editing.notesMessage || "",
       }))
-    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(emptyDraft()));
-  useTeamsUnsavedChanges(hasPendingChanges);
+    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(makeEmptyDraft()));
+  const submittedDraftForSession = submitDraftSnapshotsRef.current.get(editorSessionRef.current);
+  const hasUnsubmittedChanges = hasPendingChanges && !(
+    submittedDraftForSession &&
+    JSON.stringify(normalizeDraft(draft)) === JSON.stringify(normalizeDraft(submittedDraftForSession))
+  );
+  useTeamsUnsavedChanges(hasUnsubmittedChanges);
 
   const closePanel = () => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(false);
@@ -314,10 +381,11 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const openCreate = () => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(true);
@@ -325,10 +393,11 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const openFormSubmissions = (form: TeamIntakeForm) => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(form);
     setShowCreate(false);
@@ -336,10 +405,11 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const openFormEditor = (form: TeamIntakeForm) => {
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(form);
     setShowCreate(false);
@@ -362,10 +432,12 @@ const IntakeManager = ({
       positionsMessage: form.positionsMessage || "",
       availabilityMessage: form.availabilityMessage || "",
       notesMessage: form.notesMessage || "",
+      purpose: form.purpose || "general_intake",
     });
   };
 
   const cancelFormEdit = () => {
+    editorSessionRef.current += 1;
     if (showCreate) {
       closePanel();
       return;
@@ -373,7 +445,7 @@ const IntakeManager = ({
     setShowEditForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(emptyDraft());
+    setDraft(makeEmptyDraft());
   };
 
   const handlePanelBack = () => {
@@ -405,23 +477,68 @@ const IntakeManager = ({
       ? "All teams"
       : ids.map((id) => teamNameById.get(id) || "Unknown team").join(", ");
 
-  const applicableServices = useMemo(
-    () =>
-      draft.startDate && draft.endDate
-        ? filterServicesWithOccurrencesInRange({
-            // A service remains discoverable after its recurrence ends. Its own
-            // date bounds decide whether it can produce an occurrence in this form.
-            services: services.filter(isActive),
-            startDate: draft.startDate,
-            endDate: draft.endDate,
-          })
-        : [],
-    [draft.endDate, draft.startDate, services],
+  const relevantAvailabilityPeriod = useMemo(
+    () => canCalculateServiceDates && isAvailabilityFormEditor && draft.startDate && draft.endDate
+      ? buildTeamSchedulePeriod({
+          services,
+          positions,
+          teamIds: draft.teamIds,
+          schedules,
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+          timeZone: serviceTimeZone,
+        })
+      : null,
+    [
+      draft.endDate,
+      draft.startDate,
+      draft.teamIds,
+      canCalculateServiceDates,
+      isAvailabilityFormEditor,
+      positions,
+      schedules,
+      serviceTimeZone,
+      services,
+    ],
   );
 
+  const applicableServices = useMemo(() => {
+    if (!canCalculateServiceDates || !draft.startDate || !draft.endDate) return [];
+    const inRange = filterServicesWithOccurrencesInRange({
+      // A service remains discoverable after its recurrence ends. Its own date
+      // bounds decide whether it can produce an occurrence in this form.
+      services: services.filter(isActive),
+      startDate: draft.startDate,
+      endDate: draft.endDate,
+      timeZone: serviceTimeZone,
+    });
+    if (!isAvailabilityFormEditor) return inRange;
+
+    const relevantServiceIds = new Set(
+      (relevantAvailabilityPeriod?.occurrences || []).flatMap((occurrence) =>
+        occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+      ),
+    );
+    const savedServiceIds = new Set(draft.availabilityServices.map(({ serviceId }) => serviceId));
+    return inRange.filter((service) =>
+      relevantServiceIds.has(service.serviceId) || savedServiceIds.has(service.serviceId),
+    );
+  }, [
+    draft.availabilityServices,
+    canCalculateServiceDates,
+    draft.endDate,
+    draft.startDate,
+    isAvailabilityFormEditor,
+    relevantAvailabilityPeriod,
+    serviceTimeZone,
+    services,
+  ]);
+
   const availabilityServiceOptions = useMemo(
-    () => buildIntakeAvailabilityServiceOptions(applicableServices),
-    [applicableServices],
+    () => canCalculateServiceDates
+      ? buildIntakeAvailabilityServiceOptions(applicableServices, serviceTimeZone)
+      : [],
+    [applicableServices, canCalculateServiceDates, serviceTimeZone],
   );
 
   const selectedAvailabilityServiceOptionIds = useMemo(() => {
@@ -442,11 +559,13 @@ const IntakeManager = ({
     startDate: string,
     endDate: string,
   ) => {
+    if (!canCalculateServiceDates) return [];
     const applicableIds = new Set(
       filterServicesWithOccurrencesInRange({
         services,
         startDate,
         endDate,
+        timeZone: serviceTimeZone,
       }).map((service) => service.serviceId),
     );
     return availabilityServices.filter((item) =>
@@ -455,6 +574,11 @@ const IntakeManager = ({
   };
 
   const updateDraftDates = (patch: { startDate?: string; endDate?: string }) => {
+    const hasServiceDateCoverage = isAvailabilityFormEditor || draft.availabilityServices.length > 0;
+    if (!canCalculateServiceDates && hasServiceDateCoverage) {
+      showToast("Load the church time zone before changing service dates.", "neutral");
+      return;
+    }
     setPreserveSuggestedOccurrences(false);
     setDraft((current) => {
       const next = { ...current, ...patch };
@@ -465,6 +589,41 @@ const IntakeManager = ({
           next.endDate,
         );
       }
+      return next;
+    });
+  };
+
+  const updateDraftTeamIds = (teamIds: string[]) => {
+    if (isAvailabilityFormEditor && !canCalculateServiceDates) {
+      showToast("Load the church time zone before changing availability service dates.", "neutral");
+      return;
+    }
+    if (isAvailabilityFormEditor) setPreserveSuggestedOccurrences(false);
+    setDraft((current) => {
+      const next = { ...current, teamIds };
+      if (
+        !isAvailabilityFormEditor ||
+        editingFormHasIssuedRequests ||
+        !current.startDate ||
+        !current.endDate
+      ) return next;
+
+      const relevantServiceIds = new Set(
+        buildTeamSchedulePeriod({
+          services,
+          positions,
+          teamIds,
+          schedules,
+          startDate: current.startDate,
+          endDate: current.endDate,
+          timeZone: serviceTimeZone,
+        }).occurrences.flatMap((occurrence) =>
+          occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+        ),
+      );
+      next.availabilityServices = current.availabilityServices.filter(({ serviceId }) =>
+        relevantServiceIds.has(serviceId),
+      );
       return next;
     });
   };
@@ -480,25 +639,49 @@ const IntakeManager = ({
       editing.availabilityOccurrences?.length
     );
     const preserveOccurrences = editingFormHasIssuedRequests || unchangedExistingCoverage || preserveSuggestedOccurrences;
-    const availabilityOccurrences = preserveSuggestedOccurrences
-      ? draft.availabilityOccurrences
-      : preserveOccurrences
-      ? editing?.availabilityOccurrences?.length ? editing.availabilityOccurrences : draft.availabilityOccurrences
-      : draft.startDate && draft.endDate
-        ? generateScheduleOccurrences({
+    const availabilityForm = editing?.purpose === "team_availability" || isAvailabilityFormEditor;
+    let availabilityOccurrences = draft.availabilityOccurrences;
+    if (preserveSuggestedOccurrences) {
+      availabilityOccurrences = draft.availabilityOccurrences;
+    } else if (preserveOccurrences) {
+      availabilityOccurrences = editing?.availabilityOccurrences?.length
+        ? editing.availabilityOccurrences
+        : draft.availabilityOccurrences;
+    } else if (!canCalculateServiceDates && !serviceIds.length) {
+      availabilityOccurrences = [];
+    } else if (draft.startDate && draft.endDate && (canCalculateServiceDates || !serviceIds.length)) {
+      const occurrences = availabilityForm
+        ? (relevantAvailabilityPeriod?.occurrences || []).filter((occurrence) => {
+            const occurrenceServiceIds = occurrence.serviceIds?.length
+              ? occurrence.serviceIds
+              : [occurrence.serviceId];
+            return occurrenceServiceIds.some((serviceId) => serviceIds.includes(serviceId));
+          })
+        : generateScheduleOccurrences({
             services,
             serviceIds,
             startDate: draft.startDate,
             endDate: draft.endDate,
-          }).map((occurrence) => ({
-            occurrenceId: occurrence.occurrenceId,
-            serviceId: occurrence.serviceId,
-            name: occurrence.name,
-            startsAt: occurrence.startsAt,
-          }))
-        : [];
+            timeZone: serviceTimeZone,
+          });
+      availabilityOccurrences = occurrences.map((occurrence) => ({
+        occurrenceId: occurrence.occurrenceId,
+        serviceId: occurrence.serviceId,
+        name: occurrence.name,
+        startsAt: occurrence.startsAt,
+        serviceDate: occurrence.serviceDate,
+      }));
+    } else {
+      availabilityOccurrences = [];
+    }
+    let purpose = draft.purpose || "general_intake";
+    if (availabilityForm) purpose = "team_availability";
+    if (editing) purpose = editing.purpose || "general_intake";
     return {
       ...draft,
+      purpose,
+      enabledFields: availabilityForm ? ["availability"] : draft.enabledFields,
+      requireEmail: availabilityForm ? false : draft.requireEmail,
       responseDeadline: draft.responseDeadline || draft.endDate,
       availabilityOccurrences,
     };
@@ -510,40 +693,87 @@ const IntakeManager = ({
       showToast("Name and date range are required.", "neutral");
       return;
     }
+    if (isAvailabilityFormEditor && !draft.teamIds.length) {
+      showToast("Choose at least one Team for this availability form.", "neutral");
+      return;
+    }
+    const serviceIds = draft.availabilityServices.map(({ serviceId }) => serviceId).sort();
+    const existingServiceIds = (editing?.availabilityServices || []).map(({ serviceId }) => serviceId).sort();
+    const unchangedExistingCoverage = Boolean(editing &&
+      draft.startDate === editing.startDate &&
+      draft.endDate === editing.endDate &&
+      JSON.stringify(serviceIds) === JSON.stringify(existingServiceIds) &&
+      editing.availabilityOccurrences?.length
+    );
+    const preservesOccurrences = editingFormHasIssuedRequests || unchangedExistingCoverage || preserveSuggestedOccurrences;
+    const needsChurchTimeZone = !preservesOccurrences && Boolean(draft.startDate && draft.endDate) &&
+      (isAvailabilityFormEditor || serviceIds.length > 0);
+    if (!canCalculateServiceDates && needsChurchTimeZone) {
+      showToast("Load a valid church time zone before changing service-date coverage.", "neutral");
+      return;
+    }
     const payload = buildPayload();
+    if (isAvailabilityFormEditor && !payload.availabilityOccurrences.length) {
+      showToast("Choose at least one service date for this availability form.", "neutral");
+      return;
+    }
+    const editingAtSubmit = editing;
+    const submittedDraft = draft;
+    const editorSession = editorSessionRef.current;
+    submitDraftSnapshotsRef.current.set(editorSession, submittedDraft);
     setSaving(true);
     try {
-      if (editing) {
+      let savedForm: TeamIntakeForm;
+      if (editingAtSubmit) {
         const response = await updateTeamIntakeForm(
           churchId,
-          editing.formId,
+          editingAtSubmit.formId,
           payload,
         );
-        onFormSaved(response.form);
-        setSelectedForm(response.form);
-        setShowEditForm(false);
-        setShowSendForm(false);
-        setEditing(null);
-        setDraft(emptyDraft());
+        savedForm = editingAtSubmit.purpose === "team_availability"
+          ? {
+              ...response.form,
+              hasIssuedRecipientRequests: Boolean(
+                editingAtSubmit.hasIssuedRecipientRequests ||
+                response.form.hasIssuedRecipientRequests,
+              ),
+            }
+          : response.form;
+        onFormSaved(savedForm);
       } else {
         const response = await createTeamIntakeForm(churchId, payload);
+        savedForm = response.form;
         onFormSaved(response.form);
-        if (response.publicToken) {
+        if (editorSessionRef.current === editorSession && response.publicToken) {
           setLastCreatedPublicUrl(
             response.publicUrl ||
               buildTeamIntakePublicUrl(response.publicToken),
           );
         }
-        setSelectedForm(response.form);
-        setShowCreate(false);
-        setShowEditForm(false);
+      }
+      if (editorSessionRef.current === editorSession) {
+        const hasNewerEdits = JSON.stringify(normalizeDraft(draftRef.current)) !==
+          JSON.stringify(normalizeDraft(submittedDraft));
+        setSelectedForm(savedForm);
         setShowSendForm(false);
-        setEditing(null);
-        setDraft(emptyDraft());
+        if (hasNewerEdits) {
+          // Rebase post-submit edits on the confirmed record and keep them
+          // available for another save.
+          setShowCreate(false);
+          setShowEditForm(true);
+          setEditing(savedForm);
+        } else {
+          editorSessionRef.current += 1;
+          setShowCreate(false);
+          setShowEditForm(false);
+          setEditing(null);
+          setDraft(makeEmptyDraft());
+        }
       }
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not save this intake form.");
     } finally {
+      submitDraftSnapshotsRef.current.delete(editorSession);
       setSaving(false);
     }
   };
@@ -578,8 +808,18 @@ const IntakeManager = ({
     };
   }, []);
   const upcomingAvailabilitySuggestion = useMemo(
-    () => getUpcomingAvailabilitySuggestion({ services, forms }),
-    [forms, services],
+    () => canCalculateServiceDates ? getUpcomingAvailabilitySuggestion({
+      services,
+      forms,
+      positions,
+      schedules,
+      teamIds: availabilityOnly
+        ? managedTeamIds
+        : teams.filter((team) => !team.archivedAt).map((team) => team.teamId),
+      teamScheduleScope: availabilityOnly,
+      timeZone: serviceTimeZone,
+    }) : null,
+    [availabilityOnly, canCalculateServiceDates, forms, managedTeamIds, positions, schedules, serviceTimeZone, services, teams],
   );
 
   const openUpcomingAvailabilityDraft = () => {
@@ -589,9 +829,17 @@ const IntakeManager = ({
       if (!existingForm) return;
       openFormEditor(existingForm);
       setPreserveSuggestedOccurrences(true);
-      setDraft(upcomingAvailabilitySuggestion.draft);
+      setDraft(availabilityOnly ? {
+        ...upcomingAvailabilitySuggestion.draft,
+        purpose: "team_availability",
+        teamIds: upcomingAvailabilitySuggestion.draft.teamIds.length
+          ? upcomingAvailabilitySuggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
+          : [...managedTeamIds],
+        enabledFields: ["availability"],
+      } : upcomingAvailabilitySuggestion.draft);
       return;
     }
+    editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
     setShowCreate(true);
@@ -599,7 +847,14 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(true);
     setEditing(null);
-    setDraft(upcomingAvailabilitySuggestion.draft);
+    setDraft(availabilityOnly ? {
+      ...upcomingAvailabilitySuggestion.draft,
+      purpose: "team_availability",
+      teamIds: upcomingAvailabilitySuggestion.draft.teamIds.length
+        ? upcomingAvailabilitySuggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
+        : [...managedTeamIds],
+      enabledFields: ["availability"],
+    } : upcomingAvailabilitySuggestion.draft);
   };
 
   const refreshFormMessageState = useCallback((formId: string) => {
@@ -632,9 +887,10 @@ const IntakeManager = ({
   }, [activeSelectedFormId, refreshFormMessageState]);
 
   const handleAvailabilityBatchUpdated = (batch: NotificationBatch) => {
-    if (batch.churchId !== churchIdRef.current) return;
+    if (batch.churchId !== churchIdRef.current || !batch.formId) return;
     batch.intakeRecipients?.forEach(onRecipientSaved);
-    refreshFormMessageState(batch.formId);
+    const hasOutcome = batch.summary.sent > 0 || batch.summary.failed > 0 || batch.summary.uncertain > 0 || (batch.summary.sending || 0) > 0;
+    if (batch.status !== "prepared" || hasOutcome) refreshFormMessageState(batch.formId);
   };
 
   const openSendForm = () => {
@@ -817,7 +1073,7 @@ const IntakeManager = ({
         recipient.recipientId,
       );
       if (!prepared.preview.eligible) {
-        showToast("This volunteer is not currently eligible for SMS. Check the phone number and church consent.", "error");
+        showToast("This volunteer can't receive a text message right now. Check the phone number and consent.", "error");
         return;
       }
       const recipientName = memberName(activeMembers.find((item) => item.memberId === recipient.memberId) || null);
@@ -832,7 +1088,7 @@ const IntakeManager = ({
       });
       awaitingConfirmation = true;
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not prepare this SMS.");
+      showApiErrorToast(showToast, error, "Could not prepare this text message.");
     } finally {
       if (!awaitingConfirmation) setRecipientActionKey("");
     }
@@ -847,15 +1103,21 @@ const IntakeManager = ({
       const response = await sendNotificationIntent(churchId, preview.intentId, preview.approvalVersion);
       if (preview.recipient) onRecipientSaved(preview.recipient);
       const attempt = response.attempt;
-      if (!attempt) throw new Error(response.errorMessage || "The provider outcome is uncertain. Refresh delivery history before trying again.");
+      if (!attempt || attempt.outcome === "unknown" || (attempt.status === "pending" && attempt.outcome !== "confirmed")) {
+        throw new Error("We couldn't confirm whether this text was sent. Refresh delivery history before trying again.");
+      }
       setSmsDeliveryAttempts((current) => [
         ...current.filter((currentAttempt) => currentAttempt.attemptId !== attempt.attemptId),
         attempt,
       ]);
       onSmsDeliveryAttemptSaved?.(attempt);
-      showToast("SMS accepted by the provider.", "success");
+      const confirmedSent = attempt.outcome === "confirmed" || ["accepted", "sent", "delivered", "undelivered"].includes(attempt.status);
+      showToast(
+        confirmedSent ? "Your text message was sent. Delivery updates may take a moment." : "This text message wasn't sent. Review delivery history before preparing a retry.",
+        confirmedSent ? "success" : "error",
+      );
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not send this SMS.");
+      showApiErrorToast(showToast, error, "Could not send this text message. Check delivery history before trying again.");
     } finally {
       recipientSmsSendLockRef.current = false;
       setRecipientActionKey("");
@@ -958,12 +1220,13 @@ const IntakeManager = ({
   // occurrenceId (`serviceId@startsAt`) -> the form's label/date for it, so the
   // review queue can show which services a submitter is (un)available for.
   const occurrenceLabelById = useMemo(() => {
-    const map = new Map<string, { name: string; startsAt: string }>();
+    const map = new Map<string, { name: string; startsAt: string; serviceDate?: string }>();
     forms.forEach((form) => {
       (form.availabilityOccurrences || []).forEach((occurrence) => {
         map.set(occurrence.occurrenceId, {
           name: occurrence.name,
           startsAt: occurrence.startsAt,
+          serviceDate: occurrence.serviceDate,
         });
       });
     });
@@ -977,11 +1240,19 @@ const IntakeManager = ({
       .map((id) => {
         const known = occurrenceLabelById.get(id);
         const startsAt = known?.startsAt || id.split("@")[1] || "";
-        return { name: known?.name || "Service", startsAt };
+        return {
+          name: known?.name || "Service",
+          startsAt,
+          serviceDate: known?.serviceDate,
+        };
       })
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
-      .map(({ name, startsAt }) =>
-        startsAt ? `${name} · ${formatShortOccurrenceDate(startsAt)}` : name,
+      .sort((a, b) => (a.serviceDate || a.startsAt).localeCompare(b.serviceDate || b.startsAt))
+      .map(({ name, startsAt, serviceDate }) =>
+        serviceDate
+          ? `${name} · ${formatPlainDateRangeLabel(serviceDate, serviceDate)}`
+          : startsAt && canCalculateServiceDates
+            ? `${name} · ${formatShortOccurrenceDate(startsAt, serviceTimeZone)}`
+            : `${name} · Date unavailable`,
       );
 
   const copyPublicUrl = async (url: string) => {
@@ -1399,18 +1670,23 @@ const IntakeManager = ({
       />
       {editing ? (
         <p className="px-1 text-sm text-gray-300">
-          <span className="font-bold">Submissions: </span>
+          <span className="font-bold">{isAvailabilityFormEditor ? "Responses: " : "Submissions: "}</span>
           {editing.submissionCount || 0}
         </p>
       ) : null}
       <DateRangePicker
         label="Date range"
         value={{ startDate: draft.startDate, endDate: draft.endDate }}
-        disabled={editingFormHasIssuedRequests}
+        disabled={editingFormHasIssuedRequests || (!canCalculateServiceDates && (isAvailabilityFormEditor || draft.availabilityServices.length > 0))}
         onChange={({ startDate, endDate }) =>
           updateDraftDates({ startDate, endDate })
         }
       />
+      {!canCalculateServiceDates && (isAvailabilityFormEditor || draft.availabilityServices.length > 0) ? (
+        <p className="px-1 text-sm text-amber-200" role="note">
+          Service dates need the church time zone. You can review this form and edit its wording while date selection is unavailable.
+        </p>
+      ) : null}
       {editingFormHasIssuedRequests ? (
         <p className="text-sm text-sky-200">This form already has private links or responses. Existing service dates are saved; newly suggested dates will be added when you save.</p>
       ) : null}
@@ -1428,48 +1704,83 @@ const IntakeManager = ({
         onCheckedChange={(active) => setDraft((d) => ({ ...d, active }))}
         labelClassName="text-sm"
       />
-      <EntityMultiSelect
-        label="Fields to include"
-        description="Choose exactly what people will see on this public form."
-        showSearch={false}
-        options={INTAKE_FORM_FIELD_OPTIONS.map((field) => ({
-          id: field.id,
-          label: field.label,
-        }))}
-        value={draft.enabledFields || []}
-        onChange={(enabledFields) =>
-          setDraft((current) => ({
-            ...current,
-            enabledFields:
-              enabledFields as TeamIntakeFormPayload["enabledFields"],
-          }))
-        }
-        emptyText="No fields selected."
-      />
-      <EntityMultiSelect
-        label="Teams to collect for"
-        description="Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."
-        options={teams.map((team) => ({
-          id: team.teamId,
-          label: team.name,
-          archived: Boolean(team.archivedAt),
-        }))}
-        value={draft.teamIds}
-        onChange={(teamIds) => setDraft((d) => ({ ...d, teamIds }))}
-        emptyText="No teams yet."
-      />
+      {!isAvailabilityFormEditor ? (
+        <EntityMultiSelect
+          label="Fields to include"
+          description="Choose exactly what people will see on this public form."
+          showSearch={false}
+          options={INTAKE_FORM_FIELD_OPTIONS.map((field) => ({
+            id: field.id,
+            label: field.label,
+          }))}
+          value={draft.enabledFields || []}
+          onChange={(enabledFields) =>
+            setDraft((current) => ({
+              ...current,
+              enabledFields:
+                enabledFields as TeamIntakeFormPayload["enabledFields"],
+            }))
+          }
+          emptyText="No fields selected."
+        />
+      ) : null}
+      {editingTeamScopeLocked ? (
+        <fieldset
+          className="min-w-0"
+          aria-label="Teams to collect for"
+        >
+          <legend className="p-1 text-sm font-semibold">
+            Teams to collect for ({draft.teamIds.length} selected)
+          </legend>
+          <p className="mb-2 px-1 text-xs text-gray-400">
+            Team selection is locked because availability requests have already been issued.
+          </p>
+          <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-gray-700 bg-gray-950/60 p-2">
+            {draft.teamIds.map((teamId) => {
+              const team = teams.find((item) => item.teamId === teamId);
+              return (
+                <div
+                  key={teamId}
+                  className="rounded-md border border-cyan-400/60 bg-cyan-400/10 px-2.5 py-2 text-sm text-cyan-50"
+                >
+                  {team?.name || teamId}
+                </div>
+              );
+            })}
+          </div>
+        </fieldset>
+      ) : (
+        <EntityMultiSelect
+          label="Teams to collect for"
+          description={isAvailabilityFormEditor
+            ? "Choose one or more Teams. Availability forms always need an explicit Team scope."
+            : "Leave empty to collect for every team. The public form only shows the selected teams' positions, grouped by team."}
+          options={teams.filter((team) => !availabilityOnly || managedTeamIds.includes(team.teamId)).map((team) => ({
+            id: team.teamId,
+            label: team.name,
+            archived: Boolean(team.archivedAt),
+          }))}
+          value={draft.teamIds}
+          onChange={updateDraftTeamIds}
+          disabled={!canCalculateServiceDates && isAvailabilityFormEditor}
+          emptyText="No teams yet."
+        />
+      )}
       {editingFormHasIssuedRequests ? (
         <p className="text-sm text-gray-300">Availability services: {draft.availabilityServices.map(({ name }) => name).join(", ") || "None"}</p>
       ) : (
         <EntityMultiSelect
-          label="Show services for availability"
-          description="Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."
+          label={isAvailabilityFormEditor ? "Service dates" : "Show services for availability"}
+          description={isAvailabilityFormEditor
+            ? "Choose upcoming service dates. People will mark whether they are available for each date."
+            : "Select services that fall within this form's date range. Combined services appear together, and people will mark one availability date for the group."}
           options={availabilityServiceOptions.map((option) => ({
             id: option.id,
             label: option.label,
             sublabel: option.sublabel,
           }))}
           value={selectedAvailabilityServiceOptionIds}
+          disabled={!canCalculateServiceDates}
           onChange={(optionIds) => {
             setPreserveSuggestedOccurrences(false);
             const serviceIds = availabilityServiceOptions
@@ -1488,14 +1799,16 @@ const IntakeManager = ({
               }),
             }));
           }}
-          emptyText={
+          emptyText={!canCalculateServiceDates
+            ? "Load the church time zone before choosing service dates."
+            :
             draft.startDate && draft.endDate
               ? "No services fall in this date range."
               : "Set the form start and end dates first."
           }
         />
       )}
-      <fieldset className="space-y-3">
+      {!isAvailabilityFormEditor ? <fieldset className="space-y-3">
         <legend className="p-1 text-sm font-semibold">Form wording</legend>
         <p className="px-1 text-xs text-gray-400">
           Customize what people read on the public form. Leave a field blank to
@@ -1541,7 +1854,8 @@ const IntakeManager = ({
           }
         />
       </fieldset>
-      {editing && canEdit ? (
+        : null}
+      {editing && canEdit && !isAvailabilityFormEditor ? (
         <Button
           variant="secondary"
           svg={Clipboard}
@@ -1624,10 +1938,12 @@ const IntakeManager = ({
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-gray-100">
-              Individual links and manual SMS
+              {availabilityOnly ? "Personalized availability links" : "Individual links and text messages"}
             </h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-400">
-              For offline sharing or one-off SMS. Use Send form above for the normal invitation workflow.
+              {availabilityOnly
+                ? "Create private links to share, or use Send form to review and send text messages."
+                : "For offline sharing or one-off text messages. Use Send form above for the normal invitation workflow."}
             </p>
           </div>
           <Button
@@ -1644,13 +1960,13 @@ const IntakeManager = ({
           <span>Invited <strong className="text-gray-200">{intakeMessageCounts.invited}</strong></span>
           <span>Delivered <strong className="text-gray-200">{intakeMessageCounts.delivered}</strong></span>
           <span>Responded <strong className="text-gray-200">{intakeMessageCounts.responded}</strong></span>
-          <span>Waiting <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
+          <span>Waiting for a response <strong className="text-gray-200">{intakeMessageCounts.waiting}</strong></span>
         </div>
-        {intakeMessageCounts.failed || intakeMessageCounts.uncertain || intakeMessageCounts.optedOut ? (
+        {intakeMessageCounts.failed || intakeMessageCounts.uncertain || (!availabilityOnly && intakeMessageCounts.optedOut) ? (
           <p className="text-xs text-amber-200">{[
             intakeMessageCounts.failed ? `${intakeMessageCounts.failed} failed` : "",
-            intakeMessageCounts.uncertain ? `${intakeMessageCounts.uncertain} uncertain` : "",
-            intakeMessageCounts.optedOut ? `${intakeMessageCounts.optedOut} opted out` : "",
+            intakeMessageCounts.uncertain ? `${intakeMessageCounts.uncertain} message${intakeMessageCounts.uncertain === 1 ? "" : "s"} could not be confirmed` : "",
+            !availabilityOnly && intakeMessageCounts.optedOut ? `${intakeMessageCounts.optedOut} opted out` : "",
           ].filter(Boolean).join(" · ")}</p>
         ) : null}
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -1701,26 +2017,32 @@ const IntakeManager = ({
               const latestIntent = recipientIntents[0];
               const latestDeliveryStatus = latestSmsAttempt?.status || latestIntent?.attemptStatus;
               const latestDeliveryOutcome = latestSmsAttempt?.outcome || latestIntent?.attemptOutcome;
-              const smsStatus = recipient?.respondedAt
-                ? "Responded"
-                : smsEligibility.status === "no_mobile"
-                  ? "No mobile number"
-                  : smsEligibility.status === "consent_needed"
-                    ? "SMS consent needed"
-                    : smsEligibility.status === "opted_out"
-                      ? "SMS opted out"
-                      : latestDeliveryStatus === "delivered"
-                        ? "Delivered"
-                      : latestDeliveryStatus === "failed" ||
-                            latestDeliveryStatus === "undelivered" || latestIntent?.status === "failed"
-                          ? "Failed"
-                          : latestDeliveryOutcome === "unknown" || latestIntent?.status === "unknown"
-                            ? "Delivery uncertain"
-                          : latestDeliveryStatus === "pending"
-                            ? "Sending"
-                            : latestSmsAttempt || latestIntent?.status === "sent"
-                              ? "Sent"
-                              : "Ready to send";
+              const deliveryStatus = latestDeliveryStatus === "delivered"
+                ? "Delivered"
+                : latestDeliveryStatus === "failed" ||
+                    latestDeliveryStatus === "undelivered" || latestIntent?.status === "failed"
+                  ? "Failed"
+                  : latestDeliveryOutcome === "unknown" || latestIntent?.status === "unknown"
+                    ? "Could not confirm whether this was sent"
+                    : latestDeliveryStatus === "pending"
+                      ? "Waiting for delivery confirmation"
+                      : latestSmsAttempt || latestIntent?.status === "sent"
+                        ? "Sent"
+                        : "";
+              let smsStatus = "Ready to send";
+              if (availabilityOnly) {
+                smsStatus = deliveryStatus || (smsEligibility.eligible ? "Text message ready" : "Not eligible to receive text messages");
+              } else if (recipient?.respondedAt) {
+                smsStatus = "Responded";
+              } else if (smsEligibility.status === "no_mobile") {
+                smsStatus = "No mobile number";
+              } else if (smsEligibility.status === "consent_needed") {
+                smsStatus = "Text message consent needed";
+              } else if (smsEligibility.status === "opted_out") {
+                smsStatus = "This phone number opted out";
+              } else {
+                smsStatus = deliveryStatus || smsStatus;
+              }
               const status = recipient?.revokedAt
                 ? "Revoked"
                 : recipient?.respondedAt
@@ -1741,7 +2063,7 @@ const IntakeManager = ({
                     }
                   />
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span
+                    {!availabilityOnly ? <span
                       className={cn(
                         "rounded border px-1.5 py-0.5",
                         status === "Responded"
@@ -1752,14 +2074,14 @@ const IntakeManager = ({
                       )}
                     >
                       {status}
-                    </span>
+                    </span> : null}
                     <span
                       className={cn(
                         "rounded border px-1.5 py-0.5",
                         smsStatus === "Delivered" || smsStatus === "Responded"
                           ? "border-emerald-500/40 text-emerald-200"
                           : smsStatus === "Failed" ||
-                              smsStatus === "SMS opted out"
+                              smsStatus === "This phone number opted out"
                             ? "border-red-500/40 text-red-200"
                             : smsStatus === "Ready to send"
                               ? "border-sky-500/40 text-sky-200"
@@ -1771,10 +2093,10 @@ const IntakeManager = ({
                         : `${status} · ${smsStatus}`}
                     </span>
                     {reminderCount > 0 ? <span className="text-gray-400">{reminderCount} reminder{reminderCount === 1 ? "" : "s"}</span> : null}
-                    {latestIntent?.status === "unknown" ? <span className="text-amber-200">Delivery uncertain</span> : null}
+                    {latestIntent?.status === "unknown" ? <span className="text-amber-200">Could not confirm whether this was sent</span> : null}
                     {recipient && !recipient.revokedAt ? (
                       <>
-                        <Button
+                        {!availabilityOnly ? <Button
                           variant="textLink"
                           padding="px-0 py-0"
                           disabled={
@@ -1787,13 +2109,13 @@ const IntakeManager = ({
                             recipient.respondedAt
                               ? "This member has already responded"
                               : smsEligibility.eligible
-                              ? "Send this intake request by SMS"
+                              ? "Send this intake request by text message"
                               : smsStatus
                           }
                           onClick={() => void sendRecipientSms(recipient)}
                         >
-                          Send SMS
-                        </Button>
+                          Send text message
+                        </Button> : null}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="textLink" isLoading={recipientActionKey === recipient.recipientId}>More</Button>
@@ -1805,7 +2127,7 @@ const IntakeManager = ({
                             {recipientIntents.length ? <>
                               <DropdownMenuSeparator />
                               <DropdownMenuLabel className="text-xs text-gray-300">Message history</DropdownMenuLabel>
-                              <ul className="space-y-1 px-2 pb-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {intent.status === "sent" ? "Sent" : intent.status === "unknown" ? "Uncertain" : intent.status === "failed" ? "Failed" : intent.status}{intent.attemptStatus ? ` · ${intent.attemptStatus}` : ""}</li>)}</ul>
+                              <ul className="space-y-1 px-2 pb-1 text-xs text-gray-400">{recipientIntents.map((intent) => <li key={intent.intentId}>{new Date(intent.createdAt).toLocaleDateString()} · {intent.intentType === "availability_reminder" ? "Reminder" : "Form request"} · {messageIntentStatusLabel(intent.status)}{intent.attemptStatus ? ` · ${deliveryAttemptStatusLabel(intent.attemptStatus)}` : ""}</li>)}</ul>
                             </> : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1815,6 +2137,84 @@ const IntakeManager = ({
                 </div>
               );
             })}
+          </div>
+        )}
+      </section>
+    );
+  };
+
+  const renderAvailabilityTracking = () => {
+    if (!activeSelectedForm) return null;
+    const activeRecipients = selectedFormRecipients.filter((recipient) => !recipient.revokedAt);
+    const responded = activeRecipients.filter((recipient) => Boolean(recipient.respondedAt));
+    const outstandingCount = activeRecipients.length - responded.length;
+    const responseByRecipientId = new Map(
+      availabilityResponses
+        .filter((response) => response.formId === activeSelectedForm.formId)
+        .map((response) => [response.recipientId, response]),
+    );
+    const occurrences = activeSelectedForm.availabilityOccurrences || [];
+
+    return (
+      <section className="space-y-3" aria-labelledby="availability-response-heading">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 id="availability-response-heading" className="font-semibold text-white">Availability responses</h3>
+            <p className="mt-1 text-sm text-gray-300">
+              {activeRecipients.length} requested · {responded.length} responded · {outstandingCount} outstanding
+            </p>
+          </div>
+          <Button variant="textLink" disabled={recipientBusy || saving} onClick={onAvailabilityRefresh}>
+            Refresh status
+          </Button>
+        </div>
+        {activeRecipients.length === 0 ? (
+          <p className="rounded-md border border-gray-700 p-4 text-sm text-gray-300">No personalized requests yet. Select Team members below to create private links or prepare a text message.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-gray-700">
+            <table className="min-w-full border-collapse text-left text-sm">
+              <thead className="bg-gray-900 text-xs text-gray-300">
+                <tr>
+                  <th scope="col" className="sticky left-0 min-w-44 bg-gray-900 px-3 py-2">Team member</th>
+                  <th scope="col" className="min-w-32 px-3 py-2">Response</th>
+                  {occurrences.map((occurrence) => (
+                    <th key={occurrence.occurrenceId} scope="col" className="min-w-36 px-3 py-2">
+                      {occurrence.name} · {occurrence.serviceDate
+                        ? formatPlainDateRangeLabel(occurrence.serviceDate, occurrence.serviceDate)
+                        : canCalculateServiceDates
+                          ? formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)
+                          : "Date unavailable"}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800">
+                {activeRecipients.map((recipient) => {
+                  const member = activeMembers.find((item) => item.memberId === recipient.memberId);
+                  const response = responseByRecipientId.get(recipient.recipientId);
+                  return (
+                    <tr key={recipient.recipientId}>
+                      <th scope="row" className="sticky left-0 bg-gray-950 px-3 py-2 font-medium text-white">
+                        {memberName(member || null)}
+                      </th>
+                      <td className="px-3 py-2 text-gray-300">
+                        {recipient.respondedAt
+                          ? `Responded ${new Date(recipient.respondedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                          : "Waiting"}
+                      </td>
+                      {occurrences.map((occurrence) => {
+                        const value = response?.occurrenceAvailability[occurrence.occurrenceId];
+                        return (
+                          <td key={occurrence.occurrenceId} className="px-3 py-2 text-gray-300">
+                            {value === "available" ? "Available" : value === "unavailable" ? "Unavailable" : "No answer"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
@@ -2001,9 +2401,11 @@ const IntakeManager = ({
         onOpenCreate={openCreate}
         canEdit={canEdit}
         title={panelTitle}
-        sectionTitle="Intake forms"
-        description="Share intake forms and review submissions."
-        createLabel="Create intake form"
+        sectionTitle={availabilityOnly ? "Availability" : "Intake forms"}
+        description={availabilityOnly
+          ? "Collect Team availability for upcoming services."
+          : "Share intake forms and review submissions."}
+        createLabel={availabilityOnly ? "Create availability form" : "Create intake form"}
         formHeaderActions={
           panelOpen ? (
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2038,7 +2440,7 @@ const IntakeManager = ({
         list={
           <>
             {listHeader}
-            {lastCreatedPublicUrl && canEdit && !panelOpen ? (
+            {lastCreatedPublicUrl && canEdit && !availabilityOnly && !panelOpen ? (
               <div className="mb-3 rounded-md border border-emerald-400/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
                 <p className="font-semibold">New public link ready.</p>
                 <Button
@@ -2073,7 +2475,7 @@ const IntakeManager = ({
                       <ul className="mt-1 space-y-0.5 text-sm text-gray-200">
                         {upcomingAvailabilitySuggestion.missingOccurrences.slice(0, 3).map((occurrence) => (
                           <li key={occurrence.occurrenceId}>
-                            {occurrence.name} · {new Date(occurrence.startsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            {occurrence.name} · {formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)}
                           </li>
                         ))}
                         {upcomingAvailabilitySuggestion.occurrenceCount > 3 ? (
@@ -2087,10 +2489,10 @@ const IntakeManager = ({
               </section>
             ) : null}
             {forms.length === 0 ? (
-              <p className="text-sm text-gray-300">No intake forms yet.</p>
+              <p className="text-sm text-gray-300">{availabilityOnly ? "No availability forms yet." : "No intake forms yet."}</p>
             ) : null}
             {forms.length > 0 && visibleForms.length === 0 ? (
-              <p className="text-sm text-gray-300">No intake forms match this date range.</p>
+              <p className="text-sm text-gray-300">{availabilityOnly ? "No availability forms match this date range." : "No intake forms match this date range."}</p>
             ) : null}
             {visibleForms.map((form) => (
               <EntityRow
@@ -2106,6 +2508,7 @@ const IntakeManager = ({
                       startDate={form.startDate}
                       endDate={form.endDate}
                       submissionCount={form.submissionCount || 0}
+                      countLabel={availabilityOnly ? "Responses" : "Submissions"}
                     />
                   ) : undefined
                 }
@@ -2123,7 +2526,7 @@ const IntakeManager = ({
                 }
                 archived={Boolean(form.archivedAt)}
                 actions={
-                  form.active && canEdit ? (
+                  form.active && canEdit && !availabilityOnly ? (
                     <Button
                       variant="tertiary"
                       svg={Clipboard}
@@ -2165,7 +2568,26 @@ const IntakeManager = ({
         {showingEditForm
           ? renderEditForm()
           : activeSelectedForm
-            ? renderSubmissionsPanel()
+            ? availabilityOnly
+              ? <div className="space-y-5">{renderAvailabilityTracking()}{renderRecipientSection()}{showSendForm && activeSelectedForm.active ? <AvailabilityFormSendFlow
+                  key={`${churchId}:${activeSelectedForm.formId}`}
+                  churchId={churchId}
+                  form={activeSelectedForm}
+                  members={members}
+                  positions={positions}
+                  teams={teams}
+                  recipients={intakeRecipients}
+                  eligibilityByMemberId={smsEligibilityByMemberId}
+                  notificationIntents={formNotificationIntents}
+                  smsDeliveryAttempts={smsDeliveryAttempts}
+                  historyLoaded={messageHistoryFormId === activeSelectedForm.formId}
+                  historyError={messageHistoryError?.formId === activeSelectedForm.formId ? messageHistoryError.message : ""}
+                  onRetryHistory={() => refreshFormMessageState(activeSelectedForm.formId)}
+                  privacySafe
+                  onBatchUpdated={handleAvailabilityBatchUpdated}
+                  onClose={() => setShowSendForm(false)}
+                /> : null}</div>
+              : renderSubmissionsPanel()
             : null}
       </CreatePanel>
       {recipientSmsPreview ? <SmsConfirmationModal

@@ -9,6 +9,7 @@ import {
   serverDate,
   subscribeServerTimeOffset,
 } from "../utils/serverTime";
+import { useChurchServiceTimeZone } from "../context/churchServiceTimeZone";
 
 type UseDisplayedUpcomingServiceOptions = {
   keepRecentlyElapsedDuringGrace?: boolean;
@@ -21,6 +22,7 @@ export const useDisplayedUpcomingService = (
 ) => {
   const keepRecentlyElapsedDuringGrace =
     options.keepRecentlyElapsedDuringGrace ?? false;
+  const serviceTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
   const serverTimeOffset = useSyncExternalStore(
     subscribeServerTimeOffset,
     getServerTimeOffset,
@@ -29,7 +31,7 @@ export const useDisplayedUpcomingService = (
   const [upcomingService, setUpcomingService] = useState(() =>
     getDisplayedUpcomingService(services, serverDate(), graceMs, {
       keepRecentlyElapsedDuringGrace,
-    }),
+    }, serviceTimeZone),
   );
 
   useEffect(() => {
@@ -40,13 +42,14 @@ export const useDisplayedUpcomingService = (
       setUpcomingService(
         getDisplayedUpcomingService(services, now, graceMs, {
           keepRecentlyElapsedDuringGrace,
-        }),
+        }, serviceTimeZone),
       );
       const delayMs = getUpcomingServiceRefreshDelay(
         services,
         now,
         graceMs,
         { keepRecentlyElapsedDuringGrace },
+        serviceTimeZone,
       );
       if (delayMs != null) {
         timeoutId = window.setTimeout(syncUpcomingService, delayMs);
@@ -65,6 +68,7 @@ export const useDisplayedUpcomingService = (
     graceMs,
     keepRecentlyElapsedDuringGrace,
     serverTimeOffset,
+    serviceTimeZone,
   ]);
 
   return upcomingService;

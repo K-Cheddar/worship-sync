@@ -57,6 +57,8 @@ import {
 } from "../teamsUtils";
 import { useTeamsUnsavedChanges } from "../hooks/useTeamsUnsavedChanges";
 import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
+import { useChurchServiceTimeZone } from "../../../context/churchServiceTimeZone";
+import ChurchServiceTimeZoneSettings from "../ChurchServiceTimeZoneSettings";
 
 const applyPositionCountDrafts = (
   requirements: PositionRequirement[] | undefined,
@@ -96,6 +98,7 @@ const ServiceManager = ({
   const dispatch = useDispatch();
   const { showToast } = useToast();
   const churchId = useContext(GlobalInfoContext)?.churchId || "";
+  const churchTimeZone = useChurchServiceTimeZone();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -376,7 +379,7 @@ const ServiceManager = ({
   const combinableServices = services.filter(
     (service) =>
       service.serviceId !== editing?.serviceId &&
-      (canServicesShareDay(editedServiceDayShape, service) ||
+      (canServicesShareDay(editedServiceDayShape, service, churchTimeZone.timeZone || "UTC") ||
         combineWith.includes(service.serviceId)),
   );
 
@@ -514,15 +517,24 @@ const ServiceManager = ({
       createLabel="Create service"
         listHeaderActions={<PortableDataActions type="services" onImported={onImported} />}
       listToolbar={
-        <EntityListFilterToolbar
-          entityLabel="Services"
-          query={listQuery}
-          onQueryChange={setListQuery}
-          filters={listFilters}
-          onFiltersChange={setListFilters}
-          filtersOpen={showFilters}
-          onFiltersOpenChange={setShowFilters}
-        />
+        <div className="space-y-3">
+          {churchId ? (
+            <ChurchServiceTimeZoneSettings
+              key={churchId}
+              churchId={churchId}
+              canEdit={canEdit}
+            />
+          ) : null}
+          <EntityListFilterToolbar
+            entityLabel="Services"
+            query={listQuery}
+            onQueryChange={setListQuery}
+            filters={listFilters}
+            onFiltersChange={setListFilters}
+            filtersOpen={showFilters}
+            onFiltersOpenChange={setShowFilters}
+          />
+        </div>
       }
       asideOpen={showFilters}
       asideTitle="Filter services"
@@ -555,7 +567,7 @@ const ServiceManager = ({
             <EntityRow
               key={service.serviceId}
               title={service.name}
-              subtitle={formatServiceTiming(service)}
+              subtitle={formatServiceTiming(service, churchTimeZone.timeZone || "UTC")}
               archived={Boolean(service.archivedAt)}
               inactive={!service.archivedAt && isServicePastEnd(service)}
               canEdit={canEdit}
@@ -781,7 +793,7 @@ const ServiceManager = ({
           optionGridClassName="grid gap-2"
           options={combinableServices.map((service) => ({
             id: service.serviceId,
-            label: [service.name, formatServiceTiming(service)]
+            label: [service.name, formatServiceTiming(service, churchTimeZone.timeZone || "UTC")]
               .filter(Boolean)
               .join(" - "),
             archived: Boolean(service.archivedAt),

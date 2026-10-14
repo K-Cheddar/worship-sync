@@ -329,7 +329,7 @@ describe("api/auth", () => {
     );
   });
 
-  it("posts member access updates with appAccess and permissions payload", async () => {
+  it("posts member access updates with Controller, appAccess, and permissions", async () => {
     await updateChurchMemberAccess("church-1", "user-8", "music", {
       teams: "view",
     });
@@ -340,6 +340,7 @@ describe("api/auth", () => {
         method: "POST",
         credentials: "include",
         body: JSON.stringify({
+          controllerAccess: "music",
           appAccess: "music",
           permissions: { teams: "view" },
         }),

@@ -21,14 +21,16 @@ const TeamsServiceSettingsPage = () => {
     });
   }, [ensureLoaded, showToast]);
 
+  const canEdit = Boolean(canEditServices ?? canEditTeams);
+
   return (
     <ServiceManager
       services={pageData.services}
       positions={pageData.positions}
       teams={pageData.teams}
       planTemplates={planTemplates}
-      canEdit={Boolean(canEditServices ?? canEditTeams)}
-      onImported={() => refresh()}
+      canEdit={canEdit}
+      onImported={() => void refresh()}
     />
   );
 };

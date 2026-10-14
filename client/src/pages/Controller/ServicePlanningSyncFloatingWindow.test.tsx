@@ -17,6 +17,10 @@ import servicePlanningImportReducer, {
 import allDocsReducer from "../../store/allDocsSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import ServicePlanningSyncFloatingWindow from "./ServicePlanningSyncFloatingWindow";
+import {
+  formatControllerServicePlanDateTime,
+  formatControllerServicePlanLabel,
+} from "./controllerServicePlanSelection";
 import { getServicePlanningLineItemKey } from "../../utils/servicePlanningSyncKeys";
 import { useServicePlanningImport } from "../../hooks/useServicePlanningImport";
 import { useToast } from "../../context/toastContext";
@@ -29,6 +33,15 @@ jest.mock("../../hooks/useServicePlanningImport", () => ({
 const mockPushPlanToOutline = jest.fn();
 jest.mock("../../context/toastContext", () => ({
   useToast: jest.fn(),
+}));
+jest.mock("../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => ({
+    status: "ready",
+    timeZone: "America/New_York",
+    isConfigured: true,
+    legacyTimeZoneSuggestion: null,
+    refresh: jest.fn(),
+  }),
 }));
 jest.mock("../../utils/generalUtils", () => ({
   ...jest.requireActual("../../utils/generalUtils"),
@@ -701,9 +714,7 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     renderWindow(store);
 
     const trigger = screen.getByRole("button", {
-      name: `Select service plan: ${longName} · ${new Date(selectedPlan.startsAt).toLocaleString(undefined, {
-        weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-      })}`,
+      name: `Select service plan: ${formatControllerServicePlanLabel(selectedPlan, "America/New_York")}`,
     });
     expect(trigger).toHaveClass("min-h-9");
     expect(screen.getByText(longName)).toHaveClass("min-w-0", "truncate");
@@ -714,9 +725,9 @@ describe("ServicePlanningSyncFloatingWindow", () => {
     const option = screen.getByRole("option", { name: new RegExp(`^${longName} ·`) });
     expect(option).toHaveAttribute("aria-label");
     expect(within(option).getByText(longName)).toHaveClass("truncate");
-    expect(within(option).getByText(new Date(selectedPlan.startsAt).toLocaleString(undefined, {
-      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-    }))).toHaveClass("shrink-0");
+    expect(within(option).getByText(
+      formatControllerServicePlanDateTime(selectedPlan, "America/New_York"),
+    )).toHaveClass("shrink-0");
   });
 
   it.each([

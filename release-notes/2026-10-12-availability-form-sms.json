@@ -3,5 +3,5 @@
   "date": "2026-10-12",
   "type": "improved",
   "title": "Availability form messages",
-  "description": "Availability forms preselect first-time recipients, let you choose failed sends for retry, and refresh message history before you review a send."
+  "description": "Review volunteers and their personalized text messages in one confirmation before sending. First-time volunteers are selected automatically, and failed messages require a deliberate retry."
 }

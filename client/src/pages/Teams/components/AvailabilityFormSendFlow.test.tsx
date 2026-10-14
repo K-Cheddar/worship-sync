@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AvailabilityFormSendFlow from "./AvailabilityFormSendFlow";
 import { dispatchAvailabilityNotificationBatch, prepareAvailabilityNotificationBatch } from "../../../api/auth";
@@ -73,23 +73,41 @@ const emptyHistoryProps = {
 
 beforeEach(() => jest.clearAllMocks());
 
-it("prepares and reviews personalized messages without sending until explicit confirmation", async () => {
+it("opens one detailed confirmation after preparation and sends only after the final action", async () => {
   const user = userEvent.setup();
   jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
   jest.mocked(dispatchAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: { ...batch, status: "sent" } });
   render(<AvailabilityFormSendFlow {...emptyHistoryProps} churchId="church-1" form={form} members={[member]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { status: "enabled", eligible: true } }} onClose={jest.fn()} />);
 
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  await user.click(await screen.findByText("View message"));
-  await screen.findByText(/private-token/);
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  await user.click(within(confirmation).getByText("View message"));
+  expect(await within(confirmation).findByText(/private-token/)).toBeInTheDocument();
   expect(prepareAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", expect.objectContaining({ intentType: "availability_request", formId: form.formId, memberIds: [member.memberId] }));
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  expect(within(confirmation).getByText("1 volunteer will receive a text message.")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /Review messages ·/ })).not.toBeInTheDocument();
 
-  const reviewSendButtons = screen.getAllByRole("button", { name: "Send 1 message" });
-  await user.click(reviewSendButtons[0]);
-  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  expect(await screen.findByRole("status")).toHaveTextContent("Your messages were sent. Delivery updates may take a moment.");
+});
+
+it("sends the reviewed batch only once after rapid confirmation clicks", async () => {
+  const user = userEvent.setup();
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch });
+  jest.mocked(dispatchAvailabilityNotificationBatch).mockImplementation(() => new Promise(() => {}));
+  render(<AvailabilityFormSendFlow {...emptyHistoryProps} churchId="church-1" form={form} members={[member]} positions={[]} teams={[]} recipients={[]} eligibilityByMemberId={{ [member.memberId]: { status: "enabled", eligible: true } }} onClose={jest.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const send = within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Send 1 message" });
+  fireEvent.click(send);
+  fireEvent.click(send);
+
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledTimes(1);
+  expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1");
 });
 
 it("invalidates a prepared review when a recipient is unchecked and prepares only the new selection", async () => {
@@ -109,13 +127,15 @@ it("invalidates a prepared review when a recipient is unchecked and prepares onl
     [secondMember.memberId]: { status: "enabled", eligible: true },
   }} onClose={jest.fn()} />);
 
-  await user.click(screen.getByRole("button", { name: "Review 2 messages" }));
-  expect(await screen.findByRole("button", { name: "Send 2 messages" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 2 messages" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 
   await user.click(screen.getByRole("checkbox", { name: "Sam Lee" }));
-  expect(screen.queryByRole("button", { name: "Send 2 messages" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Recipients changed");
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
 
   await waitFor(() => expect(prepareAvailabilityNotificationBatch).toHaveBeenLastCalledWith("church-1", expect.objectContaining({ memberIds: [member.memberId] })));
 });
@@ -129,10 +149,11 @@ it("invalidates review after Select visible and Clear", async () => {
   }} onClose={jest.fn()} />);
 
   await user.click(screen.getByRole("checkbox", { name: "Rae Kim" }));
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
   await user.click(screen.getByRole("button", { name: "Clear" }));
-  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
 });
 
 it("closes an outdated confirmation when recipient eligibility changes", async () => {
@@ -150,15 +171,14 @@ it("closes an outdated confirmation when recipient eligibility changes", async (
     onClose: jest.fn(),
   };
   const view = render(<AvailabilityFormSendFlow {...props} />);
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  await user.click(await screen.findByRole("button", { name: "Send 1 message" }));
-  expect(screen.getByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
 
   view.rerender(<AvailabilityFormSendFlow {...props} eligibilityByMemberId={{
     [member.memberId]: { status: "opted_out", eligible: false },
   }} />);
 
-  expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
 });
@@ -179,21 +199,18 @@ it("requires refreshed history before confirmation can stay open or dispatch", a
     onClose: jest.fn(),
   };
   const view = render(<AvailabilityFormSendFlow {...props} />);
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  await screen.findByRole("button", { name: "Send 1 message" });
-  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
-  expect(screen.getByRole("dialog", { name: "Send this form?" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
 
   view.rerender(<AvailabilityFormSendFlow {...props} historyLoaded={false} />);
-  expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send 1 message" })).toBeDisabled();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeDisabled();
   expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
 
   view.rerender(<AvailabilityFormSendFlow {...props} historyLoaded />);
-  expect(screen.queryByRole("dialog", { name: "Send this form?" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Send 1 message" }));
-  const sendButtons = screen.getAllByRole("button", { name: "Send 1 message" });
-  await user.click(sendButtons[sendButtons.length - 1]);
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Review text messages" })).getByRole("button", { name: "Send 1 message" }));
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
 });
 
@@ -205,12 +222,39 @@ it("clears a reviewed batch when the form context changes while mounted", async 
     eligibilityByMemberId: { [member.memberId]: { status: "enabled" as const, eligible: true } }, onClose: jest.fn(),
   };
   const view = render(<AvailabilityFormSendFlow {...props} form={form} />);
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
 
   view.rerender(<AvailabilityFormSendFlow {...props} form={{ ...form, formId: "form-2", name: "November availability" }} />);
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument());
   expect(screen.getByRole("status")).toHaveTextContent("Form changed");
+});
+
+it("does not open a prepared review after the form or church changes while preparation is pending", async () => {
+  const user = userEvent.setup();
+  let resolvePreparation!: (value: Awaited<ReturnType<typeof prepareAvailabilityNotificationBatch>>) => void;
+  jest.mocked(prepareAvailabilityNotificationBatch)
+    .mockReturnValueOnce(new Promise((resolve) => { resolvePreparation = resolve; }));
+  const props = {
+    ...emptyHistoryProps,
+    churchId: "church-1",
+    form,
+    members: [member],
+    positions: [],
+    teams: [],
+    recipients: [],
+    eligibilityByMemberId: { [member.memberId]: { status: "enabled" as const, eligible: true } },
+    onClose: jest.fn(),
+  };
+  const view = render(<AvailabilityFormSendFlow {...props} />);
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  await waitFor(() => expect(prepareAvailabilityNotificationBatch).toHaveBeenCalledTimes(1));
+
+  view.rerender(<AvailabilityFormSendFlow {...props} churchId="church-2" form={{ ...form, formId: "form-2", name: "November Availability" }} />);
+  await act(async () => resolvePreparation({ success: true, batch }));
+
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
+  expect(screen.queryByText("October Availability")).not.toBeInTheDocument();
 });
 
 it("automatically selects newly eligible members after consent refresh without reselecting an unchecked member", async () => {
@@ -241,7 +285,7 @@ it("automatically selects newly eligible members after consent refresh without r
 
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeChecked();
-  expect(screen.getByRole("button", { name: "Review 1 message" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
 });
 
 it("keeps recipient selection when team and name filters change", async () => {
@@ -320,15 +364,15 @@ it("leaves previous failures unchecked until the operator selects them for retry
   }} notificationIntents={[failedIntent]} smsDeliveryAttempts={[failedAttempt]} onClose={jest.fn()} />);
 
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
-  expect(screen.getByText("First send · SMS ready")).toBeInTheDocument();
+  expect(screen.getByText("First message · ready")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeEnabled();
   expect(screen.getByText("Previous send failed · select to retry")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Review 1 message" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeEnabled();
 
   await user.click(screen.getByRole("checkbox", { name: "Sam Lee" }));
   expect(screen.getByRole("checkbox", { name: "Sam Lee" })).toBeChecked();
-  expect(screen.getByRole("button", { name: "Review 2 messages" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Review and send 2 messages" })).toBeEnabled();
 });
 
 it("does not expose recipient selection before full history loads", () => {
@@ -336,7 +380,7 @@ it("does not expose recipient selection before full history loads", () => {
 
   expect(screen.getByRole("status")).toHaveTextContent("Loading consent and message history");
   expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Review 1 message" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review and send 1 message" })).toBeDisabled();
 });
 
 it("invalidates the current review when form details change under the same form id", async () => {
@@ -353,11 +397,66 @@ it("invalidates the current review when form details change under the same form 
     onClose: jest.fn(),
   };
   const view = render(<AvailabilityFormSendFlow {...props} form={form} />);
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  expect(await screen.findByRole("button", { name: "Send 1 message" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  expect(await screen.findByRole("dialog", { name: "Review text messages" })).toBeInTheDocument();
 
   view.rerender(<AvailabilityFormSendFlow {...props} form={{ ...form, availabilityMessage: "Please update your dates." }} />);
 
-  expect(screen.queryByRole("button", { name: "Send 1 message" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Review text messages" })).not.toBeInTheDocument();
   expect(screen.getByRole("status")).toHaveTextContent("Form details changed");
+});
+
+it("uses the scoped team list and hides contact details in scoped review", async () => {
+  const user = userEvent.setup();
+  const scopedMember: TeamRosterMember = {
+    memberId: member.memberId,
+    churchId: member.churchId,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    positionIds: [],
+    blockoutDates: [],
+    teamMemberships: { worship: { teamId: "worship" } },
+  };
+  const scopedBatch: NotificationBatch = {
+    ...batch,
+    summary: { ...batch.summary, optedOut: 1 },
+    recipients: [{
+      memberId: member.memberId,
+      memberName: "Rae Kim",
+      maskedPhoneNumber: "••• ••• 1234",
+      phoneNumberSnapshot: member.phoneNumber,
+      eligible: true,
+      intentId: "intent-1",
+      status: "ready",
+      segmentCount: 1,
+      message: "Respond at [private response link]",
+    }],
+  };
+  jest.mocked(prepareAvailabilityNotificationBatch).mockResolvedValue({ success: true, batch: scopedBatch });
+  render(<AvailabilityFormSendFlow
+    {...emptyHistoryProps}
+    churchId="church-1"
+    form={{ ...form, purpose: "team_availability", enabledFields: ["availability"] }}
+    members={[scopedMember]}
+    positions={[]}
+    teams={[{ teamId: "worship", churchId: "church-1", name: "Worship", memberIds: [member.memberId] }, { teamId: "av", churchId: "church-1", name: "AV", memberIds: [] }]}
+    recipients={[]}
+    eligibilityByMemberId={{ [member.memberId]: { eligible: true } }}
+    privacySafe
+    onClose={jest.fn()}
+  />);
+
+  await user.click(screen.getByRole("combobox", { name: /Team:/ }));
+  expect(screen.getByRole("option", { name: "All managed Teams" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Worship" })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: "AV" })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  expect(within(confirmation).queryByText(/opted out/i)).not.toBeInTheDocument();
+  await user.click(within(confirmation).getByText("View message"));
+  expect(await within(confirmation).findByText("Respond at [private response link]")).toBeInTheDocument();
+  expect(confirmation).not.toHaveTextContent(member.phoneNumber!);
+  expect(confirmation).toHaveTextContent(/1234/);
 });

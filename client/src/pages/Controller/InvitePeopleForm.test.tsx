@@ -31,7 +31,8 @@ const invite = {
 };
 
 const inviteAccessDraft = {
-  access: "full" as const,
+  role: "member" as const,
+  controllerAccess: "full" as const,
   teamsAccess: "none" as const,
   servicesAccess: "none" as const,
   teamScopeIds: [],
@@ -112,7 +113,7 @@ describe("InvitePeopleForm invite recovery", () => {
     );
 
     await waitFor(() => expect(onInvited).toHaveBeenCalledTimes(1));
-    expect(screen.getByText(/Music access/)).toBeInTheDocument();
+    expect(screen.getByText(/Music controller access/)).toBeInTheDocument();
     expect(mockShowApiError).toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Update access and resend" })).toBeInTheDocument();
   });

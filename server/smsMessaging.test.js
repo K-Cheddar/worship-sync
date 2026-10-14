@@ -13,6 +13,7 @@ import { buildTeamIntakeSms, measureSmsMessage } from "./smsMessage.js";
 import {
   createFakeSmsProvider,
   createTwilioSmsProvider,
+  SMS_PROVIDER_REQUEST_TIMEOUT_MS,
   normalizeTwilioStatus,
   resolveTwilioAccountConfiguration,
   resolveTwilioStatusCallbackUrl,
@@ -230,8 +231,9 @@ test("fake provider is deterministic and Twilio responses normalize inside the p
   assert.deepEqual(factoryArgs, [
     "AC_parent",
     "token",
-    { accountSid: "AC_subaccount" },
+    { accountSid: "AC_subaccount", timeout: SMS_PROVIDER_REQUEST_TIMEOUT_MS },
   ]);
+  assert.equal(SMS_PROVIDER_REQUEST_TIMEOUT_MS, 15_000);
   assert.deepEqual(
     resolveTwilioAccountConfiguration({
       config: { twilioAccountSid: "AC_subaccount" },

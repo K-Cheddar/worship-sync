@@ -1,27 +1,25 @@
 import { memberAccessOptions, toMemberAccessOption } from "./accountUtils";
 
 describe("toMemberAccessOption", () => {
-  it("preserves every known tier", () => {
+  it("normalizes persisted Controller access values", () => {
     expect(toMemberAccessOption("full")).toBe("full");
     expect(toMemberAccessOption("music")).toBe("music");
     expect(toMemberAccessOption("view")).toBe("view");
-    // Previously fell through to "view", so opening the access sheet on a
-    // volunteer showed the wrong tier and saving widened them.
-    expect(toMemberAccessOption("member")).toBe("member");
+    expect(toMemberAccessOption("none")).toBe("none");
+    expect(toMemberAccessOption("member")).toBe("none");
   });
 
-  it("falls back to the narrowest tier, not the widest", () => {
-    // An unrecognized value must never resolve upward: that would quietly grant
-    // access on the next save.
-    expect(toMemberAccessOption(undefined)).toBe("member");
-    expect(toMemberAccessOption("something-new")).toBe("member");
+  it("fails closed for missing or unknown values", () => {
+    expect(toMemberAccessOption(undefined)).toBe("none");
+    expect(toMemberAccessOption("something-new")).toBe("none");
   });
 });
 
 describe("memberAccessOptions", () => {
-  it("offers the schedule-only tier so an admin can narrow someone", () => {
-    expect(memberAccessOptions.map((option) => option.value)).toContain(
-      "member",
-    );
+  it("offers None, View, Music, and Full without a Member tier", () => {
+    expect(memberAccessOptions.map((option) => option.value)).toEqual([
+      "none", "view", "music", "full",
+    ]);
+    expect(memberAccessOptions.map((option) => option.label)).not.toContain("Member access");
   });
 });

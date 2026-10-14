@@ -564,6 +564,49 @@ export const TeamsFormsPageSkeleton = () => (
   </SkeletonStatus>
 );
 
+export const TeamsMessagesPageSkeleton = () => (
+  <SkeletonStatus label="Loading messages">
+    <div className="mx-auto w-full max-w-5xl space-y-5 overflow-y-auto p-4 sm:p-6">
+      <header className="space-y-2">
+        <div className={cn(skeletonBar, "h-6 w-44")} />
+        <div className={cn(skeletonBar, "h-4 w-full max-w-2xl")} />
+      </header>
+      <section className="space-y-5 rounded-xl border border-gray-700 bg-gray-900/40 p-4 shadow-sm sm:p-6">
+        <div className="space-y-2">
+          <div className={cn(skeletonBar, "h-5 w-32")} />
+          <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className={cn(skeletonBar, "h-10 w-full")} />
+          <div className={cn(skeletonBar, "h-10 w-full")} />
+        </div>
+        <div className="space-y-3 border-t border-gray-700 pt-4">
+          <div className="space-y-2">
+            <div className={cn(skeletonBar, "h-5 w-24")} />
+            <div className={cn(skeletonBar, "h-4 w-full max-w-lg")} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className={cn(skeletonBar, "h-10 w-full")} />
+            <div className={cn(skeletonBar, "h-10 w-full")} />
+          </div>
+          <div className="space-y-2 rounded-lg border border-gray-700 bg-gray-950/50 p-3">
+            <div className={cn(skeletonBar, "h-9 w-full")} />
+            <SkeletonEntityRows count={4} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-700 pt-4">
+          <div className={cn(skeletonBar, "h-4 w-56 max-w-full")} />
+          <div className={cn(skeletonBar, "h-9 w-36")} />
+        </div>
+      </section>
+      <section className="space-y-3">
+        <div className={cn(skeletonBar, "h-5 w-36")} />
+        <SkeletonEntityRows count={2} withNote />
+      </section>
+    </div>
+  </SkeletonStatus>
+);
+
 export const getTeamsSectionSkeleton = (routePath: string) => {
   switch (routePath) {
     case "schedules":
@@ -589,6 +632,8 @@ export const getTeamsSectionSkeleton = (routePath: string) => {
       return <TeamsMicrophonesPageSkeleton />;
     case "forms":
       return <TeamsFormsPageSkeleton />;
+    case "messages":
+      return <TeamsMessagesPageSkeleton />;
     default:
       return <TeamsMembersPageSkeleton />;
   }

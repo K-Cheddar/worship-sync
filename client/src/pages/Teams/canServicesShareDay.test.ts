@@ -58,6 +58,23 @@ describe("canServicesShareDay", () => {
     ).toBe(false);
   });
 
+  it("compares one-time service dates in the church timezone", () => {
+    const lateSaturdayUtcSunday = {
+      reccurence: "one_time" as const,
+      dateTimeISO: "2026-10-04T03:30:00.000Z",
+    };
+    expect(canServicesShareDay(
+      lateSaturdayUtcSunday,
+      { reccurence: "weekly", dayOfWeek: 6 },
+      "America/New_York",
+    )).toBe(true);
+    expect(canServicesShareDay(
+      lateSaturdayUtcSunday,
+      { reccurence: "weekly", dayOfWeek: 0 },
+      "America/New_York",
+    )).toBe(false);
+  });
+
   it("returns false when a recurrence has no resolvable day yet", () => {
     expect(
       canServicesShareDay(

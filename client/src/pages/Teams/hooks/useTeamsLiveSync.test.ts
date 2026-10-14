@@ -44,8 +44,8 @@ describe("useTeamsLiveSync", () => {
 
   it("opens an authenticated church-scoped stream and forwards events", () => {
     const onMessage = jest.fn();
-    const { result } = renderHook(
-      () => useTeamsLiveSync("church-1", onMessage),
+    const { result } = renderHook(() =>
+      useTeamsLiveSync("church-1", onMessage, true),
     );
 
     expect(mockConnections).toHaveLength(1);
@@ -65,7 +65,7 @@ describe("useTeamsLiveSync", () => {
 
   it("reports the initial open without counting it as a reconnect", () => {
     const { result } = renderHook(() =>
-      useTeamsLiveSync("church-1", jest.fn()),
+      useTeamsLiveSync("church-1", jest.fn(), true),
     );
 
     act(() => mockConnections[0].handlers.onOpen());
@@ -75,7 +75,7 @@ describe("useTeamsLiveSync", () => {
 
   it("increments reconnectVersion once after each interruption and recovery", () => {
     const { result } = renderHook(() =>
-      useTeamsLiveSync("church-1", jest.fn()),
+      useTeamsLiveSync("church-1", jest.fn(), true),
     );
     const handlers = mockConnections[0].handlers;
 
@@ -102,7 +102,7 @@ describe("useTeamsLiveSync", () => {
     [{ kind: "permission", status: 403 } as const, "permission"],
   ])("stops in unavailable state for distinct auth failures", (failure, kind) => {
     const { result } = renderHook(() =>
-      useTeamsLiveSync("church-1", jest.fn()),
+      useTeamsLiveSync("church-1", jest.fn(), true),
     );
 
     act(() => mockConnections[0].handlers.onError(failure));
@@ -112,7 +112,7 @@ describe("useTeamsLiveSync", () => {
 
   it("keeps retryable server failures in the disconnected state", () => {
     const { result } = renderHook(() =>
-      useTeamsLiveSync("church-1", jest.fn()),
+      useTeamsLiveSync("church-1", jest.fn(), true),
     );
 
     act(() =>
@@ -127,7 +127,9 @@ describe("useTeamsLiveSync", () => {
   });
 
   it("does not open a stream without a churchId", () => {
-    const { result } = renderHook(() => useTeamsLiveSync(null, jest.fn()));
+    const { result } = renderHook(() =>
+      useTeamsLiveSync(null, jest.fn(), true),
+    );
     expect(mockConnections).toHaveLength(0);
     expect(result.current.connectionState).toBe("unavailable");
   });
@@ -135,7 +137,7 @@ describe("useTeamsLiveSync", () => {
   it("replaces the stream when the church changes", () => {
     const { rerender } = renderHook(
       ({ churchId }: { churchId: string }) =>
-        useTeamsLiveSync(churchId, jest.fn()),
+        useTeamsLiveSync(churchId, jest.fn(), true),
       { initialProps: { churchId: "church-1" } },
     );
     const first = mockConnections[0];
@@ -149,7 +151,7 @@ describe("useTeamsLiveSync", () => {
   it("replaces the stream when the authenticated identity changes", () => {
     let context = createMockGlobalContext({ churchId: "church-1" });
     const { rerender } = renderHook(
-      () => useTeamsLiveSync("church-1", jest.fn()),
+      () => useTeamsLiveSync("church-1", jest.fn(), true),
       { wrapper: createWrapper(() => context) },
     );
     const first = mockConnections[0];
@@ -166,7 +168,7 @@ describe("useTeamsLiveSync", () => {
 
   it("closes the stream on unmount", () => {
     const { unmount } = renderHook(() =>
-      useTeamsLiveSync("church-1", jest.fn()),
+      useTeamsLiveSync("church-1", jest.fn(), true),
     );
     const connection = mockConnections[0];
 
@@ -174,9 +176,48 @@ describe("useTeamsLiveSync", () => {
     expect(connection.close).toHaveBeenCalledTimes(1);
   });
 
+  it("closes on access loss, ignores queued events, and resumes when broad access returns", () => {
+    const onMessage = jest.fn();
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useTeamsLiveSync("church-1", onMessage, enabled),
+      { initialProps: { enabled: true } },
+    );
+    const first = mockConnections[0];
+    act(() => first.handlers.onOpen());
+
+    rerender({ enabled: false });
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(result.current.connectionState).toBe("unavailable");
+    act(() => {
+      first.handlers.onMessage(
+        JSON.stringify({ type: "schedule-updated", schedule: { teamId: "av" } }),
+      );
+      first.handlers.onOpen();
+      first.handlers.onError({ kind: "interrupted" });
+    });
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(result.current.connectionState).toBe("unavailable");
+
+    rerender({ enabled: false });
+    expect(mockConnections).toHaveLength(1);
+    rerender({ enabled: true });
+    expect(mockConnections).toHaveLength(2);
+    expect(result.current.reconnectVersion).toBe(0);
+  });
+
+  it("does not connect while broad access is disabled", () => {
+    const { result, rerender } = renderHook(
+      ({ churchId }) => useTeamsLiveSync(churchId, jest.fn(), false),
+      { initialProps: { churchId: "church-1" } },
+    );
+    rerender({ churchId: "church-2" });
+    expect(mockConnections).toHaveLength(0);
+    expect(result.current.connectionState).toBe("unavailable");
+  });
+
   it("reports an unknown event when the payload is not valid JSON", () => {
     const onMessage = jest.fn();
-    renderHook(() => useTeamsLiveSync("church-1", onMessage));
+    renderHook(() => useTeamsLiveSync("church-1", onMessage, true));
 
     act(() => mockConnections[0].handlers.onMessage("not json"));
     expect(onMessage).toHaveBeenCalledWith({ type: "unknown" });

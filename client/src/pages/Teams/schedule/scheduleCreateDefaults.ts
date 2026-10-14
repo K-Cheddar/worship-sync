@@ -24,6 +24,7 @@ export const getCreateScheduleDefaultRange = ({
   positions,
   schedules,
   now = serverDate(),
+  timeZone,
 }: {
   churchId: string;
   teamId: string;
@@ -31,6 +32,7 @@ export const getCreateScheduleDefaultRange = ({
   positions: TeamPosition[];
   schedules: (TeamSchedule | TeamScheduleSummary)[];
   now?: Date;
+  timeZone?: string;
 }): ScheduleDateRange => {
   let searchDate = now;
   while (teamId) {
@@ -40,6 +42,7 @@ export const getCreateScheduleDefaultRange = ({
       teamId,
       schedules,
       now: searchDate,
+      timeZone,
     });
     const range = { startDate: upcoming.start, endDate: upcoming.end };
     const coveredSchedule = upcoming.nextOccurrence && churchId
@@ -50,6 +53,7 @@ export const getCreateScheduleDefaultRange = ({
         occurrences: upcoming.period.occurrences,
         visibleStartDate: range.startDate,
         visibleEndDate: range.endDate,
+        timeZone,
       }).schedule
       : null;
     if (!coveredSchedule) return range;
@@ -65,6 +69,7 @@ export const getCreateScheduleDefaultRange = ({
     teamId,
     schedules,
     now,
+    timeZone,
   });
   return { startDate: fallback.start, endDate: fallback.end };
 };
@@ -105,17 +110,20 @@ export const getCreateScheduleDefaultServiceIds = ({
   schedules,
   services,
   range,
+  timeZone,
 }: {
   teamId: string;
   schedules: (TeamSchedule | TeamScheduleSummary)[];
   services: TeamService[];
   range: ScheduleDateRange;
+  timeZone?: string;
 }): string[] => {
   const inRangeIds = new Set(
     filterServicesWithOccurrencesInRange({
       services: services.filter(isActive),
       startDate: range.startDate,
       endDate: range.endDate,
+      timeZone,
     }).map((service) => service.serviceId),
   );
 

@@ -27,6 +27,7 @@ import type {
 } from "../types/servicePlan";
 import type { ServicePlanningTeamAssignment } from "../types/servicePlanningImport";
 import type {
+  ControllerAccess,
   AuthBootstrap,
   ChurchBranding,
   ChurchStorageQuotaUsage,
@@ -39,6 +40,8 @@ import type {
   NotificationIntent,
   NotificationIntentType,
   NotificationBatch,
+  ScheduleInitialSmsRecipient,
+  ScheduleInitialSmsBatchHistoryEntry,
   MemberPermissions,
   NotificationCategory,
   NotificationPreference,
@@ -60,6 +63,7 @@ import type {
   TeamQualificationLevel,
   TeamRole,
   TeamIntakeForm,
+  TeamAvailabilityManagementData,
   TeamIntakePreview,
   TeamIntakeRecipient,
   SmsDeliveryAttempt,
@@ -67,6 +71,7 @@ import type {
   SmsMemberEligibilityStatus,
   TeamIntakeSubmission,
   TeamRosterMember,
+  TeamMemberQualification,
   TeamSchedule,
   TeamScheduleAssignments,
   TeamScheduleCellAssignment,
@@ -1126,6 +1131,29 @@ export const listChurchMembers = async (churchId: string) =>
     `api/churches/${churchId}/members`,
   );
 
+export const getChurchServiceTimeZone = async (churchId: string) =>
+  apiFetch<{
+    success: boolean;
+    serviceTimeZone: string;
+    isConfigured: boolean;
+    legacyTimeZoneSuggestion?: string | null;
+  }>(
+    `api/churches/${churchId}/service-time-zone`,
+  );
+
+export const updateChurchServiceTimeZone = async (
+  churchId: string,
+  serviceTimeZone: string,
+) =>
+  apiFetch<{
+    success: boolean;
+    serviceTimeZone: string;
+    isConfigured: boolean;
+  }>(
+    `api/churches/${churchId}/service-time-zone`,
+    { method: "POST", body: JSON.stringify({ serviceTimeZone }) },
+  );
+
 export const listChurchInvites = async (churchId: string) =>
   apiFetch<{ success: boolean; invites: ChurchInviteRow[] }>(
     `api/churches/${churchId}/invites`,
@@ -1253,6 +1281,8 @@ export type TeamRosterMemberPayload = {
    * own `positionIds`. Omit it entirely to leave membership alone.
    */
   teamIds?: string[];
+  /** Baseline for applying only this editor's membership changes. */
+  baseTeamIds?: string[];
   serviceAvailability?: TeamRosterMember["serviceAvailability"];
   teamMemberships?: TeamRosterMember["teamMemberships"];
   qualifications?: TeamRosterMember["qualifications"];
@@ -1280,6 +1310,12 @@ export type TeamPayload = {
   memberIds: string[];
   usesMicrophoneAssignments?: boolean;
   usesIemAssignments?: boolean;
+};
+
+export type TeamUpdatePayload = Omit<TeamPayload, "memberIds"> & {
+  memberIds?: string[];
+  /** Baseline used to merge explicit roster changes with the current roster. */
+  baseMemberIds?: string[];
 };
 
 export type TeamRolePayload = {
@@ -1339,6 +1375,7 @@ export type TeamIntakeFormPayload = {
   availabilityServices: TeamIntakeForm["availabilityServices"];
   availabilityOccurrences: TeamIntakeForm["availabilityOccurrences"];
   teamIds: string[];
+  purpose?: TeamIntakeForm["purpose"];
   active: boolean;
   enabledFields?: TeamIntakeForm["enabledFields"];
   requireEmail?: boolean;
@@ -1372,6 +1409,11 @@ export type TeamIntakeSubmissionPayload = {
 export const getTeamsBootstrap = async (churchId: string) =>
   apiFetch<TeamsBootstrap>(
     `api/churches/${churchId}/teams/bootstrap?schedules=summary`,
+  );
+
+export const getTeamAvailabilityManagementData = async (churchId: string) =>
+  apiFetch<TeamAvailabilityManagementData & { success: boolean }>(
+    `api/churches/${churchId}/team-intake/availability`,
   );
 
 export const getNotificationIntents = async (
@@ -1496,6 +1538,46 @@ export const prepareAvailabilityNotificationBatch = async (
     { method: "POST", body: JSON.stringify(body) },
   );
 
+export const getScheduleInitialSmsRecipients = async (
+  churchId: string,
+  scheduleId: string,
+) => apiFetch<{
+  success: boolean;
+  historyComplete: boolean;
+  dispatchEnabled: boolean;
+  dispatchReadinessMessage: string;
+  privacySafe: boolean;
+  hasPreparedSelection: boolean;
+  currentBatch?: NotificationBatch | null;
+  recentBatches?: ScheduleInitialSmsBatchHistoryEntry[];
+  scheduleId: string;
+  published: boolean;
+  batchId: string;
+  selectedMemberIds: string[];
+  recipients: ScheduleInitialSmsRecipient[];
+  summary: {
+    assigned: number;
+    total: number;
+    eligible: number;
+    alreadySent: number;
+    failed: number;
+    uncertain: number;
+    missingConsent: number;
+    optedOut: number;
+    missingPhone: number;
+    ineligible: number;
+  };
+}>(`api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/initial-sms-recipients`);
+
+export const prepareScheduleInitialSmsBatch = async (
+  churchId: string,
+  scheduleId: string,
+  memberIds: string[],
+) => apiFetch<{ success: boolean; batch: NotificationBatch; privacySafe: boolean }>(
+  `api/churches/${churchId}/team-schedules/${encodeURIComponent(scheduleId)}/initial-sms-batch`,
+  { method: "POST", body: JSON.stringify({ memberIds }) },
+);
+
 export const getAvailabilityNotificationBatch = async (
   churchId: string,
   batchId: string,
@@ -1563,8 +1645,8 @@ export const createTeamIntakeForm = async (
   apiFetch<{
     success: boolean;
     form: TeamIntakeForm;
-    publicToken: string;
-    publicUrl: string;
+    publicToken?: string;
+    publicUrl?: string;
   }>(`api/churches/${churchId}/team-intake/forms`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -1715,6 +1797,8 @@ type TeamRosterMemberSaveResponse = {
   member: TeamRosterMember;
   /** Teams whose rosters changed (member added). Absent when none did. */
   teams?: TeamRecord[];
+  /** Current roster memberships after an explicit membership edit. */
+  membershipTeamIds?: string[];
 };
 
 export const createTeamRosterMember = async (
@@ -1765,6 +1849,80 @@ export const deleteTeamRosterMember = async (
       body: JSON.stringify({}),
     },
   );
+
+export type TeamRosterCandidate = Pick<
+  TeamRosterMember,
+  "memberId" | "title" | "firstName" | "lastName" | "profileImageUrl"
+>;
+type SafeTeamRosterMemberProjection = TeamRosterCandidate & Pick<TeamRosterMember, "churchId">;
+
+export const searchTeamRosterCandidates = async (
+  churchId: string,
+  teamId: string,
+  query: string,
+) => apiFetch<{ candidates: TeamRosterCandidate[] }>(
+  `api/churches/${churchId}/teams/${teamId}/roster-candidates?q=${encodeURIComponent(query)}`,
+);
+
+export const addTeamRosterMemberToTeam = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<{ success: boolean; team: TeamRecord; member: SafeTeamRosterMemberProjection }>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
+  { method: "POST", body: JSON.stringify({}) },
+);
+
+export const removeTeamRosterMemberFromTeam = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<{
+  success: boolean;
+  team: TeamRecord;
+  member: SafeTeamRosterMemberProjection;
+  preservedAssignmentCount: number;
+}>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}`,
+  { method: "DELETE" },
+);
+
+export type TeamMemberProfile = Pick<
+  TeamRosterMember,
+  "memberId" | "title" | "firstName" | "lastName" | "profileImageUrl"
+>;
+export type TeamMemberTeamProfile = {
+  teamId: string;
+  positionIds: string[];
+  desiredPositionIds: string[];
+  membership: { roleId?: string; isTeamLead: boolean };
+  qualifications: TeamMemberQualification[];
+};
+export type TeamMemberTeamProfilePatch = Partial<
+  Pick<TeamMemberTeamProfile, "positionIds" | "desiredPositionIds" | "qualifications">
+> & { membership?: { roleId?: string | null; isTeamLead?: boolean } };
+export type TeamMemberTeamProfileResponse = {
+  member: TeamMemberProfile;
+  teamProfile: TeamMemberTeamProfile;
+};
+
+export const getTeamRosterMemberProfile = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+) => apiFetch<TeamMemberTeamProfileResponse>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}/team-profile`,
+);
+
+export const updateTeamRosterMemberProfile = async (
+  churchId: string,
+  teamId: string,
+  memberId: string,
+  body: TeamMemberTeamProfilePatch,
+) => apiFetch<{ success: boolean } & TeamMemberTeamProfileResponse>(
+  `api/churches/${churchId}/teams/${teamId}/roster/${memberId}/team-profile`,
+  { method: "PATCH", body: JSON.stringify(body) },
+);
 
 export type MyScheduleServing = {
   /** Set only for this person's own rows; others are name-only by design. */
@@ -1846,6 +2004,7 @@ export type MyScheduleOccurrence = {
 export const getMyTeamAssignments = async (churchId: string) =>
   apiFetch<{
     success: boolean;
+    serviceTimeZone?: string;
     member: TeamRosterMember | null;
     occurrences: MyScheduleOccurrence[];
   }>(`api/churches/${churchId}/my-team-assignments`);
@@ -1876,6 +2035,7 @@ export const getAssignmentResponseContext = async (token: string) =>
   apiFetch<{
     success: boolean;
     churchName: string;
+    serviceTimeZone?: string;
     firstName: string;
     assignments: AssignmentResponseSlot[];
   }>(`api/team-schedule-response?${new URLSearchParams({ token }).toString()}`);
@@ -2238,7 +2398,7 @@ export const createTeam = async (churchId: string, body: TeamPayload) =>
 export const updateTeam = async (
   churchId: string,
   teamId: string,
-  body: TeamPayload,
+  body: TeamUpdatePayload,
 ) =>
   apiFetch<{ success: boolean; team: TeamRecord }>(
     `api/churches/${churchId}/teams/${teamId}`,
@@ -2536,6 +2696,7 @@ export type BulkServicePlanTarget = {
   serviceId: string;
   serviceIds: string[];
   groupId?: string;
+  logicalOccurrenceId?: string;
   occurrenceId: string;
   startsAt: string;
   date: string;
@@ -2747,7 +2908,8 @@ export const inviteTeamRosterMember = async (
     email,
     memberId,
     role: "member",
-    // The narrowest tier: their own schedule, no operator surfaces.
+    // No Controller access; roster-derived Teams reads remain independent.
+    controllerAccess: "none",
     appAccess: "member",
     permissions: { teams: "none", services: "none" },
   });
@@ -2914,14 +3076,18 @@ export const removeChurchMember = async (churchId: string, userId: string) =>
 export const updateChurchMemberAccess = async (
   churchId: string,
   userId: string,
-  appAccess: "full" | "music" | "view" | "member",
+  controllerAccess: ControllerAccess,
   permissions: MemberPermissions,
 ) =>
   apiFetch<{ success: boolean }>(
     `api/churches/${churchId}/members/${userId}/access`,
     {
       method: "POST",
-      body: JSON.stringify({ appAccess, permissions }),
+      body: JSON.stringify({
+        controllerAccess,
+        appAccess: controllerAccess === "none" ? "member" : controllerAccess,
+        permissions,
+      }),
     },
   );
 

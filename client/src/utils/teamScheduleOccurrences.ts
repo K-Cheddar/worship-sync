@@ -5,27 +5,42 @@ import type {
 } from "../api/authTypes";
 import type { MonthWeekOrdinal, Weekday } from "../types";
 import { formatPlainDate, parsePlainDate } from "./plainDate";
+import {
+  calendarDateInTimeZone,
+  logicalOccurrenceIdForGroup,
+  logicalOccurrenceIdForService,
+  occurrenceIdentityListsMatch,
+  occurrenceScheduleDetailsMatch as compareOccurrenceScheduleDetails,
+  serviceDateTimeInTimeZone,
+} from "../../../shared/teamScheduleOccurrences";
 
-const setDateTime = (date: Date, time = "10:00") => {
-  const [hour = 0, minute = 0] = time.split(":").map((part) => Number(part));
-  const next = new Date(date);
-  next.setHours(hour, minute, 0, 0);
-  return next;
-};
-
-const occurrenceIdFor = (serviceId: string, startsAt: string) =>
-  `${serviceId}@${startsAt}`;
+export {
+  calendarDateInTimeZone,
+  logicalOccurrenceIdForGroup,
+  logicalOccurrenceIdForService,
+  occurrenceIdentityListsMatch,
+  hasOccurrenceIdentityAmbiguity,
+  resolveOccurrenceIdentity,
+  sameOccurrenceIdentity,
+  matchOccurrencesByIdentity,
+  preserveStoredOccurrenceIds,
+  serviceDateTimeInTimeZone,
+} from "../../../shared/teamScheduleOccurrences";
 
 const toOccurrence = (
   service: TeamService,
   startsAt: Date,
+  serviceDate: string,
 ): TeamScheduleOccurrence => {
   const iso = startsAt.toISOString();
+  const logicalOccurrenceId = logicalOccurrenceIdForService(service.serviceId, serviceDate);
   return {
-    occurrenceId: occurrenceIdFor(service.serviceId, iso),
+    occurrenceId: logicalOccurrenceId,
+    logicalOccurrenceId,
     serviceId: service.serviceId,
     name: service.name,
     startsAt: iso,
+    serviceDate,
     ...(service.positionRequirements?.length
       ? {
           // Keep a schedule-time snapshot so every server-side slot check uses
@@ -59,8 +74,9 @@ const nthWeekdayOfMonth = (
   return result.getMonth() === month ? result : null;
 };
 
-export const getDefaultScheduleRange = () => {
-  const now = new Date();
+export const getDefaultScheduleRange = (timeZone = "UTC") => {
+  const now =
+    parsePlainDate(calendarDateInTimeZone(new Date(), timeZone)) || new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   return {
@@ -69,58 +85,81 @@ export const getDefaultScheduleRange = () => {
   };
 };
 
-export const formatOccurrenceTiming = (occurrence: TeamScheduleOccurrence) =>
+export const formatOccurrenceTiming = (
+  occurrence: TeamScheduleOccurrence,
+  timeZone = "UTC",
+  includeTimeZone = true,
+) =>
   new Date(occurrence.startsAt).toLocaleString(undefined, {
+    timeZone,
     weekday: "short",
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    ...(includeTimeZone ? { timeZoneName: "short" as const } : {}),
   });
+
+export const getOccurrenceTimeZoneAbbreviation = (
+  startsAt: string,
+  timeZone: string,
+): string => {
+  const date = new Date(startsAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "short",
+  }).formatToParts(date).find((part) => part.type === "timeZoneName")?.value || "";
+};
 
 export type SharedOccurrenceTiming = {
   sharedWeekday: string | null;
   sharedTime: string | null;
 };
 
-const occurrenceWeekdayLabel = (startsAt: string) =>
-  new Date(startsAt).toLocaleString(undefined, { weekday: "short" });
+const occurrenceWeekdayLabel = (startsAt: string, timeZone: string) =>
+  new Date(startsAt).toLocaleString(undefined, { timeZone, weekday: "short" });
 
-const occurrenceTimeLabel = (startsAt: string) =>
+const occurrenceTimeLabel = (startsAt: string, timeZone: string) =>
   new Date(startsAt).toLocaleString(undefined, {
+    timeZone,
     hour: "numeric",
     minute: "2-digit",
   });
 
-const occurrenceWeekdayIndex = (startsAt: string) =>
-  new Date(startsAt).getDay();
+const occurrenceWeekdayIndex = (startsAt: string, timeZone: string) =>
+  new Date(startsAt).toLocaleString("en-US", { timeZone, weekday: "short" });
 
-const occurrenceTimeKey = (startsAt: string) => {
-  const date = new Date(startsAt);
-  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
-};
+const occurrenceTimeKey = (startsAt: string, timeZone: string) =>
+  new Date(startsAt).toLocaleString("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  });
 
 export const getSharedOccurrenceTiming = (
   occurrences: TeamScheduleOccurrence[],
+  timeZone = "UTC",
 ): SharedOccurrenceTiming => {
   if (occurrences.length === 0) {
     return { sharedWeekday: null, sharedTime: null };
   }
 
   const weekdayIndexes = occurrences.map((occurrence) =>
-    occurrenceWeekdayIndex(occurrence.startsAt),
+    occurrenceWeekdayIndex(occurrence.startsAt, timeZone),
   );
   const timeKeys = occurrences.map((occurrence) =>
-    occurrenceTimeKey(occurrence.startsAt),
+    occurrenceTimeKey(occurrence.startsAt, timeZone),
   );
   const sharedWeekday = weekdayIndexes.every(
     (weekday) => weekday === weekdayIndexes[0],
   )
-    ? occurrenceWeekdayLabel(occurrences[0].startsAt)
+    ? occurrenceWeekdayLabel(occurrences[0].startsAt, timeZone)
     : null;
   const sharedTime = timeKeys.every((time) => time === timeKeys[0])
-    ? occurrenceTimeLabel(occurrences[0].startsAt)
+    ? occurrenceTimeLabel(occurrences[0].startsAt, timeZone)
     : null;
 
   return { sharedWeekday, sharedTime };
@@ -129,20 +168,22 @@ export const getSharedOccurrenceTiming = (
 export const formatOccurrenceRowLabel = (
   occurrence: TeamScheduleOccurrence,
   shared: SharedOccurrenceTiming,
+  timeZone = "UTC",
 ) => {
   if (!shared.sharedWeekday && !shared.sharedTime) {
-    return formatOccurrenceTiming(occurrence);
+    return formatOccurrenceTiming(occurrence, timeZone);
   }
 
   const date = new Date(occurrence.startsAt);
   const parts: string[] = [];
 
   if (!shared.sharedWeekday) {
-    parts.push(occurrenceWeekdayLabel(occurrence.startsAt));
+    parts.push(occurrenceWeekdayLabel(occurrence.startsAt, timeZone));
   }
 
   parts.push(
     date.toLocaleString(undefined, {
+      timeZone,
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -150,7 +191,7 @@ export const formatOccurrenceRowLabel = (
   );
 
   if (!shared.sharedTime) {
-    parts.push(occurrenceTimeLabel(occurrence.startsAt));
+    parts.push(occurrenceTimeLabel(occurrence.startsAt, timeZone));
   }
 
   if (parts.length === 1) return parts[0];
@@ -158,17 +199,19 @@ export const formatOccurrenceRowLabel = (
   return `${parts[0]}, ${parts[1]}, ${parts[2]}`;
 };
 
-export const getOccurrenceDate = (occurrence: TeamScheduleOccurrence) =>
-  occurrence.startsAt.slice(0, 10);
-
-/** YYYY-MM-DD for `date` in `timeZone` (en-CA is ISO-like and stable). */
-export const calendarDateInTimeZone = (date: Date, timeZone: string): string =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
+export const getOccurrenceDate = (
+  occurrence: Pick<TeamScheduleOccurrence, "serviceDate" | "occurrenceId" | "startsAt">,
+  timeZone = "UTC",
+) => {
+  const storedDate =
+    occurrence.serviceDate ||
+    occurrence.occurrenceId.match(/@((?:\d{4}-\d{2}-\d{2}))$/)?.[1];
+  if (storedDate) return storedDate;
+  const startsAt = new Date(occurrence.startsAt);
+  return Number.isNaN(startsAt.getTime())
+    ? ""
+    : calendarDateInTimeZone(startsAt, timeZone);
+};
 
 /**
  * True when the occurrence falls on the same calendar day as `referenceDate`
@@ -193,13 +236,10 @@ export const isOccurrenceOnCalendarDay = (
  */
 export const isOccurrenceToday = (
   occurrence: Pick<TeamScheduleOccurrence, "startsAt">,
+  timeZone = "UTC",
   referenceDate: Date = new Date(),
 ): boolean =>
-  isOccurrenceOnCalendarDay(
-    occurrence,
-    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    referenceDate,
-  );
+  isOccurrenceOnCalendarDay(occurrence, timeZone, referenceDate);
 
 /**
  * The occurrence the operator is most likely to work next: the earliest one that
@@ -281,7 +321,7 @@ const mergeGroupedOccurrences = (
     const sorted = [...bucket].sort(
       (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
-        a.name.localeCompare(b.name),
+        a.serviceId.localeCompare(b.serviceId),
     );
     const first = sorted[0];
     const groupId = serviceById.get(first.serviceId)?.serviceGroupId as string;
@@ -293,12 +333,14 @@ const mergeGroupedOccurrences = (
         .filter(Boolean) as TeamService[],
     );
     const combined: TeamScheduleOccurrence = {
-      occurrenceId: `group:${groupId}@${getOccurrenceDate(first)}`,
+      occurrenceId: logicalOccurrenceIdForGroup(groupId, getOccurrenceDate(first)),
+      logicalOccurrenceId: logicalOccurrenceIdForGroup(groupId, getOccurrenceDate(first)),
       serviceId: first.serviceId,
       groupId,
       serviceIds,
       name: names.join(" & "),
       startsAt: first.startsAt,
+      serviceDate: getOccurrenceDate(first),
       ...(requirements.length ? { positionRequirements: requirements } : {}),
     };
     return [combined];
@@ -312,11 +354,14 @@ export const generateScheduleOccurrences = ({
   serviceIds,
   startDate,
   endDate,
+  timeZone = "UTC",
 }: {
   services: TeamService[];
   serviceIds: string[];
   startDate: string;
   endDate: string;
+  /** Church/service timezone, independent of the operator's browser timezone. */
+  timeZone?: string;
 }) => {
   const start = parsePlainDate(startDate);
   const end = parsePlainDate(endDate);
@@ -348,20 +393,23 @@ export const generateScheduleOccurrences = ({
       if (serviceEnd && date > serviceEnd) return false;
       return true;
     };
-    const pushOccurrence = (startsAt: Date) => {
+    const pushOccurrence = (startsAt: Date, serviceDate: string) => {
       // Archived services remain in history but are unavailable after archive.
       if (archivedAt && !Number.isNaN(archivedAt.getTime()) && startsAt > archivedAt) {
         return;
       }
-      occurrences.push(toOccurrence(service, startsAt));
+      occurrences.push(toOccurrence(service, startsAt, serviceDate));
     };
 
     if (service.reccurence === "one_time") {
       const startsAt = service.dateTimeISO
         ? new Date(service.dateTimeISO)
         : null;
-      if (startsAt && startsAt >= start && startsAt <= endTime) {
-        pushOccurrence(startsAt);
+      const serviceDate = startsAt && !Number.isNaN(startsAt.getTime())
+        ? calendarDateInTimeZone(startsAt, timeZone)
+        : "";
+      if (startsAt && serviceDate >= startDate && serviceDate <= endDate) {
+        pushOccurrence(startsAt, serviceDate);
       }
       continue;
     }
@@ -375,7 +423,9 @@ export const generateScheduleOccurrences = ({
       ) {
         if (cursor.getDay() !== service.dayOfWeek) continue;
         if (!withinServiceBounds(cursor)) continue;
-        pushOccurrence(setDateTime(cursor, service.time));
+        const serviceDate = formatPlainDate(cursor);
+        const startsAt = serviceDateTimeInTimeZone(serviceDate, service.time, timeZone);
+        if (startsAt) pushOccurrence(startsAt, serviceDate);
       }
       continue;
     }
@@ -389,7 +439,11 @@ export const generateScheduleOccurrences = ({
       ) {
         if (!withinServiceBounds(cursor)) continue;
         const day = days.find((item) => item.day === cursor.getDay());
-        if (day) pushOccurrence(setDateTime(cursor, day.time));
+        if (day) {
+          const serviceDate = formatPlainDate(cursor);
+          const startsAt = serviceDateTimeInTimeZone(serviceDate, day.time, timeZone);
+          if (startsAt) pushOccurrence(startsAt, serviceDate);
+        }
       }
       continue;
     }
@@ -415,7 +469,9 @@ export const generateScheduleOccurrences = ({
           !withinServiceBounds(occurrenceDate)
         )
           continue;
-        pushOccurrence(setDateTime(occurrenceDate, service.time));
+        const serviceDate = formatPlainDate(occurrenceDate);
+        const startsAt = serviceDateTimeInTimeZone(serviceDate, service.time, timeZone);
+        if (startsAt) pushOccurrence(startsAt, serviceDate);
       }
     }
   }
@@ -436,22 +492,27 @@ export const generateScheduleOccurrences = ({
 export const occurrenceIdsMatch = (
   a: TeamScheduleOccurrence[],
   b: TeamScheduleOccurrence[],
-): boolean => {
-  if (a.length !== b.length) return false;
-  const aIds = [...a.map((occurrence) => occurrence.occurrenceId)].sort();
-  const bIds = [...b.map((occurrence) => occurrence.occurrenceId)].sort();
-  return aIds.every((id, index) => id === bIds[index]);
-};
+  timeZone = "UTC",
+): boolean => occurrenceIdentityListsMatch(a, b, timeZone);
+
+/** True only when identity, service membership, and scheduled date/time all match. */
+export const occurrenceScheduleDetailsMatch = (
+  a: TeamScheduleOccurrence[],
+  b: TeamScheduleOccurrence[],
+  timeZone = "UTC",
+): boolean => compareOccurrenceScheduleDetails(a, b, timeZone);
 
 /** Services that would produce at least one occurrence in the given plain-date range. */
 export const filterServicesWithOccurrencesInRange = ({
   services,
   startDate,
   endDate,
+  timeZone,
 }: {
   services: TeamService[];
   startDate: string;
   endDate: string;
+  timeZone?: string;
 }) => {
   if (!startDate || !endDate) return [];
   return services.filter(
@@ -461,6 +522,7 @@ export const filterServicesWithOccurrencesInRange = ({
         serviceIds: [service.serviceId],
         startDate,
         endDate,
+        timeZone,
       }).length > 0,
   );
 };

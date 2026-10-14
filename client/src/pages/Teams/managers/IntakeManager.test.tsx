@@ -1,6 +1,6 @@
 import { type ContextType } from "react";
 import { useState } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import IntakeManager from "./IntakeManager";
@@ -14,6 +14,9 @@ import type {
   TeamIntakeRecipient,
   TeamIntakeSubmission,
   TeamRosterMember,
+  TeamPosition,
+  TeamRecord,
+  TeamSchedule,
   TeamService,
 } from "../../../api/authTypes";
 import {
@@ -25,6 +28,11 @@ import {
   revokeTeamIntakeRecipient,
   updateTeamIntakeForm,
 } from "../../../api/auth";
+
+let mockServiceTimeZone = "UTC";
+jest.mock("../TeamsPageContext", () => ({
+  useTeamsPage: () => ({ serviceTimeZone: mockServiceTimeZone }),
+}));
 
 const mockGetRecipientLink = jest.fn();
 const mockPrepareSms = jest.fn();
@@ -86,15 +94,32 @@ const renderManager = ({
   eligibilityStatus = "consent_needed",
   forms = [form],
   services = [],
+  positions = [],
+  schedules = [],
   submissions = [],
   intakeRecipients = [recipient],
+  availabilityOnly = false,
+  managedTeamIds = ["team-1"],
+  teams = [{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
+  members = [member],
+  serviceTimeZone = "UTC",
+  smsEligibilityByMemberId,
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
   forms?: TeamIntakeForm[];
   services?: TeamService[];
+  positions?: TeamPosition[];
+  schedules?: TeamSchedule[];
   submissions?: TeamIntakeSubmission[];
   intakeRecipients?: TeamIntakeRecipient[];
+  availabilityOnly?: boolean;
+  managedTeamIds?: string[];
+  teams?: TeamRecord[];
+  members?: TeamRosterMember[];
+  serviceTimeZone?: string;
+  smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
+  mockServiceTimeZone = serviceTimeZone;
   const onSmsDeliveryAttemptSaved = jest.fn();
   const onRecipientSaved = jest.fn();
   const view = render(
@@ -107,13 +132,16 @@ const renderManager = ({
         <ToastProvider>
           <TeamsNavigationGuardProvider>
             <IntakeManager
+              availabilityOnly={availabilityOnly}
+              managedTeamIds={managedTeamIds}
               forms={forms}
               submissions={submissions}
               intakeRecipients={intakeRecipients}
               services={services}
-              members={[member]}
-              positions={[]}
-              teams={[{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }]}
+              schedules={schedules}
+              members={members}
+              positions={positions}
+              teams={teams}
               canEdit
               onFormSaved={jest.fn()}
               onSubmissionSaved={jest.fn()}
@@ -121,7 +149,7 @@ const renderManager = ({
               onTeamSaved={jest.fn()}
               onRecipientSaved={onRecipientSaved}
               onSmsDeliveryAttemptSaved={onSmsDeliveryAttemptSaved}
-              smsEligibilityByMemberId={{
+              smsEligibilityByMemberId={smsEligibilityByMemberId || {
                 "member-1": {
                   status: eligibilityStatus,
                   eligible: eligibilityStatus === "enabled",
@@ -143,6 +171,11 @@ const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockServiceTimeZone = "UTC";
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 test("late form history failures do not publish an error toast after Forms unmounts", async () => {
@@ -164,8 +197,8 @@ test("shows the consent reason and keeps Copy link available when SMS is ineligi
   renderManager();
   await openForm(user);
 
-  expect(screen.getByText(/SMS consent needed/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Send SMS" })).toBeDisabled();
+  expect(screen.getByText(/Text message consent needed/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send text message" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "More" }));
   const copyItem = within(screen.getByRole("menu")).getByRole("menuitem", { name: "Copy private link" });
   expect(copyItem).not.toHaveAttribute("data-disabled");
@@ -180,6 +213,332 @@ test("shows the consent reason and keeps Copy link available when SMS is ineligi
   await waitFor(() => expect(navigator.clipboard.writeText).toBeDefined());
   expect(await navigator.clipboard.readText()).toBe("https://example.test/a/r_test");
   expect(mockSendIntent).not.toHaveBeenCalled();
+});
+
+test("availability-only manager hides member intake and consent details", async () => {
+  const user = userEvent.setup();
+  const safeMember: TeamRosterMember = {
+    memberId: member.memberId,
+    churchId: member.churchId,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    positionIds: [],
+    blockoutDates: [],
+    teamMemberships: { "team-1": { teamId: "team-1" } },
+    serviceAvailability: {},
+  };
+  renderManager({
+    availabilityOnly: true,
+    members: [safeMember],
+    smsEligibilityByMemberId: { "member-1": { eligible: false } },
+    forms: [{ ...form, purpose: "team_availability", enabledFields: ["availability"], availabilityOccurrences: [{ occurrenceId: "service@2026-10-18T10:00:00.000Z", serviceId: "service", name: "Sunday", serviceDate: "2026-10-18", startsAt: "2026-10-18T10:00:00.000Z" }] }],
+  });
+
+  await openForm(user);
+
+  expect(screen.getByText("Availability responses")).toBeInTheDocument();
+  expect(screen.queryByText("Not eligible to receive text messages")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Text message consent needed|This phone number opted out|No mobile number/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send text message" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send form" })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Teams to collect for" })).toBeInTheDocument();
+  expect(screen.getByText("Availability services: None")).toBeInTheDocument();
+  expect(screen.queryByText("Form wording")).not.toBeInTheDocument();
+  expect(screen.queryByText("Fields to collect")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /public form link/i })).not.toBeInTheDocument();
+});
+
+test("a church-wide editor gets the restricted editor and immutable payload for a Team availability form", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = {
+    occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-18T14:00:00.000Z",
+    serviceDate: "2026-10-18",
+  };
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["firstName", "email", "birthDate", "notes", "availability"],
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: availabilityForm });
+  renderManager({
+    forms: [availabilityForm],
+    intakeRecipients: [],
+    services: [{
+      id: "saved-service",
+      serviceId: "saved-service",
+      churchId: "church-1",
+      name: "Saved service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: savedOccurrence.startsAt,
+    }],
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Welcome message")).not.toBeInTheDocument();
+  expect(screen.queryByText("Birthday (year optional)")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Notes message")).not.toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Service dates" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText(/^Name/i), " updated");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    availabilityForm.formId,
+    expect.objectContaining({
+      purpose: "team_availability",
+      enabledFields: ["availability"],
+      teamIds: ["team-1"],
+      availabilityOccurrences: [savedOccurrence],
+    }),
+  ));
+});
+
+test("saved availability forms stay readable and keep their dates when the church time zone is unavailable", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = {
+    occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-18T14:00:00.000Z",
+    serviceDate: "2026-10-18",
+  };
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: availabilityForm });
+  renderManager({
+    forms: [availabilityForm],
+    intakeRecipients: [],
+    serviceTimeZone: "",
+  });
+
+  await openForm(user);
+  expect(screen.getByRole("heading", { name: availabilityForm.name })).toBeInTheDocument();
+  expect(screen.getByText(/October 01, 2026 – October 31, 2026/)).toBeInTheDocument();
+  expect(screen.getByText(/1 availability dates/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByRole("note")).toHaveTextContent(/review this form and edit its wording/i);
+  expect(screen.getByText("Load the church time zone before choosing service dates.")).toBeInTheDocument();
+
+  await user.clear(screen.getByLabelText(/^Name/i));
+  await user.type(screen.getByLabelText(/^Name/i), "October availability updated");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    availabilityForm.formId,
+    expect.objectContaining({
+      name: "October availability updated",
+      availabilityOccurrences: [savedOccurrence],
+    }),
+  ));
+});
+
+test("editing a saved availability form keeps service selections visible after its requirements change", async () => {
+  const user = userEvent.setup();
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityServices: [{ serviceId: "legacy-service", name: "Legacy service" }],
+    availabilityOccurrences: [],
+  };
+  renderManager({
+    forms: [availabilityForm],
+    intakeRecipients: [],
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+    services: [{
+      id: "legacy-service",
+      serviceId: "legacy-service",
+      churchId: "church-1",
+      name: "Legacy service",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    }],
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  expect(screen.getByRole("checkbox", { name: /Legacy service/ })).toBeChecked();
+});
+
+test("changing an unsent availability form's Teams reconciles its selected service dates", async () => {
+  const user = userEvent.setup();
+  const unsentForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityServices: [],
+    availabilityOccurrences: [],
+  };
+  const services: TeamService[] = [
+    {
+      id: "worship-service",
+      serviceId: "worship-service",
+      churchId: "church-1",
+      name: "Worship service",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+      positionRequirements: [{ positionId: "vocal", count: 1 }],
+    },
+    {
+      id: "av-service",
+      serviceId: "av-service",
+      churchId: "church-1",
+      name: "AV service",
+      timerType: "countdown",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "10:00",
+      positionRequirements: [{ positionId: "camera", count: 1 }],
+    },
+  ];
+  const editedForm = { ...unsentForm, teamIds: ["team-2"] };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: editedForm });
+  renderManager({
+    forms: [unsentForm],
+    intakeRecipients: [],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] },
+      { teamId: "team-2", churchId: "church-1", name: "AV", memberIds: [] },
+    ],
+    positions: [
+      { positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" },
+      { positionId: "camera", churchId: "church-1", teamId: "team-2", name: "Camera" },
+    ],
+    services,
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("checkbox", { name: /Worship service/ }));
+  const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
+  await user.click(within(teamScope).getByRole("checkbox", { name: "AV" }));
+  await user.click(within(teamScope).getByRole("checkbox", { name: "Worship" }));
+
+  expect(screen.queryByRole("checkbox", { name: /Worship service/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /AV service/ })).not.toBeChecked();
+
+  await user.click(screen.getByRole("checkbox", { name: /AV service/ }));
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    unsentForm.formId,
+    expect.objectContaining({
+      teamIds: ["team-2"],
+      availabilityServices: [{ serviceId: "av-service", name: "AV service" }],
+      availabilityOccurrences: expect.arrayContaining([expect.objectContaining({ serviceId: "av-service" })]),
+    }),
+  ));
+  expect(jest.mocked(updateTeamIntakeForm).mock.calls[0][2].availabilityOccurrences).not.toEqual(
+    expect.arrayContaining([expect.objectContaining({ serviceId: "worship-service" })]),
+  );
+});
+
+test("an issued availability request locks Team selection but allows name and deadline edits", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = {
+    occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-18T14:00:00.000Z",
+    serviceDate: "2026-10-18",
+  };
+  const issuedForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    hasIssuedRecipientRequests: true,
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({
+    success: true,
+    form: { ...issuedForm, name: "October availability updated", responseDeadline: "2026-10-20" },
+  });
+  renderManager({
+    availabilityOnly: true,
+    forms: [issuedForm],
+    intakeRecipients: [],
+    services: [{
+      id: "saved-service",
+      serviceId: "saved-service",
+      churchId: "church-1",
+      name: "Saved service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: savedOccurrence.startsAt,
+    }],
+  });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
+  expect(within(teamScope).getByText("Team selection is locked because availability requests have already been issued.")).toBeInTheDocument();
+  expect(within(teamScope).getByText("Worship")).toBeInTheDocument();
+  expect(within(teamScope).queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.getByText("Availability services: Saved service")).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText(/^Name/i), " updated");
+  fireEvent.change(screen.getByLabelText(/^Response deadline/i), {
+    target: { value: "2026-10-20" },
+  });
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    issuedForm.formId,
+    expect.objectContaining({
+      name: "October availability updated",
+      responseDeadline: "2026-10-20",
+      teamIds: ["team-1"],
+      availabilityOccurrences: [savedOccurrence],
+    }),
+  ));
+
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByText("Team selection is locked because availability requests have already been issued.")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Teams to collect for" })).toHaveTextContent("Worship");
+});
+
+test("general intake editing still shows its supported fields and wording", async () => {
+  const user = userEvent.setup();
+  const generalForm: TeamIntakeForm = {
+    ...form,
+    purpose: "general_intake",
+    enabledFields: ["firstName", "availability", "notes"],
+  };
+  renderManager({ forms: [generalForm], intakeRecipients: [] });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+
+  expect(screen.getByRole("group", { name: "Fields to include" })).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Welcome message/)).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Notes message/)).toBeInTheDocument();
 });
 
 test("More preserves history, keyboard focus, Open form, and pending action feedback", async () => {
@@ -200,7 +559,7 @@ test("More preserves history, keyboard focus, Open form, and pending action feed
   await user.click(more);
   const menu = screen.getByRole("menu");
   expect(within(menu).getByText("Message history")).toBeInTheDocument();
-  expect(within(menu).getByText(/Form request · Sent · delivered/)).toBeInTheDocument();
+  expect(within(menu).getByText(/Form request · Sent · Delivered/)).toBeInTheDocument();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(more).toHaveFocus());
   await user.keyboard("{ArrowDown}");
@@ -209,7 +568,7 @@ test("More preserves history, keyboard focus, Open form, and pending action feed
   await waitFor(() => expect(mockGetRecipientLink).toHaveBeenCalledWith("church-1", recipient.recipientId, { markCopied: false }));
   expect(more).toBeEnabled();
   expect(more).toHaveAttribute("aria-busy", "true");
-  expect(screen.getByRole("button", { name: "Send SMS" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send text message" })).toBeDisabled();
   await waitFor(() => expect(more).toHaveFocus());
   await user.click(more);
   expect(screen.getByRole("menuitem", { name: "Copy private link" })).toHaveAttribute("data-disabled");
@@ -268,10 +627,10 @@ test("prevents duplicate SMS activation while the send is pending and updates th
   });
   await openForm(user);
 
-  const sendButton = screen.getByRole("button", { name: "Send SMS" });
+  const sendButton = screen.getByRole("button", { name: "Send text message" });
   await user.click(sendButton);
-  expect(await screen.findByRole("dialog", { name: "Send this SMS?" })).toBeInTheDocument();
-  const dialog = screen.getByRole("dialog", { name: "Send this SMS?" });
+  expect(await screen.findByRole("dialog", { name: "Send this text message?" })).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "Send this text message?" });
   expect(within(dialog).getByText("+19545551234")).toBeInTheDocument();
   expect(within(dialog).getByText(/First Church: respond at/)).toBeInTheDocument();
   expect(mockSendIntent).not.toHaveBeenCalled();
@@ -369,6 +728,7 @@ test.each([
   const existingForm = {
     ...form,
     name: "October Availability",
+    teamIds: [],
     availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
     availabilityOccurrences: [existingOccurrence],
     enabledFields: ["firstName", "availability"],
@@ -383,13 +743,22 @@ test.each([
     timerType: "countdown",
     reccurence: "one_time",
     dateTimeISO: "2026-10-14T14:00:00.000Z",
+    positionRequirements: [{ positionId: "vocal", count: 1 }],
   };
   jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: existingForm });
-  renderManager({ forms: [existingForm], services: [powerUpService], intakeRecipients, submissions });
+  renderManager({
+    forms: [existingForm],
+    services: [powerUpService],
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
+    intakeRecipients,
+    submissions,
+  });
 
   expect(screen.getByRole("heading", { name: "October Availability needs updating" })).toBeInTheDocument();
   expect(screen.getByText("1 upcoming service isn’t included.")).toBeInTheDocument();
-  expect(screen.getByText("Power Up · Oct 14")).toBeInTheDocument();
+  expect(screen.getByRole("listitem")).toHaveTextContent(
+    "Power Up · Wed, Oct 14, 2026 @ 2:00 PM UTC",
+  );
   await user.click(screen.getByRole("button", { name: "Review form" }));
   expect(screen.getByRole("button", { name: "Save form" })).toBeInTheDocument();
   expect(screen.getByLabelText(/^Name/i)).toHaveValue("October Availability");
@@ -412,7 +781,7 @@ test.each([
       availabilityOccurrences: [
         existingOccurrence,
         expect.objectContaining({
-          occurrenceId: "power-up@2026-10-14T14:00:00.000Z",
+          occurrenceId: "power-up@2026-10-14",
           serviceId: "power-up",
           startsAt: "2026-10-14T14:00:00.000Z",
         }),
@@ -421,6 +790,31 @@ test.each([
   ));
   expect(createTeamIntakeForm).not.toHaveBeenCalled();
   jest.useRealTimers();
+});
+
+test("a delayed form save cannot close a different form opened before it settles", async () => {
+  const user = userEvent.setup();
+  const otherForm = { ...form, formId: "form-2", name: "Other form" };
+  const savedForm = { ...form, name: "Updated availability" };
+  let resolveUpdate: (value: { success: true; form: TeamIntakeForm }) => void = () => undefined;
+  jest.mocked(updateTeamIntakeForm).mockImplementation(
+    () => new Promise((resolve) => { resolveUpdate = resolve; }),
+  );
+  renderManager({ forms: [form, otherForm] });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.clear(screen.getByLabelText(/^Name/i));
+  await user.type(screen.getByLabelText(/^Name/i), "Updated availability");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledTimes(1));
+
+  await user.click(screen.getByRole("button", { name: "Edit Other form" }));
+  expect(screen.getByRole("heading", { name: "Other form" })).toBeInTheDocument();
+  await act(async () => resolveUpdate({ success: true, form: savedForm }));
+
+  expect(screen.getByRole("heading", { name: "Other form" })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Unsaved changes" })).not.toBeInTheDocument();
 });
 
 test("an existing form view exposes Send form", async () => {
@@ -507,7 +901,6 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   jest.mocked(getTeamIntakeSmsAttempts)
     .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [] })
-    .mockResolvedValueOnce({ success: true, attempts: [] })
     .mockResolvedValueOnce({ success: true, attempts: [deliveredAttempt] });
   const notificationIntent = {
     intentId: "intent-batch-1", churchId: "church-1", intentType: "availability_request", sourceType: "team_intake_recipient",
@@ -516,7 +909,6 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
     createdAt: "2026-09-29T12:00:00.000Z", updatedAt: "2026-09-29T12:00:00.000Z",
   } as const;
   jest.mocked(getNotificationIntents)
-    .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [], nextCursor: "", limit: 50 })
     .mockResolvedValueOnce({ success: true, intents: [notificationIntent], nextCursor: "", limit: 50 });
@@ -541,18 +933,17 @@ test("a sent batch updates recipients and delivery counts in Forms without reloa
   await openForm(user);
   await user.click(screen.getByRole("button", { name: "Send form" }));
   expect(within(screen.getByRole("region", { name: "Send form" })).getByRole("checkbox", { name: "Rae Kim" })).toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Review 1 message" }));
-  await screen.findByRole("button", { name: "Send 1 message" });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Send 1 message" })).toBeEnabled());
-  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
-  await user.click(screen.getAllByRole("button", { name: "Send 1 message" }).at(-1)!);
+  await user.click(screen.getByRole("button", { name: "Review and send 1 message" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Review text messages" });
+  expect(dispatchAvailabilityNotificationBatch).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByRole("button", { name: "Send 1 message" }));
   await waitFor(() => expect(dispatchAvailabilityNotificationBatch).toHaveBeenCalledWith("church-1", "batch-1", "approval-v1"));
   const counts = screen.getByLabelText("Intake message and response counts");
   await waitFor(() => expect(within(counts).getAllByText("1")).toHaveLength(3));
   await user.click(screen.getByRole("button", { name: "Close" }));
 
   expect(within(counts).getAllByText("1")).toHaveLength(3);
-  expect(screen.getAllByText("Waiting").length).toBeGreaterThan(1);
+  expect(screen.getByText("Waiting for a response")).toBeInTheDocument();
   expect(screen.queryByText("Not requested")).not.toBeInTheDocument();
   expect(getNotificationIntents).toHaveBeenCalledWith("church-1", { formId: form.formId, limit: 100 });
   expect(getTeamIntakeSmsAttempts).toHaveBeenCalledWith("church-1", form.formId);
@@ -572,17 +963,33 @@ test("successful form edits return to the form view with Send form available", a
   expect(mockSendIntent).not.toHaveBeenCalled();
 });
 
-test("saving a form with existing recipients preserves its covered occurrence snapshot", async () => {
+test("saving an availability form with issued requests preserves its Team scope and occurrence snapshot", async () => {
   const user = userEvent.setup();
   const savedOccurrence = { occurrenceId: "saved-occurrence", serviceId: "old-service", name: "Saved service", startsAt: "2026-10-11T14:00:00.000Z" };
-  const issuedForm = { ...form, availabilityServices: [{ serviceId: "old-service", name: "Saved service" }], availabilityOccurrences: [savedOccurrence] };
+  const issuedForm = { ...form, purpose: "team_availability", enabledFields: ["availability"], availabilityServices: [{ serviceId: "old-service", name: "Saved service" }], availabilityOccurrences: [savedOccurrence] } as TeamIntakeForm;
   jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: issuedForm });
-  renderManager({ forms: [issuedForm], services: [{ id: "old-service", serviceId: "old-service", churchId: "church-1", name: "Changed service", timerType: "countdown", reccurence: "weekly", dayOfWeek: 0, time: "10:00" }] });
+  renderManager({
+    forms: [issuedForm],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] },
+      { teamId: "team-2", churchId: "church-1", name: "AV", memberIds: [] },
+    ],
+    services: [{ id: "old-service", serviceId: "old-service", churchId: "church-1", name: "Changed service", timerType: "countdown", reccurence: "weekly", dayOfWeek: 0, time: "10:00" }],
+  });
   await user.click(screen.getByRole("button", { name: `Edit ${issuedForm.name}` }));
   await user.click(screen.getByRole("button", { name: "Edit" }));
   expect(screen.getByText(/already has private links or responses/)).toBeInTheDocument();
+  const teamScope = screen.getByRole("group", { name: "Teams to collect for" });
+  expect(within(teamScope).getByText("Team selection is locked because availability requests have already been issued.")).toBeInTheDocument();
+  expect(within(teamScope).getByText("Worship")).toBeInTheDocument();
+  expect(within(teamScope).queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.getByText("Availability services: Saved service")).toBeInTheDocument();
   await user.type(screen.getByLabelText(/^Name/i), " updated");
   await user.click(screen.getByRole("button", { name: "Save form" }));
 
-  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({ availabilityOccurrences: [savedOccurrence] })));
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith("church-1", issuedForm.formId, expect.objectContaining({
+    teamIds: ["team-1"],
+    availabilityServices: [{ serviceId: "old-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  })));
 });

@@ -13,11 +13,12 @@ export type BirthDate = {
  * Shared auth API types (client). Server: authService.js.
  * Hash fields are never returned; lists are sanitized server-side.
  *
- * appAccess matches GlobalInfoContext AccessType ("full" | "music" | "view")
- * without importing context (avoids circular module graphs).
+ * controllerAccess is the normalized human Controller axis. appAccess remains
+ * a legacy membership alias during the rolling client compatibility window.
  */
 
 export type SessionKind = "human" | "workstation" | "display" | null;
+export type ControllerAccess = "none" | "view" | "music" | "full";
 export type ChurchStatus = "active" | "needs-admin";
 export type ChurchStorageQuota = {
   used: number;
@@ -133,6 +134,7 @@ export type AuthBootstrap = {
   csrfToken?: string | null;
   database?: string;
   uploadPreset?: string;
+  controllerAccess?: ControllerAccess;
   appAccess?: "full" | "music" | "view" | "member";
   permissions?: MemberPermissions;
   notifications?: MemberNotifications;
@@ -194,6 +196,7 @@ export type ChurchMemberRow = {
   userId: string;
   status: string;
   role?: string;
+  controllerAccess?: ControllerAccess;
   appAccess?: string;
   permissions?: MemberPermissions;
   user: AuthUserSummary | null;
@@ -204,6 +207,7 @@ export type ChurchInviteRow = {
   churchId: string;
   email: string;
   role: string;
+  controllerAccess?: ControllerAccess;
   appAccess: string;
   permissions?: MemberPermissions;
   status: string;
@@ -446,6 +450,12 @@ export type TeamScheduleAssignments = Record<
 >;
 
 export type TeamScheduleOccurrence = {
+  /**
+   * Current stable logical identity: serviceId@church-local-date or
+   * group:groupId@church-local-date. Legacy rows may omit this and keep their
+   * original occurrenceId so assignment/equipment map keys remain readable.
+   */
+  logicalOccurrenceId?: string;
   occurrenceId: string;
   // representative service for back-compat lookups; for a combined occurrence this
   // is the earliest service of the group. Use `serviceIds` for the full set.
@@ -457,9 +467,10 @@ export type TeamScheduleOccurrence = {
   serviceIds?: string[];
   name: string;
   startsAt: string;
-  // optional per-date override of the service's position requirements. For a
-  // combined occurrence this holds the union (max count per position) of its
-  // grouped services so one set of cells covers them all.
+  /** Calendar date at the service location, independent of the UTC instant. */
+  serviceDate?: string;
+  // Optional per-date snapshot of position requirements. In a team schedule,
+  // this contains only the selected team's positions even for a combined row.
   positionRequirements?: PositionRequirement[];
 };
 
@@ -467,6 +478,7 @@ export type TeamScheduleOccurrence = {
 export type TeamSchedulePublicSnapshot = {
   success: boolean;
   churchName: string;
+  serviceTimeZone?: string;
   teamName: string;
   churchLogoUrl?: string;
   schedule: {
@@ -528,6 +540,8 @@ export type TeamScheduleSummary = {
   serviceIds: string[];
   /** Identifies schedules created lazily for a generated team/date period. */
   source?: "generated-period" | "custom";
+  /** Missing publication metadata is treated as Published for legacy schedules. */
+  published?: boolean;
   /** Stable logical key used by the idempotent generated-period endpoint. */
   generatedPeriodKey?: string;
   occurrences?: TeamScheduleOccurrence[];
@@ -593,6 +607,7 @@ export const onlyHydratedSchedules = (
 ): TeamSchedule[] => schedules.filter(isHydratedSchedule);
 
 export type TeamsBootstrap = {
+  editableMemberIds?: string[];
   success: boolean;
   members: TeamRosterMember[];
   positions: TeamPosition[];
@@ -669,6 +684,7 @@ export type TeamIntakeAvailabilityOccurrence = {
   serviceId: string;
   name: string;
   startsAt: string;
+  serviceDate?: string;
 };
 
 export type TeamIntakeFieldId =
@@ -699,6 +715,8 @@ export type TeamIntakeForm = {
   // form covers every team in the church (the public form groups by team either
   // way).
   teamIds: string[];
+  /** Missing legacy values are general intake and are never scoped-editable. */
+  purpose?: "general_intake" | "team_availability";
   active: boolean;
   /** Public fields selected by the form owner. Missing on legacy forms. */
   enabledFields?: TeamIntakeFieldId[];
@@ -714,6 +732,8 @@ export type TeamIntakeForm = {
   notesMessage?: string;
   publicUrl?: string;
   submissionCount?: number;
+  /** Derived from recipient records; includes revoked requests. */
+  hasIssuedRecipientRequests?: boolean;
   archivedAt?: string | null;
 };
 
@@ -731,6 +751,25 @@ export type TeamIntakeRecipient = {
   respondedAt?: string | null;
   submissionId?: string | null;
   revokedAt?: string | null;
+};
+
+export type TeamAvailabilityResponse = {
+  formId: string;
+  recipientId: string;
+  memberId: string;
+  respondedAt: string;
+  submittedAt: string;
+  occurrenceAvailability: Record<string, "available" | "unavailable">;
+};
+
+export type TeamAvailabilityManagementData = {
+  teams: TeamRecord[];
+  members: TeamRosterMember[];
+  forms: TeamIntakeForm[];
+  intakeRecipients: TeamIntakeRecipient[];
+  availabilityResponses: TeamAvailabilityResponse[];
+  /** Contact and consent details stay on the server; only eligibility is returned. */
+  smsEligibilityByMemberId: Record<string, { eligible: boolean }>;
 };
 
 export type SmsMemberEligibilityStatus =
@@ -759,7 +798,8 @@ export type NotificationIntentType =
   | "assignment_notification"
   | "assignment_confirmation"
   | "schedule_change"
-  | "replacement_request";
+  | "replacement_request"
+  | "schedule_initial_notification";
 
 export type NotificationIntentStatus =
   | "preview"
@@ -823,15 +863,45 @@ export type NotificationBatchRecipient = {
   message?: string;
   approvalVersion?: string;
   phoneNumberSnapshot?: string;
+  previousDeliveryStatus?: "first_send" | "failed" | "accepted" | "uncertain" | "handled";
+  exclusionKind?: "" | "guest" | "archived" | "unlinked" | "team_mismatch";
+  assignments?: ScheduleSmsAssignment[];
+  sourceFingerprint?: string;
+  sourceStale?: boolean;
+};
+
+export type ScheduleSmsAssignment = {
+  occurrenceId: string;
+  serviceName: string;
+  serviceDate: string;
+  startsAt: string;
+  positions: { positionId: string; positionName: string }[];
+};
+
+export type ScheduleInitialSmsRecipient = {
+  memberId: string;
+  memberName: string;
+  assignments: ScheduleSmsAssignment[];
+  eligibilityStatus: SmsMemberEligibilityStatus | "";
+  eligible: boolean;
+  exclusionReason: string;
+  previousDeliveryStatus: "first_send" | "failed" | "accepted" | "uncertain" | "handled";
+  status: NotificationIntentStatus | "excluded";
+  intentId: string;
+  segmentCount: number;
+  exclusionKind?: "" | "guest" | "archived" | "unlinked" | "team_mismatch";
+  maskedPhoneNumber: string;
+  phoneNumberSnapshot?: string;
 };
 
 export type NotificationBatch = {
   batchId: string;
   churchId: string;
-  formId: string;
-  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder">;
-  reminderRound: number;
-  status: "preparing" | "prepared" | "dispatching" | "partial" | "sent" | "superseded";
+  formId?: string;
+  scheduleId?: string;
+  intentType: Extract<NotificationIntentType, "availability_request" | "availability_reminder"> | "schedule_initial_notification";
+  reminderRound?: number;
+  status: "preparing" | "prepared" | "approved" | "dispatching" | "complete" | "partial" | "paused" | "sent" | "superseded";
   selectedMemberIds: string[];
   recipients: NotificationBatchRecipient[];
   /** Persisted form recipients for the selected batch members, without token secrets. */
@@ -843,6 +913,8 @@ export type NotificationBatch = {
     selected: number;
     eligible: number;
     awaitingDispatch: number;
+    awaitingExecution?: number;
+    sending?: number;
     alreadySent: number;
     excluded: number;
     totalSegments: number;
@@ -850,9 +922,24 @@ export type NotificationBatch = {
     delivered: number;
     failed: number;
     uncertain: number;
-    responded: number;
-    waiting: number;
+    responded?: number;
+    waiting?: number;
     optedOut: number;
+  };
+};
+
+export type ScheduleInitialSmsBatchHistoryEntry = {
+  reviewVersion: string;
+  approvedAt: string;
+  status: "complete" | "partial" | "paused";
+  selected: number;
+  summary: {
+    accepted: number;
+    delivered: number;
+    failed: number;
+    uncertain: number;
+    awaiting: number;
+    excluded: number;
   };
 };
 
@@ -910,6 +997,7 @@ export type TeamIntakeSubmission = {
 export type TeamIntakePreview = {
   success: boolean;
   churchName: string;
+  serviceTimeZone?: string;
   churchLogoUrl?: string;
   form: Pick<
     TeamIntakeForm,

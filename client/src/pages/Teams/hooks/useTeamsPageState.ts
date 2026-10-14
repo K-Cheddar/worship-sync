@@ -39,7 +39,10 @@ import {
   writeScheduleDrafts,
   writeSelectedScheduleId,
 } from "../teamsLocalStore";
-import { showApiErrorToast } from "../../../utils/apiErrorToast";
+import {
+  getApiErrorStatus,
+  showApiErrorToast,
+} from "../../../utils/apiErrorToast";
 import { SCHEDULE_DRAFT_PERSIST_DELAY_MS } from "../schedule/scheduleDraftUtils";
 import { normalizeTeamsForSelectors } from "../teamsSelectors";
 import {
@@ -52,10 +55,12 @@ import {
 } from "./useTeamsLiveSync";
 import {
   isHydratedSchedule,
+  type TeamPosition,
   type TeamSchedule,
   type TeamScheduleSummary,
 } from "../../../api/authTypes";
 import { scheduleDateRangesOverlap } from "../schedule/scheduleConflicts";
+import { getAvailableTeamsNavSections } from "../teamsNavSections";
 
 // After a local optimistic edit, ignore inbound bootstraps/pushes for this long so a
 // slightly-stale server snapshot (or an echo of our own change) can't revert it.
@@ -117,6 +122,7 @@ export const useTeamsPageState = (
   const { showToast } = useToast();
   const dispatch = useDispatch();
   const churchId = context?.churchId || "";
+  const canViewTeams = Boolean(context?.canViewTeams);
   const canEditTeams = Boolean(context?.canEditTeams);
   const canEditTeam = useCallback(
     (teamId: string) => Boolean(context?.canEditTeam?.(teamId)),
@@ -135,6 +141,19 @@ export const useTeamsPageState = (
   );
   const [data, setData] = useState<TeamsData>(emptyData);
   const [loading, setLoading] = useState(true);
+  const [membershipAccessGranted, setMembershipAccessGranted] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [editableMemberIds, setEditableMemberIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const invalidateMemberEditability = useCallback((memberId: string) => {
+    setEditableMemberIds((current) => {
+      if (!current.has(memberId)) return current;
+      const next = new Set(current);
+      next.delete(memberId);
+      return next;
+    });
+  }, []);
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
   const [scheduleHydrationRequestId, setScheduleHydrationRequestId] = useState("");
   /** Bumped when another admin changes a service plan, so the Plans page can
@@ -160,6 +179,9 @@ export const useTeamsPageState = (
   // remain so a bootstrap/SSE can't apply a server snapshot missing not-yet-saved
   // edits.
   const pendingTeamsSavesRef = useRef(0);
+  const positionReorderQueuesRef = useRef(new Map<string, Promise<void>>());
+  const positionReorderVersionsRef = useRef(new Map<string, number>());
+  const persistedPositionsByTeamRef = useRef(new Map<string, TeamPosition[]>());
   // Set while an inbound (bootstrap/SSE) change is being applied so it isn't mistaken
   // for a local edit — applying a remote update must not start the local-edit
   // cooldown (which would needlessly defer further inbound syncs).
@@ -167,9 +189,11 @@ export const useTeamsPageState = (
   // Separate in-flight gate for background bootstrap recovery so it never trips
   // `refresh`'s own dedupe (which keys off refreshInFlightRef + bootstrapLoadRef).
   const backgroundRefreshInFlightRef = useRef(false);
+  const backgroundRefreshPromiseRef = useRef<Promise<void> | null>(null);
   // Cleared on unmount so a background request that resolves after the page is gone
   // doesn't apply state (mirrors refresh's isCancelled guard).
   const isMountedRef = useRef(true);
+  const accessDeniedRef = useRef(false);
   const deferredRefreshTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
@@ -194,11 +218,28 @@ export const useTeamsPageState = (
 
   useEffect(() => {
     lastSuccessfulBootstrapAtRef.current = 0;
+    accessDeniedRef.current = false;
+    setAccessDenied(false);
+    setMembershipAccessGranted(false);
+    setEditableMemberIds(new Set());
   }, [churchId]);
 
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    if (pendingTeamsSavesRef.current > 0 || !churchId) return;
+    const positionsByTeam = new Map<string, TeamPosition[]>();
+    data.positions.forEach((position) => {
+      const current = positionsByTeam.get(position.teamId) || [];
+      current.push(position);
+      positionsByTeam.set(position.teamId, current);
+    });
+    positionsByTeam.forEach((positions, teamId) => {
+      persistedPositionsByTeamRef.current.set(`${churchId}:${teamId}`, positions);
+    });
+  }, [churchId, data.positions]);
 
   useEffect(() => {
     selectedScheduleIdRef.current = selectedScheduleId;
@@ -414,6 +455,19 @@ export const useTeamsPageState = (
   // returns out-of-window schedules as summaries) doesn't blank the open grid.
   const hydratedSchedulesRef = useRef(new Map<string, TeamSchedule>());
 
+  const denyTeamsAccess = useCallback(() => {
+    accessDeniedRef.current = true;
+    setAccessDenied(true);
+    setMembershipAccessGranted(false);
+    setEditableMemberIds(new Set());
+    dataRef.current = emptyData;
+    setData(emptyData);
+    hydratedSchedulesRef.current.clear();
+    setSelectedScheduleId("");
+    selectedScheduleIdRef.current = "";
+    setScheduleHydrationRequestId("");
+  }, []);
+
   /**
    * Re-applies retained hydration over a freshly fetched schedule list. Fresh
    * summary fields win — only the assignment maps, which the summary omits, are
@@ -450,6 +504,7 @@ export const useTeamsPageState = (
 
   const refresh = useCallback(
     async (isCancelled: () => boolean = () => false) => {
+      if (accessDeniedRef.current) return;
       if (!churchId) {
         if (!isCancelled()) setLoading(false);
         return;
@@ -481,6 +536,10 @@ export const useTeamsPageState = (
       const load = (async () => {
         const response = await getTeamsBootstrap(churchId);
         if (churchIdRef.current !== churchId) return;
+        accessDeniedRef.current = false;
+        setAccessDenied(false);
+        setMembershipAccessGranted(true);
+        setEditableMemberIds(new Set(response.editableMemberIds || []));
         const nextData = buildTeamsDataFromBootstrap(response);
         nextData.schedules = withRetainedHydration(nextData.schedules);
         lastSuccessfulBootstrapAtRef.current = Date.now();
@@ -511,7 +570,9 @@ export const useTeamsPageState = (
       try {
         await load;
       } catch (error) {
-        if (!isCancelled()) {
+        if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+          denyTeamsAccess();
+        } else if (!isCancelled()) {
           showApiErrorToast(showToast, error, "Could not load teams.");
         }
       } finally {
@@ -520,7 +581,7 @@ export const useTeamsPageState = (
         if (!isCancelled()) setLoading(false);
       }
     },
-    [churchId, showToast, withRetainedHydration],
+    [churchId, denyTeamsAccess, showToast, withRetainedHydration],
   );
 
   useEffect(() => {
@@ -581,13 +642,22 @@ export const useTeamsPageState = (
     [updateDataLocal],
   );
 
-  // Persist a new position order for one team. Optimistically renumbers the
-  // affected positions (and re-sorts the list so schedule columns follow), then
-  // calls the API and reverts on failure.
+  // Persist a new position order for one team. Each drag updates the view at
+  // once, while that team's requests stay in order so an older save cannot land
+  // after a newer selection. Other teams keep independent save queues.
   const reorderPositions = useCallback(
     async (teamId: string, orderedPositionIds: string[]) => {
       if (!canEditAnyTeam || !canEditTeam(teamId)) return;
-      const previousPositions = dataRef.current.positions;
+      const churchIdAtStart = churchId;
+      const scopeKey = `${churchIdAtStart}:${teamId}`;
+      const version = (positionReorderVersionsRef.current.get(scopeKey) || 0) + 1;
+      positionReorderVersionsRef.current.set(scopeKey, version);
+      const initialTeamPositions = dataRef.current.positions.filter(
+        (position) => position.teamId === teamId,
+      );
+      if (!persistedPositionsByTeamRef.current.has(scopeKey)) {
+        persistedPositionsByTeamRef.current.set(scopeKey, initialTeamPositions);
+      }
       const orderById = new Map(
         orderedPositionIds.map((positionId, index) => [positionId, index]),
       );
@@ -601,21 +671,81 @@ export const useTeamsPageState = (
           ),
         ),
       }));
+      const previousRequest = positionReorderQueuesRef.current.get(scopeKey) || Promise.resolve();
+      const persist = previousRequest.then(async () => {
+        const result = await reorderTeamPositions(churchIdAtStart, {
+          teamId,
+          positionIds: orderedPositionIds,
+        });
+        if (churchIdRef.current !== churchIdAtStart) return result;
+
+        const persisted = persistedPositionsByTeamRef.current.get(scopeKey) || initialTeamPositions;
+        const persistedById = new Map(persisted.map((position) => [position.positionId, position]));
+        result.positions.forEach((position) => persistedById.set(position.positionId, position));
+        const nextPersisted = [...persistedById.values()];
+        persistedPositionsByTeamRef.current.set(scopeKey, nextPersisted);
+
+        if (positionReorderVersionsRef.current.get(scopeKey) === version) {
+          updateDataLocal((current) => ({
+            ...current,
+            positions: sortPositionsByOrder([
+              ...current.positions.filter((position) => position.teamId !== teamId),
+              ...nextPersisted,
+            ]),
+          }));
+        }
+        return result;
+      });
+      const handled = persist.catch(async (error: unknown) => {
+        const isCurrentRequest =
+          churchIdRef.current === churchIdAtStart &&
+          positionReorderVersionsRef.current.get(scopeKey) === version;
+        if (isCurrentRequest) {
+          let authoritativePositions: TeamPosition[] | null = null;
+          try {
+            const response = await getTeamsBootstrap(churchIdAtStart);
+            const serverPositions = buildTeamsDataFromBootstrap(response).positions
+              .filter((position) => position.teamId === teamId);
+            authoritativePositions = serverPositions;
+          } catch {
+            // Fall back to the last confirmed save below. The original save
+            // error remains visible so this reconciliation is never a success signal.
+          }
+
+          if (
+            churchIdRef.current === churchIdAtStart &&
+            positionReorderVersionsRef.current.get(scopeKey) === version
+          ) {
+            const savedPositions = authoritativePositions ||
+              persistedPositionsByTeamRef.current.get(scopeKey) || initialTeamPositions;
+            if (authoritativePositions) {
+              persistedPositionsByTeamRef.current.set(scopeKey, authoritativePositions);
+            }
+            updateDataLocal((current) => ({
+              ...current,
+              positions: sortPositionsByOrder([
+                ...current.positions.filter((position) => position.teamId !== teamId),
+                ...savedPositions,
+              ]),
+            }));
+            showApiErrorToast(showToast, error, "Could not reorder positions.");
+          }
+        }
+        throw error;
+      });
+      const queueEntry = handled.then(() => undefined, () => undefined);
+      positionReorderQueuesRef.current.set(scopeKey, queueEntry);
       try {
-        // Gate inbound sync on the real save (same as schedule edits) so a slow
-        // reorder can't be reverted by a bootstrap landing mid-request.
-        await trackTeamsSave(
-          reorderTeamPositions(churchId, {
-            teamId,
-            positionIds: orderedPositionIds,
-          }),
-        );
-      } catch (error) {
-        updateDataLocal((current) => ({
-          ...current,
-          positions: previousPositions,
-        }));
-        showApiErrorToast(showToast, error, "Could not reorder positions.");
+        // Keep remote bootstrap/push application and the global save indicator
+        // pending through both persistence and any failure reconciliation.
+        await trackTeamsSave(handled);
+      } catch {
+        // The current request's failure was reported after authoritative
+        // reconciliation; event handlers should not leak a rejected promise.
+      } finally {
+        if (positionReorderQueuesRef.current.get(scopeKey) === queueEntry) {
+          positionReorderQueuesRef.current.delete(scopeKey);
+        }
       }
     },
     [
@@ -639,61 +769,100 @@ export const useTeamsPageState = (
     [],
   );
 
+  const applyTeamsProjection = useCallback((response: Awaited<ReturnType<typeof getTeamsBootstrap>>) => {
+    accessDeniedRef.current = false;
+    setAccessDenied(false);
+    setMembershipAccessGranted(true);
+    setEditableMemberIds(new Set(response.editableMemberIds || []));
+    const nextData = buildTeamsDataFromBootstrap(response);
+    nextData.schedules = withRetainedHydration(nextData.schedules);
+    const changedKeys = teamsDataKeys.filter(
+      (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
+    );
+    lastSuccessfulBootstrapAtRef.current = Date.now();
+    if (changedKeys.length === 0) return;
+    setData((current) => {
+      let merged = current;
+      changedKeys.forEach((key) => {
+        merged = { ...merged, [key]: nextData[key] };
+      });
+      return merged;
+    });
+    if (changedKeys.includes("schedules")) {
+      const current = selectedScheduleIdRef.current;
+      const nextSelectedScheduleId =
+        current &&
+        nextData.schedules.some((schedule) => schedule.scheduleId === current)
+          ? current
+          : "";
+      setSelectedScheduleId(nextSelectedScheduleId);
+      selectedScheduleIdRef.current = nextSelectedScheduleId;
+      writeSelectedScheduleId(churchId, nextSelectedScheduleId);
+    }
+  }, [churchId, withRetainedHydration]);
+
+  const loadTeamsProjection = useCallback(async (ignoreLocalEditCooldown: boolean) => {
+    const response = await getTeamsBootstrap(churchId);
+    if (!isMountedRef.current || churchIdRef.current !== churchId) return;
+    if (!ignoreLocalEditCooldown && isLocalEditCoolingDown()) return;
+    applyTeamsProjection(response);
+  }, [applyTeamsProjection, churchId, isLocalEditCoolingDown]);
+
   // Silent background bootstrap used for SSE reconnect recovery and as a
   // bounded stale-on-focus fallback. Unlike `refresh`, it never toggles
   // `loading`, diff-gates unchanged data, and bails out while a local edit is
   // settling so it cannot clobber optimistic state.
   const backgroundRefresh = useCallback(async () => {
-    if (!churchId) return;
-    // Don't pile onto a full (loading) refresh or another background request.
-    // A background request uses its own gate so it never trips `refresh`'s dedupe
-    // (which keys off refreshInFlightRef + bootstrapLoadRef): otherwise a
-    // background request during a church switch would make refresh skip the load.
-    if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current)
-      return;
+    if (!churchId || accessDeniedRef.current) return;
+    if (refreshInFlightRef.current || backgroundRefreshInFlightRef.current) return;
     if (isLocalEditCoolingDown()) return;
     backgroundRefreshInFlightRef.current = true;
+    const load = loadTeamsProjection(false);
+    backgroundRefreshPromiseRef.current = load;
     try {
-      const response = await getTeamsBootstrap(churchId);
-      // Bail on stale writes: the page may have unmounted, the active church may
-      // have switched, or a local edit may have landed while the request was in
-      // flight.
-      if (!isMountedRef.current) return;
-      if (churchIdRef.current !== churchId) return;
-      if (isLocalEditCoolingDown()) return;
-      const nextData = buildTeamsDataFromBootstrap(response);
-      nextData.schedules = withRetainedHydration(nextData.schedules);
-      const changedKeys = teamsDataKeys.filter(
-        (key) => !teamsDataKeyEquals(dataRef.current[key], nextData[key]),
-      );
-      lastSuccessfulBootstrapAtRef.current = Date.now();
-      if (changedKeys.length === 0) return;
-      setData((current) => {
-        let merged = current;
-        changedKeys.forEach((key) => {
-          merged = { ...merged, [key]: nextData[key] };
-        });
-        return merged;
-      });
-      if (changedKeys.includes("schedules")) {
-        const current = selectedScheduleIdRef.current;
-        const nextSelectedScheduleId =
-          current &&
-          nextData.schedules.some((schedule) => schedule.scheduleId === current)
-            ? current
-            : "";
-        setSelectedScheduleId(nextSelectedScheduleId);
-        selectedScheduleIdRef.current = nextSelectedScheduleId;
-        writeSelectedScheduleId(churchId, nextSelectedScheduleId);
-      }
+      await load;
     } catch (error) {
-      // Background sync failures are non-fatal: a later focus, reconnect, or
-      // manual refresh can recover. Stay silent to avoid interrupting operators.
+      if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+        denyTeamsAccess();
+        return;
+      }
       console.error("Could not background-sync teams.", error);
     } finally {
       backgroundRefreshInFlightRef.current = false;
+      backgroundRefreshPromiseRef.current = null;
     }
-  }, [churchId, isLocalEditCoolingDown, withRetainedHydration]);
+  }, [churchId, denyTeamsAccess, isLocalEditCoolingDown, loadTeamsProjection]);
+
+  // Authorization changes caused by roster mutations require a fresh server
+  // projection even during the ordinary local-edit cooldown. Wait out older
+  // bootstrap work first so a pre-mutation response cannot land after this one.
+  const reconcileTeamsProjection = useCallback(async () => {
+    if (!churchId || accessDeniedRef.current) return;
+    await Promise.allSettled([
+      refreshInFlightRef.current ? bootstrapLoadRef.current : null,
+      backgroundRefreshPromiseRef.current,
+    ].filter((pending): pending is Promise<void> => Boolean(pending)));
+    if (!isMountedRef.current || churchIdRef.current !== churchId || accessDeniedRef.current) return;
+    if (backgroundRefreshInFlightRef.current) {
+      await backgroundRefreshPromiseRef.current;
+      if (!isMountedRef.current || churchIdRef.current !== churchId) return;
+    }
+    backgroundRefreshInFlightRef.current = true;
+    const load = loadTeamsProjection(true);
+    backgroundRefreshPromiseRef.current = load;
+    try {
+      await load;
+    } catch (error) {
+      if (getApiErrorStatus(error) === 403 && churchIdRef.current === churchId) {
+        denyTeamsAccess();
+        return;
+      }
+      console.error("Could not reconcile Teams projection after roster mutation.", error);
+    } finally {
+      backgroundRefreshInFlightRef.current = false;
+      backgroundRefreshPromiseRef.current = null;
+    }
+  }, [churchId, denyTeamsAccess, loadTeamsProjection]);
 
   // Merge server-hydrated schedules over their summaries in place, keeping list
   // order stable so the picker and grid don't reshuffle when hydration lands.
@@ -959,6 +1128,14 @@ export const useTeamsPageState = (
         }
         return;
       }
+      if (event.type === "team-positions-reordered") {
+        if (isLocalEditCoolingDown()) {
+          scheduleDeferredBackgroundRefresh();
+        } else {
+          void backgroundRefresh();
+        }
+        return;
+      }
       // Service plans aren't part of TeamsData — the Plans page keeps its own
       // summary list — so just bump a revision the page can watch to refetch,
       // rather than trying to merge the plan into this dataset.
@@ -975,6 +1152,7 @@ export const useTeamsPageState = (
       ) onTemplateEvent?.(event);
     },
     [
+      backgroundRefresh,
       isLocalEditCoolingDown,
       removeData,
       scheduleDeferredBackgroundRefresh,
@@ -986,6 +1164,7 @@ export const useTeamsPageState = (
   const { connectionState, reconnectVersion } = useTeamsLiveSync(
     churchId,
     applyTeamsStreamEvent,
+    Boolean(context?.canUseTeamsLiveSync),
   );
 
   const handledReconnectVersionRef = useRef(0);
@@ -1092,12 +1271,37 @@ export const useTeamsPageState = (
     [pageData],
   );
 
+  const hasTeamsWorkspaceAccess =
+    !accessDenied && (canViewTeams || membershipAccessGranted);
+  const hasBroadTeamsReadAccess = Boolean(context?.hasBroadTeamsReadAccess);
+  const canViewServices = Boolean(context?.canViewServices);
+  const canManageTeamAvailability =
+    canEditTeams || pageData.teams.some((team) => canEditTeam(team.teamId));
+  const availableNavSections = useMemo(
+    () =>
+      getAvailableTeamsNavSections({
+        hasTeamsWorkspaceAccess,
+        hasBroadTeamsReadAccess,
+        canViewServices,
+        canManageTeamAvailability,
+      }),
+    [hasTeamsWorkspaceAccess, hasBroadTeamsReadAccess, canViewServices, canManageTeamAvailability],
+  );
+
   return useMemo(() => ({
     churchId,
     loading,
+    accessDenied,
+    hasTeamsWorkspaceAccess,
+    hasBroadTeamsReadAccess,
+    canViewServices,
+    availableNavSections,
+    editableMemberIds,
+    invalidateMemberEditability,
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
+    canManageTeamAvailability,
     pageData,
     normalizedPageData,
     servicePlansRevision,
@@ -1113,6 +1317,7 @@ export const useTeamsPageState = (
     reorderPositions,
     trackTeamsSave,
     refresh,
+    reconcileTeamsProjection,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,
@@ -1122,9 +1327,17 @@ export const useTeamsPageState = (
   }), [
     churchId,
     loading,
+    accessDenied,
+    hasTeamsWorkspaceAccess,
+    hasBroadTeamsReadAccess,
+    canViewServices,
+    availableNavSections,
+    editableMemberIds,
+    invalidateMemberEditability,
     canEditTeams,
     canEditAnyTeam,
     canEditTeam,
+    canManageTeamAvailability,
     pageData,
     normalizedPageData,
     servicePlansRevision,
@@ -1138,6 +1351,7 @@ export const useTeamsPageState = (
     reorderPositions,
     trackTeamsSave,
     refresh,
+    reconcileTeamsProjection,
     updateSelectedScheduleId,
     updateScheduleDraft,
     flushScheduleDraft,

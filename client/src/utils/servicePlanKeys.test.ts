@@ -35,4 +35,27 @@ describe("getServicePlanKey", () => {
     const nextWeek = occurrence({ startsAt: "2026-08-02T14:00:00.000Z" });
     expect(getServicePlanKey(thisWeek)).not.toBe(getServicePlanKey(nextWeek));
   });
+
+  it("uses the service calendar date when the UTC instant falls on the next day", () => {
+    expect(getServicePlanKey(occurrence({
+      startsAt: "2026-10-08T02:30:00.000Z",
+      serviceDate: "2026-10-07",
+    }))).toBe("service-1@2026-10-07");
+  });
+
+  it("keeps the plan identity on the church date across operator timezone changes", () => {
+    const scheduled = occurrence({ startsAt: "2026-10-04T03:30:00.000Z" });
+    const originalTz = process.env.TZ;
+    try {
+      process.env.TZ = "America/Los_Angeles";
+      const losAngelesKey = getServicePlanKey(scheduled);
+      process.env.TZ = "Pacific/Auckland";
+      const aucklandKey = getServicePlanKey(scheduled);
+      expect(losAngelesKey).toBe("service-1@2026-10-04");
+      expect(aucklandKey).toBe(losAngelesKey);
+    } finally {
+      if (originalTz === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTz;
+    }
+  });
 });

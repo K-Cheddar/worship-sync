@@ -15,7 +15,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "rootDir": ".",
+    "rootDir": "..",
     "paths": {
       "@/*": ["./src/*"],
       "@/utils/*": ["./src/utils/*"],
@@ -27,5 +27,5 @@
     },
     "types": ["vite/client", "dom-screen-wake-lock", "node"]
   },
-  "include": ["src", "custom.d.ts"]
+  "include": ["src", "custom.d.ts", "../shared/teamScheduleOccurrences.ts"]
 }

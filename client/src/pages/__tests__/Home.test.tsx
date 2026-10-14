@@ -210,6 +210,103 @@ describe("Home", () => {
     openSpy.mockRestore();
   });
 
+  it.each(["none", "view", "music", "full"] as const)(
+    "gives a %s Controller human without normal Teams access a My teams entry",
+    (access) => {
+      render(
+        <MemoryRouter initialEntries={["/home"]}>
+          <GlobalInfoContext.Provider
+            value={
+              createMockGlobalContext({
+                access,
+                role: "member",
+                permissions: {
+                  teams: "none",
+                  services: "none",
+                  teamScopes: {},
+                },
+                canViewTeams: false,
+                canViewServices: false,
+                canEditTeams: false,
+                canEditServices: false,
+              }) as any
+            }
+          >
+            <ControllerInfoContext.Provider
+              value={createMockControllerContext() as any}
+            >
+              <Home />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole("link", { name: /My teams/ })).toHaveAttribute(
+        "href",
+        "/teams-and-services",
+      );
+      expect(
+        screen.queryByRole("link", { name: /^Teams /i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText("View your team rosters, positions, and schedules."),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("keeps Controller None Home free of operator cards", () => {
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider
+          value={
+            createMockGlobalContext({
+              access: "none",
+              role: "member",
+              permissions: { teams: "none", services: "none", teamScopes: {} },
+              canViewTeams: false,
+              canViewServices: false,
+              canEditTeams: false,
+              canEditServices: false,
+            }) as any
+          }
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Resources/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Service Workspace/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Presentation/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the existing Teams entry without a duplicate My teams card", () => {
+    render(
+      <MemoryRouter initialEntries={["/home"]}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ canViewTeams: true }) as any}
+        >
+          <ControllerInfoContext.Provider
+            value={createMockControllerContext() as any}
+          >
+            <Home />
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: /^Teams /i })).toHaveAttribute(
+      "href",
+      "/teams-and-services",
+    );
+    expect(screen.queryByRole("link", { name: /My teams/ })).not.toBeInTheDocument();
+  });
+
   it("shows a pending state on a home card before navigation completes", async () => {
     const user = userEvent.setup();
     render(

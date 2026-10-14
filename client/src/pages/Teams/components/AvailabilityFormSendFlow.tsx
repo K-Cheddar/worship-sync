@@ -35,6 +35,7 @@ const AvailabilityFormSendFlow = ({
   historyError,
   onRetryHistory,
   onBatchUpdated,
+  privacySafe = false,
   onClose,
 }: {
   churchId: string;
@@ -43,13 +44,14 @@ const AvailabilityFormSendFlow = ({
   positions: TeamPosition[];
   teams: TeamRecord[];
   recipients: TeamIntakeRecipient[];
-  eligibilityByMemberId?: Record<string, SmsMemberEligibility>;
+  eligibilityByMemberId?: Record<string, Pick<SmsMemberEligibility, "eligible"> & Partial<Pick<SmsMemberEligibility, "status">>>;
   notificationIntents: NotificationIntent[];
   smsDeliveryAttempts: SmsDeliveryAttempt[];
   historyLoaded: boolean;
   historyError: string;
   onRetryHistory: () => void;
   onBatchUpdated?: (batch: NotificationBatch) => void;
+  privacySafe?: boolean;
   onClose: () => void;
 }) => {
   const [deselectedIds, setDeselectedIds] = useState<Set<string>>(new Set());
@@ -57,6 +59,7 @@ const AvailabilityFormSendFlow = ({
   const [search, setSearch] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [busy, setBusy] = useState(false);
+  const sendLockRef = useRef(false);
   const [reviewedBatchState, setReviewedBatchState] = useState<{
     batch: NotificationBatch;
     formIdentity: string;
@@ -118,7 +121,7 @@ const AvailabilityFormSendFlow = ({
 
   const invalidateReview = () => {
     const hadReview = Boolean(reviewedBatchState || confirmOpen);
-    setReviewedBatchState(null);
+    setReviewedBatchState((current) => current?.batch.status === "prepared" ? null : current);
     setConfirmOpen(false);
     if (hadReview) setNotice("Recipients changed. Review the messages again before sending.");
   };
@@ -143,7 +146,6 @@ const AvailabilityFormSendFlow = ({
     [...memberTeamIds].sort(),
     eligibility.status,
     eligibility.eligible,
-    eligibility.phoneNumber || "",
     eligible,
     reason,
     recipient?.respondedAt || "",
@@ -156,10 +158,11 @@ const AvailabilityFormSendFlow = ({
   useEffect(() => {
     if (previousRecipientEligibilityRef.current === recipientEligibilityIdentity) return;
     previousRecipientEligibilityRef.current = recipientEligibilityIdentity;
-    const hadReview = Boolean(reviewedBatchState || confirmOpen);
-    setReviewedBatchState(null);
+    const hadPreparedReview = reviewedBatchState?.batch.status === "prepared" &&
+      !reviewedBatchState.batch.summary.sent && !reviewedBatchState.batch.summary.failed && !reviewedBatchState.batch.summary.uncertain;
+    setReviewedBatchState((current) => current?.batch.status === "prepared" ? null : current);
     setConfirmOpen(false);
-    if (hadReview) setNotice("Recipient eligibility changed. Review the messages again before sending.");
+    if (hadPreparedReview) setNotice("Recipient eligibility changed. Review the messages again before sending.");
   }, [confirmOpen, recipientEligibilityIdentity, reviewedBatchState]);
   const query = search.trim().toLocaleLowerCase();
   const visibleRows = rows.filter(({ member, memberTeamIds }) =>
@@ -173,10 +176,17 @@ const AvailabilityFormSendFlow = ({
   const selectionIdentity = JSON.stringify(selectedEligibleIds);
   const selectionIdentityRef = useRef(selectionIdentity);
   selectionIdentityRef.current = selectionIdentity;
+  const batchIdentityMatches = Boolean(reviewedBatchState &&
+    reviewedBatchState.formIdentity === formReviewIdentity &&
+    reviewedBatchState.recipientEligibilityIdentity === recipientEligibilityIdentity &&
+    reviewedBatchState.selectionIdentity === selectionIdentity);
+  const batchHasProgress = Boolean(reviewedBatchState && (
+    reviewedBatchState.batch.status !== "prepared" || reviewedBatchState.batch.summary.sent > 0 ||
+    reviewedBatchState.batch.summary.failed > 0 || reviewedBatchState.batch.summary.uncertain > 0
+  ));
   const reviewedBatch = activeBatch?.formId === form.formId && activeBatch.churchId === churchId &&
     reviewedBatchState?.formIdentity === formReviewIdentity &&
-    reviewedBatchState.recipientEligibilityIdentity === recipientEligibilityIdentity &&
-    reviewedBatchState.selectionIdentity === selectionIdentity ? activeBatch : null;
+    (batchIdentityMatches || batchHasProgress) ? activeBatch : null;
   const visibleSelectionCount = visibleEligibleIds.filter((id) => selectedEligibleIds.includes(id)).length;
   const allVisibleSelected = visibleEligibleIds.length > 0 && visibleSelectionCount === visibleEligibleIds.length;
   const someVisibleSelected = visibleSelectionCount > 0 && !allVisibleSelected;
@@ -198,10 +208,14 @@ const AvailabilityFormSendFlow = ({
     setSelectedRetryIds(nextRetries);
     invalidateReview();
   };
+  const formTeamIds = new Set(form.teamIds || []);
   const teamOptions = [
     { value: "", label: "All teams" },
-    ...teams.filter((team) => !team.archivedAt).map((team) => ({ value: team.teamId, label: team.name })),
+    ...teams
+      .filter((team) => !team.archivedAt && (!formTeamIds.size || formTeamIds.has(team.teamId)))
+      .map((team) => ({ value: team.teamId, label: team.name })),
   ];
+  if (privacySafe) teamOptions[0].label = "All managed Teams";
   const statusRows = rows.filter(({ reason }) => reason !== "Outside this form’s team scope");
   const statusCounts = {
     ready: rows.filter(({ eligible }) => eligible).length,
@@ -211,7 +225,7 @@ const AvailabilityFormSendFlow = ({
     sent: statusRows.filter(({ previousDeliveryStatus }) => previousDeliveryStatus === "sent").length,
     responded: statusRows.filter(({ recipient }) => Boolean(recipient?.respondedAt)).length,
     failed: statusRows.filter(({ previousDeliveryStatus }) => previousDeliveryStatus === "failed").length,
-    uncertain: statusRows.filter(({ previousDeliveryStatus }) => previousDeliveryStatus === "uncertain").length,
+    needsStatusCheck: statusRows.filter(({ previousDeliveryStatus }) => previousDeliveryStatus === "uncertain").length,
   };
 
   const reviewMessages = async () => {
@@ -245,7 +259,7 @@ const AvailabilityFormSendFlow = ({
         recipientEligibilityIdentity: requestedRecipientEligibilityIdentity,
         selectionIdentity: requestedSelectionIdentity,
       });
-      setNotice("Messages are ready to review. Nothing has been sent.");
+      setConfirmOpen(true);
     } catch (caught) {
       if (currentContextRef.current === requestedContext) {
         setError(caught instanceof Error ? caught.message : "Could not prepare form messages.");
@@ -256,8 +270,10 @@ const AvailabilityFormSendFlow = ({
   };
 
   const sendBatch = async () => {
-    if (!historyLoaded || !reviewedBatch || reviewedBatch.formId !== form.formId || reviewedBatch.churchId !== churchId || busy) return;
+    if (!historyLoaded || !reviewedBatch || reviewedBatch.summary.eligible === 0 || reviewedBatch.formId !== form.formId || reviewedBatch.churchId !== churchId || busy || sendLockRef.current) return;
+    sendLockRef.current = true;
     const requestedContext = contextIdentity;
+    const requestedChurchId = churchId;
     const requestedFormIdentity = formReviewIdentity;
     const requestedRecipientEligibilityIdentity = recipientEligibilityIdentity;
     const requestedSelectionIdentity = selectionIdentity;
@@ -265,7 +281,7 @@ const AvailabilityFormSendFlow = ({
     setBusy(true);
     setError("");
     try {
-      const response = await dispatchReviewedAvailabilityBatch(churchId, batchToSend);
+      const response = await dispatchReviewedAvailabilityBatch(requestedChurchId, batchToSend);
       if (currentContextRef.current !== requestedContext || currentFormReviewRef.current !== requestedFormIdentity) return;
       onBatchUpdated?.(response.batch);
       setReviewedBatchState({
@@ -275,13 +291,15 @@ const AvailabilityFormSendFlow = ({
         selectionIdentity: requestedSelectionIdentity,
       });
       setConfirmOpen(false);
-      setNotice("Send finished. Delivery and response status are shown below.");
+      setNotice("");
     } catch (caught) {
+      setConfirmOpen(false);
+      setReviewedBatchState(null);
       if (currentContextRef.current === requestedContext) {
-        setError(caught instanceof Error ? caught.message : "The send status could not be confirmed. Check Messages before retrying.");
+        setError(caught instanceof Error ? caught.message : "We couldn't confirm whether these texts were sent. Check message history before trying again.");
       }
       try {
-        const latest = await getAvailabilityNotificationBatch(churchId, batchToSend.batchId);
+        const latest = await getAvailabilityNotificationBatch(requestedChurchId, batchToSend.batchId);
         if (currentContextRef.current === requestedContext && currentFormReviewRef.current === requestedFormIdentity) {
           onBatchUpdated?.(latest.batch);
           setReviewedBatchState({
@@ -295,6 +313,7 @@ const AvailabilityFormSendFlow = ({
         // Keep the reviewed batch available so the operator can check it in Messages.
       }
     } finally {
+      sendLockRef.current = false;
       setBusy(false);
     }
   };
@@ -310,12 +329,12 @@ const AvailabilityFormSendFlow = ({
       {historyLoaded ? <dl className="grid grid-cols-2 gap-2 rounded-lg border border-gray-700 bg-gray-950/40 p-3 text-sm sm:grid-cols-4 lg:grid-cols-8" aria-label="Recipient status summary">
         <div><dt className="text-gray-400">Ready to send</dt><dd className="font-medium text-emerald-200">{statusCounts.ready}</dd></div>
         <div><dt className="text-gray-400">Consent needed</dt><dd className="text-gray-200">{statusCounts.consentNeeded}</dd></div>
-        <div><dt className="text-gray-400">Opted out</dt><dd className="text-gray-200">{statusCounts.optedOut}</dd></div>
-        <div><dt className="text-gray-400">Missing/invalid phone</dt><dd className="text-gray-200">{statusCounts.missingPhone}</dd></div>
+        {!privacySafe ? <div><dt className="text-gray-400">Opted out</dt><dd className="text-gray-200">{statusCounts.optedOut}</dd></div> : null}
+        <div><dt className="text-gray-400">No valid phone number</dt><dd className="text-gray-200">{statusCounts.missingPhone}</dd></div>
         <div><dt className="text-gray-400">Already sent</dt><dd className="text-gray-200">{statusCounts.sent}</dd></div>
         <div><dt className="text-gray-400">Already responded</dt><dd className="text-gray-200">{statusCounts.responded}</dd></div>
         <div><dt className="text-gray-400">Failed previously</dt><dd className="text-amber-200">{statusCounts.failed}</dd></div>
-        <div><dt className="text-gray-400">Uncertain</dt><dd className="text-amber-200">{statusCounts.uncertain}</dd></div>
+        <div><dt className="text-gray-400">Needs a status check</dt><dd className="text-amber-200">{statusCounts.needsStatusCheck}</dd></div>
       </dl> : null}
       {!historyLoaded ? historyError ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-700/70 bg-amber-950/30 p-3 text-sm text-amber-100" role="alert">
@@ -333,20 +352,20 @@ const AvailabilityFormSendFlow = ({
           <div className="flex items-center gap-3"><span aria-live="polite" className="text-sm text-gray-300">{selectedEligibleIds.length} selected</span><Button variant="textLink" disabled={busy || !historyLoaded || !selectedEligibleIds.length} onClick={() => updateRecipientSelection(selectedEligibleIds, false)}>Clear</Button></div>
         </div>
         <div className="divide-y divide-gray-800" role="list" aria-label="Form recipients">
-          {visibleRows.length ? visibleRows.map(({ member, eligible, reason, previousDeliveryStatus }) => <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem"><Checkbox label={memberName(member)} checked={selectedEligibleIds.includes(member.memberId)} disabled={busy || !historyLoaded || !eligible} onCheckedChange={(checked) => updateRecipientSelection([member.memberId], checked === true)} className="flex-1" />{!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason}</span> : <span className="shrink-0 text-xs text-emerald-200">{previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First send · SMS ready"}</span>}</div>) : <p className="p-4 text-sm text-gray-400">No members match these filters.</p>}
+          {visibleRows.length ? visibleRows.map(({ member, eligible, reason, previousDeliveryStatus }) => <div key={member.memberId} className="flex min-h-12 items-center gap-3 px-3 py-2.5" role="listitem"><Checkbox label={memberName(member)} checked={selectedEligibleIds.includes(member.memberId)} disabled={busy || !historyLoaded || !eligible} onCheckedChange={(checked) => updateRecipientSelection([member.memberId], checked === true)} className="flex-1" />{!eligible ? <span className="shrink-0 text-xs text-amber-200">{reason}</span> : <span className="shrink-0 text-xs text-emerald-200">{previousDeliveryStatus === "failed" ? "Previous send failed · select to retry" : "First message · ready"}</span>}</div>) : <p className="p-4 text-sm text-gray-400">No members match these filters.</p>}
         </div>
       </div>
-      <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-gray-400">{selectedEligibleIds.length ? `${selectedEligibleIds.length} of ${statusCounts.ready} eligible member${statusCounts.ready === 1 ? "" : "s"} selected.` : "Select at least one eligible member to continue."}</p><Button disabled={busy || !historyLoaded || !selectedEligibleIds.length} isLoading={busy} onClick={() => void reviewMessages()}>Review {selectedEligibleIds.length} message{selectedEligibleIds.length === 1 ? "" : "s"}</Button></div>
+      <div className="flex flex-col gap-3 border-t border-gray-700 pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-gray-400">{selectedEligibleIds.length ? `${selectedEligibleIds.length} of ${statusCounts.ready} eligible volunteer${statusCounts.ready === 1 ? "" : "s"} selected.` : "Select at least one eligible volunteer to continue."}</p><Button disabled={busy || !historyLoaded || !selectedEligibleIds.length} isLoading={busy} onClick={() => void reviewMessages()}>{busy ? "Preparing messages..." : `Review and send ${selectedEligibleIds.length} message${selectedEligibleIds.length === 1 ? "" : "s"}`}</Button></div>
       {error ? <p role="alert" className="text-sm text-red-200">{error}</p> : null}
       {notice ? <p role="status" className="text-sm text-sky-200">{notice}</p> : null}
-      {reviewedBatch ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy || !historyLoaded} onConfirm={() => {
-        if (historyLoaded && !busy) setConfirmOpen(true);
-      }} /> : null}
-      <Modal isOpen={confirmOpen && Boolean(reviewedBatch) && historyLoaded} onClose={() => setConfirmOpen(false)} title="Send this form?" description="Review who will receive this form by SMS." size="sm">
-        {reviewedBatch ? <div className="space-y-4 text-sm text-gray-200">
-          <p>Send {reviewedBatch.summary.eligible} messages for {form.name}? This will use {reviewedBatch.summary.totalSegments} SMS segments. Excluded members will not be contacted.</p>
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-gray-300">{reviewedBatch.recipients.filter(({ eligible }) => eligible).map((recipient) => <li key={recipient.memberId}>{recipient.memberName} · {recipient.phoneNumberSnapshot || recipient.maskedPhoneNumber}</li>)}</ul>
-          <div className="flex justify-end gap-2"><Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button><Button disabled={busy || !historyLoaded} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button></div>
+      {reviewedBatch && batchHasProgress ? <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy || !historyLoaded} privacySafe={privacySafe} mode="status" /> : null}
+      <Modal isOpen={confirmOpen && Boolean(reviewedBatch) && historyLoaded} onClose={() => setConfirmOpen(false)} title="Review text messages" description="Check who will receive this form and read the personalized messages. Choose Send to send them." size="lg" busy={busy}>
+        {reviewedBatch ? <div className="space-y-4">
+          <AvailabilityBatchReview batch={reviewedBatch} formName={form.name} busy={busy} privacySafe={privacySafe} mode="confirmation" />
+          <div className="flex flex-col-reverse justify-end gap-2 border-t border-gray-700 pt-4 sm:flex-row">
+            <Button variant="secondary" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            {reviewedBatch.summary.eligible > 0 ? <Button disabled={busy || !historyLoaded} isLoading={busy} onClick={() => void sendBatch()}>Send {reviewedBatch.summary.eligible} message{reviewedBatch.summary.eligible === 1 ? "" : "s"}</Button> : null}
+          </div>
         </div> : null}
       </Modal>
     </section>

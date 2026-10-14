@@ -455,7 +455,7 @@ export const useAccountPageState = () => {
   const getMemberAccessValue = useCallback(
     (member: Member): MemberAccessOption =>
       memberAccessDrafts[member.membershipId] ||
-      toMemberAccessOption(member.appAccess),
+      toMemberAccessOption(member.controllerAccess ?? member.appAccess),
     [memberAccessDrafts],
   );
 

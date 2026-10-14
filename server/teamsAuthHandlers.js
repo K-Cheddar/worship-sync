@@ -1,4 +1,13 @@
 import crypto from "node:crypto";
+import {
+  resolveEffectiveTeamAccess,
+  canViewTeam,
+  canEditTeam,
+} from "./teamAccess.js";
+import {
+  projectTeamsBootstrapForAccess,
+  projectViewOnlySchedule,
+} from "./teamsBootstrapProjection.js";
 import { serializeAuthError } from "./authErrorResponse.js";
 import { isDeepStrictEqual } from "node:util";
 import { emitTeamsEvent } from "./teamsSse.js";
@@ -47,6 +56,11 @@ import {
 import { normalizeUsPhoneNumber } from "./phoneNumber.js";
 import { resolveSmsMemberEligibility } from "./smsEligibility.js";
 import {
+  getScheduleAssignedMemberIds,
+  getScheduleMemberAssignments,
+  mapWithConcurrency,
+} from "./scheduleInitialSms.js";
+import {
   createTeamIntakeRecipientToken,
   decryptTeamIntakeRecipientToken,
   encryptTeamIntakeRecipientToken,
@@ -73,8 +87,17 @@ import { persistPortableCreate } from "./dataTransfer/portableCreatePersister.js
 import {
   isValidPortablePlainDate,
   isValidPortableTimeZone,
-  portableWallClockToIso,
 } from "./dataTransfer/time.js";
+import { invalidateChurchServiceTimeZone } from "./churchServiceTimeZone.js";
+import {
+  calendarDateInTimeZone,
+  hasOccurrenceIdentityAmbiguity,
+  logicalOccurrenceIdForGroup,
+  logicalOccurrenceIdForService,
+  matchOccurrencesByIdentity,
+  resolveOccurrenceIdentity,
+  serviceDateTimeInTimeZone,
+} from "../shared/teamScheduleOccurrences.ts";
 
 const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
@@ -158,11 +181,15 @@ export const createTeamsAuthHandlers = ({
   // Church membership without any teams grant — the guard a volunteer passes.
   requireHumanSession,
   requireServicesEditSession,
+  requireServicesViewSession,
+  requireServicesWorkspaceViewSession,
   requireServicePlansViewSession,
   requireTeamsEditSession,
   requireTeamsEditForTeamSession,
   requireScheduleMicrophoneEditSession,
   requireTeamsViewSession,
+  requireBroadTeamsViewSession,
+  resolveRequestBootstrap,
   getSessionActorUid = (bootstrap) => bootstrap?.user?.uid || null,
   requireFirestore,
   saveNotificationEventIntents = async () => [],
@@ -188,10 +215,14 @@ export const createTeamsAuthHandlers = ({
     requireTeamsEditForTeamSession ||
     ((req, churchId) => requireTeamsEdit(req, churchId));
   const requireTeamsView = requireTeamsViewSession || requireAdminSession;
-  // Narrower than requireTeamsView: also admits a view-only paired
-  // workstation, but only for reading saved Service Plans (no roster PII).
+  const requireServicesView =
+    requireServicesViewSession || requireServicePlansViewSession || requireTeamsView;
+  const requireServicesWorkspaceView =
+    requireServicesWorkspaceViewSession || requireServicesView;
+  const requireBroadTeamsView =
+    requireBroadTeamsViewSession || requireAdminSession;
   const requireServicePlansView =
-    requireServicePlansViewSession || requireTeamsView;
+    requireServicePlansViewSession || requireServicesView;
   const requireScheduleMicrophoneEdit =
     requireScheduleMicrophoneEditSession || requireTeamsEditForTeam;
   const sessionActorUid = (bootstrap) => {
@@ -205,6 +236,9 @@ export const createTeamsAuthHandlers = ({
   // transactions. Serialize writes to one schedule so they retain the same
   // no-lost-update guarantee as Firestore transactions.
   const inMemoryScheduleSaveQueues = new Map();
+  const inMemoryTeamPositionReorderQueues = new Map();
+  const inMemoryTeamRosterMutationQueues = new Map();
+  const inMemoryRosterMemberMutationQueues = new Map();
   const inMemoryPortableMemberQueues = new Map();
   const inMemoryPortableMemberProgress = new Map();
   const portableCreateQueues = new Map();
@@ -232,6 +266,42 @@ export const createTeamsAuthHandlers = ({
     void settled.finally(() => {
       if (inMemoryScheduleSaveQueues.get(scheduleId) === settled) {
         inMemoryScheduleSaveQueues.delete(scheduleId);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryTeamPositionReorder = (scopeKey, task) => {
+    const previous = inMemoryTeamPositionReorderQueues.get(scopeKey) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryTeamPositionReorderQueues.set(scopeKey, settled);
+    void settled.finally(() => {
+      if (inMemoryTeamPositionReorderQueues.get(scopeKey) === settled) {
+        inMemoryTeamPositionReorderQueues.delete(scopeKey);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryTeamRosterMutation = (teamId, task) => {
+    const previous = inMemoryTeamRosterMutationQueues.get(teamId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryTeamRosterMutationQueues.set(teamId, settled);
+    void settled.finally(() => {
+      if (inMemoryTeamRosterMutationQueues.get(teamId) === settled) {
+        inMemoryTeamRosterMutationQueues.delete(teamId);
+      }
+    });
+    return run;
+  };
+  const enqueueInMemoryRosterMemberMutation = (memberId, task) => {
+    const previous = inMemoryRosterMemberMutationQueues.get(memberId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(() => undefined, () => undefined);
+    inMemoryRosterMemberMutationQueues.set(memberId, settled);
+    void settled.finally(() => {
+      if (inMemoryRosterMemberMutationQueues.get(memberId) === settled) {
+        inMemoryRosterMemberMutationQueues.delete(memberId);
       }
     });
     return run;
@@ -364,16 +434,18 @@ export const createTeamsAuthHandlers = ({
   });
 
   /** Local date/time for an occurrence, as the reader would say it aloud. */
-  const formatAssignmentWhen = (startsAt) => {
+  const formatAssignmentWhen = (startsAt, timeZone) => {
     const parsed = startsAt ? new Date(startsAt) : null;
     if (!parsed || Number.isNaN(parsed.getTime()))
       return "Date to be confirmed";
     return parsed.toLocaleString("en-US", {
+      timeZone,
       weekday: "long",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZoneName: "short",
     });
   };
 
@@ -390,6 +462,12 @@ export const createTeamsAuthHandlers = ({
    */
   const notifyScheduleAssignments = async ({ churchId, schedule, slots }) => {
     const church = await getChurchById(churchId);
+    if (!isValidPortableTimeZone(church?.serviceTimeZone)) {
+      throw httpError(
+        409,
+        "Set a valid church time zone in Service setup before sending this schedule.",
+      );
+    }
     const memberships = (await listMembershipsForChurch(churchId)) || [];
     const membershipByUserId = new Map(
       memberships
@@ -497,7 +575,10 @@ export const createTeamsAuthHandlers = ({
             ),
             assignments: ordered.map((entry) => ({
               serviceName: entry.serviceName,
-              when: formatAssignmentWhen(entry.startsAt),
+              when: formatAssignmentWhen(
+                entry.startsAt,
+                church.serviceTimeZone,
+              ),
               positionName: entry.positionName,
               teamName: schedule.teamName || "",
             })),
@@ -736,6 +817,10 @@ export const createTeamsAuthHandlers = ({
       "scheduleId",
       churchId,
     );
+    const church = await getDoc(COLLECTIONS.churches, churchId);
+    const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+      ? church.serviceTimeZone
+      : "UTC";
     const blockedAt = nowIso();
 
     for (const schedule of schedules) {
@@ -745,7 +830,8 @@ export const createTeamsAuthHandlers = ({
         previousRanges,
         nextRanges,
         readHolder: readCellHolderId,
-        fromDate: blockedAt.slice(0, 10),
+        fromDate: getOccurrenceCalendarParts(blockedAt, timeZone).date,
+        timeZone,
       });
       if (slots.length === 0) continue;
 
@@ -856,30 +942,12 @@ export const createTeamsAuthHandlers = ({
       .update(`${churchId}\u0000${teamId}\u0000${startDate}\u0000${endDate}`)
       .digest("hex");
   const generatedPeriodScheduleId = (key) => `generated_${key}`;
-  // Keep the coverage contract aligned with schedulePeriodUtils on the client.
-  const coversCurrentOccurrences = (stored, current) => {
-    const remaining = new Map(stored.map((saved) => [saved.occurrenceId, saved]));
-    // Reserve stable identities before comparing names, and consume each row once.
-    const unmatched = current.filter((occurrence) => {
-      const saved = remaining.get(occurrence.occurrenceId);
-      if (!saved || new Date(saved.startsAt).getTime() !== new Date(occurrence.startsAt).getTime()) return true;
-      remaining.delete(occurrence.occurrenceId);
-      return false;
-    });
-    const semanticKey = (occurrence) =>
-      JSON.stringify([String(occurrence.name || "").trim().toLowerCase(), new Date(occurrence.startsAt).getTime()]);
-    const counts = new Map();
-    remaining.forEach((saved) => {
-      const key = semanticKey(saved);
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
-    return unmatched.every((occurrence) => {
-      const key = semanticKey(occurrence);
-      const count = counts.get(key) || 0;
-      if (!count) return false;
-      counts.set(key, count - 1);
-      return true;
-    });
+  // Legacy timestamp IDs resolve only by service/group identity and church date.
+  const coversCurrentOccurrences = (stored, current, timeZone = "UTC") => {
+    const { matches, ambiguousCurrentIds } = matchOccurrencesByIdentity(stored, current, timeZone);
+    return ambiguousCurrentIds.size === 0 && current.every((occurrence) =>
+      matches.has(occurrence.occurrenceId),
+    );
   };
   const generatedPeriodEnsureQueues = new Map();
 
@@ -994,7 +1062,7 @@ export const createTeamsAuthHandlers = ({
       "Sat",
     ].indexOf(values.weekday);
     return {
-      date: `${values.year}-${values.month}-${values.day}`,
+      date: calendarDateInTimeZone(instant, timeZone),
       time: `${values.hour}:${values.minute}`,
       weekday: weekdayIndex,
       startsAt: instant.toISOString(),
@@ -1022,19 +1090,19 @@ export const createTeamsAuthHandlers = ({
         .time;
     }
     if (service.reccurence === "weekly") {
-      return Number(service.dayOfWeek) === weekday &&
+      const time = Number(service.dayOfWeek) === weekday &&
         /^\d{2}:\d{2}$/.test(String(service.time || ""))
         ? service.time
         : null;
+      return time && serviceDateTimeInTimeZone(localDate, time, timeZone) ? time : null;
     }
     if (service.reccurence === "multi_weekly") {
-      return (
-        (service.daysOfWeek || []).find(
+      const time = (service.daysOfWeek || []).find(
           (item) =>
             Number(item?.day) === weekday &&
             /^\d{2}:\d{2}$/.test(String(item?.time || "")),
-        )?.time || null
-      );
+        )?.time || null;
+      return time && serviceDateTimeInTimeZone(localDate, time, timeZone) ? time : null;
     }
     if (service.reccurence === "monthly") {
       const [year, month, day] = localDate.split("-").map(Number);
@@ -1044,11 +1112,12 @@ export const createTeamsAuthHandlers = ({
         day + 7 > new Date(Date.UTC(year, month, 0)).getUTCDate();
       const matchesOrdinal =
         ordinal === 5 ? isLastWeekday : Math.ceil(day / 7) === ordinal;
-      return occurrenceDate.getUTCDay() === Number(service.weekday) &&
+      const time = occurrenceDate.getUTCDay() === Number(service.weekday) &&
         matchesOrdinal &&
         /^\d{2}:\d{2}$/.test(String(service.time || ""))
         ? service.time
         : null;
+      return time && serviceDateTimeInTimeZone(localDate, time, timeZone) ? time : null;
     }
     return null;
   };
@@ -1064,6 +1133,16 @@ export const createTeamsAuthHandlers = ({
         400,
         "A target does not match its current service recurrence.",
       );
+    }
+    if (service.reccurence !== "one_time") {
+      const expectedInstant = serviceDateTimeInTimeZone(
+        localParts.date,
+        scheduledTime,
+        timeZone,
+      );
+      if (!expectedInstant || expectedInstant.toISOString() !== localParts.startsAt) {
+        throw httpError(400, "A service occurrence has an invalid scheduled instant.");
+      }
     }
     if (
       service.reccurence === "one_time" &&
@@ -1081,14 +1160,19 @@ export const createTeamsAuthHandlers = ({
     serviceId,
     serviceIds,
     groupId,
+    logicalOccurrenceId,
     occurrenceId,
     startsAt,
+    serviceDate,
     localParts,
     timeZone,
     servicesById,
   }) => {
     const primaryService = servicesById.get(serviceId);
     assertServiceOccurrence({ service: primaryService, localParts, timeZone });
+    if (serviceDate && serviceDate !== localParts.date) {
+      throw httpError(400, "A service occurrence has an invalid calendar date.");
+    }
     const configuredGroupId = normalizeShortText(
       primaryService?.serviceGroupId,
       { max: 160 },
@@ -1109,9 +1193,7 @@ export const createTeamsAuthHandlers = ({
           .sort(
             (left, right) =>
               left.time.localeCompare(right.time) ||
-              String(left.service?.name || "").localeCompare(
-                String(right.service?.name || ""),
-              ),
+              left.id.localeCompare(right.id),
           )
       : [];
 
@@ -1129,17 +1211,26 @@ export const createTeamsAuthHandlers = ({
           "A combined occurrence does not match its configured service group.",
         );
       }
-      if (occurrenceId !== `group:${groupId}@${startsAt.slice(0, 10)}`) {
+      const localOccurrenceId = `group:${groupId}@${localParts.date}`;
+      const legacyUtcOccurrenceId = `group:${groupId}@${startsAt.slice(0, 10)}`;
+      const expectedLogicalId = logicalOccurrenceIdForGroup(groupId, localParts.date);
+      if (
+        (logicalOccurrenceId && logicalOccurrenceId !== expectedLogicalId) ||
+        occurrenceId !== localOccurrenceId &&
+        (serviceDate || occurrenceId !== legacyUtcOccurrenceId)
+      ) {
         throw httpError(400, "A combined occurrence has an invalid identity.");
       }
       return;
     }
 
+    const expectedLogicalId = logicalOccurrenceIdForService(serviceId, localParts.date);
     if (
       serviceIds.length !== 1 ||
       serviceIds[0] !== serviceId ||
       occurringGroupServices.length > 1 ||
-      occurrenceId !== `${serviceId}@${startsAt}`
+      (logicalOccurrenceId && logicalOccurrenceId !== expectedLogicalId) ||
+      (occurrenceId !== expectedLogicalId && occurrenceId !== `${serviceId}@${startsAt}`)
     ) {
       throw httpError(
         400,
@@ -2185,16 +2276,12 @@ export const createTeamsAuthHandlers = ({
     return safe;
   };
 
-  // Service-plan readers without Teams access may read plan content, but they
-  // must not receive roster assignments embedded in a saved plan. This covers
-  // default paired workstations and human services:view readers. Booth
-  // workstations retain the existing Teams-backed plan behavior.
+  // Services readers receive plan content without team assignments. Full
+  // assignment projections remain limited to global Teams readers.
   const hasTeamsPlanAccess = (bootstrap) =>
     bootstrap?.role === "admin" ||
     bootstrap?.permissions?.teams === "view" ||
-    bootstrap?.permissions?.teams === "edit" ||
-    bootstrap?.permissions?.services === "edit" ||
-    Object.keys(bootstrap?.permissions?.teamScopes || {}).length > 0;
+    bootstrap?.permissions?.teams === "edit";
 
   const isPlanOnlyReader = (bootstrap) =>
     bootstrap?.sessionKind === "workstation"
@@ -2221,6 +2308,50 @@ export const createTeamsAuthHandlers = ({
           : [],
       })),
     };
+  };
+
+  const getTeamScopedServicePlanKeys = async (churchId, reader) => {
+    const [teams, church] = await Promise.all([
+      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
+      getDoc(COLLECTIONS.churches, churchId),
+    ]);
+    const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+      ? church.serviceTimeZone
+      : "";
+    const requestedTeamIds = new Set(
+      reader?.role === "admin" ||
+        reader?.permissions?.teams === "view" ||
+        reader?.permissions?.teams === "edit"
+        ? teams.filter((team) => !team.archivedAt).map((team) => team.teamId)
+        : Object.keys(reader?.permissions?.teamScopes || {}),
+    );
+    const activeTeamIds = new Set(
+      teams
+        .filter((team) => !team.archivedAt && requestedTeamIds.has(team.teamId))
+        .map((team) => team.teamId),
+    );
+    const [schedules, servicePlans] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamSchedules,
+        "scheduleId",
+        churchId,
+      ),
+      queryDocs(
+        COLLECTIONS.servicePlans,
+        [{ field: "churchId", value: churchId }],
+        { limit: TEAM_COLLECTION_QUERY_LIMIT },
+      ),
+    ]);
+    return new Set(
+      schedules.flatMap((schedule) => {
+        if (schedule.archivedAt || !activeTeamIds.has(schedule.teamId)) return [];
+        return (schedule.occurrences || [])
+          .map((occurrence) =>
+            getServicePlanKeyForOccurrence(occurrence, servicePlans, timeZone),
+          )
+          .filter(Boolean);
+      }),
+    );
   };
 
   /** Whether this request may edit Teams data, as a boolean rather than a throw. */
@@ -2899,25 +3030,727 @@ export const createTeamsAuthHandlers = ({
   };
 
   const collectMemberTeamIds = async (member, churchId) => {
-    const teamIds = new Set();
-    Object.keys(member?.teamMemberships || {}).forEach((teamId) => {
-      if (teamId) teamIds.add(teamId);
-    });
-    (member?.qualifications || []).forEach((qualification) => {
-      if (qualification?.teamId) teamIds.add(qualification.teamId);
-    });
-    await Promise.all(
-      (member?.positionIds || []).map(async (positionId) => {
-        const position = await assertTeamEntityInChurch(
-          "position",
-          positionId,
-          churchId,
-          { label: "Position", active: false },
-        );
-        if (position.teamId) teamIds.add(position.teamId);
-      }),
+    const teams = await listTeamCollectionForChurch(
+      COLLECTIONS.teams,
+      "teamId",
+      churchId,
     );
+    if (teams.length >= TEAM_COLLECTION_QUERY_LIMIT) {
+      throw httpError(409, "Team ownership could not be verified completely.");
+    }
+    const teamById = new Map(
+      teams.map((team) => [team.teamId || team.id, team]),
+    );
+    const activeTeamIds = new Set(
+      teams
+        .filter((team) => !team.archivedAt)
+        .map((team) => team.teamId || team.id),
+    );
+    const teamIds = new Set();
+    const requireKnownTeam = (teamId) => {
+      const team = teamById.get(teamId);
+      if (!team) throw httpError(409, "Member team ownership is invalid.");
+      return team;
+    };
+    const addActiveOwner = (teamId) => {
+      const team = requireKnownTeam(teamId);
+      if (activeTeamIds.has(teamId)) teamIds.add(teamId);
+      return team;
+    };
+
+    if (
+      (member?.teamMemberships !== undefined &&
+        (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships))) ||
+      (member?.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+      (member?.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+      (member?.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds))
+    ) {
+      throw httpError(409, "Member team data is invalid.");
+    }
+    for (const [teamId, membership] of Object.entries(member?.teamMemberships || {})) {
+      requireKnownTeam(teamId);
+      if (!membership || typeof membership !== "object" || Array.isArray(membership)) {
+        throw httpError(409, "Member team ownership is invalid.");
+      }
+      if (membership?.teamId && membership.teamId !== teamId) {
+        throw httpError(409, "Member team ownership is invalid.");
+      }
+      if (activeTeamIds.has(teamId)) teamIds.add(teamId);
+    }
+
+    const qualifications = member?.qualifications || [];
+    const areas = qualifications.some((qualification) => qualification?.areaId)
+      ? await listTeamCollectionForChurch(
+          COLLECTIONS.teamQualificationAreas,
+          "areaId",
+          churchId,
+        )
+      : [];
+    if (areas.length >= TEAM_COLLECTION_QUERY_LIMIT) {
+      throw httpError(409, "Qualification ownership could not be verified completely.");
+    }
+    const areaById = new Map(areas.map((area) => [area.areaId || area.id, area]));
+    for (const qualification of qualifications) {
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      let areaTeamId = "";
+      if (qualification.areaId) {
+        const area = areaById.get(qualification.areaId);
+        if (!area?.teamId) throw httpError(409, "Member qualification ownership is invalid.");
+        areaTeamId = area.teamId;
+        requireKnownTeam(areaTeamId);
+      }
+      if (qualification.teamId) requireKnownTeam(qualification.teamId);
+      if (qualification.teamId && areaTeamId && qualification.teamId !== areaTeamId) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      const ownerTeamId = areaTeamId || qualification.teamId;
+      if (!ownerTeamId) throw httpError(409, "Member qualification ownership is invalid.");
+      if (activeTeamIds.has(ownerTeamId)) teamIds.add(ownerTeamId);
+    }
+
+    const positionIds = new Set([
+      ...(member?.positionIds || []),
+      ...(member?.desiredPositionIds || []),
+    ]);
+    await Promise.all([...positionIds].map(async (positionId) => {
+      const position = await assertTeamEntityInChurch(
+        "position",
+        positionId,
+        churchId,
+        { label: "Position", active: false },
+      );
+      if (!position.teamId) throw httpError(409, "Position ownership is invalid.");
+      addActiveOwner(position.teamId);
+    }));
+
+    // Canonical roster ownership lives on Team.memberIds. Member-owned fields
+    // can be incomplete (for example, a shared member with no AV position).
+    if (!member?.memberId) return Array.from(teamIds);
+    for (const team of teams) {
+      if (team.archivedAt) continue;
+      if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      if (team.memberIds?.includes(member.memberId)) teamIds.add(team.teamId || team.id);
+    }
     return Array.from(teamIds);
+  };
+
+  const getSafeRosterMemberProjection = (member, churchId) => ({
+    memberId: member.memberId,
+    churchId,
+    ...(member.title !== undefined ? { title: member.title } : {}),
+    ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
+    ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
+    ...(member.profileImageUrl !== undefined
+      ? { profileImageUrl: member.profileImageUrl }
+      : {}),
+  });
+
+  const countTeamMemberAssignments = async ({ churchId, teamId, memberId }) => {
+    const schedules = await listTeamCollectionForChurch(
+      COLLECTIONS.teamSchedules,
+      "scheduleId",
+      churchId,
+    );
+    return schedules
+      .filter((schedule) => schedule.teamId === teamId)
+      .reduce((count, schedule) => {
+        for (const row of Object.values(schedule.assignments || {})) {
+          for (const cell of Object.values(row || {})) {
+            const isPrimary = readCellHolderId(cell) === memberId;
+            const isShadow = Array.isArray(cell?.shadows) &&
+              cell.shadows.some((shadow) => shadow?.memberId === memberId);
+            if (isPrimary || isShadow) count += 1;
+          }
+        }
+        return count;
+      }, 0);
+  };
+
+  const mutateTeamRoster = async ({
+    churchId,
+    teamId,
+    memberId,
+    add,
+    adminUserId,
+  }) => {
+    const db = requireFirestore();
+    const mutate = async (transaction = null) => {
+      const read = async (collectionName, id) => {
+        if (!transaction) return getDoc(collectionName, id);
+        const snapshot = await transaction.get(
+          db.collection(collectionName).doc(id),
+        );
+        return snapshot.exists ? snapshot.data() : null;
+      };
+      const readTeamOwnedCollection = async (collectionName, idField) => {
+        if (!transaction) {
+          const rows = await listTeamCollectionForChurch(
+            collectionName,
+            idField,
+            churchId,
+          );
+          return rows.filter((row) => row.teamId === teamId);
+        }
+        const snapshot = await transaction.get(
+          db.collection(collectionName).where("teamId", "==", teamId),
+        );
+        return snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter((row) => row.churchId === churchId);
+      };
+      const team = await read(COLLECTIONS.teams, teamId);
+      const member = await read(COLLECTIONS.teamRosterMembers, memberId);
+      if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
+      if (team.teamId && team.teamId !== teamId) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+      if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      if (!member || member.churchId !== churchId) {
+        throw httpError(404, "Member not found.");
+      }
+      if (member.memberId && member.memberId !== memberId) {
+        throw httpError(409, "Member roster ownership is invalid.");
+      }
+      if (member.archivedAt) throw httpError(400, "This member is archived.");
+      const memberIds = Array.isArray(team.memberIds) ? team.memberIds : [];
+      const alreadyPresent = memberIds.includes(memberId);
+      const now = nowIso();
+      if (add) {
+        const nextTeam = alreadyPresent
+          ? { ...team, teamId, churchId }
+          : {
+              ...team,
+              teamId,
+              churchId,
+              memberIds: [...memberIds, memberId],
+              updatedAt: now,
+              updatedByUid: adminUserId,
+            };
+        if (!alreadyPresent) {
+          if (transaction) {
+            transaction.set(db.collection(COLLECTIONS.teams).doc(teamId), {
+              memberIds: nextTeam.memberIds,
+              updatedAt: now,
+              updatedByUid: adminUserId,
+            }, { merge: true });
+          } else {
+            await setDoc(COLLECTIONS.teams, teamId, {
+              memberIds: nextTeam.memberIds,
+              updatedAt: now,
+              updatedByUid: adminUserId,
+            }, { merge: true });
+          }
+        }
+        return {
+          team: nextTeam,
+          member: getSafeRosterMemberProjection({ ...member, memberId }, churchId),
+          preservedAssignmentCount: 0,
+          changed: !alreadyPresent,
+        };
+      }
+
+      if (
+        (Object.hasOwn(member, "positionIds") && !Array.isArray(member.positionIds)) ||
+        (Object.hasOwn(member, "desiredPositionIds") && !Array.isArray(member.desiredPositionIds)) ||
+        (Object.hasOwn(member, "qualifications") && !Array.isArray(member.qualifications)) ||
+        (Object.hasOwn(member, "teamMemberships") &&
+          (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))
+      ) {
+        throw httpError(409, "Member team data is invalid.");
+      }
+
+      const positionDocs = await readTeamOwnedCollection(COLLECTIONS.teamPositions, "positionId");
+      const teamPositionIds = new Set(positionDocs.map((position) => position.positionId));
+      const qualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
+      const teamAreaDocs = await readTeamOwnedCollection(COLLECTIONS.teamQualificationAreas, "areaId");
+      const referencedAreaDocs = await Promise.all(
+        [...new Set(qualifications.map((qualification) => qualification?.areaId).filter(Boolean))]
+          .map((areaId) => read(COLLECTIONS.teamQualificationAreas, areaId)),
+      );
+      const areaDocs = [...teamAreaDocs, ...referencedAreaDocs]
+        .filter((area) => area && area.churchId === churchId);
+      const areaTeamById = new Map(areaDocs.map((area) => [area.areaId, area.teamId]));
+      const teamOwnedQualifications = new Set();
+      for (const qualification of qualifications) {
+        if (!qualification || typeof qualification !== "object") {
+          throw httpError(409, "Member team data is invalid.");
+        }
+        if (
+          qualification.areaId &&
+          (!areaTeamById.has(qualification.areaId) || !areaTeamById.get(qualification.areaId))
+        ) {
+          throw httpError(409, "Member qualification ownership is invalid.");
+        }
+        const areaTeamId = areaTeamById.get(qualification.areaId);
+        if (qualification.teamId && areaTeamId && qualification.teamId !== areaTeamId) {
+          throw httpError(409, "Member qualification ownership is invalid.");
+        }
+        const ownerTeamId = qualification.areaId ? areaTeamId : qualification.teamId;
+        if (ownerTeamId && ownerTeamId !== teamId && qualification.teamId === teamId) {
+          throw httpError(409, "Member qualification ownership is invalid.");
+        }
+        if (ownerTeamId === teamId) teamOwnedQualifications.add(qualification);
+      }
+      const nextPositionIds = (Array.isArray(member.positionIds) ? member.positionIds : [])
+        .filter((positionId) => !teamPositionIds.has(positionId));
+      const nextDesiredPositionIds = (Array.isArray(member.desiredPositionIds) ? member.desiredPositionIds : [])
+        .filter((positionId) => !teamPositionIds.has(positionId));
+      const nextQualifications = qualifications.filter(
+        (qualification) => !teamOwnedQualifications.has(qualification),
+      );
+      const nextMemberIds = memberIds.filter((id) => id !== memberId);
+      const nextTeam = {
+        ...team,
+        teamId,
+        churchId,
+        memberIds: nextMemberIds,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      const memberPatch = {
+        positionIds: nextPositionIds,
+        ...(Object.hasOwn(member, "desiredPositionIds") ? { desiredPositionIds: nextDesiredPositionIds } : {}),
+        qualifications: nextQualifications,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      if (transaction) {
+        transaction.set(db.collection(COLLECTIONS.teams).doc(teamId), {
+          memberIds: nextMemberIds,
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        }, { merge: true });
+        await updateDocMapKeys(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          "teamMemberships",
+          {
+            remove: [teamId],
+            fields: memberPatch,
+            transaction,
+          },
+        );
+      } else {
+        await setDoc(COLLECTIONS.teams, teamId, {
+          memberIds: nextMemberIds,
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        }, { merge: true });
+        await updateDocMapKeys(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          "teamMemberships",
+          { remove: [teamId], fields: memberPatch },
+        );
+      }
+      return {
+        team: nextTeam,
+        member: getSafeRosterMemberProjection({ ...member, ...memberPatch, memberId }, churchId),
+      };
+    };
+
+    const result = db
+      ? await db.runTransaction((transaction) => mutate(transaction))
+      : await enqueueInMemoryTeamRosterMutation(teamId, () =>
+          enqueueInMemoryRosterMemberMutation(memberId, () => mutate()),
+        );
+    if (!add) {
+      result.preservedAssignmentCount = await countTeamMemberAssignments({ churchId, teamId, memberId });
+    }
+    return result;
+  };
+
+  const teamProfileQualificationView = (qualification) => ({
+    qualificationId: qualification.qualificationId,
+    areaId: qualification.areaId,
+    ...(qualification.levelId ? { levelId: qualification.levelId } : {}),
+    ...(qualification.teamId ? { teamId: qualification.teamId } : {}),
+    ...(qualification.status ? { status: qualification.status } : {}),
+    ...(qualification.completedAt ? { completedAt: qualification.completedAt } : {}),
+    ...(qualification.expiresAt ? { expiresAt: qualification.expiresAt } : {}),
+    ...(qualification.notes ? { notes: qualification.notes } : {}),
+  });
+
+  const resolveMemberTeamSlices = async ({ churchId, teamId, member, read }) => {
+    if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+        (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
+        (member.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+        (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
+      throw httpError(409, "Member team data is invalid.");
+    }
+
+    const positionOwnerById = new Map();
+    const positionIds = [...new Set([...(member.positionIds || []), ...(member.desiredPositionIds || [])])];
+    for (const positionId of positionIds) {
+      if (typeof positionId !== "string" || !positionId.trim()) throw httpError(409, "Position ownership is invalid.");
+      const position = await read(COLLECTIONS.teamPositions, positionId);
+      if (!position || (position.positionId !== undefined && position.positionId !== positionId) || position.churchId !== churchId || !position.teamId) {
+        throw httpError(409, "Position ownership is invalid.");
+      }
+      const owner = await read(COLLECTIONS.teams, position.teamId);
+      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
+        throw httpError(409, "Position ownership is invalid.");
+      }
+      positionOwnerById.set(positionId, position.teamId);
+    }
+
+    const qualificationOwnerById = new Map();
+    const qualificationIds = new Set();
+    for (const qualification of member.qualifications || []) {
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      const qualificationId = typeof qualification.qualificationId === "string"
+        ? normalizeShortText(qualification.qualificationId, { max: 160 })
+        : "";
+      const areaId = typeof qualification.areaId === "string"
+        ? normalizeShortText(qualification.areaId, { max: 160 })
+        : "";
+      if (!qualificationId || qualification.qualificationId !== qualificationId ||
+          qualificationIds.has(qualificationId) || !areaId || qualification.areaId !== areaId) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      qualificationIds.add(qualificationId);
+      const area = await read(COLLECTIONS.teamQualificationAreas, areaId);
+      if (!area || (area.areaId !== undefined && area.areaId !== areaId) || area.churchId !== churchId || !area.teamId ||
+          (Object.hasOwn(qualification, "teamId") && qualification.teamId !== area.teamId)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      const owner = await read(COLLECTIONS.teams, area.teamId);
+      if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== area.teamId)) {
+        throw httpError(409, "Member qualification ownership is invalid.");
+      }
+      qualificationOwnerById.set(qualificationId, area.teamId);
+    }
+
+    const membership = member.teamMemberships?.[teamId];
+    if (membership !== undefined && (!membership || typeof membership !== "object" || Array.isArray(membership) ||
+        (membership.teamId !== undefined && membership.teamId !== teamId))) {
+      throw httpError(409, "Member team ownership is invalid.");
+    }
+    return {
+      targetPositionIds: (ids) => (ids || []).filter((id) => positionOwnerById.get(id) === teamId),
+      targetQualifications: (member.qualifications || []).filter((qualification) =>
+        qualificationOwnerById.get(qualification.qualificationId) === teamId),
+      membership: membership || {},
+      positionOwnerById,
+      qualificationOwnerById,
+    };
+  };
+
+  const getTeamProfile = async ({ churchId, teamId, memberId }) => {
+    const team = await assertTeamEntityInChurch("team", teamId, churchId, {
+      label: "Team",
+    });
+    const member = await assertTeamEntityInChurch(
+      "member",
+      memberId,
+      churchId,
+      { label: "Member" },
+    );
+    if (!Array.isArray(team.memberIds) || !team.memberIds.includes(memberId)) {
+      throw httpError(409, "This member is no longer on the team.");
+    }
+    if ((team.teamId && team.teamId !== teamId) || (member.memberId && member.memberId !== memberId)) {
+      throw httpError(409, "Team profile ownership is invalid.");
+    }
+    const slices = await resolveMemberTeamSlices({
+      churchId,
+      teamId,
+      member,
+      read: getDoc,
+    });
+    const membership = slices.membership;
+    if (membership.roleId) {
+      const role = await getDoc(COLLECTIONS.teamRoles, membership.roleId);
+      if (!role || role.churchId !== churchId || role.teamId !== teamId ||
+          (role.roleId !== undefined && role.roleId !== membership.roleId)) {
+        throw httpError(409, "Member team ownership is invalid.");
+      }
+    }
+    return {
+      member: {
+        memberId,
+        ...(member.title !== undefined ? { title: member.title } : {}),
+        ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
+        ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
+        ...(member.profileImageUrl !== undefined ? { profileImageUrl: member.profileImageUrl } : {}),
+      },
+      teamProfile: {
+        teamId,
+        positionIds: slices.targetPositionIds(member.positionIds),
+        desiredPositionIds: slices.targetPositionIds(member.desiredPositionIds),
+        membership: {
+          ...(membership.roleId ? { roleId: membership.roleId } : {}),
+          isTeamLead: membership?.isTeamLead === true,
+        },
+        qualifications: slices.targetQualifications.map(teamProfileQualificationView),
+      },
+    };
+  };
+
+  const validateTeamProfilePatch = (body) => {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw httpError(400, "A team profile is required.");
+    }
+    const allowed = new Set(["positionIds", "desiredPositionIds", "membership", "qualifications"]);
+    const unknown = Object.keys(body).filter((key) => !allowed.has(key));
+    if (unknown.length) {
+      throw httpError(400, `Unsupported team profile field: ${unknown[0]}.`);
+    }
+    const patch = {};
+    for (const key of ["positionIds", "desiredPositionIds"]) {
+      if (!Object.hasOwn(body, key)) continue;
+      if (!Array.isArray(body[key]) || body[key].some((id) => typeof id !== "string" || !id.trim())) {
+        throw httpError(400, `${key} must be an array of IDs.`);
+      }
+      patch[key] = [...new Set(body[key].map((id) => id.trim()))];
+    }
+    if (Object.hasOwn(body, "membership")) {
+      const membership = body.membership;
+      if (!membership || typeof membership !== "object" || Array.isArray(membership)) {
+        throw httpError(400, "Team membership must be an object.");
+      }
+      const membershipKeys = Object.keys(membership);
+      if (membershipKeys.some((key) => !["roleId", "isTeamLead"].includes(key))) {
+        throw httpError(400, "Only this team's role and lead state can be changed.");
+      }
+      if (Object.hasOwn(membership, "roleId") && membership.roleId !== null && typeof membership.roleId !== "string") {
+        throw httpError(400, "Team role is invalid.");
+      }
+      if (Object.hasOwn(membership, "isTeamLead") && typeof membership.isTeamLead !== "boolean") {
+        throw httpError(400, "Team lead state is invalid.");
+      }
+      patch.membership = {
+        ...(Object.hasOwn(membership, "roleId")
+          ? { roleId: membership.roleId?.trim() || null }
+          : {}),
+        ...(Object.hasOwn(membership, "isTeamLead") ? { isTeamLead: membership.isTeamLead } : {}),
+      };
+    }
+    if (Object.hasOwn(body, "qualifications")) {
+      if (!Array.isArray(body.qualifications)) throw httpError(400, "Qualifications must be an array.");
+      patch.qualifications = body.qualifications;
+    }
+    if (Object.keys(patch).length === 0) throw httpError(400, "No team profile fields were supplied.");
+    return patch;
+  };
+
+  const updateTeamProfile = async ({ churchId, teamId, memberId, body, adminUserId }) => {
+    const requested = validateTeamProfilePatch(body);
+    const db = requireFirestore();
+    const now = nowIso();
+    const mutate = async (transaction = null) => {
+      const read = async (collectionName, id) => {
+        if (!transaction) return getDoc(collectionName, id);
+        const snapshot = await transaction.get(db.collection(collectionName).doc(id));
+        return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : null;
+      };
+      const team = await read(COLLECTIONS.teams, teamId);
+      const member = await read(COLLECTIONS.teamRosterMembers, memberId);
+      if (!team || team.churchId !== churchId) throw httpError(404, "Team not found.");
+      if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
+      if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+      if (!Array.isArray(team.memberIds) || !team.memberIds.includes(memberId)) {
+        throw httpError(409, "This member is no longer on the team.");
+      }
+      if (!member || member.churchId !== churchId) throw httpError(404, "Member not found.");
+      if (member.memberId && member.memberId !== memberId) throw httpError(409, "Member ownership is invalid.");
+      if (member.archivedAt) throw httpError(400, "This member is archived.");
+      if ((member.positionIds !== undefined && !Array.isArray(member.positionIds)) ||
+          (member.desiredPositionIds !== undefined && !Array.isArray(member.desiredPositionIds)) ||
+          (member.qualifications !== undefined && !Array.isArray(member.qualifications)) ||
+          (member.teamMemberships !== undefined && (!member.teamMemberships || typeof member.teamMemberships !== "object" || Array.isArray(member.teamMemberships)))) {
+        throw httpError(409, "Member team data is invalid.");
+      }
+      const slices = await resolveMemberTeamSlices({ churchId, teamId, member, read });
+      const existingPositions = new Set([
+        ...(member.positionIds || []),
+        ...(member.desiredPositionIds || []),
+      ]);
+      const requestedPositionIds = new Set([
+        ...(requested.positionIds || []),
+        ...(requested.desiredPositionIds || []),
+      ]);
+      const positionDocs = new Map();
+      for (const id of new Set([...existingPositions, ...requestedPositionIds])) {
+        if (!positionDocs.has(id)) positionDocs.set(id, await read(COLLECTIONS.teamPositions, id));
+      }
+      const validatePositionIds = async (ids, existingIds) => {
+        if (!ids) return undefined;
+        for (const id of ids) {
+          const position = positionDocs.get(id);
+          if (!position || position.churchId !== churchId || !position.teamId) {
+            throw httpError(400, "Position must belong to this team.");
+          }
+          let ownerTeamId = slices.positionOwnerById.get(id);
+          if (!ownerTeamId) {
+            const owner = await read(COLLECTIONS.teams, position.teamId);
+            if (!owner || owner.churchId !== churchId || (owner.teamId !== undefined && owner.teamId !== position.teamId)) {
+              throw httpError(409, "Position ownership is invalid.");
+            }
+            ownerTeamId = position.teamId;
+          }
+          if (ownerTeamId !== teamId) throw httpError(400, "Position must belong to this team.");
+          if (position.archivedAt && !existingIds.has(id)) {
+            throw httpError(400, "Archived positions cannot be added.");
+          }
+        }
+        return ids;
+      };
+      const nextPositions = await validatePositionIds(requested.positionIds, new Set(member.positionIds || []));
+      const nextDesired = await validatePositionIds(requested.desiredPositionIds, new Set(member.desiredPositionIds || []));
+      const replacePositionSlice = (previous, replacement) => replacement === undefined
+        ? undefined
+        : [...new Set([
+            ...previous.filter((id) => slices.positionOwnerById.get(id) !== teamId),
+            ...replacement,
+          ])];
+
+      let nextMembership;
+      if (requested.membership) {
+        const prior = slices.membership;
+        const roleId = Object.hasOwn(requested.membership, "roleId")
+          ? requested.membership.roleId
+          : prior.roleId;
+        let role;
+        if (roleId) {
+          role = await read(COLLECTIONS.teamRoles, roleId);
+          if (!role || role.churchId !== churchId || role.teamId !== teamId ||
+              (role.roleId !== undefined && role.roleId !== roleId)) {
+            throw httpError(400, "Team role must belong to this team.");
+          }
+          if (role.archivedAt && roleId !== prior.roleId) {
+            throw httpError(400, "Archived roles cannot be added.");
+          }
+        }
+        nextMembership = { ...prior, teamId };
+        if (roleId) {
+          nextMembership.roleId = role.roleId || roleId;
+          nextMembership.roleLabel = role.name;
+        } else {
+          delete nextMembership.roleId;
+          delete nextMembership.roleLabel;
+        }
+        nextMembership.isTeamLead = Object.hasOwn(requested.membership, "isTeamLead")
+          ? requested.membership.isTeamLead === true
+          : prior.isTeamLead === true;
+      }
+
+      let nextQualifications;
+      if (requested.qualifications) {
+        const priorQualifications = Array.isArray(member.qualifications) ? member.qualifications : [];
+        const ownedQualifications = slices.targetQualifications;
+        const ownedQualificationIds = new Set(ownedQualifications.map((item) => item.qualificationId));
+        const areasById = new Map();
+        const levelById = new Map();
+        const requestedIds = new Set();
+        const replacements = [];
+        for (const qualification of requested.qualifications) {
+          if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) {
+            throw httpError(400, "Qualification is invalid.");
+          }
+          const allowedKeys = new Set(["qualificationId", "areaId", "levelId", "teamId", "status", "completedAt", "expiresAt", "notes"]);
+          if (Object.keys(qualification).some((key) => !allowedKeys.has(key))) {
+            throw httpError(400, "Qualification contains unsupported fields.");
+          }
+          const areaId = normalizeShortText(qualification.areaId, { max: 160 });
+          if (!areaId) throw httpError(400, "Qualification area is required.");
+          if (!areasById.has(areaId)) areasById.set(areaId, await read(COLLECTIONS.teamQualificationAreas, areaId));
+          const area = areasById.get(areaId);
+          if (!area || area.churchId !== churchId || area.teamId !== teamId) {
+            throw httpError(400, "Qualification area must belong to this team.");
+          }
+          const qualificationId = typeof qualification.qualificationId === "string"
+            ? normalizeShortText(qualification.qualificationId, { max: 160 })
+            : "";
+          const priorWithId = priorQualifications.find((item) => item.qualificationId === qualificationId);
+          if (qualificationId && priorWithId && !ownedQualificationIds.has(qualificationId)) {
+            throw httpError(400, "Qualification belongs to another team.");
+          }
+          const wasOnTeam = Boolean(qualificationId && ownedQualificationIds.has(qualificationId) && priorWithId.areaId === areaId);
+          if (area.archivedAt && !wasOnTeam) throw httpError(400, "Archived qualifications cannot be added.");
+          const levelId = normalizeShortText(qualification.levelId, { max: 160 });
+          if (levelId) {
+            if (!levelById.has(levelId)) levelById.set(levelId, await read(COLLECTIONS.teamQualificationLevels, levelId));
+            const level = levelById.get(levelId);
+            const priorLevelId = qualificationId && ownedQualificationIds.has(qualificationId) ? priorWithId.levelId : undefined;
+            if (!level || level.churchId !== churchId || level.areaId !== areaId ||
+                (level.archivedAt && levelId !== priorLevelId)) {
+              throw httpError(400, "Qualification level must belong to this team's area.");
+            }
+          }
+          if (qualification.teamId && qualification.teamId !== teamId) {
+            throw httpError(400, "Qualification must belong to this team.");
+          }
+          const statusValues = new Set(["in_training", "completed", "expired"]);
+          if (qualification.status !== undefined && !statusValues.has(qualification.status)) {
+            throw httpError(400, "Qualification status is invalid.");
+          }
+          const status = statusValues.has(qualification.status) ? qualification.status : "in_training";
+          const normalized = {
+            ...(priorWithId || {}),
+            qualificationId: qualificationId || createId("memberQualification"),
+            areaId,
+            ...(levelId ? { levelId } : {}),
+            teamId,
+            status,
+            completedAt: normalizeOptionalPlainDate(qualification.completedAt, "Qualification completion date"),
+            expiresAt: normalizeOptionalPlainDate(qualification.expiresAt, "Qualification expiration date"),
+            notes: normalizeLongText(qualification.notes, { max: 500 }),
+          };
+          if (!levelId) delete normalized.levelId;
+          if (requestedIds.has(normalized.qualificationId)) throw httpError(400, "Duplicate qualification.");
+          requestedIds.add(normalized.qualificationId);
+          replacements.push(normalized);
+        }
+        const unrelated = priorQualifications.filter((item) => !ownedQualificationIds.has(item.qualificationId));
+        nextQualifications = [...unrelated, ...replacements];
+      }
+
+      const memberPatch = {
+        ...(nextPositions ? { positionIds: replacePositionSlice(member.positionIds || [], nextPositions) } : {}),
+        ...(nextDesired ? { desiredPositionIds: replacePositionSlice(member.desiredPositionIds || [], nextDesired) } : {}),
+        ...(nextQualifications ? { qualifications: nextQualifications } : {}),
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      if (transaction) {
+        if (nextMembership) {
+          memberPatch.teamMemberships = {
+            ...(member.teamMemberships || {}),
+            [teamId]: nextMembership,
+          };
+        }
+        await updateDocFields(
+          COLLECTIONS.teamRosterMembers,
+          memberId,
+          memberPatch,
+          { transaction },
+        );
+      } else {
+        if (nextMembership) {
+          memberPatch.teamMemberships = {
+            ...(member.teamMemberships || {}),
+            [teamId]: nextMembership,
+          };
+        }
+        await updateDocFields(COLLECTIONS.teamRosterMembers, memberId, memberPatch);
+      }
+      return memberPatch;
+    };
+
+    if (db) return db.runTransaction((transaction) => mutate(transaction));
+    return enqueueInMemoryTeamRosterMutation(teamId, () =>
+      enqueueInMemoryRosterMemberMutation(memberId, () => mutate()),
+    );
   };
 
   const requireTeamsEditForTeamIds = async (req, churchId, teamIds) => {
@@ -2939,6 +3772,83 @@ export const createTeamsAuthHandlers = ({
       await collectMemberTeamIds(member, churchId),
     );
 
+  // A combined occurrence does not change the schedule's Team ownership.
+  // Legacy mixed/unknown position ownership cannot grant a scoped operator
+  // access to a whole-schedule response link or message history.
+  const requireTeamScheduleNotificationEdit = async (req, churchId, schedule, cellKey = "") => {
+    if (!schedule || schedule.churchId !== churchId) {
+      throw httpError(404, "Schedule not found.");
+    }
+    const admin = await requireTeamsEditForTeamIds(req, churchId, [schedule.teamId].filter(Boolean));
+    const scoped = admin.role !== "admin" && admin.permissions?.teams !== "edit";
+    if (scoped) {
+      const assignedCellKeys = [
+        ...Object.values(schedule.assignments || {}).flatMap((row) => Object.keys(row || {})),
+        ...(Array.isArray(cellKey) ? cellKey : cellKey ? [cellKey] : []),
+      ];
+      const positionIds = new Set(assignedCellKeys.map((key) =>
+        String(key).split(SCHEDULE_SLOT_KEY_SEPARATOR)[0].trim(),
+      ));
+      for (const positionId of positionIds) {
+        if (!positionId) {
+          throw httpError(403, "This schedule has inconsistent Team ownership. Ask a church administrator to review it.");
+        }
+        const position = await getDoc(COLLECTIONS.teamPositions, positionId);
+        if (!position || position.churchId !== churchId || position.teamId !== schedule.teamId) {
+          throw httpError(403, "This schedule has inconsistent Team ownership. Ask a church administrator to review it.");
+        }
+      }
+    }
+    return { admin, scoped };
+  };
+
+  const updateMemberOnTeamRoster = async ({
+    churchId,
+    teamId,
+    memberId,
+    add,
+    adminUserId,
+  }) => {
+    const db = requireFirestore();
+    const mutate = async (transaction = null) => {
+      const ref = db?.collection(COLLECTIONS.teams).doc(teamId);
+      const snapshot = transaction ? await transaction.get(ref) : null;
+      const team = transaction
+        ? snapshot?.exists
+          ? { teamId: snapshot.id, ...snapshot.data() }
+          : null
+        : await getDoc(COLLECTIONS.teams, teamId);
+      if (!team || team.churchId !== churchId || (add && team.archivedAt)) {
+        return false;
+      }
+      if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+        throw httpError(409, "Team roster ownership is invalid.");
+      }
+      const currentIds = normalizeIdArray(team.memberIds);
+      const hasMember = currentIds.includes(memberId);
+      if (add === hasMember) return false;
+      const nextIds = add
+        ? [...currentIds, memberId]
+        : currentIds.filter((id) => id !== memberId);
+      const update = {
+        memberIds: nextIds,
+        updatedAt: nowIso(),
+        updatedByUid: adminUserId,
+      };
+      if (transaction) {
+        transaction.set(ref, update, { merge: true });
+      } else {
+        await setDoc(COLLECTIONS.teams, teamId, update, { merge: true });
+      }
+      return true;
+    };
+
+    if (db?.runTransaction) {
+      return db.runTransaction((transaction) => mutate(transaction));
+    }
+    return enqueueInMemoryTeamRosterMutation(teamId, () => mutate());
+  };
+
   // Add a member to each given team's roster. Tolerant of stale/foreign/archived
   // team ids (skipped), since callers may pass ids from intake forms that could
   // be out of date. Returns the team ids whose roster actually changed.
@@ -2951,24 +3861,17 @@ export const createTeamsAuthHandlers = ({
     const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
     const ids = normalizeIdArray(teamIds);
     if (!normalizedMemberId || ids.length === 0) return [];
-    const now = nowIso();
     const addedTeamIds = [];
     await Promise.all(
       ids.map(async (teamId) => {
-        const team = await getDoc(COLLECTIONS.teams, teamId);
-        if (!team || team.churchId !== churchId || team.archivedAt) return;
-        if ((team.memberIds || []).includes(normalizedMemberId)) return;
-        await setDoc(
-          COLLECTIONS.teams,
+        const changed = await updateMemberOnTeamRoster({
+          churchId,
           teamId,
-          {
-            memberIds: [...(team.memberIds || []), normalizedMemberId],
-            updatedAt: now,
-            updatedByUid: adminUserId,
-          },
-          { merge: true },
-        );
-        addedTeamIds.push(teamId);
+          memberId: normalizedMemberId,
+          add: true,
+          adminUserId,
+        });
+        if (changed) addedTeamIds.push(teamId);
       }),
     );
     return addedTeamIds;
@@ -3033,6 +3936,78 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
+  const isBroadTeamsEditor = (admin) =>
+    admin?.role === "admin" || admin?.permissions?.teams === "edit";
+
+  // Availability forms are the only intake resources a selected-Team editor
+  // may manage. Their scope is explicit and every Team is revalidated against
+  // the current church roster and current edit permissions on each request.
+  const requireTeamAvailabilityFormEdit = async (req, churchId, form) => {
+    if (!form || form.churchId !== churchId) {
+      throw httpError(404, "Availability form not found.");
+    }
+    if (form.purpose !== "team_availability") {
+      return {
+        admin: await requireTeamsEdit(req, churchId),
+        scoped: false,
+      };
+    }
+    if (!Array.isArray(form.teamIds)) {
+      throw httpError(403, "Availability form access required.");
+    }
+    const teamIds = normalizeIdArray(form.teamIds);
+    if (
+      !teamIds.length ||
+      teamIds.length !== form.teamIds.length ||
+      form.teamIds.some((teamId) => typeof teamId !== "string" || !teamId.trim())
+    ) {
+      throw httpError(403, "Availability forms must have an explicit Team scope.");
+    }
+    const teams = await Promise.all(
+      teamIds.map((teamId) => getDoc(COLLECTIONS.teams, teamId)),
+    );
+    if (teams.some((team) => !team || team.churchId !== churchId || team.archivedAt)) {
+      throw httpError(403, "Availability form access required.");
+    }
+    let admin = null;
+    for (const teamId of teamIds) {
+      admin = await requireTeamsEditForTeam(req, churchId, teamId);
+    }
+    return { admin, scoped: !isBroadTeamsEditor(admin) };
+  };
+
+  const teamAvailabilityFormTeamIds = (form) => {
+    const rawTeamIds = form?.teamIds;
+    if (!Array.isArray(rawTeamIds)) return [];
+    const teamIds = normalizeIdArray(rawTeamIds);
+    if (
+      !teamIds.length ||
+      teamIds.length !== rawTeamIds.length ||
+      rawTeamIds.some((teamId) => typeof teamId !== "string" || !teamId.trim())
+    ) return [];
+    return teamIds;
+  };
+
+  const isMemberWithinTeamAvailabilityScope = ({ form, member, teams }) => {
+    const teamIds = teamAvailabilityFormTeamIds(form);
+    if (
+      !teamIds.length ||
+      !member?.memberId ||
+      (member.churchId && member.churchId !== form.churchId)
+    ) {
+      return false;
+    }
+    const teamById = new Map((teams || []).map((team) => [team.teamId, team]));
+    if (teamIds.some((teamId) => {
+      const team = teamById.get(teamId);
+      return !team || team.churchId !== form.churchId || team.archivedAt;
+    })) return false;
+    return teamIds.some((teamId) =>
+      Array.isArray(teamById.get(teamId)?.memberIds) &&
+      teamById.get(teamId).memberIds.includes(member.memberId),
+    );
+  };
+
   // Drop a member from the given teams' rosters. The mirror of
   // `addMemberToTeams`; returns the team ids whose roster actually changed.
   const removeMemberFromTeams = async ({
@@ -3044,25 +4019,17 @@ export const createTeamsAuthHandlers = ({
     const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
     const ids = normalizeIdArray(teamIds);
     if (!normalizedMemberId || ids.length === 0) return [];
-    const now = nowIso();
     const removedTeamIds = [];
     await Promise.all(
       ids.map(async (teamId) => {
-        const team = await getDoc(COLLECTIONS.teams, teamId);
-        if (!team || team.churchId !== churchId) return;
-        const memberIds = team.memberIds || [];
-        if (!memberIds.includes(normalizedMemberId)) return;
-        await setDoc(
-          COLLECTIONS.teams,
+        const changed = await updateMemberOnTeamRoster({
+          churchId,
           teamId,
-          {
-            memberIds: memberIds.filter((id) => id !== normalizedMemberId),
-            updatedAt: now,
-            updatedByUid: adminUserId,
-          },
-          { merge: true },
-        );
-        removedTeamIds.push(teamId);
+          memberId: normalizedMemberId,
+          add: false,
+          adminUserId,
+        });
+        if (changed) removedTeamIds.push(teamId);
       }),
     );
     return removedTeamIds;
@@ -3091,6 +4058,7 @@ export const createTeamsAuthHandlers = ({
     member,
     positionIds,
     requestedTeamIds,
+    baseTeamIds = null,
     adminUserId,
   }) => {
     const memberId = member.memberId;
@@ -3101,9 +4069,20 @@ export const createTeamsAuthHandlers = ({
         memberId,
         adminUserId,
       });
+      const currentTeams = await listTeamCollectionForChurch(
+        COLLECTIONS.teams,
+        "teamId",
+        churchId,
+      );
       return {
         member,
         teams: await loadTeamsByIds(churchId, addedTeamIds),
+        membershipTeamIds: Array.from(new Set([
+          ...currentTeams
+            .filter((team) => (team.memberIds || []).includes(memberId))
+            .map((team) => team.teamId),
+          ...Object.keys(member.teamMemberships || {}),
+        ])).sort(),
       };
     }
 
@@ -3111,7 +4090,6 @@ export const createTeamsAuthHandlers = ({
       churchId,
       positionIds,
     );
-    const desired = new Set([...requestedTeamIds, ...positionTeamIds]);
     const allTeams = await listTeamCollectionForChurch(
       COLLECTIONS.teams,
       "teamId",
@@ -3120,13 +4098,21 @@ export const createTeamsAuthHandlers = ({
     const currentTeamIds = allTeams
       .filter((team) => (team.memberIds || []).includes(memberId))
       .map((team) => team.teamId);
+    const currentMembershipTeamIds = Array.from(new Set([
+      ...currentTeamIds,
+      ...Object.keys(member.teamMemberships || {}),
+    ]));
+    const requestedAgainstCurrent = baseTeamIds === null
+      ? requestedTeamIds
+      : applyIdSetDelta(currentMembershipTeamIds, baseTeamIds, requestedTeamIds);
+    const desired = new Set([...requestedAgainstCurrent, ...positionTeamIds]);
 
-    const toAdd = Array.from(desired).filter(
-      (teamId) => !currentTeamIds.includes(teamId),
-    );
+    const currentRosterTeamIdSet = new Set(currentTeamIds);
+    const toAdd = Array.from(desired).filter((teamId) => !currentRosterTeamIdSet.has(teamId));
     const removable = await Promise.all(
-      currentTeamIds
-        .filter((teamId) => !desired.has(teamId))
+      currentMembershipTeamIds
+        .filter((teamId) => !desired.has(teamId) &&
+          (baseTeamIds === null || baseTeamIds.includes(teamId)))
         .map(async (teamId) => ({
           teamId,
           allowed: await canEditTeamForRequest(req, churchId, teamId),
@@ -3134,7 +4120,11 @@ export const createTeamsAuthHandlers = ({
     );
     const toRemove = removable
       .filter((entry) => entry.allowed)
+      .filter((entry) => currentRosterTeamIdSet.has(entry.teamId))
       .map((entry) => entry.teamId);
+    const roleMembershipsToRemove = new Set(
+      removable.filter((entry) => entry.allowed).map((entry) => entry.teamId),
+    );
 
     const [addedTeamIds, removedTeamIds] = await Promise.all([
       addMemberToTeams({ churchId, teamIds: toAdd, memberId, adminUserId }),
@@ -3148,20 +4138,17 @@ export const createTeamsAuthHandlers = ({
 
     let nextMember = member;
     const staleRoleTeamIds = Object.keys(member.teamMemberships || {}).filter(
-      (teamId) => removedTeamIds.includes(teamId),
+      (teamId) => roleMembershipsToRemove.has(teamId),
     );
     if (staleRoleTeamIds.length > 0) {
-      const teamMemberships = { ...(member.teamMemberships || {}) };
-      staleRoleTeamIds.forEach((teamId) => delete teamMemberships[teamId]);
-      await setDoc(
+      await updateDocMapKeys(
         COLLECTIONS.teamRosterMembers,
         memberId,
+        "teamMemberships",
         {
-          teamMemberships,
-          updatedAt: nowIso(),
-          updatedByUid: adminUserId,
+          remove: staleRoleTeamIds,
+          fields: { updatedAt: nowIso(), updatedByUid: adminUserId },
         },
-        { merge: true },
       );
       nextMember = await getTeamEntity("member", memberId);
     }
@@ -3172,6 +4159,16 @@ export const createTeamsAuthHandlers = ({
         ...addedTeamIds,
         ...removedTeamIds,
       ]),
+      membershipTeamIds: Array.from(new Set([
+        ...(await listTeamCollectionForChurch(
+          COLLECTIONS.teams,
+          "teamId",
+          churchId,
+        ))
+          .filter((team) => (team.memberIds || []).includes(memberId))
+          .map((team) => team.teamId),
+        ...Object.keys(nextMember.teamMemberships || {}),
+      ])).sort(),
     };
   };
 
@@ -3243,6 +4240,7 @@ export const createTeamsAuthHandlers = ({
       publicTokenHash,
       publicTokenNonce,
       publicLinkToken,
+      teamAvailabilityScopeLocked,
       ...clientForm
     } = form || {};
     return {
@@ -3375,7 +4373,7 @@ export const createTeamsAuthHandlers = ({
     const lastAssignmentDateByMemberId = {};
     const occurrenceDateById = new Map(
       (Array.isArray(occurrences) ? occurrences : []).flatMap((occurrence) => {
-        const date = String(occurrence?.startsAt || "").slice(0, 10);
+        const date = occurrence?.serviceDate || String(occurrence?.startsAt || "").slice(0, 10);
         return occurrence?.occurrenceId && /^\d{4}-\d{2}-\d{2}$/.test(date)
           ? [[occurrence.occurrenceId, date]]
           : [];
@@ -3447,17 +4445,64 @@ export const createTeamsAuthHandlers = ({
     return scheduleStart <= endDate && scheduleEnd >= startDate;
   };
 
+  const loadCanonicalTeamRoster = async (churchId) => {
+    const truncatedCollections = [];
+    const [members, teams] = await Promise.all([
+      listTeamCollectionForChurch(
+        COLLECTIONS.teamRosterMembers,
+        "memberId",
+        churchId,
+        { truncatedCollections },
+      ),
+      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId, {
+        truncatedCollections,
+      }),
+    ]);
+    return { members, teams, truncatedCollections };
+  };
+
+  // Deliberately used only by bootstrap and schedule hydration. Do not admit
+  // membership-derived readers through the generic administrative read guard.
+  const resolveTeamsReadAccess = async (req, churchId) => {
+    const bootstrap = await resolveRequestBootstrap(req);
+    if (
+      !bootstrap ||
+      !["human", "workstation"].includes(bootstrap.sessionKind)
+    ) {
+      throw httpError(401, "Authentication required");
+    }
+    if (bootstrap.churchId !== churchId) {
+      throw httpError(403, "Teams access required");
+    }
+    // Retain the existing booth-only workstation restriction.
+    if (bootstrap.sessionKind === "workstation")
+      await requireTeamsView(req, churchId);
+    const canonical = await loadCanonicalTeamRoster(churchId);
+    const access = resolveEffectiveTeamAccess({
+      bootstrap,
+      churchId,
+      teams: canonical.teams,
+      // A capped roster cannot prove that the account has exactly one link.
+      members: canonical.truncatedCollections.includes(
+        COLLECTIONS.teamRosterMembers,
+      )
+        ? []
+        : canonical.members,
+    });
+    if (!access.viewAll && access.viewTeamIds.size === 0) {
+      throw httpError(403, "Teams access required");
+    }
+    return { access, canonical };
+  };
+
   const buildTeamsBootstrap = async (
     churchId,
-    { scheduleMode = "full" } = {},
+    { scheduleMode = "full", canonical, includeAdministrativeTeamsData } = {},
   ) => {
-    // Collects any collection that hit the row cap so we can warn the admin their
-    // view is incomplete instead of silently showing a partial roster/schedule.
-    const truncatedCollections = [];
+    const { members, teams, truncatedCollections } =
+      canonical || (await loadCanonicalTeamRoster(churchId));
     const [
-      members,
       positions,
-      teams,
       teamRoles,
       qualificationAreas,
       qualificationLevels,
@@ -3467,20 +4512,11 @@ export const createTeamsAuthHandlers = ({
       intakeRecipients,
     ] = await Promise.all([
       listTeamCollectionForChurch(
-        COLLECTIONS.teamRosterMembers,
-        "memberId",
-        churchId,
-        { truncatedCollections },
-      ),
-      listTeamCollectionForChurch(
         COLLECTIONS.teamPositions,
         "positionId",
         churchId,
         { truncatedCollections },
       ),
-      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId, {
-        truncatedCollections,
-      }),
       listTeamCollectionForChurch(COLLECTIONS.teamRoles, "roleId", churchId, {
         truncatedCollections,
       }),
@@ -3502,29 +4538,34 @@ export const createTeamsAuthHandlers = ({
         churchId,
         { truncatedCollections },
       ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamIntakeForms,
-        "formId",
-        churchId,
-        { truncatedCollections },
-      ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamIntakeSubmissions,
-        "submissionId",
-        churchId,
-        { truncatedCollections },
-      ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamIntakeRecipients,
-        "recipientId",
-        churchId,
-        { truncatedCollections },
-      ),
+      includeAdministrativeTeamsData
+        ? listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeForms,
+            "formId",
+            churchId,
+            { truncatedCollections },
+          )
+        : [],
+      includeAdministrativeTeamsData
+        ? listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeSubmissions,
+            "submissionId",
+            churchId,
+            { truncatedCollections },
+          )
+        : [],
+      includeAdministrativeTeamsData
+        ? listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeRecipients,
+            "recipientId",
+            churchId,
+            { truncatedCollections },
+          )
+        : [],
     ]);
-    const smsEligibilityByMemberId = await buildSmsEligibilityByMemberId(
-      churchId,
-      members,
-    );
+    const smsEligibilityByMemberId = includeAdministrativeTeamsData
+      ? await buildSmsEligibilityByMemberId(churchId, members)
+      : undefined;
     const submissionCountByForm = new Map();
     intakeSubmissions.forEach((submission) => {
       submissionCountByForm.set(
@@ -3572,7 +4613,6 @@ export const createTeamsAuthHandlers = ({
 
     return {
       members,
-      smsEligibilityByMemberId,
       positions: sortPositionsByOrder(positions),
       teams,
       teamRoles,
@@ -3587,11 +4627,16 @@ export const createTeamsAuthHandlers = ({
             },
           }
         : {}),
-      intakeForms,
-      intakeSubmissions,
-      intakeRecipients: intakeRecipients.map(
-        sanitizeTeamIntakeRecipientForAdmin,
-      ),
+      ...(includeAdministrativeTeamsData
+        ? {
+            smsEligibilityByMemberId,
+            intakeForms,
+            intakeSubmissions,
+            intakeRecipients: intakeRecipients.map(
+              sanitizeTeamIntakeRecipientForAdmin,
+            ),
+          }
+        : {}),
       ...(truncatedCollections.length > 0 ? { truncated: true } : {}),
     };
   };
@@ -4038,27 +5083,54 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
-  const validateTeamPayload = async (body, churchId, existingTeam = null) => {
+  const validateTeamSettingsPayload = (body, existingTeam = null) => {
     const name = normalizeShortText(body?.name);
     if (!name) {
       throw httpError(400, "Team name is required.");
     }
-    const memberIds = await assertTeamEntityIdsInChurch(
-      "member",
-      body?.memberIds,
-      churchId,
-      { label: "Member" },
-    );
     // Positions are owned by the team (position.teamId), not selected onto it, so
     // a team's positions are derived.
     return {
       name,
       description: normalizeLongText(body?.description),
       icon: validateEntityIcon(body?.icon, existingTeam?.icon, "Team") || "",
-      memberIds,
       usesMicrophoneAssignments: body?.usesMicrophoneAssignments === true,
       usesIemAssignments: body?.usesIemAssignments === true,
     };
+  };
+
+  const validateTeamMemberIds = (memberIds, churchId) =>
+    assertTeamEntityIdsInChurch("member", memberIds, churchId, {
+      label: "Member",
+    });
+
+  const validateTeamPayload = async (body, churchId, existingTeam = null) => ({
+    ...validateTeamSettingsPayload(body, existingTeam),
+    memberIds: await validateTeamMemberIds(body?.memberIds, churchId),
+  });
+
+  const sameIdSet = (left, right) => {
+    const leftIds = new Set(normalizeIdArray(left));
+    const rightIds = new Set(normalizeIdArray(right));
+    return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
+  };
+
+  // Apply only the membership edits made since the editor's baseline. Roster
+  // changes made by another admin after that baseline remain in `currentIds`.
+  const applyIdSetDelta = (currentIds, baseIds, requestedIds) => {
+    const base = new Set(normalizeIdArray(baseIds));
+    const requested = new Set(normalizeIdArray(requestedIds));
+    const removals = new Set([...base].filter((id) => !requested.has(id)));
+    const additions = [...requested].filter((id) => !base.has(id));
+    const next = normalizeIdArray(currentIds).filter((id) => !removals.has(id));
+    const nextSet = new Set(next);
+    additions.forEach((id) => {
+      if (!nextSet.has(id)) {
+        next.push(id);
+        nextSet.add(id);
+      }
+    });
+    return next;
   };
 
   const validateTeamRolePayload = async (body, churchId, existingRole = null) => {
@@ -4128,6 +5200,20 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const resolveQualificationLevelTeamId = async (level, churchId) => {
+    if (!level?.areaId) {
+      throw httpError(404, "Qualification area not found.");
+    }
+    const area = await assertTeamEntityInChurch(
+      "qualificationArea",
+      level.areaId,
+      churchId,
+      { active: false, label: "Qualification area" },
+    );
+    if (!area.teamId) throw httpError(404, "Qualification area not found.");
+    return area.teamId;
+  };
+
   const normalizeTeamScheduleOccurrences = (value, serviceIds) => {
     const occurrences = Array.isArray(value) ? value : [];
     if (occurrences.length === 0) {
@@ -4140,6 +5226,7 @@ export const createTeamsAuthHandlers = ({
         max: 260,
       });
       const serviceId = normalizeShortText(occurrence?.serviceId, { max: 160 });
+      const logicalOccurrenceId = normalizeShortText(occurrence?.logicalOccurrenceId, { max: 260 });
       if (!occurrenceId) {
         throw httpError(400, "Service occurrence id is required.");
       }
@@ -4162,6 +5249,7 @@ export const createTeamsAuthHandlers = ({
         : [];
       return {
         occurrenceId,
+        ...(logicalOccurrenceId ? { logicalOccurrenceId } : {}),
         serviceId,
         ...(groupId ? { groupId } : {}),
         ...(serviceIds.length ? { serviceIds } : {}),
@@ -4170,6 +5258,9 @@ export const createTeamsAuthHandlers = ({
           occurrence?.startsAt,
           "Service occurrence date",
         ),
+        ...(occurrence?.serviceDate
+          ? { serviceDate: assertPlainDate(occurrence.serviceDate, "Service calendar date") }
+          : {}),
         positionRequirements: sanitizePositionRequirements(
           occurrence?.positionRequirements,
         ),
@@ -4361,6 +5452,17 @@ export const createTeamsAuthHandlers = ({
     return payload;
   };
 
+  const requireConfiguredChurchServiceTimeZone = async (churchId) => {
+    const church = await getDoc(COLLECTIONS.churches, churchId);
+    if (!isValidPortableTimeZone(church?.serviceTimeZone)) {
+      throw httpError(
+        409,
+        "Set a valid church time zone in Service setup before scheduling.",
+      );
+    }
+    return church.serviceTimeZone;
+  };
+
   const upsertTeamEntity = async ({
     kind,
     churchId,
@@ -4375,6 +5477,7 @@ export const createTeamsAuthHandlers = ({
     const nextId = id || (portableCreateKey
       ? `${config.idPrefix}_${portableCreateKey.slice(0, 40)}`
       : createId(config.idPrefix));
+    let existing = null;
     const namedCreate = !id && ["team", "position"].includes(kind);
     const nameLockKey = namedCreate
       ? stablePortableJson([
@@ -4405,7 +5508,7 @@ export const createTeamsAuthHandlers = ({
       }
     };
     if (id) {
-      await assertTeamEntityInChurch(kind, id, churchId, {
+      existing = await assertTeamEntityInChurch(kind, id, churchId, {
         active: false,
         label: kind,
       });
@@ -4452,25 +5555,103 @@ export const createTeamsAuthHandlers = ({
       });
       return { [config.idField]: nextId, ...saved };
     }
-    if (namedCreate && db?.runTransaction) {
+    if (kind === "member" && id && Object.hasOwn(payload, "teamMemberships")) {
+      // Reconcile explicit membership keys individually. Merge-set resurrects
+      // omitted keys, while whole-map update can overwrite another team's
+      // concurrently added membership.
+      const { teamMemberships, ...memberFields } = doc;
+      const previousMemberships = existing?.teamMemberships || {};
+      await updateDocMapKeys(
+        config.collection,
+        nextId,
+        "teamMemberships",
+        {
+          set: teamMemberships,
+          remove: Object.keys(previousMemberships).filter(
+            (teamId) => !Object.hasOwn(teamMemberships, teamId),
+          ),
+          fields: memberFields,
+        },
+      );
+    } else if (namedCreate && db?.runTransaction) {
       await db.runTransaction(async (transaction) => {
         await assertNameAvailable(transaction);
         transaction.create(db.collection(config.collection).doc(nextId), doc);
       });
       return { [config.idField]: nextId, ...doc };
-    }
-    if (namedCreate) {
+    } else if (namedCreate) {
       await enqueuePortableCreate(nameLockKey, async () => {
         await assertNameAvailable(null);
         await setDoc(config.collection, nextId, doc, { merge: false });
       });
       return { [config.idField]: nextId, ...(await getDoc(config.collection, nextId)) };
+    } else {
+      await setDoc(config.collection, nextId, doc, { merge: Boolean(id) });
     }
-    await setDoc(config.collection, nextId, doc, { merge: Boolean(id) });
     return {
       [config.idField]: nextId,
       ...(await getDoc(config.collection, nextId)),
     };
+  };
+
+  const updateTeamWithMemberIdsDelta = async ({
+    churchId,
+    teamId,
+    payload,
+    baseMemberIds,
+    requestedMemberIds,
+    adminUserId,
+  }) => {
+    const db = requireFirestore();
+    const now = nowIso();
+    const collection = COLLECTIONS.teams;
+    const buildUpdate = (currentTeam) => ({
+      ...payload,
+      teamId,
+      churchId,
+      memberIds: applyIdSetDelta(
+        currentTeam.memberIds,
+        baseMemberIds,
+        requestedMemberIds,
+      ),
+      archivedAt: null,
+      updatedAt: now,
+      updatedByUid: adminUserId,
+    });
+
+    if (db?.runTransaction) {
+      return db.runTransaction(async (transaction) => {
+        const ref = db.collection(collection).doc(teamId);
+        const snapshot = await transaction.get(ref);
+        const currentTeam = snapshot.exists
+          ? { teamId: snapshot.id, ...snapshot.data() }
+          : null;
+        if (!currentTeam || currentTeam.churchId !== churchId) {
+          throw httpError(404, "Team not found.");
+        }
+        if (currentTeam.teamId && currentTeam.teamId !== teamId) {
+          throw httpError(409, "Team ownership is invalid.");
+        }
+        const update = buildUpdate(currentTeam);
+        transaction.set(ref, update, { merge: true });
+        return { ...currentTeam, ...update };
+      });
+    }
+
+    // The in-memory store has no transaction primitive. Serialize roster
+    // changes for this Team so a settings save cannot restore an older list.
+    return enqueueInMemoryTeamRosterMutation(teamId, async () => {
+      const currentTeam = await getDoc(collection, teamId);
+      if (!currentTeam || currentTeam.churchId !== churchId) {
+        throw httpError(404, "Team not found.");
+      }
+      if (currentTeam.teamId && currentTeam.teamId !== teamId) {
+        throw httpError(409, "Team ownership is invalid.");
+      }
+      const update = buildUpdate(currentTeam);
+      await setDoc(collection, teamId, update, { merge: true });
+      return { ...currentTeam, ...update };
+    });
   };
 
   const archiveTeamEntity = async ({ kind, churchId, id, adminUserId }) => {
@@ -4641,20 +5822,43 @@ export const createTeamsAuthHandlers = ({
       await Promise.all(
         members.map(async (member) => {
           let changed = false;
-          let nextTeamMemberships = member.teamMemberships || {};
           let nextQualifications = member.qualifications || [];
 
           if (kind === "role") {
-            nextTeamMemberships = Object.fromEntries(
-              Object.entries(nextTeamMemberships).map(
-                ([teamId, membership]) => {
-                  if (membership?.roleId !== id) return [teamId, membership];
-                  changed = true;
-                  const { roleId, ...rest } = membership;
-                  return [teamId, rest];
-                },
-              ),
-            );
+            const removeRoleFields = (current) =>
+              Object.entries(current?.teamMemberships || {})
+                .filter(([, membership]) => membership?.roleId === id)
+                .flatMap(([teamId]) => [
+                  [teamId, "roleId"],
+                  [teamId, "roleLabel"],
+                ]);
+            const removePaths = removeRoleFields(member);
+            if (removePaths.length === 0) return;
+            const db = requireFirestore();
+            if (db) {
+              await db.runTransaction(async (transaction) => {
+                const ref = db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId);
+                const snapshot = await transaction.get(ref);
+                if (!snapshot.exists) return;
+                const latest = { memberId: snapshot.id, ...snapshot.data() };
+                const currentPaths = removeRoleFields(latest);
+                if (currentPaths.length === 0) return;
+                await updateDocMapKeys(
+                  COLLECTIONS.teamRosterMembers,
+                  member.memberId,
+                  "teamMemberships",
+                  { removePaths: currentPaths, fields: touch, transaction },
+                );
+              });
+            } else {
+              await updateDocMapKeys(
+                COLLECTIONS.teamRosterMembers,
+                member.memberId,
+                "teamMemberships",
+                { removePaths, fields: touch },
+              );
+            }
+            return;
           }
 
           if (kind === "qualificationArea") {
@@ -4679,7 +5883,6 @@ export const createTeamsAuthHandlers = ({
             COLLECTIONS.teamRosterMembers,
             member.memberId,
             {
-              teamMemberships: nextTeamMemberships,
               qualifications: nextQualifications,
               ...touch,
             },
@@ -4768,7 +5971,7 @@ export const createTeamsAuthHandlers = ({
   };
 
   const getConcreteTeamServiceDate = (service) => {
-    const iso = service?.overrideDateTimeISO || service?.dateTimeISO || "";
+    const iso = service?.dateTimeISO || "";
     if (iso) return String(iso).slice(0, 10);
     return String(service?.date || "");
   };
@@ -4903,11 +6106,36 @@ export const createTeamsAuthHandlers = ({
     return { ...payload, iemAssignments };
   };
 
-  const getServicePlanKeyForOccurrence = (occurrence) => {
-    const date = String(occurrence?.startsAt || "").slice(0, 10);
-    return occurrence?.groupId
-      ? `group:${occurrence.groupId}@${date}`
-      : `${occurrence?.serviceId || ""}@${date}`;
+  const getServicePlanKeyForOccurrence = (occurrence, servicePlans = [], timeZone = "") => {
+    const legacyGroupMatch = String(occurrence?.occurrenceId || "")
+      .match(/^group:(.+)@(\d{4}-\d{2}-\d{2})$/);
+    const date = occurrence?.serviceDate || legacyGroupMatch?.[2];
+    const matchingPlan = servicePlans.find((plan) =>
+      plan.startsAt === occurrence?.startsAt &&
+      (occurrence?.groupId
+        ? plan.groupId === occurrence.groupId
+        : plan.serviceId === occurrence?.serviceId),
+    );
+    if (matchingPlan?.planKey) return matchingPlan.planKey;
+    if (isValidPortableTimeZone(timeZone)) {
+      const resolved = resolveOccurrenceIdentity({ ...occurrence, ...(date ? { serviceDate: date } : {}) }, timeZone);
+      return resolved?.logicalOccurrenceId || "";
+    }
+    const declaredIdentity = String(occurrence?.logicalOccurrenceId || "").trim();
+    const declaredDate = declaredIdentity.match(/@([0-9]{4}-[0-9]{2}-[0-9]{2})$/)?.[1] || "";
+    const storedDate = date || declaredDate;
+    if (!isValidPortablePlainDate(storedDate)) return "";
+    const groupId = String(occurrence?.groupId || legacyGroupMatch?.[1] || "").trim();
+    const serviceIds = normalizeIdArray(
+      occurrence?.serviceIds?.length ? occurrence.serviceIds : [occurrence?.serviceId],
+    );
+    const logicalOccurrenceId = groupId
+      ? logicalOccurrenceIdForGroup(groupId, storedDate)
+      : serviceIds.length === 1
+        ? logicalOccurrenceIdForService(serviceIds[0], storedDate)
+        : "";
+    if (!logicalOccurrenceId || (declaredIdentity && declaredIdentity !== logicalOccurrenceId)) return "";
+    return logicalOccurrenceId;
   };
 
   /**
@@ -4915,8 +6143,8 @@ export const createTeamsAuthHandlers = ({
    * Teams bootstrap, this contains no roster contact, availability, or schedule
    * data — only people assigned to the requested plan.
    */
-  const buildServicePlanAssignments = async (churchId, planKey) => {
-    const [members, positions, teams, schedules] = await Promise.all([
+  const buildServicePlanAssignments = async (churchId, planKey, servicePlan) => {
+    const [members, positions, teams, schedules, church] = await Promise.all([
       listTeamCollectionForChurch(
         COLLECTIONS.teamRosterMembers,
         "memberId",
@@ -4933,7 +6161,11 @@ export const createTeamsAuthHandlers = ({
         "scheduleId",
         churchId,
       ),
+      getDoc(COLLECTIONS.churches, churchId),
     ]);
+    const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+      ? church.serviceTimeZone
+      : "";
     const memberById = new Map(
       members.map((member) => [member.memberId, member]),
     );
@@ -4945,7 +6177,12 @@ export const createTeamsAuthHandlers = ({
     return schedules.flatMap((schedule) => {
       if (schedule.archivedAt) return [];
       const occurrence = (schedule.occurrences || []).find(
-        (candidate) => getServicePlanKeyForOccurrence(candidate) === planKey,
+        (candidate) =>
+          getServicePlanKeyForOccurrence(candidate, servicePlan ? [servicePlan] : [], timeZone) === planKey ||
+          (candidate.startsAt === servicePlan?.startsAt &&
+            (candidate.groupId
+              ? candidate.groupId === servicePlan?.groupId
+              : candidate.serviceId === servicePlan?.serviceId)),
       );
       if (!occurrence) return [];
       const guestsById = new Map(
@@ -4972,6 +6209,7 @@ export const createTeamsAuthHandlers = ({
           if (!name) return [];
           return [
             {
+              teamId,
               teamName: teamById.get(teamId)?.name || "Team",
               role,
               name,
@@ -5172,6 +6410,9 @@ export const createTeamsAuthHandlers = ({
             occurrence?.startsAt,
             "Availability service date",
           ),
+          ...(occurrence?.serviceDate
+            ? { serviceDate: assertPlainDate(occurrence.serviceDate, "Availability service calendar date") }
+            : {}),
         };
       })
       .filter(Boolean);
@@ -5258,10 +6499,42 @@ export const createTeamsAuthHandlers = ({
       body?.teamIds !== undefined
         ? normalizeIdArray(body.teamIds)
         : existing?.teamIds || [];
+    const rawTeamIds = body?.teamIds !== undefined
+      ? body.teamIds
+      : existing?.teamIds || [];
+    const purpose = String(
+      body?.purpose ?? existing?.purpose ?? "general_intake",
+    ).trim();
+    if (!["general_intake", "team_availability"].includes(purpose)) {
+      throw httpError(400, "Choose a supported form purpose.");
+    }
+    if (
+      existing &&
+      body?.purpose !== undefined &&
+      purpose !== (existing.purpose || "general_intake")
+    ) {
+      throw httpError(400, "A form's purpose cannot be changed after creation.");
+    }
     const enabledFields = normalizeTeamIntakeFields(
       body?.enabledFields,
       existing?.enabledFields,
     );
+    if (purpose === "team_availability") {
+      if (
+        !Array.isArray(rawTeamIds) ||
+        !teamIds.length ||
+        teamIds.length !== rawTeamIds.length ||
+        rawTeamIds.some((teamId) => typeof teamId !== "string" || !teamId.trim())
+      ) {
+        throw httpError(400, "Choose at least one Team for this availability form.");
+      }
+      if (!availabilityOccurrences.length) {
+        throw httpError(400, "Choose at least one service date for this availability form.");
+      }
+      if (enabledFields.length !== 1 || enabledFields[0] !== "availability") {
+        throw httpError(400, "Availability forms can collect service-date availability only.");
+      }
+    }
     const responseDeadline = assertPlainDate(
       body?.responseDeadline ?? existing?.responseDeadline ?? endDate,
       "Response deadline",
@@ -5280,6 +6553,7 @@ export const createTeamsAuthHandlers = ({
       availabilityServices,
       availabilityOccurrences,
       teamIds,
+      purpose,
       enabledFields,
       active: Boolean(body?.active ?? existing?.active),
       // Every selected member-detail field is required on the public form.
@@ -5801,6 +7075,9 @@ export const createTeamsAuthHandlers = ({
 
     return {
       churchName: church?.name || "WorshipSync",
+      serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+        ? church.serviceTimeZone
+        : "UTC",
       teamName:
         team && team.churchId === churchId
           ? String(team.name || "").trim()
@@ -5865,10 +7142,214 @@ export const createTeamsAuthHandlers = ({
   const createTeamIntakeRecipientId = (formId, memberId) =>
     `teamIntakeRecipient_${hashValue(`${formId}:${memberId}`).slice(0, 32)}`;
 
+  const TEAM_AVAILABILITY_SCOPE_LOCK_FIELD = "teamAvailabilityScopeLocked";
+  const teamAvailabilityFormQueues = new Map();
+  const withTeamAvailabilityFormLock = (formId, task) => {
+    const previous = teamAvailabilityFormQueues.get(formId) || Promise.resolve();
+    const run = previous.then(task, task);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    teamAvailabilityFormQueues.set(formId, settled);
+    void settled.finally(() => {
+      if (teamAvailabilityFormQueues.get(formId) === settled) {
+        teamAvailabilityFormQueues.delete(formId);
+      }
+    });
+    return run;
+  };
+
+  const validateCurrentTeamAvailabilityForm = ({
+    currentForm,
+    expectedForm,
+    churchId,
+    members = [],
+    teams = [],
+  }) => {
+    if (!currentForm || currentForm.churchId !== churchId) {
+      throw httpError(404, "Intake form not found.");
+    }
+    if (
+      currentForm.purpose !== "team_availability" ||
+      !sameIdSet(currentForm.teamIds, expectedForm?.teamIds)
+    ) {
+      throw httpError(
+        409,
+        "This availability form's Team scope changed. Reload and try again.",
+      );
+    }
+    assertTeamIntakeFormIsOpen(currentForm);
+    assertTeamIntakeFormResponseDeadline(currentForm);
+    for (const member of members) {
+      if (
+        !member ||
+        member.archivedAt ||
+        member.churchId !== churchId ||
+        !isMemberWithinTeamAvailabilityScope({
+          form: currentForm,
+          member,
+          teams,
+        })
+      ) {
+        throw httpError(
+          409,
+          "One or more selected members are outside this form's current Team scope.",
+        );
+      }
+    }
+    return currentForm;
+  };
+
+  const hasReusableTeamIntakeRecipientToken = (recipient) => {
+    const token = decryptTeamIntakeRecipientToken(
+      recipient?.recipientTokenCiphertext,
+      teamIntakeRecipientTokenSecret,
+    );
+    return Boolean(
+      token &&
+      looksLikeTeamIntakeRecipientToken(token) &&
+      hashTeamIntakeRecipientToken(token, teamIntakeRecipientTokenSecret) ===
+        recipient?.recipientTokenHash,
+    );
+  };
+
   const buildTeamIntakeRecipientPublicUrl = (token) =>
     `${APP_BASE_URL}/a/${encodeURIComponent(String(token || "").trim())}`;
 
-  const ensureTeamIntakeRecipientToken = async (recipient, updatedByUid) => {
+  const ensureTeamIntakeRecipientToken = async (
+    recipient,
+    updatedByUid,
+    { form: expectedForm = null, member: expectedMember = null, teams: expectedTeams = null } = {},
+  ) => {
+    const form = expectedForm || await getDoc(
+      COLLECTIONS.teamIntakeForms,
+      recipient.formId,
+    );
+    if (form?.purpose === "team_availability") {
+      const member = expectedMember || await getDoc(
+        COLLECTIONS.teamRosterMembers,
+        recipient.memberId,
+      );
+      const teams = expectedTeams || await listTeamCollectionForChurch(
+        COLLECTIONS.teams,
+        "teamId",
+        form.churchId,
+      );
+      const db = requireFirestore?.();
+      const ensureWithCurrentRecords = async (currentForm, currentRecipient, transaction = null, refs = null) => {
+        const validatedForm = validateCurrentTeamAvailabilityForm({
+          currentForm,
+          expectedForm: form,
+          churchId: form.churchId,
+          members: [member],
+          teams,
+        });
+        if (
+          !currentRecipient ||
+          currentRecipient.revokedAt ||
+          currentRecipient.churchId !== form.churchId ||
+          currentRecipient.formId !== form.formId ||
+          currentRecipient.memberId !== member?.memberId
+        ) {
+          throw httpError(409, "This individual intake request is no longer available.");
+        }
+        assertTeamIntakeFormIsOpen(validatedForm);
+        assertTeamIntakeFormResponseDeadline(validatedForm);
+        const updatedAt = nowIso();
+        const canReuseToken = hasReusableTeamIntakeRecipientToken(currentRecipient);
+        const existingToken = canReuseToken
+          ? decryptTeamIntakeRecipientToken(
+              currentRecipient.recipientTokenCiphertext,
+              teamIntakeRecipientTokenSecret,
+            )
+          : "";
+        const token = canReuseToken ? existingToken : createTeamIntakeRecipientToken();
+        const update = {
+          ...(!canReuseToken
+            ? {
+                recipientTokenHash: hashTeamIntakeRecipientToken(
+                  token,
+                  teamIntakeRecipientTokenSecret,
+                ),
+                recipientTokenCiphertext: encryptTeamIntakeRecipientToken(
+                  token,
+                  teamIntakeRecipientTokenSecret,
+                ),
+                tokenIssuedAt: updatedAt,
+              }
+            : {}),
+          updatedAt,
+          ...(updatedByUid ? { updatedByUid } : {}),
+        };
+        const shouldPersistUpdate = Object.keys(update).length > 2 || !canReuseToken;
+        if (transaction) {
+          if (!validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]) {
+            transaction.set(
+              refs.form,
+              { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+              { merge: true },
+            );
+          }
+          if (shouldPersistUpdate) {
+            transaction.set(refs.recipient, update, { merge: true });
+          }
+        } else {
+          if (!validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]) {
+            await setDoc(
+              COLLECTIONS.teamIntakeForms,
+              form.formId,
+              { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+              { merge: true },
+            );
+          }
+          if (shouldPersistUpdate) {
+            await setDoc(
+              COLLECTIONS.teamIntakeRecipients,
+              currentRecipient.recipientId || recipient.recipientId,
+              update,
+              { merge: true },
+            );
+          }
+        }
+        return {
+          token,
+          recipient: { ...currentRecipient, ...update },
+          form: validatedForm,
+        };
+      };
+
+      if (db?.runTransaction) {
+        const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(form.formId);
+        const recipientRef = db
+          .collection(COLLECTIONS.teamIntakeRecipients)
+          .doc(recipient.recipientId);
+        return db.runTransaction(async (transaction) => {
+          const [formSnapshot, recipientSnapshot] = await Promise.all([
+            transaction.get(formRef),
+            transaction.get(recipientRef),
+          ]);
+          return ensureWithCurrentRecords(
+            formSnapshot.exists
+              ? { formId: formSnapshot.id, ...formSnapshot.data() }
+              : null,
+            recipientSnapshot.exists
+              ? { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() }
+              : null,
+            transaction,
+            { form: formRef, recipient: recipientRef },
+          );
+        });
+      }
+      return withTeamAvailabilityFormLock(form.formId, async () => {
+        const [currentForm, currentRecipient] = await Promise.all([
+          getDoc(COLLECTIONS.teamIntakeForms, form.formId),
+          getDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId),
+        ]);
+        return ensureWithCurrentRecords(currentForm, currentRecipient);
+      });
+    }
+
     const updatedAt = nowIso();
     const existingToken = decryptTeamIntakeRecipientToken(
       recipient.recipientTokenCiphertext,
@@ -5943,6 +7424,18 @@ export const createTeamsAuthHandlers = ({
       throw httpError(404, "Request not found.");
     }
     assertTeamIntakeFormIsOpen(form);
+    if (form.purpose === "team_availability") {
+      const teamIds = teamAvailabilityFormTeamIds(form);
+      const teams = await Promise.all(
+        teamIds.map(async (teamId) => {
+          const team = await getDoc(COLLECTIONS.teams, teamId);
+          return team ? { ...team, teamId } : null;
+        }),
+      );
+      if (!isMemberWithinTeamAvailabilityScope({ form, member, teams })) {
+        throw httpError(404, "This request is no longer available.");
+      }
+    }
     return {
       recipient: { recipientId, ...recipient },
       form: { formId: recipient.formId, ...form },
@@ -5970,23 +7463,140 @@ export const createTeamsAuthHandlers = ({
     return getTeamIntakeRecipientContext(recipient);
   };
 
-  const writeTeamIntakeRecipientBatch = async (writes) => {
+  const writeTeamIntakeRecipientBatch = async (
+    writes,
+    availabilityContext = null,
+  ) => {
     const db = requireFirestore?.();
-    if (db) {
-      const batch = db.batch();
-      writes.forEach(({ id, data, merge }) => {
-        batch.set(
-          db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
-          data,
-          { merge },
-        );
+    if (!availabilityContext) {
+      if (db) {
+        if (!writes.length) return [];
+        const batch = db.batch();
+        writes.forEach(({ id, data, merge }) => {
+          batch.set(
+            db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+            data,
+            { merge },
+          );
+        });
+        await batch.commit();
+        return [];
+      }
+      for (const { id, data, merge } of writes) {
+        await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
+      }
+      return [];
+    }
+
+    const {
+      form,
+      churchId,
+      members,
+      teams,
+    } = availabilityContext;
+    const validate = (currentForm, currentRecipients) => {
+      const validatedForm = validateCurrentTeamAvailabilityForm({
+        currentForm,
+        expectedForm: form,
+        churchId,
+        members,
+        teams,
       });
-      await batch.commit();
-      return;
+      const latestById = new Map(
+        currentRecipients
+          .filter(Boolean)
+          .map((recipient) => [recipient.recipientId, recipient]),
+      );
+      const finalRecipients = [];
+      const recipientWrites = [];
+      for (const prepared of writes) {
+        const current = latestById.get(prepared.id) || null;
+        if (current && !current.revokedAt && hasReusableTeamIntakeRecipientToken(current)) {
+          finalRecipients.push(current);
+          continue;
+        }
+        const data = {
+          ...(current || {}),
+          ...prepared.data,
+          ...(current?.createdAt ? { createdAt: current.createdAt } : {}),
+        };
+        recipientWrites.push({
+          id: prepared.id,
+          data,
+          merge: Boolean(current),
+        });
+        finalRecipients.push({ recipientId: prepared.id, ...data });
+      }
+      const needsScopeMarker =
+        validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] !== true;
+      if (recipientWrites.length + Number(needsScopeMarker) > 500) {
+        throw httpError(
+          400,
+          "This request is too large to issue atomically. Select fewer members and try again.",
+        );
+      }
+      return { validatedForm, finalRecipients, recipientWrites, needsScopeMarker };
+    };
+
+    if (db?.runTransaction) {
+      const formRef = db
+        .collection(COLLECTIONS.teamIntakeForms)
+        .doc(form.formId);
+      return db.runTransaction(async (transaction) => {
+        const formSnapshot = await transaction.get(formRef);
+        const recipientSnapshots = await Promise.all(
+          writes.map(({ id }) => transaction.get(
+            db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+          )),
+        );
+        const currentForm = formSnapshot.exists
+          ? { formId: formSnapshot.id, ...formSnapshot.data() }
+          : null;
+        const currentRecipients = recipientSnapshots.flatMap((snapshot) =>
+          snapshot.exists
+            ? [{ recipientId: snapshot.id, ...snapshot.data() }]
+            : [],
+        );
+        const result = validate(currentForm, currentRecipients);
+        if (result.needsScopeMarker) {
+          transaction.set(
+            formRef,
+            { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+            { merge: true },
+          );
+        }
+        result.recipientWrites.forEach(({ id, data, merge }) => {
+          transaction.set(
+            db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
+            data,
+            { merge },
+          );
+        });
+        return result.finalRecipients;
+      });
     }
-    for (const { id, data, merge } of writes) {
-      await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
-    }
+
+    // This path only protects sequential work inside this server process. The
+    // production Firestore path above is the cross-instance consistency boundary.
+    return withTeamAvailabilityFormLock(form.formId, async () => {
+      const [currentForm, ...currentRecipients] = await Promise.all([
+        getDoc(COLLECTIONS.teamIntakeForms, form.formId),
+        ...writes.map(({ id }) => getDoc(COLLECTIONS.teamIntakeRecipients, id)),
+      ]);
+      const result = validate(currentForm, currentRecipients);
+      if (result.needsScopeMarker) {
+        await setDoc(
+          COLLECTIONS.teamIntakeForms,
+          form.formId,
+          { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+          { merge: true },
+        );
+      }
+      for (const { id, data, merge } of result.recipientWrites) {
+        await setDoc(COLLECTIONS.teamIntakeRecipients, id, data, { merge });
+      }
+      return result.finalRecipients;
+    });
   };
 
   const applyTeamIntakeSubmissionToMember = async ({
@@ -5999,6 +7609,43 @@ export const createTeamsAuthHandlers = ({
     now = nowIso(),
   }) => {
     const formBelongsToChurch = Boolean(form && form.churchId === churchId);
+    if (formBelongsToChurch && form.purpose === "team_availability") {
+      if (createMember) {
+        throw httpError(400, "Availability responses can only update an existing Team member.");
+      }
+      const member = await assertTeamEntityInChurch("member", memberId, churchId, {
+        label: "Member",
+        active: false,
+      });
+      const serviceAvailability = replaceServiceAvailabilityForForm({
+        existingAvailability: member.serviceAvailability,
+        replacementAvailability: normalizeServiceAvailability(
+          submission.occurrenceAvailability,
+        ),
+        form,
+      });
+      await setDoc(
+        COLLECTIONS.teamRosterMembers,
+        member.memberId,
+        {
+          serviceAvailability,
+          updatedAt: now,
+          updatedByUid: adminUserId,
+        },
+        { merge: true },
+      );
+      return {
+        member: await getTeamEntity("member", member.memberId),
+        updatedTeams: [],
+        application: {
+          status: "applied",
+          appliedAt: now,
+          appliedByUid: adminUserId,
+          appliedMemberId: member.memberId,
+          appliedMemberCreated: false,
+        },
+      };
+    }
     const formCollectsBlockouts =
       formBelongsToChurch &&
       Boolean(form.startDate && form.endDate) &&
@@ -6203,6 +7850,7 @@ export const createTeamsAuthHandlers = ({
         throw httpError(404, "Request not found.");
       }
       assertTeamIntakeFormIsOpen(form);
+      const availabilityOnly = form.purpose === "team_availability";
 
       const submissionId =
         recipient.submissionId ||
@@ -6245,6 +7893,15 @@ export const createTeamsAuthHandlers = ({
         teamSnapshots.push(
           await transaction.get(db.collection(COLLECTIONS.teams).doc(teamId)),
         );
+      }
+      if (availabilityOnly && !isMemberWithinTeamAvailabilityScope({
+        form,
+        member,
+        teams: teamSnapshots
+          .filter((snapshot) => snapshot.exists)
+          .map((snapshot) => ({ ...snapshot.data(), teamId: snapshot.id })),
+      })) {
+        throw httpError(404, "This request is no longer available.");
       }
 
       const formCollectsBlockouts =
@@ -6322,6 +7979,13 @@ export const createTeamsAuthHandlers = ({
         updatedAt: submittedAt,
         updatedByUid: adminUserId,
       };
+      const memberPatch = availabilityOnly
+        ? {
+            serviceAvailability: nextServiceAvailability,
+            updatedAt: submittedAt,
+            updatedByUid: adminUserId,
+          }
+        : memberUpdate;
 
       // All reads are complete before any write. Firestore retries this whole
       // callback when another process changes one of these documents, so the
@@ -6336,8 +8000,8 @@ export const createTeamsAuthHandlers = ({
           .doc(submissionId),
         submission,
       });
-      transaction.set(memberRef, memberUpdate, { merge: true });
-      for (const teamSnapshot of teamSnapshots) {
+      transaction.set(memberRef, memberPatch, { merge: true });
+      for (const teamSnapshot of availabilityOnly ? [] : teamSnapshots) {
         if (!teamSnapshot.exists) continue;
         const team = teamSnapshot.data();
         if (
@@ -6398,9 +8062,9 @@ export const createTeamsAuthHandlers = ({
     const result = await enqueueTeamIntakeRecipientSubmission(
       token,
       async () => {
-        const { recipient, form, member } =
+        let { recipient, form, member } =
           await getTeamIntakeRecipientContextByToken(token);
-        const payload = await validateTeamIntakeSubmissionPayload(
+        let payload = await validateTeamIntakeSubmissionPayload(
           req.body,
           form,
           { member },
@@ -6411,6 +8075,17 @@ export const createTeamsAuthHandlers = ({
             payload,
           });
         if (transactionalResult) return transactionalResult;
+        if (form.purpose === "team_availability") {
+          // The in-memory store has no transaction. Re-read authorization and
+          // form state immediately before creating its durable response.
+          ({ recipient, form, member } =
+            await getTeamIntakeRecipientContextByToken(token));
+          payload = await validateTeamIntakeSubmissionPayload(
+            req.body,
+            form,
+            { member },
+          );
+        }
         const submittedAt = nowIso();
         const submissionId =
           recipient.submissionId ||
@@ -6587,8 +8262,8 @@ export const createTeamsAuthHandlers = ({
         currentServiceIds.size > 1 || otherServiceIds.size > 1;
       return (
         includesJoinedServices &&
-        String(current.startsAt).slice(0, 10) ===
-          String(other.startsAt).slice(0, 10)
+        (current.serviceDate || String(current.startsAt).slice(0, 10)) ===
+          (other.serviceDate || String(other.startsAt).slice(0, 10))
       );
     }
     return Boolean(options.schedulesOverlap);
@@ -7372,7 +9047,7 @@ export const createTeamsAuthHandlers = ({
     const occurrence = getScheduleOccurrencesForConflict(schedule).find(
       (item) => item.occurrenceId === occurrenceId,
     );
-    const occurrenceDate = String(occurrence?.startsAt || "").slice(0, 10);
+    const occurrenceDate = occurrence?.serviceDate || String(occurrence?.startsAt || "").slice(0, 10);
     // Most writes target one concrete service date. Query only that day; use
     // the wider custom schedule range only for legacy occurrences without time
     // details, whose conflict relation depends on overlapping parent ranges.
@@ -7800,7 +9475,7 @@ export const createTeamsAuthHandlers = ({
           }
         });
 
-        const serviceDate = String(change.serviceDate || occurrence.startsAt || "").slice(0, 10);
+        const serviceDate = String(change.serviceDate || occurrence.serviceDate || occurrence.startsAt || "").slice(0, 10);
         const normalized = normalizeScheduleAssignmentCell(desired);
         for (const memberId of desiredMemberIds) {
           const member = await assertTeamEntityInChurch("member", memberId, churchId, { label: "Member" });
@@ -8138,14 +9813,9 @@ export const createTeamsAuthHandlers = ({
 
   const teamIntakeNotificationRecipientQueues = new Map();
   const withTeamIntakeRecipientLock = (recipientId, task) => {
-    const previous =
-      teamIntakeNotificationRecipientQueues.get(recipientId) ||
-      Promise.resolve();
+    const previous = teamIntakeNotificationRecipientQueues.get(recipientId) || Promise.resolve();
     const run = previous.then(task, task);
-    const settled = run.then(
-      () => undefined,
-      () => undefined,
-    );
+    const settled = run.then(() => undefined, () => undefined);
     teamIntakeNotificationRecipientQueues.set(recipientId, settled);
     void settled.finally(() => {
       if (teamIntakeNotificationRecipientQueues.get(recipientId) === settled) {
@@ -8159,21 +9829,47 @@ export const createTeamsAuthHandlers = ({
     form,
     member,
     actorUid,
+    teams,
   }) => {
     const recipientId = createTeamIntakeRecipientId(
       form.formId,
       member.memberId,
     );
     const db = requireFirestore?.();
-    const buildOrReuse = (
+    const availabilityOnly = form.purpose === "team_availability";
+    const buildOrReuse = async (
+      currentForm,
       existing,
       transaction = null,
-      recipientRef = null,
+      refs = null,
     ) => {
+      const validatedForm = availabilityOnly
+        ? validateCurrentTeamAvailabilityForm({
+            currentForm,
+            expectedForm: form,
+            churchId: form.churchId,
+            members: [member],
+            teams,
+          })
+        : currentForm || form;
+      if (availabilityOnly) {
+        assertTeamIntakeFormIsOpen(validatedForm);
+        assertTeamIntakeFormResponseDeadline(validatedForm);
+      }
       if (existing?.revokedAt)
-        return { recipient: existing, token: "", reason: "revoked" };
+        return {
+          recipient: existing,
+          token: "",
+          reason: "revoked",
+          form: validatedForm,
+        };
       if (existing?.respondedAt)
-        return { recipient: existing, token: "", reason: "responded" };
+        return {
+          recipient: existing,
+          token: "",
+          reason: "responded",
+          form: validatedForm,
+        };
       const existingToken = decryptTeamIntakeRecipientToken(
         existing?.recipientTokenCiphertext,
         teamIntakeRecipientTokenSecret,
@@ -8215,50 +9911,102 @@ export const createTeamsAuthHandlers = ({
         updatedAt: now,
         updatedByUid: actorUid,
       };
-      if (transaction && recipientRef) {
-        transaction.set(recipientRef, recipient, { merge: Boolean(existing) });
+      if (transaction && refs) {
+        if (
+          availabilityOnly &&
+          validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] !== true
+        ) {
+          transaction.set(
+            refs.form,
+            { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+            { merge: true },
+          );
+        }
+        transaction.set(refs.recipient, recipient, { merge: Boolean(existing) });
+      } else if (availabilityOnly) {
+        if (
+          validatedForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] !== true
+        ) {
+          await setDoc(
+            COLLECTIONS.teamIntakeForms,
+            form.formId,
+            { [TEAM_AVAILABILITY_SCOPE_LOCK_FIELD]: true },
+            { merge: true },
+          );
+        }
+        if (
+          !existing ||
+          recipient.recipientTokenHash !== existing.recipientTokenHash
+        ) {
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+            recipient,
+            { merge: Boolean(existing) },
+          );
+        }
       }
-      return { recipient, token, reason: "" };
+      return { recipient, token, reason: "", form: validatedForm };
     };
 
-    if (db) {
+    if (db?.runTransaction) {
       return db.runTransaction(async (transaction) => {
-        const ref = db
+        const recipientRef = db
           .collection(COLLECTIONS.teamIntakeRecipients)
           .doc(recipientId);
-        const snapshot = await transaction.get(ref);
-        const existing = snapshot.exists
-          ? { recipientId: snapshot.id, ...snapshot.data() }
+        const formRef = availabilityOnly
+          ? db.collection(COLLECTIONS.teamIntakeForms).doc(form.formId)
           : null;
-        return buildOrReuse(existing, transaction, ref);
+        const [formSnapshot, recipientSnapshot] = availabilityOnly
+          ? await Promise.all([
+              transaction.get(formRef),
+              transaction.get(recipientRef),
+            ])
+          : [null, await transaction.get(recipientRef)];
+        const currentForm = availabilityOnly && formSnapshot.exists
+          ? { formId: formSnapshot.id, ...formSnapshot.data() }
+          : form;
+        const existing = recipientSnapshot.exists
+          ? { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() }
+          : null;
+        return buildOrReuse(currentForm, existing, transaction, {
+          form: formRef,
+          recipient: recipientRef,
+        });
       });
     }
-    return withTeamIntakeRecipientLock(recipientId, async () => {
-      const existing = await getDoc(
-        COLLECTIONS.teamIntakeRecipients,
-        recipientId,
-      );
-      const result = buildOrReuse(existing);
-      if (!existing && !result.reason) {
-        await setDoc(
-          COLLECTIONS.teamIntakeRecipients,
-          recipientId,
-          result.recipient,
-          { merge: false },
-        );
-      } else if (
-        existing &&
-        !result.reason &&
-        result.recipient.recipientTokenHash !== existing.recipientTokenHash
-      ) {
-        await setDoc(
-          COLLECTIONS.teamIntakeRecipients,
-          recipientId,
-          result.recipient,
-          { merge: true },
-        );
-      }
-      return result;
+    if (!availabilityOnly) {
+      return withTeamIntakeRecipientLock(recipientId, async () => {
+        const existing = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+        const result = await buildOrReuse(form, existing);
+        if (!existing && !result.reason) {
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+            result.recipient,
+            { merge: false },
+          );
+        } else if (
+          existing &&
+          !result.reason &&
+          result.recipient.recipientTokenHash !== existing.recipientTokenHash
+        ) {
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipientId,
+            result.recipient,
+            { merge: true },
+          );
+        }
+        return result;
+      });
+    }
+    return withTeamAvailabilityFormLock(form.formId, async () => {
+      const [currentForm, existing] = await Promise.all([
+        getDoc(COLLECTIONS.teamIntakeForms, form.formId),
+        getDoc(COLLECTIONS.teamIntakeRecipients, recipientId),
+      ]);
+      return buildOrReuse(currentForm, existing);
     });
   };
 
@@ -8268,6 +10016,9 @@ export const createTeamsAuthHandlers = ({
     positions,
     teams,
   }) => {
+    if (form?.purpose === "team_availability") {
+      return isMemberWithinTeamAvailabilityScope({ form, member, teams });
+    }
     const formTeamIds = new Set(normalizeIdArray(form.teamIds));
     if (formTeamIds.size === 0) return true;
     const positionTeamById = new Map(
@@ -8285,6 +10036,44 @@ export const createTeamsAuthHandlers = ({
     return [...formTeamIds].some((teamId) => memberTeamIds.has(teamId));
   };
 
+  const isAvailabilityRecipientInFormScope = async ({
+    churchId,
+    formId,
+    recipientId,
+    memberId,
+  }) => {
+    const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+    if (
+      !recipient ||
+      recipient.churchId !== churchId ||
+      recipient.formId !== formId ||
+      (memberId && recipient.memberId !== memberId)
+    ) return false;
+    const [form, member] = await Promise.all([
+      getDoc(COLLECTIONS.teamIntakeForms, formId),
+      getDoc(COLLECTIONS.teamRosterMembers, recipient.memberId),
+    ]);
+    if (
+      !form ||
+      form.churchId !== churchId ||
+      form.purpose !== "team_availability" ||
+      !member ||
+      member.churchId !== churchId ||
+      member.archivedAt
+    ) return false;
+    const teams = await listTeamCollectionForChurch(
+      COLLECTIONS.teams,
+      "teamId",
+      churchId,
+    );
+    return assertMemberWithinIntakeFormScope({
+      form,
+      member,
+      positions: [],
+      teams,
+    });
+  };
+
   const prepareAvailabilityNotificationRecipients = async ({
     churchId,
     formId,
@@ -8296,6 +10085,9 @@ export const createTeamsAuthHandlers = ({
     if (!form || form.churchId !== churchId || form.archivedAt) {
       throw httpError(404, "Intake form not found.");
     }
+    // The caller's request guard authorizes the form. This independent roster
+    // check ensures every requested member still belongs to a Team in its
+    // explicit scope when notification recipients are materialized.
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
     const enabledFields = normalizeTeamIntakeFields(
@@ -8359,6 +10151,7 @@ export const createTeamsAuthHandlers = ({
           form,
           member,
           actorUid,
+          teams,
         });
         recipient = ensured.recipient;
         token = ensured.token;
@@ -8405,6 +10198,7 @@ export const createTeamsAuthHandlers = ({
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
           actorUid,
+          { form, member, teams },
         );
         recipient = ensured.recipient;
         token = ensured.token;
@@ -8468,6 +10262,17 @@ export const createTeamsAuthHandlers = ({
       );
     }
     const { form, member } = await getTeamIntakeRecipientContext(recipient);
+    let teams = [];
+    if (form.purpose === "team_availability") {
+      teams = await listTeamCollectionForChurch(
+        COLLECTIONS.teams,
+        "teamId",
+        intent.churchId,
+      );
+      if (!assertMemberWithinIntakeFormScope({ form, member, positions: [], teams })) {
+        throw httpError(409, "The recipient is no longer on a Team in this availability form.");
+      }
+    }
     assertTeamIntakeFormIsOpen(form);
     assertTeamIntakeFormResponseDeadline(form);
     if (recipient.revokedAt)
@@ -8485,10 +10290,14 @@ export const createTeamsAuthHandlers = ({
         "This intake form no longer has response fields for an existing volunteer.",
       );
     }
-    const ensured = await ensureTeamIntakeRecipientToken(recipient, actorUid);
-    return {
-      form,
+    const ensured = await ensureTeamIntakeRecipientToken(
       recipient,
+      actorUid,
+      { form, member, teams },
+    );
+    return {
+      form: ensured.form || form,
+      recipient: ensured.recipient,
       member,
       church: await getChurchById(intent.churchId),
       publicUrl: buildTeamIntakeRecipientPublicUrl(ensured.token),
@@ -8505,6 +10314,34 @@ export const createTeamsAuthHandlers = ({
       throw httpError(409, "The source schedule is no longer available.");
     }
     const member = await getDoc(COLLECTIONS.teamRosterMembers, intent.memberId);
+    if (intent.intentType === "schedule_initial_notification") {
+      const [positions, church] = await Promise.all([
+        listTeamCollectionForChurch(
+          COLLECTIONS.teamPositions,
+          "positionId",
+          intent.churchId,
+        ),
+        getChurchById(intent.churchId),
+      ]);
+      if (!isValidPortableTimeZone(church?.serviceTimeZone)) {
+        throw httpError(
+          409,
+          "Set a valid church time zone in Service setup before sending this schedule message.",
+        );
+      }
+      return {
+        schedule,
+        member,
+        church,
+        assignments: getScheduleMemberAssignments({ schedule, memberId: intent.memberId, positions }),
+        serviceTimeZone: church.serviceTimeZone,
+        responseUrl: buildAssignmentResponseUrl({
+          churchId: intent.churchId,
+          scheduleId: intent.sourceId,
+          memberId: intent.memberId,
+        }),
+      };
+    }
     const occurrence = (schedule.occurrences || []).find(
       (item) => item.occurrenceId === intent.occurrenceId,
     );
@@ -8528,6 +10365,64 @@ export const createTeamsAuthHandlers = ({
         memberId: intent.memberId,
       }),
     };
+  };
+
+  const prepareScheduleInitialSmsRecipients = async ({ churchId, schedule }) => {
+    const [members, positions] = await Promise.all([
+      listTeamCollectionForChurch(COLLECTIONS.teamRosterMembers, "memberId", churchId),
+      listTeamCollectionForChurch(COLLECTIONS.teamPositions, "positionId", churchId),
+    ]);
+    const memberById = new Map(members.map((member) => [member.memberId, member]));
+    const guests = new Map((schedule.guests || []).filter((guest) => guest?.guestId).map((guest) => [guest.guestId, guest]));
+    return mapWithConcurrency(getScheduleAssignedMemberIds(schedule), 8, async (memberId) => {
+      const member = memberById.get(memberId) || null;
+      const guest = guests.get(memberId) || null;
+      const assignments = getScheduleMemberAssignments({ schedule, memberId, positions });
+      let eligibility = { status: "no_mobile", eligible: false, phoneNumber: "" };
+      let exclusionReason = "";
+      let exclusionKind = "";
+      if (!member && guest) {
+        exclusionKind = "guest";
+        exclusionReason = "Guests do not have roster SMS eligibility.";
+      } else if (!member || member.churchId !== churchId) {
+        exclusionKind = "unlinked";
+        exclusionReason = "This assignment is not linked to an active roster member.";
+      } else if (member.archivedAt) {
+        exclusionKind = "archived";
+        exclusionReason = "Archived roster members cannot receive schedule SMS.";
+      } else if (!assignments.length) {
+        exclusionKind = "team_mismatch";
+        exclusionReason = "No current assignment belongs to this schedule's Team.";
+      } else {
+        const preliminary = resolveSmsMemberEligibility({ member, churchId, consent: null });
+        const consent = preliminary.phoneNumber
+          ? await getSmsConsentForChurchPhone(churchId, preliminary.phoneNumber)
+          : null;
+        eligibility = resolveSmsMemberEligibility({ member, churchId, consent });
+        exclusionReason = eligibility.eligible
+          ? ""
+          : {
+              no_mobile: "No valid mobile number.",
+              consent_needed: "SMS consent is needed for this phone number.",
+              opted_out: "This phone number opted out of SMS.",
+            }[eligibility.status];
+      }
+      const displayName = member
+        ? `${member.firstName || ""} ${member.lastName || ""}`.trim() || "Roster member"
+        : String(guest?.name || "Guest").trim();
+      return {
+        memberId,
+        member,
+        memberName: displayName,
+        isGuest: Boolean(guest && !member),
+        exclusionKind,
+        assignments,
+        eligibilityStatus: eligibility.status,
+        phoneNumber: eligibility.phoneNumber || "",
+        eligible: Boolean(member && !member.archivedAt && assignments.length && eligibility.eligible),
+        exclusionReason,
+      };
+    });
   };
 
   const closeResolvedReplacementInvitations = async ({
@@ -8654,7 +10549,7 @@ export const createTeamsAuthHandlers = ({
         vacancySchedule.assignments[occurrenceId][cellKey] = clearedCell;
       else delete vacancySchedule.assignments[occurrenceId][cellKey];
     }
-    const serviceDate = String(occurrence.startsAt || "").slice(0, 10);
+    const serviceDate = occurrence.serviceDate || String(occurrence.startsAt || "").slice(0, 10);
     const validated = await buildValidatedScheduleAssignments({
       churchId,
       schedule: vacancySchedule,
@@ -9333,8 +11228,12 @@ export const createTeamsAuthHandlers = ({
 
   return {
     prepareAvailabilityNotificationRecipients,
+    prepareScheduleInitialSmsRecipients,
     resolveAvailabilityNotificationContext,
     resolveScheduleNotificationContext,
+    requireTeamScheduleNotificationEdit,
+    requireTeamAvailabilityFormEdit,
+    isAvailabilityRecipientInFormScope,
     async exportPortableData(req, res) {
       try {
         const churchId = String(req.params.churchId || "").trim();
@@ -9342,9 +11241,10 @@ export const createTeamsAuthHandlers = ({
         const type = String(req.params.type || "")
           .trim()
           .toLowerCase();
-        const timeZone = String(req.query?.timeZone || "UTC").trim();
-        if (!isValidPortableTimeZone(timeZone))
-          throw httpError(400, "Choose a valid time zone for this export.");
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+      : "";
         if (type === "all") {
           const datasets = buildPortableDatasets(
             await readPortableDatasets(churchId),
@@ -10717,6 +12617,12 @@ export const createTeamsAuthHandlers = ({
             .digest("hex");
         };
         const data = await readPortableDatasets(churchId);
+        const church = type === "schedules"
+          ? await getDoc(COLLECTIONS.churches, churchId)
+          : null;
+        const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
         const teamActionKey = (sourceValue) => stablePortableJson([normalizePortableMatchValue(sourceValue)]);
         const sourceCsvHash = String(req.body?.previewCsvHash || "");
         const pendingTeamId = (sourceValue) => `portable-pending-team-${crypto.createHash("sha256").update(`${sourceCsvHash}\u0000${normalizePortableMatchValue(sourceValue)}`).digest("hex").slice(0, 32)}`;
@@ -11390,45 +13296,43 @@ export const createTeamsAuthHandlers = ({
                     400,
                     "Use a valid 24-hour start time, such as 10:30.",
                   );
-                const timeZone = String(req.body?.timeZone || "UTC").trim();
-                const startsAt = portableWallClockToIso(
-                  date,
-                  startTime,
-                  timeZone,
-                );
+                const startsAt = serviceDateTimeInTimeZone(date, startTime, serviceTimeZone)?.toISOString() || null;
                 if (!startsAt)
                   throw httpError(
                     400,
-                    "Use a valid service date, time, and time zone.",
+                    "The service time does not exist on this date in the church time zone.",
                   );
                 const priorOccurrence = existing?.occurrences?.find(
                   (item) =>
                     item.occurrenceId === record.occurrenceId &&
-                    String(item.startsAt || "").slice(0, 10) === date,
+                    (item.serviceDate || String(item.startsAt || "").slice(0, 10)) === date,
                 );
                 const occurrenceId = String(
                   priorOccurrence?.occurrenceId ||
                     (serviceIds.length > 1
                       ? `group:${services[0].serviceGroupId}@${date}`
-                      : `${serviceIds[0]}@${startsAt}`),
+                      : logicalOccurrenceIdForService(serviceIds[0], date)),
                 );
                 const occurrenceKey = `${date}\u0000${startTime}\u0000${serviceIds.join(",")}`;
                 if (!occurrencesByKey.has(occurrenceKey)) {
                   const requirementMap = new Map();
+                  const teamPositionIds = new Set(data.positions
+                    .filter((position) => position.teamId === team.teamId)
+                    .map((position) => position.positionId));
                   services.forEach((service) =>
                     (service.positionRequirements || []).forEach(
                       ({ positionId, count }) =>
-                        requirementMap.set(
+                        teamPositionIds.has(positionId) && requirementMap.set(
                           positionId,
-                          Math.max(
-                            requirementMap.get(positionId) || 0,
-                            Number(count) || 0,
-                          ),
+                          Math.max(requirementMap.get(positionId) || 0, Number(count) || 0),
                         ),
                     ),
                   );
                   occurrencesByKey.set(occurrenceKey, {
                     occurrenceId,
+                    logicalOccurrenceId: serviceIds.length > 1
+                      ? logicalOccurrenceIdForGroup(services[0].serviceGroupId, date)
+                      : logicalOccurrenceIdForService(serviceIds[0], date),
                     serviceId: serviceIds[0],
                     ...(serviceIds.length > 1
                       ? { groupId: services[0].serviceGroupId }
@@ -12467,7 +14371,10 @@ export const createTeamsAuthHandlers = ({
     },
     async getTeamsBootstrap(req, res) {
       try {
-        await requireTeamsView(req, req.params.churchId);
+        const { access, canonical } = await resolveTeamsReadAccess(
+          req,
+          req.params.churchId,
+        );
         // Opt-in: `?schedules=summary` trades full schedule docs for summaries
         // plus a hydrated window around today. Absent (older clients) keeps the
         // original full payload.
@@ -12475,10 +14382,272 @@ export const createTeamsAuthHandlers = ({
           req.query?.schedules === "summary" ? "summary" : "full";
         return res.json({
           success: true,
-          ...(await buildTeamsBootstrap(req.params.churchId, { scheduleMode })),
+          ...projectTeamsBootstrapForAccess({
+            data: await buildTeamsBootstrap(req.params.churchId, {
+              scheduleMode,
+              canonical,
+              includeAdministrativeTeamsData: access.editAll,
+            }),
+            access,
+          }),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load teams.");
+      }
+    },
+
+    /**
+     * Purpose-built read for the Team availability workflow. It returns only
+     * active roster identity, SMS eligibility booleans, and the requested
+     * service-date answers for forms every editable Team in the form scope.
+     */
+    async getTeamAvailabilityManagementData(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        let broadAdmin = null;
+        try {
+          broadAdmin = await requireTeamsEdit(req, churchId);
+        } catch {
+          // Scoped Team editors are admitted below using the same per-Team
+          // guard used by the rest of the Teams workspace.
+        }
+        const allTeams = await listTeamCollectionForChurch(
+          COLLECTIONS.teams,
+          "teamId",
+          churchId,
+        );
+        const activeTeams = allTeams.filter(
+          (team) => team && team.churchId === churchId && !team.archivedAt,
+        );
+        const editableTeams = broadAdmin
+          ? activeTeams
+          : await Promise.all(
+              activeTeams.map(async (team) =>
+                (await canEditTeamForRequest(req, churchId, team.teamId))
+                  ? team
+                  : null,
+              ),
+            ).then((teams) => teams.filter(Boolean));
+        if (!editableTeams.length) {
+          throw httpError(403, "Team edit access required.");
+        }
+        const editableTeamIds = new Set(
+          editableTeams.map((team) => team.teamId),
+        );
+        const teamById = new Map(activeTeams.map((team) => [team.teamId, team]));
+        const [allForms, allMembers] = await Promise.all([
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamIntakeForms,
+            "formId",
+            churchId,
+          ),
+          listTeamCollectionForChurch(
+            COLLECTIONS.teamRosterMembers,
+            "memberId",
+            churchId,
+          ),
+        ]);
+        const forms = allForms.filter((form) => {
+          if (form?.purpose !== "team_availability" || form.churchId !== churchId) {
+            return false;
+          }
+          const teamIds = Array.isArray(form.teamIds)
+            ? normalizeIdArray(form.teamIds)
+            : [];
+          return teamIds.length > 0 && teamIds.every((teamId) =>
+            teamById.has(teamId) && editableTeamIds.has(teamId),
+          );
+        });
+        const formById = new Map(forms.map((form) => [form.formId, form]));
+        const memberById = new Map(
+          allMembers
+            .filter((member) => member && member.churchId === churchId && !member.archivedAt)
+            .map((member) => [member.memberId, member]),
+        );
+        const memberTeamsById = new Map();
+        const memberIds = new Set();
+        const authorizedTeams = editableTeams.map((team) => {
+          const rosterMemberIds = [];
+          for (const memberId of Array.isArray(team.memberIds) ? team.memberIds : []) {
+            if (!memberById.has(memberId)) continue;
+            memberIds.add(memberId);
+            rosterMemberIds.push(memberId);
+            const teamIds = memberTeamsById.get(memberId) || new Set();
+            teamIds.add(team.teamId);
+            memberTeamsById.set(memberId, teamIds);
+          }
+          return {
+            teamId: team.teamId,
+            churchId,
+            name: team.name || "Team",
+            memberIds: rosterMemberIds,
+          };
+        });
+        const recipients = await queryDocs(
+          COLLECTIONS.teamIntakeRecipients,
+          [{ field: "churchId", value: churchId }],
+          { limit: TEAM_COLLECTION_QUERY_LIMIT },
+        );
+        const scopedRecipients = recipients.filter((recipient) => {
+          const form = formById.get(recipient.formId);
+          const memberTeamIds = memberTeamsById.get(recipient.memberId);
+          return Boolean(
+            form &&
+            recipient.churchId === churchId &&
+            memberById.has(recipient.memberId) &&
+            memberTeamIds &&
+            form.teamIds.some((teamId) => memberTeamIds.has(teamId)),
+          );
+        });
+        const submissionIds = [...new Set(
+          scopedRecipients.map((recipient) => recipient.submissionId).filter(Boolean),
+        )];
+        const submissions = await Promise.all(
+          submissionIds.map((submissionId) =>
+            getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId),
+          ),
+        );
+        const submissionById = new Map(
+          submissions.filter(Boolean).map((submission) => [submission.submissionId, submission]),
+        );
+        const occurrenceIdsByMember = new Map();
+        for (const form of forms) {
+          const scopedTeamIds = normalizeIdArray(form.teamIds);
+          const occurrenceIds = (form.availabilityOccurrences || [])
+            .map((occurrence) => occurrence?.occurrenceId)
+            .filter(Boolean);
+          for (const memberId of memberIds) {
+            const memberTeamIds = memberTeamsById.get(memberId) || new Set();
+            if (!scopedTeamIds.some((teamId) => memberTeamIds.has(teamId))) continue;
+            const allowed = occurrenceIdsByMember.get(memberId) || new Set();
+            occurrenceIds.forEach((occurrenceId) => allowed.add(occurrenceId));
+            occurrenceIdsByMember.set(memberId, allowed);
+          }
+        }
+        const projectedMembers = [...memberIds].map((memberId) => {
+          const member = memberById.get(memberId);
+          const availability = {};
+          const allowedOccurrenceIds = occurrenceIdsByMember.get(memberId) || new Set();
+          for (const occurrenceId of allowedOccurrenceIds) {
+            const value = member.serviceAvailability?.[occurrenceId];
+            if (value === "available" || value === "unavailable") {
+              availability[occurrenceId] = value;
+            }
+          }
+          return {
+            memberId,
+            churchId,
+            firstName: member.firstName || "",
+            lastName: member.lastName || "",
+            positionIds: [],
+            blockoutDates: [],
+            teamMemberships: Object.fromEntries(
+              [...(memberTeamsById.get(memberId) || [])].map((teamId) => [teamId, { teamId }]),
+            ),
+            serviceAvailability: availability,
+          };
+        });
+        const eligibility = await buildSmsEligibilityByMemberId(
+          churchId,
+          [...memberIds].map((memberId) => memberById.get(memberId)),
+        );
+        const projectedRecipients = scopedRecipients.map((recipient) => ({
+          recipientId: recipient.recipientId,
+          churchId,
+          formId: recipient.formId,
+          memberId: recipient.memberId,
+          createdAt: recipient.createdAt || "",
+          respondedAt: recipient.respondedAt || null,
+          revokedAt: recipient.revokedAt || null,
+          linkCopiedAt: recipient.linkCopiedAt || null,
+        }));
+        const projectedForms = forms.map((form) => ({
+          formId: form.formId,
+          churchId,
+          name: form.name || "Availability form",
+          startDate: form.startDate,
+          endDate: form.endDate,
+          responseDeadline: form.responseDeadline || form.endDate,
+          availabilityServices: form.availabilityServices || [],
+          availabilityOccurrences: form.availabilityOccurrences || [],
+          teamIds: normalizeIdArray(form.teamIds),
+          purpose: "team_availability",
+          active: Boolean(form.active),
+          enabledFields: ["availability"],
+          availabilityMessage: form.availabilityMessage || "",
+          archivedAt: form.archivedAt || null,
+          createdAt: form.createdAt || "",
+          updatedAt: form.updatedAt || "",
+          submissionCount: scopedRecipients.filter(
+            (recipient) => recipient.formId === form.formId && recipient.respondedAt,
+          ).length,
+          hasIssuedRecipientRequests: recipients.some(
+            (recipient) => recipient.formId === form.formId,
+          ),
+        }));
+        const availabilityResponses = scopedRecipients.flatMap((recipient) => {
+          if (!recipient.respondedAt || !recipient.submissionId) return [];
+          const submission = submissionById.get(recipient.submissionId);
+          const form = formById.get(recipient.formId);
+          if (
+            !submission ||
+            !form ||
+            submission.churchId !== churchId ||
+            submission.formId !== recipient.formId ||
+            (submission.appliedMemberId || submission.memberId) !== recipient.memberId
+          ) return [];
+          const allowedIds = new Set(
+            (form.availabilityOccurrences || [])
+              .map((occurrence) => occurrence?.occurrenceId)
+              .filter(Boolean),
+          );
+          const availability = Object.fromEntries(
+            Object.entries(submission.occurrenceAvailability || {}).filter(
+              ([occurrenceId, value]) =>
+                allowedIds.has(occurrenceId) &&
+                (value === "available" || value === "unavailable"),
+            ),
+          );
+          return [{
+            formId: recipient.formId,
+            recipientId: recipient.recipientId,
+            memberId: recipient.memberId,
+            respondedAt: recipient.respondedAt,
+            submittedAt: submission.submittedAt || recipient.respondedAt,
+            occurrenceAvailability: availability,
+          }];
+        });
+        const smsEligibilityByMemberId = Object.fromEntries(
+          [...memberIds].map((memberId) => [memberId, {
+            eligible: Boolean(eligibility[memberId]?.eligible),
+          }]),
+        );
+        await Promise.all(editableTeams.map(async (team) => {
+          const currentTeam = await getDoc(COLLECTIONS.teams, team.teamId);
+          if (!currentTeam || currentTeam.churchId !== churchId || currentTeam.archivedAt) {
+            throw httpError(403, "Team availability access changed. Reload this page.");
+          }
+          await requireTeamsEditForTeam(req, churchId, team.teamId);
+        }));
+        await Promise.all(forms.map(async (form) => {
+          const currentForm = await getDoc(COLLECTIONS.teamIntakeForms, form.formId);
+          await requireTeamAvailabilityFormEdit(req, churchId, currentForm);
+        }));
+        return res.json({
+          success: true,
+          teams: authorizedTeams,
+          members: projectedMembers,
+          forms: projectedForms,
+          intakeRecipients: projectedRecipients,
+          availabilityResponses,
+          smsEligibilityByMemberId,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load Team availability.",
+        );
       }
     },
 
@@ -12489,15 +14658,34 @@ export const createTeamsAuthHandlers = ({
      */
     async getTeamIntakeSmsAttempts(req, res) {
       try {
-        await requireTeamsView(req, req.params.churchId);
+        let broadAccessError = null;
+        try {
+          await requireBroadTeamsView(req, req.params.churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          broadAccessError = error;
+        }
         const form = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
         );
-        if (!form || form.churchId !== req.params.churchId) {
+        if (form && form.churchId !== req.params.churchId) {
+          if (broadAccessError) throw broadAccessError;
           throw httpError(404, "Intake form not found.");
         }
-        const recipients = await queryDocs(
+        let scoped = false;
+        if (!form) {
+          if (broadAccessError) throw broadAccessError;
+        } else if (form.purpose === "team_availability") {
+          ({ scoped } = await requireTeamAvailabilityFormEdit(
+            req,
+            req.params.churchId,
+            form,
+          ));
+        } else if (broadAccessError) {
+          throw broadAccessError;
+        }
+        const loadedRecipients = await queryDocs(
           COLLECTIONS.teamIntakeRecipients,
           [
             { field: "churchId", value: req.params.churchId },
@@ -12505,7 +14693,16 @@ export const createTeamsAuthHandlers = ({
           ],
           { limit: TEAM_COLLECTION_QUERY_LIMIT },
         );
-        const recipientIds = recipients
+        const visibleRecipients = scoped
+          ? (await Promise.all(loadedRecipients.map(async (recipient) =>
+              await isAvailabilityRecipientInFormScope({
+                churchId: req.params.churchId,
+                formId: form.formId,
+                recipientId: recipient.recipientId || recipient.id,
+              }) ? recipient : null,
+            ))).filter(Boolean)
+          : loadedRecipients;
+        const recipientIds = visibleRecipients
           .map((recipient) =>
             String(recipient.recipientId || recipient.id || "").trim(),
           )
@@ -12527,9 +14724,23 @@ export const createTeamsAuthHandlers = ({
         const uniqueAttempts = new Map(
           attempts.map((attempt) => [attempt.attemptId || attempt.id, attempt]),
         );
+        const recipientById = new Map(visibleRecipients.map((recipient) => [
+          recipient.recipientId || recipient.id,
+          recipient,
+        ]));
+        const scopedAttempts = scoped
+          ? [...uniqueAttempts.values()].filter((attempt) => {
+              const recipient = recipientById.get(attempt.recipientId);
+              return Boolean(
+                recipient &&
+                attempt.memberId === recipient.memberId &&
+                (!attempt.formId || attempt.formId === form.formId),
+              );
+            })
+          : [...uniqueAttempts.values()];
         return res.json({
           success: true,
-          attempts: [...uniqueAttempts.values()]
+          attempts: scopedAttempts
             .sort(
               (a, b) =>
                 new Date(b.createdAt || 0).getTime() -
@@ -12556,7 +14767,10 @@ export const createTeamsAuthHandlers = ({
      */
     async getTeamScheduleDetail(req, res) {
       try {
-        await requireTeamsView(req, req.params.churchId);
+        const { access } = await resolveTeamsReadAccess(
+          req,
+          req.params.churchId,
+        );
         const schedule = await getDoc(
           COLLECTIONS.teamSchedules,
           req.params.scheduleId,
@@ -12564,6 +14778,14 @@ export const createTeamsAuthHandlers = ({
         if (!schedule || schedule.churchId !== req.params.churchId) {
           throw httpError(404, "Schedule not found.");
         }
+        if (!canViewTeam(access, schedule.teamId)) {
+          throw httpError(403, "Teams access required");
+        }
+        // Reuse bootstrap's safe shape for every schedule the caller only views.
+        const projectSchedule = (record) =>
+          canEditTeam(access, record.teamId)
+            ? record
+            : projectViewOnlySchedule(record);
         const hydrated = { scheduleId: req.params.scheduleId, ...schedule };
         const all = await listTeamCollectionForChurch(
           COLLECTIONS.teamSchedules,
@@ -12576,6 +14798,7 @@ export const createTeamsAuthHandlers = ({
           (other) =>
             other.scheduleId !== hydrated.scheduleId &&
             !other.archivedAt &&
+            canViewTeam(access, other.teamId) &&
             other.teamId !== hydrated.teamId &&
             (!startDate ||
               !endDate ||
@@ -12583,8 +14806,8 @@ export const createTeamsAuthHandlers = ({
         );
         return res.json({
           success: true,
-          schedule: hydrated,
-          relatedSchedules,
+          schedule: projectSchedule(hydrated),
+          relatedSchedules: relatedSchedules.map(projectSchedule),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load this schedule.");
@@ -12621,7 +14844,11 @@ export const createTeamsAuthHandlers = ({
         // Positions are team-scoped, so being eligible for a team's position
         // implies belonging to that team's roster. Mirror the intake-apply flow
         // and reconcile membership into `team.memberIds`.
-        const { member, teams: updatedTeams } = await syncMemberTeamMembership({
+        const {
+          member,
+          teams: updatedTeams,
+          membershipTeamIds,
+        } = await syncMemberTeamMembership({
           req,
           churchId: req.params.churchId,
           member: created,
@@ -12639,6 +14866,7 @@ export const createTeamsAuthHandlers = ({
           success: true,
           member,
           ...(updatedTeams.length ? { teams: updatedTeams } : {}),
+          ...(membershipTeamIds ? { membershipTeamIds } : {}),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this member.");
@@ -12648,6 +14876,10 @@ export const createTeamsAuthHandlers = ({
     async updateTeamRosterMember(req, res) {
       try {
         await assertCsrf(req);
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        if (admin.role !== "admin" && admin.permissions?.teams !== "edit") {
+          throw httpError(403, "Church-wide Teams edit access is required.");
+        }
         const existing = await assertTeamEntityInChurch(
           "member",
           req.params.memberId,
@@ -12662,17 +14894,21 @@ export const createTeamsAuthHandlers = ({
           req.body,
           req.params.churchId,
         );
-        const admin = await requireTeamsEditForTeamIds(
-          req,
-          req.params.churchId,
-          [
-            ...(await collectMemberTeamIds(existing, req.params.churchId)),
-            ...(await collectMemberTeamIds(payload, req.params.churchId)),
-            // Joining a team is an edit to that team's roster, so hold the
-            // request to the same bar as editing the team itself.
-            ...(requestedTeamIds || []),
-          ],
+        const hasBaseTeamIds = Object.prototype.hasOwnProperty.call(
+          req.body || {},
+          "baseTeamIds",
         );
+        if (hasBaseTeamIds && requestedTeamIds === null) {
+          throw httpError(400, "baseTeamIds requires teamIds.");
+        }
+        const baseTeamIds = hasBaseTeamIds
+          ? await assertTeamEntityIdsInChurch(
+              "team",
+              req.body.baseTeamIds,
+              req.params.churchId,
+              { label: "Team" },
+            )
+          : null;
         const saved = await upsertTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
@@ -12683,12 +14919,17 @@ export const createTeamsAuthHandlers = ({
         // Positions are team-scoped, so being eligible for a team's position
         // implies belonging to that team's roster. Mirror the intake-apply flow
         // and reconcile membership into `team.memberIds`.
-        const { member, teams: updatedTeams } = await syncMemberTeamMembership({
+        const {
+          member,
+          teams: updatedTeams,
+          membershipTeamIds,
+        } = await syncMemberTeamMembership({
           req,
           churchId: req.params.churchId,
           member: saved,
           positionIds: payload.positionIds,
           requestedTeamIds,
+          baseTeamIds,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -12701,9 +14942,145 @@ export const createTeamsAuthHandlers = ({
           success: true,
           member,
           ...(updatedTeams.length ? { teams: updatedTeams } : {}),
+          ...(membershipTeamIds ? { membershipTeamIds } : {}),
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this member.");
+      }
+    },
+
+    async getTeamRosterMemberProfile(req, res) {
+      try {
+        const { churchId, teamId, memberId } = req.params;
+        await requireHumanSession(req);
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team" });
+        if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
+        await requireTeamsEditForTeam(req, churchId, teamId);
+        return res.json(await getTeamProfile({ churchId, teamId, memberId }));
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load this team profile.");
+      }
+    },
+
+    async updateTeamRosterMemberProfile(req, res) {
+      try {
+        await assertCsrf(req);
+        await requireHumanSession(req);
+        const { churchId, teamId, memberId } = req.params;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team" });
+        if (team.teamId && team.teamId !== teamId) throw httpError(409, "Team ownership is invalid.");
+        const admin = await requireTeamsEditForTeam(req, churchId, teamId);
+        await updateTeamProfile({
+          churchId,
+          teamId,
+          memberId,
+          body: req.body,
+          adminUserId: admin.user.uid,
+        });
+        const result = await getTeamProfile({ churchId, teamId, memberId });
+        return res.json({ success: true, ...result });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save this team profile.");
+      }
+    },
+
+    async searchTeamRosterCandidates(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        const teamId = req.params.teamId;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, {
+          label: "Team", active: false,
+        });
+        if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+        await requireTeamsEditForTeam(req, churchId, team.teamId);
+        const query = String(req.query?.q || "").trim().toLocaleLowerCase();
+        if (query.length < 2) throw httpError(400, "Enter at least 2 characters to search.");
+        if (team.memberIds !== undefined && !Array.isArray(team.memberIds)) {
+          throw httpError(409, "Team roster ownership is invalid.");
+        }
+        const members = await listTeamCollectionForChurch(
+          COLLECTIONS.teamRosterMembers,
+          "memberId",
+          churchId,
+        );
+        const alreadyOnTeam = new Set(Array.isArray(team.memberIds) ? team.memberIds : []);
+        const candidates = members
+          .filter((member) => !member.archivedAt && !alreadyOnTeam.has(member.memberId))
+          .filter((member) => `${member.firstName || ""} ${member.lastName || ""}`.toLocaleLowerCase().includes(query))
+          .slice(0, 20)
+          .map((member) => ({
+            memberId: member.memberId,
+            ...(member.title !== undefined ? { title: member.title } : {}),
+            ...(member.firstName !== undefined ? { firstName: member.firstName } : {}),
+            ...(member.lastName !== undefined ? { lastName: member.lastName } : {}),
+            ...(member.profileImageUrl !== undefined ? { profileImageUrl: member.profileImageUrl } : {}),
+          }));
+        return res.json({ candidates });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not search roster candidates.");
+      }
+    },
+
+    async addTeamRosterMember(req, res) {
+      try {
+        await assertCsrf(req);
+        const { churchId, teamId, memberId } = req.params;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team", active: false });
+        if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+        const admin = await requireTeamsEditForTeam(req, churchId, team.teamId);
+        const result = await mutateTeamRoster({
+          churchId,
+          teamId: team.teamId,
+          memberId,
+          add: true,
+          adminUserId: admin.user.uid,
+        });
+        await addSecurityEvent({
+          type: "team_roster_member_added",
+          churchId,
+          userId: admin.user.uid,
+          teamId: team.teamId,
+          memberId,
+        });
+        return res.json({
+          success: true,
+          team: result.team,
+          member: getSafeRosterMemberProjection(result.member, churchId),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not add this member to the team.");
+      }
+    },
+
+    async removeTeamRosterMember(req, res) {
+      try {
+        await assertCsrf(req);
+        const { churchId, teamId, memberId } = req.params;
+        const team = await assertTeamEntityInChurch("team", teamId, churchId, { label: "Team", active: false });
+        if (team.archivedAt) throw httpError(403, "Team roster access is unavailable.");
+        const admin = await requireTeamsEditForTeam(req, churchId, team.teamId);
+        const result = await mutateTeamRoster({
+          churchId,
+          teamId: team.teamId,
+          memberId,
+          add: false,
+          adminUserId: admin.user.uid,
+        });
+        await addSecurityEvent({
+          type: "team_roster_member_removed",
+          churchId,
+          userId: admin.user.uid,
+          teamId: team.teamId,
+          memberId,
+        });
+        return res.json({
+          success: true,
+          team: result.team,
+          member: getSafeRosterMemberProjection(result.member, churchId),
+          preservedAssignmentCount: result.preservedAssignmentCount,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not remove this member from the team.");
       }
     },
 
@@ -12716,11 +15093,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        const admin = await requireTeamsEdit(req, req.params.churchId);
         await archiveTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
@@ -12763,6 +15136,11 @@ export const createTeamsAuthHandlers = ({
           throw httpError(401, "Authentication required");
         }
 
+        const church = await getDoc(COLLECTIONS.churches, req.params.churchId);
+        const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+          ? church.serviceTimeZone
+          : "UTC";
+
         const members = await listTeamCollectionForChurch(
           COLLECTIONS.teamRosterMembers,
           "memberId",
@@ -12770,7 +15148,7 @@ export const createTeamsAuthHandlers = ({
         );
         const member = members.find((row) => row.userId === userId);
         if (!member) {
-          return res.json({ success: true, member: null, occurrences: [] });
+          return res.json({ success: true, serviceTimeZone, member: null, occurrences: [] });
         }
 
         const [schedules, positions, teams] = await Promise.all([
@@ -13013,7 +15391,7 @@ export const createTeamsAuthHandlers = ({
           );
         });
 
-        return res.json({ success: true, member, occurrences });
+        return res.json({ success: true, serviceTimeZone, member, occurrences });
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -13070,10 +15448,13 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Schedule", active: false },
         );
-        const admin = await requireTeamsEditForTeamIds(
+        if (schedule.published === false) {
+          throw httpError(409, "Publish this schedule before sending it.");
+        }
+        const { admin } = await requireTeamScheduleNotificationEdit(
           req,
           req.params.churchId,
-          [schedule.teamId].filter(Boolean),
+          schedule,
         );
 
         const [members, positions, teams] = await Promise.all([
@@ -13230,6 +15611,9 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           churchName: church?.name || "",
+          serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+            ? church.serviceTimeZone
+            : "UTC",
           firstName: String(member?.firstName || member?.name || "")
             .trim()
             .split(/\s+/)[0],
@@ -13669,11 +16053,9 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        // Linking an account changes identity and schedule delivery across the
+        // church. A selected-Team grant is not account-linking authority.
+        let admin = await requireTeamsEdit(req, req.params.churchId);
         const requestedUserId = normalizeShortText(req.body?.userId, {
           max: 160,
         });
@@ -13681,6 +16063,7 @@ export const createTeamsAuthHandlers = ({
         const isSelf = userId === admin.user.uid;
 
         if (!isSelf) {
+          admin = await requireAdminSession(req, req.params.churchId);
           const memberships =
             (await listMembershipsForChurch(req.params.churchId)) || [];
           const target = memberships.find(
@@ -13774,11 +16157,11 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        // Only church-wide Teams editors may detach account links.
+        const admin = await requireTeamsEdit(req, req.params.churchId);
+        if (existing.userId && existing.userId !== admin.user.uid) {
+          await requireAdminSession(req, req.params.churchId);
+        }
         if (!existing.userId) {
           return res.json({ success: true, member: existing });
         }
@@ -13815,10 +16198,14 @@ export const createTeamsAuthHandlers = ({
     async createTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const payload = await validateTeamPositionPayload(
           req.body,
           req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          payload.teamId,
         );
         const position = await upsertTeamEntity({
           kind: "position",
@@ -13844,10 +16231,14 @@ export const createTeamsAuthHandlers = ({
     async createTeamIntakeForm(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = validateTeamIntakeFormPayload(req.body);
+        const { admin, scoped } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          { ...payload, churchId: req.params.churchId },
+        );
         const formId = createId("teamIntakeForm");
         const publicLinkToken = createTeamIntakeShortPublicToken();
-        const payload = validateTeamIntakeFormPayload(req.body);
         const now = nowIso();
         const form = {
           ...payload,
@@ -13872,9 +16263,19 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({
           success: true,
-          form: sanitizeTeamIntakeFormForAdmin(form, 0),
-          publicToken: publicLinkToken,
-          publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
+          form: scoped
+            ? (() => {
+                const safeForm = sanitizeTeamIntakeFormForAdmin(form, 0);
+                delete safeForm.publicUrl;
+                return safeForm;
+              })()
+            : sanitizeTeamIntakeFormForAdmin(form, 0),
+          ...(!scoped
+            ? {
+                publicToken: publicLinkToken,
+                publicUrl: buildTeamIntakePublicUrl(publicLinkToken),
+              }
+            : {}),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -13888,7 +16289,6 @@ export const createTeamsAuthHandlers = ({
     async updateTeamIntakeForm(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const existing = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
@@ -13896,19 +16296,150 @@ export const createTeamsAuthHandlers = ({
         if (!existing || existing.churchId !== req.params.churchId) {
           throw httpError(404, "Intake form not found.");
         }
+        const { admin, scoped } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          existing,
+        );
         const payload = validateTeamIntakeFormPayload(req.body, existing);
+        if (payload.purpose === "team_availability") {
+          await requireTeamAvailabilityFormEdit(
+            req,
+            req.params.churchId,
+            { ...existing, ...payload },
+          );
+        }
+        const changesAvailabilityScope =
+          existing.purpose === "team_availability" &&
+          !sameIdSet(existing.teamIds, payload.teamIds);
+        const writesAvailabilityTeamIds =
+          existing.purpose === "team_availability" &&
+          JSON.stringify(normalizeIdArray(existing.teamIds)) !==
+            JSON.stringify(normalizeIdArray(payload.teamIds));
+        const updatePayload = { ...payload };
+        if (
+          existing.purpose === "team_availability" &&
+          !writesAvailabilityTeamIds
+        ) {
+          delete updatePayload.teamIds;
+        }
         const update = {
-          ...payload,
+          ...updatePayload,
           updatedAt: nowIso(),
           updatedByUid: admin.user.uid,
         };
-        await setDoc(COLLECTIONS.teamIntakeForms, req.params.formId, update, {
-          merge: true,
-        });
+        if (writesAvailabilityTeamIds) {
+          const db = requireFirestore?.();
+          if (db?.runTransaction) {
+            await db.runTransaction(async (transaction) => {
+              const formRef = db
+                .collection(COLLECTIONS.teamIntakeForms)
+                .doc(req.params.formId);
+              const formSnapshot = await transaction.get(formRef);
+              if (!formSnapshot.exists) {
+                throw httpError(404, "Intake form not found.");
+              }
+              const currentForm = formSnapshot.data();
+              if (currentForm.churchId !== req.params.churchId) {
+                throw httpError(404, "Intake form not found.");
+              }
+              if (changesAvailabilityScope) {
+                if (currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true) {
+                  throw httpError(
+                    409,
+                    "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                  );
+                }
+                const recipientQuery = db
+                  .collection(COLLECTIONS.teamIntakeRecipients)
+                  .where("formId", "==", req.params.formId)
+                  .limit(1);
+                const recipientSnapshot = await transaction.get(recipientQuery);
+                if (recipientSnapshot.docs.length) {
+                  throw httpError(
+                    409,
+                    "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                  );
+                }
+              }
+              if (
+                !sameIdSet(currentForm.teamIds, existing.teamIds) &&
+                !sameIdSet(currentForm.teamIds, payload.teamIds)
+              ) {
+                throw httpError(
+                  409,
+                  "This availability form changed. Reload it before saving.",
+                );
+              }
+              transaction.set(formRef, update, { merge: true });
+            });
+          } else {
+            await withTeamAvailabilityFormLock(
+              req.params.formId,
+              async () => {
+                const currentForm = await getDoc(
+                  COLLECTIONS.teamIntakeForms,
+                  req.params.formId,
+                );
+                if (!currentForm || currentForm.churchId !== req.params.churchId) {
+                  throw httpError(404, "Intake form not found.");
+                }
+                if (changesAvailabilityScope) {
+                  const recipients = await queryDocs(
+                    COLLECTIONS.teamIntakeRecipients,
+                    [{ field: "formId", value: req.params.formId }],
+                    { limit: 1 },
+                  );
+                  if (
+                    currentForm[TEAM_AVAILABILITY_SCOPE_LOCK_FIELD] === true ||
+                    recipients.length
+                  ) {
+                    throw httpError(
+                      409,
+                      "Team selection is locked because availability requests have already been issued. Create a new form to change the Team scope.",
+                    );
+                  }
+                }
+                if (
+                  !sameIdSet(currentForm.teamIds, existing.teamIds) &&
+                  !sameIdSet(currentForm.teamIds, payload.teamIds)
+                ) {
+                  throw httpError(
+                    409,
+                    "This availability form changed. Reload it before saving.",
+                  );
+                }
+                await setDoc(
+                  COLLECTIONS.teamIntakeForms,
+                  req.params.formId,
+                  update,
+                  { merge: true },
+                );
+              },
+            );
+          }
+        } else {
+          await setDoc(COLLECTIONS.teamIntakeForms, req.params.formId, update, {
+            merge: true,
+          });
+        }
+        const hasIssuedRecipientRequests = existing.purpose === "team_availability"
+          ? (await queryDocs(
+              COLLECTIONS.teamIntakeRecipients,
+              [{ field: "formId", value: req.params.formId }],
+              { limit: 1 },
+            )).length > 0
+          : undefined;
+        const persistedForm = await getDoc(
+          COLLECTIONS.teamIntakeForms,
+          req.params.formId,
+        );
         const nextForm = {
           formId: req.params.formId,
-          ...existing,
-          ...update,
+          ...(persistedForm || { ...existing, ...update }),
+          ...(hasIssuedRecipientRequests === undefined
+            ? {}
+            : { hasIssuedRecipientRequests }),
         };
         await addSecurityEvent({
           type: "team_intake_form_updated",
@@ -13918,7 +16449,13 @@ export const createTeamsAuthHandlers = ({
         });
         return res.json({
           success: true,
-          form: sanitizeTeamIntakeFormForAdmin(nextForm),
+          form: scoped
+            ? (() => {
+                const safeForm = sanitizeTeamIntakeFormForAdmin(nextForm);
+                delete safeForm.publicUrl;
+                return safeForm;
+              })()
+            : sanitizeTeamIntakeFormForAdmin(nextForm),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -13977,7 +16514,6 @@ export const createTeamsAuthHandlers = ({
     async createTeamIntakeRecipients(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const form = await getDoc(
           COLLECTIONS.teamIntakeForms,
           req.params.formId,
@@ -13985,6 +16521,11 @@ export const createTeamsAuthHandlers = ({
         if (!form || form.churchId !== req.params.churchId) {
           throw httpError(404, "Intake form not found.");
         }
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
         assertTeamIntakeFormIsOpen(form);
         const memberIds = normalizeIdArray(req.body?.memberIds).slice(0, 500);
         if (memberIds.length === 0) {
@@ -14013,6 +16554,7 @@ export const createTeamsAuthHandlers = ({
         const formTeamIds = new Set(normalizeIdArray(form.teamIds));
         const now = nowIso();
         const recipients = [];
+        const selectedMembers = [];
         const existingRecipients = await Promise.all(
           memberIds.map((memberId) =>
             getDoc(
@@ -14027,17 +16569,23 @@ export const createTeamsAuthHandlers = ({
           if (!member || member.archivedAt) {
             throw httpError(404, "Member not found or archived.");
           }
+          selectedMembers.push(member);
           if (formTeamIds.size > 0) {
-            const memberTeamIds = new Set([
-              ...Object.keys(member.teamMemberships || {}),
-              ...(member.positionIds || [])
-                .map((positionId) => positionTeamById.get(positionId))
-                .filter(Boolean),
-              ...teams
-                .filter((team) => (team.memberIds || []).includes(memberId))
-                .map((team) => team.teamId),
-            ]);
-            if (![...formTeamIds].some((teamId) => memberTeamIds.has(teamId))) {
+            const isWithinScope = form.purpose === "team_availability"
+              ? assertMemberWithinIntakeFormScope({ form, member, positions, teams })
+              : (() => {
+                  const memberTeamIds = new Set([
+                    ...Object.keys(member.teamMemberships || {}),
+                    ...(member.positionIds || [])
+                      .map((positionId) => positionTeamById.get(positionId))
+                      .filter(Boolean),
+                    ...teams
+                      .filter((team) => (team.memberIds || []).includes(memberId))
+                      .map((team) => team.teamId),
+                  ]);
+                  return [...formTeamIds].some((teamId) => memberTeamIds.has(teamId));
+                })();
+            if (!isWithinScope) {
               throw httpError(
                 400,
                 "One or more selected members are outside this form's team scope.",
@@ -14113,13 +16661,12 @@ export const createTeamsAuthHandlers = ({
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
               };
-          if (!isActive || !canReuseToken) {
-            writes.push({
-              id: recipientId,
-              data: recipient,
-              merge: Boolean(existing),
-            });
-          }
+          writes.push({
+            id: recipientId,
+            data: recipient,
+            merge: Boolean(existing),
+            shouldWrite: !isActive || !canReuseToken,
+          });
           recipients.push(
             sanitizeTeamIntakeRecipientForAdmin({
               recipientId,
@@ -14127,7 +16674,25 @@ export const createTeamsAuthHandlers = ({
             }),
           );
         }
-        await writeTeamIntakeRecipientBatch(writes);
+        let responseRecipients = recipients;
+        if (form.purpose === "team_availability") {
+          const committedRecipients = await writeTeamIntakeRecipientBatch(
+            writes,
+            {
+              form,
+              churchId: req.params.churchId,
+              members: selectedMembers,
+              teams,
+            },
+          );
+          responseRecipients = committedRecipients.map((recipient) =>
+            sanitizeTeamIntakeRecipientForAdmin(recipient),
+          );
+        } else {
+          await writeTeamIntakeRecipientBatch(
+            writes.filter((write) => write.shouldWrite),
+          );
+        }
         await addSecurityEvent({
           type: "team_intake_recipients_created",
           churchId: req.params.churchId,
@@ -14135,7 +16700,7 @@ export const createTeamsAuthHandlers = ({
           formId: req.params.formId,
           memberIds,
         });
-        return res.json({ success: true, recipients });
+        return res.json({ success: true, recipients: responseRecipients });
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -14148,7 +16713,6 @@ export const createTeamsAuthHandlers = ({
     async getTeamIntakeRecipientLink(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const recipient = await getDoc(
           COLLECTIONS.teamIntakeRecipients,
           req.params.recipientId,
@@ -14162,11 +16726,30 @@ export const createTeamsAuthHandlers = ({
             requireTokenHash: false,
           },
         );
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
+        const teams = form.purpose === "team_availability"
+          ? await listTeamCollectionForChurch(
+              COLLECTIONS.teams,
+              "teamId",
+              req.params.churchId,
+            )
+          : [];
+        if (
+          form.purpose === "team_availability" &&
+          !assertMemberWithinIntakeFormScope({ form, member, positions: [], teams })
+        ) {
+          throw httpError(404, "Individual request not found.");
+        }
         const markCopied = req.body?.markCopied === true;
         const copiedAt = nowIso();
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
           admin.user.uid,
+          { form, member, teams },
         );
         const update = {
           ...(markCopied
@@ -14215,7 +16798,19 @@ export const createTeamsAuthHandlers = ({
     async sendTeamIntakeRecipientSms(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
         enforceRateLimit({
           scope: "team-intake-sms-send",
           key: `${req.params.churchId}:${admin.user.uid}:${req.params.recipientId}`,
@@ -14229,7 +16824,10 @@ export const createTeamsAuthHandlers = ({
             "The shared volunteer message dispatcher is unavailable.",
           );
         }
-        return await sendTeamIntakeNotificationIntent(req, res);
+        return await sendTeamIntakeNotificationIntent({
+          ...req,
+          params: { ...req.params, formId: form.formId },
+        }, res);
       } catch (error) {
         return sendTeamsJsonError(
           res,
@@ -14242,7 +16840,19 @@ export const createTeamsAuthHandlers = ({
     async prepareTeamIntakeRecipientSms(req, res) {
       try {
         await assertCsrf(req);
-        await requireTeamsEdit(req, req.params.churchId);
+        const recipient = await getDoc(
+          COLLECTIONS.teamIntakeRecipients,
+          req.params.recipientId,
+        );
+        if (
+          !recipient ||
+          recipient.churchId !== req.params.churchId ||
+          recipient.formId !== req.params.formId
+        ) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+        await requireTeamAvailabilityFormEdit(req, req.params.churchId, form);
         if (typeof prepareTeamIntakeNotificationIntent !== "function") {
           throw httpError(
             503,
@@ -14262,12 +16872,32 @@ export const createTeamsAuthHandlers = ({
     async revokeTeamIntakeRecipient(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const recipient = await getDoc(
           COLLECTIONS.teamIntakeRecipients,
           req.params.recipientId,
         );
         if (!recipient || recipient.churchId !== req.params.churchId) {
+          throw httpError(404, "Individual request not found.");
+        }
+        const form = await getDoc(COLLECTIONS.teamIntakeForms, recipient.formId);
+        const { admin } = await requireTeamAvailabilityFormEdit(
+          req,
+          req.params.churchId,
+          form,
+        );
+        if (
+          form.purpose === "team_availability" &&
+          !assertMemberWithinIntakeFormScope({
+            form,
+            member: { memberId: recipient.memberId },
+            positions: [],
+            teams: await listTeamCollectionForChurch(
+              COLLECTIONS.teams,
+              "teamId",
+              req.params.churchId,
+            ),
+          })
+        ) {
           throw httpError(404, "Individual request not found.");
         }
         const revokedAt = nowIso();
@@ -14362,6 +16992,9 @@ export const createTeamsAuthHandlers = ({
         return res.json({
           success: true,
           churchName: church?.name || "WorshipSync",
+          serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+            ? church.serviceTimeZone
+            : "UTC",
           ...(churchLogoUrl ? { churchLogoUrl } : {}),
           form: {
             formId: form.formId,
@@ -14477,22 +17110,27 @@ export const createTeamsAuthHandlers = ({
       try {
         await assertCsrf(req);
         const churchId = req.params.churchId;
-        const admin = await requireTeamsEdit(req, churchId);
         const existing = await assertTeamEntityInChurch(
           "position",
           req.params.positionId,
           churchId,
           { active: false, label: "Position" },
         );
+        const payload = await validateTeamPositionPayload(
+          req.body,
+          churchId,
+          existing,
+        );
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existing.teamId, payload.teamId],
+        );
         const position = await upsertTeamEntity({
           kind: "position",
           churchId,
           id: req.params.positionId,
-          payload: await validateTeamPositionPayload(
-            req.body,
-            churchId,
-            existing,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14510,7 +17148,6 @@ export const createTeamsAuthHandlers = ({
     async reorderTeamPositions(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const churchId = req.params.churchId;
         // The team scopes the reorder so we never renumber another team's positions.
         const team = await assertTeamEntityInChurch(
@@ -14519,52 +17156,106 @@ export const createTeamsAuthHandlers = ({
           churchId,
           { label: "Team", active: false },
         );
+        const admin = await requireTeamsEditForTeam(req, churchId, team.teamId);
         const positionIds = normalizeIdArray(req.body?.positionIds);
         if (!positionIds.length) {
           throw httpError(400, "No positions to reorder.");
         }
-        // Every id must be an existing position in this church owned by the team
-        // (archived included — order applies to the whole list).
-        const positions = await Promise.all(
-          positionIds.map(async (positionId) => {
-            const position = await assertTeamEntityInChurch(
-              "position",
-              positionId,
-              churchId,
-              { label: "Position", active: false },
-            );
+        const validatePositions = (positions) => {
+          positions.forEach((position) => {
+            if (position.churchId !== churchId) {
+              throw httpError(404, "Position not found.");
+            }
             if (position.teamId !== team.teamId) {
               throw httpError(400, "That position is not part of this team.");
             }
-            return position;
-          }),
-        );
-        const now = nowIso();
-        await Promise.all(
-          positionIds.map((positionId, index) =>
-            setDoc(
-              COLLECTIONS.teamPositions,
-              positionId,
-              {
+          });
+          return positions;
+        };
+        const db = requireFirestore();
+        let positions;
+        if (db) {
+          positions = await db.runTransaction(async (transaction) => {
+            const teamRef = db.collection(COLLECTIONS.teams).doc(team.teamId);
+            const teamSnapshot = await transaction.get(teamRef);
+            const currentTeam = readTransactionTeamEntity(
+              teamSnapshot,
+              "teamId",
+              "Team",
+              { active: false },
+            );
+            if (currentTeam.churchId !== churchId) {
+              throw httpError(404, "Team not found.");
+            }
+            const refs = positionIds.map((positionId) =>
+              db.collection(COLLECTIONS.teamPositions).doc(positionId),
+            );
+            const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)));
+            const currentPositions = validatePositions(snapshots.map((snapshot) => {
+              const position = readTransactionTeamEntity(
+                snapshot,
+                "positionId",
+                "Position",
+                { active: false },
+              );
+              return position;
+            }));
+            const now = nowIso();
+            refs.forEach((ref, index) => {
+              transaction.set(ref, {
                 order: index,
                 updatedAt: now,
                 updatedByUid: admin.user.uid,
-              },
-              { merge: true },
-            ),
-          ),
-        );
+              }, { merge: true });
+            });
+            return currentPositions.map((position, index) => ({
+              ...position,
+              order: index,
+              updatedAt: now,
+              updatedByUid: admin.user.uid,
+            }));
+          });
+        } else {
+          positions = await enqueueInMemoryTeamPositionReorder(
+            `${churchId}:${team.teamId}`,
+            async () => {
+              const currentPositions = validatePositions(await Promise.all(
+                positionIds.map(async (positionId) => {
+                  const position = await assertTeamEntityInChurch(
+                    "position",
+                    positionId,
+                    churchId,
+                    { active: false, label: "Position" },
+                  );
+                  return position;
+                }),
+              ));
+              const now = nowIso();
+              await Promise.all(positionIds.map((positionId, index) =>
+                setDoc(
+                  COLLECTIONS.teamPositions,
+                  positionId,
+                  { order: index, updatedAt: now, updatedByUid: admin.user.uid },
+                  { merge: true },
+                ),
+              ));
+              return currentPositions.map((position, index) => ({
+                ...position,
+                order: index,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+              }));
+            },
+          );
+        }
         await addSecurityEvent({
           type: "team_positions_reordered",
           churchId,
           userId: admin.user.uid,
           teamId: team.teamId,
         });
-        const reordered = positions.map((position, index) => ({
-          ...position,
-          order: index,
-        }));
-        return res.json({ success: true, positions: reordered });
+        emitTeamsEvent(churchId, "team-positions-reordered");
+        return res.json({ success: true, positions });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not reorder positions.");
       }
@@ -14573,7 +17264,17 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "position",
+          req.params.positionId,
+          req.params.churchId,
+          { active: false, label: "Position" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await archiveTeamEntity({
           kind: "position",
           churchId: req.params.churchId,
@@ -14599,11 +17300,16 @@ export const createTeamsAuthHandlers = ({
     async createTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = await validateTeamRolePayload(req.body, req.params.churchId);
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          payload.teamId,
+        );
         const role = await upsertTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
-          payload: await validateTeamRolePayload(req.body, req.params.churchId),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14621,18 +17327,24 @@ export const createTeamsAuthHandlers = ({
     async updateTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
         const existingRole = await assertTeamEntityInChurch(
           "role",
           req.params.roleId,
-          req.params.churchId,
+          churchId,
           { active: false, label: "Role" },
+        );
+        const payload = await validateTeamRolePayload(req.body, churchId, existingRole);
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existingRole.teamId, payload.teamId],
         );
         const role = await upsertTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
           id: req.params.roleId,
-          payload: await validateTeamRolePayload(req.body, req.params.churchId, existingRole),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14650,7 +17362,17 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "role",
+          req.params.roleId,
+          req.params.churchId,
+          { active: false, label: "Role" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await archiveTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
@@ -14672,7 +17394,17 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamRole(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "role",
+          req.params.roleId,
+          req.params.churchId,
+          { active: false, label: "Role" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await deleteTeamEntity({
           kind: "role",
           churchId: req.params.churchId,
@@ -14694,14 +17426,19 @@ export const createTeamsAuthHandlers = ({
     async createTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = await validateQualificationAreaPayload(
+          req.body,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          payload.teamId,
+        );
         const area = await upsertTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
-          payload: await validateQualificationAreaPayload(
-            req.body,
-            req.params.churchId,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14723,22 +17460,28 @@ export const createTeamsAuthHandlers = ({
     async updateTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
         const existingArea = await assertTeamEntityInChurch(
           "qualificationArea",
           req.params.areaId,
-          req.params.churchId,
+          churchId,
           { active: false, label: "Qualification area" },
+        );
+        const payload = await validateQualificationAreaPayload(
+          req.body,
+          churchId,
+          existingArea,
+        );
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existingArea.teamId, payload.teamId],
         );
         const area = await upsertTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
           id: req.params.areaId,
-          payload: await validateQualificationAreaPayload(
-            req.body,
-            req.params.churchId,
-            existingArea,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14760,7 +17503,17 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationArea",
+          req.params.areaId,
+          req.params.churchId,
+          { active: false, label: "Qualification area" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await archiveTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
@@ -14786,7 +17539,17 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamQualificationArea(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationArea",
+          req.params.areaId,
+          req.params.churchId,
+          { active: false, label: "Qualification area" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await deleteTeamEntity({
           kind: "qualificationArea",
           churchId: req.params.churchId,
@@ -14812,14 +17575,23 @@ export const createTeamsAuthHandlers = ({
     async createTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const payload = await validateQualificationLevelPayload(
+          req.body,
+          req.params.churchId,
+        );
+        const targetTeamId = await resolveQualificationLevelTeamId(
+          { areaId: payload.areaId },
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          targetTeamId,
+        );
         const level = await upsertTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
-          payload: await validateQualificationLevelPayload(
-            req.body,
-            req.params.churchId,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14841,15 +17613,28 @@ export const createTeamsAuthHandlers = ({
     async updateTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const churchId = req.params.churchId;
+        const existing = await assertTeamEntityInChurch(
+          "qualificationLevel",
+          req.params.levelId,
+          churchId,
+          { active: false, label: "Qualification level" },
+        );
+        const payload = await validateQualificationLevelPayload(req.body, churchId);
+        const [existingTeamId, nextTeamId] = await Promise.all([
+          resolveQualificationLevelTeamId(existing, churchId),
+          resolveQualificationLevelTeamId({ areaId: payload.areaId }, churchId),
+        ]);
+        const admin = await requireTeamsEditForTeamIds(
+          req,
+          churchId,
+          [existingTeamId, nextTeamId],
+        );
         const level = await upsertTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
           id: req.params.levelId,
-          payload: await validateQualificationLevelPayload(
-            req.body,
-            req.params.churchId,
-          ),
+          payload,
           adminUserId: admin.user.uid,
         });
         await addSecurityEvent({
@@ -14871,7 +17656,21 @@ export const createTeamsAuthHandlers = ({
     async archiveTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationLevel",
+          req.params.levelId,
+          req.params.churchId,
+          { active: false, label: "Qualification level" },
+        );
+        const teamId = await resolveQualificationLevelTeamId(
+          existing,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          teamId,
+        );
         await archiveTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
@@ -14897,7 +17696,21 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamQualificationLevel(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "qualificationLevel",
+          req.params.levelId,
+          req.params.churchId,
+          { active: false, label: "Qualification level" },
+        );
+        const teamId = await resolveQualificationLevelTeamId(
+          existing,
+          req.params.churchId,
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          teamId,
+        );
         await deleteTeamEntity({
           kind: "qualificationLevel",
           churchId: req.params.churchId,
@@ -14945,20 +17758,70 @@ export const createTeamsAuthHandlers = ({
     async updateTeam(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
         const existingTeam = await assertTeamEntityInChurch(
           "team",
           req.params.teamId,
           req.params.churchId,
           { label: "Team", active: false },
         );
-        const team = await upsertTeamEntity({
-          kind: "team",
-          churchId: req.params.churchId,
-          id: req.params.teamId,
-          payload: await validateTeamPayload(req.body, req.params.churchId, existingTeam),
-          adminUserId: admin.user.uid,
-        });
+        let admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existingTeam.teamId,
+        );
+        const payload = validateTeamSettingsPayload(req.body, existingTeam);
+        const hasMemberIds = Object.prototype.hasOwnProperty.call(
+          req.body || {},
+          "memberIds",
+        );
+        const hasBaseMemberIds = Object.prototype.hasOwnProperty.call(
+          req.body || {},
+          "baseMemberIds",
+        );
+        if (hasBaseMemberIds && !hasMemberIds) {
+          throw httpError(400, "baseMemberIds requires memberIds.");
+        }
+        let team = null;
+        if (hasMemberIds) {
+          const memberIds = await validateTeamMemberIds(
+            req.body.memberIds,
+            req.params.churchId,
+          );
+          if (hasBaseMemberIds) {
+            const baseMemberIds = await validateTeamMemberIds(
+              req.body.baseMemberIds,
+              req.params.churchId,
+            );
+            if (!sameIdSet(baseMemberIds, memberIds)) {
+              // The general Team editor can change rosters only with church-wide
+              // Teams access. The baseline lets the server apply this editor's
+              // additions/removals over the roster as it exists now.
+              admin = await requireTeamsEdit(req, req.params.churchId);
+              team = await updateTeamWithMemberIdsDelta({
+                churchId: req.params.churchId,
+                teamId: req.params.teamId,
+                payload,
+                baseMemberIds,
+                requestedMemberIds: memberIds,
+                adminUserId: admin.user.uid,
+              });
+            }
+          } else if (!sameIdSet(existingTeam.memberIds, memberIds)) {
+            // The canonical roster grants automatic Team read access, so it has
+            // a separate authorization boundary from Team-owned settings.
+            admin = await requireTeamsEdit(req, req.params.churchId);
+            payload.memberIds = memberIds;
+          }
+        }
+        if (!team) {
+          team = await upsertTeamEntity({
+            kind: "team",
+            churchId: req.params.churchId,
+            id: req.params.teamId,
+            payload,
+            adminUserId: admin.user.uid,
+          });
+        }
         await addSecurityEvent({
           type: "team_updated",
           churchId: req.params.churchId,
@@ -14998,14 +17861,12 @@ export const createTeamsAuthHandlers = ({
         await assertCsrf(req);
         const churchId = req.params.churchId;
         let payload = await validateTeamSchedulePayload(req.body, churchId);
-        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
-        if (!timeZone)
-          throw httpError(400, "Choose a time zone for this schedule period.");
         const admin = await requireTeamsEditForTeam(
           req,
           churchId,
           payload.teamId,
         );
+        const timeZone = await requireConfiguredChurchServiceTimeZone(churchId);
         const activeServicesById = new Map(
           (await readChurchServiceTimes(churchId))
             .filter((service) => !service?.archivedAt)
@@ -15015,6 +17876,16 @@ export const createTeamsAuthHandlers = ({
               }),
               service,
             ]),
+        );
+        const teamPositionIds = new Set(
+          (await listTeamCollectionForChurch(
+            COLLECTIONS.teamPositions,
+            "positionId",
+            churchId,
+          ))
+            .filter((position) => position.teamId === payload.teamId)
+            .map((position) => normalizeShortText(position.positionId, { max: 160 }))
+            .filter(Boolean),
         );
         if (
           payload.serviceIds.some(
@@ -15060,8 +17931,11 @@ export const createTeamsAuthHandlers = ({
             serviceIds: occurrenceServiceIds,
             groupId:
               normalizeShortText(occurrence.groupId, { max: 160 }) || undefined,
+            logicalOccurrenceId:
+              normalizeShortText(occurrence.logicalOccurrenceId, { max: 260 }) || undefined,
             occurrenceId: occurrence.occurrenceId,
             startsAt: occurrence.startsAt,
+            serviceDate: occurrence.serviceDate,
             localParts,
             timeZone,
             servicesById: activeServicesById,
@@ -15077,16 +17951,17 @@ export const createTeamsAuthHandlers = ({
               ? occurrence.serviceIds
               : [occurrence.serviceId],
           );
-          const requirements = occurrence.groupId
-            ? mergeServicePositionRequirements(
-                serviceIds.map((id) => activeServicesById.get(id)),
-              )
-            : sanitizePositionRequirements(
-                activeServicesById.get(occurrence.serviceId)
-                  ?.positionRequirements,
-              );
+          const requirements = mergeServicePositionRequirements(
+            serviceIds.map((id) => activeServicesById.get(id)),
+          ).filter((requirement) => teamPositionIds.has(requirement.positionId));
+          const serviceDate = getOccurrenceCalendarParts(occurrence.startsAt, timeZone).date;
+          const logicalOccurrenceId = occurrence.groupId
+            ? logicalOccurrenceIdForGroup(occurrence.groupId, serviceDate)
+            : logicalOccurrenceIdForService(occurrence.serviceId, serviceDate);
           return {
             ...occurrence,
+            logicalOccurrenceId,
+            serviceDate,
             ...(requirements.length
               ? { positionRequirements: requirements }
               : { positionRequirements: [] }),
@@ -15139,12 +18014,28 @@ export const createTeamsAuthHandlers = ({
                 Object.keys(schedule.optionalPositionSlots || {}).length ||
                 Object.keys(schedule.responses || {}).length,
             );
+          const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
+            schedule.churchId === churchId && hasScheduleData(schedule) &&
+            schedule.startDate && schedule.endDate &&
+            schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
+            hasOccurrenceIdentityAmbiguity(
+              schedule.occurrences || [],
+              payload.occurrences,
+              timeZone,
+            ),
+          );
+          if (ambiguousSavedSchedule) {
+            throw httpError(
+              409,
+              "A saved schedule has occurrence rows that cannot be matched safely. Its assignments were preserved; review the saved schedule before creating another.",
+            );
+          }
           // Resolve the default schedule from the full requested period. A
           // partial custom schedule remains an overlap-picker option.
           const compatible = activeTeamSchedules.filter(
             (schedule) => schedule.churchId === churchId &&
               schedule.startDate && schedule.endDate &&
-              coversCurrentOccurrences(schedule.occurrences || [], payload.occurrences),
+              coversCurrentOccurrences(schedule.occurrences || [], payload.occurrences, timeZone),
           );
           const canonicalGenerated = compatible.filter(
             (schedule) =>
@@ -15198,7 +18089,7 @@ export const createTeamsAuthHandlers = ({
 
           const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
           const reuseExisting = (existing) => {
-            if (!coversCurrentOccurrences(existing.occurrences || [], payload.occurrences)) {
+            if (!coversCurrentOccurrences(existing.occurrences || [], payload.occurrences, timeZone)) {
               throw httpError(409, "This saved period is missing current services. Edit its services or create a custom schedule for this period.");
             }
             return { schedule: existing, created: false };
@@ -15356,6 +18247,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           payload.teamId,
         );
+        await requireConfiguredChurchServiceTimeZone(req.params.churchId);
         if (Object.keys(payload.assignments || {}).length > 0) {
           const schedules = await listScheduleConflictCandidates({
             churchId: req.params.churchId,
@@ -15465,6 +18357,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           [existing.teamId, payload.teamId],
         );
+        await requireConfiguredChurchServiceTimeZone(req.params.churchId);
         const newAssignmentConflictChecks =
           getNewScheduleAssignmentConflictChecks({
             previousAssignments: existing.assignments,
@@ -15642,11 +18535,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           { label: "Member", active: false },
         );
-        const admin = await requireTeamsEditForMember(
-          req,
-          req.params.churchId,
-          existing,
-        );
+        const admin = await requireTeamsEdit(req, req.params.churchId);
         await deleteTeamEntity({
           kind: "member",
           churchId: req.params.churchId,
@@ -15668,7 +18557,17 @@ export const createTeamsAuthHandlers = ({
     async deleteTeamPosition(req, res) {
       try {
         await assertCsrf(req);
-        const admin = await requireTeamsEdit(req, req.params.churchId);
+        const existing = await assertTeamEntityInChurch(
+          "position",
+          req.params.positionId,
+          req.params.churchId,
+          { active: false, label: "Position" },
+        );
+        const admin = await requireTeamsEditForTeam(
+          req,
+          req.params.churchId,
+          existing.teamId,
+        );
         await deleteTeamEntity({
           kind: "position",
           churchId: req.params.churchId,
@@ -15756,28 +18655,122 @@ export const createTeamsAuthHandlers = ({
     // from scratch or import, then edit) — separate from ServiceTime (the
     // recurring day/time/positions definition) and from the live PouchDB
     // outline it eventually gets pushed into.
+    async getChurchServiceTimeZone(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        let controllerOnlyRead = false;
+        try {
+          await requireServicesWorkspaceView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          try {
+            await requireTeamsView(req, churchId);
+          } catch (teamsError) {
+            if (teamsError?.statusCode !== 403) throw teamsError;
+            const bootstrap = await requireHumanSession(req);
+            const controllerAccess =
+              bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
+            if (
+              bootstrap.churchId !== churchId ||
+              bootstrap.role !== "member" ||
+              !["full", "music", "view"].includes(controllerAccess)
+            ) {
+              throw teamsError;
+            }
+            controllerOnlyRead = true;
+          }
+        }
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (!church) throw httpError(404, "Church settings were not found.");
+        const isConfigured = isValidPortableTimeZone(church.serviceTimeZone);
+        const serviceTimeZone = isConfigured ? church.serviceTimeZone : "UTC";
+        let legacyTimeZoneSuggestion = null;
+        if (!isConfigured && !controllerOnlyRead) {
+          const legacyChatSettings = await getDoc("chatSettings", churchId);
+          const legacyTimeZone = legacyChatSettings?.timeZone;
+          if (isValidPortableTimeZone(legacyTimeZone)) {
+            legacyTimeZoneSuggestion = legacyTimeZone;
+          }
+        }
+        return res.json({
+          success: true,
+          serviceTimeZone,
+          isConfigured,
+          ...(controllerOnlyRead ? {} : { legacyTimeZoneSuggestion }),
+        });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not load the church service timezone.",
+        );
+      }
+    },
+
+    async updateChurchServiceTimeZone(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireServicesEdit(req, churchId);
+        const serviceTimeZone = String(req.body?.serviceTimeZone || "").trim();
+        if (!isValidPortableTimeZone(serviceTimeZone)) {
+          throw httpError(400, "Choose a valid IANA timezone.");
+        }
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (!church) throw httpError(404, "Church settings were not found.");
+        await updateDocFields(COLLECTIONS.churches, churchId, {
+          serviceTimeZone,
+        });
+        invalidateChurchServiceTimeZone(churchId);
+        return res.json({ success: true, serviceTimeZone, isConfigured: true });
+      } catch (error) {
+        return sendTeamsJsonError(
+          res,
+          error,
+          "Could not update the church service timezone.",
+        );
+      }
+    },
+
     async listServicePlans(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireServicePlansView(req, churchId);
+        let reader;
+        let servicesRead = true;
+        try {
+          reader = await requireServicesView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          servicesRead = false;
+          reader = await requireTeamsView(req, churchId);
+        }
+        const visiblePlanKeys = servicesRead
+          ? null
+          : await getTeamScopedServicePlanKeys(churchId, reader);
         const docs = await queryDocs(
           COLLECTIONS.servicePlans,
           [{ field: "churchId", value: churchId }],
           { limit: TEAM_COLLECTION_QUERY_LIMIT },
         );
-        // Lightweight projection for the Plans list — enough to show "does
-        // this date already have a plan" without shipping every plan's
-        // full section/element content down for a list view.
-        const servicePlans = docs.map((doc) => ({
-          planKey: doc.planKey,
-          serviceId: doc.serviceId,
-          serviceIds: doc.serviceIds,
-          groupId: doc.groupId,
-          date: doc.date,
-          name: doc.name,
-          startsAt: doc.startsAt,
-          published: Boolean(doc.published),
-        }));
+        const visibleDocs = docs.filter((doc) =>
+          servicesRead || visiblePlanKeys.has(doc.planKey),
+        );
+        // Services readers receive plan metadata. Team readers receive only
+        // plan keys for occurrences scheduled by their authorized teams.
+        const servicePlans = visibleDocs.map((doc) =>
+          servicesRead
+            ? {
+                planKey: doc.planKey,
+                serviceId: doc.serviceId,
+                serviceIds: doc.serviceIds,
+                groupId: doc.groupId,
+                date: doc.date,
+                name: doc.name,
+                startsAt: doc.startsAt,
+                published: Boolean(doc.published),
+              }
+            : { planKey: doc.planKey },
+        );
         return res.json({ success: true, servicePlans });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load service plans.");
@@ -15923,20 +18916,30 @@ export const createTeamsAuthHandlers = ({
       try {
         const churchId = req.params.churchId;
         const reader = await requireServicePlansView(req, churchId);
-        if (isPlanOnlyReader(reader)) {
-          return res.json({ success: true, assignments: [] });
-        }
         const planKey = decodeURIComponent(req.params.planKey);
         const servicePlan = await getDoc(
           COLLECTIONS.servicePlans,
           buildServicePlanDocId(churchId, planKey),
         );
-        if (!servicePlan || servicePlan.churchId !== churchId) {
+        // A plan-only workstation gets the sanitized current-service viewer
+        // projection, but not this separate assignment-list endpoint.
+        const planOnlyWorkstation =
+          reader?.sessionKind === "workstation" &&
+          reader.device?.serviceWorkspaceAccess !== true;
+        if (
+          !servicePlan ||
+          servicePlan.churchId !== churchId ||
+          planOnlyWorkstation
+        ) {
           return res.json({ success: true, assignments: [] });
         }
         return res.json({
           success: true,
-          assignments: await buildServicePlanAssignments(churchId, planKey),
+          assignments: await buildServicePlanAssignments(
+            churchId,
+            planKey,
+            servicePlan,
+          ),
         });
       } catch (error) {
         return sendTeamsJsonError(
@@ -15997,7 +19000,7 @@ export const createTeamsAuthHandlers = ({
           servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         }
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
           saveOperationId: payload.saveOperationId,
         });
         await emitPublicServicePlanUpdated(
@@ -16049,9 +19052,7 @@ export const createTeamsAuthHandlers = ({
           throw httpError(400, "Existing plans can only be skipped.");
         }
         const useServiceDefaults = req.body?.useServiceDefaults === true;
-        const timeZone = normalizeShortText(req.body?.timeZone, { max: 80 });
-        if (!timeZone)
-          throw httpError(400, "Choose a time zone for service occurrences.");
+        const timeZone = await requireConfiguredChurchServiceTimeZone(churchId);
         const templateId = normalizeShortText(req.body?.templateId, {
           max: 160,
         });
@@ -16097,11 +19098,15 @@ export const createTeamsAuthHandlers = ({
           }
           const expectedOccurrenceId = groupId
             ? `group:${groupId}@${date}`
+            : logicalOccurrenceIdForService(serviceId, date);
+          const legacyOccurrenceId = groupId
+            ? `group:${groupId}@${startsAt.slice(0, 10)}`
             : `${serviceId}@${startsAt}`;
+          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
           if (
             !occurrenceId ||
-            occurrenceId !== expectedOccurrenceId ||
-            startsAt.slice(0, 10) !== date
+            (occurrenceId !== expectedOccurrenceId && occurrenceId !== legacyOccurrenceId) ||
+            localParts.date !== date
           ) {
             throw httpError(
               400,
@@ -16118,13 +19123,14 @@ export const createTeamsAuthHandlers = ({
               "Every target must use active service definitions.",
             );
           }
-          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
           assertOccurrenceServiceGroup({
             serviceId,
             serviceIds,
             groupId,
+            logicalOccurrenceId: raw?.logicalOccurrenceId,
             occurrenceId,
             startsAt,
+            serviceDate: date,
             localParts,
             timeZone,
             servicesById,
@@ -16264,7 +19270,7 @@ export const createTeamsAuthHandlers = ({
           );
           if (plan)
             emitTeamsEvent(churchId, "service-plan-updated", {
-              servicePlan: withoutServicePlanSecrets(plan),
+              planKey: plan.planKey,
             });
         }
         return res.json({
@@ -16288,7 +19294,7 @@ export const createTeamsAuthHandlers = ({
     async listServicePlanTemplates(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicesWorkspaceView(req, churchId);
         const docs = await queryDocs(
           COLLECTIONS.servicePlanTemplates,
           [{ field: "churchId", value: churchId }],
@@ -16381,7 +19387,7 @@ export const createTeamsAuthHandlers = ({
           );
           template = await getDoc(COLLECTIONS.servicePlanTemplates, templateId);
         }
-        emitTeamsEvent(churchId, "service-plan-template-updated", { template });
+        emitTeamsEvent(churchId, "service-plan-template-updated", { templateId });
         return res.json({ success: true, template });
       } catch (error) {
         if (error?.servicePlanTemplateConflict) {
@@ -16435,7 +19441,7 @@ export const createTeamsAuthHandlers = ({
     async getServicePlanAssignmentHistory(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        await requireServicesWorkspaceView(req, churchId);
         const doc = await getDoc(
           COLLECTIONS.servicePlanAssignmentHistory,
           churchId,
@@ -16483,7 +19489,14 @@ export const createTeamsAuthHandlers = ({
     async getServicePlanMicrophones(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        // Team schedule workflows need this non-personal catalog to place
+        // equipment assignments. Services readers also use it in the editor.
+        try {
+          await requireServicesWorkspaceView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          await requireTeamsView(req, churchId);
+        }
         const church = await getDoc(COLLECTIONS.churches, churchId);
         const microphones = (
           Array.isArray(church?.servicePlanMicrophones)
@@ -16570,7 +19583,14 @@ export const createTeamsAuthHandlers = ({
     async getServiceEquipment(req, res) {
       try {
         const churchId = req.params.churchId;
-        await requireTeamsView(req, churchId);
+        // Team schedule workflows need this non-personal catalog to place
+        // equipment assignments. Services readers also use it in the editor.
+        try {
+          await requireServicesWorkspaceView(req, churchId);
+        } catch (error) {
+          if (error?.statusCode !== 403) throw error;
+          await requireTeamsView(req, churchId);
+        }
         const church = await getDoc(COLLECTIONS.churches, churchId);
         return res.json({
           success: true,
@@ -16666,7 +19686,7 @@ export const createTeamsAuthHandlers = ({
         });
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
           servicePlan,
@@ -16863,7 +19883,7 @@ export const createTeamsAuthHandlers = ({
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
           { ...existing, published: true },
@@ -16910,7 +19930,7 @@ export const createTeamsAuthHandlers = ({
         );
         const servicePlan = await getDoc(COLLECTIONS.servicePlans, docId);
         emitTeamsEvent(churchId, "service-plan-updated", {
-          servicePlan: withoutServicePlanSecrets(servicePlan),
+          planKey: servicePlan.planKey,
         });
         await emitPublicServicePlanUpdated(
           servicePlan,

@@ -23,10 +23,10 @@ const mockedGetChatContext = jest.mocked(getChatContext);
 const mockedGetChatMessages = jest.mocked(getChatMessages);
 const mockedStreamChatEvents = jest.mocked(streamChatEvents);
 
-const contextFor = (todayKey: string): ChatContextInfo => ({
+const contextFor = (todayKey: string, timeZone = "UTC"): ChatContextInfo => ({
   actorId: "user_1",
   actorName: "Alex",
-  timeZone: "UTC",
+  timeZone,
   todayKey,
   retentionDays: 365,
   imageUploadsEnabled: true,
@@ -51,6 +51,9 @@ const ChatHarness = () => {
   return (
     <>
       <button type="button" onClick={chat?.openChat}>Open chat</button>
+      <button type="button" onClick={() => void chat?.refreshContext()}>
+        Refresh context
+      </button>
       <button
         type="button"
         onClick={() => void chat?.selectDay("2026-08-03")}
@@ -58,6 +61,7 @@ const ChatHarness = () => {
         Previous week
       </button>
       <div>week: {chat?.selectedDayKey}</div>
+      <div>time zone: {chat?.context?.timeZone}</div>
       <div>{chat?.messages.map((message) => message.text).join(", ")}</div>
     </>
   );
@@ -155,6 +159,23 @@ describe("ChatProvider weekly rollover", () => {
 
     await waitFor(() => expect(mockedGetChatContext).toHaveBeenCalledTimes(2));
     expect(mockedStreamChatEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the context and chat stream when the church time zone changes within the same week", async () => {
+    const previousContext = contextFor("2026-08-09", "UTC");
+    const updatedContext = contextFor("2026-08-09", "America/New_York");
+    mockedGetChatContext
+      .mockResolvedValueOnce({ context: previousContext })
+      .mockResolvedValueOnce({ context: updatedContext });
+
+    renderChat();
+    expect(await screen.findByText("time zone: UTC")).toBeInTheDocument();
+    await waitFor(() => expect(mockedStreamChatEvents).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh context" }));
+
+    expect(await screen.findByText("time zone: America/New_York")).toBeInTheDocument();
+    await waitFor(() => expect(mockedStreamChatEvents).toHaveBeenCalledTimes(2));
   });
 
   it("shows the current week when chat opens after rollover", async () => {

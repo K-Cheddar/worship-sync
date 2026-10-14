@@ -47,7 +47,7 @@ it("reports SMS, scope, revoked, and responded exclusions without making them se
 
   expect(rows.map(({ member: item, eligible, reason }) => [item.memberId, eligible, reason])).toEqual([
     ["eligible", true, ""],
-    ["no-mobile", false, "Missing or invalid phone"],
+    ["no-mobile", false, "No mobile number"],
     ["outside", false, "Outside this form’s team scope"],
     ["responded", false, "Already responded"],
     ["revoked", false, "Response link revoked"],
@@ -55,8 +55,8 @@ it("reports SMS, scope, revoked, and responded exclusions without making them se
 });
 
 it.each([
-  ["consent_needed", "SMS consent needed"],
-  ["opted_out", "SMS opted out"],
+  ["consent_needed", "Text message consent needed"],
+  ["opted_out", "This phone number opted out"],
 ] as const)("excludes members with %s consent state", (status, reason) => {
   const rows = getAvailabilityRecipientRows({
     members: [member("one")],
@@ -113,7 +113,7 @@ it("keeps only unsent eligible members selectable and exposes retryable and unce
     ["ready", true, "", ""],
     ["sent", false, "Already sent", "sent"],
     ["failed", true, "", "failed"],
-    ["uncertain", false, "Previous send outcome is uncertain. Check message history before sending again.", "uncertain"],
+    ["uncertain", false, "We couldn't confirm whether this text was sent. Check message history before trying again.", "uncertain"],
     ["responded", false, "Already responded", ""],
     ["outside", false, "Outside this form’s team scope", ""],
   ]);
@@ -187,7 +187,7 @@ it("treats a failed attempt with no outcome as uncertain even when its intent is
 
   expect(rows[0]).toMatchObject({
     eligible: false,
-    reason: "Previous send outcome is uncertain. Check message history before sending again.",
+    reason: "We couldn't confirm whether this text was sent. Check message history before trying again.",
     previousDeliveryStatus: "uncertain",
   });
 });
