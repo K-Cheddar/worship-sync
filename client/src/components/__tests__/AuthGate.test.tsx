@@ -61,6 +61,20 @@ const renderWithGate = (
   );
 
 describe("AuthGate", () => {
+  it.each(["human", "workstation", "display"])(
+    "keeps %s display sessions empty during authentication and reconnect",
+    (sessionKind) => {
+      const { container } = renderWithGate(
+        { sessionKind, bootstrapStatus: "loading", loginState: "loading", authServerStatus: "unavailable", authServerRetryCount: 2 },
+        ["human", "workstation", "display"],
+        "/projector?outputId=main",
+      );
+      expect(container.textContent).toBe("");
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(container).toContainHTML('<div class="min-h-dvh w-full bg-transparent" aria-busy="true"></div>');
+    },
+  );
   it("shows a loading screen while bootstrap or sign-in is loading", () => {
     renderWithGate(
       { bootstrapStatus: "loading", loginState: "loading" },

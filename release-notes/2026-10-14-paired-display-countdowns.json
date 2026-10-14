@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-14-paired-display-countdowns",
+  "date": "2026-10-14",
+  "type": "fixed",
+  "title": "Keep service countdowns aligned",
+  "description": "Paired displays now use your church's time zone for service countdowns, keeping monitors, projectors, and streams aligned with the controller."
+}

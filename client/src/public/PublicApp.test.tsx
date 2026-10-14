@@ -1,8 +1,27 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getPublicServiceFlow } from "../services/serviceFlowApi";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 import PublicApp from "./PublicApp";
+
+let mockBoardPending: Promise<void> | null = null;
+jest.mock("../pages/BoardPresent", () => () => {
+  if (mockBoardPending) throw mockBoardPending;
+  return <div>Board presentation</div>;
+});
+
+it("keeps public board presentation chunk loading transparent", async () => {
+  window.history.replaceState({}, "", "/boards/present/alias?preview=1");
+  let finish!: () => void;
+  mockBoardPending = new Promise<void>((resolve) => { finish = resolve; });
+  const { container } = render(<PublicApp />);
+  // Flush the actual lazy import before checking its suspended fallback.
+  // eslint-disable-next-line testing-library/no-unnecessary-act
+  await act(async () => {});
+  expect(container).toBeEmptyDOMElement();
+  await act(async () => { mockBoardPending = null; finish(); });
+  expect(screen.getByText("Board presentation")).toBeInTheDocument();
+});
 
 jest.mock("../services/serviceFlowApi", () => ({
   ...jest.requireActual("../services/serviceFlowApi"),

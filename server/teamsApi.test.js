@@ -2105,6 +2105,68 @@ test("service timezone read grants only the requested permission axis", async (t
   }
 });
 
+test("paired workstations read timezone without expanding Teams or Services edit access", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("workstation_timezone");
+  const pairing = await callHandler(authHandlers.createWorkstationPairing, { context, body: { label: "Countdown workstation", appAccess: "full" } });
+  assert.equal(pairing.statusCode, 200);
+  const redeemed = createRes();
+  await authHandlers.redeemWorkstationPairing(createReq({ body: { token: pairing.payload.pairing.token } }), redeemed);
+  assert.equal(redeemed.statusCode, 200);
+  const request = (churchId = context.churchId) => createReq({ headers: { "x-workstation-token": redeemed.payload.credential }, params: { churchId } });
+  const read = createRes();
+  await authHandlers.getChurchServiceTimeZone(request(), read);
+  assert.deepEqual(read.payload, { success: true, serviceTimeZone: "UTC", isConfigured: true });
+  const other = createRes();
+  await authHandlers.getChurchServiceTimeZone(request("other-church"), other);
+  assert.equal(other.statusCode, 403);
+  for (const handler of [authHandlers.getTeamsBootstrap, authHandlers.updateChurchServiceTimeZone]) {
+    const denied = createRes(); await handler(request(), denied);
+    assert.equal(denied.statusCode, 403);
+  }
+  const existingPlanRead = createRes();
+  await authHandlers.listServicePlans(request(), existingPlanRead);
+  assert.equal(existingPlanRead.statusCode, 200);
+});
+
+test("paired displays read only their church timezone through credential bootstrap and reject revocation", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("display_timezone");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York", privateSetting: "secret" }, { merge: true });
+  for (const surfaceType of ["monitor", "projector", "stream"]) {
+    const pairing = await callHandler(authHandlers.createDisplayPairing, { context, body: { label: surfaceType, surfaceType } });
+    assert.equal(pairing.statusCode, 200);
+    const redeemed = createRes();
+    await authHandlers.redeemDisplayPairing(createReq({ body: { token: pairing.payload.pairing.token } }), redeemed);
+    assert.equal(redeemed.statusCode, 200);
+    const headers = { "x-display-token": redeemed.payload.credential };
+    const request = (churchId = context.churchId) => createReq({ headers, params: { churchId } });
+    const bootstrap = await resolveRequestBootstrap(request());
+    assert.equal(bootstrap.sessionKind, "display");
+    assert.equal(bootstrap.churchId, context.churchId);
+    const read = createRes();
+    await authHandlers.getChurchServiceTimeZone(request(), read);
+    assert.deepEqual(read.payload, { success: true, serviceTimeZone: "America/New_York", isConfigured: true });
+    const other = createRes();
+    await authHandlers.getChurchServiceTimeZone(request("another-church"), other);
+    assert.equal(other.statusCode, 403);
+    for (const handler of [authHandlers.updateChurchServiceTimeZone, authHandlers.getTeamsBootstrap, authHandlers.listServicePlans]) {
+      const denied = createRes();
+      await handler(request(), denied);
+      assert.ok([401, 403].includes(denied.statusCode));
+    }
+    await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/Chicago" }, { merge: true });
+    const changed = createRes();
+    await authHandlers.getChurchServiceTimeZone(request(), changed);
+    assert.equal(changed.payload.serviceTimeZone, "America/Chicago");
+    await setDoc(COLLECTIONS.displayDevices, redeemed.payload.device.deviceId, { revokedAt: new Date().toISOString() }, { merge: true });
+    const revoked = createRes();
+    await authHandlers.getChurchServiceTimeZone(request(), revoked);
+    assert.equal(revoked.statusCode, 401);
+    await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
+  }
+});
+
 test("Services edit can change service plans without receiving Teams data", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const adminContext = await createAdminContext("services_edit_permission");

@@ -12,12 +12,14 @@ Review as if you did not write the code. Do not assume passing tests prove corre
 1. Establish intended behavior from the task or PR description, acceptance criteria, applicable Feature Contracts in [`docs/features/`](../../../docs/features/README.md), AGENTS.md, and domain guidance. Distinguish confirmed product intent from current implementation behavior, draft contract text, and unresolved questions.
 2. Compare the implementation with its declared Before / After Behavior and unchanged adjacent behavior.
 3. Inspect the complete diff.
+   For a merge, also compare critical behavior in **each parent and the merge result** (not only merge-base-to-HEAD). Identify known fixes in either parent and demonstrate that the result retains their invariant. Record parent/result SHAs, relevant symbols, and failure-derived regression evidence in Verification gaps; an unexplained behavior loss blocks readiness. Repeat this comparison after conflict resolution or subsequent integration edits.
 4. Inspect surrounding architecture, callers, consumers, state ownership, data contracts, analogous features, and tests. For substantial workflows, trace the actual behavior from input through normalization, validation, preview and user decisions (when present), commit, persistence, publication, errors, and retry/recovery. Name the authoritative source at each boundary and verify that values and approved decisions survive the whole path; correctness of each changed function alone is not sufficient.
 5. Search for duplicated solutions and existing abstractions that should have been reused.
 6. Review lifecycle and failure behavior as applicable: initial load, retries, failures, partial failures, unmount, rapid repeated actions, switching entities during async work, offline/reconnect, stale remote updates, and duplicate events.
 7. Review contracts: persisted formats, API shapes, Firebase/Pouch/localStorage, Electron preload/IPC, and backward compatibility.
 8. Treat tests as evidence, not proof. Re-check completeness against every acceptance criterion and distinguish required verification from optional additional confidence checks.
 9. Independently trace the production entry point/runtime and compare its providers, authentication/permissions, data sources, mocks, fixtures, and wrapper with the tests. Follow interactive actions that mount deferred content. Require representative integration-level coverage when a composition gap creates meaningful risk, and check that regression tests retain the original failure condition when practical.
+   For shared providers, enumerate controller, paired display (monitor/projector/stream), human, and workstation consumers as applicable. Trace credential transport and server authorization as well as provider inclusion; an authorized hook mock does not establish that the production session can obtain its data.
 
 ## Product approval check
 

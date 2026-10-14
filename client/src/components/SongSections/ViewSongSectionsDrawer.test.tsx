@@ -1,5 +1,5 @@
 import { configureStore } from "@reduxjs/toolkit";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Provider, useSelector } from "react-redux";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
@@ -109,7 +109,7 @@ const renderDrawer = ({
       allItems: allItemsReducer,
     },
   });
-  render(
+  const view = render(
     <Provider store={store}>
       <ControllerInfoContext.Provider
         value={createMockControllerContext({ db }) as never}
@@ -122,7 +122,7 @@ const renderDrawer = ({
       </ControllerInfoContext.Provider>
     </Provider>,
   );
-  return { store };
+  return { store, ...view };
 };
 
 describe("ViewSongSectionsDrawer", () => {
@@ -309,6 +309,36 @@ describe("ViewSongSectionsDrawer", () => {
       previousAudio: song.songAudio,
     });
     expect(mockDeleteSongAudio).not.toHaveBeenCalled();
+  });
+
+  it.each(["attach", "remove"])("preserves a concurrent rename and lyrics during an audio-only %s", async (operation) => {
+    const remote = { ...song, _rev: "2-remote", name: "Remote renamed song", arrangements: [] };
+    const put = jest.fn().mockResolvedValue({ rev: "3-audio" });
+    const db = createMockPouchDB({ get: jest.fn().mockResolvedValue(remote), put });
+    mockUploadSongAudio.mockResolvedValue(song.songAudio!);
+    renderDrawer({ db });
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    if (operation === "remove") {
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove MP3" }));
+    } else {
+      fireEvent.change(screen.getByLabelText("Choose MP3"), { target: { files: [new File(["mp3"], "reference.mp3", { type: "audio/mpeg" })] } });
+    }
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(put).toHaveBeenCalledWith(expect.objectContaining({ name: "Remote renamed song", arrangements: [], _rev: "2-remote" }));
+  });
+
+  it("finishes an audio write on the original database without publishing into an unmounted drawer", async () => {
+    let resolveUpload!: (value: NonNullable<DBItem["songAudio"]>) => void;
+    mockUploadSongAudio.mockReturnValue(new Promise((resolve) => { resolveUpload = resolve; }));
+    const db = createMockPouchDB({ get: jest.fn().mockResolvedValue({ ...song, _rev: "1-old" }), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
+    const { unmount, store } = renderDrawer({ db });
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(screen.getByLabelText("Choose MP3"), { target: { files: [new File(["mp3"], "reference.mp3", { type: "audio/mpeg" })] } });
+    unmount();
+    await act(async () => { resolveUpload(song.songAudio!); });
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-1" }));
+    expect(store.getState().allDocs.allSongDocs).toEqual([]);
   });
 
   it("clears MP3 metadata only after storage deletion succeeds", async () => {

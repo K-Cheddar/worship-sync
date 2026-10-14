@@ -1139,6 +1139,8 @@ export const getChurchServiceTimeZone = async (churchId: string) =>
     legacyTimeZoneSuggestion?: string | null;
   }>(
     `api/churches/${churchId}/service-time-zone`,
+    { method: "GET", cache: "no-store" },
+    getDisplayToken() ? { "x-display-token": getDisplayToken() } : undefined,
   );
 
 export const updateChurchServiceTimeZone = async (

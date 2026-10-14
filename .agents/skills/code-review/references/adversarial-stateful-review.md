@@ -40,6 +40,8 @@ Apply the lenses that fit the invariant; a structurally valid record alone does 
 
 For a confirmed defect, recommend a regression test that reproduces the failure conditions, exercises the competing operation or lifecycle transition, asserts the actual final behavior (including persisted state when relevant), and would fail against the defective implementation. Prefer deferred promises, controlled revisions, and deterministic event order over arbitrary delays. A helper-call assertion alone is insufficient. A review may recommend a test without writing or running it; label tests as existing, proposed, or actually executed, and identify when existing coverage is narrower than the invariant.
 
+For merge regressions, derive the scenario from the original defect and compare it against both parent implementations and the resulting merge. Record a failing run against the defective behavior and a passing run against the fix when feasible. Preserve production-relevant session kinds, non-default configuration, competing revisions, and event order; a default UTC fixture or a save without another writer cannot establish these invariants.
+
 ## Evidence output
 
 Put a compact table in the skill's existing **Verification gaps** section for the few scenarios that materially affect the review:

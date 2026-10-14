@@ -20,6 +20,8 @@ Use these recurring shapes to identify where a review must follow work beyond th
 
 ## Persist -> upgrade -> resume
 
+For a partial-field mutation that feeds an editor/autosave, trace the original comparison baseline, latest persisted revision, pending local intent, and pending remote conflict separately through write and acknowledgment. A full-document response is not permission to replace the full comparison baseline. Test a competing controller edit followed by the partial write and delayed autosave, then both explicit conflict decisions. Also settle an older save acknowledgment after the partial write; it must not restore an older field or acknowledge content it did not persist.
+
 **Failure mechanism:** Current code resumes a durable record written by an older app version or a partially completed migration. A newer required-field assumption can reject valid old work or repeat a completed side effect.
 
 **Review questions:** Which persisted shapes and schema states can exist? What do server/storage still accept? Which durable steps already committed, and where should retry resume when optional newer metadata is absent?

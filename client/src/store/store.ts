@@ -1054,14 +1054,16 @@ const flushItemAutosavesForContentDatabase = async (scopeId: string) => {
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    // Audio is persisted independently after the R2 operation succeeds. Let the
-    // reconciliation action retire a pending debounce for this item, but do not
-    // schedule another save for it.
+    // Audio is already persisted. Reconcile pending content intent without
+    // scheduling another audio write or accepting a stale owner's result.
     if (itemSlice.actions.applyPersistedSongAudio.match(action)) {
-      return (
-        (currentState as RootState).undoable.present.item._id ===
-        action.payload.persistedDoc._id
-      );
+      return (currentState as RootState).undoable.present.item !==
+        (previousState as RootState).undoable.present.item;
+    }
+    if (itemSlice.actions.applyPendingRemoteItem.match(action)) {
+      const previousItem = (previousState as RootState).undoable.present.item;
+      return previousItem.pendingRemoteItem?._id === previousItem._id &&
+        (currentState as RootState).undoable.present.item !== previousItem;
     }
 
     const excluded = isAnyOf(
@@ -1110,6 +1112,11 @@ listenerMiddleware.startListening({
       : db;
     const saveKey = itemAutosaveKey(item);
     const priorPending = pendingItemAutosaves.get(saveKey);
+    if (itemSlice.actions.applyPendingRemoteItem.match(_action)) {
+      cancelItemAutosaveDebounce(saveKey);
+      pendingItemAutosaves.delete(saveKey);
+      return;
+    }
 
     if (isPersistedAudioUpdate) {
       cancelItemAutosaveDebounce(saveKey);
@@ -1138,7 +1145,7 @@ listenerMiddleware.startListening({
     ) {
       pendingItemAutosaves.delete(saveKey);
       listenerApi.dispatch(
-        itemSlice.actions.markItemPersisted(_action.payload.persistedDoc),
+        itemSlice.actions.setHasPendingUpdate(false),
       );
       return;
     }
@@ -1155,12 +1162,12 @@ listenerMiddleware.startListening({
 
     await enqueueItemAutosaveWrite(saveKey, async () => {
       const currentPending = pendingItemAutosaves.get(saveKey);
-      const desired = currentPending?.mutationVersion === mutationVersion
-        ? currentPending.desired
-        : item;
-      const writeBaseline = currentPending?.baseline ?? baseline;
-      const writeDatabase = currentPending?.database ?? database;
+      if (currentPending?.mutationVersion !== mutationVersion) return;
+      const desired = currentPending.desired;
+      const writeBaseline = currentPending.baseline;
+      const writeDatabase = currentPending.database;
       let db_item: DBItem = await writeDatabase.get(desired._id);
+      if (pendingItemAutosaves.get(saveKey)?.mutationVersion !== mutationVersion) return;
       const changedFields = getItemPersistenceChanges(desired, writeBaseline);
       const conflicts = getItemPersistenceConflicts(
         desired,
@@ -1243,10 +1250,18 @@ listenerMiddleware.startListening({
       ) {
         pendingItemAutosaves.set(saveKey, {
           ...pendingAfterWrite,
-          baseline: db_item,
+          // Acknowledge only what this write changed. A newer edit may still
+          // compare unrelated fields against an older remote document.
+          baseline: {
+            ...pendingAfterWrite.baseline,
+            ...Object.fromEntries(changedFields.map((field) => [field, db_item[field]])),
+          },
         });
       }
 
+      // A newer intent/remote decision owns publication too. Do not broadcast
+      // the older document after its acknowledgment has been superseded.
+      if (pendingAfterWrite?.mutationVersion !== mutationVersion) return;
       const latestState = listenerApi.getState() as RootState;
       const activeItem = latestState.undoable.present.item;
       const isSameActiveOwner = sameItemMutationOwner(

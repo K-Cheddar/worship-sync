@@ -1,0 +1,7 @@
+{
+  "id": "2026-10-14-display-startup-transparency",
+  "date": "2026-10-14",
+  "type": "fixed",
+  "title": "Transparent stream startup",
+  "description": "Stream outputs stay transparent during startup, refresh, and connection recovery, keeping the application loading screen out of live broadcasts."
+}

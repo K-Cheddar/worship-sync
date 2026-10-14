@@ -8,6 +8,7 @@ import { initConsoleLogForwarder } from "./utils/consoleLogForwarder";
 import { isPublicSharePathname } from "./utils/publicSharePathRedirect";
 import BootstrapLoadingScreen from "./components/BootstrapLoadingScreen";
 import BootstrapRecoveryScreen from "./components/BootstrapRecoveryScreen";
+import { getInitialRoutePathname, isTransparentDisplayRoute } from "./utils/displayRoutes";
 import {
   isModuleLoadError,
   loadSelectedBootstrapModule,
@@ -47,9 +48,12 @@ const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement,
 );
 
+const isDisplayStartup = () =>
+  isTransparentDisplayRoute(getInitialRoutePathname(window.location));
+
 const renderBootstrapRecovery = () =>
   root.render(
-    <BootstrapRecoveryScreen onReload={() => window.location.reload()} />,
+    isDisplayStartup() ? null : <BootstrapRecoveryScreen onReload={() => window.location.reload()} />,
   );
 
 type ServiceWorkerDiagnostic = {
@@ -178,7 +182,7 @@ const boot = async () => {
   reportWebVitals();
 };
 
-root.render(<BootstrapLoadingScreen />);
+root.render(isDisplayStartup() ? null : <BootstrapLoadingScreen />);
 void boot().catch((error: unknown) => {
   try {
     Sentry.captureException(error);

@@ -489,12 +489,23 @@ export const itemSlice = createSlice({
     },
     applyPersistedSongAudio: (
       state,
-      action: PayloadAction<{ songAudio?: SongAudio; persistedDoc: DBItem }>,
+      action: PayloadAction<{ songAudio?: SongAudio; persistedDoc: DBItem; owner?: ItemMutationOwner | null }>,
     ) => {
       if (state._id !== action.payload.persistedDoc._id) return;
+      if (state.contentOwner && !sameItemMutationOwner(getItemMutationOwner(state), action.payload.owner ?? null)) return;
       state.songAudio = action.payload.songAudio;
       if (state.baseItem) {
-        state.baseItem = createItemSnapshot(action.payload.persistedDoc);
+        // Audio acknowledges only its own fields, never a competing lyric edit.
+        state.baseItem.songAudio = action.payload.songAudio;
+        state.baseItem._rev = action.payload.persistedDoc._rev;
+        state.baseItem.updatedAt = action.payload.persistedDoc.updatedAt;
+        state.baseItem.updatedBy = action.payload.persistedDoc.updatedBy;
+      }
+      if (state.pendingRemoteItem) {
+        state.pendingRemoteItem.songAudio = action.payload.songAudio;
+        state.pendingRemoteItem._rev = action.payload.persistedDoc._rev;
+        state.pendingRemoteItem.updatedAt = action.payload.persistedDoc.updatedAt;
+        state.pendingRemoteItem.updatedBy = action.payload.persistedDoc.updatedBy;
       }
     },
     setItemIsLoading: (state, action: PayloadAction<boolean>) => {

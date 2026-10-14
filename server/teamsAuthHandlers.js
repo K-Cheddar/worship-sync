@@ -18659,25 +18659,37 @@ export const createTeamsAuthHandlers = ({
       try {
         const churchId = req.params.churchId;
         let controllerOnlyRead = false;
-        try {
-          await requireServicesWorkspaceView(req, churchId);
-        } catch (error) {
-          if (error?.statusCode !== 403) throw error;
+        const bootstrap = await resolveRequestBootstrap(req);
+        if (!bootstrap?.authenticated) throw httpError(401, "Authentication required");
+        if (bootstrap.churchId !== churchId) {
+          throw httpError(403, "Church access required");
+        }
+        if (bootstrap.sessionKind === "display") {
+          // Presentation configuration only; this grants no workspace or edit access.
+          controllerOnlyRead = true;
+        } else {
           try {
-            await requireTeamsView(req, churchId);
-          } catch (teamsError) {
-            if (teamsError?.statusCode !== 403) throw teamsError;
-            const bootstrap = await requireHumanSession(req);
-            const controllerAccess =
-              bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
-            if (
-              bootstrap.churchId !== churchId ||
-              bootstrap.role !== "member" ||
-              !["full", "music", "view"].includes(controllerAccess)
-            ) {
-              throw teamsError;
+            await requireServicesWorkspaceView(req, churchId);
+          } catch (error) {
+            if (error?.statusCode !== 403) throw error;
+            try {
+              await requireTeamsView(req, churchId);
+            } catch (teamsError) {
+              if (teamsError?.statusCode !== 403) throw teamsError;
+              if (bootstrap.sessionKind !== "workstation") {
+                const bootstrap = await requireHumanSession(req);
+                const controllerAccess =
+                  bootstrap.controllerAccess ?? bootstrap.appAccess ?? "view";
+                if (
+                  bootstrap.churchId !== churchId ||
+                  bootstrap.role !== "member" ||
+                  !["full", "music", "view"].includes(controllerAccess)
+                ) {
+                  throw teamsError;
+                }
+              }
+              controllerOnlyRead = true;
             }
-            controllerOnlyRead = true;
           }
         }
         const church = await getDoc(COLLECTIONS.churches, churchId);

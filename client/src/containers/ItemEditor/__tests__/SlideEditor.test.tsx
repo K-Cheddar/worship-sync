@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import SlideEditor from "../SlideEditor";
+import * as authApi from "../../../api/auth";
+import { broadcastItemUpdate } from "../../../store/store";
+import userEvent from "@testing-library/user-event";
 import { ToastContext } from "../../../context/toastContext";
 import { PresentationControllerModeProvider } from "../../../context/presentationControllerMode";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
@@ -455,6 +458,47 @@ describe("SlideEditor", () => {
     mockState = makeBaseState();
     mockShowToast = jest.fn<any, any[]>(() => "toast-1");
     mockRemoveToast = jest.fn();
+  });
+
+  it.each(["song", "church", "unmount"])("keeps a deferred MP3 upload on its original database after %s changes", async (transition) => {
+    const original = { ...makeBaseState().undoable.present.item, _id: "song-A", type: "song", _rev: "1-original" };
+    mockState = makeStateWithItem(original);
+    const dbA = createMockPouchDB({ get: jest.fn().mockResolvedValue(original), put: jest.fn().mockResolvedValue({ rev: "2-audio" }) });
+    const dbB = createMockPouchDB();
+    let resolveUpload!: (value: Awaited<ReturnType<typeof authApi.uploadSongAudio>>) => void;
+    const upload = new Promise<Awaited<ReturnType<typeof authApi.uploadSongAudio>>>((resolve) => { resolveUpload = resolve; });
+    const uploadMock = jest.spyOn(authApi, "uploadSongAudio").mockReturnValue(upload);
+    const view = (churchId: string, db: typeof dbA) => (
+      <ControllerInfoContext.Provider value={createMockControllerContext({ db }) as never}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext({ churchId, access: "full" }) as never}>
+          <SlideEditor access="full" />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const { rerender, unmount } = render(view("church-a", dbA));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Song details" }));
+    await user.upload(screen.getByLabelText("Choose MP3"), new File(["mp3"], "reference.mp3", { type: "audio/mpeg" }));
+    expect(screen.getByLabelText("Choose MP3")).toBeDisabled();
+    expect(uploadMock).toHaveBeenCalledWith(expect.objectContaining({ churchId: "church-a", songId: "song-A" }));
+    if (transition === "unmount") unmount();
+    if (transition === "song") {
+      mockState = makeStateWithItem({ ...original, _id: "song-B" });
+      rerender(view("church-a", dbA));
+    }
+    if (transition === "church") rerender(view("church-b", dbB));
+    mockDispatch.mockClear();
+    await act(async () => {
+      resolveUpload({ id: "audio", key: "churches/church-a/songs/song-A/audio.mp3", contentType: "audio/mpeg", fileName: "reference.mp3", sizeBytes: 3, uploadedAt: "2026-10-14T00:00:00Z" });
+    });
+    expect(dbA.get).toHaveBeenCalledWith("song-A");
+    expect(dbA.put).toHaveBeenCalledWith(expect.objectContaining({ _id: "song-A", name: original.name, _rev: "1-original" }));
+    expect(dbB.get).not.toHaveBeenCalled();
+    expect(dbB.put).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "item/applyPersistedSongAudio" }));
+    const publicationCount = transition === "song" ? 1 : 0;
+    expect(broadcastItemUpdate).toHaveBeenCalledTimes(publicationCount);
+    uploadMock.mockRestore();
   });
 
   it("uses the larger present preview without an outer gray border", () => {
