@@ -122,6 +122,10 @@ export const findReusablePeriodSchedule = ({
       schedule.archivedAt || schedule.churchId !== churchId ||
       schedule.teamId !== teamId || !schedule.startDate || !schedule.endDate
     ) return false;
+    // Every candidate is later restricted to an exact range or one covering
+    // this period, so older/non-covering ranges cannot be reusable. Skip their
+    // occurrence identity scans up front.
+    if (schedule.startDate > periodStartDate || schedule.endDate < periodEndDate) return false;
     return coversCurrentOccurrences(schedule.occurrences || [], occurrences, timeZone);
   });
   const deduplicated = deduplicateCanonicalGenerated(eligible);

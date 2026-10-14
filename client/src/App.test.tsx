@@ -1,7 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
-import App from "./App";
+import App, { AppRoutes } from "./App";
+import { GlobalInfoContext } from "./context/globalInfo";
+import { createMockGlobalContext } from "./test/mocks";
+import { MemoryRouter } from "react-router-dom";
 import { presentationSlice } from "./store/presentationSlice";
 import { itemSlice } from "./store/itemSlice";
 import { overlaysSlice } from "./store/overlaysSlice";
@@ -15,6 +18,8 @@ import { mediaItemsSlice } from "./store/mediaSlice";
 import { allDocsSlice } from "./store/allDocsSlice";
 import { creditsSlice } from "./store/creditsSlice";
 
+let mockBoardPending: Promise<void> | null = null;
+
 // controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 
 // Mock react-router-dom: use MemoryRouter so useLocation/useNavigate work in tests
@@ -23,29 +28,6 @@ jest.mock("react-router-dom", () => {
   return {
     ...originalModule,
     HashRouter: originalModule.MemoryRouter,
-    Routes: ({ children }: { children: React.ReactNode }) => (
-      <div>{children}</div>
-    ),
-    Route: ({
-      path,
-      element,
-      children,
-    }: {
-      path?: string;
-      element?: React.ReactNode;
-      children?: React.ReactNode;
-    }) => {
-      // For routes with element but no path (like ControllerContextWrapper), render the children
-      if (element && !path) {
-        return <div>{children}</div>;
-      }
-      // For the default route (path is "/"), render the element
-      if (path === "/") {
-        return <div>{element}</div>;
-      }
-      // For other routes, don't render anything in the test
-      return null;
-    },
   };
 });
 
@@ -158,9 +140,10 @@ jest.mock("./pages/BoardDisplay", () => () => (
 jest.mock("./pages/BoardPage", () => () => (
   <div data-testid="board-page">Board Page</div>
 ));
-jest.mock("./pages/BoardPresent", () => () => (
-  <div data-testid="board-present-page">Board Present Page</div>
-));
+jest.mock("./pages/BoardPresent", () => () => {
+  if (mockBoardPending) throw mockBoardPending;
+  return <div data-testid="board-present-page">Board Present Page</div>;
+});
 jest.mock("./pages/WorkstationPair", () => () => (
   <div data-testid="workstation-pair-page">Workstation Pair Page</div>
 ));
@@ -206,12 +189,58 @@ jest.mock("./context/globalInfo", () => {
 
 jest.mock("./ControllerContextWrapper", () => ({
   __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
+  default: () => {
+    const { Outlet } = require("react-router-dom");
+    return <Outlet />;
+  },
 }));
 
 describe("App Component", () => {
+  it("keeps the actual route Suspense fallback empty while a display chunk is pending", async () => {
+    let finish!: () => void;
+    mockBoardPending = new Promise<void>((resolve) => { finish = resolve; });
+    const { container } = render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/boards/present/alias?outputId=main"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    // Flush the actual lazy import before checking its suspended fallback.
+    // eslint-disable-next-line testing-library/no-unnecessary-act
+    await act(async () => {});
+    expect(container).toBeEmptyDOMElement();
+    await act(async () => { mockBoardPending = null; finish(); });
+    expect(screen.getByTestId("board-present-page")).toBeInTheDocument();
+  });
+
+  it.each(["/home", "/controller"])("preserves the app auth splash on %s", (path) => {
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "loading" })}>
+        <MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByAltText("")).toBeInTheDocument();
+    expect(document.body.style.backgroundColor).toBe("rgb(43, 53, 68)");
+  });
+  it.each(["human", "display", "workstation"].flatMap((sessionKind) =>
+    ["/stream", "/stream-info", "/projector", "/projector-full", "/monitor", "/credits", "/boards/display"]
+      .map((route) => ({ sessionKind, route })),
+  ))(
+    "keeps $route authentication transparent for $sessionKind sessions",
+    ({ sessionKind, route }) => {
+      const { container } = render(
+        <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "loading", sessionKind })}>
+          <MemoryRouter initialEntries={[`${route}?outputId=main`]}>
+            <AppRoutes />
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>,
+      );
+      expect(container.textContent).toBe("");
+      expect(screen.queryByAltText("")).toBeNull();
+      expect(document.body.style.backgroundColor).toBe("transparent");
+    },
+  );
   const renderApp = () => {
     const store = createMockStore();
     return render(

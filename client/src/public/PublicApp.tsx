@@ -4,6 +4,7 @@ import {
   Outlet,
   Route,
   Routes,
+  useLocation,
 } from "react-router-dom";
 import { Provider } from "react-redux";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -12,6 +13,7 @@ import { ToastProvider } from "../context/toastContext";
 import { useDocumentPageTitle } from "../hooks/useDocumentPageTitle";
 import store from "../store/store";
 import { lazyRoute } from "../utils/lazyRoute";
+import { isTransparentDisplayRoute } from "../utils/displayRoutes";
 
 /**
  * Lean shell for path-based public share links (`/services/...`, boards, etc.).
@@ -36,14 +38,18 @@ const PrivacyPolicy = lazyRoute(() => import("../pages/Legal/PrivacyPolicy"));
 const TermsOfService = lazyRoute(() => import("../pages/Legal/TermsOfService"));
 const SmsOptIn = lazyRoute(() => import("../pages/SmsOptIn"));
 
-const PublicFallback = () => (
-  <div
-    className="flex min-h-dvh items-center justify-center bg-neutral-950 text-sm text-neutral-300"
-    aria-busy="true"
-  >
-    Loading…
-  </div>
-);
+const PublicFallback = () => {
+  const { pathname } = useLocation();
+  if (isTransparentDisplayRoute(pathname)) return null;
+  return (
+    <div
+      className="flex min-h-dvh items-center justify-center bg-neutral-950 text-sm text-neutral-300"
+      aria-busy="true"
+    >
+      Loading…
+    </div>
+  );
+};
 
 /** Invite + schedule-response need Firebase session helpers from GlobalInfo (+ Redux). */
 const InviteProviderLayout = () => (

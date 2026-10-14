@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Highlighter, Info } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import { cn } from "@/utils/cnHelper";
@@ -24,6 +24,7 @@ type MemberChipProps = {
   expanded?: boolean;
   showHighlightAction?: boolean;
   details?: ReactNode;
+  renderDetails?: () => ReactNode;
   onToggleHighlight?: () => void;
   onToggleExpand?: () => void;
   onSelect?: () => void;
@@ -43,6 +44,7 @@ const MemberChip = ({
   expanded = false,
   showHighlightAction = false,
   details,
+  renderDetails,
   onToggleHighlight,
   onToggleExpand,
   onSelect,
@@ -53,6 +55,16 @@ const MemberChip = ({
     : "Not yet served";
   const selectable = Boolean(onSelect);
   const showSecondRow = Boolean(subtitle || desiresPosition);
+  const [detailsMounted, setDetailsMounted] = useState(Boolean(renderDetails && expanded));
+  useEffect(() => {
+    if (expanded || !detailsMounted) return undefined;
+    const timeoutId = window.setTimeout(() => setDetailsMounted(false), 200);
+    return () => window.clearTimeout(timeoutId);
+  }, [detailsMounted, expanded]);
+  const detailsContent = details || (
+    renderDetails && (expanded || detailsMounted) ? renderDetails() : null
+  );
+  const hasDetails = Boolean(details || renderDetails);
 
   return (
     <div
@@ -169,7 +181,10 @@ const MemberChip = ({
               )}
               aria-expanded={expanded}
               aria-label={`${expanded ? "Hide" : "Show"} details for ${label}`}
-              onClick={onToggleExpand}
+              onClick={() => {
+                if (renderDetails && !expanded) setDetailsMounted(true);
+                onToggleExpand?.();
+              }}
             />
           ) : null}
         </div>
@@ -204,7 +219,7 @@ const MemberChip = ({
         ) : null}
       </div>
 
-      {details ? (
+      {hasDetails ? (
         <div
           className={cn(
             "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
@@ -213,7 +228,7 @@ const MemberChip = ({
         >
           <div className="min-h-0 overflow-hidden" inert={expanded ? undefined : true}>
             <div className="border-t border-gray-700/80 px-2 py-2 text-xs font-normal text-gray-300">
-              {details}
+              {detailsContent}
             </div>
           </div>
         </div>

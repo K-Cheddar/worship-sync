@@ -547,7 +547,7 @@ const QualificationManager = ({
                       title={area.name}
                       icon={area.icon || "Award"}
                       details={
-                        <div className="mt-0.5 space-y-1">
+                        <div className="space-y-1">
                           {area.description ? (
                             <p className="text-xs text-gray-400">{area.description}</p>
                           ) : null}

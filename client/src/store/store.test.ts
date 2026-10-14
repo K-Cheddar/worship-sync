@@ -298,7 +298,7 @@ describe("item content integrity investigation", () => {
       songOrder: [{ id: id + "-order", name: "Verse" }],
     }] : [],
   });
-  type Fixture = ReturnType<typeof fixture> & { _rev?: string; formattedSections?: unknown };
+  type Fixture = ReturnType<typeof fixture> & { _rev?: string; formattedSections?: unknown; songAudio?: ReturnType<typeof createSongAudio> };
   const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
   const deferred = <T,>() => {
     let resolve!: (value: T) => void;
@@ -313,12 +313,11 @@ describe("item content integrity investigation", () => {
         formattedSections: [{ sectionNum: 1, words: "free-A exclusive words", slideSpan: 1 }] }],
       ["free-B", fixture("free-B", "free")],
     ]);
-    let revision = 1;
     runtime.db.get.mockImplementation(async (id: string) => clone(docs.get(id)));
     const commit = async (doc: Fixture) => {
       const current = docs.get(doc._id);
       if (current?._rev !== doc._rev) throw Object.assign(new Error("conflict"), { status: 409 });
-      const rev = String(++revision) + "-written";
+      const rev = String(Number(current?._rev?.split("-")[0] ?? 0) + 1) + "-written";
       docs.set(doc._id, clone({ ...doc, _rev: rev }));
       return { ok: true, id: doc._id, rev };
     };
@@ -412,6 +411,123 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-A")?.name).toBe("Local rename");
     expect(docs.get("song-A")?._rev).not.toBe(remote._rev);
     expect(docs.get("song-B")?.arrangements).toEqual(fixture("song-B").arrangements);
+  });
+
+  it.each([["attach", "keep"], ["remove", "keep"], ["attach", "remote"], ["remove", "remote"]])("protects B's lyrics after A's %s audio write before the %s decision", async (operation, decision) => {
+    const { docs, select, tick, store, itemSlice, db } = setup();
+    const audioModule = await import("../utils/persistSongAudioAttachment");
+    select("song-A");
+    const baseline = clone(store.getState().undoable.present.item.baseItem);
+    const local = [{ id: "song-A-arrangement", name: "Master", slides: [],
+      formattedLyrics: [{ id: "song-A-section", type: "Verse", name: "Verse", words: "A local lyrics", slideSpan: 1 }],
+      songOrder: [{ id: "song-A-order", name: "Verse" }],
+    }];
+    store.dispatch(itemSlice.actions._updateArrangements(local));
+    const remote = { ...fixture("song-A"), _rev: "2-remote",
+      arrangements: fixture("song-B").arrangements, songAudio: createSongAudio("old") };
+    docs.set("song-A", remote);
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remote));
+    const upload = deferred<void>();
+    const audio = operation === "attach" ? createSongAudio("new") : null;
+    const audioWrite = upload.promise.then(async () => {
+      const saved = await audioModule.persistSongAudioAttachment({ db: db as unknown as Parameters<typeof audioModule.persistSongAudioAttachment>[0]["db"], songId: "song-A", audio });
+      const item = store.getState().undoable.present.item;
+      const owner = { ...item.contentOwner, itemId: item._id, itemType: item.type };
+      store.dispatch(itemSlice.actions.applyPersistedSongAudio({ persistedDoc: saved, songAudio: audio ?? undefined, owner }));
+      return saved;
+    });
+    upload.resolve();
+    const savedAudio = await audioWrite;
+    expect({ stage: "savedAudio", audio: savedAudio.songAudio }).toEqual({ stage: "savedAudio", audio: audio ?? undefined });
+    expect({ stage: "persisted", audio: docs.get("song-A")?.songAudio }).toEqual({ stage: "persisted", audio: audio ?? undefined });
+    expect({ stage: "editor", audio: store.getState().undoable.present.item.songAudio }).toEqual({ stage: "editor", audio: audio ?? undefined });
+    expect(savedAudio.arrangements).toEqual(remote.arrangements);
+    expect(store.getState().undoable.present.item.baseItem.arrangements).toEqual(baseline.arrangements);
+    expect(store.getState().undoable.present.item.pendingRemoteItem.arrangements).toEqual(remote.arrangements);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    await tick();
+    expect(docs.get("song-A")?.arrangements).toEqual(remote.arrangements);
+    expect(store.getState().undoable.present.item.arrangements).toEqual(local);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect({ stage: "pendingRemote", audio: store.getState().undoable.present.item.pendingRemoteItem.songAudio }).toEqual({ stage: "pendingRemote", audio: audio ?? undefined });
+    store.dispatch(decision === "remote" ? itemSlice.actions.applyPendingRemoteItem() : itemSlice.actions.keepLocalItemChanges());
+    await tick();
+    const expectedLyrics = decision === "remote" ? remote.arrangements : local;
+    expect(store.getState().undoable.present.item.arrangements).toEqual(expectedLyrics);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    expect(docs.get("song-A")?.arrangements).toEqual(expectedLyrics);
+    expect(store.getState().undoable.present.item.songAudio).toEqual(audio ?? undefined);
+    expect(docs.get("song-A")?.songAudio).toEqual(audio ?? undefined);
+    expect(store.getState().undoable.present.item.baseItem.arrangements).toEqual(expectedLyrics);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("does not restore old audio when an already committed autosave acknowledges after audio persistence", async () => {
+    const { docs, select, edit, tick, store, itemSlice, db, commit, postMessage } = setup();
+    const acknowledgment = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      const result = await commit(doc);
+      await acknowledgment.promise;
+      return result;
+    });
+    select("song-A"); edit("Saved lyric title");
+    await tick();
+    expect(docs.get("song-A")?.name).toBe("Saved lyric title");
+    const audio = createSongAudio("new");
+    const audioModule = await import("../utils/persistSongAudioAttachment");
+    const saved = await audioModule.persistSongAudioAttachment({ db: db as unknown as Parameters<typeof audioModule.persistSongAudioAttachment>[0]["db"], songId: "song-A", audio });
+    const item = store.getState().undoable.present.item;
+    store.dispatch(itemSlice.actions.applyPersistedSongAudio({ persistedDoc: saved, songAudio: audio,
+      owner: { ...item.contentOwner, itemId: item._id, itemType: item.type } }));
+    acknowledgment.resolve();
+    await tick();
+    expect(store.getState().undoable.present.item.songAudio).toEqual(audio);
+    expect(docs.get("song-A")?.songAudio).toEqual(audio);
+    expect(store.getState().undoable.present.item.baseItem.songAudio).toEqual(audio);
+    expect(store.getState().undoable.present.item.baseItem.name).toBe(docs.get("song-A")?.name);
+    expect(store.getState().undoable.present.item.baseItem._rev).toBe(docs.get("song-A")?._rev);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("does not republish a committed older save after Use Their Changes", async () => {
+    const { docs, select, edit, tick, store, itemSlice, db, commit, postMessage } = setup();
+    const acknowledgment = deferred<void>();
+    db.put.mockImplementationOnce(async (doc: Fixture) => {
+      const result = await commit(doc);
+      await acknowledgment.promise;
+      return result;
+    });
+    select("song-A"); edit("A saved before B"); await tick();
+    const remote = { ...fixture("song-A"), _rev: "3-remote", name: "B newest" };
+    docs.set("song-A", remote);
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remote));
+    store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+    acknowledgment.resolve(); await tick();
+    expect(store.getState().undoable.present.item.name).toBe("B newest");
+    expect(store.getState().undoable.present.item.baseItem._rev).toBe("3-remote");
+    expect(docs.get("song-A")).toEqual(remote);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it("Use Their Changes cancels a deferred autosave read and adopts remote content and audio", async () => {
+    const { docs, select, edit, tick, store, itemSlice, db } = setup();
+    select("song-A"); edit("Local edit");
+    const read = deferred<Fixture>();
+    db.get.mockReturnValueOnce(read.promise);
+    await tick();
+    const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit", songAudio: createSongAudio("new") };
+    docs.set("song-A", remote);
+    store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(remote));
+    store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+    read.resolve(remote);
+    await tick();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(docs.get("song-A")).toEqual(remote);
+    expect(store.getState().undoable.present.item.name).toBe("Remote edit");
+    expect(store.getState().undoable.present.item.songAudio).toEqual(remote.songAudio);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
   });
 
   it("leaves failed writes pending without changing stored content", async () => {
@@ -530,7 +646,7 @@ const createSongAudio = (id: string) => ({
   id,
   key: `churches/church-1/songs/song-1/${id}.mp3`,
   fileName: `${id}.mp3`,
-  contentType: "audio/mpeg",
+  contentType: "audio/mpeg" as const,
   sizeBytes: 1234,
   uploadedAt: "2026-08-09T12:00:00.000Z",
 });
@@ -2081,11 +2197,13 @@ describe("store module", () => {
     });
   });
 
-  it("cancels a pending item autosave when persisted song audio is applied", async () => {
+  it("verifies pending content against storage after audio reconciliation", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const previousAudio = createSongAudio("audio-old");
     const attachedAudio = createSongAudio("audio-new");
+    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio }));
+    db.put.mockResolvedValue({ rev: "3-song" });
 
     store.dispatch(
       itemSlice.actions.setActiveItem(
@@ -2095,6 +2213,7 @@ describe("store module", () => {
     store.dispatch(itemSlice.actions._setName("Edited while uploading"));
     store.dispatch(
       itemSlice.actions.applyPersistedSongAudio({
+        owner: { ...store.getState().undoable.present.item.contentOwner, itemId: "song-1", itemType: "song" },
         songAudio: attachedAudio,
         persistedDoc: createSongDoc({
           _rev: "2-song",
@@ -2107,8 +2226,9 @@ describe("store module", () => {
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
-    expect(db.get).not.toHaveBeenCalled();
-    expect(db.put).not.toHaveBeenCalled();
+    expect(db.get).toHaveBeenCalledWith("song-1");
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ name: "Edited while uploading", songAudio: attachedAudio }));
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
     expect(store.getState().undoable.present.item.songAudio).toEqual(
       attachedAudio,
     );

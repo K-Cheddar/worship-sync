@@ -19,6 +19,21 @@ const createStore = (preloadedState?: Partial<ItemSliceState>) =>
   });
 
 describe("itemSlice", () => {
+  it("rejects audio results for another song or church with the same song ID", () => {
+    const store = createStore();
+    const owner = { scopeId: "a", databaseKey: "a", churchId: "a", itemId: "song-A", itemType: "song" as const };
+    const doc = { _id: "song-A", type: "song" as const, name: "Song", arrangements: [], slides: [], selectedArrangement: 0, shouldSendTo: { projector: true, monitor: true, stream: true } };
+    const staleResult = itemSlice.actions.applyPersistedSongAudio({ persistedDoc: doc, owner });
+    store.dispatch(itemSlice.actions.setActiveItem({ ...doc, _id: "song-B", contentOwner: owner }));
+    const songB = store.getState().item;
+    store.dispatch(staleResult);
+    expect(store.getState().item).toBe(songB);
+    store.dispatch(itemSlice.actions.setActiveItem({ ...doc, contentOwner: { scopeId: "b", databaseKey: "b", churchId: "b" } }));
+    const churchB = store.getState().item;
+    store.dispatch(staleResult);
+    expect(store.getState().item).toBe(churchB);
+  });
+
   it("rejects stale owner-tagged slide and arrangement updates but accepts the active owner", async () => {
     const ownerA = {
       scopeId: "church-a/database-a",

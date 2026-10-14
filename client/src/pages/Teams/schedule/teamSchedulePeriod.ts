@@ -12,6 +12,7 @@ import {
   generateScheduleOccurrences,
   getOccurrenceDate,
   matchOccurrencesByIdentity,
+  resolveOccurrenceIdentity,
 } from "../../../utils/teamScheduleOccurrences";
 import {
   parseSlotKey,
@@ -29,6 +30,93 @@ export type TeamSchedulePeriod = {
   serviceIds: string[];
   requirementsByOccurrence: Map<string, PositionRequirement[]>;
 };
+
+type ResolvedOccurrenceIdentity = NonNullable<ReturnType<typeof resolveOccurrenceIdentity>>;
+type IndexedScheduleOccurrence = {
+  occurrence: TeamScheduleOccurrence;
+  identity: ResolvedOccurrenceIdentity;
+};
+type ScheduleOccurrenceIdentityIndex = {
+  byLogicalId: Map<string, IndexedScheduleOccurrence[]>;
+  byOccurrenceId: Map<string, TeamScheduleOccurrence[]>;
+  byDateAndServiceId: Set<string>;
+  byNameAndInstant: Set<string>;
+};
+
+const dateAndServiceKey = (date: string, serviceId: string) =>
+  JSON.stringify([date, serviceId]);
+
+const nameAndInstantKey = (occurrence: TeamScheduleOccurrence) => {
+  const name = String(occurrence.name || "").trim().toLocaleLowerCase("en-US");
+  const startsAt = Date.parse(String(occurrence.startsAt || ""));
+  return name && Number.isFinite(startsAt) ? JSON.stringify([name, startsAt]) : null;
+};
+
+const createScheduleOccurrenceIdentityIndex = (): ScheduleOccurrenceIdentityIndex => ({
+  byLogicalId: new Map(),
+  byOccurrenceId: new Map(),
+  byDateAndServiceId: new Set(),
+  byNameAndInstant: new Set(),
+});
+
+const indexScheduleOccurrence = (
+  index: ScheduleOccurrenceIdentityIndex,
+  occurrence: TeamScheduleOccurrence,
+  timeZone: string,
+) => {
+  const occurrenceId = String(occurrence.occurrenceId || "");
+  const sameIdRows = index.byOccurrenceId.get(occurrenceId) || [];
+  sameIdRows.push(occurrence);
+  index.byOccurrenceId.set(occurrenceId, sameIdRows);
+
+  const nameAndInstant = nameAndInstantKey(occurrence);
+  if (nameAndInstant) index.byNameAndInstant.add(nameAndInstant);
+
+  const identity = resolveOccurrenceIdentity(occurrence, timeZone);
+  if (!identity) return;
+  const sameLogicalIdRows = index.byLogicalId.get(identity.logicalOccurrenceId) || [];
+  sameLogicalIdRows.push({ occurrence, identity });
+  index.byLogicalId.set(identity.logicalOccurrenceId, sameLogicalIdRows);
+  identity.serviceIds.forEach((serviceId) => {
+    index.byDateAndServiceId.add(dateAndServiceKey(identity.serviceDate, serviceId));
+  });
+};
+
+const sameOccurrenceMembership = (
+  left: ResolvedOccurrenceIdentity,
+  right: ResolvedOccurrenceIdentity,
+) => left.groupId === right.groupId &&
+  left.serviceIds.length === right.serviceIds.length &&
+  left.serviceIds.every((serviceId, index) => serviceId === right.serviceIds[index]);
+
+const findIndexedOccurrenceMatch = (
+  index: ScheduleOccurrenceIdentityIndex,
+  occurrence: TeamScheduleOccurrence,
+  identity: ResolvedOccurrenceIdentity | null,
+) => {
+  if (!identity) return { saved: null, ambiguous: true };
+  const sameKeyRows = index.byLogicalId.get(identity.logicalOccurrenceId) || [];
+  if (sameKeyRows.length > 1) return { saved: null, ambiguous: true };
+  if (sameKeyRows.length === 1) {
+    const saved = sameKeyRows[0];
+    return sameOccurrenceMembership(saved.identity, identity)
+      ? { saved: saved.occurrence, ambiguous: false }
+      : { saved: null, ambiguous: true };
+  }
+
+  const nameAndInstant = nameAndInstantKey(occurrence);
+  const possibleConflict = identity.serviceIds.some((serviceId) =>
+    index.byDateAndServiceId.has(dateAndServiceKey(identity.serviceDate, serviceId)),
+  ) || Boolean(nameAndInstant && index.byNameAndInstant.has(nameAndInstant));
+  return { saved: null, ambiguous: possibleConflict };
+};
+
+const occurrenceIdentityKey = (identity: ResolvedOccurrenceIdentity) =>
+  JSON.stringify([
+    identity.logicalOccurrenceId,
+    identity.groupId,
+    identity.serviceIds,
+  ]);
 
 /** Generate complete church groups first, then project only this team's staffing requirements. */
 export const buildTeamSchedulePeriod = ({
@@ -69,6 +157,12 @@ export const buildTeamSchedulePeriod = ({
       return leftUpdatedAt.localeCompare(rightUpdatedAt);
     });
   const scheduleOccurrencesByTeam = new Map<string, TeamScheduleOccurrence[]>();
+  const occurrenceIdentityIndexByTeam = new Map<string, ScheduleOccurrenceIdentityIndex>();
+  const matchedStoredIdsByTeam = new Map<string, Set<string>>();
+  selectedTeamIds.forEach((selectedTeamId) => {
+    occurrenceIdentityIndexByTeam.set(selectedTeamId, createScheduleOccurrenceIdentityIndex());
+    matchedStoredIdsByTeam.set(selectedTeamId, new Set());
+  });
   const additionalSlotsByTeam = new Map<string, Map<string, Set<string>>>();
   const addSlots = (teamIdForSlots: string, slots: Record<string, string[]> = {}) => {
     const byOccurrence = additionalSlotsByTeam.get(teamIdForSlots) || new Map<string, Set<string>>();
@@ -86,6 +180,10 @@ export const buildTeamSchedulePeriod = ({
       ...(scheduleOccurrencesByTeam.get(scheduleTeamId) || []),
       ...occurrences,
     ]);
+    const identityIndex = occurrenceIdentityIndexByTeam.get(scheduleTeamId);
+    if (identityIndex) occurrences.forEach((occurrence) =>
+      indexScheduleOccurrence(identityIndex, occurrence, timeZone || "UTC"),
+    );
     if ("additionalPositionSlots" in schedule) {
       addSlots(scheduleTeamId, schedule.additionalPositionSlots || {});
     }
@@ -130,21 +228,25 @@ export const buildTeamSchedulePeriod = ({
 
   generated.forEach((occurrence) => {
     const occurrenceServiceIds = occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId];
+    const occurrenceIdentity = resolveOccurrenceIdentity(occurrence, timeZone);
     const matchedSavedOccurrenceIds = new Set<string>();
     let hasAmbiguousPersistedKeyCollision = false;
     const requirementsByPosition = new Map<string, PositionRequirement>();
     let relevant = false;
     selectedTeamIds.forEach((selectedTeamId) => {
       const teamPositionIdsForSchedule = [...(positionIdsByTeam.get(selectedTeamId) || [])];
-      const teamScheduleOccurrences = scheduleOccurrencesByTeam.get(selectedTeamId) || [];
-      const identityMatch = matchOccurrencesByIdentity(teamScheduleOccurrences, [occurrence], timeZone);
-      const savedMatch = identityMatch.matches.get(occurrence.occurrenceId);
-      if (!savedMatch && identityMatch.ambiguousCurrentIds.has(occurrence.occurrenceId) &&
-          teamScheduleOccurrences.some((saved) => saved.occurrenceId === occurrence.occurrenceId)) {
+      const identityIndex = occurrenceIdentityIndexByTeam.get(selectedTeamId);
+      const identityMatch = identityIndex
+        ? findIndexedOccurrenceMatch(identityIndex, occurrence, occurrenceIdentity)
+        : { saved: null, ambiguous: false };
+      const savedMatch = identityMatch.saved;
+      if (!savedMatch && identityMatch.ambiguous &&
+          identityIndex?.byOccurrenceId.has(String(occurrence.occurrenceId || ""))) {
         hasAmbiguousPersistedKeyCollision = true;
       }
       if (savedMatch) {
         matchedSavedOccurrenceIds.add(savedMatch.occurrenceId);
+        matchedStoredIdsByTeam.get(selectedTeamId)?.add(String(savedMatch.occurrenceId || ""));
       }
       const teamRequirements = new Map<string, PositionRequirement>();
       occurrenceServiceIds.forEach((serviceId) => {
@@ -188,16 +290,13 @@ export const buildTeamSchedulePeriod = ({
 
   // Keep unmatched persisted rows in the period so their existing assignment
   // and equipment map keys remain visible while a caller surfaces ambiguity.
+  const visibleOccurrenceIds = new Set(occurrences.map((occurrence) => occurrence.occurrenceId));
   selectedSchedules.forEach((schedule) => {
     const teamPositionIds = positionIdsByTeam.get(schedule.teamId) || new Set<string>();
-    const safelyMatchedIds = matchOccurrencesByIdentity(
-      scheduleOccurrencesByTeam.get(schedule.teamId) || [],
-      generated,
-      timeZone,
-    ).matchedStoredIds;
+    const safelyMatchedIds = matchedStoredIdsByTeam.get(schedule.teamId) || new Set<string>();
     (schedule.occurrences || []).forEach((saved) => {
       if (safelyMatchedIds.has(saved.occurrenceId) ||
-          occurrences.some((occurrence) => occurrence.occurrenceId === saved.occurrenceId)) return;
+          visibleOccurrenceIds.has(saved.occurrenceId)) return;
       const savedDate = getOccurrenceDate(saved, timeZone);
       if (!savedDate || savedDate < startDate || savedDate > endDate) return;
       const requirementsByPosition = new Map<string, PositionRequirement>();
@@ -239,6 +338,7 @@ export const buildTeamSchedulePeriod = ({
       const visibleRequirements = [...requirementsByPosition.values()];
       if (!visibleRequirements.length && !hasTeamSlot(schedule.teamId, [saved.occurrenceId]) && !hasTeamStoredData) return;
       occurrences.push({ ...saved, positionRequirements: visibleRequirements });
+      visibleOccurrenceIds.add(saved.occurrenceId);
       requirementsByOccurrence.set(saved.occurrenceId, visibleRequirements);
       (saved.serviceIds?.length ? saved.serviceIds : [saved.serviceId])
         .forEach((serviceId) => serviceIds.add(serviceId));
@@ -292,6 +392,23 @@ export const findInitialTeamSchedulePeriod = ({
       });
       return slots;
     }, {});
+  const teamSchedules = schedules.filter((schedule) =>
+    !schedule.archivedAt && schedule.teamId === teamId,
+  );
+  const savedOccurrencesByIdentity = new Map<string, Array<{
+    schedule: TeamSchedule | TeamScheduleSummary;
+    saved: TeamScheduleOccurrence;
+  }>>();
+  teamSchedules.forEach((schedule) => {
+    (schedule.occurrences || []).forEach((saved) => {
+      const identity = resolveOccurrenceIdentity(saved, timeZone);
+      if (!identity) return;
+      const key = occurrenceIdentityKey(identity);
+      const matches = savedOccurrencesByIdentity.get(key) || [];
+      matches.push({ schedule, saved });
+      savedOccurrencesByIdentity.set(key, matches);
+    });
+  });
   const relevantServices = services.filter((service) => !service.archivedAt &&
     sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
       teamPositionIds.has(requirement.positionId),
@@ -308,9 +425,20 @@ export const findInitialTeamSchedulePeriod = ({
     .sort()
     .at(-1) || formatPlainDate(searchHorizon);
   const scanStart = formatPlainDate(today);
+  const activeServices = services.filter((service) => !service.archivedAt);
+  const hasTeamRequirementByServiceId = new Map<string, boolean>();
+  services.forEach((service) => {
+    if (hasTeamRequirementByServiceId.has(service.serviceId)) return;
+    hasTeamRequirementByServiceId.set(
+      service.serviceId,
+      sanitizePositionRequirements(service.positionRequirements).some((requirement) =>
+        teamPositionIds.has(requirement.positionId),
+      ),
+    );
+  });
   const generatedFutureAll = generateScheduleOccurrences({
-    services: services.filter((service) => !service.archivedAt),
-    serviceIds: services.filter((service) => !service.archivedAt).map((service) => service.serviceId),
+    services: activeServices,
+    serviceIds: activeServices.map((service) => service.serviceId),
     startDate: scanStart,
     endDate: searchEnd,
     timeZone,
@@ -320,14 +448,12 @@ export const findInitialTeamSchedulePeriod = ({
       ? occurrence.serviceIds
       : [occurrence.serviceId];
     const hasTeamRequirement = occurrenceServiceIds.some((serviceId) =>
-      sanitizePositionRequirements(services.find((service) => service.serviceId === serviceId)?.positionRequirements)
-        .some((requirement) => teamPositionIds.has(requirement.positionId)),
+      hasTeamRequirementByServiceId.get(serviceId) || false,
     );
-    const matchingSaved = schedules
-      .filter((schedule) => !schedule.archivedAt && schedule.teamId === teamId)
-      .flatMap((schedule) => (schedule.occurrences || []).map((saved) => ({ schedule, saved })))
-      .filter(({ saved }) => matchOccurrencesByIdentity([saved], [occurrence], timeZone)
-        .matches.has(occurrence.occurrenceId));
+    const occurrenceIdentity = resolveOccurrenceIdentity(occurrence, timeZone);
+    const matchingSaved = occurrenceIdentity
+      ? savedOccurrencesByIdentity.get(occurrenceIdentityKey(occurrenceIdentity)) || []
+      : [];
     const hasTeamSlot = matchingSaved.some(({ schedule, saved }) => {
       const slots = "additionalPositionSlots" in schedule
         ? schedule.additionalPositionSlots?.[saved.occurrenceId] || []
@@ -349,8 +475,7 @@ export const findInitialTeamSchedulePeriod = ({
       ...(uniqueSavedMatch ? { occurrenceId: uniqueSavedMatch.occurrenceId } : {}),
     }];
   });
-  const savedFuture = schedules
-    .filter((schedule) => !schedule.archivedAt && schedule.teamId === teamId)
+  const savedFuture = teamSchedules
     .flatMap((schedule) => {
       const additionalSlots = "additionalPositionSlots" in schedule
         ? schedule.additionalPositionSlots

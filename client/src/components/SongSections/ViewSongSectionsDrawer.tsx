@@ -25,7 +25,8 @@ import {
 } from "../ItemDetailsModal/ItemDetailsModal";
 import LyricsEditor from "../../containers/ItemEditor/LyricsEditor";
 
-type PersistSongPatch = ItemDetailsSavePayload & {
+type PersistSongPatch = Omit<ItemDetailsSavePayload, "name"> & {
+  name?: string;
   songAudioPatch?: SongAudio | null;
 };
 
@@ -60,6 +61,13 @@ const ViewSongSectionsDrawer = ({
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId, access } = useContext(GlobalInfoContext) || {};
+  const persistenceScopeRef = useRef({ db, churchId });
+  persistenceScopeRef.current = { db, churchId };
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [arrangementIndex, setArrangementIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingLyrics, setIsEditingLyrics] = useState(false);
@@ -98,7 +106,8 @@ const ViewSongSectionsDrawer = ({
       }
 
       const existing = (await db.get(song._id)) as DBItem;
-      const next: DBItem = { ...existing, name: patch.name };
+      const next: DBItem = { ...existing };
+      if (patch.name !== undefined) next.name = patch.name;
 
       if (patch.songMetadataPatch !== undefined) {
         if (patch.songMetadataPatch === null) {
@@ -121,6 +130,8 @@ const ViewSongSectionsDrawer = ({
       const audited = applyPouchAudit(existing, next, { isNew: false });
       const result = await db.put(audited);
       const saved = { ...audited, _rev: result.rev };
+      if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+        persistenceScopeRef.current.churchId !== churchId) return;
       dispatch(upsertItemInAllDocs(saved));
       dispatch(
         upsertItemInAllItemsList({
@@ -134,7 +145,7 @@ const ViewSongSectionsDrawer = ({
       );
       broadcastItemUpdate(saved);
     },
-    [db, dispatch, song],
+    [db, dispatch, song, churchId],
   );
 
   const persistSongLyrics = useCallback(
@@ -212,7 +223,6 @@ const ViewSongSectionsDrawer = ({
       });
       try {
         await persistSongPatch({
-          name: song.name,
           songAudioPatch: audio,
         });
       } catch (error) {
@@ -259,7 +269,6 @@ const ViewSongSectionsDrawer = ({
         }),
       clearMetadata: () =>
         persistSongPatch({
-          name: song.name,
           songAudioPatch: null,
         }),
     });

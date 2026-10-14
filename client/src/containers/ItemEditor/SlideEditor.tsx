@@ -249,6 +249,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const globalInfo = useContext(GlobalInfoContext);
   const churchId = globalInfo?.churchId || "";
+  const audioScopeRef = useRef({ churchId, db, itemId: _id });
+  audioScopeRef.current = { churchId, db, itemId: _id };
   const toastContext = useContext(ToastContext);
   const showToast = toastContext?.showToast;
   const removeToast = toastContext?.removeToast;
@@ -453,6 +455,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         throw new Error("Sign in to attach an MP3.");
       }
       const previousAudio = songAudio;
+      const owner = itemOwnerRef.current;
       const audio = await uploadSongAudio({
         churchId,
         songId: _id,
@@ -479,9 +482,16 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         throw error;
       }
 
-      dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved }));
-      dispatch(upsertItemInAllDocs(saved));
-      broadcastItemUpdate(saved);
+      const currentScope = audioScopeRef.current;
+      const isCurrentScope = isEditorMountedRef.current &&
+        currentScope.churchId === churchId && currentScope.db === db;
+      if (isCurrentScope) {
+        if (currentScope.itemId === _id) {
+          dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved, owner }));
+        }
+        dispatch(upsertItemInAllDocs(saved));
+        broadcastItemUpdate(saved);
+      }
 
       if (previousAudio && previousAudio.key !== audio.key) {
         try {
@@ -494,7 +504,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           console.error("Error cleaning replaced song audio:", error);
         }
       }
-      showToast?.({ message: "MP3 attached.", variant: "success" });
+      if (isEditorMountedRef.current && audioScopeRef.current.churchId === churchId &&
+        audioScopeRef.current.db === db && audioScopeRef.current.itemId === _id) {
+        showToast?.({ message: "MP3 attached.", variant: "success" });
+      }
     },
     [_id, churchId, db, dispatch, showToast, songAudio],
   );
@@ -517,6 +530,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const removeSongAudio = useCallback(async () => {
     if (!churchId || !db || !songAudio) return;
+    const owner = itemOwnerRef.current;
     const saved = await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
         deleteSongAudioWithRetry({ churchId, songId: _id, audio: songAudio }),
@@ -527,12 +541,16 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           audio: null,
         }),
     });
-    dispatch(
-      applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved }),
-    );
+    const currentScope = audioScopeRef.current;
+    if (!isEditorMountedRef.current || currentScope.churchId !== churchId || currentScope.db !== db) return;
+    if (currentScope.itemId === _id) {
+      dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved, owner }));
+    }
     dispatch(upsertItemInAllDocs(saved));
     broadcastItemUpdate(saved);
-    showToast?.({ message: "MP3 removed.", variant: "success" });
+    if (currentScope.itemId === _id) {
+      showToast?.({ message: "MP3 removed.", variant: "success" });
+    }
   }, [_id, churchId, db, dispatch, showToast, songAudio]);
 
   const onNameEditButtonClick = () => {

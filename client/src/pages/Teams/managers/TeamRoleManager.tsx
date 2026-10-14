@@ -329,6 +329,7 @@ const TeamRoleManager = ({
                   <EntityRow
                     key={role.roleId}
                     title={role.name}
+                    subtitleLabel={teams.find((team) => team.teamId === role.teamId)?.name}
                     subtitle={role.description || undefined}
                     icon={role.icon || "ShieldCheck"}
                     archived={Boolean(role.archivedAt)}

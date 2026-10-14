@@ -36,6 +36,7 @@ const deferred = <T,>() => {
 
 describe("ChurchServiceTimeZoneProvider", () => {
   let churchId: string;
+  let deviceId: string;
 
   const wrapper = ({ children }: PropsWithChildren) => (
     <GlobalInfoContext.Provider
@@ -43,6 +44,7 @@ describe("ChurchServiceTimeZoneProvider", () => {
         churchId,
         loginState: "success",
         sessionKind: "human",
+        device: { deviceId },
       }) as React.ContextType<typeof GlobalInfoContext>}
     >
       <ChurchServiceTimeZoneProvider>{children}</ChurchServiceTimeZoneProvider>
@@ -51,6 +53,7 @@ describe("ChurchServiceTimeZoneProvider", () => {
 
   beforeEach(() => {
     churchId = "church-a";
+    deviceId = "device-a";
     mockGetChurchServiceTimeZone.mockReset();
   });
 
@@ -114,6 +117,25 @@ describe("ChurchServiceTimeZoneProvider", () => {
     expect(result.current.status).toBe("ready");
     expect(result.current.timeZone).toBe("America/Chicago");
     expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(3);
+  });
+
+  it("invalidates a same-church cached setting and late response when the authenticated device changes", async () => {
+    const oldRequest = deferred<ReturnType<typeof serviceTimeZoneResult>>();
+    const newRequest = deferred<ReturnType<typeof serviceTimeZoneResult>>();
+    mockGetChurchServiceTimeZone.mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
+      .mockReturnValueOnce(oldRequest.promise as never).mockReturnValueOnce(newRequest.promise as never);
+    const { result, rerender } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    let refresh!: Promise<void>;
+    act(() => { refresh = result.current.refresh(); });
+    deviceId = "device-b";
+    rerender();
+    expect(result.current.status).toBe("loading");
+    expect(result.current.timeZone).toBeNull();
+    await act(async () => { oldRequest.resolve(serviceTimeZoneResult("Europe/London")); await refresh; });
+    expect(result.current.timeZone).toBeNull();
+    await act(async () => newRequest.resolve(serviceTimeZoneResult("America/Chicago")));
+    expect(result.current.timeZone).toBe("America/Chicago");
   });
 
   it("does not expose another church's time zone or adopt its late response", async () => {

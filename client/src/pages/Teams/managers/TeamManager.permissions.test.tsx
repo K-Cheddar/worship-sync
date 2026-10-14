@@ -110,7 +110,7 @@ it("lets a scoped manager edit team settings and manage only that team's roster"
 
   await user.click(screen.getByRole("button", { name: "Edit Worship" }));
   expect(screen.getByRole("heading", { name: "Edit team" })).toBeInTheDocument();
-  expect(screen.getByText("Avery Singer")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Edit team" })).getByText("Avery Singer")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Add member" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remove from team" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Team actions" })).not.toBeInTheDocument();
@@ -262,7 +262,11 @@ it("keeps Team creation global-only for roster readers", () => {
 
 it("shows roster names to read-only Team viewers without roster mutation controls", () => {
   renderManager(TEAMS_SECTION_PATHS.groups, { canEditTeam: () => false });
-  expect(screen.getAllByText(/1 member \| 0 positions · Avery Singer/)).toHaveLength(2);
+  const teamRows = screen.getAllByTestId("entity-row");
+  expect(teamRows).toHaveLength(2);
+  teamRows.forEach((row) => {
+    expect(row).toHaveTextContent("1 member | 0 positions · Avery Singer");
+  });
   expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Remove from team" })).not.toBeInTheDocument();

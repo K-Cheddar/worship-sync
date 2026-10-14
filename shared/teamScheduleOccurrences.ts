@@ -97,12 +97,7 @@ export const serviceDateTimeInTimeZone = (date: string, time: string, timeZone: 
 /** YYYY-MM-DD for an instant in its church's IANA timezone. */
 export const calendarDateInTimeZone = (date: Date | string | number, timeZone: string): string => {
   const instant = date instanceof Date ? date : new Date(date);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(instant);
+  const parts = wallClockFormatter(timeZone).formatToParts(instant);
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
   return `${values.year}-${values.month}-${values.day}`;
 };

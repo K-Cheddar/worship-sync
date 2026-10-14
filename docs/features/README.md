@@ -37,6 +37,8 @@ Existing `docs/` pages are focused architecture, migration, and rollout referenc
 
 ## What to document next
 
+Focused confirmed contracts from the October 14, 2026 production correctness request: [Service countdowns](service-countdowns.md) and [Song audio and editor conflicts](song-audio-conflicts.md). These authorize only the behaviors stated there; the broader inventory remains unconfirmed.
+
 Create a small number of contracts around complete operator workflows, not one contract per button or component. Recommended order:
 
 1. Service-plan import → ambiguity review → save/sync → controller and public use — document source ownership and what each import or push action replaces or preserves.

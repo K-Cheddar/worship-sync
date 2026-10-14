@@ -365,7 +365,7 @@ const TeamManager = ({
 
   const formatNameList = (names: string[]) =>
     names.length === 0 ? "None yet." : names.join(", ");
-  const teamSubtitle = (team: TeamRecord) => {
+  const teamSummary = (team: TeamRecord) => {
     const names = team.memberIds
       .map((memberId) => members.find((member) => member.memberId === memberId))
       .filter((member): member is TeamRosterMember => Boolean(member))
@@ -373,9 +373,12 @@ const TeamManager = ({
       .map(memberName);
     const remaining = Math.max(0, team.memberIds.length - names.length);
     const moreSummary = remaining > 0 ? ` +${remaining} more` : "";
-    const rosterSummary = names.length === 0 ? "" : ` · ${names.join(", ")}${moreSummary}`;
+    const rosterSummary = names.length === 0 ? undefined : `${names.join(", ")}${moreSummary}`;
     const memberLabel = team.memberIds.length === 1 ? "member" : "members";
-    return `${team.memberIds.length} ${memberLabel} | ${positions.filter((position) => position.teamId === team.teamId).length} positions${rosterSummary}`;
+    return {
+      subtitleLabel: `${team.memberIds.length} ${memberLabel} | ${positions.filter((position) => position.teamId === team.teamId).length} positions`,
+      subtitle: rosterSummary,
+    };
   };
 
   const searchCandidates = async () => {
@@ -494,9 +497,10 @@ const TeamManager = ({
               <EntityRow
                 key={team.teamId}
                 title={team.name}
-                subtitle={teamSubtitle(team)}
+                {...teamSummary(team)}
                 icon={team.icon}
                 archived={Boolean(team.archivedAt)}
+                compact
                 canEdit={canEditTeam(team.teamId)}
                 onTitleClick={canEditTeam(team.teamId) ? () => selectTeam(team) : undefined}
               />
