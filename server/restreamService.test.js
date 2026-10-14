@@ -327,7 +327,7 @@ const createServiceHarness = ({
   useFirestore = true,
   realtimeDb,
   firestore: providedFirestore,
-  fetchInProgressEvents,
+  fetchInProgressEvents = async () => ({ ok: false, events: [] }),
 } = {}) => {
   const firestore = providedFirestore || createFirestoreMock();
   const database = realtimeDb || createRealtimeDbMock();
@@ -2196,7 +2196,11 @@ test("restream service surfaces connection issues when Restream has no live chat
       }),
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () =>
+        firestore.read("restreamSessions", "db-1")?.connectionIssues?.[0] ===
+        "YouTube: Main Channel (event not started)",
+    );
 
     const status = await service.getStatusForChurch({
       churchId: "church-1",
@@ -2287,7 +2291,13 @@ test("restream service stores YouTube messages from the documented chat action e
       }),
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => {
+      const session = firestore.read("restreamSessions", "db-1");
+      return (
+        session?.streamTitle === "Sunday Live" &&
+        session?.activeConnectionCount === 0
+      );
+    });
 
     const connectingStatus = await service.getStatusForChurch({
       churchId: "church-1",
@@ -2335,7 +2345,10 @@ test("restream service stores YouTube messages from the documented chat action e
     const queryCountBeforeDedupe = firestore.metrics.queryGets.length;
     sockets[0].emit("message", viewerEvent);
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () =>
+        firestore.read("restreamSessions", "db-1")?.messageCount === 1,
+    );
 
     // Restream may replay an event after a reconnect. The second delivery
     // must use the bounded lookup and leave both the document count and the
@@ -2567,7 +2580,11 @@ test("restream service deduplicates the same event across receiver instances", a
       new Error("temporary Firestore failure"),
     );
     sockets[0].emit("message", retryEvent);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(
+      () =>
+        sharedFirestore.read("restreamSessions", "db-1")?.lastError ===
+        "Could not process a Restream chat update.",
+    );
 
     assert.equal(
       (
