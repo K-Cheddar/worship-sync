@@ -16,6 +16,7 @@ export const controllerTest = diagnosticTest.extend<{}, { controllerContext: Bro
       storageState: options.storageState,
       ignoreHTTPSErrors: options.ignoreHTTPSErrors,
       viewport: options.viewport,
+      userAgent: options.userAgent,
       serviceWorkers: "block",
     });
     context.setDefaultTimeout(options.actionTimeout ?? 15_000);

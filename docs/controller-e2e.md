@@ -73,6 +73,10 @@ That extra persistence is not implemented. A normal execution performs one cold 
 
 ## Focused checks
 
+Authentication setup, explicit refresh, and the controller worker use the configured `Desktop Chrome` user agent in both headed and headless Chromium. Native defaults differ (including `HeadlessChrome` and version details), and the server hashes the submitted user agent and platform together with the browser's local device ID for trusted-device recognition. Browser upgrades can still change this fingerprint; a rejected saved session fails without requesting an email.
+
+`worshipsync_device_id` is the client-generated identity preserved in localStorage and checked on the silent recovery request. `bootstrap.device.deviceId` is the separate server-generated trusted-device record ID. Recovery requires an authenticated human bootstrap for the expected account and tenant with a nonempty trusted-device record ID; those two IDs need not match. Production token, membership, fingerprint and revocation checks remain authoritative.
+
 ```powershell
 npm.cmd run test:e2e:controller:fixture-policy
 npm.cmd run test:e2e:auth-policy

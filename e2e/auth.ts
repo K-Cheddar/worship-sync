@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { expect, type Browser, type Page } from "@playwright/test";
+import { devices, expect, type Browser, type Page } from "@playwright/test";
 import { allowedE2EAuthOrigins } from "./authOrigins";
 
 type AuthStateFiles = { authFile: string; metadataFile: string };
@@ -415,7 +415,6 @@ type RecoveryResponse =
       status: "authenticated";
       tenantIdFingerprint: string;
       email: string;
-      deviceId: string;
     }
   | { status: "requires-email-code" }
   | { status: "unavailable" };
@@ -460,7 +459,10 @@ const observeSilentSessionRecovery = async (
             ? (bootstrap.device as Record<string, unknown>)
             : {};
         const email = String(user.primaryEmail || user.email || "").trim();
-        const deviceId = String(device.deviceId || "").trim();
+        // This is a server-issued trusted-device record ID, not the localStorage identity.
+        const trustedDeviceRecordId = typeof device.deviceId === "string"
+          ? device.deviceId.trim()
+          : "";
         if (
           !response.ok() ||
           bootstrap.authenticated !== true ||
@@ -468,7 +470,7 @@ const observeSilentSessionRecovery = async (
           typeof bootstrap.churchId !== "string" ||
           !bootstrap.churchId.trim() ||
           !email ||
-          !deviceId
+          !trustedDeviceRecordId
         ) {
           return { status: "unavailable" };
         }
@@ -476,7 +478,6 @@ const observeSilentSessionRecovery = async (
           status: "authenticated",
           tenantIdFingerprint: fingerprint(bootstrap.churchId.trim()),
           email,
-          deviceId,
         };
       })
       .catch(() => ({ status: "unavailable" }));
@@ -608,6 +609,8 @@ export async function validateSavedSession(
   try {
     context = await browser.newContext({
       baseURL,
+      // Match auth-refresh and controller projects in both headed and headless Chromium.
+      userAgent: devices["Desktop Chrome"].userAgent,
       storageState: files.authFile,
       ignoreHTTPSErrors: localDevelopmentHosts.has(new URL(baseURL).hostname),
     });
@@ -753,12 +756,6 @@ export async function validateSavedSession(
         return {
           status: "invalid",
           reason: "Silent server-session recovery authenticated a different configured test account.",
-        };
-      }
-      if (recoveryResult.deviceId !== storageStateInspection.deviceIdentity) {
-        return {
-          status: "invalid",
-          reason: "Silent server-session recovery returned a different controller device identity.",
         };
       }
       if (tenantIdFingerprint !== recoveryResult.tenantIdFingerprint) {

@@ -7,6 +7,7 @@ import { join, resolve, sep } from "node:path";
 import test from "node:test";
 import {
   chromium,
+  devices,
   type Browser,
   type BrowserContext,
 } from "@playwright/test";
@@ -18,6 +19,7 @@ import {
 
 const email = "fixture.operator@example.invalid";
 const deviceIdentity = "fixture-controller-device";
+const trustedDeviceRecordId = "humanDevice_fixture-trusted-record";
 const churchId = "fixture-church-id";
 const tenantLabel = "Fixture Church";
 const authFileName = "worshipsync-user.json";
@@ -33,11 +35,17 @@ type TestStorageState = Omit<TestStorageStateBase, "origins"> & {
 };
 
 type FixtureOptions = {
-  recovery: "success" | "email-code";
+  recovery: "success" | "email-code" | "invalid-firebase";
   tryEmailRequestOnLoad?: boolean;
   sessionRequestNewCode?: boolean;
   recoveredEmail?: string;
   recoveredChurchId?: string;
+  recoveredAuthenticated?: boolean;
+  recoveredSessionKind?: string;
+  recoveredDeviceRecordId?: string;
+  restoredDeviceIdentity?: string;
+  requestDeviceIdentity?: string;
+  expectedFingerprint?: string;
 };
 
 const bootstrap = (
@@ -49,8 +57,11 @@ const bootstrap = (
   churchId: churchIdValue,
   churchName: tenantLabel,
   user: { uid: "fixture-user", email: emailValue, primaryEmail: emailValue },
-  device: { deviceId: deviceIdentity },
+  device: { deviceId: trustedDeviceRecordId },
 });
+
+const deviceFingerprint = (deviceId: unknown, userAgent: unknown, platform: unknown) =>
+  createHash("sha256").update(JSON.stringify({ deviceId, userAgent, platform })).digest("hex");
 
 const json = (response: import("node:http").ServerResponse, status: number, body: unknown) => {
   response.writeHead(status, { "content-type": "application/json" });
@@ -67,6 +78,7 @@ const startFixture = async (options: FixtureOptions) => {
   const state = {
     recoveryRequests: 0,
     emailSendAttempts: 0,
+    recoveryFingerprints: [] as string[],
     recoveryBodySummaries: [] as Array<{
       requestNewCode: unknown;
       deviceId: unknown;
@@ -91,13 +103,20 @@ const startFixture = async (options: FixtureOptions) => {
     if (request.method === "POST" && pathname === "/api/auth/session") {
       state.recoveryRequests += 1;
       const body = await readRequestBody(request);
+      const fingerprint = deviceFingerprint(body.deviceId, body.userAgent, body.platform);
+      state.recoveryFingerprints.push(fingerprint);
       if (body.requestNewCode !== false) state.emailSendAttempts += 1;
       state.recoveryBodySummaries.push({
         requestNewCode: body.requestNewCode,
         deviceId: body.deviceId,
         hasIdToken: typeof body.idToken === "string" && Boolean(body.idToken),
       });
-      if (options.recovery === "email-code") {
+      if (options.recovery === "invalid-firebase") {
+        json(response, 401, { success: false, errorMessage: "Invalid Firebase identity token" });
+        return;
+      }
+      if (options.recovery === "email-code" ||
+          (options.expectedFingerprint && options.expectedFingerprint !== fingerprint)) {
         json(response, 200, {
           success: true,
           requiresEmailCode: true,
@@ -113,7 +132,9 @@ const startFixture = async (options: FixtureOptions) => {
         success: true,
         bootstrap: {
           ...bootstrap(options.recoveredEmail, options.recoveredChurchId),
-          device: { deviceId: String(body.deviceId || "") },
+          authenticated: options.recoveredAuthenticated ?? true,
+          sessionKind: options.recoveredSessionKind ?? "human",
+          device: { deviceId: options.recoveredDeviceRecordId ?? trustedDeviceRecordId },
         },
       });
       return;
@@ -129,6 +150,7 @@ const startFixture = async (options: FixtureOptions) => {
         <html><body><div id="app">Loading</div><script>
           const email = ${JSON.stringify(email)};
           const deviceKey = "worshipsync_device_id";
+          ${options.restoredDeviceIdentity !== undefined ? `localStorage.setItem(deviceKey, ${JSON.stringify(options.restoredDeviceIdentity)});` : ""}
           const authStore = () => new Promise((resolve) => {
             const request = indexedDB.open("firebaseLocalStorageDb");
             request.onsuccess = () => {
@@ -178,7 +200,9 @@ const startFixture = async (options: FixtureOptions) => {
                     headers: { "content-type": "application/json" },
                     body: JSON.stringify({
                       idToken: "fixture-firebase-id-token",
-                      deviceId: localStorage.getItem(deviceKey),
+                      deviceId: ${options.requestDeviceIdentity !== undefined ? JSON.stringify(options.requestDeviceIdentity) : "localStorage.getItem(deviceKey)"},
+                      userAgent: navigator.userAgent,
+                      platform: navigator.platform,
                       requestNewCode: ${JSON.stringify(options.sessionRequestNewCode ?? false)},
                     }),
                   });
@@ -368,7 +392,8 @@ test("recovers an expired cookie and reuses the saved session in a second Chromi
   }]);
 });
 
-test("silently recovers a server-rejected cookie without requesting an email code", async (t) => {
+test("silently recovers with distinct browser and trusted-device record IDs without requesting an email code", async (t) => {
+  assert.notEqual(trustedDeviceRecordId, deviceIdentity);
   const fixture = await startFixture({ recovery: "success" });
   t.after(fixture.close);
   const temp = await makeTempFiles(t);
@@ -425,6 +450,122 @@ test("rejects silent recovery for a different configured account or tenant", asy
       await fixture.close();
     }
   }
+});
+
+test("rejects changed local device identity and a substituted recovery request identity", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  for (const scenario of [
+    { restoredDeviceIdentity: "different-local-device", expectedReason: /saved controller device identity/ },
+    { requestDeviceIdentity: "different-request-device", expectedReason: /outside silent server-session recovery/ },
+  ]) {
+    const { expectedReason, ...overrides } = scenario;
+    const fixture = await startFixture({ recovery: "success", ...overrides });
+    try {
+      const temp = await makeTempFiles(t);
+      const state = await seedStorageState(browser, fixture.baseURL, {
+        value: "rejected-cookie", expires: Math.floor(Date.now() / 1000) + 3_600,
+      });
+      await writeFixtureState(temp.files, fixture.baseURL, state);
+      const savedBefore = await readFile(temp.files.authFile, "utf8");
+      const result = await validateSavedSession(browser, fixture.baseURL, email, temp.files);
+      assert.equal(result.status, "invalid");
+      if (result.status === "invalid") assert.match(result.reason, expectedReason);
+      assert.equal(await readFile(temp.files.authFile, "utf8"), savedBefore);
+      assert.equal(fixture.state.recoveryRequests, 0);
+      assert.equal(fixture.state.emailSendAttempts, 0);
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test("rejects missing Firebase state and a server-rejected Firebase identity token", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  for (const missingState of [true, false]) {
+    const fixture = await startFixture({ recovery: "invalid-firebase" });
+    try {
+      const temp = await makeTempFiles(t);
+      const state = await seedStorageState(browser, fixture.baseURL, {
+        value: "rejected-cookie", expires: Math.floor(Date.now() / 1000) + 3_600,
+      });
+      if (missingState) state.origins[0].indexedDB = [];
+      await writeFixtureState(temp.files, fixture.baseURL, state);
+      const savedBefore = await readFile(temp.files.authFile, "utf8");
+      const result = await validateSavedSession(browser, fixture.baseURL, email, temp.files);
+      assert.equal(result.status, "invalid");
+      if (result.status === "invalid") assert.match(result.reason, missingState
+        ? /does not contain Firebase IndexedDB state/
+        : /could not restore the server session silently/);
+      assert.equal(await readFile(temp.files.authFile, "utf8"), savedBefore);
+      assert.equal(fixture.state.recoveryRequests, missingState ? 0 : 1);
+      assert.equal(fixture.state.emailSendAttempts, 0);
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test("requires an authenticated human recovery response with a trusted-device record", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  for (const overrides of [
+    { recoveredAuthenticated: false },
+    { recoveredSessionKind: "workstation" },
+    { recoveredDeviceRecordId: "" },
+  ]) {
+    const fixture = await startFixture({ recovery: "success", ...overrides });
+    try {
+      const temp = await makeTempFiles(t);
+      const state = await seedStorageState(browser, fixture.baseURL, {
+        value: "rejected-cookie", expires: Math.floor(Date.now() / 1000) + 3_600,
+      });
+      await writeFixtureState(temp.files, fixture.baseURL, state);
+      const savedBefore = await readFile(temp.files.authFile, "utf8");
+      const result = await validateSavedSession(browser, fixture.baseURL, email, temp.files);
+      assert.equal(result.status, "invalid");
+      assert.equal(await readFile(temp.files.authFile, "utf8"), savedBefore);
+      assert.equal(fixture.state.recoveryRequests, 1);
+      assert.equal(fixture.state.emailSendAttempts, 0);
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+test("headed and headless recovery use the same configured trusted-device fingerprint", async (t) => {
+  const headedBrowser = await chromium.launch({ headless: false });
+  t.after(() => headedBrowser.close());
+  const referenceContext = await headedBrowser.newContext(devices["Desktop Chrome"]);
+  const referencePage = await referenceContext.newPage();
+  const referencePlatform = await referencePage.evaluate(() => navigator.platform);
+  await referenceContext.close();
+  const expectedFingerprint = deviceFingerprint(
+    deviceIdentity, devices["Desktop Chrome"].userAgent, referencePlatform,
+  );
+  const fixture = await startFixture({ recovery: "success", expectedFingerprint });
+  t.after(fixture.close);
+  const temp = await makeTempFiles(t);
+  const state = await seedStorageState(headedBrowser, fixture.baseURL, {
+    value: "expired-cookie", expires: Math.floor(Date.now() / 1000) - 60,
+  });
+  await writeFixtureState(temp.files, fixture.baseURL, state);
+  verifyRecoveredResult(await validateSavedSession(headedBrowser, fixture.baseURL, email, temp.files));
+
+  // Reject just the recovered cookie so the next mode must prove the same fingerprint.
+  const recoveredState = JSON.parse(await readFile(temp.files.authFile, "utf8")) as TestStorageState;
+  recoveredState.cookies = [];
+  await writeFixtureState(temp.files, fixture.baseURL, recoveredState);
+  const headlessBrowser = await chromium.launch({ headless: true });
+  try {
+    verifyRecoveredResult(await validateSavedSession(headlessBrowser, fixture.baseURL, email, temp.files));
+  } finally {
+    await headlessBrowser.close();
+  }
+  assert.deepEqual(fixture.state.recoveryFingerprints, [expectedFingerprint, expectedFingerprint]);
+  assert.equal(fixture.state.recoveryRequests, 2);
+  assert.equal(fixture.state.emailSendAttempts, 0);
 });
 
 test("fails clearly when recovery needs email verification and blocks email-sending auth requests", async (t) => {
