@@ -35,6 +35,7 @@ const {
   requireTeamsViewSession,
   COLLECTIONS,
   canSeedHumanBearerAuthForServerTests,
+  deleteDoc,
   getDoc,
   seedActiveHumanBearerForServerTests,
   seedChurchServiceTimesForServerTests,
@@ -17787,6 +17788,66 @@ test("Services catalog reads follow Services grants while scoped Teams retain on
     body: { microphones: [], audiences: [] },
   });
   assert.equal(mutation.statusCode, 403);
+});
+
+test("saved-plan assignments and scoped lists use stored dates without a configured church time zone", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const fixture = await seedEffectiveTeamsReadFixture("saved_plan_missing_timezone");
+  const reader = await createHumanContext("saved_plan_scoped_reader", {
+    churchId: fixture.churchId,
+    role: "member",
+    permissions: {
+      teams: "none", services: "none", teamScopes: { [fixture.ids.worship]: "view" },
+    },
+  });
+  const serviceId = "worship-service";
+  const startsAt = "2026-10-05T02:30:00.000Z";
+  const cases = [
+    { name: "stored service date", fields: { serviceDate: "2026-10-04" }, planKey: `${serviceId}@2026-10-04`, resolves: true },
+    { name: "declared identity date", fields: { logicalOccurrenceId: `${serviceId}@2026-10-04` }, planKey: `${serviceId}@2026-10-04`, resolves: true },
+    { name: "legacy group date", fields: { occurrenceId: "group:combined@2026-10-04" }, planKey: "group:combined@2026-10-04", resolves: true },
+    { name: "exact saved start without a date", fields: {}, planKey: `${serviceId}@2026-10-04`, exactStart: true, resolves: true },
+    { name: "missing saved date", fields: {}, planKey: `${serviceId}@2026-10-05`, resolves: false },
+    { name: "conflicting declared identity", fields: { serviceDate: "2026-10-04", logicalOccurrenceId: `${serviceId}@2026-10-03` }, planKey: `${serviceId}@2026-10-04`, resolves: false },
+  ];
+  for (const serviceTimeZone of [null, "Invalid/TimeZone"]) {
+    await setDoc(COLLECTIONS.churches, fixture.churchId, { serviceTimeZone }, { merge: true });
+    for (const scenario of cases) {
+      await t.test(`${serviceTimeZone ?? "unconfigured"}: ${scenario.name}`, async (subtest) => {
+        subtest.after(() => deleteDoc(COLLECTIONS.servicePlans, `${fixture.churchId}::${scenario.planKey}`));
+        const occurrence = { occurrenceId: `${serviceId}@${startsAt}`, serviceId, startsAt, ...scenario.fields };
+        await setDoc(COLLECTIONS.teamSchedules, `${fixture.ids.worship}_schedule`, {
+          occurrences: [occurrence],
+          assignments: {
+            [occurrence.occurrenceId]: {
+              [`${fixture.ids.worship}_position::0`]: { primaryMemberId: fixture.memberId },
+            },
+          },
+        }, { merge: true });
+        // Fallback cases use a time edit to avoid the exact-start shortcut.
+        await setDoc(COLLECTIONS.servicePlans, `${fixture.churchId}::${scenario.planKey}`, {
+          churchId: fixture.churchId,
+          planKey: scenario.planKey,
+          serviceId,
+          ...(scenario.planKey.startsWith("group:") ? { groupId: "combined" } : {}),
+          date: scenario.planKey.split("@")[1],
+          startsAt: scenario.exactStart ? startsAt : "2026-10-05T03:30:00.000Z",
+          sections: [],
+        }, { merge: false });
+        const assignments = await callHandler(authHandlers.getServicePlanAssignments, {
+          context: fixture.owner,
+          params: { planKey: scenario.planKey },
+        });
+        assert.equal(assignments.statusCode, 200, JSON.stringify(assignments.payload));
+        assert.deepEqual(assignments.payload.assignments, scenario.resolves ? [{
+          teamId: fixture.ids.worship, teamName: "worship", role: "Lead", name: "Worship Member",
+        }] : []);
+        const list = await callHandler(authHandlers.listServicePlans, { context: reader });
+        assert.equal(list.statusCode, 200, JSON.stringify(list.payload));
+        assert.deepEqual(list.payload.servicePlans, scenario.resolves ? [{ planKey: scenario.planKey }] : []);
+      });
+    }
+  }
 });
 
 test("team-scoped plan status does not expose unrelated plans or plan roster projections", async (t) => {

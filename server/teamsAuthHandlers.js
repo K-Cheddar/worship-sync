@@ -2317,7 +2317,7 @@ export const createTeamsAuthHandlers = ({
     ]);
     const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
       ? church.serviceTimeZone
-      : "UTC";
+      : "";
     const requestedTeamIds = new Set(
       reader?.role === "admin" ||
         reader?.permissions?.teams === "view" ||
@@ -6107,9 +6107,9 @@ export const createTeamsAuthHandlers = ({
   };
 
   const getServicePlanKeyForOccurrence = (occurrence, servicePlans = [], timeZone = "") => {
-    const legacyGroupDate = String(occurrence?.occurrenceId || "")
-      .match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
-    const date = occurrence?.serviceDate || legacyGroupDate;
+    const legacyGroupMatch = String(occurrence?.occurrenceId || "")
+      .match(/^group:(.+)@(\d{4}-\d{2}-\d{2})$/);
+    const date = occurrence?.serviceDate || legacyGroupMatch?.[2];
     const matchingPlan = servicePlans.find((plan) =>
       plan.startsAt === occurrence?.startsAt &&
       (occurrence?.groupId
