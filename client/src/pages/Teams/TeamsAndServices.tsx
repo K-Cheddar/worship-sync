@@ -237,7 +237,10 @@ const TeamsAndServicesLayout = () => {
           <TeamsSidebarNav collapsed={sidebarCollapsed} />
         </Sidebar>
 
-        <div className={teamsSectionScrollClassName}>
+        <div
+          className={teamsSectionScrollClassName}
+          data-mobile-header-scroll-owner
+        >
           <div className="flex min-h-0 flex-1 flex-col">
             {loading ? (
               getTeamsSectionSkeleton(activeSection.routePath)

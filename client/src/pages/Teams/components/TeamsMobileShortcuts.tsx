@@ -104,7 +104,7 @@ const TeamsMobileShortcuts = ({
         </nav>
         <TabsContent
           value={activeSection.path}
-          className="min-h-0 min-w-0 w-full flex-1"
+          className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
         >
           {children}
         </TabsContent>

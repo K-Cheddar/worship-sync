@@ -36,6 +36,7 @@ it("selects the primary group and secondary page on a nested deep link", () => {
   expect(primary.getByRole("link", { name: "Teams" })).toHaveAttribute("href", "/teams-and-services/groups");
   expect(screen.getByRole("tab", { name: "Qualifications" })).toHaveAttribute("aria-selected", "true");
   expect(screen.getByRole("tablist", { name: "Teams pages" })).toHaveAttribute("data-variant", "navigation");
+  expect(screen.getByRole("tabpanel")).toHaveClass("flex", "flex-col", "flex-1", "min-h-0");
 });
 
 it("switches groups and secondary pages immediately", async () => {
