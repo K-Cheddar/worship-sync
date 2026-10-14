@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleAlert, Menu as MenuIcon } from "lucide-react";
+import { Menu as MenuIcon } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import {
   Sheet,
@@ -9,18 +9,14 @@ import {
 } from "../../../components/ui/sheet";
 import type { MenuItemType } from "../../../types";
 import TeamsSidebarNav from "./TeamsSidebarNav";
-import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
-import { homeNavSection } from "../teamsNavSections";
 
 type TeamsMobileNavigationProps = {
   menuItems: MenuItemType[];
-  updateReady?: boolean;
 };
 
 /** Combines app-level actions and Teams and Services sections into one drawer. */
-const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNavigationProps) => {
+const TeamsMobileNavigation = ({ menuItems }: TeamsMobileNavigationProps) => {
   const [open, setOpen] = useState(false);
-  const { requestNavigation } = useTeamsNavigationGuard();
   const closeMenu = () => setOpen(false);
 
   return (
@@ -36,7 +32,6 @@ const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNa
         onClick={() => setOpen(true)}
       >
         Menu
-        {updateReady ? <CircleAlert className="size-4 text-amber-400" aria-label="Update available" /> : null}
       </Button>
       <SheetContent
         side="left"
@@ -50,7 +45,6 @@ const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNa
           <div className="flex flex-col gap-1">
             {menuItems.map((item, index) => {
               const content = item.element || item.text;
-              const destination = item.to === "/" ? homeNavSection.path : item.to;
 
               if (item.preventClose) {
                 return (
@@ -72,14 +66,8 @@ const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNa
                   variant="tertiary"
                   className="w-full justify-start rounded-lg px-2 py-1.5 text-sm text-gray-200 hover:bg-gray-800 hover:text-white max-md:min-h-10 max-md:[&>div]:min-h-0"
                   component={item.to ? "link" : "button"}
-                  to={destination}
-                  onClick={(event) => {
-                    if (destination) {
-                      if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
-                      event.preventDefault();
-                      requestNavigation(destination, { onNavigated: closeMenu });
-                      return;
-                    }
+                  to={item.to}
+                  onClick={() => {
                     item.onClick?.();
                     closeMenu();
                   }}
@@ -90,7 +78,7 @@ const TeamsMobileNavigation = ({ menuItems, updateReady = false }: TeamsMobileNa
             })}
           </div>
           <div className="mt-4 border-t border-gray-700 pt-2">
-            <TeamsSidebarNav onNavigate={closeMenu} scrollable={false} includeHome={false} />
+            <TeamsSidebarNav onNavigate={closeMenu} scrollable={false} />
           </div>
         </div>
       </SheetContent>

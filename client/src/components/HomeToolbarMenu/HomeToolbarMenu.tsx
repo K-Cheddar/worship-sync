@@ -15,14 +15,11 @@ export type HomeToolbarMenuProps = {
   extraMenuItems?: MenuItemType[];
   /** Replaces the dropdown trigger and content on narrow screens. */
   mobileMenuRenderer?: (menuItems: MenuItemType[]) => ReactNode;
-  /** Workspace shells may use the same complete drawer at every width. */
-  menuRenderer?: (menuItems: MenuItemType[], updateReady: boolean) => ReactNode;
 };
 
 const HomeToolbarMenu = ({
   extraMenuItems,
   mobileMenuRenderer,
-  menuRenderer,
 }: HomeToolbarMenuProps = {}) => {
   const { pathname } = useLocation();
   const hideHomeMenuItem = pathname === "/home";
@@ -85,36 +82,30 @@ const HomeToolbarMenu = ({
 
   return (
     <>
-      {menuRenderer ? (
-        menuRenderer(menuItems, Boolean(updateReadyVersion))
-      ) : (
-        <>
-          <div className={mobileMenuRenderer ? "hidden sm:block" : undefined}>
-            <Menu
-              menuItems={menuItems}
-              align="start"
-              TriggeringButton={
-                <Button
-                  variant="tertiary"
-                  className="w-fit max-md:min-h-0 max-md:px-1 max-md:py-0.5"
-                  aria-label="Open menu"
-                  svg={MenuIcon}
-                  iconSize="md"
-                  gap="gap-1.5"
-                >
-                  Menu
-                  {updateReadyVersion ? (
-                    <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
-                  ) : null}
-                </Button>
-              }
-            />
-          </div>
-          {mobileMenuRenderer ? (
-            <div className="sm:hidden">{mobileMenuRenderer(menuItems)}</div>
-          ) : null}
-        </>
-      )}
+      <div className={mobileMenuRenderer ? "hidden sm:block" : undefined}>
+        <Menu
+          menuItems={menuItems}
+          align="start"
+          TriggeringButton={
+            <Button
+              variant="tertiary"
+              className="w-fit max-md:min-h-0 max-md:px-1 max-md:py-0.5"
+              aria-label="Open menu"
+              svg={MenuIcon}
+              iconSize="md"
+              gap="gap-1.5"
+            >
+              Menu
+              {updateReadyVersion ? (
+                <Icon svg={CircleAlert} color="#f59e0b" size="sm" />
+              ) : null}
+            </Button>
+          }
+        />
+      </div>
+      {mobileMenuRenderer ? (
+        <div className="sm:hidden">{mobileMenuRenderer(menuItems)}</div>
+      ) : null}
       {aboutChangelogModals}
     </>
   );

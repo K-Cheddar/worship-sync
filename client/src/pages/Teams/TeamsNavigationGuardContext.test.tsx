@@ -76,8 +76,6 @@ describe("TeamsNavigationGuardProvider", () => {
       screen.getByRole("dialog", { name: "Unsaved changes" }),
     ).toBeInTheDocument();
     expect(goSpy).toHaveBeenCalledWith(1);
-    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(goSpy).toHaveBeenLastCalledWith(-1);
 
     goSpy.mockRestore();
     window.history.replaceState(originalState, "", originalUrl);

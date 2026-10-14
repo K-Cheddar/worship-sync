@@ -3745,7 +3745,7 @@ const ServicePlanEditor = ({
       ) : null}
 
       {recoveryDraft && plan && loadedEditorIdentityRef.current === editorIdentityKey ? (
-        <div className="fixed bottom-[calc(1rem+var(--teams-bottom-navigation-height,0px))] left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center gap-2 rounded-lg border border-amber-700/70 bg-gray-900 px-4 py-3 text-sm text-white shadow-xl" role="status">
+        <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center gap-2 rounded-lg border border-amber-700/70 bg-gray-900 px-4 py-3 text-sm text-white shadow-xl" role="status">
           <span>{restoringRecovery ? "Restoring saved changes…" : "Unsaved plan changes are available from this tab."}</span>
           <Button variant="cta" disabled={restoringRecovery} onClick={() => { void restoreRecoveryDraft(); }}>{restoringRecovery ? "Restoring…" : "Restore draft"}</Button>
           <Button variant="tertiary" disabled={restoringRecovery} onClick={() => { if (userId && churchId) clearServicePlanRecoveryDraft(userId, churchId, planKey); setRecoveryDraft(null); }}>Discard draft</Button>
