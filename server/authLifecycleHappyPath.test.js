@@ -86,6 +86,12 @@ const createAdminContext = async (suffix) => {
       appAccess: "full",
     },
   );
+  await setDoc(
+    COLLECTIONS.churches,
+    churchId,
+    { serviceTimeZone: "UTC" },
+    { merge: true },
+  );
   const meRes = createRes();
   await authHandlers.getAuthMe(
     createReq({

@@ -29,8 +29,9 @@ import {
   updateTeamIntakeForm,
 } from "../../../api/auth";
 
+let mockServiceTimeZone = "UTC";
 jest.mock("../TeamsPageContext", () => ({
-  useTeamsPage: () => ({ serviceTimeZone: "UTC" }),
+  useTeamsPage: () => ({ serviceTimeZone: mockServiceTimeZone }),
 }));
 
 const mockGetRecipientLink = jest.fn();
@@ -101,6 +102,7 @@ const renderManager = ({
   managedTeamIds = ["team-1"],
   teams = [{ teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
   members = [member],
+  serviceTimeZone = "UTC",
   smsEligibilityByMemberId,
 }: {
   eligibilityStatus?: "no_mobile" | "consent_needed" | "enabled" | "opted_out";
@@ -114,8 +116,10 @@ const renderManager = ({
   managedTeamIds?: string[];
   teams?: TeamRecord[];
   members?: TeamRosterMember[];
+  serviceTimeZone?: string;
   smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
 } = {}) => {
+  mockServiceTimeZone = serviceTimeZone;
   const onSmsDeliveryAttemptSaved = jest.fn();
   const onRecipientSaved = jest.fn();
   const view = render(
@@ -167,6 +171,7 @@ const openForm = async (user: ReturnType<typeof userEvent.setup>) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockServiceTimeZone = "UTC";
 });
 
 afterEach(() => {
@@ -295,6 +300,51 @@ test("a church-wide editor gets the restricted editor and immutable payload for 
       purpose: "team_availability",
       enabledFields: ["availability"],
       teamIds: ["team-1"],
+      availabilityOccurrences: [savedOccurrence],
+    }),
+  ));
+});
+
+test("saved availability forms stay readable and keep their dates when the church time zone is unavailable", async () => {
+  const user = userEvent.setup();
+  const savedOccurrence = {
+    occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+    serviceId: "saved-service",
+    name: "Saved service",
+    startsAt: "2026-10-18T14:00:00.000Z",
+    serviceDate: "2026-10-18",
+  };
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityServices: [{ serviceId: "saved-service", name: "Saved service" }],
+    availabilityOccurrences: [savedOccurrence],
+  };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: availabilityForm });
+  renderManager({
+    forms: [availabilityForm],
+    intakeRecipients: [],
+    serviceTimeZone: "",
+  });
+
+  await openForm(user);
+  expect(screen.getByRole("heading", { name: availabilityForm.name })).toBeInTheDocument();
+  expect(screen.getByText(/October 01, 2026 – October 31, 2026/)).toBeInTheDocument();
+  expect(screen.getByText(/1 availability dates/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByRole("note")).toHaveTextContent(/review this form and edit its wording/i);
+  expect(screen.getByText("Load the church time zone before choosing service dates.")).toBeInTheDocument();
+
+  await user.clear(screen.getByLabelText(/^Name/i));
+  await user.type(screen.getByLabelText(/^Name/i), "October availability updated");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    availabilityForm.formId,
+    expect.objectContaining({
+      name: "October availability updated",
       availabilityOccurrences: [savedOccurrence],
     }),
   ));

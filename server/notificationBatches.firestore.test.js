@@ -11,6 +11,8 @@ import {
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const projectId = "demo-worshipsync";
+const coordinatorId = "internal-schedule-sms-dispatch-coordinator";
+const reservedCoordinatorId = "__schedule_sms_dispatch_coordinator__";
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 
 const clearFirestoreEmulator = async () => {
@@ -23,14 +25,37 @@ const clearFirestoreEmulator = async () => {
 
 const withFirestore = async (task) => {
   const id = randomUUID();
-  await clearFirestoreEmulator();
-  const app = initializeApp({ projectId }, `schedule-batch-${id}`);
-  const db = getFirestore(app);
+  let app;
+  let db;
+  let taskError;
   try {
+    await clearFirestoreEmulator();
+    app = initializeApp({ projectId }, `schedule-batch-${id}`);
+    db = getFirestore(app);
     await task(db);
-  } finally {
-    await deleteApp(app);
+  } catch (error) {
+    taskError = error;
   }
+  const cleanupErrors = [];
+  if (db) {
+    try {
+      await db.terminate();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (app) {
+    try {
+      await deleteApp(app);
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  if (taskError && cleanupErrors.length) {
+    throw new AggregateError([taskError, ...cleanupErrors], "Firestore test failed and cleanup reported an error.");
+  }
+  if (taskError) throw taskError;
+  if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Firestore test cleanup failed.");
 };
 
 const makeStore = (db) => createScheduleBatchStoreOperations({
@@ -95,6 +120,7 @@ const dispatcherFor = (store, {
   maxRecipientsPerRun = 10,
   maxConcurrentProviderRequests = 1,
   now = () => Date.now(),
+  logger = { info() {}, warn() {}, error() {} },
 } = {}) => createScheduleBatchDispatcher({
   ...store,
   createOwnerToken: () => ownerToken,
@@ -106,7 +132,70 @@ const dispatcherFor = (store, {
   pollIntervalMs: 1000,
   leaseMs: 30000,
   now,
-  logger: { info() {}, warn() {}, error() {} },
+  logger,
+});
+
+test("Firestore emulator rejects the former reserved coordinator ID", { skip: !enabled }, async () => {
+  await withFirestore(async (db) => {
+    await assert.rejects(
+      db.collection("notificationBatches").doc(reservedCoordinatorId).set({ status: "idle" }),
+      (error) => /document|path|reserved|__schedule_sms_dispatch_coordinator__/i.test(String(error?.message || error)),
+    );
+  });
+});
+
+test("Firestore coordinator lease is atomic, releasable, and excluded from batch discovery", { skip: !enabled }, async () => {
+  await withFirestore(async (db) => {
+    const firstStore = makeStore(db);
+    const secondStore = makeStore(db);
+    const [firstClaim, secondClaim] = await Promise.all([
+      firstStore.claimCoordinator("coordinator-one", 1000, 500),
+      secondStore.claimCoordinator("coordinator-two", 1000, 500),
+    ]);
+    const claims = [firstClaim, secondClaim].filter(Boolean);
+    assert.equal(claims.length, 1, "only one process acquires the coordinator lease");
+    const owner = claims[0];
+    const ownerStore = firstClaim ? firstStore : secondStore;
+    const coordinatorRef = db.collection("notificationBatches").doc(coordinatorId);
+    const created = await coordinatorRef.get();
+    assert.equal(created.exists, true);
+    assert.equal(created.data().intentType, "schedule_sms_dispatch_coordinator");
+    assert.equal(created.data().dispatchGeneration, 1);
+    assert.equal(created.data().dispatchOwnerToken, firstClaim ? "coordinator-one" : "coordinator-two");
+    assert.equal(created.data().dispatchLeaseExpiresAt, 1500);
+
+    await db.collection("notificationBatches").doc("approved-batch").set(approvedBatch({ batchId: "approved-batch", size: 1 }));
+    await coordinatorRef.update({ status: "approved", dispatchPriorityAt: 1 });
+    const candidates = await ownerStore.listCandidates();
+    assert.deepEqual(candidates.map((batch) => batch.batchId), ["approved-batch"]);
+
+    assert.equal(await ownerStore.reserveProviderWindow(owner, 1100, 500, 2, 2), 0);
+    assert.ok(await ownerStore.releaseCoordinator(owner, 1200));
+    const released = (await coordinatorRef.get()).data();
+    assert.equal(released.status, "idle");
+    assert.equal(released.dispatchOwnerToken, "");
+    assert.equal(released.dispatchLeaseExpiresAt, 0);
+    assert.equal(released.nextSendAvailableAt, 2100, "release preserves the durable provider rate window");
+
+    const reacquired = await secondStore.claimCoordinator("coordinator-three", 1300, 500);
+    assert.deepEqual(reacquired, { ownerToken: "coordinator-three", generation: 2 });
+  });
+});
+
+test("Firestore coordinator transfers an expired lease and fences the previous owner", { skip: !enabled }, async () => {
+  await withFirestore(async (db) => {
+    const store = makeStore(db);
+    const ownerA = await store.claimCoordinator("coordinator-old", 1000, 100);
+    const ownerB = await store.claimCoordinator("coordinator-new", 1101, 100);
+    assert.deepEqual(ownerA, { ownerToken: "coordinator-old", generation: 1 });
+    assert.deepEqual(ownerB, { ownerToken: "coordinator-new", generation: 2 });
+    assert.equal(await store.renewCoordinator(ownerA, 1110, 100), null);
+    assert.equal(await store.releaseCoordinator(ownerA, 1110), null);
+    const saved = (await db.collection("notificationBatches").doc(coordinatorId).get()).data();
+    assert.equal(saved.dispatchOwnerToken, "coordinator-new");
+    assert.equal(saved.dispatchGeneration, 2);
+    assert.equal(saved.dispatchLeaseExpiresAt, 1201);
+  });
 });
 
 test("Firestore emulator lets only one of two live dispatchers claim and send an approved batch", { skip: !enabled }, async () => {
@@ -120,6 +209,14 @@ test("Firestore emulator lets only one of two live dispatchers claim and send an
     let releaseProvider;
     const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
     let providerCalls = 0;
+    const dispatcherErrors = [];
+    const logger = {
+      info() {},
+      warn() {},
+      error(event, details) {
+        if (event === "schedule_sms.dispatch_scan_error") dispatcherErrors.push(details);
+      },
+    };
     const makeProcess = async ({ recipient }) => {
       providerCalls += 1;
       signalProviderStarted();
@@ -130,24 +227,34 @@ test("Firestore emulator lets only one of two live dispatchers claim and send an
       ownerToken: "dispatcher-one",
       processRecipient: makeProcess,
       getRecipientState: async (recipient) => state.get(recipient.intentId),
+      logger,
     });
     const second = dispatcherFor(makeStore(db), {
       ownerToken: "dispatcher-two",
       processRecipient: makeProcess,
       getRecipientState: async (recipient) => state.get(recipient.intentId),
     });
+    let timeout;
+    let taskError;
     try {
       const firstRun = first.runOnce();
-      let timeout;
+      let providerStarted = false;
+      const firstRunResult = firstRun.then((result) => {
+        if (!providerStarted && !result) {
+          const details = dispatcherErrors.at(-1);
+          throw new Error(details?.message || "First dispatcher stopped before reaching the provider.");
+        }
+        return result;
+      });
       const startedOrTimedOut = Promise.race([
-        started,
+        started.then(() => { providerStarted = true; }),
+        firstRunResult,
         new Promise((_, reject) => {
           timeout = setTimeout(() => reject(new Error("First dispatcher did not reach the provider.")), 10000);
           timeout.unref?.();
         }),
       ]);
       await startedOrTimedOut;
-      clearTimeout(timeout);
       assert.equal(await second.runOnce(), false, "the shared Firestore coordinator excludes a second live web process");
       releaseProvider();
       assert.equal(await firstRun, true);
@@ -155,11 +262,29 @@ test("Firestore emulator lets only one of two live dispatchers claim and send an
       const saved = await db.collection("notificationBatches").doc(batchId).get();
       assert.equal(saved.data().status, "complete");
       assert.equal(saved.data().recipients[0].status, "sent");
+    } catch (error) {
+      taskError = error;
     } finally {
       releaseProvider?.();
-      await first.stop({ timeoutMs: 1000 });
-      await second.stop({ timeoutMs: 1000 });
+      if (timeout) clearTimeout(timeout);
+      const stopResults = await Promise.allSettled([
+        first.stop({ timeoutMs: 1000 }),
+        second.stop({ timeoutMs: 1000 }),
+      ]);
+      const stopErrors = stopResults.flatMap((result) =>
+        result.status === "rejected"
+          ? [result.reason]
+          : result.value === true
+            ? []
+            : [new Error("A schedule dispatcher did not finish before shutdown.")],
+      );
+      if (stopErrors.length) {
+        taskError = taskError
+          ? new AggregateError([taskError, ...stopErrors], "Schedule dispatcher test and cleanup failed.")
+          : new AggregateError(stopErrors, "Schedule dispatchers failed to stop cleanly.");
+      }
     }
+    if (taskError) throw taskError;
   });
 });
 
@@ -234,7 +359,11 @@ test("Firestore emulator fences a slow provider result after lease transfer and 
       const oldRun = oldProcess.runOnce();
       await providerStarted;
       await db.collection("notificationBatches").doc(batchId).update({ dispatchLeaseExpiresAt: Date.now() - 1 });
-      await db.collection("notificationBatches").doc("__schedule_sms_dispatch_coordinator__").update({ dispatchOwnerToken: "", dispatchLeaseExpiresAt: 0 });
+      const coordinator = await db.collection("notificationBatches").doc(coordinatorId).get();
+      await makeStore(db).releaseCoordinator({
+        ownerToken: coordinator.data().dispatchOwnerToken,
+        generation: coordinator.data().dispatchGeneration,
+      }, Date.now());
       await recoveredProcess.runOnce();
       releaseProvider();
       await oldRun;

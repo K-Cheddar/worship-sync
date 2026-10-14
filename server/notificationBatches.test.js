@@ -333,10 +333,10 @@ test("shared provider pacing accounts for approved SMS segments rather than reci
   assert.equal(await operations.reserveProviderWindow(ownership, 1000, 90_000, 1, 2), 0);
   assert.equal(await operations.reserveProviderWindow(ownership, 1000, 90_000, 1, 3), 2000);
   assert.equal(await operations.reserveProviderWindow(ownership, 3000, 90_000, 1, 1), 3000);
-  const saved = store.get("__schedule_sms_dispatch_coordinator__");
+  const saved = store.get("internal-schedule-sms-dispatch-coordinator");
   assert.equal(saved.nextSendAvailableAt, 7000);
   await operations.releaseCoordinator(ownership, 4000);
-  assert.equal(store.get("__schedule_sms_dispatch_coordinator__").dispatchOwnerToken, "");
+  assert.equal(store.get("internal-schedule-sms-dispatch-coordinator").dispatchOwnerToken, "");
 });
 
 test("concurrent provider execution obeys the configured request cap and avoids the old final full-batch sweep", async () => {

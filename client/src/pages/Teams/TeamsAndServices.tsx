@@ -327,9 +327,7 @@ const TeamsAndServicesRoutes = () => (
         path="forms"
         element={
           <TeamsSectionRoute routePath="forms">
-            <ChurchServiceTimeZoneGate area="Availability forms">
-              <TeamsFormsPage />
-            </ChurchServiceTimeZoneGate>
+            <TeamsFormsPage />
           </TeamsSectionRoute>
         }
       />
@@ -337,9 +335,7 @@ const TeamsAndServicesRoutes = () => (
         path="services"
         element={
           <TeamsSectionRoute routePath="services">
-            <ChurchServiceTimeZoneGate area="Service Plans">
-              <TeamsPlansPage />
-            </ChurchServiceTimeZoneGate>
+            <TeamsPlansPage />
           </TeamsSectionRoute>
         }
       />

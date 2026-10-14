@@ -674,6 +674,7 @@ describe("Teams", () => {
     mockChurchServiceTimeZone.timeZone = null;
     mockChurchServiceTimeZone.isConfigured = false;
     mockChurchServiceTimeZone.refresh.mockRejectedValue(new Error("offline"));
+    mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
 
     renderTeams("/teams-and-services/members");
     expect(
@@ -683,7 +684,8 @@ describe("Teams", () => {
 
     await openTeamsNavigationIfNeeded(user);
     await user.click(screen.getByRole("link", { name: /^Services$/i }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Service Plans dates are unavailable/i);
+    expect(await screen.findByRole("heading", { name: "Saved plans" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/date-based Service Plans actions are unavailable/i);
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(mockChurchServiceTimeZone.refresh).toHaveBeenCalledTimes(1);
 

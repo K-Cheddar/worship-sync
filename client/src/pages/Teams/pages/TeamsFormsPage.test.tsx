@@ -1,12 +1,24 @@
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import type { TeamService } from "../../../api/authTypes";
 import { setServerTimeOffset } from "../../../utils/serverTime";
 import { getTeamAvailabilityManagementData } from "../../../api/auth";
 import { useTeamsPage } from "../TeamsPageContext";
 import TeamsFormsPage from "./TeamsFormsPage";
 
+const mockChurchServiceTimeZone = {
+  status: "ready" as "loading" | "ready" | "error",
+  timeZone: "America/New_York" as string | null,
+  isConfigured: true,
+  legacyTimeZoneSuggestion: null,
+  refresh: jest.fn().mockResolvedValue(undefined),
+};
+
 jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
+jest.mock("../../../context/churchServiceTimeZone", () => ({
+  useChurchServiceTimeZone: () => mockChurchServiceTimeZone,
+}));
 jest.mock("../../../api/auth", () => ({ getTeamAvailabilityManagementData: jest.fn() }));
 jest.mock("../components/RangeSelector", () => ({
   __esModule: true,
@@ -21,6 +33,7 @@ jest.mock("../managers/IntakeManager", () => ({
     availabilityOnly,
     managedTeamIds,
     forms,
+    displayForms,
     submissions,
     positions,
     schedules,
@@ -29,10 +42,11 @@ jest.mock("../managers/IntakeManager", () => ({
     availabilityOnly?: boolean;
     managedTeamIds?: string[];
     forms: { formId: string }[];
+    displayForms?: { formId: string }[];
     submissions: unknown[];
     positions?: { positionId: string; teamId: string }[];
     schedules?: { scheduleId: string; teamId: string }[];
-  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output><output data-testid="authorized-scope-metadata">{`${positions?.map(({ positionId }) => positionId).join(",") || ""}|${schedules?.map(({ scheduleId }) => scheduleId).join(",") || ""}`}</output>{listHeader}</>,
+  }) => <><output data-testid="intake-manager-mode">{availabilityOnly ? `availability:${managedTeamIds?.join(",")}:forms=${forms.length}:submissions=${submissions.length}` : "intake"}</output><output data-testid="displayed-form-count">{displayForms?.length ?? forms.length}</output><output data-testid="authorized-scope-metadata">{`${positions?.map(({ positionId }) => positionId).join(",") || ""}|${schedules?.map(({ scheduleId }) => scheduleId).join(",") || ""}`}</output>{listHeader}</>,
 }));
 
 const mockUseTeamsPage = jest.mocked(useTeamsPage);
@@ -42,6 +56,9 @@ afterEach(() => {
   jest.useRealTimers();
   setServerTimeOffset(0);
   jest.clearAllMocks();
+  mockChurchServiceTimeZone.status = "ready";
+  mockChurchServiceTimeZone.timeZone = "America/New_York";
+  mockChurchServiceTimeZone.isConfigured = true;
 });
 
 describe("TeamsFormsPage period selection", () => {
@@ -77,6 +94,7 @@ describe("TeamsFormsPage period selection", () => {
         teams: [],
       },
       canEditTeams: false,
+      serviceTimeZone: "America/New_York",
       upsertData: jest.fn(),
     } as unknown as ReturnType<typeof useTeamsPage>);
 
@@ -107,6 +125,7 @@ describe("TeamsFormsPage period selection", () => {
         teams: [{ teamId: "worship", churchId: "church-1", name: "Worship", memberIds: ["member-1"] }],
       },
       canEditTeams: false,
+      serviceTimeZone: "America/New_York",
       canEditTeam: (teamId: string) => teamId === "worship",
       canManageTeamAvailability: true,
       upsertData: jest.fn(),
@@ -128,5 +147,38 @@ describe("TeamsFormsPage period selection", () => {
     );
     expect(screen.getByTestId("authorized-scope-metadata")).toHaveTextContent("worship-vocal|worship-schedule");
     expect(mockGetTeamAvailabilityManagementData).toHaveBeenCalledWith("church-1");
+  });
+
+  it("keeps saved forms visible when the initial church time zone request fails", () => {
+    mockChurchServiceTimeZone.status = "error";
+    mockChurchServiceTimeZone.timeZone = null;
+    mockChurchServiceTimeZone.isConfigured = false;
+    mockUseTeamsPage.mockReturnValue({
+      churchId: "church-1",
+      pageData: {
+        services: [],
+        intakeForms: [{ formId: "saved-form", churchId: "church-1", name: "Saved form", active: true }],
+        intakeSubmissions: [],
+        intakeRecipients: [],
+        smsEligibilityByMemberId: {},
+        smsDeliveryAttempts: [],
+        members: [],
+        positions: [],
+        schedules: [],
+        teams: [],
+      },
+      canEditTeams: false,
+      serviceTimeZone: "",
+      upsertData: jest.fn(),
+    } as unknown as ReturnType<typeof useTeamsPage>);
+
+    render(<MemoryRouter><TeamsFormsPage /></MemoryRouter>);
+
+    expect(screen.getByTestId("displayed-form-count")).toHaveTextContent("1");
+    expect(screen.getByRole("alert")).toHaveTextContent(/date-based Availability forms actions are unavailable/i);
+    expect(screen.getByRole("link", { name: "Open Service setup" })).toHaveAttribute(
+      "href",
+      "/teams-and-services/service-setup",
+    );
   });
 });

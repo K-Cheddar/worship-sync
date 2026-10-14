@@ -22,6 +22,7 @@ import {
 import type { TeamService } from "../../../api/authTypes";
 import type { ServicePlanTemplate } from "../../../types/servicePlan";
 import { formatPlainDate } from "../../../utils/plainDate";
+import { plainTextToRichText } from "../../../types/richText";
 import { setServerTimeOffset } from "../../../utils/serverTime";
 import { formatResolvedDateRange } from "../rangeSelection";
 import { writePlansFilterPreferences } from "../plansFilterPersistence";
@@ -150,14 +151,15 @@ jest.mock("../TeamsPageContext", () => ({
   useTeamsPage: () => ({ ...mockUseTeamsPage(), templates: mockTemplatesResource }),
 }));
 
+const mockChurchServiceTimeZone = {
+  status: "ready" as "loading" | "ready" | "error",
+  timeZone: "America/New_York" as string | null,
+  isConfigured: true,
+  legacyTimeZoneSuggestion: null,
+  refresh: jest.fn(),
+};
 jest.mock("../../../context/churchServiceTimeZone", () => ({
-  useChurchServiceTimeZone: () => ({
-    status: "ready",
-    timeZone: "America/New_York",
-    isConfigured: true,
-    legacyTimeZoneSuggestion: null,
-    refresh: jest.fn(),
-  }),
+  useChurchServiceTimeZone: () => mockChurchServiceTimeZone,
 }));
 
 const mockGetServicePlan = jest.mocked(getServicePlan);
@@ -224,6 +226,9 @@ describe("TeamsPlansPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockChurchServiceTimeZone.status = "ready";
+    mockChurchServiceTimeZone.timeZone = "America/New_York";
+    mockChurchServiceTimeZone.isConfigured = true;
     localStorage.clear();
     mockTemplatesResource = {
       data: [],
@@ -243,6 +248,7 @@ describe("TeamsPlansPage", () => {
         schedules: [],
         members: [],
       },
+      serviceTimeZone: "America/New_York",
       canEditTeams: true,
       hasTeamsWorkspaceAccess: true,
       hydrateSchedules: mockHydrateSchedules,
@@ -295,6 +301,59 @@ describe("TeamsPlansPage", () => {
     expect(await screen.findByRole("heading", { name: "Apply plan templates" })).toBeInTheDocument();
     expect(mockTemplatesResource.ensureLoaded).toHaveBeenCalledTimes(1);
     expect(mockListServicePlanTemplates).not.toHaveBeenCalled();
+  });
+
+  it("keeps existing plans readable when no church time zone is available", async () => {
+    const user = userEvent.setup();
+    mockChurchServiceTimeZone.status = "error";
+    mockChurchServiceTimeZone.timeZone = null;
+    mockChurchServiceTimeZone.isConfigured = false;
+    mockUseTeamsPage.mockReturnValue({
+      ...mockUseTeamsPage(),
+      serviceTimeZone: "",
+    });
+    mockListServicePlans.mockResolvedValue({
+      success: true,
+      servicePlans: [{
+        planKey: "sabbath@2026-10-10",
+        serviceId: "sabbath",
+        date: "2026-10-10",
+        startsAt: "2026-10-10T14:00:00.000Z",
+        name: "Saved Sabbath plan",
+      }],
+    });
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: {
+        planId: "church-1::sabbath@2026-10-10",
+        churchId: "church-1",
+        planKey: "sabbath@2026-10-10",
+        serviceId: "sabbath",
+        date: "2026-10-10",
+        startsAt: "2026-10-10T14:00:00.000Z",
+        timezone: "America/New_York",
+        name: "Saved Sabbath plan",
+        sections: [{
+          id: "saved-section",
+          name: "Saved order",
+          elements: [{
+            id: "saved-item",
+            type: "free",
+            title: plainTextToRichText("Saved order content"),
+          }],
+        }],
+      } as never,
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Saved plans" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Saved Sabbath plan.*2026-10-10/ })).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/date-based Service Plans actions are unavailable/i);
+    await user.click(screen.getByRole("button", { name: /Saved Sabbath plan.*2026-10-10/ }));
+
+    expect(await screen.findByRole("heading", { name: "Saved Sabbath plan" })).toBeInTheDocument();
+    expect(mockGetServicePlan).toHaveBeenCalledWith("church-1", "sabbath@2026-10-10");
   });
 
   it("shows one compact editable custom range input and opens its calendar", async () => {

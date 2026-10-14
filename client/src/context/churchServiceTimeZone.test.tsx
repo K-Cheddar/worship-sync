@@ -69,6 +69,33 @@ describe("ChurchServiceTimeZoneProvider", () => {
     expect(result.current.isConfigured).toBe(true);
   });
 
+  it("keeps date-based actions unavailable after an initial request failure and restores them on retry", async () => {
+    mockGetChurchServiceTimeZone
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never);
+    const { result } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(result.current.timeZone).toBeNull();
+    expect(result.current.isConfigured).toBe(false);
+
+    await act(async () => result.current.refresh());
+    expect(result.current.status).toBe("ready");
+    expect(result.current.timeZone).toBe("America/New_York");
+    expect(result.current.isConfigured).toBe(true);
+  });
+
+  it("does not treat the API's unconfigured UTC display value as a service time zone", async () => {
+    mockGetChurchServiceTimeZone.mockResolvedValue(
+      serviceTimeZoneResult("UTC", false) as never,
+    );
+    const { result } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.timeZone).toBeNull();
+    expect(result.current.isConfigured).toBe(false);
+  });
+
   it("keeps the last successful value through a failed refresh and adopts a successful retry", async () => {
     mockGetChurchServiceTimeZone
       .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)

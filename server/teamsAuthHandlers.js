@@ -462,6 +462,12 @@ export const createTeamsAuthHandlers = ({
    */
   const notifyScheduleAssignments = async ({ churchId, schedule, slots }) => {
     const church = await getChurchById(churchId);
+    if (!isValidPortableTimeZone(church?.serviceTimeZone)) {
+      throw httpError(
+        409,
+        "Set a valid church time zone in Service setup before sending this schedule.",
+      );
+    }
     const memberships = (await listMembershipsForChurch(churchId)) || [];
     const membershipByUserId = new Map(
       memberships
@@ -571,9 +577,7 @@ export const createTeamsAuthHandlers = ({
               serviceName: entry.serviceName,
               when: formatAssignmentWhen(
                 entry.startsAt,
-                isValidPortableTimeZone(church?.serviceTimeZone)
-                  ? church.serviceTimeZone
-                  : "UTC",
+                church.serviceTimeZone,
               ),
               positionName: entry.positionName,
               teamName: schedule.teamName || "",
@@ -5448,6 +5452,17 @@ export const createTeamsAuthHandlers = ({
     return payload;
   };
 
+  const requireConfiguredChurchServiceTimeZone = async (churchId) => {
+    const church = await getDoc(COLLECTIONS.churches, churchId);
+    if (!isValidPortableTimeZone(church?.serviceTimeZone)) {
+      throw httpError(
+        409,
+        "Set a valid church time zone in Service setup before scheduling.",
+      );
+    }
+    return church.serviceTimeZone;
+  };
+
   const upsertTeamEntity = async ({
     kind,
     churchId,
@@ -6091,7 +6106,7 @@ export const createTeamsAuthHandlers = ({
     return { ...payload, iemAssignments };
   };
 
-  const getServicePlanKeyForOccurrence = (occurrence, servicePlans = [], timeZone = "UTC") => {
+  const getServicePlanKeyForOccurrence = (occurrence, servicePlans = [], timeZone = "") => {
     const legacyGroupDate = String(occurrence?.occurrenceId || "")
       .match(/^group:.+@(\d{4}-\d{2}-\d{2})$/)?.[1];
     const date = occurrence?.serviceDate || legacyGroupDate;
@@ -6102,8 +6117,25 @@ export const createTeamsAuthHandlers = ({
         : plan.serviceId === occurrence?.serviceId),
     );
     if (matchingPlan?.planKey) return matchingPlan.planKey;
-    const resolved = resolveOccurrenceIdentity({ ...occurrence, ...(date ? { serviceDate: date } : {}) }, timeZone);
-    return resolved?.logicalOccurrenceId || "";
+    if (isValidPortableTimeZone(timeZone)) {
+      const resolved = resolveOccurrenceIdentity({ ...occurrence, ...(date ? { serviceDate: date } : {}) }, timeZone);
+      return resolved?.logicalOccurrenceId || "";
+    }
+    const declaredIdentity = String(occurrence?.logicalOccurrenceId || "").trim();
+    const declaredDate = declaredIdentity.match(/@([0-9]{4}-[0-9]{2}-[0-9]{2})$/)?.[1] || "";
+    const storedDate = date || declaredDate;
+    if (!isValidPortablePlainDate(storedDate)) return "";
+    const groupId = String(occurrence?.groupId || legacyGroupMatch?.[1] || "").trim();
+    const serviceIds = normalizeIdArray(
+      occurrence?.serviceIds?.length ? occurrence.serviceIds : [occurrence?.serviceId],
+    );
+    const logicalOccurrenceId = groupId
+      ? logicalOccurrenceIdForGroup(groupId, storedDate)
+      : serviceIds.length === 1
+        ? logicalOccurrenceIdForService(serviceIds[0], storedDate)
+        : "";
+    if (!logicalOccurrenceId || (declaredIdentity && declaredIdentity !== logicalOccurrenceId)) return "";
+    return logicalOccurrenceId;
   };
 
   /**
@@ -6133,7 +6165,7 @@ export const createTeamsAuthHandlers = ({
     ]);
     const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
       ? church.serviceTimeZone
-      : "UTC";
+      : "";
     const memberById = new Map(
       members.map((member) => [member.memberId, member]),
     );
@@ -10291,14 +10323,18 @@ export const createTeamsAuthHandlers = ({
         ),
         getChurchById(intent.churchId),
       ]);
+      if (!isValidPortableTimeZone(church?.serviceTimeZone)) {
+        throw httpError(
+          409,
+          "Set a valid church time zone in Service setup before sending this schedule message.",
+        );
+      }
       return {
         schedule,
         member,
         church,
         assignments: getScheduleMemberAssignments({ schedule, memberId: intent.memberId, positions }),
-        serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
-          ? church.serviceTimeZone
-          : "UTC",
+        serviceTimeZone: church.serviceTimeZone,
         responseUrl: buildAssignmentResponseUrl({
           churchId: intent.churchId,
           scheduleId: intent.sourceId,
@@ -11208,7 +11244,7 @@ export const createTeamsAuthHandlers = ({
         const church = await getDoc(COLLECTIONS.churches, churchId);
         const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
           ? church.serviceTimeZone
-          : "UTC";
+      : "";
         if (type === "all") {
           const datasets = buildPortableDatasets(
             await readPortableDatasets(churchId),
@@ -17830,10 +17866,7 @@ export const createTeamsAuthHandlers = ({
           churchId,
           payload.teamId,
         );
-        const church = await getDoc(COLLECTIONS.churches, churchId);
-        const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
-          ? church.serviceTimeZone
-          : "UTC";
+        const timeZone = await requireConfiguredChurchServiceTimeZone(churchId);
         const activeServicesById = new Map(
           (await readChurchServiceTimes(churchId))
             .filter((service) => !service?.archivedAt)
@@ -18214,6 +18247,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           payload.teamId,
         );
+        await requireConfiguredChurchServiceTimeZone(req.params.churchId);
         if (Object.keys(payload.assignments || {}).length > 0) {
           const schedules = await listScheduleConflictCandidates({
             churchId: req.params.churchId,
@@ -18323,6 +18357,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           [existing.teamId, payload.teamId],
         );
+        await requireConfiguredChurchServiceTimeZone(req.params.churchId);
         const newAssignmentConflictChecks =
           getNewScheduleAssignmentConflictChecks({
             previousAssignments: existing.assignments,
@@ -19017,10 +19052,7 @@ export const createTeamsAuthHandlers = ({
           throw httpError(400, "Existing plans can only be skipped.");
         }
         const useServiceDefaults = req.body?.useServiceDefaults === true;
-        const church = await getDoc(COLLECTIONS.churches, churchId);
-        const timeZone = isValidPortableTimeZone(church?.serviceTimeZone)
-          ? church.serviceTimeZone
-          : "UTC";
+        const timeZone = await requireConfiguredChurchServiceTimeZone(churchId);
         const templateId = normalizeShortText(req.body?.templateId, {
           max: 160,
         });

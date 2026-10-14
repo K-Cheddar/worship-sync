@@ -48,7 +48,7 @@ export const ChurchServiceTimeZoneProvider = ({
   } | null>(null);
   const [loadedTimeZone, setLoadedTimeZone] = useState<{
     churchId: string;
-    timeZone: string;
+    timeZone: string | null;
     isConfigured: boolean;
     legacyTimeZoneSuggestion: string | null;
   } | null>(null);
@@ -74,7 +74,12 @@ export const ChurchServiceTimeZoneProvider = ({
       ) return;
       setLoadedTimeZone({
         churchId: requestedChurchId,
-        timeZone: result.serviceTimeZone,
+        // The API uses UTC only as a legacy display value when no church
+        // setting exists. It is not a configured service timezone and must
+        // never drive scheduling or date-derived pages.
+        timeZone: result.isConfigured && result.serviceTimeZone
+          ? result.serviceTimeZone
+          : null,
         isConfigured: result.isConfigured,
         legacyTimeZoneSuggestion: result.legacyTimeZoneSuggestion || null,
       });

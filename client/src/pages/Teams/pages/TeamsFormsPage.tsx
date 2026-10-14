@@ -6,6 +6,7 @@ import IntakeManager from "../managers/IntakeManager";
 import { useTeamsPage } from "../TeamsPageContext";
 import { isActive } from "../teamsUtils";
 import { getUpcomingServiceRange } from "../servicePeriodRange";
+import { ChurchServiceTimeZoneNotice } from "../components/ChurchServiceTimeZoneGate";
 import { serverDate } from "../../../utils/serverTime";
 import { getTeamAvailabilityManagementData } from "../../../api/auth";
 import Button from "../../../components/Button/Button";
@@ -76,6 +77,7 @@ const TeamsFormsPage = () => {
   }, [availabilityScopeKey, churchId, scopedAvailabilityOnly, scopedRefreshVersion]);
   const now = serverDate();
   const resolveUpcomingRange = useCallback((referenceTime: Date) => {
+    if (!serviceTimeZone) return { start: "", end: "" };
     return getUpcomingServiceRange(pageData.services.filter(isActive), referenceTime, serviceTimeZone);
   }, [pageData.services, serviceTimeZone]);
   const {
@@ -89,11 +91,13 @@ const TeamsFormsPage = () => {
     resolvePresetRange: (preset, referenceTime) => resolveRangePreset(preset, referenceTime),
   });
   const visibleForms = useMemo(
-    () => filterFormsByDateRange(pageData.intakeForms, {
-      startDate: periodRange.start,
-      endDate: periodRange.end,
-    }),
-    [pageData.intakeForms, periodRange.end, periodRange.start],
+    () => serviceTimeZone
+      ? filterFormsByDateRange(pageData.intakeForms, {
+          startDate: periodRange.start,
+          endDate: periodRange.end,
+        })
+      : pageData.intakeForms,
+    [pageData.intakeForms, periodRange.end, periodRange.start, serviceTimeZone],
   );
 
   const refreshScopedData = useCallback(() => {
@@ -121,19 +125,23 @@ const TeamsFormsPage = () => {
         availabilityResponses={availabilityResponses}
         onAvailabilityRefresh={refreshScopedData}
         forms={availabilityForms}
-        displayForms={filterFormsByDateRange(availabilityForms, {
-          startDate: periodRange.start,
-          endDate: periodRange.end,
-        })}
+        displayForms={serviceTimeZone
+          ? filterFormsByDateRange(availabilityForms, {
+              startDate: periodRange.start,
+              endDate: periodRange.end,
+            })
+          : availabilityForms}
         listHeader={(
-          <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
-            <RangeSelector
-              preset={periodPreset}
-              range={periodRange}
-              onPresetChange={selectPeriodPreset}
-              onCustomRangeChange={selectCustomRange}
-            />
-          </div>
+          serviceTimeZone ? (
+            <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+              <RangeSelector
+                preset={periodPreset}
+                range={periodRange}
+                onPresetChange={selectPeriodPreset}
+                onCustomRangeChange={selectCustomRange}
+              />
+            </div>
+          ) : <ChurchServiceTimeZoneNotice area="Availability forms" />
         )}
         submissions={[]}
         intakeRecipients={scopedData.intakeRecipients}
@@ -170,14 +178,16 @@ const TeamsFormsPage = () => {
       forms={pageData.intakeForms}
       displayForms={visibleForms}
       listHeader={(
-        <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
-          <RangeSelector
-            preset={periodPreset}
-            range={periodRange}
-            onPresetChange={selectPeriodPreset}
-            onCustomRangeChange={selectCustomRange}
-          />
-        </div>
+        serviceTimeZone ? (
+          <div className="mb-3 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2">
+            <RangeSelector
+              preset={periodPreset}
+              range={periodRange}
+              onPresetChange={selectPeriodPreset}
+              onCustomRangeChange={selectCustomRange}
+            />
+          </div>
+        ) : <ChurchServiceTimeZoneNotice area="Availability forms" />
       )}
       submissions={pageData.intakeSubmissions}
       intakeRecipients={pageData.intakeRecipients}

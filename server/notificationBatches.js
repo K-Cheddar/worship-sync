@@ -129,7 +129,7 @@ export const releaseScheduleBatchLease = ({ current, ownership, now, status }) =
   };
 };
 
-const SCHEDULE_SMS_DISPATCH_COORDINATOR_ID = "__schedule_sms_dispatch_coordinator__";
+const SCHEDULE_SMS_DISPATCH_COORDINATOR_ID = "internal-schedule-sms-dispatch-coordinator";
 
 const readFirestoreDocument = async (transaction, db, collection, id) => {
   const snapshot = await transaction.get(db.collection(collection).doc(id));

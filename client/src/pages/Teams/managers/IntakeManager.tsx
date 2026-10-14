@@ -258,6 +258,7 @@ const IntakeManager = ({
   const visibleForms = displayForms ?? forms;
   const context = useContext(GlobalInfoContext);
   const { serviceTimeZone } = useTeamsPage();
+  const canCalculateServiceDates = Boolean(serviceTimeZone);
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
@@ -477,7 +478,7 @@ const IntakeManager = ({
       : ids.map((id) => teamNameById.get(id) || "Unknown team").join(", ");
 
   const relevantAvailabilityPeriod = useMemo(
-    () => isAvailabilityFormEditor && draft.startDate && draft.endDate
+    () => canCalculateServiceDates && isAvailabilityFormEditor && draft.startDate && draft.endDate
       ? buildTeamSchedulePeriod({
           services,
           positions,
@@ -492,6 +493,7 @@ const IntakeManager = ({
       draft.endDate,
       draft.startDate,
       draft.teamIds,
+      canCalculateServiceDates,
       isAvailabilityFormEditor,
       positions,
       schedules,
@@ -501,7 +503,7 @@ const IntakeManager = ({
   );
 
   const applicableServices = useMemo(() => {
-    if (!draft.startDate || !draft.endDate) return [];
+    if (!canCalculateServiceDates || !draft.startDate || !draft.endDate) return [];
     const inRange = filterServicesWithOccurrencesInRange({
       // A service remains discoverable after its recurrence ends. Its own date
       // bounds decide whether it can produce an occurrence in this form.
@@ -523,6 +525,7 @@ const IntakeManager = ({
     );
   }, [
     draft.availabilityServices,
+    canCalculateServiceDates,
     draft.endDate,
     draft.startDate,
     isAvailabilityFormEditor,
@@ -532,8 +535,10 @@ const IntakeManager = ({
   ]);
 
   const availabilityServiceOptions = useMemo(
-    () => buildIntakeAvailabilityServiceOptions(applicableServices, serviceTimeZone),
-    [applicableServices, serviceTimeZone],
+    () => canCalculateServiceDates
+      ? buildIntakeAvailabilityServiceOptions(applicableServices, serviceTimeZone)
+      : [],
+    [applicableServices, canCalculateServiceDates, serviceTimeZone],
   );
 
   const selectedAvailabilityServiceOptionIds = useMemo(() => {
@@ -554,6 +559,7 @@ const IntakeManager = ({
     startDate: string,
     endDate: string,
   ) => {
+    if (!canCalculateServiceDates) return [];
     const applicableIds = new Set(
       filterServicesWithOccurrencesInRange({
         services,
@@ -568,6 +574,11 @@ const IntakeManager = ({
   };
 
   const updateDraftDates = (patch: { startDate?: string; endDate?: string }) => {
+    const hasServiceDateCoverage = isAvailabilityFormEditor || draft.availabilityServices.length > 0;
+    if (!canCalculateServiceDates && hasServiceDateCoverage) {
+      showToast("Load the church time zone before changing service dates.", "neutral");
+      return;
+    }
     setPreserveSuggestedOccurrences(false);
     setDraft((current) => {
       const next = { ...current, ...patch };
@@ -583,6 +594,10 @@ const IntakeManager = ({
   };
 
   const updateDraftTeamIds = (teamIds: string[]) => {
+    if (isAvailabilityFormEditor && !canCalculateServiceDates) {
+      showToast("Load the church time zone before changing availability service dates.", "neutral");
+      return;
+    }
     if (isAvailabilityFormEditor) setPreserveSuggestedOccurrences(false);
     setDraft((current) => {
       const next = { ...current, teamIds };
@@ -632,7 +647,9 @@ const IntakeManager = ({
       availabilityOccurrences = editing?.availabilityOccurrences?.length
         ? editing.availabilityOccurrences
         : draft.availabilityOccurrences;
-    } else if (draft.startDate && draft.endDate) {
+    } else if (!canCalculateServiceDates && !serviceIds.length) {
+      availabilityOccurrences = [];
+    } else if (draft.startDate && draft.endDate && (canCalculateServiceDates || !serviceIds.length)) {
       const occurrences = availabilityForm
         ? (relevantAvailabilityPeriod?.occurrences || []).filter((occurrence) => {
             const occurrenceServiceIds = occurrence.serviceIds?.length
@@ -678,6 +695,21 @@ const IntakeManager = ({
     }
     if (isAvailabilityFormEditor && !draft.teamIds.length) {
       showToast("Choose at least one Team for this availability form.", "neutral");
+      return;
+    }
+    const serviceIds = draft.availabilityServices.map(({ serviceId }) => serviceId).sort();
+    const existingServiceIds = (editing?.availabilityServices || []).map(({ serviceId }) => serviceId).sort();
+    const unchangedExistingCoverage = Boolean(editing &&
+      draft.startDate === editing.startDate &&
+      draft.endDate === editing.endDate &&
+      JSON.stringify(serviceIds) === JSON.stringify(existingServiceIds) &&
+      editing.availabilityOccurrences?.length
+    );
+    const preservesOccurrences = editingFormHasIssuedRequests || unchangedExistingCoverage || preserveSuggestedOccurrences;
+    const needsChurchTimeZone = !preservesOccurrences && Boolean(draft.startDate && draft.endDate) &&
+      (isAvailabilityFormEditor || serviceIds.length > 0);
+    if (!canCalculateServiceDates && needsChurchTimeZone) {
+      showToast("Load a valid church time zone before changing service-date coverage.", "neutral");
       return;
     }
     const payload = buildPayload();
@@ -776,7 +808,7 @@ const IntakeManager = ({
     };
   }, []);
   const upcomingAvailabilitySuggestion = useMemo(
-    () => getUpcomingAvailabilitySuggestion({
+    () => canCalculateServiceDates ? getUpcomingAvailabilitySuggestion({
       services,
       forms,
       positions,
@@ -786,8 +818,8 @@ const IntakeManager = ({
         : teams.filter((team) => !team.archivedAt).map((team) => team.teamId),
       teamScheduleScope: availabilityOnly,
       timeZone: serviceTimeZone,
-    }),
-    [availabilityOnly, forms, managedTeamIds, positions, schedules, serviceTimeZone, services, teams],
+    }) : null,
+    [availabilityOnly, canCalculateServiceDates, forms, managedTeamIds, positions, schedules, serviceTimeZone, services, teams],
   );
 
   const openUpcomingAvailabilityDraft = () => {
@@ -1188,12 +1220,13 @@ const IntakeManager = ({
   // occurrenceId (`serviceId@startsAt`) -> the form's label/date for it, so the
   // review queue can show which services a submitter is (un)available for.
   const occurrenceLabelById = useMemo(() => {
-    const map = new Map<string, { name: string; startsAt: string }>();
+    const map = new Map<string, { name: string; startsAt: string; serviceDate?: string }>();
     forms.forEach((form) => {
       (form.availabilityOccurrences || []).forEach((occurrence) => {
         map.set(occurrence.occurrenceId, {
           name: occurrence.name,
           startsAt: occurrence.startsAt,
+          serviceDate: occurrence.serviceDate,
         });
       });
     });
@@ -1207,11 +1240,19 @@ const IntakeManager = ({
       .map((id) => {
         const known = occurrenceLabelById.get(id);
         const startsAt = known?.startsAt || id.split("@")[1] || "";
-        return { name: known?.name || "Service", startsAt };
+        return {
+          name: known?.name || "Service",
+          startsAt,
+          serviceDate: known?.serviceDate,
+        };
       })
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
-      .map(({ name, startsAt }) =>
-        startsAt ? `${name} · ${formatShortOccurrenceDate(startsAt, serviceTimeZone)}` : name,
+      .sort((a, b) => (a.serviceDate || a.startsAt).localeCompare(b.serviceDate || b.startsAt))
+      .map(({ name, startsAt, serviceDate }) =>
+        serviceDate
+          ? `${name} · ${formatPlainDateRangeLabel(serviceDate, serviceDate)}`
+          : startsAt && canCalculateServiceDates
+            ? `${name} · ${formatShortOccurrenceDate(startsAt, serviceTimeZone)}`
+            : `${name} · Date unavailable`,
       );
 
   const copyPublicUrl = async (url: string) => {
@@ -1636,11 +1677,16 @@ const IntakeManager = ({
       <DateRangePicker
         label="Date range"
         value={{ startDate: draft.startDate, endDate: draft.endDate }}
-        disabled={editingFormHasIssuedRequests}
+        disabled={editingFormHasIssuedRequests || (!canCalculateServiceDates && (isAvailabilityFormEditor || draft.availabilityServices.length > 0))}
         onChange={({ startDate, endDate }) =>
           updateDraftDates({ startDate, endDate })
         }
       />
+      {!canCalculateServiceDates && (isAvailabilityFormEditor || draft.availabilityServices.length > 0) ? (
+        <p className="px-1 text-sm text-amber-200" role="note">
+          Service dates need the church time zone. You can review this form and edit its wording while date selection is unavailable.
+        </p>
+      ) : null}
       {editingFormHasIssuedRequests ? (
         <p className="text-sm text-sky-200">This form already has private links or responses. Existing service dates are saved; newly suggested dates will be added when you save.</p>
       ) : null}
@@ -1716,6 +1762,7 @@ const IntakeManager = ({
           }))}
           value={draft.teamIds}
           onChange={updateDraftTeamIds}
+          disabled={!canCalculateServiceDates && isAvailabilityFormEditor}
           emptyText="No teams yet."
         />
       )}
@@ -1733,6 +1780,7 @@ const IntakeManager = ({
             sublabel: option.sublabel,
           }))}
           value={selectedAvailabilityServiceOptionIds}
+          disabled={!canCalculateServiceDates}
           onChange={(optionIds) => {
             setPreserveSuggestedOccurrences(false);
             const serviceIds = availabilityServiceOptions
@@ -1751,7 +1799,9 @@ const IntakeManager = ({
               }),
             }));
           }}
-          emptyText={
+          emptyText={!canCalculateServiceDates
+            ? "Load the church time zone before choosing service dates."
+            :
             draft.startDate && draft.endDate
               ? "No services fall in this date range."
               : "Set the form start and end dates first."
@@ -2129,7 +2179,11 @@ const IntakeManager = ({
                   <th scope="col" className="min-w-32 px-3 py-2">Response</th>
                   {occurrences.map((occurrence) => (
                     <th key={occurrence.occurrenceId} scope="col" className="min-w-36 px-3 py-2">
-                      {occurrence.name} · {occurrence.serviceDate || formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)}
+                      {occurrence.name} · {occurrence.serviceDate
+                        ? formatPlainDateRangeLabel(occurrence.serviceDate, occurrence.serviceDate)
+                        : canCalculateServiceDates
+                          ? formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)
+                          : "Date unavailable"}
                     </th>
                   ))}
                 </tr>

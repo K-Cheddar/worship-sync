@@ -7,22 +7,28 @@ type Props = {
   area: string;
 };
 
-const ChurchServiceTimeZoneGate = ({ children, area }: Props) => {
+export const ChurchServiceTimeZoneNotice = ({ area }: Pick<Props, "area">) => {
   const { status, timeZone, isConfigured, refresh } = useChurchServiceTimeZone();
-
-  if (status === "ready" && isConfigured && timeZone) return children;
-
+  const hasConfirmedValue = Boolean(isConfigured && timeZone);
+  if (status === "ready" && hasConfirmedValue) return null;
   const loading = status === "loading";
   const needsConfiguration = status === "ready" && !isConfigured;
-  let heading = "Could not load the church time zone";
-  let message = `${area} dates are unavailable until the time zone loads. Try again or check your connection.`;
-  if (loading) {
-    heading = "Loading the church time zone";
-    message = `The ${area} dates will be available when the time zone loads. You can open another section while you wait.`;
-  } else if (needsConfiguration) {
-    heading = "Choose a church time zone";
-    message = `Choose a church time zone in Service setup before using ${area}.`;
-  }
+  const heading = needsConfiguration
+    ? "Choose a church time zone"
+    : loading
+      ? hasConfirmedValue
+        ? "Refreshing the church time zone"
+        : "Loading the church time zone"
+      : hasConfirmedValue
+        ? "Could not refresh the church time zone"
+        : "Could not load the church time zone";
+  const message = needsConfiguration
+    ? `Choose a church time zone in Service setup before using date-based ${area} actions.`
+    : hasConfirmedValue
+      ? `Using this church's last confirmed time zone while the refresh is unavailable. Try again to check for updates.`
+      : loading
+        ? `Date-based ${area} actions will be available when the church time zone loads. Existing content remains accessible where it does not need date calculations.`
+        : `Date-based ${area} actions are unavailable until the church time zone loads. Try again or check your connection.`;
 
   return (
     <section
@@ -49,6 +55,20 @@ const ChurchServiceTimeZoneGate = ({ children, area }: Props) => {
         </Button>
       </div>
     </section>
+  );
+};
+
+const ChurchServiceTimeZoneGate = ({ children, area }: Props) => {
+  const { timeZone, isConfigured } = useChurchServiceTimeZone();
+  const hasConfirmedValue = Boolean(isConfigured && timeZone);
+
+  if (!hasConfirmedValue) return <ChurchServiceTimeZoneNotice area={area} />;
+
+  return (
+    <>
+      <ChurchServiceTimeZoneNotice area={area} />
+      {children}
+    </>
   );
 };
 

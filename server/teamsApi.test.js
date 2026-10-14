@@ -154,6 +154,9 @@ const createHumanContext = async (
       appAccess,
       permissions,
     });
+  // Test churches model an explicitly configured UTC church by default. Tests
+  // for missing configuration clear this field to exercise the guard.
+  await setDoc(COLLECTIONS.churches, seededChurchId, { serviceTimeZone: "UTC" }, { merge: true });
   const meRes = createRes();
   await authHandlers.getAuthMe(
     createReq({
@@ -429,6 +432,76 @@ test("teams bootstrap allows view permission but mutations require edit", async 
   });
   assert.equal(create.statusCode, 403);
   assert.equal(create.payload.success, false);
+});
+
+test("schedule creation, changes, and generation require a configured church time zone", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("schedule_requires_time_zone");
+  const { teamId } = await seedTeam(context, { teamName: "Worship" });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: "schedule-time-zone-service",
+      name: "Sabbath Service",
+      reccurence: "weekly",
+      dayOfWeek: 6,
+      time: "10:00",
+    }],
+  });
+  const body = {
+    name: "October 2026",
+    teamId,
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    timeZone: "UTC",
+    serviceIds: ["schedule-time-zone-service"],
+    occurrences: [{
+      occurrenceId: "schedule-time-zone-service@2026-10-03T10:00:00.000Z",
+      serviceId: "schedule-time-zone-service",
+      name: "Sabbath Service",
+      startsAt: "2026-10-03T10:00:00.000Z",
+    }],
+  };
+  const created = await callHandler(authHandlers.createTeamSchedule, { context, body });
+  assert.equal(created.statusCode, 200);
+
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "" }, { merge: true });
+  const changed = await callHandler(authHandlers.updateTeamSchedule, {
+    context,
+    params: { scheduleId: created.payload.schedule.scheduleId },
+    body,
+  });
+  assert.equal(changed.statusCode, 409);
+  assert.match(changed.payload.errorMessage, /valid church time zone/i);
+
+  const sent = await callHandler(authHandlers.sendTeamSchedule, {
+    context,
+    params: { scheduleId: created.payload.schedule.scheduleId },
+    body: {},
+  });
+  assert.equal(sent.statusCode, 409);
+  assert.match(sent.payload.errorMessage, /valid church time zone/i);
+
+  const generated = await callHandler(authHandlers.ensureTeamScheduleForPeriod, { context, body });
+  assert.equal(generated.statusCode, 409);
+  assert.match(generated.payload.errorMessage, /valid church time zone/i);
+
+  const bulkPlan = await callHandler(authHandlers.applyServicePlanTemplateBulk, {
+    context,
+    body: {
+      useServiceDefaults: true,
+      existingPlanMode: "skip",
+      targets: [{
+        serviceId: "schedule-time-zone-service",
+        serviceIds: ["schedule-time-zone-service"],
+        occurrenceId: "schedule-time-zone-service@2026-10-03T10:00:00.000Z",
+        startsAt: "2026-10-03T10:00:00.000Z",
+        date: "2026-10-03",
+      }],
+    },
+  });
+  assert.equal(bulkPlan.statusCode, 409);
+  assert.match(bulkPlan.payload.errorMessage, /valid church time zone/i);
 });
 
 test("generated schedule ensure reuses a compatible custom schedule", async (t) => {

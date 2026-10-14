@@ -335,21 +335,28 @@ const formatAdjustedTimelineTime = (timeMs: number, timezone: string): string =>
   }).format(new Date(timeMs));
 
 const formatServicePlanEmailDate = (startsAt: string, timezone?: string) => {
+  if (!timezone) return "Date unavailable";
   const parsed = new Date(startsAt);
-  if (Number.isNaN(parsed.getTime())) return "the scheduled date";
+  if (Number.isNaN(parsed.getTime())) return "Date unavailable";
   try {
     return new Intl.DateTimeFormat(undefined, {
       month: "long",
       day: "numeric",
       year: "numeric",
-      timeZone: timezone || undefined,
+      timeZone: timezone,
     }).format(parsed);
   } catch {
-    return new Intl.DateTimeFormat(undefined, {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    }).format(parsed);
+    return "Date unavailable";
+  }
+};
+
+const isValidServiceTimeZone = (timeZone: string | null | undefined) => {
+  if (!timeZone) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format();
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -499,7 +506,7 @@ const ServicePlanEditor = ({
   scheduledAssignmentRows,
   onOpenScheduledAssignment,
   teamEquipment,
-  canEdit,
+  canEdit: canEditPermission,
   showSummary = true,
   onBack,
   backLabel = "Back to Plans",
@@ -513,7 +520,15 @@ const ServicePlanEditor = ({
 }: ServicePlanEditorProps) => {
   const { churchId, userId, access, churchBranding, churchIntegrations, canUseTeamsLiveSync } =
     useContext(GlobalInfoContext) || {};
-  const churchTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
+  const churchTimeZoneValue = useChurchServiceTimeZone().timeZone;
+  const churchTimeZone = isValidServiceTimeZone(churchTimeZoneValue)
+    ? churchTimeZoneValue
+    : "";
+  const [plan, setPlan] = useState<ServicePlan | null>(null);
+  const planTimezone = isValidServiceTimeZone(plan?.timezone)
+    ? String(plan?.timezone)
+    : churchTimeZone;
+  const canEdit = Boolean(canEditPermission && planTimezone);
   const planningCenterConnected = Boolean(
     churchIntegrations?.planningCenter?.enabled &&
     churchIntegrations?.planningCenter?.connected,
@@ -581,7 +596,6 @@ const ServicePlanEditor = ({
   currentEditorIdentityRef.current = editorIdentityKey;
   const defaultPlanTemplateId = service.defaultPlanTemplateId?.trim() || "";
 
-  const [plan, setPlan] = useState<ServicePlan | null>(null);
   const [planName, setPlanName] = useState("");
   const [sections, setSections] = useState<ServicePlanSection[] | null>(null);
   const [selectedPlanTarget, setSelectedPlanTarget] = useState<ServicePlanSelection | null>(null);
@@ -599,16 +613,16 @@ const ServicePlanEditor = ({
         onPlanTimingChange(null);
         return;
       }
+      if (!planTimezone) return;
       onPlanTimingChange({
         planKey: sourcePlan?.planKey || planKey,
         startsAt: sourcePlan?.startsAt || occurrence.startsAt,
-        timezone:
-          sourcePlan?.timezone || churchTimeZone,
+        timezone: sourcePlan?.timezone || planTimezone,
         sections: nextSections,
         publicLive: sourcePlan?.publicLive,
       });
     },
-    [churchTimeZone, occurrence.startsAt, onPlanTimingChange, planKey],
+    [occurrence.startsAt, onPlanTimingChange, planKey, planTimezone],
   );
   // Do not expose the empty-plan actions until the first fetch has answered.
   // Otherwise a fast click can create a local draft that the initial response
@@ -973,9 +987,6 @@ const ServicePlanEditor = ({
   // it was first saved as. Re-stamping the current browser's zone on every
   // save would let an editor working from another timezone silently shift the
   // wall-clock times public viewers see.
-  const planTimezone =
-    plan?.timezone || churchTimeZone;
-
   /** Best-effort: remembers any newly-typed "Assigned to" names for future
    * suggestions. Never blocks or fails the plan save itself. */
   const rememberAssignmentHistory = (savedSections: ServicePlanSection[]) => {
@@ -992,19 +1003,25 @@ const ServicePlanEditor = ({
   };
 
   const buildAutosavePayload = useCallback(() => {
-    if (!sections) return null;
+    if (!sections || !planTimezone) return null;
+    const serviceDate = occurrence.serviceDate || plan?.date || (
+      churchTimeZone
+        ? calendarDateInTimeZone(new Date(occurrence.startsAt), churchTimeZone)
+        : ""
+    );
+    if (!serviceDate) return null;
     return {
       serviceId: occurrence.serviceId,
       serviceIds: occurrence.serviceIds || [occurrence.serviceId],
       groupId: occurrence.groupId,
-      date: occurrence.serviceDate || calendarDateInTimeZone(new Date(occurrence.startsAt), churchTimeZone),
+      date: serviceDate,
       name: planName || occurrence.name,
       startsAt: occurrence.startsAt,
       timezone: planTimezone,
       sections,
       ...(sourceImport ? { sourceImport } : {}),
     };
-  }, [churchTimeZone, occurrence, planName, planTimezone, sections, sourceImport]);
+  }, [churchTimeZone, occurrence, plan?.date, planName, planTimezone, sections, sourceImport]);
 
   const saveAutosavePayload = useCallback(
     (payload: ServicePlanPayload, baseRevision: number, operationId?: string) => {
@@ -1696,6 +1713,7 @@ const ServicePlanEditor = ({
     // occurrence-time anchor as a useful starting point.
     const freshImportSections =
       hasElements && !hasSourceTiming
+        && planTimezone
         ? applyPlanAnchorStartTime(
           importedSections,
           occurrenceLocalTime(occurrence.startsAt, planTimezone),
@@ -1873,7 +1891,7 @@ const ServicePlanEditor = ({
   };
 
   const handleAddElement = (sectionId: string, insertAfterElementId?: string): string | null => {
-    if (!sections) return null;
+    if (!sections || !planTimezone) return null;
     const existingElementIds = new Set(
       sections.flatMap((section) => section.elements.map((element) => element.id)),
     );
@@ -2099,11 +2117,13 @@ const ServicePlanEditor = ({
   };
 
   const anchorStartTime = sections?.[0]?.elements?.[0]?.startTime || "";
-  const occurrenceTiming = formatOccurrenceRowLabel(
-    occurrence,
-    getSharedOccurrenceTiming([occurrence], churchTimeZone),
-    churchTimeZone,
-  );
+  const occurrenceTiming = planTimezone
+    ? formatOccurrenceRowLabel(
+        occurrence,
+        getSharedOccurrenceTiming([occurrence], planTimezone),
+        planTimezone,
+      )
+    : occurrence.serviceDate || plan?.date || "Service date unavailable";
   // Starter actions stay available both before a plan exists and after every
   // section has been removed. A fresh "Start from scratch" draft still has one
   // empty section, so it does not bounce back into this empty state.
@@ -2416,7 +2436,7 @@ const ServicePlanEditor = ({
   const isEmpty = !loadingInitialContent && !hasSections;
   const showChrome = Boolean(onBack);
   const publicSharingEnabled = Boolean(plan?.published);
-  const isServiceDay = isOccurrenceOnCalendarDay(occurrence, planTimezone);
+  const isServiceDay = Boolean(planTimezone && isOccurrenceOnCalendarDay(occurrence, planTimezone));
   const isManualLive = isServicePlanManualLive(plan);
   const isTimelineAdjusted = isServicePlanTimelineAdjusted(plan);
   const isLiveOverridden = isServicePlanLiveOverridden(plan);
@@ -2472,11 +2492,11 @@ const ServicePlanEditor = ({
   });
 
   const liveStartedAt = getServicePlanLiveStartedAt(plan);
-  const liveStartedAtLabel = liveStartedAt
+  const liveStartedAtLabel = liveStartedAt && planTimezone
     ? formatAdjustedTimelineTime(Date.parse(liveStartedAt), planTimezone)
     : null;
   const adjustedStartTimes = useMemo(() => {
-    if (!isTimelineAdjusted || !liveProgress || !liveElementId) return new Map<string, string>();
+    if (!planTimezone || !isTimelineAdjusted || !liveProgress || !liveElementId) return new Map<string, string>();
     const liveIndex = liveProgress.items.findIndex(
       (timed) => timed.item.id === liveElementId,
     );
@@ -3257,6 +3277,11 @@ const ServicePlanEditor = ({
                 {occurrence.name || service.name}
               </h2>
               <p className="mt-0.5 text-xs text-gray-400">{occurrenceTiming}</p>
+                  {!planTimezone ? (
+                    <p className="mt-1 text-xs text-amber-200" role="note">
+                      Plan dates and new service-date actions are unavailable until a valid church time zone is set.
+                    </p>
+                  ) : null}
             </div>
             {plan || hasSections || canSwitchOccurrence ? (
               <div className="flex shrink-0 items-center gap-1.5">
@@ -3700,7 +3725,7 @@ const ServicePlanEditor = ({
       {emailModalOpen ? (
         <ServicePlanEmailModal
           serviceName={planName.trim() || occurrence.name || service.name || "Service"}
-          dateLabel={formatServicePlanEmailDate(occurrence.startsAt, planTimezone)}
+          dateLabel={formatServicePlanEmailDate(occurrence.startsAt, planTimezone || undefined)}
           initialShareVersion={emailModalInitialVersion}
           onClose={() => setEmailModalOpen(false)}
           onSend={handleSendServicePlanEmail}
