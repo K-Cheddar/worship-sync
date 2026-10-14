@@ -209,6 +209,19 @@ const buildDetailedSnapshot = (
   } as PublicServiceFlowSnapshot;
 };
 
+const expectCurrentServiceToolbar = () => {
+  const page = screen.getByRole("main");
+  const toolbar = screen.getByRole("toolbar", { name: "Current service toolbar" });
+
+  // The toolbar must be a direct child so sticky positioning uses the page scroller.
+  // eslint-disable-next-line testing-library/no-node-access
+  expect(toolbar.parentElement).toBe(page);
+  expect(toolbar).toHaveClass("sticky", "top-0", "z-20", "w-full", "flex-wrap", "lg:grid");
+  expect(toolbar).not.toHaveClass("w-dvw", "-translate-x-1/2", "-mt-4", "sm:-mt-6");
+
+  return toolbar;
+};
+
 describe("CurrentServiceViewer", () => {
   beforeEach(() => {
     mockedUseChat.mockReturnValue(null);
@@ -260,6 +273,7 @@ describe("CurrentServiceViewer", () => {
     const equipmentPanel = await screen.findByRole("complementary", {
       name: "Equipment assignments",
     });
+    expect(equipmentPanel).toHaveClass("lg:max-h-[calc(100dvh-6rem)]");
     expect(within(equipmentPanel).getByText("Avery Stone")).toBeInTheDocument();
     expect(within(equipmentPanel).getByText("Lead vocal")).toBeInTheDocument();
     expect(within(equipmentPanel).getByText("Blue")).toBeInTheDocument();
@@ -299,6 +313,7 @@ describe("CurrentServiceViewer", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Detailed service information is unavailable.",
     );
+    expectCurrentServiceToolbar();
     expect(screen.queryByRole("heading", { name: "Sunday Service" })).not.toBeInTheDocument();
     expect(screen.queryByText("Opening Song")).not.toBeInTheDocument();
 
@@ -451,6 +466,7 @@ describe("CurrentServiceViewer", () => {
     renderViewer([morningService]);
 
     expect(await screen.findByRole("heading", { name: "Sunday Service" })).toBeInTheDocument();
+    expectCurrentServiceToolbar();
     expect(await screen.findByRole("heading", { name: "Welcome" })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveClass("overflow-x-hidden");
     expect(getServicePlanViewer).toHaveBeenCalledWith(
@@ -609,10 +625,9 @@ describe("CurrentServiceViewer", () => {
     renderViewer([morningService]);
 
     expect(await screen.findByText("No Service Plan yet")).toBeInTheDocument();
-    const toolbar = screen.getByRole("toolbar", { name: "Current service toolbar" });
+    const toolbar = expectCurrentServiceToolbar();
     expect(within(toolbar).getByRole("link", { name: "Home" })).toBeInTheDocument();
     expect(within(toolbar).queryByText("Current service")).not.toBeInTheDocument();
-    expect(toolbar).toHaveClass("w-dvw", "-translate-x-1/2", "-mt-4", "sm:-mt-6");
     expect(screen.getByRole("main")).toHaveClass("overflow-x-hidden");
     expect(toolbar).not.toHaveClass("rounded-xl");
     expect(screen.getByRole("combobox", { name: /Choose a service/i })).toBeInTheDocument();
@@ -620,6 +635,26 @@ describe("CurrentServiceViewer", () => {
       "church-1",
       "svc-1@2026-09-13",
     );
+  });
+
+  it("keeps the shared toolbar above loading content in the page scroller", () => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    jest.mocked(getServicePlanViewer).mockReturnValue(new Promise<never>(() => undefined));
+
+    renderViewer([morningService]);
+
+    expect(screen.getByRole("status", { name: "Loading service" })).toBeInTheDocument();
+    expectCurrentServiceToolbar();
+  });
+
+  it("keeps the shared toolbar when service viewing is unavailable", () => {
+    renderViewer([morningService], false, { canViewServices: false });
+
+    expect(screen.getByRole("heading", { name: "Service viewer unavailable" })).toBeInTheDocument();
+    const toolbar = expectCurrentServiceToolbar();
+    expect(within(toolbar).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/home");
   });
 
   it("does not wait for a church-wide service-plan list", async () => {
@@ -1006,9 +1041,7 @@ describe("CurrentServiceViewer", () => {
       name: "Open Team Chat. 3 unread messages.",
     });
     expect(teamChatButton).toBeInTheDocument();
-    expect(
-      screen.getByRole("toolbar", { name: "Current service toolbar" }),
-    ).toHaveClass("w-dvw", "-translate-x-1/2");
+    expectCurrentServiceToolbar();
 
     await userEvent.setup().click(teamChatButton);
 
