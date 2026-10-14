@@ -1,3 +1,39 @@
+# [2.44.0](https://github.com/K-Cheddar/worship-sync/compare/v2.43.0...v2.44.0) (2026-10-14)
+
+
+### Bug Fixes
+
+* authenticate WorshipSync SSE connections ([8151719](https://github.com/K-Cheddar/worship-sync/commit/8151719192afa3cc3798ea05acb004cfdcd959a8))
+* close details editors after successful saves ([3d3e751](https://github.com/K-Cheddar/worship-sync/commit/3d3e751217267777d3b5517d79ee9196d472b9de))
+* complete team profile integrity ([e765edb](https://github.com/K-Cheddar/worship-sync/commit/e765edbd315ea38b617d0edbfa6a419b9e6e1447))
+* Correct email verification ([a83a9af](https://github.com/K-Cheddar/worship-sync/commit/a83a9af3d633c9bbca32fc76c0271d406a3a85cc))
+* Correct form availability ([0f4e054](https://github.com/K-Cheddar/worship-sync/commit/0f4e05499aed72a3b6a693c43a9db670a19dfdec))
+* Correct public service view ([846538c](https://github.com/K-Cheddar/worship-sync/commit/846538c8fb511d55516be1c2a87ff8628d14f2f0))
+* correct time zone fixes ([32339ae](https://github.com/K-Cheddar/worship-sync/commit/32339ae2973d67e7ba9a51ec1313144b40e59276))
+* correct timezones ([58f22a3](https://github.com/K-Cheddar/worship-sync/commit/58f22a369497e23c510052aafac453d4aebf6eaf))
+* Correcting sms perms ([313c81c](https://github.com/K-Cheddar/worship-sync/commit/313c81cbff08d99ba4c10a817bf7504f522f119c))
+* **display:** sync clocks with server time ([28774e3](https://github.com/K-Cheddar/worship-sync/commit/28774e35638c6980751edb571893d725faf93d9e))
+* Improving team permission structure ([320308b](https://github.com/K-Cheddar/worship-sync/commit/320308b9d99cc7d4a064fc94f10b5a7b51a22dea))
+* make credit generation schedule-safe ([6387445](https://github.com/K-Cheddar/worship-sync/commit/638744581a280076f33fc9b9a0f8a4c9e37db57d))
+* preserve team profile csrf contract ([c8420d3](https://github.com/K-Cheddar/worship-sync/commit/c8420d3a55e701fd4063c7ab6f4951307a502ba9))
+* refresh manually edited generated credits ([ab5faa2](https://github.com/K-Cheddar/worship-sync/commit/ab5faa28e83daf872f7f786597352b1b740a221f))
+* **service-planning:** persist finalized overlay clones ([f555d6c](https://github.com/K-Cheddar/worship-sync/commit/f555d6c9f45c4656effb6cb5659a666ce8e835c1))
+* **service-planning:** sync overlays by reusable event ([026f0c0](https://github.com/K-Cheddar/worship-sync/commit/026f0c060b5d21c36f04a0bf951108dc91582cdd))
+* sms improvement ([8d6c080](https://github.com/K-Cheddar/worship-sync/commit/8d6c080cf1fb1ce2ad4fa34270fc48745867d0fb))
+* **teams:** keep navigation changes on in-progress-2 ([0c46606](https://github.com/K-Cheddar/worship-sync/commit/0c4660648215108df151a05fb0ad2895a1611d16))
+
+
+### Features
+
+* add team-scoped member profiles ([f101237](https://github.com/K-Cheddar/worship-sync/commit/f10123715444f55bd8b2aabcf2054df0a71e1616))
+* **controller:** enable content viewing from service plans ([9d2b89b](https://github.com/K-Cheddar/worship-sync/commit/9d2b89ba41f8d1c94e271db0ee9c6843819af8dd))
+* **teams:** add team-scoped availability management ([6bd335d](https://github.com/K-Cheddar/worship-sync/commit/6bd335d428cb7d6c3d4674f6a6023155fd7733a3))
+
+
+### Performance Improvements
+
+* **teams:** improve navigation and schedule responsiveness ([26f5625](https://github.com/K-Cheddar/worship-sync/commit/26f562566ad084b380651ea3a1eb2b7df86cf44c))
+
 # [2.43.0](https://github.com/K-Cheddar/worship-sync/compare/v2.42.0...v2.43.0) (2026-10-09)
 
 
