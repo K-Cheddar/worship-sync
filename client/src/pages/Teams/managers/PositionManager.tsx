@@ -460,6 +460,7 @@ const PositionManager = ({
 
   const positionRowProps = (position: TeamPosition) => ({
     title: position.name,
+    subtitleLabel: teams.find((team) => team.teamId === position.teamId)?.name,
     subtitle: position.description || undefined,
     icon: position.icon,
     archived: Boolean(position.archivedAt),

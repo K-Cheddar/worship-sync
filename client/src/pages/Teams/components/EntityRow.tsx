@@ -13,6 +13,7 @@ import { cn } from "@/utils/cnHelper";
 import EntityIconBadge from "../../../components/icons/EntityIconBadge";
 import type { EntityIcon } from "../../../components/icons/iconTypes";
 import {
+  teamsCompactEntityRowLayoutClassName,
   teamsRowIconButtonClassName,
   teamsRowIconButtonPadding,
 } from "../teamsStyles";
@@ -20,6 +21,8 @@ import {
 type EntityRowProps = {
   title: string;
   subtitle?: string;
+  /** Emphasized context at the start of the second line (team name or counts). */
+  subtitleLabel?: string;
   /** Custom metadata below the title; takes precedence over `subtitle` when set. */
   details?: ReactNode;
   /** Details contain an interactive control and must stay outside the row's click button. */
@@ -62,6 +65,7 @@ type EntityRowProps = {
 const EntityRow = ({
   title,
   subtitle,
+  subtitleLabel,
   details,
   detailsInteractive = false,
   headerBadge,
@@ -123,7 +127,7 @@ const EntityRow = ({
       ? "flex-1"
       : "w-full flex-1";
   const rootLayoutClassName = (() => {
-    if (compact) return "items-center gap-2 p-2";
+    if (compact) return teamsCompactEntityRowLayoutClassName;
     if (useStackedCardLayout || useHeaderActions) return "flex-col gap-3 p-3";
     return "flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between";
   })();
@@ -147,16 +151,29 @@ const EntityRow = ({
     </div>
   );
 
+  const renderedDetails = compact && details != null ? (
+    <div className="mt-0.5 min-w-0 text-xs leading-4 text-gray-400 [overflow-wrap:anywhere]">
+      {details}
+    </div>
+  ) : details;
+
   const metaBlock = (
     <>
-      {details ?? (subtitle ? (
+      {renderedDetails ?? (subtitleLabel || subtitle ? (
         <p
           className={cn(
             compact
-              ? "mt-0.5 truncate text-xs text-gray-400"
+              ? "mt-0.5 truncate text-xs leading-4 text-gray-400"
               : "mt-1 text-sm leading-relaxed text-gray-300",
           )}
+          title={[subtitleLabel, subtitle].filter(Boolean).join(" · ")}
         >
+          {subtitleLabel ? (
+            <span className="font-medium text-gray-300">{subtitleLabel}</span>
+          ) : null}
+          {subtitleLabel && subtitle ? (
+            <span className="text-gray-600"> · </span>
+          ) : null}
           {subtitle}
         </p>
       ) : null)}
@@ -258,7 +275,7 @@ const EntityRow = ({
       data-testid="entity-row"
       onClick={handleRowClick}
       className={cn(
-        "group flex rounded-lg border border-gray-800 bg-gray-950/40",
+        "group flex min-w-0 max-w-full rounded-lg border border-gray-800 bg-gray-950/40",
         rootLayoutClassName,
         selected && "border-cyan-400/40 bg-cyan-500/10",
         isClickable &&
