@@ -186,16 +186,28 @@ describe("LocalVideoInputView", () => {
   it("starts direct capture playback without reopening the USB input", async () => {
     const play = jest
       .spyOn(HTMLMediaElement.prototype, "play")
-      .mockResolvedValue(undefined);
+      .mockImplementation(function (this: HTMLMediaElement) {
+        // jsdom does not emit media lifecycle events when play() resolves.
+        // Model a successful browser start so the recovery timer does not
+        // mistake a missing test event for stalled playback.
+        Object.defineProperty(this, "readyState", {
+          configurable: true,
+          value: HTMLMediaElement.HAVE_CURRENT_DATA,
+        });
+        this.dispatchEvent(new Event("playing"));
+        return Promise.resolve();
+      });
     const view = render(<LocalVideoInputView input={input} />);
-    const video = screen.getByLabelText("USB Capture") as HTMLVideoElement;
+    try {
+      const video = screen.getByLabelText("USB Capture") as HTMLVideoElement;
 
-    await waitFor(() => expect(video.srcObject).toBe(stream));
-    expect(play).toHaveBeenCalledTimes(1);
-    expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(1);
-
-    view.unmount();
-    play.mockRestore();
+      await waitFor(() => expect(video.srcObject).toBe(stream));
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(mockAcquireWarmCapture).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      play.mockRestore();
+    }
   });
 
   it("uses hardware recovery copy when the video element reports an error", async () => {
