@@ -1,4 +1,5 @@
 import { test, expect } from "./smokeFixtures";
+import { openEditableTeam, checkSchedulingPeriodRoundTrip } from "./smokeNavigation";
 
 const openHome = async (page: import("@playwright/test").Page) => {
   await page.goto("/#/home", { waitUntil: "domcontentloaded" });
@@ -82,27 +83,7 @@ test("Teams opens an existing team with its positions and member UI", async ({ p
   await expect(page.getByRole("status", { name: "Loading teams" })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Teams", exact: true })).toBeVisible();
 
-  const firstTeam = page.getByTestId("entity-row").first();
-  if (await firstTeam.count() === 0) {
-    throw new Error(
-      "Teams loaded without an existing team. Provision at least one active team for the E2E account.",
-    );
-  }
-  const teamName = (await firstTeam.innerText()).split("\n")[0]?.trim();
-  if (!teamName) throw new Error("The first Teams row did not expose a team name.");
-
-  const editTeam = page.getByRole("button", { name: `Edit ${teamName}`, exact: true });
-  if (await editTeam.count() === 0) {
-    throw new Error(
-      `The saved E2E account can view ${teamName} but cannot open its team details. Grant edit access to one active team; smoke tests do not skip permission-gated coverage.`,
-    );
-  }
-  await editTeam.click();
-
-  await expect(page.getByRole("heading", { name: "Edit team", exact: true })).toBeVisible();
-  await expect(page.getByText("Members", { exact: true })).toBeVisible();
-  await expect(page.getByText("Positions", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Edit positions", exact: true })).toBeVisible();
+  await openEditableTeam(page);
 });
 
 test("Scheduling changes period and returns with schedule content ready", async ({ page }) => {
@@ -114,26 +95,5 @@ test("Scheduling changes period and returns with schedule content ready", async 
   await expect(page.getByRole("status", { name: "Loading schedules" })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Choose a church time zone" })).toBeHidden();
 
-  const range = page.locator('[aria-live="polite"]').filter({ hasText: /\d{4}/ }).first();
-  await expect(range).toBeVisible();
-  const initialRange = (await range.innerText()).trim();
-  if (!initialRange) throw new Error("Schedule did not render its selected date range.");
-
-  const scheduleControls = page.getByRole("group", { name: "Team schedule controls" });
-  await expect(
-    scheduleControls,
-    "Scheduling requires an active team with a service occurrence and positions in the selected period.",
-  ).toBeVisible();
-  await expect(page.getByText(/Loading this schedule.s assignments/)).toBeHidden();
-  await expect(page.getByRole("group", { name: "Schedule layout" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Next period" }).click();
-  await expect.poll(async () => (await range.innerText()).trim()).not.toBe(initialRange);
-  await expect(scheduleControls).toBeVisible();
-  await expect(page.getByText(/Loading this schedule.s assignments/)).toBeHidden();
-
-  await page.getByRole("button", { name: "Previous period" }).click();
-  await expect.poll(async () => (await range.innerText()).trim()).toBe(initialRange);
-  await expect(scheduleControls).toBeVisible();
-  await expect(page.getByText(/Loading this schedule.s assignments/)).toBeHidden();
+  await checkSchedulingPeriodRoundTrip(page);
 });

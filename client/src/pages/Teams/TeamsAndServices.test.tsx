@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ContextType, SVGProps } from "react";
+import { Fragment, useMemo, type ContextType, type PropsWithChildren, type ReactElement, type SVGProps } from "react";
 import {
   HashRouter,
   MemoryRouter,
@@ -13,7 +13,7 @@ import TeamsAndServices from "./TeamsAndServices";
 import { TeamsPageProvider } from "./TeamsPageContext";
 import TeamsMobileNavigation from "./components/TeamsMobileNavigation";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { ToastProvider } from "../../context/toastContext";
+import { ToastContext, ToastProvider, useToast } from "../../context/toastContext";
 import { createMockGlobalContext } from "../../test/mocks";
 import {
   createTeamPosition,
@@ -488,10 +488,29 @@ const TeamsLocationProbe = () => {
   return <div data-testid="teams-location">{JSON.stringify({ pathname: location.pathname, state: location.state })}</div>;
 };
 
+let retainedShadowRetry: (() => void) | undefined;
+const CaptureShadowRetry = ({ children }: PropsWithChildren) => {
+  const toast = useToast();
+  const value = useMemo(() => ({ ...toast, showToast: (...args: Parameters<typeof toast.showToast>) => {
+    const [data] = args;
+    if (typeof data !== "string" && String(data.message).includes("Couldn't save this shadow assignment")) {
+      // React element props retain the toast action; this does not traverse DOM nodes.
+      // eslint-disable-next-line testing-library/no-node-access
+      const content = data.children as ReactElement<{ children: ReactElement<{ onClick: () => void }> }>;
+      // eslint-disable-next-line testing-library/no-node-access
+      retainedShadowRetry = content.props.children.props.onClick;
+    }
+    return toast.showToast(...args);
+  } }), [toast]);
+  return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>;
+};
+
 const renderTeams = (
   initialEntry: string | { pathname: string; state?: unknown } = "/teams-and-services",
   contextOverrides: Record<string, unknown> = {},
+  captureShadowRetry = false,
 ) => {
+  const ToastObserver = captureShadowRetry ? CaptureShadowRetry : Fragment;
   const tree = () => (
     <MemoryRouter initialEntries={[initialEntry]}>
       <GlobalInfoContext.Provider
@@ -502,10 +521,12 @@ const renderTeams = (
         }
       >
         <ToastProvider>
+          <ToastObserver>
           <Routes>
             <Route path="/teams-and-services/*" element={<TeamsAndServices />} />
           </Routes>
           <TeamsLocationProbe />
+          </ToastObserver>
         </ToastProvider>
       </GlobalInfoContext.Provider>
     </MemoryRouter>
@@ -5388,6 +5409,121 @@ describe("Teams", () => {
 
     expect(screen.getByText("Jordan S.")).toBeInTheDocument();
     expect(screen.getByText("Jordan M.")).toBeInTheDocument();
+  });
+
+
+  it("retires failed shadow retries after virtual schedule remapping and removal", async () => {
+    const user = userEvent.setup();
+    const startsAt = new Date();
+    startsAt.setDate(startsAt.getDate() + 1);
+    startsAt.setHours(10, 0, 0, 0);
+    mockState = { undoable: { present: { serviceTimes: { list: [{ ...mockSharedServices[0], dateTimeISO: startsAt.toISOString(), positionRequirements: [{ positionId: "position-vocal", count: 1 }, { positionId: "position-keys", count: 1 }] }] } } } };
+    let persisted: TeamSchedule | undefined;
+    mockGetTeamsBootstrap.mockImplementation(async () => asTeamsBootstrapResponse({
+      ...scheduleBootstrap, schedules: persisted ? [persisted] : [],
+      members: scheduleBootstrap.members.map((member) => ({ ...member, blockoutDates: [] })),
+    }));
+    let finishEnsure!: (response: Awaited<ReturnType<typeof ensureTeamScheduleForPeriod>>) => void;
+    let ensureBody!: Parameters<typeof ensureTeamScheduleForPeriod>[1];
+    mockEnsureTeamScheduleForPeriod.mockImplementation((_churchId, body) => {
+      ensureBody = body;
+      return new Promise((resolve) => { finishEnsure = resolve; });
+    });
+    let rejectShadow = true;
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, scheduleId, body) => {
+      if (body.shadowAction === "add" && rejectShadow) {
+        rejectShadow = false;
+        throw new Error("Shadow save failed after ID remapping");
+      }
+      persisted = { ...persisted!, scheduleId, assignments: { [body.serviceId]: { [body.positionSlotKey]: { primaryMemberId: "member-avery", shadows: [] } } } };
+      return { success: true, schedule: persisted! };
+    });
+    retainedShadowRetry = undefined;
+    renderTeams("/teams-and-services", {}, true);
+    await user.click(await screen.findByRole("button", { name: /Sunday Vocal, Empty/i }));
+    await user.click(await screen.findByRole("button", { name: /Assign Avery/i }));
+    await openVocalSlot(user, /Sunday Vocal, Avery/i, "Add shadow");
+    await user.click(screen.getByRole("option", { name: /^Morgan$/i }));
+    persisted = { ...ensureBody, churchId: "church-1", scheduleId: "generated_remapped", source: "generated-period", generatedPeriodKey: "remapped", assignments: {} };
+    await act(async () => { finishEnsure({ success: true, created: true, schedule: persisted! }); });
+    await screen.findByRole("button", { name: "Retry save" });
+    expect(mockUpdateTeamScheduleAssignment.mock.calls.map((call) => call[1])).toEqual(["generated_remapped", "generated_remapped"]);
+    await user.click(screen.getByRole("button", { name: "Remove Shadow: Morgan" }));
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(3));
+    await act(async () => { retainedShadowRetry?.(); });
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(3);
+    expect(persisted!.assignments).toEqual(expect.objectContaining({ [ensureBody.occurrences![0].occurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery", shadows: [] } } }));
+    expect(screen.queryByRole("button", { name: "Retry save" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Shadow: Morgan" })).not.toBeInTheDocument();
+  });
+
+  it.each(["retry", "remove", "in-flight", "queued"] as const)("protects shadow intent during %s recovery", async (scenario) => {
+    const user = userEvent.setup();
+    const schedule = {
+      ...scheduleBootstrap.schedules[0],
+      assignments: { [sundayOccurrenceId]: { "position-vocal::0": { primaryMemberId: "member-avery" } } },
+    };
+    mockGetTeamsBootstrap.mockResolvedValue(asTeamsBootstrapResponse({
+      ...scheduleBootstrap,
+      members: [...scheduleBootstrap.members.map((member) => ({ ...member, blockoutDates: [] })), { memberId: "member-jordan", churchId: "church-1", firstName: "Jordan", lastName: "Ray", positionIds: ["position-keys"], blockoutDates: [], notes: "" }],
+      teams: [{ ...scheduleBootstrap.teams[0], memberIds: [...scheduleBootstrap.teams[0].memberIds, "member-jordan"] }],
+      schedules: [schedule],
+    }));
+    const added: TeamSchedule = { ...schedule, assignments: { [sundayOccurrenceId]: { "position-vocal::0": {
+      primaryMemberId: "member-avery", shadows: [{ memberId: "member-morgan", kind: "shadow" }],
+    } } } };
+    let finishFirst!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+    if (scenario === "in-flight" || scenario === "queued") {
+      mockUpdateTeamScheduleAssignment.mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }));
+    } else {
+      mockUpdateTeamScheduleAssignment.mockRejectedValueOnce(new Error("Network unavailable"));
+    }
+    mockUpdateTeamScheduleAssignment.mockImplementation(async (_churchId, _scheduleId, body) => ({ success: true, schedule: body.shadowAction === "add" ? added : schedule }));
+    retainedShadowRetry = undefined;
+    const view = renderTeams("/teams-and-services", {}, true);
+    // Occupy the existing save queue before staging a shadow.
+    if (scenario === "queued") {
+      await waitForScheduleGrid();
+      await user.click(screen.getByRole("button", { name: /Sunday Keys, Empty/i }));
+      await user.click(await screen.findByRole("button", { name: /Assign Jordan/i }));
+    }
+    await openVocalSlot(user, /Sunday Vocal/i, "Add shadow");
+    await user.click(screen.getByRole("option", { name: /^Morgan$/i }));
+    expect(await screen.findByRole("button", { name: "Remove Shadow: Morgan" })).toBeInTheDocument();
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(1));
+    if (scenario === "retry") {
+      await user.click(await screen.findByRole("button", { name: "Retry save" }));
+    } else {
+      if (scenario === "remove") await screen.findByRole("button", { name: "Retry save" });
+      await user.click(screen.getByRole("button", { name: "Remove Shadow: Morgan" }));
+      if (scenario === "in-flight" || scenario === "queued") {
+        await act(async () => { finishFirst({ success: true, schedule: scenario === "queued" ? schedule : added }); });
+      }
+    }
+    await waitFor(() => expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "Retry save" })).not.toBeInTheDocument();
+    expect(mockUpdateTeamScheduleAssignment.mock.calls[1][2]).toMatchObject({ shadowAction: scenario === "retry" ? "add" : "remove", memberId: "member-morgan" });
+    expect(Boolean(screen.queryByRole("button", { name: "Remove Shadow: Morgan" }))).toBe(scenario === "retry");
+    // Exercise a retained retry closure after a successful removal, including
+    // while another edit exists after the pending map was emptied.
+    if (scenario !== "retry") {
+      let finishLatest!: (value: UpdateTeamScheduleAssignmentResponse) => void;
+      let failLatest!: (error: Error) => void;
+      mockUpdateTeamScheduleAssignment.mockImplementationOnce(() => new Promise((resolve, reject) => { finishLatest = resolve; failLatest = reject; }));
+      await openVocalSlot(user, /Sunday Vocal/i, "Add shadow");
+      await user.click(screen.getByRole("option", { name: /^Morgan$/i }));
+      await waitFor(() => { if (mockUpdateTeamScheduleAssignment.mock.calls.length < 3) throw new Error("Latest add did not start"); });
+      await act(async () => { retainedShadowRetry?.(); });
+      await act(async () => {
+        if (scenario === "remove") failLatest(new Error("A newer choice failed"));
+        else finishLatest({ success: true, schedule: added });
+      });
+    }
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(scenario === "retry" ? 2 : 3);
+    expect(screen.getByRole("button", { name: "Remove Shadow: Morgan" })).toBeInTheDocument();
+    view.unmount();
+    await act(async () => { retainedShadowRetry?.(); });
+    expect(mockUpdateTeamScheduleAssignment).toHaveBeenCalledTimes(scenario === "retry" ? 2 : 3);
   });
 
   it("adds a shadow member from the assignment submenu", async () => {

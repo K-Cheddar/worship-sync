@@ -4,6 +4,9 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { openEditableTeam, checkSchedulingPeriodRoundTrip } from '../../e2e/smokeNavigation.ts';
+
+const smokeOnly = process.argv.includes('--smoke');
 
 // Run from client/: PLAYWRIGHT_MODULE_PATH may point to an existing Playwright installation.
 // Real workspace, routes, guard, controls, styles and navigation; deterministic page/data fixtures.
@@ -53,11 +56,11 @@ const server = await createServer({
       if (path.endsWith('/Teams/TeamsPageContext.tsx')) return `import {getAvailableTeamsNavSections} from '/src/pages/Teams/teamsNavSections';
         export const TeamsPageProvider = ({children}) => children;
         const forms = Array.from({length:32},(_,index)=>({formId:'form-'+(index+1),churchId:'fixture-church',name:'Fixture intake form '+(index+1),purpose:'intake',active:false,teamIds:[],startDate:'',endDate:'',responseDeadline:'',availabilityOccurrences:[],availabilityServices:[],enabledFields:[]}));
-        const planTime='${planServiceDateTime}'; const planService={id:'fixture-service',serviceId:'fixture-service',churchId:'fixture-church',name:'Fixture Service',timerType:'countdown',reccurence:'one_time',dateTimeISO:planTime,positionRequirements:[]};
-        const pageData = {services:[planService],intakeForms:forms,intakeSubmissions:[],intakeRecipients:[],smsEligibilityByMemberId:{},smsDeliveryAttempts:[],members:[],positions:[],schedules:[],teams:[],teamRoles:[],qualificationAreas:[],qualificationLevels:[]};
+        const planTime='${planServiceDateTime}'; const planService={id:'fixture-service',serviceId:'fixture-service',churchId:'fixture-church',name:'Fixture Service',timerType:'countdown',reccurence:location.search.includes('smoke-recurring')?'weekly':'one_time',dayOfWeek:new Date(planTime).getUTCDay(),time:'10:00',dateTimeISO:planTime,positionRequirements:location.search.includes('smoke')?[{positionId:'fixture-position',count:1}]:[]};
+        const pageData = {services:[planService],intakeForms:forms,intakeSubmissions:[],intakeRecipients:[],smsEligibilityByMemberId:{},smsDeliveryAttempts:[],members:[],positions:location.search.includes('smoke')?[{positionId:'fixture-position',churchId:'fixture-church',teamId:'editable-team',name:'Camera'}]:[],schedules:[],teams:location.search.includes('smoke')?[{teamId:'readonly-team',churchId:'fixture-church',name:'A Read only',memberIds:[]},{teamId:'editable-team',churchId:'fixture-church',name:'B Editable',memberIds:[]}]:[],teamRoles:[],qualificationAreas:[],qualificationLevels:[]};
         const templates = {data:[],loaded:true,loading:false,error:null,ensureLoaded:async()=>{},refresh:async()=>{},remove:()=>{},upsert:()=>{}};
         const availableNavSections = getAvailableTeamsNavSections({hasTeamsWorkspaceAccess:true,hasBroadTeamsReadAccess:true,canViewServices:!location.search.includes('restricted')});
-        export const useTeamsPage = () => ({loading:false,accessDenied:false,canViewServices:true,canEditServices:true,canEditTeams:true,canEditAnyTeam:true,canManageTeamAvailability:false,canEditTeam:()=>true,editableMemberIds:new Set(),serviceTimeZone:'America/New_York',churchId:'fixture-church',pageData,templates,upsertData:()=>{},removeData:()=>{},refresh:()=>{},availableNavSections,selectedScheduleId:'',scheduleDrafts:{},trackTeamsSave:()=>()=>{},updateSelectedScheduleId:()=>{},updateScheduleDraft:()=>{},flushScheduleDraft:async()=>{},clearScheduleDraft:()=>{},reconcileTeamsProjection:async()=>{},invalidateMemberEditability:()=>{}});`;
+        export const useTeamsPage = () => ({loading:false,accessDenied:false,canViewServices:true,canEditServices:true,canEditTeams:true,canEditAnyTeam:true,canManageTeamAvailability:false,canEditTeam:(id)=>id!=='readonly-team',editableMemberIds:new Set(),serviceTimeZone:'America/New_York',churchId:'fixture-church',pageData,templates,upsertData:()=>{},removeData:()=>{},refresh:()=>{},availableNavSections,selectedScheduleId:'',scheduleDrafts:{},trackTeamsSave:()=>()=>{},updateSelectedScheduleId:()=>{},updateScheduleDraft:()=>{},flushScheduleDraft:async()=>{},clearScheduleDraft:()=>{},reconcileTeamsProjection:async()=>{},invalidateMemberEditability:()=>{}});`;
       if (path.endsWith('/context/controllerInfo.tsx')) return `import {createContext} from 'react'; export const ControllerInfoContext=createContext(null); export let globalDb=undefined; export let globalBroadcastRef=undefined;`;
       if (path.endsWith('/context/globalInfo.tsx')) return `import {createContext} from 'react'; export const GlobalInfoContext=createContext({loginState:'success',sessionKind:'workstation',user:'Fixture Operator',userEmail:'fixture@example.com',churchName:'Fixture Church',activeInstances:[],hostId:'fixture-host',churchId:'fixture-church',canViewServices:true,canEditTeams:true,canEditServices:true,userId:'fixture-user',churchBranding:{colors:[]}}); export const globalHostId='fixture-host'; export const globalFireDbInfo={};`;
       if (path.endsWith('/context/toastContext.tsx')) return `import React from 'react'; export const ToastContext=React.createContext({showToast:()=>'',updateToast:()=>{},removeToast:()=>{}}); export const useToast=()=>React.useContext(ToastContext); export const ToastProvider=({children})=>children;`;
@@ -94,6 +97,30 @@ try {
   await page.route('**/service-plan-assignment-history',async route=>route.fulfill({json:{success:true,values:[]}}));
   await page.route('**/service-plan-microphones',async route=>route.fulfill({json:{success:true,microphones:[],audiences:[]}}));
   await page.route('**/service-equipment',async route=>route.fulfill({json:{success:true,equipment:[]}}));
+  if (smokeOnly) {
+    await page.route('**/team-schedules/*', async route => {
+      const body=route.request().postDataJSON() || {};
+      await route.fulfill({json:{success:true,created:true,schedule:{...body,churchId:'fixture-church',scheduleId:'generated-smoke',source:'generated-period',assignments:{}}}});
+    });
+    await page.route('**/notification-intents*', route=>route.fulfill({json:{success:true,intents:[]}}));
+    await page.setViewportSize({width:1440,height:900});
+    await page.goto('http://127.0.0.1:3107/navigation?smoke#/teams-and-services/groups');
+    await openEditableTeam(page);
+    console.log('PASS smoke selector skips the read-only first team and opens the editable second team');
+    await page.goto('http://127.0.0.1:3107/navigation?smoke#/teams-and-services/schedules');
+    await checkSchedulingPeriodRoundTrip(page);
+    console.log('PASS smoke scheduling: populated period -> empty period -> restored controls');
+    // An arbitrary error must not qualify as the legitimate empty state.
+    await page.getByRole('button',{name:'Next period'}).click();
+    const empty=page.getByText('No service occurrences are configured for this period.',{exact:false});
+    await empty.waitFor();
+    await empty.evaluate(element=>{element.textContent='Could not load schedules.';});
+    assert.equal(await page.getByRole('group',{name:'Team schedule controls'}).or(page.getByText('No service occurrences are configured for this period.',{exact:false})).count(),0);
+    console.log('PASS smoke does not accept a data error as an empty period');
+    await page.goto('http://127.0.0.1:3107/navigation?smoke-recurring#/teams-and-services/schedules');
+    await checkSchedulingPeriodRoundTrip(page);
+    console.log('PASS smoke scheduling: populated period -> populated next period -> restored controls');
+  } else {
   for (const [width,height] of [[320,568],[390,844],[844,390],[768,1024],[1024,768],[1440,900]]) {
     await page.setViewportSize({width,height});
     await page.goto(`http://127.0.0.1:3107/navigation?viewport=${width}x${height}#/teams-and-services/members`);
@@ -612,4 +639,5 @@ try {
   await page.unroute('**/service-equipment');
   console.log('PASS real Equipment page: large catalogs, sticky actions, focused add, retained drafts, independent save/retry, and unclipped color/type popovers');
 
+  }
 } finally { await browser.close(); await server.close(); }

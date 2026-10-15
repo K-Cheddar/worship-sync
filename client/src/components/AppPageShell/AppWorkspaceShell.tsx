@@ -118,6 +118,9 @@ const CollapsibleWorkspaceContent = ({ pathname, renderHeader, children }: Colla
     const finishPointerInteraction = () => {
       pointerDownRef.current = false;
       if (!pointerFocusRevealPendingRef.current) return;
+      if (pointerFocusFallbackRef.current !== null) {
+        window.clearTimeout(pointerFocusFallbackRef.current);
+      }
       pointerFocusFallbackRef.current = window.setTimeout(() => {
         pointerFocusFallbackRef.current = null;
         if (!pointerFocusRevealPendingRef.current) return;

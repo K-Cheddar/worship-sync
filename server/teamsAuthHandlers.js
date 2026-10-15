@@ -1056,7 +1056,7 @@ export const createTeamsAuthHandlers = ({
     for (const [key, { occurrence, identity, churchId: entryChurchId, teamId: entryTeamId, logicalOccurrenceId }] of entries) {
       const previous = claimSnapshots.get(key)?.data;
       if (previous?.scheduleId === scheduleId && previous.logicalOccurrenceId === logicalOccurrenceId &&
-          (previous.groupId !== (identity.groupId || null) ||
+          ((previous.groupId || null) !== (identity.groupId || null) ||
             !isDeepStrictEqual([...(previous.serviceIds || [])].sort(), [...identity.serviceIds].sort()))) {
         throw httpError(409, "A saved schedule has a conflicting service-group identity. Resolve it before continuing.");
       }
@@ -1098,7 +1098,7 @@ export const createTeamsAuthHandlers = ({
       };
       const sameClaim = previous?.scheduleId === claim.scheduleId &&
         previous?.logicalOccurrenceId === claim.logicalOccurrenceId &&
-        previous?.groupId === claim.groupId &&
+        (previous?.groupId || null) === claim.groupId &&
         isDeepStrictEqual([...(previous?.serviceIds || [])].sort(), [...claim.serviceIds].sort());
       if (sameClaim) continue;
       if (transaction) transaction.set(ref, claim, { merge: false });

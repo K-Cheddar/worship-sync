@@ -66,6 +66,8 @@ export const ChurchServiceTimeZoneProvider = ({
         globalInfo.sessionKind === "workstation" ||
         globalInfo.sessionKind === "display"),
   );
+  const canReadRef = useRef(canRead);
+  canReadRef.current = canRead;
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
   const scopeKey = JSON.stringify([churchId, globalInfo?.loginState, globalInfo?.sessionKind, globalInfo?.device?.deviceId]);
@@ -113,6 +115,9 @@ export const ChurchServiceTimeZoneProvider = ({
   }, []);
 
   const loadForChurch = useCallback((requestedChurchId: string, force = false) => {
+    if (!mountedRef.current || !canReadRef.current || requestedChurchId !== churchIdRef.current) {
+      return Promise.resolve();
+    }
     const requestedScope = scopeRef.current;
     const inFlight = inFlightRequestRef.current;
     if (
@@ -217,9 +222,9 @@ export const ChurchServiceTimeZoneProvider = ({
     }
     reconnectTimerRef.current = window.setTimeout(() => {
       reconnectTimerRef.current = null;
-      void loadForChurch(churchId).catch(() => undefined);
+      void loadForChurch(churchIdRef.current).catch(() => undefined);
     }, REFRESH_RECONNECT_COALESCE_MS);
-  }, [churchId, loadForChurch]);
+  }, [loadForChurch]);
 
   useEffect(() => {
     if (!canRead) {
