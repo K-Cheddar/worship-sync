@@ -440,6 +440,19 @@ try {
     assert.equal(headerPosition,'static',`${category} mobile actions should be in the flex layout, not another sticky layer`);
     assert.equal(await equipmentCategories.getByRole('tab',{name:category==='iems'?'In-Ear Monitors (IEMs)':'Microphones'}).getAttribute('data-state'),'active');
     assert(scrollMetrics.scrollHeight>scrollMetrics.clientHeight,`${category} ${mode} list is not an independently bounded scrollport: ${JSON.stringify(scrollMetrics)}`);
+    if(category==='iems'&&mode==='edit'){
+      const firstIemRow=page.locator('[data-equipment-editor-row]').filter({has:page.locator('#iem-name-iem-1')});
+      const [colorBox,nameBox,typeBox,removeBox]=await Promise.all([
+        firstIemRow.locator('[data-iem-color-control]').boundingBox(),
+        firstIemRow.locator('#iem-name-iem-1').boundingBox(),
+        firstIemRow.getByRole('combobox').boundingBox(),
+        firstIemRow.getByRole('button',{name:'Remove IEM 1'}).boundingBox(),
+      ]);
+      assert(colorBox&&nameBox&&typeBox&&removeBox,`IEM editor controls are missing at mobile width ${await page.evaluate(()=>innerWidth)}`);
+      const colorCenterY=colorBox.y+colorBox.height/2;
+      const removeCenterY=removeBox.y+removeBox.height/2;
+      assert(Math.abs(colorCenterY-removeCenterY)<=1&&colorBox.x<removeBox.x&&nameBox.y>colorBox.y&&typeBox.y>nameBox.y,`mobile IEM controls lost their color/delete first row and stacked fields: ${JSON.stringify({colorBox,nameBox,typeBox,removeBox})}`);
+    }
     const prefix=category==='iems'?'IEM':'Mic';
     const finalRow=page.locator(`[aria-label="${prefix} 36"]`).last();
     await scrollport.evaluate(el=>{el.scrollTop=Math.floor((el.scrollHeight-el.clientHeight)/2);});
@@ -533,6 +546,20 @@ try {
     await page.getByRole('button',{name:'Edit IEMs'}).click();
     await page.getByRole('button',{name:/Save IEMs|Saved IEMs/}).waitFor();
     await page.locator('#iem-name-iem-36').waitFor();
+    if(width===1440){
+      const firstIemRow=page.locator('[data-equipment-editor-row]').filter({has:page.locator('#iem-name-iem-1')});
+      const controls=[
+        ['Color/icon',firstIemRow.locator('[data-iem-color-control]')],
+        ['Name',firstIemRow.locator('#iem-name-iem-1')],
+        ['Type',firstIemRow.getByRole('combobox')],
+        ['Delete',firstIemRow.getByRole('button',{name:'Remove IEM 1'})],
+      ];
+      const boxes=await Promise.all(controls.map(([,control])=>control.boundingBox()));
+      assert(boxes.every(Boolean),`desktop IEM editor controls are missing: ${JSON.stringify(boxes)}`);
+      const centers=boxes.map(box=>({x:box.x+box.width/2,y:box.y+box.height/2}));
+      assert(centers.every((center,index)=>index===0||centers[index-1].x<center.x)&&centers.every(center=>Math.abs(center.y-centers[0].y)<=2),`desktop IEM controls are not aligned left-to-right as Color/icon, Name, Type, Delete: ${JSON.stringify({controls:controls.map(([name])=>name),boxes,centers})}`);
+      console.log('PASS desktop IEM editor control positions at 1440px: Color/icon, Name, Type, Delete');
+    }
     const desktopEditActions=await page.locator('[data-equipment-actions="iems"]').boundingBox();
     const desktopEditToolbar=await page.locator('[data-app-toolbar]').boundingBox();
     assert(desktopEditActions&&desktopEditToolbar&&desktopEditActions.y>=desktopCategory.y+desktopCategory.height-1,`desktop Equipment edit actions overlap category tabs at ${width}px`);

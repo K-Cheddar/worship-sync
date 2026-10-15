@@ -366,15 +366,15 @@ const TeamsMicrophonesPage = () => {
                           aria-label={title}
                           className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-gray-800 bg-gray-900/60 p-2 lg:grid-cols-[auto_minmax(12rem,1fr)_minmax(0,18rem)_auto]"
                         >
-                          <div className="col-span-1 flex min-w-0 items-center gap-2 lg:col-span-1">
+                          <div data-iem-color-control className="col-span-1 flex min-w-0 items-center gap-2 lg:order-1 lg:col-span-1">
                             <ServiceEquipmentIcon equipment={item} color={item.color} className="size-7 shrink-0" />
                             <div className="w-fit shrink-0 [&_button]:w-auto [&_button]:min-w-0 [&_button]:px-2">
                               <ColorField alpha={false} className="w-fit" label={`Color for ${title}`} hideLabel value={item.color || SERVICE_EQUIPMENT_DEFAULT_COLOR} onChange={(color) => updateIem(item.id, { color })} />
                             </div>
                           </div>
-                          <Button type="button" variant="tertiary" svg={Trash2} className={cn("justify-self-end", teamsRowIconButtonClassName)} padding={teamsRowIconButtonPadding} disabled={savingIems} aria-label={`Remove ${title}`} onClick={() => setIemDraft((current) => current.filter((entry) => entry.id !== item.id))} />
-                          <Input id={`iem-name-${item.id}`} label="Name" hideLabel placeholder="Name" className="col-span-2 min-w-0 w-full lg:col-span-1" value={item.name} disabled={savingIems} onChange={(name) => updateIem(item.id, { name: String(name) })} />
-                          <div className="col-span-2 flex min-w-0 gap-2 lg:col-span-1">
+                          <Button type="button" variant="tertiary" svg={Trash2} className={cn("justify-self-end lg:order-4", teamsRowIconButtonClassName)} padding={teamsRowIconButtonPadding} disabled={savingIems} aria-label={`Remove ${title}`} onClick={() => setIemDraft((current) => current.filter((entry) => entry.id !== item.id))} />
+                          <Input id={`iem-name-${item.id}`} label="Name" hideLabel placeholder="Name" className="col-span-2 min-w-0 w-full lg:order-2 lg:col-span-1" value={item.name} disabled={savingIems} onChange={(name) => updateIem(item.id, { name: String(name) })} />
+                          <div className="col-span-2 flex min-w-0 gap-2 lg:order-3 lg:col-span-1">
                             <Select label="Type" hideLabel className="w-full min-w-0 flex-1" selectClassName="h-10" value={isCustomSubtype ? SERVICE_EQUIPMENT_CUSTOM_SUBTYPE : item.subtype || "wireless-beltpack"} options={serviceEquipmentSubtypeOptions.map(({ value, label }) => ({ value, label }))} disabled={savingIems} onChange={(subtype) => updateIem(item.id, { subtype: subtype === SERVICE_EQUIPMENT_CUSTOM_SUBTYPE ? (isPresetServiceEquipmentSubtype(item.subtype) ? "" : item.subtype) : subtype })} />
                             {isCustomSubtype ? <Input label="Custom type" hideLabel placeholder="Custom type" className="min-w-0 w-full flex-1" value={item.subtype || ""} disabled={savingIems} onChange={(subtype) => updateIem(item.id, { subtype: String(subtype) })} /> : null}
                           </div>
