@@ -880,6 +880,135 @@ describe("BoardControllerContent", () => {
     expect(mockResetRestreamSession).not.toHaveBeenCalled();
   });
 
+  it("offers a board-only reset when Restream is authoritatively absent", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: null,
+      messages: [],
+      isLoading: true,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(
+      screen.queryByRole("button", { name: /Start fresh for today/i }),
+    ).not.toBeInTheDocument();
+    mockUseRestreamSession.mockReturnValue({
+      session: null,
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+    view.rerender(pageElement());
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start a fresh discussion board/i,
+    });
+    await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
+
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday"));
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
+  });
+
+  it("resumes a combined reset after Restream succeeds and the board reset fails", async () => {
+    const user = userEvent.setup();
+    const oldSessionAt = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: oldSessionAt,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    let currentSessionId = "restream-session-old";
+    const reloadRestream = jest.fn(async () => {
+      currentSessionId = "restream-session-new";
+    });
+    mockUseRestreamSession.mockImplementation(() => ({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: currentSessionId,
+        startedAt: currentSessionId === "restream-session-old" ? oldSessionAt : Date.now(),
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      isRefreshing: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: reloadRestream,
+    }));
+    mockHardResetBoardAlias
+      .mockRejectedValueOnce(new Error("Board archive failed"))
+      .mockResolvedValueOnce(undefined);
+
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start fresh for today/i,
+    });
+    const confirmButton = () =>
+      within(dialog).getByRole("button", { name: /^Start fresh$/i });
+    await user.click(confirmButton());
+
+    expect(await screen.findByText("Board archive failed")).toBeInTheDocument();
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+    expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("dialog", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    await user.click(confirmButton());
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(2));
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+  });
+
   it("remembers Keep current across visits for the same stale session identities", async () => {
     const user = userEvent.setup();
     mockBoardDb.__setBoardDoc("board-current", {

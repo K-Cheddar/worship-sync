@@ -62,17 +62,23 @@ const getOccurrenceCoverageKeys = (
   servicesByGroupId: Map<string, string[]>,
   allowedServiceIds?: Set<string>,
   timeZone?: string,
+  relevantServiceIds?: string[],
 ) => {
   const groupId = occurrence.occurrenceId.startsWith("group:")
     ? occurrence.occurrenceId.slice("group:".length).split("@")[0]
     : "";
   const groupedServiceIds = groupId ? servicesByGroupId.get(groupId) : undefined;
-  let serviceIds = occurrence.serviceIds?.length
+  const occurrenceServiceIds = occurrence.serviceIds?.length
     ? occurrence.serviceIds
-    : groupedServiceIds || [occurrence.serviceId];
-  if (allowedServiceIds?.size) serviceIds = serviceIds.filter((serviceId) => allowedServiceIds.has(serviceId));
+    : allowedServiceIds?.size && groupedServiceIds ? groupedServiceIds : [occurrence.serviceId];
+  // Legacy forms without a service list retain their saved primary member.
+  // For known lists, intersect against current group membership and preserve an
+  // empty result when the saved group no longer contains any allowed service.
+  const serviceIds = relevantServiceIds || (allowedServiceIds?.size
+    ? occurrenceServiceIds.filter((serviceId) => allowedServiceIds.has(serviceId))
+    : occurrenceServiceIds);
   const date = getOccurrenceDate(occurrence, timeZone || "UTC");
-  return [...new Set(serviceIds.length ? serviceIds : [occurrence.serviceId])]
+  return [...new Set(serviceIds)]
     .map((serviceId) => `${serviceId}@${date}`);
 };
 
@@ -220,7 +226,7 @@ export const getUpcomingAvailabilitySuggestions = ({
     return allSuggestions;
   }
 
-  type TeamCoverage = { teamId: string; range: { start: string; end: string }; missing: TeamScheduleOccurrence[]; review: Array<{ form: TeamIntakeForm; reason: "closed" | "expired" }> };
+  type TeamCoverage = { teamId: string; range: { start: string; end: string }; missing: TeamScheduleOccurrence[]; review: Array<{ form: TeamIntakeForm; reason: "closed" | "expired"; occurrences: TeamScheduleOccurrence[] }> };
   const teamCoverage: TeamCoverage[] = [];
   for (const teamId of scopedTeamIds) {
     const initial = findInitialTeamSchedulePeriod({ services: activeServices, positions, teamId, schedules, now, timeZone });
@@ -244,19 +250,27 @@ export const getUpcomingAvailabilitySuggestions = ({
       );
     });
     for (let offset = 0; offset < 12; offset += 1) {
-      const candidates = buildTeamSchedulePeriod({ services: activeServices, positions, teamId, schedules, startDate: range.start, endDate: range.end, timeZone }).occurrences
+      const period = buildTeamSchedulePeriod({ services: activeServices, positions, teamId, schedules, startDate: range.start, endDate: range.end, timeZone });
+      const candidates = period.occurrences
         .filter((occurrence) => Date.parse(occurrence.startsAt) > now.getTime());
       const missing = candidates.flatMap((occurrence) => {
-        const uncoveredServiceIds = getOccurrenceCoverageKeys(occurrence, groups, undefined, timeZone)
+        const relevantServiceIds = period.serviceIdsByOccurrence.get(occurrence.occurrenceId) || [occurrence.serviceId];
+        const uncoveredServiceIds = getOccurrenceCoverageKeys(occurrence, groups, undefined, timeZone, relevantServiceIds)
           .filter((key) => !openCoverage.has(key) && !closedCoverage.has(key))
           .map((key) => key.slice(0, key.lastIndexOf("@")));
         return uncoveredServiceIds.length ? [{ ...occurrence, serviceIds: [...new Set(uncoveredServiceIds)] }] : [];
       });
-      const reviewForms = new Map<string, { form: TeamIntakeForm; reason: "closed" | "expired" }>();
-      candidates.forEach((occurrence) => getOccurrenceCoverageKeys(occurrence, groups, undefined, timeZone).forEach((key) => {
-        const closed = closedCoverage.get(key);
-        if (closed && !openCoverage.has(key)) reviewForms.set(closed.form.formId, closed);
-      }));
+      const reviewForms = new Map<string, { form: TeamIntakeForm; reason: "closed" | "expired"; occurrences: TeamScheduleOccurrence[] }>();
+      candidates.forEach((occurrence) => {
+        const relevantServiceIds = period.serviceIdsByOccurrence.get(occurrence.occurrenceId) || [occurrence.serviceId];
+        getOccurrenceCoverageKeys(occurrence, groups, undefined, timeZone, relevantServiceIds).forEach((key) => {
+          const closed = closedCoverage.get(key);
+          if (!closed || openCoverage.has(key)) return;
+          const row = reviewForms.get(closed.form.formId) || { ...closed, occurrences: [] };
+          if (!row.occurrences.some(({ occurrenceId }) => occurrenceId === occurrence.occurrenceId)) row.occurrences.push(occurrence);
+          reviewForms.set(closed.form.formId, row);
+        });
+      });
       if (missing.length || reviewForms.size) {
         teamCoverage.push({ teamId, range, missing, review: [...reviewForms.values()] });
         break;
@@ -270,9 +284,11 @@ export const getUpcomingAvailabilitySuggestions = ({
   teamCoverage.forEach((coverage) => {
     if (coverage.review.length) reviewOnly.push({ ...coverage, missing: [] });
     if (!coverage.missing.length) return;
-    const signature = `${coverage.range.start}:${coverage.range.end}:${coverage.missing.flatMap((occurrence) =>
-      getOccurrenceCoverageKeys(occurrence, groups, undefined, timeZone),
-    ).sort().join("|")}`;
+    // A shared form applies its selected service dates to every selected team.
+    // Teams with the same missing dates can safely share it even when each
+    // team staffs a different member of one combined occurrence.
+    const signature = `${coverage.range.start}:${coverage.range.end}:${[...new Set(coverage.missing
+      .map((occurrence) => getOccurrenceDate(occurrence, timeZone || "UTC")))].sort().join("|")}`;
     const rows = byMissingSet.get(signature) || [];
     rows.push(coverage);
     byMissingSet.set(signature, rows);
@@ -280,9 +296,23 @@ export const getUpcomingAvailabilitySuggestions = ({
 
   byMissingSet.forEach((rows) => {
     const targetTeamIds = rows.map(({ teamId }) => teamId).sort();
-    const missing = rows[0].missing;
+    const missingByOccurrence = new Map<string, TeamScheduleOccurrence>();
+    rows.flatMap(({ missing: teamMissing }) => teamMissing).forEach((occurrence) => {
+      const previous = missingByOccurrence.get(occurrence.occurrenceId);
+      if (!previous) {
+        missingByOccurrence.set(occurrence.occurrenceId, occurrence);
+        return;
+      }
+      const serviceIds = [...new Set([
+        ...(previous.serviceIds?.length ? previous.serviceIds : [previous.serviceId]),
+        ...(occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId]),
+      ])];
+      missingByOccurrence.set(occurrence.occurrenceId, { ...previous, serviceIds });
+    });
+    const missing = [...missingByOccurrence.values()];
     const range = rows[0].range;
     const serviceIds = getServiceIds(missing);
+    const missingDateCount = new Set(missing.map((occurrence) => getOccurrenceDate(occurrence, timeZone || "UTC"))).size;
     const matchingForm = forms.find((form) =>
       !form.archivedAt && isOpen(form, today) && resolveIntakeFormFields(form).includes("availability") &&
       form.purpose === "team_availability" &&
@@ -291,7 +321,7 @@ export const getUpcomingAvailabilitySuggestions = ({
     );
     if (matchingForm) {
       allSuggestions.push({ kind: "update", formId: matchingForm.formId, name: matchingForm.name, startDate: range.start,
-        endDate: range.end, serviceCount: serviceIds.length, occurrenceCount: missing.length, teamIds: targetTeamIds,
+        endDate: range.end, serviceCount: serviceIds.length, occurrenceCount: missingDateCount, teamIds: targetTeamIds,
         missingOccurrences: missing, draft: getDraftForForm(matchingForm, missing, servicesById) });
     } else {
       const draft: TeamIntakeFormPayload = {
@@ -302,14 +332,37 @@ export const getUpcomingAvailabilitySuggestions = ({
         welcomeMessage: "", positionsMessage: "", availabilityMessage: "", notesMessage: "",
       };
       allSuggestions.push({ kind: "create", name: draft.name, startDate: range.start, endDate: range.end,
-        serviceCount: serviceIds.length, occurrenceCount: missing.length, teamIds: targetTeamIds,
+        serviceCount: serviceIds.length, occurrenceCount: missingDateCount, teamIds: targetTeamIds,
         missingOccurrences: missing, draft });
     }
   });
 
-  reviewOnly.forEach(({ teamId, range, review }) => review.forEach(({ form, reason }) => {
+  const reviewSuggestions = new Map<string, {
+    form: TeamIntakeForm;
+    reason: "closed" | "expired";
+    teamIds: Set<string>;
+    range: { start: string; end: string };
+    occurrences: Map<string, TeamScheduleOccurrence>;
+  }>();
+  reviewOnly.forEach(({ teamId, range, review }) => review.forEach(({ form, reason, occurrences }) => {
+    const item = reviewSuggestions.get(form.formId) || {
+      form, reason, teamIds: new Set<string>(), range,
+      occurrences: new Map<string, TeamScheduleOccurrence>(),
+    };
+    item.teamIds.add(teamId);
+    item.range = {
+      start: item.range.start < range.start ? item.range.start : range.start,
+      end: item.range.end > range.end ? item.range.end : range.end,
+    };
+    occurrences.forEach((occurrence) => item.occurrences.set(occurrence.occurrenceId, occurrence));
+    reviewSuggestions.set(form.formId, item);
+  }));
+  reviewSuggestions.forEach(({ form, reason, teamIds, range, occurrences }) => {
+    const affectedOccurrences = [...occurrences.values()];
+    const affectedDateCount = new Set(affectedOccurrences.map((occurrence) => getOccurrenceDate(occurrence, timeZone || "UTC"))).size;
     allSuggestions.push({ kind: "review", formId: form.formId, reason, name: form.name, startDate: range.start,
-      endDate: range.end, serviceCount: 0, occurrenceCount: 0, teamIds: [teamId], missingOccurrences: [],
+      endDate: range.end, serviceCount: getServiceIds(affectedOccurrences).length, occurrenceCount: affectedDateCount,
+      teamIds: [...teamIds].sort(), missingOccurrences: affectedOccurrences,
       draft: {
         name: form.name, startDate: form.startDate, endDate: form.endDate, responseDeadline: form.responseDeadline || form.endDate,
         availabilityServices: form.availabilityServices || [], availabilityOccurrences: form.availabilityOccurrences || [],
@@ -318,7 +371,7 @@ export const getUpcomingAvailabilitySuggestions = ({
         notesMessage: form.notesMessage || "", purpose: "team_availability",
       },
     });
-  }));
+  });
   return allSuggestions.sort((left, right) => left.startDate.localeCompare(right.startDate) || left.teamIds.join().localeCompare(right.teamIds.join()));
 };
 

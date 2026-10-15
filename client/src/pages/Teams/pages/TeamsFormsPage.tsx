@@ -58,9 +58,10 @@ const TeamsFormsPage = () => {
   const selectedTeamId = teamFilterState?.scopeKey === teamFilterScopeKey
     ? teamFilterState.teamId
     : !canEditTeams && authorizedActiveTeams.length === 1 ? authorizedActiveTeams[0].teamId : "";
-  const suggestionTeamIds = selectedTeamId
+  const suggestionTeamIds = useMemo(() => selectedTeamId
     ? [selectedTeamId]
-    : (scopedAvailabilityOnly ? managedTeamIds : authorizedActiveTeams.map(({ teamId }) => teamId));
+    : (scopedAvailabilityOnly ? managedTeamIds : authorizedActiveTeams.map(({ teamId }) => teamId)),
+  [authorizedActiveTeams, managedTeamIds, scopedAvailabilityOnly, selectedTeamId]);
   const availabilityScopeKey = `${churchId}:${managedTeamIds.join("|")}`;
   const [scopedDataState, setScopedDataState] = useState<{
     scopeKey: string;

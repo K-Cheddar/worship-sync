@@ -96,6 +96,14 @@ type AllDocsResult<T> = {
   rows: Array<{ doc?: T }>;
 };
 
+type FreshBoardResetProgress = {
+  churchId: string;
+  aliasId: string;
+  scope: StaleBoardSessionScope;
+  restreamCompleted: boolean;
+  boardCompleted: boolean;
+};
+
 type LiveActivityItem =
   | {
     id: string;
@@ -265,6 +273,7 @@ export const BoardControllerContent = () => {
   const [keptStaleSessionIdentity, setKeptStaleSessionIdentity] = useState("");
   const [isConfirmingFreshBoardSession, setIsConfirmingFreshBoardSession] =
     useState(false);
+  const freshBoardResetProgressRef = useRef<FreshBoardResetProgress | null>(null);
   const loadRequestIdRef = useRef(0);
   const activeDbRef = useRef<PouchDB.Database | undefined>(db);
   const activeDatabaseRef = useRef(database);
@@ -552,28 +561,53 @@ export const BoardControllerContent = () => {
   const handleConfirmFreshBoardSession = useCallback(async () => {
     if (!freshBoardResetAliasId || !churchId || isConfirmingFreshBoardSession) return;
     const aliasId = freshBoardResetAliasId;
+    let progress = freshBoardResetProgressRef.current;
+    if (
+      !progress ||
+      progress.churchId !== churchId ||
+      progress.aliasId !== aliasId ||
+      progress.scope !== freshBoardResetScope
+    ) {
+      progress = {
+        churchId,
+        aliasId,
+        scope: freshBoardResetScope,
+        restreamCompleted: false,
+        boardCompleted: false,
+      };
+      freshBoardResetProgressRef.current = progress;
+    }
     setIsConfirmingFreshBoardSession(true);
     try {
-      if (freshBoardResetScope === "both" || freshBoardResetScope === "restream") {
+      if (
+        (progress.scope === "both" || progress.scope === "restream") &&
+        !progress.restreamCompleted
+      ) {
         await resetRestreamSession(churchId);
+        progress.restreamCompleted = true;
       }
-      if (freshBoardResetScope === "both" || freshBoardResetScope === "board") {
+      if (
+        (progress.scope === "both" || progress.scope === "board") &&
+        !progress.boardCompleted
+      ) {
         await hardResetBoardAlias(aliasId);
+        progress.boardCompleted = true;
       }
-      if (freshBoardResetScope !== "board") await reloadRestreamSession();
+      if (progress.scope !== "board") await reloadRestreamSession();
+      freshBoardResetProgressRef.current = null;
       setSelectedBoardId("");
       setFreshBoardConfirmOpen(false);
       showToast(
-        freshBoardResetScope === "both"
+        progress.scope === "both"
           ? "Started fresh for today and cleared earlier Restream chat."
-          : freshBoardResetScope === "board"
+          : progress.scope === "board"
             ? "Started a fresh discussion board for today."
             : "Started a new Restream session.",
         "success",
       );
       pullFromRemote?.();
     } catch (error) {
-      if (freshBoardResetScope !== "board") {
+      if (progress.scope !== "board" && progress.restreamCompleted) {
         await reloadRestreamSession();
       }
       showToast(
@@ -613,12 +647,11 @@ export const BoardControllerContent = () => {
     churchId &&
     !restreamSession.isLoading &&
     !restreamSession.isRefreshing &&
-    !restreamSession.error &&
-    restreamSession.session
+    !restreamSession.error
       ? getStaleBoardSessionScope({
           boardCreatedAt: currentBoard.createdAt,
           boardPosts: posts,
-          restreamStartedAt: restreamSession.session.startedAt,
+          restreamStartedAt: restreamSession.session?.startedAt,
           restreamActivityTimestamps,
         })
       : null;
@@ -641,10 +674,20 @@ export const BoardControllerContent = () => {
       keptStaleSessionIdentity !== staleSessionIdentity &&
       localStorage.getItem(staleSessionDecisionKey) !== staleSessionIdentity,
   );
+  const hasPartialFreshBoardReset = Boolean(
+    freshBoardResetProgressRef.current &&
+      freshBoardResetProgressRef.current.churchId === churchId &&
+      freshBoardResetProgressRef.current.aliasId === freshBoardResetAliasId &&
+      selectedAlias?.aliasId === freshBoardResetAliasId &&
+      freshBoardResetProgressRef.current.scope === freshBoardResetScope &&
+      (freshBoardResetProgressRef.current.restreamCompleted ||
+        freshBoardResetProgressRef.current.boardCompleted),
+  );
   useEffect(() => {
     if (
       freshBoardConfirmOpen &&
       !isConfirmingFreshBoardSession &&
+      !hasPartialFreshBoardReset &&
       (selectedAlias?.aliasId !== freshBoardResetAliasId ||
         staleSessionScope !== freshBoardResetScope ||
         staleSessionIdentity !== freshBoardResetSessionIdentity)
@@ -660,6 +703,7 @@ export const BoardControllerContent = () => {
     freshBoardResetScope,
     staleSessionIdentity,
     freshBoardResetSessionIdentity,
+    hasPartialFreshBoardReset,
   ]);
   const handleKeepStaleSession = async () => {
     if (!staleSessionDecisionKey || !staleSessionIdentity) return;
@@ -863,6 +907,13 @@ export const BoardControllerContent = () => {
           scope={staleSessionScope}
           onKeep={handleKeepStaleSession}
           onStart={() => {
+            freshBoardResetProgressRef.current = {
+              churchId: churchId || "",
+              aliasId: selectedAlias?.aliasId || "",
+              scope: staleSessionScope,
+              restreamCompleted: false,
+              boardCompleted: false,
+            };
             setFreshBoardResetAliasId(selectedAlias?.aliasId || "");
             setFreshBoardResetSessionIdentity(staleSessionIdentity);
             setFreshBoardResetScope(staleSessionScope);
@@ -1230,7 +1281,10 @@ export const BoardControllerContent = () => {
       {freshBoardConfirmOpen && (
         <DeleteModal
           isOpen
-          onClose={() => setFreshBoardConfirmOpen(false)}
+          onClose={() => {
+            freshBoardResetProgressRef.current = null;
+            setFreshBoardConfirmOpen(false);
+          }}
           onConfirm={() => void handleConfirmFreshBoardSession()}
           itemName={
             freshBoardResetScope === "both"

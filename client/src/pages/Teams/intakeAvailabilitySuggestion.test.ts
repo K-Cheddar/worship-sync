@@ -66,9 +66,10 @@ describe("getUpcomingAvailabilitySuggestion", () => {
       timeZone: "America/New_York",
     });
 
-    expect(results.map(({ teamIds }) => teamIds)).toEqual([["av"], ["worship"]]);
-    expect(results[0].missingOccurrences.every((occurrence) => occurrence.serviceId === "av-service")).toBe(true);
-    expect(results[1].missingOccurrences.every((occurrence) => occurrence.serviceId === "worship-service")).toBe(true);
+    expect(results).toHaveLength(1);
+    expect(results[0].teamIds).toEqual(["av", "worship"]);
+    expect(results[0].missingOccurrences.flatMap((occurrence) => occurrence.serviceIds || [occurrence.serviceId]))
+      .toEqual(expect.arrayContaining(["av-service", "worship-service"]));
   });
 
   it("uses every explicitly supplied church Team when the template is Team-specific", () => {
@@ -771,6 +772,54 @@ describe("team availability coverage", () => {
     expect(result[0]?.missingOccurrences).not.toContainEqual(expect.objectContaining({ serviceDate: "2026-10-11" }));
   });
 
+  it("checks combined-service coverage against only each team's staffing services", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00", serviceGroupId: "sunday" };
+    const worship = { ...worshipService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00", serviceGroupId: "sunday" };
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media, worship], teamIds: ["media", "worship"], teamScheduleScope: true,
+      forms: [availabilityForm(["media"], [media, worship], "2026-10-01", "2026-10-31")],
+    });
+    expect(suggestion).toMatchObject({ kind: "create", teamIds: ["worship"], startDate: "2026-10-01" });
+    expect(suggestion?.missingOccurrences.every((occurrence) => occurrence.serviceIds?.includes("worship-service"))).toBe(true);
+    expect(suggestion?.missingOccurrences.every((occurrence) => !occurrence.serviceIds?.includes("media-service"))).toBe(true);
+  });
+
+  it("does not use a stale combined occurrence's primary service when its membership has no allowed intersection", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00", serviceGroupId: "sunday" };
+    const worship = { ...worshipService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00", serviceGroupId: "sunday" };
+    const stale = availabilityForm(["worship"], [media], "2026-10-01", "2026-10-31", {
+      availabilityServices: [{ serviceId: "removed-service", name: "Removed" }],
+      availabilityOccurrences: [{
+        occurrenceId: "group:sunday@2026-10-04", serviceId: "worship-service", name: "Sunday",
+        startsAt: "2026-10-04T14:00:00.000Z", serviceDate: "2026-10-04",
+      }],
+    });
+    const [suggestion] = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media, worship], teamIds: ["worship"], teamScheduleScope: true, forms: [stale],
+    });
+    expect(suggestion?.startDate).toBe("2026-10-01");
+    expect(suggestion?.missingOccurrences.map(({ serviceDate }) => serviceDate)).toContain("2026-10-04");
+  });
+
+  it("keeps legacy forms without service lists scoped to their saved occurrence member", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00", serviceGroupId: "sunday" };
+    const worship = { ...worshipService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00", serviceGroupId: "sunday" };
+    const legacy = availabilityForm([], [media], "2026-10-01", "2026-10-31", {
+      availabilityServices: [],
+      availabilityOccurrences: [{
+        occurrenceId: "group:sunday@2026-10-04", serviceId: "media-service", name: "Sunday",
+        startsAt: "2026-10-04T14:00:00.000Z", serviceDate: "2026-10-04",
+      }],
+    });
+    const suggestions = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media, worship], teamIds: ["media", "worship"], teamScheduleScope: true, forms: [legacy],
+    });
+    const mediaSuggestion = suggestions.find(({ teamIds }) => teamIds.includes("media"));
+    const worshipSuggestion = suggestions.find(({ teamIds }) => teamIds.includes("worship"));
+    expect(mediaSuggestion?.missingOccurrences.map(({ serviceDate }) => serviceDate)).not.toContain("2026-10-04");
+    expect(worshipSuggestion?.missingOccurrences.map(({ serviceDate }) => serviceDate)).toContain("2026-10-04");
+  });
+
   it("keeps teams with different missing dates in separate drafts", () => {
     const first = scopedService("media-service", "camera", "2026-10-11");
     const second = scopedService("worship-service", "vocal", "2026-10-18");
@@ -854,6 +903,19 @@ describe("team availability coverage", () => {
     });
     expect(issuedSuggestion[0]).toMatchObject({ kind: "create", teamIds: ["media"], draft: { purpose: "team_availability" } });
     expect(issuedSuggestion[0]).not.toHaveProperty("formId");
+  });
+
+  it("deduplicates one closed legacy all-team form across affected teams and dates", () => {
+    const media = { ...mediaService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const worship = { ...worshipService, reccurence: "weekly" as const, dayOfWeek: 0 as const, time: "10:00" };
+    const closedAllTeams = availabilityForm([], [media, worship], "2026-10-01", "2026-10-31", { active: false });
+    const result = getUpcomingAvailabilitySuggestions({
+      ...common, services: [media, worship], teamIds: ["media", "worship"], teamScheduleScope: true, forms: [closedAllTeams],
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ kind: "review", formId: closedAllTeams.formId, teamIds: ["media", "worship"] });
+    expect(result[0].occurrenceCount).toBeGreaterThan(0);
+    expect(new Set(result[0].missingOccurrences.map(({ serviceDate }) => serviceDate)).size).toBe(result[0].occurrenceCount);
   });
 
   it("treats a legacy empty team scope as all teams", () => {

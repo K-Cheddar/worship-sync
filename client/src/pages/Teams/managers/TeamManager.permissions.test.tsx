@@ -93,6 +93,15 @@ beforeEach(() => {
   jest.mocked(updateTeamRosterMemberProfile).mockReset();
 });
 
+it("shows team member and position counts without listing member names", () => {
+  renderManager();
+
+  const teamList = screen.getByTestId("teams-create-panel-list");
+  expect(within(teamList).getByText("Worship")).toBeInTheDocument();
+  expect(teamList).toHaveTextContent("1 member | 0 positions");
+  expect(within(teamList).queryByText("Avery Singer")).not.toBeInTheDocument();
+});
+
 it("lets a scoped manager edit team settings and manage only that team's roster", async () => {
   const user = userEvent.setup();
   const onSaved = jest.fn();

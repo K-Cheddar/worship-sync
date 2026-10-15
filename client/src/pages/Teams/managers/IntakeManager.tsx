@@ -2478,7 +2478,7 @@ const IntakeManager = ({
                         </p>
                         <p className="text-gray-300">
                           {isReview
-                            ? `This form is ${suggestion.reason}. Review it before creating another request.`
+                            ? `This form is ${suggestion.reason} for ${teamLabel} · ${formatPlainDateRangeLabel(suggestion.startDate, suggestion.endDate)} · ${suggestion.occurrenceCount} upcoming ${suggestion.occurrenceCount === 1 ? "date" : "dates"} affected. Review it before creating another request.`
                             : `${formatPlainDateRangeLabel(suggestion.startDate, suggestion.endDate)} · ${suggestion.occurrenceCount} upcoming ${suggestion.occurrenceCount === 1 ? "date" : "dates"} missing`}
                         </p>
                       </div>
