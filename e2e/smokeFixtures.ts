@@ -1,0 +1,49 @@
+import { type BrowserContext } from "@playwright/test";
+import { test as diagnosticTest } from "./fixtures";
+
+/**
+ * Keep one authenticated browser context for the smoke project. PouchDB's
+ * IndexedDB cache is browser-context scoped, so opening fresh pages between
+ * cases reuses the initial synchronized data without sharing live page state.
+ */
+export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>({
+  smokeContext: [
+    async ({ browser }, use, workerInfo) => {
+      const churchId = process.env.E2E_SMOKE_DISPOSABLE_CHURCH_ID?.trim();
+      if (!churchId) {
+        throw new Error("Set E2E_SMOKE_DISPOSABLE_CHURCH_ID to an isolated disposable test church. Opening Schedules can persist reconciliation changes.");
+      }
+      const options = workerInfo.project.use;
+      const context = await browser.newContext({
+        baseURL: options.baseURL,
+        storageState: options.storageState,
+        ignoreHTTPSErrors: options.ignoreHTTPSErrors,
+        viewport: options.viewport,
+        userAgent: options.userAgent,
+        serviceWorkers: "block",
+      });
+      // Refuse church-scoped traffic outside the explicitly selected test tenant.
+      await context.route(/\/api\/churches\/[^/]+(?:\/|$)/, async (route) => {
+        const requestedChurch = new URL(route.request().url()).pathname.match(/\/api\/churches\/([^/]+)/)?.[1];
+        if (!requestedChurch || decodeURIComponent(requestedChurch) !== churchId) {
+          await route.abort("blockedbyclient");
+          throw new Error("Smoke request targeted a church other than E2E_SMOKE_DISPOSABLE_CHURCH_ID.");
+        }
+        await route.fallback();
+      });
+      context.setDefaultTimeout(options.actionTimeout ?? 15_000);
+      context.setDefaultNavigationTimeout(options.navigationTimeout ?? 30_000);
+      try {
+        await use(context);
+      } finally {
+        await context.close();
+      }
+    },
+    { scope: "worker" },
+  ],
+  context: async ({ smokeContext }, use) => {
+    await use(smokeContext);
+  },
+});
+
+export { expect } from "./fixtures";

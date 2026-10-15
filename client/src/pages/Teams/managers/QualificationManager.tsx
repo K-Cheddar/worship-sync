@@ -552,7 +552,6 @@ const QualificationManager = ({
                             <p className="text-xs text-gray-400">{area.description}</p>
                           ) : null}
                           <div className="text-xs">
-                            <p className="text-gray-500">Levels</p>
                             {areaLevels.length > 0 ? (
                               <ol className="flex flex-wrap gap-x-3 gap-y-0.5 text-gray-400">
                                 {areaLevels.map((level) => (

@@ -1268,7 +1268,7 @@ const TeamsPlansCalendarPage = () => {
                 )
               }
             /> : (
-              <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
+              <section data-mobile-header-scroll-owner="page" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
                 <div>
                   <h1 className="text-lg font-semibold text-white">
                     {selection.service.name}
@@ -1369,13 +1369,13 @@ const TeamsPlansCalendarPage = () => {
   }
 
   return (
-    <div className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <div data-mobile-header-scroll-owner="page" className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <ChurchServiceTimeZoneNotice area="Service Plans" />
       <div className="shrink-0 space-y-4">
-        <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-md:p-2">
-          <div className="grid items-start gap-3 max-md:grid-cols-2 max-md:gap-2 md:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
+        <div className="rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 max-lg:p-2">
+          <div data-testid="service-plan-filter-controls" className="grid items-start gap-3 max-lg:grid-cols-2 max-lg:gap-2 lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
             {activeServices.length > 1 ? (
-              <div className="min-w-0 max-md:col-span-2">
+              <div className="min-w-0 max-lg:col-span-2">
                 <span className="block p-1 text-sm font-semibold">Service:</span>
                 <Popover>
                   <PopoverTrigger asChild>
@@ -1423,8 +1423,8 @@ const TeamsPlansCalendarPage = () => {
             ) : null}
 
             <div className={cn(
-              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 pb-2 pt-1 max-md:col-span-2 max-md:px-2 max-md:pb-1.5 max-md:pt-1",
-              activeServices.length <= 1 && "md:col-span-2",
+              "min-w-0 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 pb-2 pt-1 max-lg:col-span-2 max-lg:px-2 max-lg:pb-1.5 max-lg:pt-1",
+              activeServices.length <= 1 && "lg:col-span-2",
             )}>
               <RangeSelector
                 preset={rangePreset}
@@ -1441,10 +1441,10 @@ const TeamsPlansCalendarPage = () => {
         aria-label="Service results"
         className="min-w-0 space-y-3"
       >
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-gray-700/80 bg-gray-950/80 px-3.5 py-3 shadow-sm shadow-black/20 md:flex md:justify-between">
-          <div className="flex w-full min-w-0 flex-col items-stretch gap-3 md:flex-1 md:flex-row md:flex-wrap md:items-start">
+        <header data-testid="service-plan-results-header" className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 rounded-xl border border-gray-700/80 bg-gray-950/80 px-3.5 py-3 shadow-sm shadow-black/20 lg:flex lg:justify-between">
+          <div className="flex w-full min-w-0 flex-col items-stretch gap-3 lg:flex-1 lg:flex-row lg:flex-wrap lg:items-start">
             {showOrganizeToggle ? (
-              <div className="order-2 flex w-fit flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-md:gap-1 max-md:px-2 max-md:py-1.5 md:order-1">
+              <div className="order-2 flex w-fit flex-col gap-1.5 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-2 max-lg:gap-1 max-lg:px-2 max-lg:py-1.5 lg:order-1">
                 <span className="px-0.5 text-sm font-semibold">Organize</span>
                 <SegmentedControl
                   ariaLabel="Organize services"
@@ -1455,7 +1455,7 @@ const TeamsPlansCalendarPage = () => {
                 />
               </div>
             ) : null}
-            <div className="order-1 flex w-full min-w-0 items-start gap-3 md:order-2 md:w-auto md:flex-1">
+            <div className="order-1 flex w-full min-w-0 items-start gap-3 lg:order-2 lg:w-auto lg:flex-1">
               <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-orange-400/25 bg-orange-400/10">
                 <Icon svg={CalendarDays} size="sm" className="text-orange-300" />
               </div>
@@ -1494,7 +1494,7 @@ const TeamsPlansCalendarPage = () => {
               </div>
             </div>
           </div>
-          <div className="flex items-center justify-end gap-3 md:w-auto md:max-w-full md:flex-wrap">
+          <div className="flex items-center justify-end gap-3 lg:w-auto lg:max-w-full lg:flex-wrap">
             {canEditServices &&
             groups.length > 0 &&
             visibleGroups.length > 0 &&
@@ -1973,7 +1973,7 @@ const SavedServicePlansDuringTimeZoneLoad = ({
   }
 
   return (
-    <main className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <main data-mobile-header-scroll-owner="page" className="scrollbar-variable flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
       <ChurchServiceTimeZoneNotice area="Service Plans" />
       <section aria-label="Saved service plans" className="space-y-3">
         <div>

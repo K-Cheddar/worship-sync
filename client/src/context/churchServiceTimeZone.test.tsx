@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
-import { getChurchServiceTimeZone } from "../api/auth";
+import { AuthApiError, getChurchServiceTimeZone } from "../api/auth";
 import { createMockGlobalContext } from "../test/mocks";
 import { GlobalInfoContext } from "./globalInfo";
 import {
@@ -9,6 +9,7 @@ import {
 } from "./churchServiceTimeZone";
 
 jest.mock("../api/auth", () => ({
+  ...jest.requireActual("../api/auth"),
   getChurchServiceTimeZone: jest.fn(),
 }));
 
@@ -37,6 +38,7 @@ const deferred = <T,>() => {
 describe("ChurchServiceTimeZoneProvider", () => {
   let churchId: string;
   let deviceId: string;
+  let realtimeConnected: boolean;
 
   const wrapper = ({ children }: PropsWithChildren) => (
     <GlobalInfoContext.Provider
@@ -45,6 +47,7 @@ describe("ChurchServiceTimeZoneProvider", () => {
         loginState: "success",
         sessionKind: "human",
         device: { deviceId },
+        realtimeConnected,
       }) as React.ContextType<typeof GlobalInfoContext>}
     >
       <ChurchServiceTimeZoneProvider>{children}</ChurchServiceTimeZoneProvider>
@@ -54,6 +57,7 @@ describe("ChurchServiceTimeZoneProvider", () => {
   beforeEach(() => {
     churchId = "church-a";
     deviceId = "device-a";
+    realtimeConnected = false;
     mockGetChurchServiceTimeZone.mockReset();
   });
 
@@ -81,11 +85,13 @@ describe("ChurchServiceTimeZoneProvider", () => {
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.timeZone).toBeNull();
     expect(result.current.isConfigured).toBe(false);
+    expect(result.current.refreshIssue?.kind).toBe("unavailable");
 
     await act(async () => result.current.refresh());
     expect(result.current.status).toBe("ready");
     expect(result.current.timeZone).toBe("America/New_York");
     expect(result.current.isConfigured).toBe(true);
+    expect(result.current.refreshIssue).toBeNull();
   });
 
   it("does not treat the API's unconfigured UTC display value as a service time zone", async () => {
@@ -99,7 +105,7 @@ describe("ChurchServiceTimeZoneProvider", () => {
     expect(result.current.isConfigured).toBe(false);
   });
 
-  it("keeps the last successful value through a failed refresh and adopts a successful retry", async () => {
+  it("keeps the last successful value ready through a transient refresh failure and adopts recovery", async () => {
     mockGetChurchServiceTimeZone
       .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
       .mockRejectedValueOnce(new Error("offline"))
@@ -110,16 +116,18 @@ describe("ChurchServiceTimeZoneProvider", () => {
     await act(async () => {
       await expect(result.current.refresh()).rejects.toThrow("offline");
     });
-    expect(result.current.status).toBe("error");
+    expect(result.current.status).toBe("ready");
     expect(result.current.timeZone).toBe("America/New_York");
+    expect(result.current.refreshIssue?.kind).toBe("unavailable");
 
     await act(async () => result.current.refresh());
     expect(result.current.status).toBe("ready");
     expect(result.current.timeZone).toBe("America/Chicago");
+    expect(result.current.refreshIssue).toBeNull();
     expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(3);
   });
 
-  it("invalidates a same-church cached setting and late response when the authenticated device changes", async () => {
+  it("keeps the church-scoped setting across device changes and ignores the old device response", async () => {
     const oldRequest = deferred<ReturnType<typeof serviceTimeZoneResult>>();
     const newRequest = deferred<ReturnType<typeof serviceTimeZoneResult>>();
     mockGetChurchServiceTimeZone.mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
@@ -130,12 +138,76 @@ describe("ChurchServiceTimeZoneProvider", () => {
     act(() => { refresh = result.current.refresh(); });
     deviceId = "device-b";
     rerender();
-    expect(result.current.status).toBe("loading");
-    expect(result.current.timeZone).toBeNull();
+    expect(result.current.status).toBe("ready");
+    expect(result.current.timeZone).toBe("America/New_York");
     await act(async () => { oldRequest.resolve(serviceTimeZoneResult("Europe/London")); await refresh; });
-    expect(result.current.timeZone).toBeNull();
+    expect(result.current.timeZone).toBe("America/New_York");
     await act(async () => newRequest.resolve(serviceTimeZoneResult("America/Chicago")));
     expect(result.current.timeZone).toBe("America/Chicago");
+  });
+
+  it("coalesces browser-online and realtime reconnect refreshes", async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetChurchServiceTimeZone
+        .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
+        .mockResolvedValueOnce(serviceTimeZoneResult("America/Chicago") as never);
+      const { rerender } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+      await act(async () => { await Promise.resolve(); });
+      expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(1);
+
+      window.dispatchEvent(new Event("online"));
+      realtimeConnected = true;
+      rerender();
+      await act(async () => {
+        jest.advanceTimersByTime(200);
+        await Promise.resolve();
+      });
+      expect(mockGetChurchServiceTimeZone).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("uses the current church when a delayed reconnect callback survives a church switch", async () => {
+    jest.useFakeTimers();
+    const timers = jest.spyOn(window, "setTimeout");
+    try {
+      mockGetChurchServiceTimeZone.mockResolvedValue(serviceTimeZoneResult("America/New_York") as never);
+      const { rerender, unmount } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+      await act(async () => { await Promise.resolve(); });
+      window.dispatchEvent(new Event("online"));
+      const delayed = timers.mock.calls.find(([, delay]) => delay === 0)?.[0];
+      expect(delayed).toEqual(expect.any(Function));
+      churchId = "church-b";
+      rerender();
+      await act(async () => { await Promise.resolve(); });
+      mockGetChurchServiceTimeZone.mockClear();
+      await act(async () => { (delayed as () => void)(); await Promise.resolve(); });
+      expect(mockGetChurchServiceTimeZone.mock.calls).toEqual([["church-b"]]);
+      unmount();
+      mockGetChurchServiceTimeZone.mockClear();
+      await act(async () => { (delayed as () => void)(); });
+      expect(mockGetChurchServiceTimeZone).not.toHaveBeenCalled();
+    } finally {
+      timers.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps a confirmed value while reporting authentication and permission failures separately", async () => {
+    mockGetChurchServiceTimeZone
+      .mockResolvedValueOnce(serviceTimeZoneResult("America/New_York") as never)
+      .mockRejectedValueOnce(new AuthApiError("Forbidden", { status: 403 }));
+    const { result } = renderHook(() => useChurchServiceTimeZone(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    await act(async () => {
+      await expect(result.current.refresh()).rejects.toThrow("Forbidden");
+    });
+    expect(result.current.status).toBe("ready");
+    expect(result.current.timeZone).toBe("America/New_York");
+    expect(result.current.refreshIssue?.kind).toBe("permission");
   });
 
   it("does not expose another church's time zone or adopt its late response", async () => {

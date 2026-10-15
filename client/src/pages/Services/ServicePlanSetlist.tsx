@@ -105,6 +105,7 @@ const ServicePlanSetlist = ({
   return (
     <>
       <section
+        data-mobile-header-scroll-owner="page"
         className="scrollbar-variable min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-700 bg-black/20"
         aria-label="Rehearse songs"
       >

@@ -943,11 +943,324 @@ export const createTeamsAuthHandlers = ({
       .digest("hex");
   const generatedPeriodScheduleId = (key) => `generated_${key}`;
   // Legacy timestamp IDs resolve only by service/group identity and church date.
-  const coversCurrentOccurrences = (stored, current, timeZone = "UTC") => {
-    const { matches, ambiguousCurrentIds } = matchOccurrencesByIdentity(stored, current, timeZone);
-    return ambiguousCurrentIds.size === 0 && current.every((occurrence) =>
-      matches.has(occurrence.occurrenceId),
-    );
+  const matchCurrentOccurrences = (stored, current, timeZone = "UTC") =>
+    matchOccurrencesByIdentity(stored, current, timeZone);
+  const hasScheduleOperationalData = (schedule) => Boolean(
+    schedule.guests?.length ||
+    Object.keys(schedule.assignments || {}).length ||
+    Object.keys(schedule.microphoneAssignments || {}).length ||
+    Object.keys(schedule.iemAssignments || {}).length ||
+    Object.keys(schedule.additionalPositionSlots || {}).length ||
+    Object.keys(schedule.optionalPositionSlots || {}).length ||
+    Object.keys(schedule.responses || {}).length ||
+    schedule.publicLinkToken || schedule.publicToken || schedule.sentAt ||
+    schedule.publicationHistory?.length || schedule.notificationHistory?.length,
+  );
+  const isCanonicalPeriodSchedule = (schedule) =>
+    schedule.source === "generated-period" &&
+    Boolean(schedule.generatedPeriodKey) &&
+    schedule.scheduleId === generatedPeriodScheduleId(schedule.generatedPeriodKey);
+  const occurrenceOwnershipEntries = (occurrences, timeZone) => {
+    const entries = new Map();
+    for (const occurrence of Array.isArray(occurrences) ? occurrences : []) {
+      const identity = resolveOccurrenceIdentity(occurrence, timeZone);
+      if (!identity) throw httpError(409, "A schedule occurrence has no safe logical identity. Review the saved schedule before continuing.");
+      if (entries.has(identity.logicalOccurrenceId)) throw httpError(409, "A schedule contains duplicate logical occurrences. Review it before continuing.");
+      entries.set(identity.logicalOccurrenceId, { occurrence, identity });
+    }
+    return entries;
+  };
+  const scheduleOccurrenceOwnerDocumentId = (churchId, teamId, logicalOccurrenceId) =>
+    crypto.createHash("sha256")
+      .update(`${churchId}\u0000${teamId}\u0000${logicalOccurrenceId}`)
+      .digest("hex");
+  const withScheduleOccurrenceLocks = async (logicalOccurrenceIds, operation) => {
+    const keys = [...new Set(logicalOccurrenceIds)].sort();
+    const releases = [];
+    try {
+      for (const key of keys) {
+        const previous = generatedPeriodEnsureQueues.get(key) || Promise.resolve();
+        let release;
+        const current = new Promise((resolve) => { release = resolve; });
+        generatedPeriodEnsureQueues.set(key, current);
+        await previous;
+        releases.push(() => {
+          release();
+          if (generatedPeriodEnsureQueues.get(key) === current) {
+            generatedPeriodEnsureQueues.delete(key);
+          }
+        });
+      }
+      return await operation();
+    } finally {
+      releases.reverse().forEach((release) => release());
+    }
+  };
+  const assertAndWriteScheduleOccurrenceOwners = async ({
+    churchId,
+    teamId,
+    scheduleId,
+    schedule,
+    previousSchedule = null,
+    activeSchedules,
+    timeZone,
+    transaction,
+    db,
+  }) => {
+    const makeEntries = (sourceChurchId, sourceTeamId, sourceOccurrences) => {
+      const occurrences = occurrenceOwnershipEntries(sourceOccurrences, timeZone);
+      return new Map([...occurrences].map(([logicalOccurrenceId, value]) => {
+        const key = `${sourceChurchId}\u0000${sourceTeamId}\u0000${logicalOccurrenceId}`;
+        return [key, { ...value, churchId: sourceChurchId, teamId: sourceTeamId, logicalOccurrenceId }];
+      }));
+    };
+    const entries = makeEntries(churchId, teamId, schedule.occurrences || []);
+    const previousEntries = previousSchedule
+      ? makeEntries(previousSchedule.churchId || churchId, previousSchedule.teamId || teamId, previousSchedule.occurrences || [])
+      : new Map();
+    const allEntries = new Map([...previousEntries, ...entries]);
+    const claimSnapshots = new Map();
+    for (const [key, entry] of allEntries) {
+      const claimId = scheduleOccurrenceOwnerDocumentId(entry.churchId, entry.teamId, entry.logicalOccurrenceId);
+      const ref = db?.collection(COLLECTIONS.teamScheduleOccurrenceOwners).doc(claimId);
+      const claim = transaction
+        ? await transaction.get(ref)
+        : await getDoc(COLLECTIONS.teamScheduleOccurrenceOwners, claimId);
+      const transactionSnapshot = typeof claim?.exists === "boolean";
+      claimSnapshots.set(key, {
+        claimId,
+        ref,
+        exists: transactionSnapshot ? claim.exists : Boolean(claim),
+        data: transactionSnapshot ? (claim.exists ? claim.data() : null) : claim,
+      });
+    }
+
+    const ownerIds = [...new Set([...claimSnapshots.values()]
+      .map(({ data }) => data?.scheduleId)
+      .filter((ownerId) => ownerId && ownerId !== scheduleId))];
+    const activeById = new Map(activeSchedules.map((item) => [item.scheduleId, item]));
+    if (transaction) {
+      for (const ownerId of ownerIds) {
+        if (activeById.has(ownerId)) continue;
+        const ownerSnapshot = await transaction.get(db.collection(COLLECTIONS.teamSchedules).doc(ownerId));
+        if (ownerSnapshot.exists) activeById.set(ownerId, { scheduleId: ownerSnapshot.id, ...ownerSnapshot.data() });
+      }
+    } else {
+      for (const ownerId of ownerIds) {
+        if (activeById.has(ownerId)) continue;
+        const owner = await getDoc(COLLECTIONS.teamSchedules, ownerId);
+        if (owner) activeById.set(ownerId, { scheduleId: ownerId, ...owner });
+      }
+    }
+
+    for (const [key, { occurrence, identity, churchId: entryChurchId, teamId: entryTeamId, logicalOccurrenceId }] of entries) {
+      const previous = claimSnapshots.get(key)?.data;
+      if (previous?.scheduleId === scheduleId && previous.logicalOccurrenceId === logicalOccurrenceId &&
+          ((previous.groupId || null) !== (identity.groupId || null) ||
+            !isDeepStrictEqual([...(previous.serviceIds || [])].sort(), [...identity.serviceIds].sort()))) {
+        throw httpError(409, "A saved schedule has a conflicting service-group identity. Resolve it before continuing.");
+      }
+      if (!previous || previous.scheduleId === scheduleId) continue;
+      const owner = activeById.get(previous.scheduleId);
+      if (!owner || owner.archivedAt || owner.churchId !== entryChurchId || owner.teamId !== entryTeamId) continue;
+      const ownerMatch = matchCurrentOccurrences(owner.occurrences || [], [occurrence], timeZone);
+      if (ownerMatch.matches.has(occurrence.occurrenceId) || ownerMatch.ambiguousCurrentIds.size) {
+        throw httpError(409, "This service occurrence is already owned by another active schedule. Its data was preserved; review schedule ownership before continuing.");
+      }
+      // A stale claim is safe to replace only after its active schedule was read
+      // in this transaction and shown not to contain this logical occurrence.
+      if (previous.logicalOccurrenceId === logicalOccurrenceId &&
+          ((previous.groupId || null) !== (identity.groupId || null) ||
+            !isDeepStrictEqual([...(previous.serviceIds || [])].sort(), [...identity.serviceIds].sort()))) {
+        throw httpError(409, "A saved schedule has a conflicting service-group identity. Resolve it before continuing.");
+      }
+    }
+
+    for (const [key] of previousEntries) {
+      if (entries.has(key)) continue;
+      const { claimId, ref, data: previous } = claimSnapshots.get(key);
+      if (previous?.scheduleId !== scheduleId) continue;
+      if (transaction) transaction.delete(ref);
+      else await deleteDoc(COLLECTIONS.teamScheduleOccurrenceOwners, claimId);
+    }
+    const now = nowIso();
+    for (const [key, { occurrence, identity, churchId: entryChurchId, teamId: entryTeamId, logicalOccurrenceId }] of entries) {
+      const { claimId, ref, data: previous } = claimSnapshots.get(key);
+      const claim = {
+        churchId: entryChurchId,
+        teamId: entryTeamId,
+        scheduleId,
+        logicalOccurrenceId,
+        groupId: identity.groupId || null,
+        serviceIds: identity.serviceIds,
+        occurrenceId: occurrence.occurrenceId,
+        updatedAt: now,
+      };
+      const sameClaim = previous?.scheduleId === claim.scheduleId &&
+        previous?.logicalOccurrenceId === claim.logicalOccurrenceId &&
+        (previous?.groupId || null) === claim.groupId &&
+        isDeepStrictEqual([...(previous?.serviceIds || [])].sort(), [...claim.serviceIds].sort());
+      if (sameClaim) continue;
+      if (transaction) transaction.set(ref, claim, { merge: false });
+      else await setDoc(COLLECTIONS.teamScheduleOccurrenceOwners, claimId, claim, { merge: false });
+    }
+  };
+  const assertNoOtherActiveScheduleOwnsOccurrences = ({
+    churchId,
+    teamId,
+    scheduleId,
+    schedule,
+    activeSchedules,
+    timeZone,
+  }) => {
+    const entries = occurrenceOwnershipEntries(schedule.occurrences || [], timeZone);
+    for (const { occurrence } of entries.values()) {
+      const owners = activeSchedules.filter((candidate) =>
+        candidate.churchId === churchId && !candidate.archivedAt &&
+        candidate.teamId === teamId && candidate.scheduleId !== scheduleId,
+      ).filter((candidate) => {
+        const match = matchCurrentOccurrences(candidate.occurrences || [], [occurrence], timeZone);
+        if (match.ambiguousCurrentIds.size) {
+          throw httpError(409, "A saved schedule has a conflicting service identity. Its data was preserved; review schedule ownership before continuing.");
+        }
+        return match.matches.has(occurrence.occurrenceId);
+      });
+      if (owners.length) {
+        throw httpError(409, "This service occurrence is already owned by another active schedule. Its data was preserved; review schedule ownership before continuing.");
+      }
+    }
+  };
+  const persistTeamScheduleWithOccurrenceOwnership = async ({
+    churchId,
+    scheduleId = `teamSchedule_${crypto.randomUUID()}`,
+    payload,
+    adminUserId,
+    timeZone,
+    existingSchedule = null,
+  }) => {
+    const db = requireFirestore();
+    const buildSchedule = (current) => {
+      const now = nowIso();
+      return {
+        ...(current || {}),
+        ...payload,
+        scheduleId,
+        churchId,
+        archivedAt: null,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+        ...(current
+          ? {
+              ...(current.createdAt ? { createdAt: current.createdAt } : {}),
+              ...(current.createdByUid ? { createdByUid: current.createdByUid } : {}),
+            }
+          : { createdAt: now, createdByUid: adminUserId }),
+      };
+    };
+    const ownershipSignature = (schedule) =>
+      [...occurrenceOwnershipEntries(schedule?.occurrences || [], timeZone).entries()]
+        .map(([logicalOccurrenceId, { identity }]) => [
+          logicalOccurrenceId,
+          identity.groupId || null,
+          [...identity.serviceIds].sort(),
+        ])
+        .sort(([left], [right]) => left.localeCompare(right));
+
+    if (db) {
+      return db.runTransaction(async (transaction) => {
+        const allSnapshot = await transaction.get(
+          db.collection(COLLECTIONS.teamSchedules).where("churchId", "==", churchId),
+        );
+        const allSchedules = allSnapshot.docs.map((doc) => ({ scheduleId: doc.id, ...doc.data() }));
+        const ref = db.collection(COLLECTIONS.teamSchedules).doc(scheduleId);
+        const snapshot = await transaction.get(ref);
+        const current = snapshot.exists ? { scheduleId: snapshot.id, ...snapshot.data() } : null;
+        if (existingSchedule && (!current || current.churchId !== churchId ||
+            current.updatedAt !== existingSchedule.updatedAt || current.teamId !== existingSchedule.teamId)) {
+          throw httpError(409, "This schedule changed while you were editing it. Refresh before saving again.");
+        }
+        if (!existingSchedule && current) throw httpError(409, "This schedule already exists. Refresh before continuing.");
+        if (current && hasOccurrenceIdentityAmbiguity(current.occurrences || [], payload.occurrences || [], timeZone)) {
+          throw httpError(409, "The schedule's service identities changed in a way that cannot be reconciled safely. Its data was preserved.");
+        }
+        const next = buildSchedule(current);
+        const activeSchedules = allSchedules.filter((item) => !item.archivedAt);
+        const occurrenceOwnershipChanged = !current || current.teamId !== next.teamId ||
+          !isDeepStrictEqual(ownershipSignature(current), ownershipSignature(next));
+        if (occurrenceOwnershipChanged) {
+          assertNoOtherActiveScheduleOwnsOccurrences({
+            churchId,
+            teamId: next.teamId,
+            scheduleId,
+            schedule: next,
+            activeSchedules,
+            timeZone,
+          });
+        }
+        await assertAndWriteScheduleOccurrenceOwners({
+          churchId,
+          teamId: next.teamId,
+          scheduleId,
+          schedule: next,
+          previousSchedule: current,
+          activeSchedules,
+          timeZone,
+          transaction,
+          db,
+        });
+        transaction.set(ref, next, { merge: false });
+        return next;
+      });
+    }
+
+    const lockIds = [
+      `schedule:${churchId}:${scheduleId}`,
+      ...[...occurrenceOwnershipEntries(payload.occurrences || [], timeZone).keys()]
+        .map((logicalOccurrenceId) => `occurrence:${churchId}:${payload.teamId}:${logicalOccurrenceId}`),
+      ...[...occurrenceOwnershipEntries(existingSchedule?.occurrences || [], timeZone).keys()]
+        .map((logicalOccurrenceId) => `occurrence:${churchId}:${existingSchedule?.teamId || payload.teamId}:${logicalOccurrenceId}`),
+    ];
+    return withScheduleOccurrenceLocks(lockIds, async () => {
+      const rawCurrent = await getDoc(COLLECTIONS.teamSchedules, scheduleId);
+      const current = rawCurrent ? { scheduleId, ...rawCurrent } : null;
+      if (existingSchedule && (!current || current.churchId !== churchId ||
+          current.updatedAt !== existingSchedule.updatedAt || current.teamId !== existingSchedule.teamId)) {
+        throw httpError(409, "This schedule changed while you were editing it. Refresh before saving again.");
+      }
+      if (!existingSchedule && current) throw httpError(409, "This schedule already exists. Refresh before continuing.");
+      if (current && hasOccurrenceIdentityAmbiguity(current.occurrences || [], payload.occurrences || [], timeZone)) {
+        throw httpError(409, "The schedule's service identities changed in a way that cannot be reconciled safely. Its data was preserved.");
+      }
+      const next = buildSchedule(current);
+      const activeSchedules = (await listTeamCollectionForChurch(
+        COLLECTIONS.teamSchedules,
+        "scheduleId",
+        churchId,
+      )).filter((item) => !item.archivedAt);
+      const occurrenceOwnershipChanged = !current || current.teamId !== next.teamId ||
+        !isDeepStrictEqual(ownershipSignature(current), ownershipSignature(next));
+      if (occurrenceOwnershipChanged) {
+        assertNoOtherActiveScheduleOwnsOccurrences({
+          churchId,
+          teamId: next.teamId,
+          scheduleId,
+          schedule: next,
+          activeSchedules,
+          timeZone,
+        });
+      }
+      await assertAndWriteScheduleOccurrenceOwners({
+        churchId,
+        teamId: next.teamId,
+        scheduleId,
+        schedule: next,
+        previousSchedule: current,
+        activeSchedules,
+        timeZone,
+      });
+      await setDoc(COLLECTIONS.teamSchedules, scheduleId, next, { merge: false });
+      return next;
+    });
   };
   const generatedPeriodEnsureQueues = new Map();
 
@@ -13106,6 +13419,7 @@ export const createTeamsAuthHandlers = ({
           });
         }
         if (type === "schedules") {
+          const timeZone = await requireConfiguredChurchServiceTimeZone(churchId);
           const groups = new Map();
           approvedRows.forEach((approved) => {
             const record =
@@ -13663,11 +13977,11 @@ export const createTeamsAuthHandlers = ({
               });
               let saved;
               if (!existing) {
-                saved = await upsertTeamEntity({
-                  kind: "schedule",
+                saved = await persistTeamScheduleWithOccurrenceOwnership({
                   churchId,
-                  payload,
+                  payload: { ...payload, source: "custom" },
                   adminUserId: admin.user.uid,
+                  timeZone,
                 });
               } else {
                 const changedCells = [];
@@ -13780,6 +14094,10 @@ export const createTeamsAuthHandlers = ({
                     .collection(COLLECTIONS.teamSchedules)
                     .doc(existing.scheduleId);
                   await db.runTransaction(async (transaction) => {
+                    const allSnapshot = await transaction.get(
+                      db.collection(COLLECTIONS.teamSchedules).where("churchId", "==", churchId),
+                    );
+                    const allSchedules = allSnapshot.docs.map((doc) => ({ scheduleId: doc.id, ...doc.data() }));
                     const snapshot = await transaction.get(reference);
                     const current = snapshot.exists
                       ? { scheduleId: snapshot.id, ...snapshot.data() }
@@ -13789,7 +14107,30 @@ export const createTeamsAuthHandlers = ({
                         409,
                         "This schedule is no longer available. Preview the file again.",
                       );
-                    transaction.set(reference, mergeUpdate(current), {
+                    const next = mergeUpdate(current);
+                    if (hasOccurrenceIdentityAmbiguity(current.occurrences || [], next.occurrences || [], timeZone)) {
+                      throw httpError(409, "The imported service identities conflict with this schedule. Its data was preserved; review it before importing again.");
+                    }
+                    assertNoOtherActiveScheduleOwnsOccurrences({
+                      churchId,
+                      teamId: next.teamId,
+                      scheduleId: current.scheduleId,
+                      schedule: next,
+                      activeSchedules: allSchedules.filter((item) => !item.archivedAt),
+                      timeZone,
+                    });
+                    await assertAndWriteScheduleOccurrenceOwners({
+                      churchId,
+                      teamId: next.teamId,
+                      scheduleId: current.scheduleId,
+                      schedule: next,
+                      previousSchedule: current,
+                      activeSchedules: allSchedules.filter((item) => !item.archivedAt),
+                      timeZone,
+                      transaction,
+                      db,
+                    });
+                    transaction.set(reference, next, {
                       merge: false,
                     });
                   });
@@ -13801,12 +14142,43 @@ export const createTeamsAuthHandlers = ({
                 } else {
                   const updated = await enqueueInMemoryScheduleSave(
                     existing.scheduleId,
-                    async () => {
-                      const current = await getDoc(
-                        COLLECTIONS.teamSchedules,
-                        existing.scheduleId,
-                      );
+                    async () => withScheduleOccurrenceLocks([
+                      `schedule:${churchId}:${existing.scheduleId}`,
+                      ...[...new Set([
+                        ...occurrenceOwnershipEntries(existing.occurrences || [], timeZone).keys(),
+                        ...occurrenceOwnershipEntries([...occurrencesByKey.values()], timeZone).keys(),
+                      ])].map((logicalOccurrenceId) =>
+                        `occurrence:${churchId}:${team.teamId}:${logicalOccurrenceId}`,
+                      ),
+                    ], async () => {
+                      const currentData = await getDoc(COLLECTIONS.teamSchedules, existing.scheduleId);
+                      const current = { scheduleId: existing.scheduleId, ...currentData };
                       const next = mergeUpdate(current);
+                      if (hasOccurrenceIdentityAmbiguity(current.occurrences || [], next.occurrences || [], timeZone)) {
+                        throw httpError(409, "The imported service identities conflict with this schedule. Its data was preserved; review it before importing again.");
+                      }
+                      const activeSchedules = (await listTeamCollectionForChurch(
+                        COLLECTIONS.teamSchedules,
+                        "scheduleId",
+                        churchId,
+                      )).filter((item) => !item.archivedAt);
+                      assertNoOtherActiveScheduleOwnsOccurrences({
+                        churchId,
+                        teamId: next.teamId,
+                        scheduleId: current.scheduleId,
+                        schedule: next,
+                        activeSchedules,
+                        timeZone,
+                      });
+                      await assertAndWriteScheduleOccurrenceOwners({
+                        churchId,
+                        teamId: next.teamId,
+                        scheduleId: current.scheduleId,
+                        schedule: next,
+                        previousSchedule: current,
+                        activeSchedules,
+                        timeZone,
+                      });
                       await setDoc(
                         COLLECTIONS.teamSchedules,
                         existing.scheduleId,
@@ -13814,7 +14186,7 @@ export const createTeamsAuthHandlers = ({
                         { merge: false },
                       );
                       return next;
-                    },
+                    }),
                   );
                   saved = { scheduleId: existing.scheduleId, ...updated };
                 }
@@ -17887,6 +18259,43 @@ export const createTeamsAuthHandlers = ({
             .map((position) => normalizeShortText(position.positionId, { max: 160 }))
             .filter(Boolean),
         );
+        const serviceDefinitionSignature = stablePortableJson(
+          [...activeServicesById.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([serviceId, service]) => [serviceId, service]),
+        );
+        const teamPositionSignature = [...teamPositionIds].sort();
+        const assertGenerationInputsUnchanged = async ({ transaction, db } = {}) => {
+          const latestServicesById = new Map(
+            (await readChurchServiceTimes(churchId))
+              .filter((service) => !service?.archivedAt)
+              .map((service) => [
+                normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
+                service,
+              ]),
+          );
+          const latestServiceSignature = stablePortableJson(
+            [...latestServicesById.entries()]
+              .sort(([left], [right]) => left.localeCompare(right))
+              .map(([serviceId, service]) => [serviceId, service]),
+          );
+          if (latestServiceSignature !== serviceDefinitionSignature) {
+            throw httpError(409, "Service definitions changed while this schedule was opening. Refresh and try again.");
+          }
+          const currentPositionRows = transaction && db
+            ? (await transaction.get(
+                db.collection(COLLECTIONS.teamPositions).where("churchId", "==", churchId),
+              )).docs.map((doc) => ({ positionId: doc.id, ...doc.data() }))
+            : await listTeamCollectionForChurch(COLLECTIONS.teamPositions, "positionId", churchId);
+          const latestTeamPositionSignature = currentPositionRows
+            .filter((position) => position.teamId === payload.teamId)
+            .map((position) => normalizeShortText(position.positionId, { max: 160 }))
+            .filter(Boolean)
+            .sort();
+          if (!isDeepStrictEqual(latestTeamPositionSignature, teamPositionSignature)) {
+            throw httpError(409, "Team positions changed while this schedule was opening. Refresh and try again.");
+          }
+        };
         if (
           payload.serviceIds.some(
             (serviceId) => !activeServicesById.has(serviceId),
@@ -17993,130 +18402,168 @@ export const createTeamsAuthHandlers = ({
         }
 
         const createIfMissing = async () => {
-          const activeTeamSchedules = (
-            await listTeamCollectionForChurch(
-              COLLECTIONS.teamSchedules,
-              "scheduleId",
-              churchId,
-            )
-          ).filter(
-            (schedule) =>
-              !schedule.archivedAt &&
+          const ownershipError = (message = "More than one saved schedule owns a service occurrence. The schedules and assignments were preserved; resolve duplicate ownership before adding services.") => httpError(409, message);
+          const selectSchedule = (allSchedules) => {
+            const activeTeamSchedules = allSchedules.filter((schedule) =>
+              schedule.churchId === churchId && !schedule.archivedAt &&
               schedule.teamId === payload.teamId,
-          );
-          const hasScheduleData = (schedule) =>
-            Boolean(
-              schedule.guests?.length ||
-                Object.keys(schedule.assignments || {}).length ||
-                Object.keys(schedule.microphoneAssignments || {}).length ||
-                Object.keys(schedule.iemAssignments || {}).length ||
-                Object.keys(schedule.additionalPositionSlots || {}).length ||
-                Object.keys(schedule.optionalPositionSlots || {}).length ||
-                Object.keys(schedule.responses || {}).length,
             );
-          const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
-            schedule.churchId === churchId && hasScheduleData(schedule) &&
-            schedule.startDate && schedule.endDate &&
-            schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
-            hasOccurrenceIdentityAmbiguity(
-              schedule.occurrences || [],
-              payload.occurrences,
-              timeZone,
-            ),
-          );
-          if (ambiguousSavedSchedule) {
-            throw httpError(
-              409,
-              "A saved schedule has occurrence rows that cannot be matched safely. Its assignments were preserved; review the saved schedule before creating another.",
-            );
-          }
-          // Resolve the default schedule from the full requested period. A
-          // partial custom schedule remains an overlap-picker option.
-          const compatible = activeTeamSchedules.filter(
-            (schedule) => schedule.churchId === churchId &&
+            const ambiguousSavedSchedule = activeTeamSchedules.find((schedule) =>
               schedule.startDate && schedule.endDate &&
-              coversCurrentOccurrences(schedule.occurrences || [], payload.occurrences, timeZone),
-          );
-          const canonicalGenerated = compatible.filter(
-            (schedule) =>
-              schedule.source === "generated-period" &&
-              Boolean(schedule.generatedPeriodKey) &&
-              schedule.scheduleId ===
-                generatedPeriodScheduleId(schedule.generatedPeriodKey),
-          );
-          const resolutionCandidates = compatible.filter(
-            (schedule) => schedule.source != null ||
-              !canonicalGenerated.some((generated) =>
-                generated.startDate === schedule.startDate &&
-                generated.endDate === schedule.endDate,
+              schedule.startDate <= payload.endDate && schedule.endDate >= payload.startDate &&
+              hasOccurrenceIdentityAmbiguity(
+                schedule.occurrences || [],
+                payload.occurrences,
+                timeZone,
               ),
-          );
-          const exact = resolutionCandidates.filter(
-            (schedule) => schedule.startDate === payload.startDate &&
-              schedule.endDate === payload.endDate,
-          );
-          const covering = resolutionCandidates.filter(
-            (schedule) => schedule.startDate <= payload.startDate &&
-              schedule.endDate >= payload.endDate,
-          );
-          const candidates = exact.length ? exact : covering;
-          const preferredScheduleId = normalizeShortText(
-            req.body?.preferredScheduleId,
-            { max: 160 },
-          );
-          const canonicalForTier = candidates.filter((schedule) =>
-            schedule.source === "generated-period" &&
-            Boolean(schedule.generatedPeriodKey) &&
-            schedule.scheduleId === generatedPeriodScheduleId(schedule.generatedPeriodKey),
-          );
-          const tierCandidates = candidates.filter((schedule) =>
-            schedule.source != null ||
-            !canonicalForTier.some((generated) =>
-              generated.startDate === schedule.startDate &&
-              generated.endDate === schedule.endDate,
-            ),
-          );
-          const selected = tierCandidates.find((schedule) =>
-            schedule.scheduleId === preferredScheduleId,
-          ) || [...tierCandidates].sort((left, right) =>
-            Number(hasScheduleData(right)) - Number(hasScheduleData(left)) ||
-            Number(canonicalForTier.includes(right)) - Number(canonicalForTier.includes(left)) ||
-            String(left.startDate).localeCompare(String(right.startDate)) ||
-            String(left.endDate).localeCompare(String(right.endDate)) ||
-            String(left.scheduleId).localeCompare(String(right.scheduleId), "en"),
-          )[0];
-          if (selected) return { schedule: selected, created: false };
-
-          const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
-          const reuseExisting = (existing) => {
-            if (!coversCurrentOccurrences(existing.occurrences || [], payload.occurrences, timeZone)) {
-              throw httpError(409, "This saved period is missing current services. Edit its services or create a custom schedule for this period.");
+            );
+            if (ambiguousSavedSchedule) {
+              throw ownershipError("A saved schedule has occurrence rows that cannot be matched safely. Its data was preserved; review it before adding services.");
             }
-            return { schedule: existing, created: false };
+
+            const ownersByOccurrenceId = new Map();
+            for (const occurrence of payload.occurrences) {
+              const owners = activeTeamSchedules.filter((schedule) => {
+                const match = matchCurrentOccurrences(
+                  schedule.occurrences || [],
+                  [occurrence],
+                  timeZone,
+                );
+                if (match.ambiguousCurrentIds.size) throw ownershipError("A saved schedule has an ambiguous service identity. Its data was preserved; review it before adding services.");
+                return match.matches.has(occurrence.occurrenceId);
+              });
+              if (owners.length > 1) throw ownershipError();
+              if (owners.length) ownersByOccurrenceId.set(occurrence.occurrenceId, owners[0]);
+            }
+
+            const periodCandidates = activeTeamSchedules.filter((schedule) => {
+              if (!schedule.startDate || !schedule.endDate ||
+                  schedule.startDate > payload.startDate || schedule.endDate < payload.endDate) return false;
+              const stored = schedule.occurrences || [];
+              const { matches, ambiguousCurrentIds } = matchCurrentOccurrences(stored, payload.occurrences, timeZone);
+              if (ambiguousCurrentIds.size) return false;
+              if (matches.size || payload.occurrences.length === 0) return true;
+              return isCanonicalPeriodSchedule(schedule) &&
+                schedule.startDate === payload.startDate &&
+                schedule.endDate === payload.endDate &&
+                stored.length === 0 && !hasScheduleOperationalData(schedule);
+            });
+            const exact = periodCandidates.filter((schedule) =>
+              schedule.startDate === payload.startDate && schedule.endDate === payload.endDate,
+            );
+            const candidates = exact.length ? exact : periodCandidates;
+            const operatorSelectedScheduleId = normalizeShortText(req.body?.operatorSelectedScheduleId, { max: 160 });
+            const canonicalCandidates = candidates.filter(isCanonicalPeriodSchedule);
+            const selected = candidates.find((schedule) => schedule.scheduleId === operatorSelectedScheduleId) ||
+              [...candidates].sort((left, right) =>
+                Number(hasScheduleOperationalData(right)) - Number(hasScheduleOperationalData(left)) ||
+                Number(canonicalCandidates.includes(right)) - Number(canonicalCandidates.includes(left)) ||
+                String(left.startDate).localeCompare(String(right.startDate)) ||
+                String(left.endDate).localeCompare(String(right.endDate)) ||
+                String(left.scheduleId).localeCompare(String(right.scheduleId), "en"),
+              )[0] || null;
+
+            for (const owner of ownersByOccurrenceId.values()) {
+              if (selected && owner.scheduleId === selected.scheduleId) continue;
+              if (selected) continue;
+              throw ownershipError("A requested service occurrence is already owned by another schedule. Open that schedule or resolve its ownership before continuing.");
+            }
+            return { selected, activeTeamSchedules, ownersByOccurrenceId };
           };
+          const reconcile = (existing, ownersByOccurrenceId = new Map()) => {
+            const stored = Array.isArray(existing.occurrences) ? existing.occurrences : [];
+            const { matches, ambiguousCurrentIds } = matchCurrentOccurrences(stored, payload.occurrences, timeZone);
+            if (ambiguousCurrentIds.size) throw ownershipError("This saved schedule's occurrence identities cannot be reconciled safely. Its data was preserved.");
+            const currentById = new Map(payload.occurrences.map((occurrence) => [occurrence.occurrenceId, occurrence]));
+            const occurrences = stored.map((occurrence) => {
+              const current = [...matches.entries()].find(([, saved]) => saved.occurrenceId === occurrence.occurrenceId);
+              const nextOccurrence = current ? currentById.get(current[0]) : null;
+              if (!nextOccurrence) return occurrence;
+              const requirements = new Map();
+              [...(occurrence.positionRequirements || []), ...(nextOccurrence.positionRequirements || [])].forEach((requirement) => {
+                const previous = requirements.get(requirement.positionId);
+                if (!previous || previous.count < requirement.count) requirements.set(requirement.positionId, requirement);
+              });
+              const nextRequirements = [...requirements.values()];
+              return isDeepStrictEqual(occurrence.positionRequirements || [], nextRequirements)
+                ? occurrence
+                : { ...occurrence, positionRequirements: nextRequirements };
+            });
+            const applicableOccurrences = payload.occurrences.filter((occurrence) => {
+              const owner = ownersByOccurrenceId.get(occurrence.occurrenceId);
+              return !owner || owner.scheduleId === existing.scheduleId;
+            });
+            const missing = applicableOccurrences.filter((occurrence) => !matches.has(occurrence.occurrenceId));
+            const nextOccurrences = [...occurrences, ...missing].sort((left, right) =>
+              String(left.startsAt).localeCompare(String(right.startsAt)) ||
+              String(left.occurrenceId).localeCompare(String(right.occurrenceId)),
+            );
+            const applicableServiceIds = applicableOccurrences.flatMap((occurrence) =>
+              occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+            );
+            const serviceIds = [...new Set([...(existing.serviceIds || []), ...applicableServiceIds])];
+            const microphoneAssignments = { ...(existing.microphoneAssignments || {}) };
+            const iemAssignments = { ...(existing.iemAssignments || {}) };
+            missing.forEach((occurrence) => {
+              if (payload.microphoneAssignments?.[occurrence.occurrenceId]) microphoneAssignments[occurrence.occurrenceId] = payload.microphoneAssignments[occurrence.occurrenceId];
+              if (payload.iemAssignments?.[occurrence.occurrenceId]) iemAssignments[occurrence.occurrenceId] = payload.iemAssignments[occurrence.occurrenceId];
+            });
+            const changed = missing.length > 0 ||
+              !isDeepStrictEqual(existing.serviceIds || [], serviceIds) ||
+              !isDeepStrictEqual(stored, nextOccurrences) ||
+              !isDeepStrictEqual(existing.microphoneAssignments || {}, microphoneAssignments) ||
+              !isDeepStrictEqual(existing.iemAssignments || {}, iemAssignments);
+            if (!changed) return { schedule: existing, updated: false };
+            const now = nowIso();
+            return {
+              schedule: {
+                ...existing,
+                serviceIds,
+                occurrences: nextOccurrences,
+                microphoneAssignments,
+                iemAssignments,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+              },
+              updated: true,
+            };
+          };
+          const scheduleId = generatedPeriodScheduleId(generatedPeriodKey);
           const db = requireFirestore();
           if (db) {
             return db.runTransaction(async (transaction) => {
-              const ref = db
-                .collection(COLLECTIONS.teamSchedules)
-                .doc(scheduleId);
+              const allSnapshot = await transaction.get(
+                db.collection(COLLECTIONS.teamSchedules).where("churchId", "==", churchId),
+              );
+              const allSchedules = allSnapshot.docs.map((doc) => ({ scheduleId: doc.id, ...doc.data() }));
+              await assertGenerationInputsUnchanged({ transaction, db });
+              const { selected, ownersByOccurrenceId } = selectSchedule(allSchedules);
+              const targetId = selected?.scheduleId || scheduleId;
+              const ref = db.collection(COLLECTIONS.teamSchedules).doc(targetId);
               const snapshot = await transaction.get(ref);
               if (snapshot.exists) {
-                const existing = {
-                  scheduleId: snapshot.id,
-                  ...snapshot.data(),
-                };
-                if (
-                  existing.churchId !== churchId ||
-                  existing.generatedPeriodKey !== generatedPeriodKey
-                ) {
-                  throw httpError(
-                    409,
-                    "The generated schedule identity is unavailable.",
-                  );
+                const existing = { scheduleId: snapshot.id, ...snapshot.data() };
+                if (existing.churchId !== churchId || existing.teamId !== payload.teamId || existing.archivedAt) {
+                  throw ownershipError("This saved schedule is no longer active. Refresh the schedule list before continuing.");
                 }
-                return reuseExisting(existing);
+                if (!selected && existing.generatedPeriodKey !== generatedPeriodKey) {
+                  throw httpError(409, "The generated schedule identity is unavailable.");
+                }
+                const result = reconcile(existing, ownersByOccurrenceId);
+                await assertAndWriteScheduleOccurrenceOwners({
+                  churchId,
+                  teamId: payload.teamId,
+                  scheduleId: targetId,
+                  schedule: result.schedule,
+                  activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
+                  timeZone,
+                  transaction,
+                  db,
+                });
+                if (result.updated) transaction.set(ref, result.schedule, { merge: false });
+                return { ...result, created: false };
               }
+              if (selected) throw ownershipError("The selected schedule changed while this period was opening. Refresh and try again.");
               const now = nowIso();
               const document = {
                 ...payload,
@@ -18128,32 +18575,74 @@ export const createTeamsAuthHandlers = ({
                 createdAt: now,
                 createdByUid: admin.user.uid,
               };
+              await assertAndWriteScheduleOccurrenceOwners({
+                churchId,
+                teamId: payload.teamId,
+                scheduleId,
+                schedule: document,
+                activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
+                timeZone,
+                transaction,
+                db,
+              });
               transaction.create(ref, document);
-              return { schedule: document, created: true };
+              return { schedule: document, created: true, updated: false };
             });
           }
 
-          return withGeneratedPeriodEnsureLock(generatedPeriodKey, async () => {
-            const existing = await getDoc(
-              COLLECTIONS.teamSchedules,
-              scheduleId,
-            );
-            if (existing)
-              return reuseExisting({ scheduleId, ...existing });
-            const now = nowIso();
-            const document = {
-              ...payload,
-              scheduleId,
-              churchId,
-              archivedAt: null,
-              updatedAt: now,
-              updatedByUid: admin.user.uid,
-              createdAt: now,
-              createdByUid: admin.user.uid,
-            };
-            await setDoc(COLLECTIONS.teamSchedules, scheduleId, document);
-            return { schedule: document, created: true };
-          });
+          const logicalIds = [...occurrenceOwnershipEntries(payload.occurrences, timeZone).keys()]
+            .map((logicalOccurrenceId) => `occurrence:${churchId}:${payload.teamId}:${logicalOccurrenceId}`);
+          return withGeneratedPeriodEnsureLock(generatedPeriodKey, () =>
+            withScheduleOccurrenceLocks(logicalIds, async () => {
+              const allSchedules = await listTeamCollectionForChurch(COLLECTIONS.teamSchedules, "scheduleId", churchId);
+              await assertGenerationInputsUnchanged();
+              const { selected, ownersByOccurrenceId } = selectSchedule(allSchedules);
+              const targetId = selected?.scheduleId || scheduleId;
+              const existingValue = await getDoc(COLLECTIONS.teamSchedules, targetId);
+              if (existingValue) {
+                const existing = { scheduleId: targetId, ...existingValue };
+                if (existing.churchId !== churchId || existing.teamId !== payload.teamId || existing.archivedAt) {
+                  throw ownershipError("This saved schedule is no longer active. Refresh the schedule list before continuing.");
+                }
+                if (!selected && existing.generatedPeriodKey !== generatedPeriodKey) {
+                  throw httpError(409, "The generated schedule identity is unavailable.");
+                }
+                const result = reconcile(existing, ownersByOccurrenceId);
+                await assertAndWriteScheduleOccurrenceOwners({
+                  churchId,
+                  teamId: payload.teamId,
+                  scheduleId: targetId,
+                  schedule: result.schedule,
+                  activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
+                  timeZone,
+                });
+                if (result.updated) await setDoc(COLLECTIONS.teamSchedules, targetId, result.schedule, { merge: false });
+                return { ...result, created: false };
+              }
+              if (selected) throw ownershipError("The selected schedule changed while this period was opening. Refresh and try again.");
+              const now = nowIso();
+              const document = {
+                ...payload,
+                scheduleId,
+                churchId,
+                archivedAt: null,
+                updatedAt: now,
+                updatedByUid: admin.user.uid,
+                createdAt: now,
+                createdByUid: admin.user.uid,
+              };
+              await assertAndWriteScheduleOccurrenceOwners({
+                churchId,
+                teamId: payload.teamId,
+                scheduleId,
+                schedule: document,
+                activeSchedules: allSchedules.filter((item) => item.teamId === payload.teamId && !item.archivedAt),
+                timeZone,
+              });
+              await setDoc(COLLECTIONS.teamSchedules, scheduleId, document, { merge: false });
+              return { schedule: document, created: true, updated: false };
+            }),
+          );
         };
 
         // Seed position-default microphone/IEM choices exactly as normal new
@@ -18183,9 +18672,9 @@ export const createTeamsAuthHandlers = ({
           generatedPeriodKey,
         };
         const result = await createIfMissing();
-        if (result.created) {
+        if (result.created || result.updated) {
           await addSecurityEvent({
-            type: "team_schedule_created",
+            type: result.created ? "team_schedule_created" : "team_schedule_updated",
             churchId,
             userId: admin.user.uid,
             scheduleId: result.schedule.scheduleId,
@@ -18247,7 +18736,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           payload.teamId,
         );
-        await requireConfiguredChurchServiceTimeZone(req.params.churchId);
+        const timeZone = await requireConfiguredChurchServiceTimeZone(req.params.churchId);
         if (Object.keys(payload.assignments || {}).length > 0) {
           const schedules = await listScheduleConflictCandidates({
             churchId: req.params.churchId,
@@ -18260,11 +18749,11 @@ export const createTeamsAuthHandlers = ({
             confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
           });
         }
-        const schedule = await upsertTeamEntity({
-          kind: "schedule",
+        const schedule = await persistTeamScheduleWithOccurrenceOwnership({
           churchId: req.params.churchId,
-          payload,
+          payload: { ...payload, source: "custom" },
           adminUserId: admin.user.uid,
+          timeZone,
         });
         await addSecurityEvent({
           type: "team_schedule_created",
@@ -18357,7 +18846,7 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           [existing.teamId, payload.teamId],
         );
-        await requireConfiguredChurchServiceTimeZone(req.params.churchId);
+        const timeZone = await requireConfiguredChurchServiceTimeZone(req.params.churchId);
         const newAssignmentConflictChecks =
           getNewScheduleAssignmentConflictChecks({
             previousAssignments: existing.assignments,
@@ -18379,12 +18868,13 @@ export const createTeamsAuthHandlers = ({
             confirmedFingerprint: normalizeAllowOccurrenceConflict(req.body),
           });
         }
-        const saved = await upsertTeamEntity({
-          kind: "schedule",
+        const saved = await persistTeamScheduleWithOccurrenceOwnership({
           churchId: req.params.churchId,
-          id: req.params.scheduleId,
           payload,
+          scheduleId: req.params.scheduleId,
           adminUserId: admin.user.uid,
+          timeZone,
+          existingSchedule: existing,
         });
         // Editing occurrences rewrites assignments wholesale, so answers about
         // slots that no longer exist have to go with them.

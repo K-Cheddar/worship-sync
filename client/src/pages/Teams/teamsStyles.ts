@@ -4,7 +4,7 @@ export const panelShellClassName =
 export const panelClassName = `${panelShellClassName} p-4`;
 
 /** Shared dimensions for compact roster rows and their loading placeholders. */
-export const teamsCompactEntityRowLayoutClassName = "min-h-14 items-center gap-2 p-2";
+export const teamsCompactEntityRowLayoutClassName = "min-h-14 items-center gap-2 p-3 sm:p-2";
 
 /** Fixed header area inside a panel with an inner scroll region. */
 export const panelHeaderPaddingClassName = "px-4 pt-4";
@@ -17,7 +17,7 @@ export const panelFormScrollPaddingClassName = "px-4 pb-4";
 
 /** Teams outlet scroll region: page scroll on mobile, height-constrained panels on desktop. */
 export const teamsSectionScrollClassName =
-  "teams-section-scroll scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-3 sm:p-5 lg:overflow-hidden";
+  "teams-section-scroll scrollbar-variable flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-3 pb-2 sm:p-5 sm:pb-2 lg:pb-5 lg:overflow-hidden";
 
 /** Manager page root fills the Teams outlet column. */
 export const teamsManagerPageRootClassName = "flex min-h-0 flex-1 flex-col";

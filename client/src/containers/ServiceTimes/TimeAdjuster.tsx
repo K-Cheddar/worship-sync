@@ -31,7 +31,7 @@ const formatMmSs = (totalSeconds: number) => {
 
 const TimeAdjuster = ({ serviceId }: Props) => {
   const headingId = useId();
-  const serviceTimeZone = useChurchServiceTimeZone().timeZone || "UTC";
+  const serviceTimeZone = useChurchServiceTimeZone().timeZone;
   const dispatch = useDispatch();
   const services = useSelector(
     (s: RootState) => s.undoable.present.serviceTimes.list
@@ -47,7 +47,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
   );
 
   const resetToScheduledTime = () => {
-    if (!service || !hasScheduleOverride) return;
+    if (!service || !serviceTimeZone || !hasScheduleOverride) return;
     dispatch(
       updateService({
         id: serviceId,
@@ -57,7 +57,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
   };
 
   const adjustTime = (deltaSeconds: number) => {
-    if (!service) return;
+    if (!service || !serviceTimeZone) return;
 
     const currentNext = getEffectiveTargetTime(service, serverDate(), serviceTimeZone);
     if (!currentNext) return;
@@ -89,7 +89,7 @@ const TimeAdjuster = ({ serviceId }: Props) => {
   };
 
   const applySecondsToCountdown = (totalSeconds: number) => {
-    if (!service || totalSeconds <= 0) return;
+    if (!service || !serviceTimeZone || totalSeconds <= 0) return;
 
     const now = serverDate();
     const newTime = new Date(now.getTime() + totalSeconds * 1000);
@@ -155,6 +155,8 @@ const TimeAdjuster = ({ serviceId }: Props) => {
     if (!Number.isFinite(n)) return;
     setter(n);
   };
+
+  if (!serviceTimeZone) return null;
 
   return (
     <div

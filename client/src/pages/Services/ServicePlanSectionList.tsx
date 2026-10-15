@@ -430,6 +430,8 @@ type ServicePlanSectionListProps = ServicePlanLiveRowState & {
   structureOnly?: boolean;
   /** Id on the scroll container, so a caller can scroll a row into view. */
   scrollId?: string;
+  /** Opt this page-level scrollport into the responsive workspace-header behavior. */
+  mobileHeaderScrollOwner?: boolean;
   /** Ref for a caller that coordinates scrolling within this list only. */
   scrollContainerRef?: Ref<HTMLDivElement>;
   ariaLabel?: string;
@@ -485,6 +487,7 @@ const ServicePlanSectionList = ({
   resolvedSongRefs = EMPTY_RESOLVED_SONG_REFS,
   structureOnly = false,
   scrollId,
+  mobileHeaderScrollOwner = false,
   scrollContainerRef,
   ariaLabel = "Service plan",
   sectionLabelColor = "#f97316",
@@ -918,6 +921,7 @@ const ServicePlanSectionList = ({
           <div className="relative flex min-h-0 min-w-0 flex-1">
             <div
               id={scrollId}
+              data-mobile-header-scroll-owner={mobileHeaderScrollOwner ? "page" : undefined}
               ref={(element) => {
                 planListRef.current = element;
                 if (typeof scrollContainerRef === "function") {

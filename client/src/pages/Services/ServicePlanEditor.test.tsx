@@ -2183,6 +2183,51 @@ Opening Song to begin the worship experience.
     ],
   };
 
+  it("compacts service details from the existing plan scroll event without moving the running order", async () => {
+    mockGetServicePlan.mockResolvedValue({
+      success: true,
+      servicePlan: planWithTwoSections,
+    });
+    const user = userEvent.setup();
+    renderEditor({
+      onBack: jest.fn(),
+      scheduledAssignmentRows: [{
+        teamId: "team-1",
+        teamName: "Worship",
+        scheduleId: "schedule-1",
+        occurrenceId: occurrence.occurrenceId,
+        positionId: "position-vocal",
+        positionName: "Vocal",
+        columnKey: "position-vocal::0",
+        slotLabel: "Vocal 1",
+        memberName: null,
+        canNotify: null,
+        microphoneIds: [],
+      }],
+    });
+
+    const planList = await screen.findByRole("region", { name: "Service plan" });
+    Object.defineProperty(planList, "scrollHeight", { configurable: true, value: 1_200 });
+    Object.defineProperty(planList, "clientHeight", { configurable: true, value: 320 });
+    expect(screen.getByLabelText("Service summary")).toBeInTheDocument();
+
+    planList.scrollTop = 80;
+    fireEvent.wheel(planList, { deltaY: 80 });
+    fireEvent.scroll(planList);
+
+    const showDetails = await screen.findByRole("button", { name: "Show service details" });
+    expect(showDetails).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Service summary")).not.toBeInTheDocument();
+    expect(screen.getByText("Synced")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Service plan" })).toBe(planList);
+    expect(planList.scrollTop).toBe(80);
+
+    await user.click(showDetails);
+    expect(screen.getByLabelText("Service summary")).toBeInTheDocument();
+    expect(screen.getByText("Jul 26, 2026")).toBeVisible();
+    expect(planList.scrollTop).toBe(80);
+  });
+
   it("opens in edit mode when the entry point requests it", async () => {
     mockGetServicePlan.mockResolvedValue({
       success: true,
