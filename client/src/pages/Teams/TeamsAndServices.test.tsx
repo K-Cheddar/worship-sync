@@ -189,6 +189,7 @@ const mockChurchServiceTimeZone = {
   timeZone: "America/New_York" as string | null,
   isConfigured: true,
   legacyTimeZoneSuggestion: null,
+  refreshIssue: null as { kind: "unavailable" | "authentication" | "permission" | "configuration"; since: number } | null,
   refresh: jest.fn().mockResolvedValue(undefined),
 };
 
@@ -640,6 +641,7 @@ describe("Teams", () => {
     mockChurchServiceTimeZone.status = "ready";
     mockChurchServiceTimeZone.timeZone = "America/New_York";
     mockChurchServiceTimeZone.isConfigured = true;
+    mockChurchServiceTimeZone.refreshIssue = null;
     lazyRouteTestControl.reset();
     originalLocationHref = window.location.href;
     originalMatchMedia = window.matchMedia;
@@ -768,6 +770,7 @@ describe("Teams", () => {
     mockChurchServiceTimeZone.status = "error";
     mockChurchServiceTimeZone.timeZone = null;
     mockChurchServiceTimeZone.isConfigured = false;
+    mockChurchServiceTimeZone.refreshIssue = { kind: "unavailable", since: Date.now() };
     mockChurchServiceTimeZone.refresh.mockRejectedValue(new Error("offline"));
     mockListServicePlans.mockResolvedValue({ success: true, servicePlans: [] });
 
@@ -781,7 +784,7 @@ describe("Teams", () => {
     await user.click(sectionNavigation().getByRole("link", { name: /^Services$/i }));
     expect(await screen.findByRole("heading", { name: "Saved plans" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/date-based Service Plans actions are unavailable/i);
-    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(mockChurchServiceTimeZone.refresh).toHaveBeenCalledTimes(1);
 
     await openTeamsNavigationIfNeeded(user);

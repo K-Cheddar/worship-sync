@@ -22,18 +22,17 @@ const ServiceTimesList = ({
   upcomingServiceTargetIso,
   canEdit = true,
 }: Props) => {
-  const { timeZone } = useChurchServiceTimeZone();
-  const serviceTimeZone = timeZone || "UTC";
+  const { timeZone: serviceTimeZone } = useChurchServiceTimeZone();
   const [manualAdjustId, setManualAdjustId] = useState<string | null>(null);
 
   const toggleManualAdjust = (id: string) =>
     setManualAdjustId((cur) => (cur === id ? null : id));
 
   const otherServices = useMemo(() => {
+    const remainingServices = services.filter((s) => s.id !== upcomingService?.service.id);
+    if (!serviceTimeZone) return remainingServices;
     const now = serverDate();
-    return services
-      .filter((s) => s.id !== upcomingService?.service.id)
-      .sort((a, b) => {
+    return remainingServices.sort((a, b) => {
         const aNext = getEffectiveTargetTime(a, now, serviceTimeZone);
         const bNext = getEffectiveTargetTime(b, now, serviceTimeZone);
         if (aNext && bNext) return aNext.getTime() - bNext.getTime();
@@ -62,7 +61,7 @@ const ServiceTimesList = ({
                 service={upcomingService.service}
                 targetIso={upcomingServiceTargetIso}
               />
-              {canEdit ? (
+              {canEdit && serviceTimeZone ? (
                 <TimeAdjuster serviceId={upcomingService.service.id} />
               ) : null}
             </div>
@@ -76,7 +75,10 @@ const ServiceTimesList = ({
                   service={s}
                   timeZone={serviceTimeZone}
                   {...(canEdit
-                    ? { onEdit, onToggleAdjust: toggleManualAdjust }
+                    ? {
+                      onEdit,
+                      ...(serviceTimeZone ? { onToggleAdjust: toggleManualAdjust } : {}),
+                    }
                     : {})}
                   isAdjusting={manualAdjustId === s.id}
                 />

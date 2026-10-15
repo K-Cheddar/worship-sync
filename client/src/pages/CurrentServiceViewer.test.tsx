@@ -683,6 +683,7 @@ describe("CurrentServiceViewer", () => {
         occurrence("later", "2026-09-14T10:00:00.000Z"),
       ],
       now,
+      "America/New_York",
     );
 
     expect(options.map((option) => option.group)).toEqual([
@@ -695,6 +696,16 @@ describe("CurrentServiceViewer", () => {
       "today",
       "later",
     ]);
+  });
+
+  it("does not build date-sensitive choices without a confirmed church timezone", () => {
+    expect(
+      buildCurrentServiceViewerOptions(
+        [occurrence("later", "2026-09-14T10:00:00.000Z")],
+        Date.parse("2026-09-13T08:00:00.000Z"),
+        null,
+      ),
+    ).toEqual([]);
   });
 
   it("keeps manual selection until the viewer explicitly returns to automatic", () => {

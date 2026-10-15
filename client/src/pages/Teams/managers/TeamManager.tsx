@@ -366,18 +366,31 @@ const TeamManager = ({
   const formatNameList = (names: string[]) =>
     names.length === 0 ? "None yet." : names.join(", ");
   const teamSummary = (team: TeamRecord) => {
-    const memberCount = team.memberIds.length;
+    const memberIds = team.memberIds || [];
+    const names = memberIds
+      .map((memberId) => members.find((member) => member.memberId === memberId))
+      .filter((member): member is TeamRosterMember => Boolean(member))
+      .slice(0, 3)
+      .map(memberName);
+    const remaining = Math.max(0, memberIds.length - names.length);
     const positionCount = positions.filter((position) => position.teamId === team.teamId).length;
-    const memberLabel = memberCount === 1 ? "member" : "members";
+    const memberLabel = memberIds.length === 1 ? "member" : "members";
     return {
       details: (
-        <>
-          <span className="font-medium text-gray-300">{memberCount}</span>{" "}
-          <span>{memberLabel}</span>
-          <span className="text-gray-600"> | </span>
-          <span className="font-medium text-gray-300">{positionCount}</span>{" "}
-          <span>positions</span>
-        </>
+        <div className="min-w-0 space-y-0.5">
+          <div>
+            <span className="font-medium text-gray-300">{memberIds.length}</span>{" "}
+            <span>{memberLabel}</span>
+            <span className="text-gray-600"> | </span>
+            <span className="font-medium text-gray-300">{positionCount}</span>{" "}
+            <span>positions</span>
+          </div>
+          {names.length > 0 ? (
+            <div className="truncate text-gray-300" title={`${names.join(", ")}${remaining ? ` +${remaining} more` : ""}`}>
+              {" · "}{names.join(", ")}{remaining ? ` +${remaining} more` : ""}
+            </div>
+          ) : null}
+        </div>
       ),
     };
   };

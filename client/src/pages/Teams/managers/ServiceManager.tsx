@@ -99,6 +99,16 @@ const ServiceManager = ({
   const { showToast } = useToast();
   const churchId = useContext(GlobalInfoContext)?.churchId || "";
   const churchTimeZone = useChurchServiceTimeZone();
+  const formatServiceTimingForChurch = (service: TeamService | ServiceTime) => {
+    if (service.reccurence === "one_time" && !churchTimeZone.timeZone) {
+      return "Date unavailable";
+    }
+    // Weekly, monthly, and multi-weekly labels are local wall-clock values;
+    // only one-time timestamps need the configured church timezone.
+    return churchTimeZone.timeZone
+      ? formatServiceTiming(service, churchTimeZone.timeZone)
+      : formatServiceTiming(service);
+  };
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const [editing, setEditing] = useState<TeamService | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -379,7 +389,7 @@ const ServiceManager = ({
   const combinableServices = services.filter(
     (service) =>
       service.serviceId !== editing?.serviceId &&
-      (canServicesShareDay(editedServiceDayShape, service, churchTimeZone.timeZone || "UTC") ||
+      ((churchTimeZone.timeZone && canServicesShareDay(editedServiceDayShape, service, churchTimeZone.timeZone)) ||
         combineWith.includes(service.serviceId)),
   );
 
@@ -567,7 +577,7 @@ const ServiceManager = ({
             <EntityRow
               key={service.serviceId}
               title={service.name}
-              subtitle={formatServiceTiming(service, churchTimeZone.timeZone || "UTC")}
+              subtitle={formatServiceTimingForChurch(service)}
               archived={Boolean(service.archivedAt)}
               inactive={!service.archivedAt && isServicePastEnd(service)}
               canEdit={canEdit}
@@ -793,7 +803,7 @@ const ServiceManager = ({
           optionGridClassName="grid gap-2"
           options={combinableServices.map((service) => ({
             id: service.serviceId,
-            label: [service.name, formatServiceTiming(service, churchTimeZone.timeZone || "UTC")]
+            label: [service.name, formatServiceTimingForChurch(service)]
               .filter(Boolean)
               .join(" - "),
             archived: Boolean(service.archivedAt),

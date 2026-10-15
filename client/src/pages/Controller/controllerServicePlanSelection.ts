@@ -103,25 +103,35 @@ export const servicePlanToSummary = (plan: ServicePlan): ServicePlanSummary => (
 
 export const formatControllerServicePlanDateTime = (
   plan: ServicePlanSummary,
-  timeZone = "UTC",
+  timeZone?: string | null,
 ): string => {
-  const dateSource = plan.startsAt || `${plan.date}T12:00:00.000Z`;
-  const parsed = Date.parse(dateSource);
+  const [year, month, day] = plan.date.split("-").map(Number);
+  const plainDate = Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+    ? new Intl.DateTimeFormat(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(Date.UTC(year, month - 1, day, 12)))
+    : plan.date;
+  if (!plan.startsAt || !timeZone) return plainDate || "Date unavailable";
+
+  const parsed = Date.parse(plan.startsAt);
   return Number.isFinite(parsed)
     ? new Date(parsed).toLocaleString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        ...(plan.startsAt
-          ? { hour: "numeric", minute: "2-digit", timeZoneName: "short" as const }
-          : {}),
-        timeZone: plan.startsAt ? timeZone : "UTC",
-      })
-    : plan.date;
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+      timeZone,
+    })
+    : plainDate;
 };
 
 export const formatControllerServicePlanLabel = (
   plan: ServicePlanSummary,
-  timeZone = "UTC",
+  timeZone?: string | null,
 ): string =>
   `${plan.name?.trim() || "Service plan"} · ${formatControllerServicePlanDateTime(plan, timeZone)}`;
