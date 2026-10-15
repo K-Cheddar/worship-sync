@@ -26,6 +26,7 @@ export type UseRestreamSessionResult = {
   session: RestreamSession | null;
   messages: RestreamMessage[];
   isLoading: boolean;
+  isRefreshing?: boolean;
   error: string;
   bestEffortOnly: boolean;
   oauthConfigured: boolean;
@@ -52,6 +53,7 @@ export const useRestreamSession = (
   const [session, setSession] = useState<RestreamSession | null>(null);
   const [messages, setMessages] = useState<RestreamMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [bestEffortOnly, setBestEffortOnly] = useState(true);
   const [oauthConfigured, setOauthConfigured] = useState(false);
@@ -88,6 +90,7 @@ export const useRestreamSession = (
       setSession(null);
       setMessages([]);
       setIsLoading(false);
+      setIsRefreshing(false);
       hasLoadedOnceRef.current = false;
       return;
     }
@@ -97,6 +100,7 @@ export const useRestreamSession = (
     }
     loadInFlightRef.current = true;
     loadQueuedRef.current = false;
+    setIsRefreshing(true);
 
     if (!hasLoadedOnceRef.current) {
       setIsLoading(true);
@@ -141,6 +145,7 @@ export const useRestreamSession = (
         sessionIdentityRef.current === requestedSessionIdentity
       ) {
         setIsLoading(false);
+        if (!loadQueuedRef.current) setIsRefreshing(false);
       }
       // Always re-enter through the latest load so a queued refresh cannot
       // reuse a stale churchId closure from the request that just finished.
@@ -179,6 +184,7 @@ export const useRestreamSession = (
   useEffect(() => {
     hasLoadedOnceRef.current = false;
     setIsLoading(Boolean(churchId));
+    setIsRefreshing(false);
     setSession(null);
     setMessages([]);
     setError("");
@@ -254,6 +260,7 @@ export const useRestreamSession = (
     session,
     messages,
     isLoading,
+    isRefreshing,
     error,
     bestEffortOnly,
     oauthConfigured,

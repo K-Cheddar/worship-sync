@@ -124,6 +124,29 @@ describe("useRestreamSession", () => {
     expect(mockGetRestreamMessages).toHaveBeenCalledTimes(3);
   });
 
+  it("reports status refreshes without treating the existing snapshot as settled", async () => {
+    const { result } = renderHook(() => useRestreamSession("church-1"));
+    await flushMicrotasks();
+    let resolveStatusRefresh:
+      | ((value: { session: RestreamSession }) => void)
+      | undefined;
+    mockGetRestreamSessionStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStatusRefresh = resolve;
+        }),
+    );
+
+    act(() => mockConnections[0].handlers.onMessage(JSON.stringify({ type: "status-updated" })));
+    expect(result.current.isRefreshing).toBe(true);
+    await act(async () => {
+      resolveStatusRefresh?.({ session });
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+    expect(result.current.isRefreshing).toBe(false);
+  });
+
   it("distinguishes authentication from permission failures without retrying in the hook", () => {
     const { result } = renderHook(() => useRestreamSession("church-1"));
     const handlers = mockConnections[0].handlers;

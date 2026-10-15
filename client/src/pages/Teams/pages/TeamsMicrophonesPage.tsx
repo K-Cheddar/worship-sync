@@ -250,7 +250,7 @@ const TeamsMicrophonesPage = () => {
         <TabsList
           variant="line"
           data-equipment-category-tabs
-          className="h-[44px] min-h-[44px] shrink-0 rounded-none border-x-0 border-t-0 bg-gray-950 px-0"
+          className="h-[44px] min-h-[44px] shrink-0 rounded-xl border-x-0 border-t-0 bg-gray-950 px-0"
           aria-label="Equipment categories"
         >
           <TabsTrigger value="microphones" className={cn(lineTabsTriggerSmClassName, "min-h-[44px]")}>
@@ -291,14 +291,16 @@ const TeamsMicrophonesPage = () => {
                     positionNoteOptions={positionNoteOptions}
                     equipmentPageLayout
                     renderHeader={(actions) => (
-                      <header data-equipment-actions="microphones" aria-label="Microphone actions" className="flex min-h-[48px] shrink-0 flex-nowrap items-center justify-end gap-2 border-b border-gray-700 bg-gray-950 px-2 py-1 [&_button]:min-h-[44px] lg:sticky lg:top-0 lg:z-10">
+                      <header data-equipment-actions="microphones" aria-label="Microphone actions" className="flex min-h-[48px] shrink-0 flex-nowrap items-center justify-between gap-2 border-b border-gray-700 bg-gray-950 px-2 py-1 [&_button]:min-h-[44px] lg:sticky lg:top-0 lg:z-10">
+                        {actions.editing ? (
+                          <Button type="button" variant="secondary" svg={Plus} disabled={!actions.canAdd} aria-label="Add microphone" onClick={actions.onAdd}>Add</Button>
+                        ) : <span aria-hidden="true" />}
                         <div className="flex min-w-0 flex-nowrap items-center gap-2">
                           {!actions.editing && !actions.disabled ? (
                             <Button type="button" svg={Pencil} aria-label="Edit microphones" onClick={actions.onStartEditing}>Edit</Button>
                           ) : null}
                           {actions.editing ? (
                             <>
-                              <Button type="button" variant="secondary" svg={Plus} disabled={!actions.canAdd} aria-label="Add microphone" onClick={actions.onAdd}>Add</Button>
                               <Button type="button" variant="tertiary" svg={X} disabled={actions.saving} onClick={actions.onCancel}>{actions.hasPendingChanges ? "Cancel" : "Close"}</Button>
                               <Button type="button" variant="cta" svg={actions.saving || actions.saved ? undefined : Save} aria-busy={actions.saving || undefined} disabled={!actions.canSave || actions.saved} aria-label={actions.saving ? "Saving microphones" : actions.saved ? "Saved microphones" : "Save microphones"} onClick={actions.onSave}>{actions.saving ? "Saving…" : actions.saved ? <><Check aria-hidden="true" data-testid="microphone-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
                             </>
@@ -329,15 +331,17 @@ const TeamsMicrophonesPage = () => {
               <header
                 data-equipment-actions="iems"
                 aria-label="IEM actions"
-                className="flex min-h-[48px] shrink-0 flex-nowrap items-center justify-end gap-2 border-b border-gray-700 bg-gray-950 px-2 py-1 [&_button]:min-h-[44px] lg:sticky lg:top-0 lg:z-10"
+                className="flex min-h-[48px] shrink-0 flex-nowrap items-center justify-between gap-2 border-b border-gray-700 bg-gray-950 px-2 py-1 [&_button]:min-h-[44px] lg:sticky lg:top-0 lg:z-10"
               >
+                {isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
+                  <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
+                ) : <span aria-hidden="true" />}
                 <div className="flex min-w-0 flex-nowrap items-center gap-2">
                   {!isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
                     <Button type="button" svg={Pencil} aria-label="Edit IEMs" onClick={() => { setIemDraft(iemEquipment); setIsEditingIems(true); }}>Edit</Button>
                   ) : null}
                   {isEditingIems && canEdit && !loadingIems && !iemLoadError ? (
                     <div className="flex min-w-0 flex-nowrap items-center gap-2">
-                      <Button type="button" variant="secondary" svg={Plus} disabled={savingIems || iemDraft.length >= 80} aria-label="Add IEM" onClick={addIem}>Add</Button>
                       <Button type="button" variant="tertiary" svg={X} disabled={savingIems} onClick={() => { if (iemHasPendingChanges) setIemDraft(iemEquipment); setIsEditingIems(false); }}>{iemHasPendingChanges ? "Cancel" : "Close"}</Button>
                       <Button type="button" variant="cta" svg={savingIems || !iemHasPendingChanges ? undefined : Save} aria-busy={savingIems || undefined} disabled={savingIems || hasIncompleteIem || !iemHasPendingChanges} aria-label={savingIems ? "Saving IEMs" : !iemHasPendingChanges ? "Saved IEMs" : "Save IEMs"} onClick={() => void saveIems()}>{savingIems ? "Saving…" : !iemHasPendingChanges ? <><Check aria-hidden="true" data-testid="iem-save-success-icon" className="size-4 shrink-0 text-emerald-300" />Saved</> : "Save"}</Button>
                     </div>

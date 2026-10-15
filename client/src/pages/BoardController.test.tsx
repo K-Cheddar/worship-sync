@@ -62,6 +62,7 @@ jest.mock("../boards/api", () => ({
   disconnectRestream: jest.fn(),
   deleteBoardAlias: jest.fn(),
   hardResetBoardAlias: jest.fn(),
+  keepCurrentRestreamSession: jest.fn(),
   resetRestreamSession: jest.fn(),
   softResetBoardAlias: jest.fn(),
   updateBoardAliasTitle: jest.fn(),
@@ -76,6 +77,7 @@ const mockedBoardApi = jest.requireMock("../boards/api") as {
   createBoardAlias: jest.Mock;
   deleteBoardAlias: jest.Mock;
   hardResetBoardAlias: jest.Mock;
+  keepCurrentRestreamSession: jest.Mock;
   resetRestreamSession: jest.Mock;
   softResetBoardAlias: jest.Mock;
   updateBoardAliasTitle: jest.Mock;
@@ -87,6 +89,7 @@ const mockedBoardApi = jest.requireMock("../boards/api") as {
 const mockCreateBoardAlias = mockedBoardApi.createBoardAlias;
 const mockDeleteBoardAlias = mockedBoardApi.deleteBoardAlias;
 const mockHardResetBoardAlias = mockedBoardApi.hardResetBoardAlias;
+const mockKeepCurrentRestreamSession = mockedBoardApi.keepCurrentRestreamSession;
 const mockResetRestreamSession = mockedBoardApi.resetRestreamSession;
 const mockSoftResetBoardAlias = mockedBoardApi.softResetBoardAlias;
 const mockUpdateBoardAliasTitle = mockedBoardApi.updateBoardAliasTitle;
@@ -134,7 +137,7 @@ const createMockBoardDb = () => {
       id: "board-current",
       aliasId: "sunday",
       database: "test",
-      createdAt: 10,
+      createdAt: Date.now(),
       archived: false,
     },
     "board-old": {
@@ -264,6 +267,10 @@ const createMockBoardDb = () => {
           history: [],
         };
       }
+      if (docId.startsWith("board:")) {
+        const board = boardDocs[docId.slice("board:".length)];
+        if (board) return board;
+      }
       throw new Error(`Unexpected doc lookup: ${docId}`);
     }),
     changes: jest.fn(() => ({
@@ -349,7 +356,7 @@ describe("BoardControllerContent", () => {
         churchId: "church-1",
         database: "test",
         sessionId: "restream-session-1",
-        startedAt: 100,
+        startedAt: Date.now(),
         messageCount: 0,
         enabled: false,
         connected: false,
@@ -393,12 +400,11 @@ describe("BoardControllerContent", () => {
     mockUpdateBoardPostHighlighted.mockResolvedValue({ post: {} as any });
   });
 
-  const renderPage = (
+  const pageElement = (
     options: {
       globalOverrides?: Record<string, unknown>;
     } = {},
-  ) =>
-    render(
+  ) => (
       <MemoryRouter>
         <GlobalInfoContext.Provider
           value={
@@ -412,8 +418,11 @@ describe("BoardControllerContent", () => {
             <BoardControllerContent />
           </ToastProvider>
         </GlobalInfoContext.Provider>
-      </MemoryRouter>,
+      </MemoryRouter>
     );
+
+  const renderPage = (options: { globalOverrides?: Record<string, unknown> } = {}) =>
+    render(pageElement(options));
 
   const openBoardToolsSheetIfMobile = async (
     user: ReturnType<typeof userEvent.setup>,
@@ -757,7 +766,7 @@ describe("BoardControllerContent", () => {
     expect(screen.queryByText(/Earlier question/i)).not.toBeInTheDocument();
   });
 
-  it("does not prompt to start fresh when only Restream chat is stale (server auto-resets it)", async () => {
+  it("offers a Restream-only reset when only Restream is stale", async () => {
     mockBoardDb.__setPosts("board-current", [
       {
         _id: "post:board-current:today",
@@ -805,15 +814,695 @@ describe("BoardControllerContent", () => {
     renderPage();
 
     await screen.findByRole("heading", { name: "Sunday Board" });
+    const resetButton = await screen.findByRole("button", {
+      name: /Start new Restream session/i,
+    });
+    expect(resetButton).toBeInTheDocument();
+    expect(mockHardResetBoardAlias).not.toHaveBeenCalled();
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
+    const user = userEvent.setup();
+    await user.click(resetButton);
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start a new Restream session/i,
+    });
+    await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
+    await waitFor(() => expect(mockResetRestreamSession).toHaveBeenCalledTimes(1));
+    expect(mockHardResetBoardAlias).not.toHaveBeenCalled();
+  });
+
+  it("resets only the board when it is stale and Restream has activity today", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-today",
+        startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+        lastEventAt: Date.now(),
+        messageCount: 1,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start a fresh discussion board/i,
+    });
+    expect(within(dialog).queryByText(/Restream chat starts a new session/i)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday"));
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
+  });
+
+  it("offers a board-only reset when Restream is authoritatively absent", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: null,
+      messages: [],
+      isLoading: true,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
     expect(
       screen.queryByRole("button", { name: /Start fresh for today/i }),
     ).not.toBeInTheDocument();
-    expect(mockHardResetBoardAlias).not.toHaveBeenCalled();
+    mockUseRestreamSession.mockReturnValue({
+      session: null,
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+    view.rerender(pageElement());
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start a fresh discussion board/i,
+    });
+    await user.click(within(dialog).getByRole("button", { name: /^Continue$/i }));
+
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday"));
     expect(mockResetRestreamSession).not.toHaveBeenCalled();
+  });
+
+  it("resumes a combined reset after Restream succeeds and the board reset fails", async () => {
+    const user = userEvent.setup();
+    const oldSessionAt = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: oldSessionAt,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    let currentSessionId = "restream-session-old";
+    const reloadRestream = jest.fn(async () => {
+      currentSessionId = "restream-session-new";
+    });
+    mockUseRestreamSession.mockImplementation(() => ({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: currentSessionId,
+        startedAt: currentSessionId === "restream-session-old" ? oldSessionAt : Date.now(),
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      isRefreshing: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: reloadRestream,
+    }));
+    mockHardResetBoardAlias
+      .mockRejectedValueOnce(new Error("Board archive failed"))
+      .mockResolvedValueOnce(undefined);
+
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start fresh for today/i,
+    });
+    const confirmButton = () =>
+      within(dialog).getByRole("button", { name: /^Start fresh$/i });
+    await user.click(confirmButton());
+
+    expect(await screen.findByText("Board archive failed")).toBeInTheDocument();
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+    expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("dialog", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    await user.click(confirmButton());
+    await waitFor(() => expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(2));
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves new board posts before retrying a partially completed reset", async () => {
+    const user = userEvent.setup();
+    const oldSessionAt = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: oldSessionAt,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    const reloadRestream = jest.fn(() => Promise.resolve());
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-old",
+        startedAt: oldSessionAt,
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      isRefreshing: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: reloadRestream,
+    });
+    mockHardResetBoardAlias.mockRejectedValueOnce(new Error("Board archive failed"));
+
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /Start fresh for today/i,
+    });
+    const confirmButton = () =>
+      within(dialog).getByRole("button", { name: /^Start fresh$/i });
+    await user.click(confirmButton());
+
+    expect(await screen.findByText("Board archive failed")).toBeInTheDocument();
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+    expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(1);
+
+    mockBoardDb.__setPosts("board-current", [
+      {
+        _id: "post:board-current:today",
+        _rev: "1-today",
+        type: "post",
+        docType: "board-post",
+        id: "today",
+        aliasId: "sunday",
+        boardId: "board-current",
+        database: "test",
+        author: "Alex",
+        text: "Today's question",
+        timestamp: Date.now(),
+        hidden: false,
+        highlighted: false,
+      },
+    ]);
+    await user.click(confirmButton());
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: /Start fresh for today/i }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(mockHardResetBoardAlias).toHaveBeenCalledTimes(1);
+    expect(mockResetRestreamSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/discussion board.*activity today/i)).toBeInTheDocument();
+  });
+
+  it("remembers Keep current across visits for the same stale session identities", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-kept",
+        startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    const view = renderPage();
+    await user.click(await screen.findByRole("button", { name: /Keep current session/i }));
+    await waitFor(() => expect(mockKeepCurrentRestreamSession).toHaveBeenCalledWith("church-1"));
+    await waitFor(() => expect(screen.queryByRole("status", { name: /session/i })).not.toBeInTheDocument());
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-kept",
+        startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+        lastEventAt: Date.now(),
+        messageCount: 1,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+    view.rerender(pageElement());
+    expect(screen.queryByRole("status", { name: /session/i })).not.toBeInTheDocument();
+    view.unmount();
+    const { rerender: rerenderSecondView } = renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(screen.queryByRole("button", { name: /Keep current session/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Start fresh for today/i })).not.toBeInTheDocument();
+
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-new",
+        startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+    rerenderSecondView(pageElement());
+    expect(await screen.findByRole("button", { name: /Start new Restream session/i })).toBeInTheDocument();
+  });
+
+  it("waits for delayed PouchDB posts before evaluating an empty stale board", async () => {
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockBoardDb.__deferNextPostLoad();
+    renderPage();
+    await waitFor(() => expect(mockBoardDb.__hasDeferredPostLoad()).toBe(true));
+    expect(screen.queryByRole("button", { name: /Start fresh for today/i })).not.toBeInTheDocument();
+    await act(async () => mockBoardDb.__resolveDeferredPostLoad({ rows: [] }));
+    expect(await screen.findByRole("button", { name: /Start fresh for today/i })).toBeInTheDocument();
+  });
+
+  it("shows one timestamped toast for an empty October 10 board and old Restream activity on October 15, then leaves a header recovery action when dismissed", async () => {
+    const user = userEvent.setup();
+    const oct10 = new Date(2026, 9, 10, 12).getTime();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: oct10,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-oct10",
+        startedAt: oct10,
+        lastMessageAt: oct10,
+        messageCount: 2,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [
+        {
+          _id: "restream-message-old",
+          sessionId: "restream-session-oct10",
+          author: "Restream viewer",
+          postedAt: oct10,
+          receivedAt: oct10,
+          text: "Old Restream message",
+        },
+      ],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "ready",
+      reload: jest.fn(() => Promise.resolve()),
+    } as any);
+
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(
+      await screen.findByText(
+        "The discussion board created Oct 10 has no posts today. Restream started Oct 10 and has no activity today.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Keep current session/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close toast" }));
+    expect(await screen.findByRole("button", { name: "Start fresh" })).toBeInTheDocument();
+
+    view.unmount();
+    renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(screen.getByRole("button", { name: "Start fresh" })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/The discussion board created Oct 10/),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start fresh" }));
+    expect(
+      await screen.findByRole("dialog", { name: /Start fresh for today/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("re-evaluates stale sessions after local midnight", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(2026, 9, 15, 23, 59, 40));
+    try {
+      mockBoardDb.__setBoardDoc("board-current", {
+        _id: "board:board-current",
+        _rev: "1-b",
+        type: "board",
+        docType: "board",
+        id: "board-current",
+        aliasId: "sunday",
+        database: "test",
+        createdAt: new Date(2026, 9, 10, 12).getTime(),
+        archived: false,
+      });
+      mockBoardDb.__setPosts("board-current", []);
+      mockUseRestreamSession.mockReturnValue({
+        session: null,
+        messages: [],
+        isLoading: false,
+        error: "",
+        bestEffortOnly: true,
+        oauthConfigured: true,
+        isOffline: false,
+        streamState: "disconnected",
+        streamFailure: null,
+        feedState: "empty",
+        reload: jest.fn(() => Promise.resolve()),
+      });
+      renderPage();
+      expect(
+        await screen.findByRole("button", { name: /Start fresh for today/i }),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        jest.advanceTimersByTime(20_100);
+      });
+
+      expect(
+        screen.getByRole("button", { name: /Start fresh for today/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/The discussion board created Oct 10 has no posts today/),
+      ).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("waits for Restream status refresh before suggesting a reset", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    const oldRestreamSession = {
+      churchId: "church-1",
+      database: "test",
+      sessionId: "restream-session-refreshing",
+      startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      messageCount: 0,
+      enabled: true,
+      connected: false,
+      connectionState: "disconnected" as const,
+      accountLabel: "Main channel",
+      lastError: "",
+      platformSummary: [],
+    };
+    let restreamIsLoading = true;
+    let restreamIsRefreshing = false;
+    let restreamHasActivityToday = false;
+    mockUseRestreamSession.mockImplementation(() => ({
+      session: {
+        ...oldRestreamSession,
+        lastEventAt: restreamHasActivityToday ? Date.now() : undefined,
+      },
+      messages: [],
+      isLoading: restreamIsLoading,
+      isRefreshing: restreamIsRefreshing,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: restreamIsLoading ? "pending" : "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    }));
+
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(screen.queryByRole("button", { name: /Start fresh for today/i })).not.toBeInTheDocument();
+
+    restreamIsLoading = false;
+    view.rerender(pageElement());
+    expect(await screen.findByRole("button", { name: /Start fresh for today/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Start fresh for today/i }));
+    expect(await screen.findByRole("dialog", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    restreamIsRefreshing = true;
+    view.rerender(pageElement());
+    expect(screen.getByRole("dialog", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    restreamHasActivityToday = true;
+    view.rerender(pageElement());
+    expect(screen.getByRole("dialog", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    restreamIsRefreshing = false;
+    view.rerender(pageElement());
+    expect(screen.queryByRole("dialog", { name: /Start fresh for today/i })).not.toBeInTheDocument();
+  });
+
+  it("waits for board sync to connect before suggesting a reset", async () => {
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    const boardSync = {
+      db: mockBoardDb,
+      status: "retrying",
+      pullFromRemote: jest.fn(),
+      subscribeToChanges: (listener: (change?: unknown) => void) => {
+        const changes = mockBoardDb.changes();
+        changes.on("change", listener);
+        return () => changes.cancel();
+      },
+    };
+    mockUseBoardSync.mockReturnValue(boardSync as any);
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "Sunday Board" });
+    expect(screen.queryByRole("button", { name: /Start fresh for today/i })).not.toBeInTheDocument();
+
+    mockUseBoardSync.mockReturnValue({ ...boardSync, status: "connected" } as any);
+    view.rerender(pageElement());
+    expect(await screen.findByRole("button", { name: /Start fresh for today/i })).toBeInTheDocument();
+  });
+
+  it("removes the current-session suggestion when switching to an archived board", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    const confirmation = await screen.findByRole("dialog", {
+      name: /Start a fresh discussion board/i,
+    });
+    await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+    await openBoardToolsSheetIfMobile(user);
+    await user.click(screen.getByLabelText(/Show posts from/i));
+    await user.click(screen.getByRole("option", { name: /Earlier session:/i }));
+    await screen.findByText(/Archived session question/i);
+    expect(screen.queryByRole("button", { name: /Start fresh for today/i })).not.toBeInTheDocument();
   });
 
   it("resets both the discussion board and Restream when the operator starts fresh", async () => {
     const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    const oldSessionAt = Date.now() - 5 * 24 * 60 * 60 * 1000;
     const reloadRestream = jest.fn(() => Promise.resolve());
     let resolveResetRestream: ((value: unknown) => void) | undefined;
     mockResetRestreamSession.mockImplementationOnce(
@@ -827,7 +1516,8 @@ describe("BoardControllerContent", () => {
         churchId: "church-1",
         database: "test",
         sessionId: "restream-session-old",
-        startedAt: 100,
+        startedAt: oldSessionAt,
+        lastMessageAt: oldSessionAt,
         messageCount: 2,
         enabled: true,
         connected: false,
@@ -836,7 +1526,24 @@ describe("BoardControllerContent", () => {
         lastError: "",
         platformSummary: [],
       },
-      messages: [],
+      messages: [
+        {
+          id: "old-message",
+          churchId: "church-1",
+          database: "test",
+          sessionId: "restream-session-old",
+          platform: "YouTube",
+          connectionIdentifier: "connection-1",
+          author: "Viewer",
+          text: "Old Restream message",
+          postedAt: oldSessionAt,
+          receivedAt: oldSessionAt,
+          rawEventType: "message",
+          kind: "viewer_message",
+          isHighlighted: false,
+          hidden: false,
+        },
+      ],
       isLoading: false,
       error: "",
       bestEffortOnly: true,
@@ -882,8 +1589,111 @@ describe("BoardControllerContent", () => {
     expect(mockHardResetBoardAlias).toHaveBeenCalledWith("sunday");
   });
 
+  it("closes a combined reset confirmation when Restream becomes active", async () => {
+    const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    const staleSession = {
+      churchId: "church-1",
+      database: "test",
+      sessionId: "restream-session-stale",
+      startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      messageCount: 0,
+      enabled: true,
+      connected: false,
+      connectionState: "disconnected" as const,
+      accountLabel: "Main channel",
+      lastError: "",
+      platformSummary: [],
+    };
+    mockUseRestreamSession.mockReturnValue({
+      session: staleSession,
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+
+    const view = renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Start fresh for today/i }),
+    );
+    expect(await screen.findByRole("dialog", { name: /Start fresh for today/i })).toBeInTheDocument();
+
+    mockUseRestreamSession.mockReturnValue({
+      session: { ...staleSession, lastEventAt: Date.now() },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "connected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
+    view.rerender(pageElement());
+    expect(screen.queryByRole("dialog", { name: /Start fresh for today/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start fresh for today/i, hidden: true })).toBeInTheDocument();
+    expect(mockResetRestreamSession).not.toHaveBeenCalled();
+  });
+
   it("restores the Start Fresh confirmation after the operation fails", async () => {
     const user = userEvent.setup();
+    mockBoardDb.__setBoardDoc("board-current", {
+      _id: "board:board-current",
+      _rev: "1-b",
+      type: "board",
+      docType: "board",
+      id: "board-current",
+      aliasId: "sunday",
+      database: "test",
+      createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      archived: false,
+    });
+    mockBoardDb.__setPosts("board-current", []);
+    mockUseRestreamSession.mockReturnValue({
+      session: {
+        churchId: "church-1",
+        database: "test",
+        sessionId: "restream-session-old",
+        startedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+        messageCount: 0,
+        enabled: true,
+        connected: false,
+        connectionState: "disconnected",
+        accountLabel: "Main channel",
+        lastError: "",
+        platformSummary: [],
+      },
+      messages: [],
+      isLoading: false,
+      error: "",
+      bestEffortOnly: true,
+      oauthConfigured: true,
+      isOffline: false,
+      streamState: "disconnected",
+      streamFailure: null,
+      feedState: "empty",
+      reload: jest.fn(() => Promise.resolve()),
+    });
     mockResetRestreamSession.mockRejectedValueOnce(
       new Error("Restream is unavailable"),
     );

@@ -75,7 +75,7 @@ import {
   isActive,
   memberName,
 } from "../teamsUtils";
-import { getUpcomingAvailabilitySuggestion } from "../intakeAvailabilitySuggestion";
+import { getUpcomingAvailabilitySuggestions } from "../intakeAvailabilitySuggestion";
 import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
 import AvailabilityFormSendFlow from "../components/AvailabilityFormSendFlow";
@@ -96,6 +96,7 @@ import {
 type IntakeManagerProps = {
   availabilityOnly?: boolean;
   managedTeamIds?: string[];
+  suggestionTeamIds?: string[];
   availabilityResponses?: TeamAvailabilityResponse[];
   onAvailabilityRefresh?: () => void;
   forms: TeamIntakeForm[];
@@ -233,6 +234,7 @@ const emptyDraft = (): TeamIntakeFormPayload => ({
 const IntakeManager = ({
   availabilityOnly = false,
   managedTeamIds = [],
+  suggestionTeamIds,
   availabilityResponses = [],
   onAvailabilityRefresh,
   forms,
@@ -807,36 +809,44 @@ const IntakeManager = ({
       messageStateRefreshSequenceRef.current += 1;
     };
   }, []);
-  const upcomingAvailabilitySuggestion = useMemo(
-    () => canCalculateServiceDates ? getUpcomingAvailabilitySuggestion({
+  const upcomingAvailabilitySuggestions = useMemo(
+    () => canCalculateServiceDates ? getUpcomingAvailabilitySuggestions({
       services,
       forms,
       positions,
       schedules,
-      teamIds: availabilityOnly
+      teamIds: suggestionTeamIds ?? (availabilityOnly
         ? managedTeamIds
-        : teams.filter((team) => !team.archivedAt).map((team) => team.teamId),
-      teamScheduleScope: availabilityOnly,
+        : teams.filter((team) => !team.archivedAt).map((team) => team.teamId)),
+      teamScheduleScope: true,
+      issuedFormIds: [...new Set([
+        ...intakeRecipients.map((recipient) => recipient.formId),
+        ...submissions.map((submission) => submission.formId),
+      ])],
       timeZone: serviceTimeZone,
     }) : null,
-    [availabilityOnly, canCalculateServiceDates, forms, managedTeamIds, positions, schedules, serviceTimeZone, services, teams],
+    [availabilityOnly, canCalculateServiceDates, forms, intakeRecipients, managedTeamIds, positions, schedules, serviceTimeZone, services, submissions, suggestionTeamIds, teams],
   );
 
-  const openUpcomingAvailabilityDraft = () => {
-    if (!upcomingAvailabilitySuggestion) return;
-    if (upcomingAvailabilitySuggestion.kind === "update") {
-      const existingForm = forms.find((form) => form.formId === upcomingAvailabilitySuggestion.formId);
+  const openUpcomingAvailabilityDraft = (suggestion: NonNullable<typeof upcomingAvailabilitySuggestions>[number]) => {
+    if (suggestion.kind === "review") {
+      const existingForm = forms.find((form) => form.formId === suggestion.formId);
+      if (existingForm) openFormEditor(existingForm);
+      return;
+    }
+    if (suggestion.kind === "update") {
+      const existingForm = forms.find((form) => form.formId === suggestion.formId);
       if (!existingForm) return;
       openFormEditor(existingForm);
       setPreserveSuggestedOccurrences(true);
       setDraft(availabilityOnly ? {
-        ...upcomingAvailabilitySuggestion.draft,
+        ...suggestion.draft,
         purpose: "team_availability",
-        teamIds: upcomingAvailabilitySuggestion.draft.teamIds.length
-          ? upcomingAvailabilitySuggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
+        teamIds: suggestion.draft.teamIds.length
+          ? suggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
           : [...managedTeamIds],
         enabledFields: ["availability"],
-      } : upcomingAvailabilitySuggestion.draft);
+      } : suggestion.draft);
       return;
     }
     editorSessionRef.current += 1;
@@ -848,13 +858,13 @@ const IntakeManager = ({
     setPreserveSuggestedOccurrences(true);
     setEditing(null);
     setDraft(availabilityOnly ? {
-      ...upcomingAvailabilitySuggestion.draft,
+      ...suggestion.draft,
       purpose: "team_availability",
-      teamIds: upcomingAvailabilitySuggestion.draft.teamIds.length
-        ? upcomingAvailabilitySuggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
+      teamIds: suggestion.draft.teamIds.length
+        ? suggestion.draft.teamIds.filter((teamId) => managedTeamIds.includes(teamId))
         : [...managedTeamIds],
       enabledFields: ["availability"],
-    } : upcomingAvailabilitySuggestion.draft);
+    } : suggestion.draft);
   };
 
   const refreshFormMessageState = useCallback((formId: string) => {
@@ -2454,39 +2464,29 @@ const IntakeManager = ({
                 </Button>
               </div>
             ) : null}
-            {upcomingAvailabilitySuggestion && !panelOpen && canEdit ? (
-              <section className="mb-4 space-y-2 rounded-lg border border-sky-600/70 bg-sky-950/30 p-4" aria-labelledby="upcoming-availability-heading">
-                <div>
-                  <h2 id="upcoming-availability-heading" className="font-semibold text-sky-100">
-                    {upcomingAvailabilitySuggestion.kind === "update"
-                      ? `${upcomingAvailabilitySuggestion.name} needs updating`
-                      : "Upcoming availability"}
-                  </h2>
-                  {upcomingAvailabilitySuggestion.kind === "create" ? (
-                    <>
-                      <p className="mt-1 text-sm text-gray-200">{upcomingAvailabilitySuggestion.name}</p>
-                      <p className="text-sm text-gray-300">{formatPlainDateRangeLabel(upcomingAvailabilitySuggestion.startDate, upcomingAvailabilitySuggestion.endDate)} · {upcomingAvailabilitySuggestion.occurrenceCount} upcoming service{upcomingAvailabilitySuggestion.occurrenceCount === 1 ? "" : "s"}</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="mt-1 text-sm text-gray-300">
-                        {upcomingAvailabilitySuggestion.occurrenceCount} upcoming service{upcomingAvailabilitySuggestion.occurrenceCount === 1 ? " isn’t" : "s aren’t"} included.
-                      </p>
-                      <ul className="mt-1 space-y-0.5 text-sm text-gray-200">
-                        {upcomingAvailabilitySuggestion.missingOccurrences.slice(0, 3).map((occurrence) => (
-                          <li key={occurrence.occurrenceId}>
-                            {occurrence.name} · {formatShortOccurrenceDate(occurrence.startsAt, serviceTimeZone)}
-                          </li>
-                        ))}
-                        {upcomingAvailabilitySuggestion.occurrenceCount > 3 ? (
-                          <li className="text-gray-300">And {upcomingAvailabilitySuggestion.occurrenceCount - 3} more</li>
-                        ) : null}
-                      </ul>
-                    </>
-                  )}
-                </div>
-                <Button variant="secondary" onClick={openUpcomingAvailabilityDraft}>Review form</Button>
-              </section>
+            {upcomingAvailabilitySuggestions?.length && !panelOpen && canEdit ? (
+              <div className="mb-4 space-y-2" aria-label="Upcoming availability suggestions">
+                {upcomingAvailabilitySuggestions.map((suggestion, index) => {
+                  const teamNames = suggestion.teamIds.map((teamId) => teams.find((team) => team.teamId === teamId)?.name || teamId);
+                  const teamLabel = suggestion.teamIds.length === 0 ? "All teams" : teamNames.join(", ");
+                  const isReview = suggestion.kind === "review";
+                  return (
+                    <section key={`${suggestion.kind}:${("formId" in suggestion ? suggestion.formId : "") || suggestion.teamIds.join("|")}:${suggestion.startDate}:${index}`} className="flex flex-col gap-2 rounded-md border border-sky-700/60 bg-sky-950/25 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between" aria-label={`${teamLabel} availability`}>
+                      <div className="min-w-0 text-sm">
+                        <p className="font-medium text-sky-100">
+                          {isReview ? `${suggestion.name} needs review` : `Availability needed for ${teamLabel}`}
+                        </p>
+                        <p className="text-gray-300">
+                          {isReview
+                            ? `This form is ${suggestion.reason} for ${teamLabel} · ${formatPlainDateRangeLabel(suggestion.startDate, suggestion.endDate)} · ${suggestion.occurrenceCount} upcoming ${suggestion.occurrenceCount === 1 ? "date" : "dates"} affected. Review it before creating another request.`
+                            : `${formatPlainDateRangeLabel(suggestion.startDate, suggestion.endDate)} · ${suggestion.occurrenceCount} upcoming ${suggestion.occurrenceCount === 1 ? "date" : "dates"} missing`}
+                        </p>
+                      </div>
+                      <Button variant="secondary" className="shrink-0" onClick={() => openUpcomingAvailabilityDraft(suggestion)}>Review form</Button>
+                    </section>
+                  );
+                })}
+              </div>
             ) : null}
             {forms.length === 0 ? (
               <p className="text-sm text-gray-300">{availabilityOnly ? "No availability forms yet." : "No intake forms yet."}</p>

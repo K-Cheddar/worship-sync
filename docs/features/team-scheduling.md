@@ -4,7 +4,7 @@
 
 **Approval source:** Product-owner request, “WorshipSync Scheduling Foundation, Phase 1,” supplied for this audit on 2026-10-12.
 
-**Last reviewed:** 2026-10-12
+**Last reviewed:** 2026-10-15
 
 **Phase 1 audit:** [Scheduling foundation audit](../team-scheduling-foundation-phase-1.md)
 
@@ -60,6 +60,17 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - Archiving or removing a service does not destroy historical schedule records.
 - Publishing controls visibility; sending controls notifications. Both are deliberate and separate.
 - Assignment edits and publishing do not automatically send messages. Support sending relevant updates or selected services without needless resending.
+
+### Forms and upcoming availability
+
+- Forms has an authorized active-Team filter independent of its date-range filter. Administrators start at **All teams**; a manager of one active Team starts at that Team. A legacy form with an empty Team scope applies to all teams.
+- Upcoming availability is calculated for each selected Team's future occurrences using the same church-timezone schedule generation, combined-service identity, saved occurrence overrides, requirements, and explicit position slots as Team Scheduling. Combined groups are projected to each Team's staffing-relevant service members before coverage is compared; saved occurrence overrides apply across the group while service membership remains team-specific. Past services do not count as missing.
+- Existing open availability forms cover only their actual Team scope and the service dates they include. Coverage is accumulated across eligible forms, and volunteer responses do not affect coverage.
+- A suggested draft includes only uncovered Team/date coverage and uses `purpose: "team_availability"`. Teams share a draft only when their missing logical occurrence sets match; different staffed members of one combined occurrence are unioned for the shared draft, while unrelated events on the same date stay separate. Teams with different missing occurrences receive separate drafts.
+- Saved combined occurrences cover only their intersection with the form's known service list. Legacy forms without service lists retain their saved occurrence member. Closed or expired forms that cover future dates are grouped into one review suggestion per form, with affected Teams and dates. An existing form is suggested for update only when its scope and service-date additions are safe and no requests or responses have been issued; otherwise, uncovered dates use a separate draft.
+- The Team selector does not change the selected date range. Team options and suggestions are limited to authorized active Teams, and a church or permission-scope change cannot retain a stale Team selection.
+
+**Approval source:** Current product-owner request, 2026-10-15. This Forms behavior adds Team-level availability coverage and filtering without changing scheduling, form-link, response, SMS, or authorization contracts.
 
 ## Core data invariants
 

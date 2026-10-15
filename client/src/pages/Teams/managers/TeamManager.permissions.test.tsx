@@ -93,6 +93,15 @@ beforeEach(() => {
   jest.mocked(updateTeamRosterMemberProfile).mockReset();
 });
 
+it("shows team member and position counts without listing member names", () => {
+  renderManager();
+
+  const teamList = screen.getByTestId("teams-create-panel-list");
+  expect(within(teamList).getByText("Worship")).toBeInTheDocument();
+  expect(teamList).toHaveTextContent("1 member | 0 positions");
+  expect(within(teamList).queryByText("Avery Singer")).not.toBeInTheDocument();
+});
+
 it("lets a scoped manager edit team settings and manage only that team's roster", async () => {
   const user = userEvent.setup();
   const onSaved = jest.fn();
@@ -260,13 +269,16 @@ it("keeps Team creation global-only for roster readers", () => {
   expect(within(screen.getByTestId("teams-create-panel-list")).queryByRole("button", { name: "Create team" })).not.toBeInTheDocument();
 });
 
-it("shows roster names to read-only Team viewers without roster mutation controls", () => {
+it("shows counts without member names or edit controls for read-only Team viewers", () => {
   renderManager(TEAMS_SECTION_PATHS.groups, { canEditTeam: () => false });
   const teamRows = screen.getAllByTestId("entity-row");
   expect(teamRows).toHaveLength(2);
   teamRows.forEach((row) => {
-    expect(row).toHaveTextContent("1 member | 0 positions · Avery Singer");
+    expect(row).toHaveTextContent("1 member | 0 positions");
+    expect(row).not.toHaveTextContent("Avery Singer");
   });
+  expect(screen.queryByRole("button", { name: "Edit Worship" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit AV" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Add member" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Remove from team" })).not.toBeInTheDocument();

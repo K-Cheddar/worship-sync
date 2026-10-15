@@ -14,7 +14,7 @@ import {
   getBoardPostRange,
   getBoardPostsForAttendeeView,
   isBoardAuthorInUse,
-  boardHasOnlyPreviousDayPosts,
+  getStaleBoardSessionScope,
   isBoardPostOwnedByParticipant,
   isTimestampFromPreviousLocalDay,
   isWorshipSyncModeratorBoardPost,
@@ -340,28 +340,55 @@ describe("isTimestampFromPreviousLocalDay", () => {
   });
 });
 
-describe("boardHasOnlyPreviousDayPosts", () => {
-  const now = new Date(2026, 5, 14, 10, 0, 0).getTime();
-  const yesterday = new Date(2026, 5, 13, 18, 0, 0).getTime();
-  const lastWeek = new Date(2026, 5, 7, 18, 0, 0).getTime();
-  const today = new Date(2026, 5, 14, 9, 30, 0).getTime();
+describe("getStaleBoardSessionScope", () => {
+  const now = new Date(2026, 9, 15, 12).getTime();
+  const october10 = new Date(2026, 9, 10, 12).getTime();
 
-  it("returns false when the board has no posts (nothing to roll)", () => {
-    expect(boardHasOnlyPreviousDayPosts([], now)).toBe(false);
+  it("reproduces an empty October 10 board and ended Restream session on October 15", () => {
+    expect(
+      getStaleBoardSessionScope({
+        boardCreatedAt: october10,
+        boardPosts: [],
+        restreamStartedAt: october10,
+        restreamActivityTimestamps: [october10],
+        now,
+      }),
+    ).toBe("both");
   });
 
-  it("returns true when every post is from an earlier day", () => {
-    const posts = [{ timestamp: lastWeek }, { timestamp: yesterday }];
-    expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(true);
+  it("does not reset a board with any activity today", () => {
+    expect(
+      getStaleBoardSessionScope({
+        boardCreatedAt: october10,
+        boardPosts: [{ timestamp: now }],
+        restreamStartedAt: october10,
+        restreamActivityTimestamps: [october10],
+        now,
+      }),
+    ).toBe("restream");
   });
 
-  it("returns false when any post is from today (active session)", () => {
-    const posts = [{ timestamp: yesterday }, { timestamp: today }];
-    expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(false);
+  it("does not reset Restream when it has activity today", () => {
+    expect(
+      getStaleBoardSessionScope({
+        boardCreatedAt: october10,
+        boardPosts: [],
+        restreamStartedAt: october10,
+        restreamActivityTimestamps: [now],
+        now,
+      }),
+    ).toBe("board");
   });
 
-  it("returns false when all posts are from today", () => {
-    const posts = [{ timestamp: today }, { timestamp: today + 1000 }];
-    expect(boardHasOnlyPreviousDayPosts(posts, now)).toBe(false);
+  it("returns null when sessions started today", () => {
+    expect(
+      getStaleBoardSessionScope({
+        boardCreatedAt: now,
+        boardPosts: [],
+        restreamStartedAt: now,
+        restreamActivityTimestamps: [],
+        now,
+      }),
+    ).toBeNull();
   });
 });
